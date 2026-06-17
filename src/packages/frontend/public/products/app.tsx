@@ -53,14 +53,14 @@ function supportContactPath({
 function supportProductPath(product: "Launchpad" | "Rocket"): string {
   if (product === "Launchpad") {
     return supportContactPath({
-      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, timeline, support expectations, and whether pricing, site licensing, data-location, privacy, or security questions are part of the decision.",
+      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, who will own infrastructure, recovery, and ongoing operations, timeline, support expectations, and whether pricing, site licensing, data-location, privacy, or security questions are part of the decision.",
       context: "product-cocalc-launchpad",
       subject: "CoCalc Launchpad",
       title: "Talk with CoCalc about Launchpad",
     });
   }
   return supportContactPath({
-    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, governance, security, privacy, or data-ownership questions, procurement needs, timeline, and support or deployment-planning questions.",
+    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, operator boundary, infrastructure, recovery, ongoing operations, governance, security, privacy, or data-ownership questions, procurement needs, timeline, and support or deployment-planning questions.",
     context: "product-cocalc-rocket",
     subject: "CoCalc Rocket",
     title: "Talk with CoCalc about Rocket",
@@ -563,7 +563,7 @@ function CocalcRocketPage() {
           <ProductNotesList
             items={[
               "Rocket starts with a deployment and commercial conversation, not a self-service installer.",
-              "It is for customer-operated private-cloud planning with infrastructure, governance, and support requirements.",
+              "It is for customer-operated private-cloud planning with infrastructure, governance, support requirements, and clear ownership of ongoing operations.",
               "Use Launchpad when the immediate need is a smaller bounded private deployment.",
             ]}
           />
@@ -571,7 +571,8 @@ function CocalcRocketPage() {
         <ProductDetailCard icon="servers" title="Plan Rocket with CoCalc">
           <Paragraph style={{ marginTop: 0 }}>
             Start with support when the conversation includes infrastructure,
-            rollout, governance, support coverage, or site licensing.
+            rollout, governance, support coverage, site licensing, or the level
+            of deployment help your organization expects.
           </Paragraph>
           <ProductActions
             actions={[
@@ -654,11 +655,18 @@ function CocalcStarPage() {
             <Button href="https://github.com/sagemathinc/cocalc-ai/releases/tag/cocalc-star-stable">
               Stable channel
             </Button>
+            <Button href={appPath("docs/self-hosting/cocalc-star")}>
+              Read Star setup guide
+            </Button>
           </Flex>
           <Paragraph style={{ margin: 0 }}>
             The default flow detects the public IPv4 address, uses sslip.io for
             DNS, obtains a Let's Encrypt certificate through Caddy, and shows a
             web onboarding page before continuing.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            The setup guide covers the firewall, onboarding, first admin,
+            project-start, and invite-user checks.
           </Paragraph>
         </ProductDetailCard>
         <ProductDetailCard icon="servers" title="Boundary: one public VM">
@@ -768,6 +776,7 @@ function CocalcLaunchpadPage() {
           <ProductNotesList
             items={[
               "Launchpad is customer-operated and sized for a pilot, lab, workshop, department, or platform team.",
+              "The customer or administrator owns infrastructure, recovery, and ongoing operations.",
               "Use Star if one public Ubuntu VM is enough.",
               "Use Rocket when governance, support, and broader private-cloud planning are the main decision.",
             ]}
@@ -782,6 +791,8 @@ function CocalcLaunchpadPage() {
           Start with Launchpad when your team is ready to operate a private
           CoCalc environment. Use pricing and support when procurement,
           deployment rights, or rollout planning are part of the decision.
+          Support can cover install guidance, licensing questions, product
+          defects, and upgrade planning while your team remains the operator.
         </Paragraph>
         <ProductActions
           actions={[
@@ -871,7 +882,8 @@ function CocalcPlusPage() {
           <ProductNotesList
             items={[
               "Plus is for local evaluation or individual work on one machine.",
-              "Use hosted CoCalc.ai when collaborators need managed shared projects.",
+              "It is self-serve local software; the user operates the runtime and local data.",
+              "Use hosted CoCalc.ai when collaborators need shared projects operated by CoCalc.",
               "Use Star, Launchpad, or Rocket when the group needs a shared deployment.",
             ]}
           />

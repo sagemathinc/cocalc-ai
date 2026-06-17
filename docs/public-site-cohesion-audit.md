@@ -213,6 +213,19 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Finding: keep the overview, pricing, and compare pages structurally unchanged during this pass; this is a product-detail visual hierarchy pass, not a product taxonomy redesign.
 - [x] Browser QA: validate `/features`, `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` on desktop, tablet, and mobile with zero horizontal overflow; confirm teaching now follows runtime/hosted compute and precedes languages/math, product pages use buyer-question headings, generic taxonomy labels are absent, and Launchpad support retains `context=product-cocalc-launchpad`. The known `CoCalc Crashed` overlay remains present in the DOM and was ignored per user instruction.
 
+## Product Detail Evidence Depth Pass
+
+- [x] Active: audit `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` for install proof, deployment boundary, support expectation, workflow evidence, and next-step confidence.
+- [x] Finding: product pages should not add new screenshot or performance proof during this pass; the evidence register still requires approved, fresh public assets before screenshots, setup-time claims, restore-time claims, or benchmark-style proof become product-page evidence.
+- [x] Finding: CoCalc Star has the strongest existing public proof route because `/docs/self-hosting/cocalc-star` documents the VM, firewall, onboarding, first-admin, project-start, and invite-user checks.
+- [x] Finding: Launchpad and Rocket need clearer operating-boundary and support-expectation language, especially who owns infrastructure, recovery, and ongoing operations, without implying managed private cloud or guaranteed support levels.
+- [x] Finding: Plus needs a clearer self-serve/local ownership boundary so technical evaluators do not confuse it with hosted collaboration or a supported shared deployment path.
+- [x] Change: expose compact, route-specific evidence cues using existing install commands, public docs routes, and contextual support prefill rather than adding new proof sections.
+- [x] Change: link CoCalc Star to the public setup guide from the install card; keep Plus, Launchpad, and Rocket evidence tied to install commands, ownership boundaries, and contextual support rather than adding unapproved screenshots.
+- [x] Change: clarify that Plus is self-serve local software, Launchpad/Rocket remain customer-operated, and support guidance does not move infrastructure ownership to CoCalc.
+- [x] Add focused tests for product evidence cues, support-context preservation, product-boundary discipline, and unsupported proof phrasing.
+- [x] Browser QA: validate `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` on desktop, tablet, and mobile with zero horizontal overflow; confirm Star setup-guide routing, Plus local ownership language, Launchpad support context, and Rocket operator-boundary support context.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

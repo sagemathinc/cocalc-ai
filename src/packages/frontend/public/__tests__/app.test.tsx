@@ -92,6 +92,16 @@ function expectNoProductDetailStalePhrasing() {
     /^Audience$/i,
     /^Deployment model$/i,
     /^Why choose it$/i,
+    /setup-time/i,
+    /restore-time/i,
+    /deployment-time/i,
+    /benchmark/i,
+    /guaranteed support/i,
+    /guaranteed response/i,
+    /\bSLA\b/i,
+    /managed private cloud/i,
+    /sovereign cloud/i,
+    /air-gapped/i,
   ]) {
     expect(screen.queryByText(phrase)).toBeNull();
   }
@@ -1142,6 +1152,10 @@ describe("PublicApp", () => {
         name: "Boundary: local, one-user runtime",
       }),
     ).not.toBeNull();
+    expect(screen.getByText(/self-serve local software/i)).not.toBeNull();
+    expect(
+      screen.getByText(/user operates the runtime and local data/i),
+    ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
         name: "Choose a shared path after local evaluation",
@@ -1354,6 +1368,13 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
+      screen.getByText(/customer or administrator owns infrastructure/i),
+    ).not.toBeNull();
+    expect(screen.getByText(/ongoing operations/i)).not.toBeNull();
+    expect(
+      screen.getByText(/Support can cover install guidance/i),
+    ).not.toBeNull();
+    expect(
       screen
         .getAllByRole("link", { name: "Pricing and licensing" })
         .every((link) => link.getAttribute("href") === "/pricing"),
@@ -1376,6 +1397,9 @@ describe("PublicApp", () => {
       ),
     );
     expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute("href", expect.stringContaining("ongoing+operations"));
+    expect(
       screen.getByRole("link", { name: "Compare with Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
     expect(
@@ -1387,6 +1411,9 @@ describe("PublicApp", () => {
       "href",
       expect.stringContaining("context=product-cocalc-launchpad"),
     );
+    expect(
+      screen.getByRole("link", { name: "Discuss Launchpad requirements" }),
+    ).toHaveAttribute("href", expect.stringContaining("ongoing+operations"));
     expect(
       screen.queryByRole("link", { name: "Compare with CoCalc Plus" }),
     ).toBeNull();
@@ -1427,6 +1454,10 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Boundary: one public VM" }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Read Star setup guide" }),
+    ).toHaveAttribute("href", "/docs/self-hosting/cocalc-star");
+    expect(screen.getByText(/setup guide covers the firewall/i)).not.toBeNull();
     expectNoProductDetailStalePhrasing();
   });
 
@@ -1454,7 +1485,13 @@ describe("PublicApp", () => {
     expect(
       screen.getAllByText(/customer-operated private-cloud path/i).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText(/governance, support/i)).not.toBeNull();
+    expect(screen.getAllByText(/governance, support/i).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      screen.getByText(/clear ownership of ongoing operations/i),
+    ).not.toBeNull();
+    expect(screen.getByText(/level of deployment help/i)).not.toBeNull();
     expect(
       screen.getByRole("heading", { name: "Plan Rocket with CoCalc" }),
     ).not.toBeNull();
@@ -1476,6 +1513,16 @@ describe("PublicApp", () => {
       "href",
       expect.stringContaining("context=product-cocalc-rocket"),
     );
+    expect(
+      screen.getAllByRole("link", {
+        name: "Talk with CoCalc about Rocket",
+      })[0],
+    ).toHaveAttribute("href", expect.stringContaining("operator+boundary"));
+    expect(
+      screen.getAllByRole("link", {
+        name: "Talk with CoCalc about Rocket",
+      })[0],
+    ).toHaveAttribute("href", expect.stringContaining("ongoing+operations"));
     expect(
       screen.getAllByRole("link", {
         name: "Talk with CoCalc about Rocket",
