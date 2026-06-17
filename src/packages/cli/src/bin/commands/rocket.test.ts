@@ -13,6 +13,8 @@ type CapturedRun = {
   args: string[];
 };
 
+const releaseArch = process.arch === "arm64" ? "arm64" : "x64";
+
 function createProgram({
   runs,
   gitStatus = "",
@@ -91,7 +93,7 @@ test("rocket release build --out-dir keeps the default tarball beside that direc
   const runs: CapturedRun[] = [];
   const dir = mkdtempSync(join(tmpdir(), "rocket-release-out-dir-"));
   const outDir = join(dir, "runtime");
-  const bundle = join(dir, "cocalc-bay-runtime-linux-x64.tar.xz");
+  const bundle = join(dir, `cocalc-bay-runtime-linux-${releaseArch}.tar.xz`);
   const manifest = join(outDir, "bay-runtime-manifest.json");
   const program = createProgram({
     runs,
@@ -129,7 +131,7 @@ test("rocket release build --kind bay-hub builds a control-plane artifact", asyn
   const runs: CapturedRun[] = [];
   const dir = mkdtempSync(join(tmpdir(), "rocket-hub-build-"));
   const outDir = join(dir, "bay-hub");
-  const bundle = join(dir, "cocalc-bay-hub-linux-x64.tar.xz");
+  const bundle = join(dir, `cocalc-bay-hub-linux-${releaseArch}.tar.xz`);
   const manifest = join(outDir, "bay-hub-manifest.json");
   const program = createProgram({
     runs,
@@ -167,7 +169,10 @@ test("rocket release build --kind project-host-software builds separate host pay
   const runs: CapturedRun[] = [];
   const dir = mkdtempSync(join(tmpdir(), "rocket-host-software-build-"));
   const outDir = join(dir, "project-host-software");
-  const bundle = join(dir, "cocalc-project-host-software-linux-x64.tar.xz");
+  const bundle = join(
+    dir,
+    `cocalc-project-host-software-linux-${releaseArch}.tar.xz`,
+  );
   const manifest = join(outDir, "project-host-software-manifest.json");
   const program = createProgram({
     runs,
