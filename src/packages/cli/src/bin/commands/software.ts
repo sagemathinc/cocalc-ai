@@ -247,6 +247,76 @@ function parseDeployComponentSelector({
   };
 }
 
+function parseBuildComponentSelector({
+  componentSelectorArg,
+  legacyTagArg,
+}: {
+  componentSelectorArg: string;
+  legacyTagArg?: string;
+}): {
+  component: SoftwareBuildComponent;
+  tagArg: string | undefined;
+} {
+  const { componentRaw, selectorRaw } = splitSoftwareComponentSelector({
+    value: componentSelectorArg,
+    command: "build",
+  });
+  return {
+    component: parseSoftwareBuildComponent(componentRaw),
+    tagArg:
+      legacyTagArg != null && `${legacyTagArg}`.trim() !== ""
+        ? validateSoftwareTag(legacyTagArg)
+        : selectorRaw == null
+          ? undefined
+          : validateSoftwareTag(selectorRaw),
+  };
+}
+
+function parsePushComponentSelector({
+  componentSelectorArg,
+  legacySelectorArg,
+}: {
+  componentSelectorArg: string;
+  legacySelectorArg?: string;
+}): {
+  component: SoftwareBuildComponent;
+  selector: string;
+} {
+  const { componentRaw, selectorRaw } = splitSoftwareComponentSelector({
+    value: componentSelectorArg,
+    command: "push",
+  });
+  const selector =
+    legacySelectorArg != null && `${legacySelectorArg}`.trim() !== ""
+      ? legacySelectorArg
+      : selectorRaw;
+  if (selector == null || `${selector}`.trim() === "") {
+    throw new Error("software push requires <component:tag-or-id>");
+  }
+  return {
+    component: parseSoftwareBuildComponent(componentRaw),
+    selector: validateSoftwareDeploySelector(selector),
+  };
+}
+
+function splitSoftwareComponentSelector({
+  value,
+  command,
+}: {
+  value: string;
+  command: string;
+}): { componentRaw: string; selectorRaw: string | undefined } {
+  const componentSelector = `${value ?? ""}`.trim();
+  if (!componentSelector) {
+    throw new Error(`software ${command} requires <component[:tag]>`);
+  }
+  const [componentRaw, selectorRaw, ...extra] = componentSelector.split(":");
+  if (extra.length > 0) {
+    throw new Error(`software ${command} component selector has too many ':'`);
+  }
+  return { componentRaw, selectorRaw };
+}
+
 function validateSoftwareDeploySelector(selector: string): string {
   const trimmed = `${selector ?? ""}`.trim();
   if (!trimmed) {
@@ -361,8 +431,8 @@ function rawSoftwareComponentInfo(
         "Use history and rollback against this deploy component name, not against bay.",
       ],
       commands: {
-        build: ["cocalc software build bay <tag>"],
-        push: ["cocalc software push bay <tag-or-id>"],
+        build: ["cocalc software build bay:<tag>"],
+        push: ["cocalc software push bay:<tag-or-id>"],
         deploy: [`cocalc software deploy ${component}:<tag-or-id> <profile>`],
         smoke: ["cocalc software smoke bay <profile>"],
         history: [`cocalc software history ${component} <profile>`],
@@ -402,8 +472,8 @@ function rawSoftwareComponentInfo(
         "Reconcile online project hosts and wait for convergence.",
       ],
       commands: {
-        build: ["cocalc software build project-host <tag>"],
-        push: ["cocalc software push project-host <tag-or-id>"],
+        build: ["cocalc software build project-host:<tag>"],
+        push: ["cocalc software push project-host:<tag-or-id>"],
         deploy: [`cocalc software deploy ${component}:<tag-or-id> <profile>`],
         smoke: ["cocalc software smoke project-host <profile>"],
         history: [`cocalc software history ${component} <profile>`],
@@ -444,8 +514,8 @@ function rawSoftwareComponentInfo(
           "Smoke HTTP bootstrap and static asset endpoints.",
         ],
         commands: {
-          build: ["cocalc software build static <tag>"],
-          push: ["cocalc software push static <tag-or-id>"],
+          build: ["cocalc software build static:<tag>"],
+          push: ["cocalc software push static:<tag-or-id>"],
           deploy: ["cocalc software deploy static:<tag-or-id> <profile>"],
           smoke: ["cocalc software smoke static <profile>"],
           history: ["cocalc software history static <profile>"],
@@ -480,8 +550,8 @@ function rawSoftwareComponentInfo(
           "Smoke API endpoints and Rocket host-route health.",
         ],
         commands: {
-          build: ["cocalc software build hub <tag>"],
-          push: ["cocalc software push hub <tag-or-id>"],
+          build: ["cocalc software build hub:<tag>"],
+          push: ["cocalc software push hub:<tag-or-id>"],
           deploy: ["cocalc software deploy hub:<tag-or-id> <profile>"],
           smoke: ["cocalc software smoke hub <profile>"],
           history: ["cocalc software history hub <profile>"],
@@ -517,8 +587,8 @@ function rawSoftwareComponentInfo(
           "Smoke bay HTTP and health checks.",
         ],
         commands: {
-          build: ["cocalc software build bay <tag>"],
-          push: ["cocalc software push bay <tag-or-id>"],
+          build: ["cocalc software build bay:<tag>"],
+          push: ["cocalc software push bay:<tag-or-id>"],
           deploy: ["cocalc software deploy bay:<tag-or-id> <profile>"],
           smoke: ["cocalc software smoke bay <profile>"],
           history: ["cocalc software history bay <profile>"],
@@ -590,11 +660,11 @@ function rawSoftwareComponentInfo(
         lifecycle: [
           "Build tools-minimal artifacts.",
           "Push them to the R2 artifact store.",
-          "Coordinate promotion with plus using cocalc software deploy plus --tools-minimal.",
+          "Coordinate promotion with plus using cocalc software deploy plus:<tag-or-id> <channel> --tools-minimal.",
         ],
         commands: {
-          build: ["cocalc software build tools-minimal <tag>"],
-          push: ["cocalc software push tools-minimal <tag-or-id>"],
+          build: ["cocalc software build tools-minimal:<tag>"],
+          push: ["cocalc software push tools-minimal:<tag-or-id>"],
           deploy: [
             "cocalc software deploy plus:<tag-or-id> <channel> --tools-minimal <tools-tag-or-id>",
           ],
@@ -633,8 +703,8 @@ function rawSoftwareComponentInfo(
           "Smoke the selected release channel with the Star smoke script.",
         ],
         commands: {
-          build: ["cocalc software build star <tag>"],
-          push: ["cocalc software push star <tag-or-id>"],
+          build: ["cocalc software build star:<tag>"],
+          push: ["cocalc software push star:<tag-or-id>"],
           deploy: ["cocalc software deploy star:<tag-or-id> <channel>"],
           smoke: ["cocalc software smoke star <channel>"],
           history: ["cocalc software history star <channel>"],
@@ -861,7 +931,7 @@ function formatSoftwareInfoPayload(
     "",
     "Examples:",
     "  cocalc software info hub",
-    "  cocalc software build hub <tag>",
+    "  cocalc software build hub:<tag>",
     "  cocalc software deploy hub:<tag-or-id> <profile>",
     "  cocalc software smoke hub <profile>",
     "  cocalc software history hub <profile>",
@@ -2156,7 +2226,7 @@ async function buildFromFile({
       }>
     | undefined;
   let commandText = `cocalc software build ${component}${
-    tagArg ? ` ${tagArg}` : ""
+    tagArg ? `:${tagArg}` : ""
   }`;
   if (sourceFile) {
     sourceFiles = [{ source: sourceFile, name: artifactName }];
@@ -3126,8 +3196,11 @@ Supported deploy/smoke components:
   software
     .command("build")
     .description("build or record a local immutable software artifact")
-    .argument("<component>", BUILD_COMPONENT_ARGUMENT)
-    .argument("[tag]", "optional human tag; generated if omitted")
+    .argument(
+      "<component[:tag]>",
+      `${BUILD_COMPONENT_ARGUMENT}; tag is generated if omitted`,
+    )
+    .allowExcessArguments(true)
     .option("--local-store <path>", "local artifact store")
     .option(
       "--from-file <path>",
@@ -3137,12 +3210,17 @@ Supported deploy/smoke components:
     .option("--keep-build-dir", "keep temporary component build directory")
     .action(
       async (
-        componentArg: string,
-        tagArg: string | undefined,
+        componentSelectorArg: string,
         opts: BuildOptions,
         command: Command,
       ) => {
-        const component = parseSoftwareBuildComponent(componentArg);
+        if (command.args.length > 2) {
+          throw new Error("software build accepts <component[:tag]>");
+        }
+        const { component, tagArg } = parseBuildComponentSelector({
+          componentSelectorArg,
+          legacyTagArg: command.args[1],
+        });
         const manifest = await buildFromFile({
           component,
           tagArg,
@@ -3209,8 +3287,11 @@ Supported deploy/smoke components:
   software
     .command("push")
     .description("push a local software artifact to the remote software store")
-    .argument("<component>", BUILD_COMPONENT_ARGUMENT)
-    .argument("<tag-or-id>", "artifact tag or id")
+    .argument(
+      "<component:tag-or-id>",
+      `${BUILD_COMPONENT_ARGUMENT}; artifact tag or id`,
+    )
+    .allowExcessArguments(true)
     .option("--local-store <path>", "local artifact store")
     .option(
       "--env-file <path>",
@@ -3219,12 +3300,17 @@ Supported deploy/smoke components:
     )
     .action(
       async (
-        componentArg: string,
-        selector: string,
+        componentSelectorArg: string,
         opts: PushOptions,
         command: Command,
       ) => {
-        const component = parseSoftwareBuildComponent(componentArg);
+        if (command.args.length > 2) {
+          throw new Error("software push accepts <component:tag-or-id>");
+        }
+        const { component, selector } = parsePushComponentSelector({
+          componentSelectorArg,
+          legacySelectorArg: command.args[1],
+        });
         const startedAt = deps.now?.() ?? new Date();
         const localStore = resolveSoftwareLocalStore({
           option: opts.localStore,

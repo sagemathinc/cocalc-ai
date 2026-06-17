@@ -532,8 +532,7 @@ test("software build hub runs the Rocket bay hub builder", async () => {
     "--quiet",
     "software",
     "build",
-    "hub",
-    "runtime-test",
+    "hub:runtime-test",
   ]);
 
   assert.equal(runs.length, 1);
@@ -1077,8 +1076,7 @@ test("software push uploads files manifest and component index", async () => {
       "--json",
       "software",
       "push",
-      "hub",
-      "push-test",
+      "hub:push-test",
       "--env-file",
       join(dir, "missing.env"),
     ]);
