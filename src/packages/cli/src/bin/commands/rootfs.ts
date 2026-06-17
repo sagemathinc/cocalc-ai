@@ -1203,6 +1203,7 @@ export function registerRootfsCommand(
     .requiredOption("--image <image>", "runtime image reference")
     .option("--label <label>", "catalog label")
     .option("--image-id <id>", "update an existing catalog entry by id")
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option(
       "--config-file <path>",
       "portable RootFS config JSON exported from the UI or authored by an agent",
@@ -1227,6 +1228,7 @@ export function registerRootfsCommand(
           image: string;
           label?: string;
           imageId?: string;
+          browserId?: string;
           configFile?: string;
           family?: string;
           imageVersion?: string;
@@ -1248,6 +1250,7 @@ export function registerRootfsCommand(
           const entry = await ctx.hub.system.saveRootfsCatalogEntry({
             image_id: `${opts.imageId ?? ""}`.trim() || undefined,
             image: opts.image,
+            browser_id: `${opts.browserId ?? ""}`.trim() || undefined,
             ...payload,
             official: opts.official ? true : undefined,
             prepull: opts.prepull ? true : undefined,
@@ -1263,6 +1266,7 @@ export function registerRootfsCommand(
     .description("publish the current RootFS state of a project")
     .option("-w, --project <project>", "project id or name")
     .option("--label <label>", "catalog label for the published image")
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option(
       "--config-file <path>",
       "portable RootFS config JSON exported from the UI or authored by an agent",
@@ -1291,6 +1295,7 @@ export function registerRootfsCommand(
         opts: {
           project?: string;
           label?: string;
+          browserId?: string;
           configFile?: string;
           family?: string;
           imageVersion?: string;
@@ -1314,6 +1319,7 @@ export function registerRootfsCommand(
           const payload = rootfsCatalogConfigPayload(opts, config);
           const op = await ctx.hub.system.publishProjectRootfsImage({
             project_id: ws.project_id,
+            browser_id: `${opts.browserId ?? ""}`.trim() || undefined,
             ...payload,
             official: opts.official ? true : undefined,
             prepull: opts.prepull ? true : undefined,
