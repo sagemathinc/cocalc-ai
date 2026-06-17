@@ -1593,6 +1593,17 @@ export async function moveProjectToHost(
         },
       });
     } else {
+      if (context.provisioned !== false) {
+        progress({
+          step: "backup",
+          message: "writing move verification sentinel",
+        });
+        moveSentinel = await createMoveSentinel({
+          context,
+          move_log_id,
+          op_id: opts?.op_id,
+        });
+      }
       progress({
         step: "stop-source",
         message: "stopping source project",
@@ -1647,15 +1658,6 @@ export async function moveProjectToHost(
             },
           );
         }
-        progress({
-          step: "backup",
-          message: "writing move verification sentinel",
-        });
-        moveSentinel = await createMoveSentinel({
-          context,
-          move_log_id,
-          op_id: opts?.op_id,
-        });
         progress({
           step: "backup",
           message: "creating final backup (always)",

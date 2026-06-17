@@ -25,6 +25,7 @@ let setProjectBackupRegionMock: jest.Mock;
 let purgeProjectBackupsForRepoMock: jest.Mock;
 let conatPublishMock: jest.Mock;
 let projectLogRows: any[];
+let moveCallOrder: string[];
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -143,6 +144,7 @@ describe("moveProjectToHost", () => {
   beforeEach(() => {
     jest.resetModules();
     projectLogRows = [];
+    moveCallOrder = [];
     currentRoutedHostId = SOURCE_HOST_ID;
     const sharedFiles = new Map<string, string>();
     routedFsByHost = new Map([
@@ -233,7 +235,9 @@ describe("moveProjectToHost", () => {
     savePlacementMock = jest.fn(async (_project_id, { host_id }: any) => {
       currentRoutedHostId = host_id;
     });
-    stopProjectOnHostMock = jest.fn(async () => undefined);
+    stopProjectOnHostMock = jest.fn(async () => {
+      moveCallOrder.push("stop-source");
+    });
     startProjectLroMock = jest.fn(async () => ({
       op_id: "44444444-4444-4444-8444-444444444444",
       scope_type: "project",
@@ -325,6 +329,9 @@ describe("moveProjectToHost", () => {
           }),
           writeFile: jest.fn(async (path: string, data: any) => {
             maybeThrowNotInitialized();
+            if (path.startsWith(`${MOVE_SENTINEL_DIR}/`)) {
+              moveCallOrder.push("write-sentinel");
+            }
             const files = routedFsByHost.get(currentRoutedHostId);
             if (!files) {
               throw new Error(`missing routed fs host ${currentRoutedHostId}`);
@@ -414,6 +421,65 @@ describe("moveProjectToHost", () => {
       host_id: DEST_HOST_ID,
     });
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("writes the move sentinel before stopping an online provisioned source", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(moveCallOrder.slice(0, 2)).toEqual([
+      "write-sentinel",
+      "stop-source",
+    ]);
   });
 
   it("retries when the source project file server is still initializing", async () => {
