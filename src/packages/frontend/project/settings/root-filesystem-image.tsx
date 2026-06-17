@@ -3011,11 +3011,19 @@ function RootfsContentManifestBuilder({
         the files bundled with this image.
       </Paragraph>
 
-      <RuntimePanel
-        icon="eye"
-        title="Manifest preview"
-        subtitle="How the RootFS discovery component will appear to users."
-      >
+      <div style={{ position: "relative" }}>
+        <Tag
+          color="blue"
+          style={{
+            marginInlineEnd: 0,
+            position: "absolute",
+            right: 12,
+            top: 12,
+            zIndex: 1,
+          }}
+        >
+          Preview
+        </Tag>
         {validation.content ? (
           renderRootfsContentPanel({
             entry: previewEntry,
@@ -3030,7 +3038,7 @@ function RootfsContentManifestBuilder({
             description="Add a title, description, highlight, or action to create the discovery panel."
           />
         )}
-      </RuntimePanel>
+      </div>
 
       <RuntimePanel
         icon="book"
