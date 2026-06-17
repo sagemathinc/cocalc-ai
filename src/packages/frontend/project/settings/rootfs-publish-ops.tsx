@@ -6,9 +6,9 @@ import {
   LRO_TERMINAL_STATUSES,
   progressBarStatus,
 } from "@cocalc/frontend/lro/utils";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import type { RootfsPublishLroState } from "@cocalc/frontend/project/rootfs-publish-ops";
 import { User } from "@cocalc/frontend/users/user";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   clampProgressPercent,
   formatProgressDetail,
@@ -76,6 +76,7 @@ export default function RootfsPublishOps({
 }: {
   project_id: string;
 }) {
+  const { actions } = useProjectContext();
   const publishOps =
     useTypedRedux({ project_id }, "rootfs_publish_ops")?.toJS() ?? {};
   const entries = Object.values(publishOps) as RootfsPublishLroState[];
@@ -99,16 +100,25 @@ export default function RootfsPublishOps({
         RootFS publish operations
       </div>
       {visible.map((op) => (
-        <RootfsPublishRow key={op.op_id} op={op} />
+        <RootfsPublishRow
+          key={op.op_id}
+          op={op}
+          onDismiss={() => actions?.dismissRootfsPublishLro(op.op_id)}
+        />
       ))}
     </div>
   );
 }
 
-function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
+function RootfsPublishRow({
+  op,
+  onDismiss,
+}: {
+  op: RootfsPublishLroState;
+  onDismiss: () => void;
+}) {
   const summary = op.summary;
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
-  const [dismissed, setDismissed] = useState<boolean>(false);
   const percent = progressPercent(op);
   const status = summary?.status;
   const progress = op.last_progress;
@@ -126,17 +136,6 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
   );
   const phaseTimings = summary?.result?.phase_timings_ms;
   const dismissible = !!status && LRO_TERMINAL_STATUSES.has(status);
-
-  async function dismissOp() {
-    await webapp_client.conat_client.hub.lro.dismiss({
-      op_id: op.op_id,
-    });
-    setDismissed(true);
-  }
-
-  if (dismissed) {
-    return null;
-  }
 
   return (
     <div style={{ marginBottom: "6px" }}>
@@ -171,14 +170,14 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
             overflowY: "auto",
             maxWidth: "min(92vw, 560px)",
           }}
-          content={<RootfsPublishTimeline op={op} onDismiss={dismissOp} />}
+          content={<RootfsPublishTimeline op={op} onDismiss={onDismiss} />}
         >
           <Button type="link" size="small">
             Timeline
           </Button>
         </Popover>
         {dismissible ? (
-          <Button type="link" size="small" onClick={() => void dismissOp()}>
+          <Button type="link" size="small" onClick={onDismiss}>
             Dismiss
           </Button>
         ) : null}
@@ -211,7 +210,7 @@ function RootfsPublishTimeline({
   onDismiss,
 }: {
   op: RootfsPublishLroState;
-  onDismiss: () => Promise<void>;
+  onDismiss: () => void;
 }) {
   const summary = op.summary;
   const status = summary?.status;
@@ -326,7 +325,7 @@ function RootfsPublishTimeline({
         ) : null}
         <Timeline items={timelineItems} />
         {dismissible ? (
-          <Button size="small" onClick={() => void onDismiss()}>
+          <Button size="small" onClick={onDismiss}>
             Dismiss
           </Button>
         ) : null}
