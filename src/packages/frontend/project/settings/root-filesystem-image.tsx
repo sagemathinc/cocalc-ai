@@ -133,6 +133,35 @@ type RootfsContentDirectoryPicker = {
   pendingPath: string;
 } | null;
 
+const ROOTFS_CONFIG_EXPORT_KIND = "cocalc-rootfs-config";
+const ROOTFS_CONFIG_EXPORT_VERSION = 1;
+
+type RootfsConfigExportMetadata = {
+  label?: string;
+  description?: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
+  visibility?: RootfsImageVisibility;
+  tags?: string[];
+};
+
+type RootfsConfigExport = {
+  kind: typeof ROOTFS_CONFIG_EXPORT_KIND;
+  version: typeof ROOTFS_CONFIG_EXPORT_VERSION;
+  exported_at: string;
+  metadata?: RootfsConfigExportMetadata;
+  theme?: RootfsImageTheme;
+  content?: RootfsContentManifest;
+};
+
+type RootfsConfigImportOptions = {
+  metadata: boolean;
+  theme: boolean;
+  content: boolean;
+};
+
 type RootFilesystemImageMode = "inline" | "modal";
 
 interface RootFilesystemImageProps {
@@ -185,6 +214,15 @@ export default function RootFilesystemImage({
     useState<RootfsContentDraft>(() => emptyRootfsContentDraft());
   const [publishContentPicker, setPublishContentPicker] =
     useState<RootfsContentDirectoryPicker>(null);
+  const rootfsConfigImportInputRef = useRef<HTMLInputElement | null>(null);
+  const [rootfsConfigImportCandidate, setRootfsConfigImportCandidate] =
+    useState<RootfsConfigExport | null>(null);
+  const [rootfsConfigImportOptions, setRootfsConfigImportOptions] =
+    useState<RootfsConfigImportOptions>(() => ({
+      metadata: true,
+      theme: true,
+      content: true,
+    }));
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
@@ -832,6 +870,83 @@ export default function RootFilesystemImage({
       });
     } catch (err) {
       setError(`${err}`);
+    }
+  }
+
+  function exportRootfsConfig(): void {
+    downloadJsonFile(
+      `${safeJsonFilenamePart(publishDraft.label || "rootfs-config")}.rootfs-config.json`,
+      {
+        kind: ROOTFS_CONFIG_EXPORT_KIND,
+        version: ROOTFS_CONFIG_EXPORT_VERSION,
+        exported_at: new Date().toISOString(),
+        metadata: rootfsConfigMetadataFromPublishDraft(publishDraft),
+        theme: rootfsThemeFromPublishDraft(publishDraft),
+        content: publishContentValidation.content,
+      } satisfies RootfsConfigExport,
+    );
+  }
+
+  async function importRootfsConfigFile(file: File): Promise<void> {
+    try {
+      const candidate = parseRootfsConfigExport(JSON.parse(await file.text()));
+      setRootfsConfigImportCandidate(candidate);
+      setRootfsConfigImportOptions(rootfsConfigImportOptionsFor(candidate));
+    } catch (err) {
+      message.error(`Could not import RootFS config: ${err}`);
+    } finally {
+      if (rootfsConfigImportInputRef.current) {
+        rootfsConfigImportInputRef.current.value = "";
+      }
+    }
+  }
+
+  function applyRootfsConfigImport(): void {
+    const candidate = rootfsConfigImportCandidate;
+    if (!candidate) return;
+    const imported: string[] = [];
+    if (rootfsConfigImportOptions.metadata && candidate.metadata) {
+      setPublishDraft((cur) => ({
+        ...cur,
+        label: candidate.metadata?.label ?? cur.label,
+        description: candidate.metadata?.description ?? cur.description,
+        family: candidate.metadata?.family ?? cur.family,
+        version: candidate.metadata?.version ?? cur.version,
+        channel: candidate.metadata?.channel ?? cur.channel,
+        supersedes_image_id:
+          candidate.metadata?.supersedes_image_id ?? cur.supersedes_image_id,
+        visibility: candidate.metadata?.visibility ?? cur.visibility,
+        tags: candidate.metadata?.tags
+          ? normalizeRootfsTags(candidate.metadata.tags).join(", ")
+          : cur.tags,
+      }));
+      imported.push("metadata");
+    }
+    if (rootfsConfigImportOptions.theme && candidate.theme) {
+      setPublishDraft((cur) => ({
+        ...cur,
+        theme: themeDraftFromTheme(
+          candidate.theme,
+          candidate.metadata?.label ?? cur.label,
+        ),
+      }));
+      imported.push("theme");
+    }
+    if (rootfsConfigImportOptions.content && candidate.content) {
+      const result = normalizeRootfsContentManifest(candidate.content);
+      setPublishContentDraft(rootfsContentManifestToDraft(result.content));
+      imported.push("discovery config");
+      if (result.warnings.length > 0) {
+        message.warning(
+          `Imported discovery config with ${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}.`,
+        );
+      }
+    }
+    setRootfsConfigImportCandidate(null);
+    if (imported.length > 0) {
+      message.success(
+        `Imported ${imported.join(", ")}. Save or publish to update the catalog entry.`,
+      );
     }
   }
 
@@ -2118,25 +2233,57 @@ export default function RootFilesystemImage({
                   key: "manifest",
                   label: "Manifest",
                   children: (
-                    <RootfsContentManifestBuilder
-                      draft={publishContentDraft}
-                      onChange={setPublishContentDraft}
-                      onPickDirectory={(actionIndex, field, currentPath) =>
-                        setPublishContentPicker({
-                          actionIndex,
-                          field,
-                          pendingPath: currentPath || "/",
-                        })
-                      }
-                      onSave={
-                        publishMode === "copy" && publishCopyMode === "project"
-                          ? undefined
-                          : saveRootfsDiscoveryConfig
-                      }
-                      previewEntry={publishContentPreviewEntry}
-                      project_id={project_id}
-                      validation={publishContentValidation}
-                    />
+                    <Space
+                      direction="vertical"
+                      size={14}
+                      style={{ width: "100%" }}
+                    >
+                      <RuntimePanel
+                        icon="file-export"
+                        title="Import / export config"
+                        subtitle="Move portable RootFS catalog metadata, theme, and discovery actions between images or projects."
+                      >
+                        <Space wrap>
+                          <Button onClick={exportRootfsConfig}>
+                            Export JSON
+                          </Button>
+                          <Button
+                            onClick={() =>
+                              rootfsConfigImportInputRef.current?.click()
+                            }
+                          >
+                            Import JSON
+                          </Button>
+                        </Space>
+                        <Paragraph
+                          type="secondary"
+                          style={{ marginTop: 10, marginBottom: 0 }}
+                        >
+                          Import updates this draft only. Save or publish to
+                          update the RootFS catalog entry.
+                        </Paragraph>
+                      </RuntimePanel>
+                      <RootfsContentManifestBuilder
+                        draft={publishContentDraft}
+                        onChange={setPublishContentDraft}
+                        onPickDirectory={(actionIndex, field, currentPath) =>
+                          setPublishContentPicker({
+                            actionIndex,
+                            field,
+                            pendingPath: currentPath || "/",
+                          })
+                        }
+                        onSave={
+                          publishMode === "copy" &&
+                          publishCopyMode === "project"
+                            ? undefined
+                            : saveRootfsDiscoveryConfig
+                        }
+                        previewEntry={publishContentPreviewEntry}
+                        project_id={project_id}
+                        validation={publishContentValidation}
+                      />
+                    </Space>
                   ),
                 },
                 {
@@ -2377,6 +2524,87 @@ export default function RootFilesystemImage({
           </Space>
         </Modal>
       )}
+      <input
+        ref={rootfsConfigImportInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            void importRootfsConfigFile(file);
+          }
+        }}
+      />
+      {rootfsConfigImportCandidate ? (
+        <Modal
+          open
+          destroyOnHidden
+          title="Import RootFS Config"
+          okText="Import selected"
+          okButtonProps={{
+            disabled: !rootfsConfigImportOptionsHasSelection(
+              rootfsConfigImportOptions,
+            ),
+          }}
+          onCancel={() => setRootfsConfigImportCandidate(null)}
+          onOk={applyRootfsConfigImport}
+        >
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Alert
+              type="info"
+              showIcon
+              message="Choose which parts of this JSON config to import."
+              description="Import changes this draft only. Save or publish to update the RootFS catalog metadata."
+            />
+            <Checkbox
+              disabled={!rootfsConfigImportCandidate.metadata}
+              checked={rootfsConfigImportOptions.metadata}
+              onChange={(e) =>
+                setRootfsConfigImportOptions((cur) => ({
+                  ...cur,
+                  metadata: e.target.checked,
+                }))
+              }
+            >
+              Metadata
+              {rootfsConfigImportCandidate.metadata?.label
+                ? `: ${rootfsConfigImportCandidate.metadata.label}`
+                : ""}
+            </Checkbox>
+            <Checkbox
+              disabled={!rootfsConfigImportCandidate.theme}
+              checked={rootfsConfigImportOptions.theme}
+              onChange={(e) =>
+                setRootfsConfigImportOptions((cur) => ({
+                  ...cur,
+                  theme: e.target.checked,
+                }))
+              }
+            >
+              Theme
+              {rootfsConfigImportCandidate.theme?.icon
+                ? `: ${rootfsConfigImportCandidate.theme.icon}`
+                : ""}
+            </Checkbox>
+            <Checkbox
+              disabled={!rootfsConfigImportCandidate.content}
+              checked={rootfsConfigImportOptions.content}
+              onChange={(e) =>
+                setRootfsConfigImportOptions((cur) => ({
+                  ...cur,
+                  content: e.target.checked,
+                }))
+              }
+            >
+              Discovery config
+              {rootfsConfigImportCandidate.content
+                ? `: ${(rootfsConfigImportCandidate.content.actions ?? []).length} action${(rootfsConfigImportCandidate.content.actions ?? []).length === 1 ? "" : "s"}`
+                : ""}
+            </Checkbox>
+          </Space>
+        </Modal>
+      ) : null}
       {publishContentPicker && (
         <Modal
           open
@@ -2634,6 +2862,151 @@ function normalizeRootfsTags(tags: string[]): string[] {
 
 function parseRootfsTagString(tags: string): string[] {
   return normalizeRootfsTags(tags.split(","));
+}
+
+function rootfsConfigMetadataFromPublishDraft(
+  draft: PublishDraft,
+): RootfsConfigExportMetadata {
+  return {
+    label: draft.label,
+    description: draft.description,
+    family: draft.family.trim() || undefined,
+    version: draft.version.trim() || undefined,
+    channel: draft.channel.trim() || undefined,
+    supersedes_image_id: draft.supersedes_image_id.trim() || undefined,
+    visibility: draft.visibility,
+    tags: parseRootfsTagString(draft.tags),
+  };
+}
+
+function parseRootfsConfigExport(input: unknown): RootfsConfigExport {
+  if (!isPlainObject(input)) {
+    throw new Error("expected a JSON object");
+  }
+  if (input.kind !== ROOTFS_CONFIG_EXPORT_KIND) {
+    throw new Error("expected a CoCalc RootFS config export");
+  }
+  if (input.version !== ROOTFS_CONFIG_EXPORT_VERSION) {
+    throw new Error(`unsupported RootFS config version ${input.version}`);
+  }
+  const metadata = parseRootfsConfigExportMetadata(input.metadata);
+  const theme = parseRootfsConfigExportTheme(input.theme);
+  const content = parseRootfsConfigExportContent(input.content);
+  if (!metadata && !theme && !content) {
+    throw new Error("config does not contain metadata, theme, or discovery");
+  }
+  return {
+    kind: ROOTFS_CONFIG_EXPORT_KIND,
+    version: ROOTFS_CONFIG_EXPORT_VERSION,
+    exported_at: `${input.exported_at ?? ""}`,
+    metadata,
+    theme,
+    content,
+  };
+}
+
+function parseRootfsConfigExportMetadata(
+  input: unknown,
+): RootfsConfigExportMetadata | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("metadata must be an object");
+  }
+  const visibility = `${input.visibility ?? ""}`.trim();
+  return {
+    label: optionalString(input.label),
+    description: optionalString(input.description),
+    family: optionalString(input.family),
+    version: optionalString(input.version),
+    channel: optionalString(input.channel),
+    supersedes_image_id: optionalString(input.supersedes_image_id),
+    visibility: isRootfsImageVisibility(visibility) ? visibility : undefined,
+    tags: Array.isArray(input.tags)
+      ? normalizeRootfsTags(input.tags.map((tag) => `${tag}`))
+      : undefined,
+  };
+}
+
+function parseRootfsConfigExportTheme(
+  input: unknown,
+): RootfsImageTheme | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("theme must be an object");
+  }
+  return {
+    title: optionalString(input.title) ?? "",
+    description: optionalString(input.description) ?? "",
+    color: optionalString(input.color) ?? null,
+    accent_color: optionalString(input.accent_color) ?? null,
+    icon: optionalString(input.icon) ?? null,
+    image_blob: optionalString(input.image_blob) ?? null,
+  };
+}
+
+function parseRootfsConfigExportContent(
+  input: unknown,
+): RootfsContentManifest | undefined {
+  if (input == null) return undefined;
+  const result = normalizeRootfsContentManifest(input);
+  if (!result.content) {
+    throw new Error("discovery config is invalid");
+  }
+  return result.content;
+}
+
+function rootfsConfigImportOptionsFor(
+  config: RootfsConfigExport,
+): RootfsConfigImportOptions {
+  return {
+    metadata: config.metadata != null,
+    theme: config.theme != null,
+    content: config.content != null,
+  };
+}
+
+function rootfsConfigImportOptionsHasSelection(
+  options: RootfsConfigImportOptions,
+): boolean {
+  return options.metadata || options.theme || options.content;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  return `${value}`;
+}
+
+function isRootfsImageVisibility(
+  value: string,
+): value is RootfsImageVisibility {
+  return value === "private" || value === "collaborators" || value === "public";
+}
+
+function safeJsonFilenamePart(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "rootfs-config"
+  );
+}
+
+function downloadJsonFile(filename: string, value: unknown): void {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function rootfsThemeHasVisuals(theme: ThemeEditorDraft): boolean {
