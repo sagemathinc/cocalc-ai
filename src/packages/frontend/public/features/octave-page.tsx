@@ -13,7 +13,12 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
+import {
+  ContextList,
+  IconBadge,
+  StartCard,
+  TerminalMock,
+} from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -108,39 +113,19 @@ function OctaveFlow() {
           </Flex>
         </Col>
         <Col xs={24} lg={12}>
-          <div
-            style={{
-              background: "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 8,
-              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-              padding: 22,
-            }}
-          >
-            <Flex vertical gap={12}>
-              {[
-                ["jupyter", "Explore interactively in notebooks"],
-                ["file", "Edit .m files in the project"],
-                ["terminal", "Run Octave commands and scripts"],
-                ["history", "Recover earlier versions with project history"],
-              ].map(([icon, label]) => (
-                <Flex
-                  align="center"
-                  gap={12}
-                  key={label}
-                  style={{
-                    background: "#fff7f1",
-                    border: "1px solid #ffbb96",
-                    borderRadius: 8,
-                    padding: 14,
-                  }}
-                >
-                  <IconBadge accent="#d4380d" icon={icon as IconName} />
-                  <Text strong>{label}</Text>
-                </Flex>
-              ))}
-            </Flex>
-          </div>
+          <ContextList
+            accent="#d4380d"
+            items={[
+              { icon: "jupyter", label: "Explore interactively in notebooks" },
+              { icon: "file", label: "Edit .m files in the project" },
+              { icon: "terminal", label: "Run Octave commands and scripts" },
+              {
+                icon: "history",
+                label: "Recover earlier versions with project history",
+              },
+            ]}
+            title="Project context"
+          />
         </Col>
       </Row>
     </PublicSection>

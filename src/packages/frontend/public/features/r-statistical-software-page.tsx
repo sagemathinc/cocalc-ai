@@ -14,7 +14,12 @@ import {
   featureSupportPath,
   LinkButton,
 } from "./page-components";
-import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
+import {
+  ContextList,
+  IconBadge,
+  StartCard,
+  TerminalMock,
+} from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -112,39 +117,22 @@ function RProjectFitBand() {
           </Flex>
         </Col>
         <Col xs={24} lg={12}>
-          <div
-            style={{
-              background: "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 8,
-              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-              padding: 22,
-            }}
-          >
-            <Flex vertical gap={12}>
-              {[
-                ["r", "Use R where it fits"],
-                ["python", "Mix with Python or shell tools"],
-                ["tex", "Publish with LaTeX, Rmd, Qmd, or Knitr"],
-                ["graduation-cap", "Teach in shared project environments"],
-              ].map(([icon, label]) => (
-                <Flex
-                  align="center"
-                  gap={12}
-                  key={label}
-                  style={{
-                    background: "#f7fbff",
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: 8,
-                    padding: 14,
-                  }}
-                >
-                  <IconBadge accent="#386cb0" icon={icon as IconName} />
-                  <Text strong>{label}</Text>
-                </Flex>
-              ))}
-            </Flex>
-          </div>
+          <ContextList
+            accent="#386cb0"
+            items={[
+              { icon: "r", label: "Use R where it fits" },
+              { icon: "python", label: "Mix with Python or shell tools" },
+              {
+                icon: "tex",
+                label: "Publish with LaTeX, Rmd, Qmd, or Knitr",
+              },
+              {
+                icon: "graduation-cap",
+                label: "Teach in shared project environments",
+              },
+            ]}
+            title="Project context"
+          />
         </Col>
       </Row>
     </PublicSection>

@@ -14,6 +14,7 @@ import {
   featureSupportPath,
   LinkButton,
 } from "./page-components";
+import { ContextList } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -215,36 +216,11 @@ function TeachingComparison() {
           </Flex>
         </Col>
         <Col xs={24} lg={13}>
-          <div
-            style={{
-              background: "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 8,
-              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-              padding: 22,
-            }}
-          >
-            <Row gutter={[12, 12]}>
-              {tools.map(([icon, label]) => (
-                <Col key={label} xs={24} sm={12}>
-                  <Flex
-                    align="center"
-                    gap={12}
-                    style={{
-                      background: "#f7fbff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 8,
-                      height: "100%",
-                      padding: 14,
-                    }}
-                  >
-                    <IconBadge accent="#389e0d" icon={icon} />
-                    <Text strong>{label}</Text>
-                  </Flex>
-                </Col>
-              ))}
-            </Row>
-          </div>
+          <ContextList
+            accent="#389e0d"
+            items={tools.map(([icon, label]) => ({ icon, label }))}
+            title="Course context"
+          />
         </Col>
       </Row>
     </PublicSection>
@@ -338,39 +314,16 @@ export default function SageFeaturePage({
             </Flex>
           </Col>
           <Col xs={24} lg={12}>
-            <div
-              style={{
-                background: "#fff",
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
-                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-                padding: 22,
-              }}
-            >
-              <Flex vertical gap={14}>
-                {[
-                  ["file", "Keep source files"],
-                  ["terminal", "Run project commands"],
-                  ["bug", "Inspect errors"],
-                  ["robot", "Use Codex with context"],
-                ].map(([icon, label]) => (
-                  <Flex
-                    align="center"
-                    gap={12}
-                    key={label}
-                    style={{
-                      background: "#f7fbff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 8,
-                      padding: 14,
-                    }}
-                  >
-                    <IconBadge accent="#389e0d" icon={icon as IconName} />
-                    <Text strong>{label}</Text>
-                  </Flex>
-                ))}
-              </Flex>
-            </div>
+            <ContextList
+              accent="#389e0d"
+              items={[
+                { icon: "file", label: "Keep source files" },
+                { icon: "terminal", label: "Run project commands" },
+                { icon: "bug", label: "Inspect errors" },
+                { icon: "robot", label: "Use Codex with context" },
+              ]}
+              title="Project context"
+            />
           </Col>
         </Row>
       </PublicSection>

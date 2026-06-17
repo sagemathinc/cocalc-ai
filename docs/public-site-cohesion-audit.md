@@ -49,6 +49,68 @@ the entry in place as a decision record.
   examples still earn their space, but do not flatten useful workflow-specific
   evidence merely for uniformity.
 
+### PSL-2026-06-17-010: Remaining Feature Visual Evidence Review
+
+- **Routes:** `/features/whiteboard`, `/features/slides`, `/features/python`,
+  `/features/sage`, `/features/r-statistical-software`, `/features/julia`, and
+  `/features/octave`.
+- **Trigger:** Follow-up from `PSL-2026-06-17-009` to decide whether remaining
+  feature-detail visual examples still earn their space.
+- **Principle:** Keep visual evidence when it explains route-specific workflow
+  value; reduce visual weight when a card panel mostly repeats nearby copy.
+- **Finding:** Browser QA passed on the rebuilt preview: `feature-details` 504
+  assertions, 0 failures at `/tmp/cocalc-public-qa-2iqu9m`.
+- **Finding:** `/features/whiteboard` and `/features/slides` use visuals that
+  match the page topic: board structure, executable-cell flow, and deck
+  sequence. They should remain visual rather than be flattened for uniformity.
+- **Finding:** `/features/python` is visually denser, but the density is earned:
+  the page demonstrates the notebook-to-script-to-paper workflow, package
+  state, terminal execution, and agent context in one route-specific example.
+- **Finding:** `/features/sage`, `/features/r-statistical-software`,
+  `/features/julia`, and `/features/octave` have useful hero mocks, but the
+  secondary project-fit panels use heavy bordered card rows for information
+  already stated in adjacent copy. That makes the pages feel busier without
+  improving decision value.
+- **Decision:** Leave Whiteboard, Slides, and Python unchanged. Keep the
+  Sage/R/Julia/Octave hero mocks, but convert their secondary project-fit card
+  panels into quieter context lists so the hero remains the primary visual
+  evidence on each page.
+- **Changed files:** `docs/public-site-cohesion-audit.md`,
+  `src/.agents/public-site-audit-prompt-log.md`,
+  `src/packages/frontend/public/features/feature-visuals.tsx`,
+  `src/packages/frontend/public/features/sage-page.tsx`,
+  `src/packages/frontend/public/features/r-statistical-software-page.tsx`,
+  `src/packages/frontend/public/features/julia-page.tsx`,
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/public/__tests__/public-site-browser-qa-script.test.ts`,
+  and `src/packages/frontend/scripts/public-site-browser-qa.mjs`.
+- **Validation state:** Initial focused feature and browser-QA script Jest tests
+  passed, with existing React/Ant Design jsdom warnings. Frontend lint passed.
+  Frontend package typecheck passed. `pnpm -C src build:dev` completed, with
+  existing MkDocs/griffe warnings from the Python API docs build. Post-rebuild
+  browser QA passed: `feature-details` 543 assertions, 0 failures at
+  `/tmp/cocalc-public-qa-uhugUo`. Final focused feature app, browser-QA script,
+  and agent-workflow Jest tests passed, with the same existing jsdom warnings.
+  Pre-commit hygiene passed: `git diff --check`, `git status --short`,
+  `git diff --name-only`, and `git ls-files --others --exclude-standard`.
+- **Open sub-actions:**
+  - [x] Confirm the quieter context-list treatment on Sage/R/Julia/Octave after
+        rebuild at desktop, tablet, and mobile sizes.
+  - [x] Run focused feature and browser-QA script tests after formatting.
+  - [x] Run frontend lint/typecheck and `pnpm -C src build:dev` before final
+        browser QA.
+  - [x] Re-run `feature-details` browser QA against the rebuilt
+        `blaec.cocalc.ai` preview and record the new artifact directory.
+  - [x] Append the next reusable prompt to
+        `src/.agents/public-site-audit-prompt-log.md`.
+  - [x] Rerun focused tests after the prompt-log and helper-key cleanup.
+  - [x] Run pre-commit hygiene before commit.
+- **Follow-up:** Recheck the language/math pages after rebuild for mobile
+  density. If they still feel long, consider combining lower "when it belongs"
+  sections with the route-owned ending, but do not remove high-intent language
+  routes or useful workflow examples.
+
 ### PSL-2026-06-17-001: Feature Index Starter Cards
 
 - **Routes:** `/features`
@@ -265,6 +327,10 @@ the entry in place as a decision record.
 
 ### Current Open Validation Tasks
 
+- [x] `PSL-2026-06-17-010`: complete Sage/R/Julia/Octave context-list source
+      edits, format touched files, run focused tests, lint/typecheck, rebuild,
+      post-rebuild browser QA, prompt-log update, pre-commit hygiene, commit,
+      and final residual-risk report.
 - [x] `PSL-2026-06-17-001` through `PSL-2026-06-17-004`: run static preview
       rebuild after the Guides changes.
 - [x] `PSL-2026-06-17-001`, `PSL-2026-06-17-002`, and
@@ -281,6 +347,38 @@ the entry in place as a decision record.
       state, commit, and report the next recommended prompt.
 - [x] `PSL-2026-06-17-008`: add reusable browser-QA script, focused tests,
       docs updates, validation, commit, and next recommended prompt.
+
+## Active Known Issue Queue
+
+Use this queue for unresolved public-site observations that should survive
+across Codex turns. Close items only by linking them to a validated `PSL-*`
+entry, or by explicitly recording why the issue was deliberately left alone.
+
+- [ ] `KI-2026-06-17-A`: `/features/teaching` lower-half density. User feedback
+      flagged the lower sections as overloaded and partially redundant. Earlier
+      passes improved the page, but the remaining question is whether the final
+      teaching sections should be shortened, combined, or reframed as one
+      route-owned next step. Expected closure: a dedicated teaching/Jupyter
+      workflow pass or a future high-traffic feature-page pass.
+- [ ] `KI-2026-06-17-B`: language/math feature endings may still be long after
+      `PSL-2026-06-17-010`. Current pass is reducing secondary visual panels,
+      not rewriting every final section. After rebuild, inspect
+      `/features/python`, `/features/sage`, `/features/r-statistical-software`,
+      `/features/julia`, and `/features/octave` for whether "when it belongs"
+      content and dark route-owned endings can be combined without losing
+      decision value.
+- [ ] `KI-2026-06-17-C`: `/features` index rhythm should continue to be
+      checked after feature-detail changes. The current order should preserve
+      AI first, notebooks/writing second, runtime before teaching, teaching as
+      secondary, and languages visible without being crammed.
+- [ ] `KI-2026-06-17-D`: guides and docs bridge pages need continued visual QA
+      after the compact Guides pass. `/guides` is improved, but future passes
+      should verify that guide groupings remain scannable and do not become a
+      wall of links on mobile.
+- [ ] `KI-2026-06-17-E`: prompt handoff reliability. Every public-site pass must
+      update `src/.agents/public-site-audit-prompt-log.md` with one next prompt
+      before final response, and must link that prompt to the active `PSL-*`
+      ledger item so the process does not stall without a reusable next step.
 
 ## Agentic Public-Site Operating Model
 

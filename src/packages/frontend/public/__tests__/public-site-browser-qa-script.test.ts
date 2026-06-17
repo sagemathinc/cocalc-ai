@@ -66,6 +66,9 @@ describe("public-site browser QA script", () => {
   it("guards visual-triage route invariants", () => {
     expect(scriptSource).toContain('"What stays with the paper"');
     expect(scriptSource).toContain('"PDF build"');
+    expect(scriptSource).toContain('"Project context"');
+    expect(scriptSource).toContain('"Course context"');
+    expect(scriptSource).toContain('".cocalc-feature-context-list"');
     expect(scriptSource).toContain('".cocalc-guide-link-compact"');
   });
 });

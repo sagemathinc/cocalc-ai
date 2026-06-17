@@ -75,6 +75,43 @@ export function StoryCard({
   );
 }
 
+export function ContextList({
+  accent = PUBLIC_COLORS.brand,
+  items,
+  title,
+}: {
+  accent?: string;
+  items: { icon: IconName; label: ReactNode }[];
+  title?: ReactNode;
+}) {
+  return (
+    <div
+      className="cocalc-feature-context-list"
+      style={{
+        borderLeft: `3px solid ${accent}33`,
+        paddingLeft: 18,
+      }}
+    >
+      <Flex vertical gap={12}>
+        {title != null && <Text strong>{title}</Text>}
+        {items.map(({ icon, label }, index) => (
+          <Flex align="center" gap={10} key={`${icon}-${index}`}>
+            <Icon
+              name={icon}
+              style={{
+                color: accent,
+                flex: "0 0 auto",
+                fontSize: 17,
+              }}
+            />
+            <Text strong>{label}</Text>
+          </Flex>
+        ))}
+      </Flex>
+    </div>
+  );
+}
+
 export function TerminalMock({
   rows,
   title = "terminal",

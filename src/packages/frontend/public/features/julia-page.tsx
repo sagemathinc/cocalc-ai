@@ -13,7 +13,12 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
+import {
+  ContextList,
+  IconBadge,
+  StartCard,
+  TerminalMock,
+} from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -111,39 +116,22 @@ function JuliaProjectFit() {
           </Flex>
         </Col>
         <Col xs={24} lg={12}>
-          <div
-            style={{
-              background: "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 8,
-              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-              padding: 22,
-            }}
-          >
-            <Flex vertical gap={12}>
-              {[
-                ["jupyter", "Collaborative Jupyter notebooks"],
-                ["layout", "Pluto for reactive notebooks"],
-                ["terminal", "Julia packages and scripts in a shell"],
-                ["graduation-cap", "Shared environments for courses"],
-              ].map(([icon, label]) => (
-                <Flex
-                  align="center"
-                  gap={12}
-                  key={label}
-                  style={{
-                    background: "#faf7ff",
-                    border: "1px solid #d3adf7",
-                    borderRadius: 8,
-                    padding: 14,
-                  }}
-                >
-                  <IconBadge accent="#9558b2" icon={icon as IconName} />
-                  <Text strong>{label}</Text>
-                </Flex>
-              ))}
-            </Flex>
-          </div>
+          <ContextList
+            accent="#9558b2"
+            items={[
+              { icon: "jupyter", label: "Collaborative Jupyter notebooks" },
+              { icon: "layout", label: "Pluto for reactive notebooks" },
+              {
+                icon: "terminal",
+                label: "Julia packages and scripts in a shell",
+              },
+              {
+                icon: "graduation-cap",
+                label: "Shared environments for courses",
+              },
+            ]}
+            title="Project context"
+          />
         </Col>
       </Row>
     </PublicSection>

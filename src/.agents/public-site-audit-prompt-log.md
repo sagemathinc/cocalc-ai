@@ -44,6 +44,21 @@ turns.
 
 ## Prompt Backlog
 
+### Language/Math Feature Ending Density Review
+
+Continue from `PSL-2026-06-17-010` and `KI-2026-06-17-B`. Audit the
+bottom-of-page route-owned endings for `/features/python`, `/features/sage`,
+`/features/r-statistical-software`, `/features/julia`, and `/features/octave`
+after the secondary context panels were compressed. Use the rebuilt
+`feature-details` browser-QA screenshots as the starting evidence. Decide
+whether each final "when it belongs" section and dark start card answers a
+distinct visitor question, or whether the ending should be shortened or
+combined without losing high-intent language-route value. Log findings first in
+`docs/public-site-cohesion-audit.md`, make only high-confidence copy/layout/test
+changes, keep artifacts under `/tmp/cocalc-public-qa-*`, rebuild
+`blaec.cocalc.ai` if public source changes, commit, and report residual risks
+plus the next recommended prompt.
+
 ### Remaining Feature Detail Visual Evidence Review
 
 Continue from `PSL-2026-06-17-009` and audit the remaining feature-detail pages

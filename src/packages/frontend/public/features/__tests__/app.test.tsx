@@ -966,21 +966,25 @@ describe("PublicFeaturesApp", () => {
 
   it.each([
     {
+      contextLabels: ["Course context", "Project context"],
       slug: "sage",
       title: "Use SageMath inside collaborative mathematics projects.",
       section: "Use Sage with the surrounding project.",
     },
     {
+      contextLabels: ["Project context"],
       slug: "julia",
       title: "Use Julia in notebooks, terminals, Pluto, and source files.",
       section: "Julia works best in CoCalc when the project matters.",
     },
     {
+      contextLabels: ["Project context"],
       slug: "r-statistical-software",
       title: "Use R when statistics is part of a larger workflow.",
       section: "Keep R close to the rest of the analysis.",
     },
     {
+      contextLabels: ["Project context"],
       slug: "octave",
       title: "Run Octave in notebooks, scripts, and terminals.",
       section: "Teach and run Octave without local setup drift.",
@@ -993,10 +997,12 @@ describe("PublicFeaturesApp", () => {
   ])(
     "renders the richer $slug feature page",
     ({
+      contextLabels,
       section,
       slug,
       title,
     }: {
+      contextLabels?: string[];
       section: string;
       slug: string;
       title: string;
@@ -1010,6 +1016,9 @@ describe("PublicFeaturesApp", () => {
 
       expect(screen.getByText(title)).not.toBeNull();
       expect(screen.getByText(section)).not.toBeNull();
+      for (const label of contextLabels ?? []) {
+        expect(screen.getByText(label)).not.toBeNull();
+      }
     },
   );
 

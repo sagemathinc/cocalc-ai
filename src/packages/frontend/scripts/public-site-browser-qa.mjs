@@ -272,6 +272,35 @@ const ROUTE_RULES = {
     ],
     forbidText: ["PDF build"],
   },
+  "/features/sage": {
+    requireText: [
+      "Use Sage with the surrounding project.",
+      "Course context",
+      "Project context",
+    ],
+    requireSelectors: [".cocalc-feature-context-list"],
+  },
+  "/features/r-statistical-software": {
+    requireText: [
+      "Keep R close to the rest of the analysis.",
+      "Project context",
+    ],
+    requireSelectors: [".cocalc-feature-context-list"],
+  },
+  "/features/julia": {
+    requireText: [
+      "Julia works best in CoCalc when the project matters.",
+      "Project context",
+    ],
+    requireSelectors: [".cocalc-feature-context-list"],
+  },
+  "/features/octave": {
+    requireText: [
+      "Teach and run Octave without local setup drift.",
+      "Project context",
+    ],
+    requireSelectors: [".cocalc-feature-context-list"],
+  },
   "/guides": {
     requireText: [
       "Find the guide by task",
