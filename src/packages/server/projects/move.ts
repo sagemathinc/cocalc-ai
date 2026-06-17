@@ -67,7 +67,8 @@ const RESTORE_BACKUP_NOT_FOUND_RETRIES = Math.max(
   Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRIES) || 3,
 );
 const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
-const MOVE_SENTINEL_DIR = ".move-sentinels";
+const LEGACY_MOVE_SENTINEL_DIR = ".move-sentinels";
+const MOVE_SENTINEL_PREFIX = ".move-sentinel-";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS) || 30 * 1000,
@@ -192,7 +193,7 @@ type MoveSentinel = {
 };
 
 function moveSentinelPath(move_log_id: string): string {
-  return pathPosix.join(MOVE_SENTINEL_DIR, `${move_log_id}.json`);
+  return `${MOVE_SENTINEL_PREFIX}${move_log_id}.json`;
 }
 
 function summarizeMoveSentinelContent(content: string): Record<string, string> {
@@ -414,6 +415,12 @@ async function deleteMoveSentinelBestEffort({
     await fs.rm(path, { force: true });
     if (path !== LEGACY_MOVE_SENTINEL_PATH) {
       await fs.rm(LEGACY_MOVE_SENTINEL_PATH, { force: true }).catch(() => {});
+      await fs
+        .rm(LEGACY_MOVE_SENTINEL_DIR, {
+          force: true,
+          recursive: true,
+        })
+        .catch(() => {});
       await fs
         .rm(".cocalc/move-sentinels", {
           force: true,

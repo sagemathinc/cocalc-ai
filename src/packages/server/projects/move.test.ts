@@ -125,11 +125,12 @@ describe("moveProjectToHost", () => {
   const SOURCE_HOST_NAME = "Source Host";
   const DEST_HOST_NAME = "Destination Host";
   const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
-  const MOVE_SENTINEL_DIR = ".move-sentinels";
+  const LEGACY_MOVE_SENTINEL_DIR = ".move-sentinels";
+  const MOVE_SENTINEL_PREFIX = ".move-sentinel-";
 
   const hasMoveSentinel = (files: Map<string, string> | undefined) =>
     !!files &&
-    [...files.keys()].some((path) => path.startsWith(`${MOVE_SENTINEL_DIR}/`));
+    [...files.keys()].some((path) => path.startsWith(MOVE_SENTINEL_PREFIX));
 
   let postTimeoutState: {
     host_id: string | null;
@@ -329,7 +330,7 @@ describe("moveProjectToHost", () => {
           }),
           writeFile: jest.fn(async (path: string, data: any) => {
             maybeThrowNotInitialized();
-            if (path.startsWith(`${MOVE_SENTINEL_DIR}/`)) {
+            if (path.startsWith(MOVE_SENTINEL_PREFIX)) {
               moveCallOrder.push("write-sentinel");
             }
             const files = routedFsByHost.get(currentRoutedHostId);
@@ -343,7 +344,7 @@ describe("moveProjectToHost", () => {
             if (
               hangMoveSentinelReadOnDest &&
               currentRoutedHostId === DEST_HOST_ID &&
-              path.startsWith(`${MOVE_SENTINEL_DIR}/`)
+              path.startsWith(MOVE_SENTINEL_PREFIX)
             ) {
               return await new Promise<string>(() => {});
             }
@@ -359,7 +360,7 @@ describe("moveProjectToHost", () => {
             maybeThrowNotInitialized();
             const files = routedFsByHost.get(currentRoutedHostId);
             files?.delete(path);
-            if (path.endsWith("move-sentinels")) {
+            if (path.endsWith(LEGACY_MOVE_SENTINEL_DIR)) {
               for (const file of [...(files?.keys() ?? [])]) {
                 if (file.startsWith(`${path}/`)) {
                   files?.delete(file);
