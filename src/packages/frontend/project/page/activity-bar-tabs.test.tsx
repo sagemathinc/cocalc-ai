@@ -206,8 +206,14 @@ jest.mock("./file-tabs", () => ({
 }));
 
 jest.mock("./file-tab", () => ({
-  FileTab: ({ iconName, name }: any) => (
-    <div data-testid={`rail-${name}`}>{iconName ?? name}</div>
+  FileTab: ({ iconName, iconStyle, name }: any) => (
+    <div
+      data-testid={`rail-${name}`}
+      data-bg={iconStyle?.backgroundColor}
+      data-color={iconStyle?.color}
+    >
+      {iconName ?? name}
+    </div>
   ),
   FIXED_PROJECT_TABS: {
     workspaces: { label: "Workspaces", icon: "cube" },
@@ -314,13 +320,16 @@ describe("VerticalFixedTabs overflow actions", () => {
         id: "rootfs-image-1",
         image: "registry.example/runtime:1",
         label: "Runtime",
-        theme: { icon: "python", color: "#3572a5" },
+        theme: { accent_color: "#3572a5", icon: "python", color: "#fff" },
       },
     ];
 
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
-    expect(screen.getByTestId("rail-rootfs")).toHaveTextContent("python");
+    const rootfsRail = screen.getByTestId("rail-rootfs");
+    expect(rootfsRail).toHaveTextContent("python");
+    expect(rootfsRail).toHaveAttribute("data-bg", "#3572a5");
+    expect(rootfsRail).toHaveAttribute("data-color", "#fff");
   });
 
   it("lets viewers remove themselves from the overflow rail menu", () => {

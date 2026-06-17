@@ -81,6 +81,7 @@ const VIEWER_FIXED_TABS = new Set<FixedTab>([
 ]);
 
 interface ThemedFixedTab {
+  backgroundColor?: string;
   color?: string;
   iconName?: IconName;
 }
@@ -104,7 +105,29 @@ function useRootfsFixedTabTheme(enabled = true): ThemedFixedTab {
     ? entry.theme.icon
     : undefined;
   const color = entry?.theme?.color?.trim() || undefined;
-  return { color, iconName };
+  const backgroundColor = entry?.theme?.accent_color?.trim() || undefined;
+  return { backgroundColor, color, iconName };
+}
+
+function themedRootfsIconStyle({
+  condensed,
+  theme,
+}: {
+  condensed: boolean;
+  theme: ThemedFixedTab;
+}): React.CSSProperties | undefined {
+  if (!theme.backgroundColor && !theme.color) return undefined;
+  const size = condensed ? 24 : 32;
+  return {
+    alignItems: "center",
+    backgroundColor: theme.backgroundColor,
+    borderRadius: 8,
+    color: theme.color,
+    display: "inline-flex",
+    height: size,
+    justifyContent: "center",
+    width: size,
+  };
 }
 
 function filterTabsForProjectAccess({
@@ -361,11 +384,15 @@ export function VerticalFixedTabs({
         : name === "rootfs"
           ? rootfsTheme.iconName
           : undefined;
+    const rootfsIconStyle =
+      name === "rootfs"
+        ? themedRootfsIconStyle({ condensed, theme: rootfsTheme })
+        : undefined;
     const themedIconStyle =
       name === "workspaces" && workspaces.current?.theme?.color
         ? { color: workspaces.current.theme.color }
-        : name === "rootfs" && rootfsTheme.color
-          ? { color: rootfsTheme.color }
+        : name === "rootfs"
+          ? rootfsIconStyle
           : undefined;
 
     const tab = (
@@ -451,6 +478,12 @@ export function VerticalFixedTabs({
       showActBarLabels: showActBarLabels === true,
       tabIcons: {
         rootfs: rootfsTheme.iconName,
+      },
+      tabIconStyles: {
+        rootfs: themedRootfsIconStyle({
+          condensed,
+          theme: rootfsTheme,
+        }),
       },
     });
     return (
@@ -650,6 +683,12 @@ export function HiddenActivityBarLauncher() {
     tabIcons: {
       rootfs: rootfsTheme.iconName,
     },
+    tabIconStyles: {
+      rootfs: themedRootfsIconStyle({
+        condensed: false,
+        theme: rootfsTheme,
+      }),
+    },
   });
 
   return (
@@ -742,6 +781,7 @@ function createRailMenuItems(opts: {
   };
   sectionKeyPrefix: string;
   showActBarLabels: boolean;
+  tabIconStyles?: Partial<Record<FixedTab, React.CSSProperties | undefined>>;
   tabIcons?: Partial<Record<FixedTab, IconName | undefined>>;
 }): NonNullable<MenuProps["items"]> {
   const {
@@ -757,12 +797,16 @@ function createRailMenuItems(opts: {
     requestCollaboratorAccess,
     sectionKeyPrefix,
     showActBarLabels,
+    tabIconStyles,
     tabIcons,
   } = opts;
   const items: NonNullable<MenuProps["items"]> = names.map((name) => ({
     key: `${sectionKeyPrefix}:${name}`,
     label: renderMenuLabel(
-      <Icon name={tabIcons?.[name] ?? FIXED_PROJECT_TABS[name].icon} />,
+      <Icon
+        name={tabIcons?.[name] ?? FIXED_PROJECT_TABS[name].icon}
+        style={tabIconStyles?.[name]}
+      />,
       renderFixedTabLabel(name, intl),
     ),
     onClick: ({ domEvent }) => onTabClick(name, domEvent),
