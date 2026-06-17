@@ -14,17 +14,50 @@ import type { SiteLicenseExternalClaimConsumption } from "@cocalc/conat/hub/api/
 import { appUrl } from "@cocalc/frontend/auth/util";
 
 const { Paragraph, Text, Title } = Typography;
+const CLAIM_TOKEN_SESSION_KEY = "cocalc-site-license-claim-token";
 
-function currentClaimTarget(): string {
-  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+export function claimTargetWithoutToken(): string {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("token");
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
-function authHref(view: "sign-in" | "sign-up"): string {
-  return `${appUrl(`auth/${view}`)}?target=${encodeURIComponent(currentClaimTarget())}`;
+export function claimAuthHref(view: "sign-in" | "sign-up"): string {
+  return `${appUrl(`auth/${view}`)}?target=${encodeURIComponent(claimTargetWithoutToken())}`;
 }
 
-function tokenFromLocation(): string {
-  return new URL(window.location.href).searchParams.get("token")?.trim() ?? "";
+function getSessionClaimToken(): string {
+  try {
+    return sessionStorage.getItem(CLAIM_TOKEN_SESSION_KEY)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function setSessionClaimToken(token: string) {
+  try {
+    sessionStorage.setItem(CLAIM_TOKEN_SESSION_KEY, token);
+  } catch {
+    // If storage is blocked, keep the in-memory token for this render only.
+  }
+}
+
+function clearSessionClaimToken() {
+  try {
+    sessionStorage.removeItem(CLAIM_TOKEN_SESSION_KEY);
+  } catch {
+    // Ignore blocked storage cleanup.
+  }
+}
+
+export function tokenFromLocationOrSession(): string {
+  const token =
+    new URL(window.location.href).searchParams.get("token")?.trim() ?? "";
+  if (token) {
+    setSessionClaimToken(token);
+    return token;
+  }
+  return getSessionClaimToken();
 }
 
 function formatDate(value?: Date | string | null): string | undefined {
@@ -48,6 +81,51 @@ function clearTokenFromUrl() {
     "",
     `${url.pathname}${url.search}${url.hash}`,
   );
+}
+
+function removeTokenFromUrl() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("token")) {
+    return;
+  }
+  url.searchParams.delete("token");
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${url.pathname}${url.search}${url.hash}`,
+  );
+}
+
+export function claimErrorMessage(error: unknown): string {
+  const code =
+    error && typeof error === "object"
+      ? `${(error as { code?: unknown }).code ?? ""}`
+      : "";
+  switch (code) {
+    case "claim_token_expired":
+      return "This claim link has expired. Ask the issuer for a new claim link.";
+    case "claim_token_already_used":
+      return "This claim link has already been used.";
+    case "claim_token_not_active":
+      return "This claim link is not active yet.";
+    case "claim_pool_disabled":
+    case "claim_site_license_disabled":
+      return "This claim is no longer active.";
+    case "claim_pool_limit":
+      return "This claim pool has no seats available.";
+    case "claim_pool_account_limit":
+      return "Your account has already claimed the allowed access from this pool.";
+    case "claim_audience_mismatch":
+    case "claim_issuer_mismatch":
+    case "claim_not_found":
+    case "claim_token_invalid":
+      return "This claim link is not valid for this CoCalc site.";
+    case "claim_membership_failed":
+      return "The claim was accepted, but applying membership access failed. Please contact support.";
+    case "claim_token_required":
+      return "No claim token was provided.";
+  }
+  return normalizeUserFacingError(error).message;
 }
 
 function SuccessDetails({
@@ -95,12 +173,16 @@ function SuccessDetails({
 
 export default function SiteLicenseClaimPage() {
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
-  const [token] = useState(tokenFromLocation);
+  const [token] = useState(tokenFromLocationOrSession);
   const attemptedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [consumption, setConsumption] =
     useState<SiteLicenseExternalClaimConsumption | null>(null);
   const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    removeTokenFromUrl();
+  }, []);
 
   useEffect(() => {
     if (!isLoggedIn || !token || attemptedRef.current) {
@@ -113,11 +195,11 @@ export default function SiteLicenseClaimPage() {
       .consumeSiteLicenseExternalClaimToken({ token })
       .then((result) => {
         setConsumption(result);
+        clearSessionClaimToken();
         clearTokenFromUrl();
       })
       .catch((err) => {
-        const normalized = normalizeUserFacingError(err);
-        setError(normalized.message);
+        setError(claimErrorMessage(err));
       })
       .finally(() => setLoading(false));
   }, [isLoggedIn, token]);
@@ -136,7 +218,7 @@ export default function SiteLicenseClaimPage() {
     return (
       <div style={{ maxWidth: 760, margin: "48px auto", padding: "0 24px" }}>
         <Card>
-          <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="large" style={{ width: "100%" }}>
             <div>
               <Title level={2}>Claim CoCalc access</Title>
               <Paragraph>
@@ -150,10 +232,10 @@ export default function SiteLicenseClaimPage() {
               </Paragraph>
             </div>
             <Space wrap>
-              <Button type="primary" href={authHref("sign-in")}>
+              <Button type="primary" href={claimAuthHref("sign-in")}>
                 Sign in and claim
               </Button>
-              <Button href={authHref("sign-up")}>Create account</Button>
+              <Button href={claimAuthHref("sign-up")}>Create account</Button>
             </Space>
           </Space>
         </Card>

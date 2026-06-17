@@ -1539,40 +1539,89 @@ export async function consumeSiteLicenseExternalClaimToken({
   account_id?: string;
   token?: string;
 } = {}): Promise<SiteLicenseExternalClaimConsumption> {
-  const actorId = requireAccount(account_id);
-  const rawToken = `${token ?? ""}`.trim();
-  if (!rawToken) {
-    throw Error("token required");
-  }
-  const home_bay_id = await resolveTargetAccountHomeBay({
-    account_id: actorId,
-    user_account_id: actorId,
-  });
-  if (home_bay_id !== getConfiguredBayId()) {
-    return await createInterBayAccountLocalClient({
-      client: getInterBayFabricClient(),
-      dest_bay: home_bay_id,
-    }).consumeSiteLicenseExternalClaimToken({
+  try {
+    const actorId = requireAccount(account_id);
+    const rawToken = `${token ?? ""}`.trim();
+    if (!rawToken) {
+      throw Error("token required");
+    }
+    const home_bay_id = await resolveTargetAccountHomeBay({
+      account_id: actorId,
+      user_account_id: actorId,
+    });
+    if (home_bay_id !== getConfiguredBayId()) {
+      return await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: home_bay_id,
+      }).consumeSiteLicenseExternalClaimToken({
+        account_id: actorId,
+        token: rawToken,
+      });
+    }
+    await assertAccountTrustedForProductAccess(
+      actorId,
+      "claim site-license external token",
+    );
+    if (!isSeedBay()) {
+      return await getSeedSiteLicenseClient().consumeSiteLicenseExternalClaimToken(
+        {
+          account_id: actorId,
+          token: rawToken,
+        },
+      );
+    }
+    return await consumeSiteLicenseExternalClaimToken0({
       account_id: actorId,
       token: rawToken,
     });
+  } catch (err) {
+    throw asSiteLicenseExternalClaimRpcError(err);
   }
-  await assertAccountTrustedForProductAccess(
-    actorId,
-    "claim site-license external token",
-  );
-  if (!isSeedBay()) {
-    return await getSeedSiteLicenseClient().consumeSiteLicenseExternalClaimToken(
-      {
-        account_id: actorId,
-        token: rawToken,
-      },
-    );
+}
+
+function asSiteLicenseExternalClaimRpcError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : `${err}`;
+  if (err instanceof Error && (err as any).code) {
+    return err;
   }
-  return await consumeSiteLicenseExternalClaimToken0({
-    account_id: actorId,
-    token: rawToken,
+  return Object.assign(err instanceof Error ? err : new Error(message), {
+    code: classifySiteLicenseExternalClaimError(message),
   });
+}
+
+function classifySiteLicenseExternalClaimError(message: string): string {
+  const s = message.toLowerCase();
+  if (s.includes("token required")) return "claim_token_required";
+  if (s.includes("external claim key")) return "claim_token_invalid";
+  if (s.includes("pool") && s.includes("disabled")) {
+    return "claim_pool_disabled";
+  }
+  if (s.includes("pool") && s.includes("expired")) {
+    return "claim_pool_disabled";
+  }
+  if (s.includes("site license") && s.includes("disabled")) {
+    return "claim_site_license_disabled";
+  }
+  if (s.includes("site license") && s.includes("expired")) {
+    return "claim_site_license_disabled";
+  }
+  if (s.includes("expired")) return "claim_token_expired";
+  if (s.includes("not active yet")) return "claim_token_not_active";
+  if (s.includes("already consumed")) return "claim_token_already_used";
+  if (s.includes("already claimed for this account")) {
+    return "claim_pool_account_limit";
+  }
+  if (s.includes("no claims available")) return "claim_pool_limit";
+  if (s.includes("not found")) return "claim_not_found";
+  if (s.includes("audience")) return "claim_audience_mismatch";
+  if (s.includes("issuer")) return "claim_issuer_mismatch";
+  if (s.includes("signature") || s.includes("compact jws")) {
+    return "claim_token_invalid";
+  }
+  if (s.includes("membership") || s.includes("seat")) {
+    return "claim_membership_failed";
+  }
+  return "claim_failed";
 }
 
 export async function archiveSiteLicensePool({
