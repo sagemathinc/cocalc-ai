@@ -5,7 +5,7 @@
 
 import { type ReactNode, useEffect } from "react";
 
-import { Button, Flex, Typography } from "antd";
+import { Button, Flex, Tag, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { getPublicMarketingConfig } from "@cocalc/frontend/public/config";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
@@ -297,18 +297,10 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                   aria-hidden="true"
                   style={{
                     alignItems: "center",
-                    background:
-                      index === 2
-                        ? PUBLIC_COLORS.warningTint
-                        : PUBLIC_COLORS.surfaceMuted,
-                    border: `1px solid ${
-                      index === 2
-                        ? PUBLIC_COLORS.warningBorder
-                        : PUBLIC_COLORS.border
-                    }`,
+                    background: PUBLIC_COLORS.surfaceMuted,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
                     borderRadius: 8,
-                    color:
-                      index === 2 ? PUBLIC_COLORS.warning : PUBLIC_COLORS.brand,
+                    color: PUBLIC_COLORS.brand,
                     display: "flex",
                     flex: "0 0 38px",
                     height: 38,
@@ -319,6 +311,11 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                   <Icon name={path.icon} />
                 </span>
                 <Text strong>{path.title}</Text>
+                {index === 0 ? (
+                  <Tag color="blue" style={{ marginInlineStart: "auto" }}>
+                    Start here
+                  </Tag>
+                ) : null}
               </Flex>
               <div>
                 <Text
