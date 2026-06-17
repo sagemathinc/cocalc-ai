@@ -1,5 +1,4 @@
-import { mergeTerminalEnv0 } from "./index";
-import { terminalClient } from "./index";
+import { mergeTerminalEnv0, terminalClient, terminalServer } from "./index";
 
 describe("mergeTerminalEnv0", () => {
   it("does not leak ambient COCALC_* vars into generic terminals", () => {
@@ -126,6 +125,31 @@ describe("mergeTerminalEnv0", () => {
       id: "/home/user/a.term",
       input: "pwd\n",
       kind: "auto",
+    });
+  });
+});
+
+describe("terminalServer", () => {
+  it("uses a keepalive timeout with real jitter budget", () => {
+    const server = { on: jest.fn() };
+    const listen = jest.fn(() => server);
+    const client = {
+      socket: {
+        listen,
+      },
+    } as any;
+
+    expect(
+      terminalServer({
+        client,
+        project_id: "project-1",
+        spawn: jest.fn(),
+      } as any),
+    ).toBe(server);
+
+    expect(listen).toHaveBeenCalledWith("terminal.project-project-1.0", {
+      keepAlive: 45_000,
+      keepAliveTimeout: 30_000,
     });
   });
 });
