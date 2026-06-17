@@ -218,6 +218,18 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Change: shorten `AI workflows and integration`, `Runtime and hosted compute`, `Teaching and workshops`, and `Languages and math` to shorter scannable labels.
 - [x] Run focused tests, browser QA, rebuild, and commit.
 
+## Feature Index Rhythm Pass
+
+- [x] Audit `/features` after the shortened group-label pass for visual density, section order, and mobile rhythm.
+- [x] Finding: the overall order is now right for the product story: AI first, notebooks/writing next, runtime/hosted compute before teaching, teaching secondary, and languages last as high-intent direct routes.
+- [x] Finding: the page still feels long on mobile because multiple full card groups stack back-to-back; hiding language/tool routes behind a disclosure would reduce information scent, so prefer compact visible treatment first.
+- [x] Finding: `Notebook, writing, and visual work` is the remaining heavy group label. It wraps awkwardly on mobile and reads like a taxonomy label instead of a quick route marker.
+- [x] Decision: keep teaching as a secondary callout after `Runtime`; do not promote it back into the starter panel or remove it from the page.
+- [x] Change: shorten the notebook/writing label to `Notebooks and writing` and tighten the group description so it reads like a route marker instead of a taxonomy.
+- [x] Change: add mobile-only spacing reductions for the feature hero, starter cards, route cards, and language rows while keeping every high-intent route visible.
+- [x] Validation: focused feature tests, frontend lint, frontend typecheck, and static dev build passed.
+- [ ] Follow-up: rerun desktop/tablet/mobile browser QA when an agent-accessible browser session is healthy. The shared CoCalc browser session timed out during this pass, and package-local Playwright could not install Chromium on the Ubuntu 26.04 container.
+
 ## Workflow To Product Decision Handoff Pass
 
 - [x] Audit `/features`, `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, `/features/teaching`, `/products`, `/pricing`, `/features/compare`, and `/support/new` as one path from workflow fit to operating-model decision.

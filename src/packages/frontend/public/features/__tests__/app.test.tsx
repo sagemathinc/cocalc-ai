@@ -237,9 +237,7 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.queryByAltText(/CoCalc feature map/i),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText("Notebook, writing, and visual work"),
-    ).not.toBeNull();
+    expect(screen.getByText("Notebooks and writing")).not.toBeNull();
     expect(
       screen
         .getByRole("link", { name: "Project notes and Markdown" })
@@ -251,10 +249,10 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Teaching")).not.toBeNull();
     const indexText = container.textContent ?? "";
     expect(indexText.indexOf("AI workflows")).toBeLessThan(
-      indexText.indexOf("Notebook, writing, and visual work"),
+      indexText.indexOf("Notebooks and writing"),
     );
     expect(indexText.indexOf("Teaching")).toBeGreaterThan(
-      indexText.indexOf("Notebook, writing, and visual work"),
+      indexText.indexOf("Notebooks and writing"),
     );
     expect(indexText.indexOf("Teaching")).toBeGreaterThan(
       indexText.indexOf("Runtime"),
@@ -266,6 +264,7 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Runtime and hosted compute")).toBeNull();
     expect(screen.queryByText("Languages and math")).toBeNull();
     expect(screen.queryByText("Teaching and workshops")).toBeNull();
+    expect(screen.queryByText("Notebook, writing, and visual work")).toBeNull();
     expect(screen.queryByText("AI and integration")).toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);

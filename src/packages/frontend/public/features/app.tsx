@@ -96,8 +96,7 @@ const FEATURE_GROUPS = [
   },
   {
     accent: COLORS.BLUE_D,
-    description:
-      "Find the page for notebooks, papers, boards, slides, and other technical artifacts.",
+    description: "Find notebooks, papers, boards, slides, and project notes.",
     icon: "jupyter",
     links: [
       {
@@ -106,7 +105,7 @@ const FEATURE_GROUPS = [
       },
     ],
     slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
-    title: "Notebook, writing, and visual work",
+    title: "Notebooks and writing",
     variant: "cards",
   },
   {
@@ -292,6 +291,11 @@ const FEATURE_INDEX_CSS = `
   }
 
   @media (max-width: 560px) {
+    .cocalc-feature-index-hero {
+      gap: 28px;
+      padding: 20px 0 4px;
+    }
+
     .cocalc-feature-index-title {
       font-size: 34px !important;
     }
@@ -300,9 +304,19 @@ const FEATURE_INDEX_CSS = `
       grid-template-columns: minmax(0, 1fr) !important;
     }
 
+    .cocalc-feature-starter-card {
+      min-height: 0 !important;
+      padding: 14px !important;
+    }
+
     .cocalc-feature-link-card {
       min-height: 0 !important;
       padding: 14px !important;
+    }
+
+    .cocalc-feature-list-link {
+      min-height: 82px !important;
+      padding: 12px !important;
     }
 
     .cocalc-feature-link-list {
