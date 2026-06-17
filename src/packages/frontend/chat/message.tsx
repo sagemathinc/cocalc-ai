@@ -107,6 +107,7 @@ import { getDefaultNewThreadSetup } from "./chatroom-thread-panel";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
 import { CodexQuotaHelp } from "./codex-quota-help";
+import { AcpPromptModal } from "./acp-prompt-modal";
 import {
   linkifyCommitHashes,
   parseGitCommitLink,
@@ -481,6 +482,7 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const [showAcpPromptModal, setShowAcpPromptModal] = useState<boolean>(false);
   const [interruptRequested, setInterruptRequested] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
@@ -497,6 +499,7 @@ export default function Message({
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
+  const acpPrompt = field<string>(message, "acp_prompt") ?? "";
   const acpInterrupted = useMemo(
     () => field<boolean>(message, "acp_interrupted") === true,
     [message],
@@ -1741,6 +1744,14 @@ export default function Message({
       },
     ];
 
+    if (acpPrompt.trim()) {
+      overflowItems.push({
+        key: "agent-prompt",
+        label: "Full agent prompt",
+        onClick: () => setShowAcpPromptModal(true),
+      });
+    }
+
     if (allowReply && !replying && actions) {
       overflowItems.push({
         key: "reply",
@@ -2885,6 +2896,29 @@ export default function Message({
     >
       {renderCols()}
       {renderZenMessageDrawer()}
+      <AcpPromptModal
+        open={showAcpPromptModal}
+        title="Full agent prompt for this message"
+        value={acpPrompt}
+        fontSize={font_size}
+        onSave={(value) => {
+          const ok = actions?.saveAcpPrompt?.(
+            {
+              date: dateValue(message) ?? new Date(date),
+              sender_id: field<string>(message, "sender_id"),
+              message_id: field<string>(message, "message_id"),
+              thread_id: field<string>(message, "thread_id"),
+              parent_message_id: field<string>(message, "parent_message_id"),
+              history: historyArray(message) as any,
+            },
+            value,
+          );
+          if (ok === false) {
+            antdMessage.error("Unable to save agent prompt");
+          }
+        }}
+        onClose={() => setShowAcpPromptModal(false)}
+      />
       {onOpenGitBrowser == null ? (
         <GitCommitDrawer
           projectId={project_id}

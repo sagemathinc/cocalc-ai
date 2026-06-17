@@ -263,7 +263,7 @@ describe("AgentTitleBarButton", () => {
       target: { value: "Start fresh" },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Add to Composer/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Send to Agent/ }));
     });
 
     expect(languageModel).toHaveBeenCalledWith(

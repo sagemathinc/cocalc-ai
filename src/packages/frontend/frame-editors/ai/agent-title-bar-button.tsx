@@ -347,7 +347,7 @@ export default function AgentTitleBarButton({
                   name={querying ? "spinner" : "paper-plane"}
                   spin={querying}
                 />{" "}
-                {autoSubmit ? "Send to Agent" : "Add to Composer"}
+                Send to Agent
               </Button>
             </Space>
           </div>

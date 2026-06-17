@@ -6,4 +6,5 @@
 export interface ChatComposerDraftAppendRequest {
   threadKey: string | null;
   text: string;
+  acpPrompt?: string;
 }
