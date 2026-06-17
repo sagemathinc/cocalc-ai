@@ -664,6 +664,7 @@ function addRootfsCatalogFilters({
       COALESCE(r.version, '') ILIKE ${p} OR
       COALESCE(r.channel, '') ILIKE ${p} OR
       COALESCE(r.description, '') ILIKE ${p} OR
+      COALESCE(r.digest, '') ILIKE ${p} OR
       COALESCE(r.visibility, '') ILIKE ${p} OR
       COALESCE(r.owner_id::TEXT, '') ILIKE ${p} OR
       COALESCE(r.content->>'title', '') ILIKE ${p} OR

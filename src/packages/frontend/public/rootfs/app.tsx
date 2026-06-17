@@ -39,7 +39,7 @@ import type {
 } from "@cocalc/util/rootfs-images";
 import { appPath, type PublicConfig } from "../common";
 import type { PublicRootfsRoute } from "./routes";
-import { rootfsPath } from "./routes";
+import { rootfsEntryMatchesImageTarget, rootfsPath } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -252,7 +252,12 @@ function RootfsCatalogCard({ entry }: { entry: RootfsImageEntry }) {
 }
 
 function useSelectedRootfsImage(route: PublicRootfsRoute) {
-  const query = route.view === "slug" ? route.slug : undefined;
+  const query =
+    route.view === "slug"
+      ? route.slug
+      : route.view === "image-id"
+        ? route.imageId
+        : undefined;
   const imageIds = route.view === "image-id" ? [route.imageId] : undefined;
   const { images, loading, error } = useRootfsImages(
     [managedRootfsCatalogUrl()],
@@ -267,7 +272,9 @@ function useSelectedRootfsImage(route: PublicRootfsRoute) {
       return images.find((entry) => entry.slug === route.slug);
     }
     if (route.view === "image-id") {
-      return images.find((entry) => entry.id === route.imageId);
+      return images.find((entry) =>
+        rootfsEntryMatchesImageTarget(entry, route.imageId),
+      );
     }
   }, [images, route]);
   return { error, images, loading, selected };
