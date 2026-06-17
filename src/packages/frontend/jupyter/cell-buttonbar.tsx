@@ -127,13 +127,27 @@ export const CellButtonBar: React.FC<Props> = React.memo(
 
       // ATTN: this must be wrapped in a plain div, otherwise it's own flex & width 100% style disturbs the button bar
       return (
-        <div style={{ marginTop: "6px", color: "#5f5f5f" }}>
+        <div
+          style={{
+            alignItems: "center",
+            color: CODE_BAR_BTN_STYLE.color,
+            display: "flex",
+          }}
+        >
           <Dropdown.Button
             size="small"
             type="text"
             trigger={["click"]}
             mouseLeaveDelay={1.5}
-            icon={<Icon name="angle-down" />}
+            icon={
+              <Icon
+                name="angle-down"
+                style={{
+                  lineHeight: 1,
+                  transform: "translateY(-1px)",
+                }}
+              />
+            }
             onClick={onClick}
             menu={{
               items: [
