@@ -1028,3 +1028,197 @@ test("membership site-license claim-token consumes an external claim token", asy
   assert.equal(captured?.consumption_id, "consumption-1");
   assert.equal(captured?.status, "granted");
 });
+
+test("membership site-license external claim admin list and revoke commands", async () => {
+  const calls: Record<string, any> = {};
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "admin-1",
+        hub: {
+          purchases: {
+            listSiteLicenseExternalClaimPools: async (opts) => {
+              calls.listPools = opts;
+              return [
+                {
+                  id: "claim-pool-1",
+                  site_license_id: opts.site_license_id,
+                  package_id: "package-1",
+                  name: "Instructor LMS",
+                  issuer: "https://lms.example.edu",
+                  audience: "cocalc-site-license",
+                  allow_membership_class_override: false,
+                  allow_membership_expires_at_override: false,
+                },
+              ];
+            },
+            disableSiteLicenseExternalClaimPool: async (opts) => {
+              calls.disablePool = opts;
+              return {
+                id: opts.pool_id,
+                site_license_id: "license-1",
+                package_id: "package-1",
+                name: "Instructor LMS",
+                issuer: "https://lms.example.edu",
+                audience: "cocalc-site-license",
+                allow_membership_class_override: false,
+                allow_membership_expires_at_override: false,
+                disabled_at: opts.disabled_at,
+              };
+            },
+            listSiteLicenseExternalClaimKeys: async (opts) => {
+              calls.listKeys = opts;
+              return [
+                {
+                  id: "key-1",
+                  pool_id: opts.pool_id,
+                  kid: "key-2026-06",
+                  alg: "EdDSA",
+                  public_key_jwk: { kty: "OKP" },
+                },
+              ];
+            },
+            revokeSiteLicenseExternalClaimKey: async (opts) => {
+              calls.revokeKey = opts;
+              return {
+                id: "key-1",
+                pool_id: opts.pool_id,
+                kid: opts.kid,
+                alg: "EdDSA",
+                public_key_jwk: { kty: "OKP" },
+                revoked_at: opts.revoked_at,
+              };
+            },
+            listSiteLicenseExternalClaimConsumptions: async (opts) => {
+              calls.listConsumptions = opts;
+              return [
+                {
+                  id: "consumption-1",
+                  pool_id: opts.pool_id,
+                  site_license_id: opts.site_license_id,
+                  package_id: "package-1",
+                  jti: "token-1",
+                  token_hash: "hash",
+                  issuer: "https://lms.example.edu",
+                  account_id: opts.target_account_id,
+                  status: opts.status,
+                  side_effect_key: "membership-package-assignment",
+                  membership_class: "instructor",
+                  retry_count: 0,
+                  consumed_at: "2026-06-17T00:00:00.000Z",
+                  updated: "2026-06-17T00:00:00.000Z",
+                },
+              ];
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "external-pool",
+    "list",
+    "--site-license",
+    "license-1",
+    "--limit",
+    "10",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "external-pool",
+    "disable",
+    "claim-pool-1",
+    "--disabled-at",
+    "2026-06-17T00:00:00.000Z",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "external-key",
+    "list",
+    "--pool",
+    "claim-pool-1",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "external-key",
+    "revoke",
+    "--pool",
+    "claim-pool-1",
+    "--kid",
+    "key-2026-06",
+    "--revoked-at",
+    "2026-06-17T00:00:00.000Z",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "external-claim-list",
+    "--pool",
+    "claim-pool-1",
+    "--site-license",
+    "license-1",
+    "--account",
+    "user-1",
+    "--status",
+    "granted",
+    "--limit",
+    "5",
+  ]);
+
+  assert.deepEqual(calls.listPools, {
+    account_id: "admin-1",
+    site_license_id: "license-1",
+    package_id: undefined,
+    pool_id: undefined,
+    limit: 10,
+  });
+  assert.deepEqual(calls.disablePool, {
+    account_id: "admin-1",
+    pool_id: "claim-pool-1",
+    disabled_at: "2026-06-17T00:00:00.000Z",
+  });
+  assert.deepEqual(calls.listKeys, {
+    account_id: "admin-1",
+    pool_id: "claim-pool-1",
+    limit: undefined,
+  });
+  assert.deepEqual(calls.revokeKey, {
+    account_id: "admin-1",
+    pool_id: "claim-pool-1",
+    kid: "key-2026-06",
+    revoked_at: "2026-06-17T00:00:00.000Z",
+  });
+  assert.deepEqual(calls.listConsumptions, {
+    account_id: "admin-1",
+    pool_id: "claim-pool-1",
+    site_license_id: "license-1",
+    target_account_id: "user-1",
+    status: "granted",
+    limit: 5,
+  });
+});

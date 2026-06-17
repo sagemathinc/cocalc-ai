@@ -21,7 +21,12 @@ import {
   consumeSiteLicenseExternalClaimToken,
   consumeVerifiedSiteLicenseExternalClaim,
   createSiteLicenseExternalClaimPool,
+  disableSiteLicenseExternalClaimPool,
   hashSiteLicenseExternalClaimToken,
+  listSiteLicenseExternalClaimConsumptions,
+  listSiteLicenseExternalClaimKeys,
+  listSiteLicenseExternalClaimPools,
+  revokeSiteLicenseExternalClaimKey,
   runSiteLicenseExternalClaimRepairPass,
 } from "./site-license-external-claims";
 
@@ -365,6 +370,57 @@ describe("site license external claim tokens", () => {
         account_id,
       }),
     ).rejects.toThrow("external claim token signature is invalid");
+  });
+
+  it("lists and disables pools, keys, and consumptions for operator visibility", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool();
+    const { kid } = await addEdDsaKey(claimPool.id);
+    const consumption = await consumeVerifiedSiteLicenseExternalClaim({
+      issuer: claimPool.issuer,
+      site_license_id: claimPool.site_license_id,
+      pool_id: claimPool.id,
+      jti: uuid(),
+      token_hash: hashSiteLicenseExternalClaimToken({
+        token: `visibility-token-${uuid()}`,
+      }),
+      account_id,
+    });
+
+    const pools = await listSiteLicenseExternalClaimPools({
+      site_license_id: claimPool.site_license_id,
+    });
+    expect(pools.some((pool) => pool.id === claimPool.id)).toBe(true);
+
+    const keys = await listSiteLicenseExternalClaimKeys({
+      pool_id: claimPool.id,
+    });
+    expect(keys.some((key) => key.kid === kid)).toBe(true);
+
+    const consumptions = await listSiteLicenseExternalClaimConsumptions({
+      pool_id: claimPool.id,
+      account_id,
+      status: "granted",
+    });
+    expect(consumptions.some((entry) => entry.id === consumption.id)).toBe(
+      true,
+    );
+
+    const revoked = await revokeSiteLicenseExternalClaimKey({
+      pool_id: claimPool.id,
+      kid,
+      revoked_at: "2026-06-17T00:00:00.000Z",
+    });
+    expect(revoked.revoked_at?.toISOString()).toBe("2026-06-17T00:00:00.000Z");
+
+    const disabled = await disableSiteLicenseExternalClaimPool({
+      pool_id: claimPool.id,
+      disabled_at: "2026-06-17T00:00:00.000Z",
+    });
+    expect(disabled.disabled_at?.toISOString()).toBe(
+      "2026-06-17T00:00:00.000Z",
+    );
   });
 
   it("repairs retryable consumed claims by replaying the idempotent side effect", async () => {

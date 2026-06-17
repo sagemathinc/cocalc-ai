@@ -757,6 +757,167 @@ export async function addSiteLicenseExternalClaimKey(
   return normalizeKeyRow(rows[0]!);
 }
 
+export async function listSiteLicenseExternalClaimPools({
+  site_license_id,
+  package_id,
+  pool_id,
+  limit = 100,
+}: {
+  site_license_id?: string;
+  package_id?: string;
+  pool_id?: string;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimPool[]> {
+  await ensureSiteLicenseSchema();
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (site_license_id != null && `${site_license_id}`.trim()) {
+    args.push(normalizeUUID(site_license_id, "site_license_id"));
+    where.push(`site_license_id = $${args.length}`);
+  }
+  if (package_id != null && `${package_id}`.trim()) {
+    args.push(normalizeUUID(package_id, "package_id"));
+    where.push(`package_id = $${args.length}`);
+  }
+  if (pool_id != null && `${pool_id}`.trim()) {
+    args.push(normalizeUUID(pool_id, "pool_id"));
+    where.push(`id = $${args.length}`);
+  }
+  args.push(Math.max(1, Math.min(1000, Math.floor(Number(limit) || 100))));
+  const { rows } = await getPool().query<RawExternalClaimPool>(
+    `SELECT *
+       FROM site_license_external_claim_pools
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY created DESC, id ASC
+      LIMIT $${args.length}`,
+    args,
+  );
+  return rows.map(normalizePoolRow);
+}
+
+export async function disableSiteLicenseExternalClaimPool({
+  pool_id,
+  disabled_at = new Date(),
+}: {
+  pool_id: string;
+  disabled_at?: Date | string | null;
+}): Promise<SiteLicenseExternalClaimPool> {
+  await ensureSiteLicenseSchema();
+  const { rows } = await getPool().query<RawExternalClaimPool>(
+    `UPDATE site_license_external_claim_pools
+        SET disabled_at=$2, updated=NOW()
+      WHERE id=$1
+      RETURNING *`,
+    [normalizeUUID(pool_id, "pool_id"), asDate(disabled_at)],
+  );
+  if (rows.length === 0) {
+    throw Error("external claim pool not found");
+  }
+  return normalizePoolRow(rows[0]!);
+}
+
+export async function listSiteLicenseExternalClaimKeys({
+  pool_id,
+  limit = 100,
+}: {
+  pool_id: string;
+  limit?: number;
+}): Promise<SiteLicenseExternalClaimKey[]> {
+  await ensureSiteLicenseSchema();
+  const { rows } = await getPool().query<RawExternalClaimKey>(
+    `SELECT *
+       FROM site_license_external_claim_keys
+      WHERE pool_id=$1
+      ORDER BY created DESC, kid ASC
+      LIMIT $2`,
+    [
+      normalizeUUID(pool_id, "pool_id"),
+      Math.max(1, Math.min(1000, Math.floor(Number(limit) || 100))),
+    ],
+  );
+  return rows.map(normalizeKeyRow);
+}
+
+export async function revokeSiteLicenseExternalClaimKey({
+  pool_id,
+  kid,
+  revoked_at = new Date(),
+}: {
+  pool_id: string;
+  kid: string;
+  revoked_at?: Date | string | null;
+}): Promise<SiteLicenseExternalClaimKey> {
+  await ensureSiteLicenseSchema();
+  const { rows } = await getPool().query<RawExternalClaimKey>(
+    `UPDATE site_license_external_claim_keys
+        SET revoked_at=$3, updated=NOW()
+      WHERE pool_id=$1 AND kid=$2
+      RETURNING *`,
+    [
+      normalizeUUID(pool_id, "pool_id"),
+      normalizeString(kid, "kid"),
+      asDate(revoked_at),
+    ],
+  );
+  if (rows.length === 0) {
+    throw Error("external claim key not found");
+  }
+  return normalizeKeyRow(rows[0]!);
+}
+
+export async function listSiteLicenseExternalClaimConsumptions({
+  pool_id,
+  site_license_id,
+  account_id,
+  status,
+  limit = 100,
+}: {
+  pool_id?: string;
+  site_license_id?: string;
+  account_id?: string;
+  status?: SiteLicenseExternalClaimConsumptionStatus;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimConsumption[]> {
+  await ensureSiteLicenseSchema();
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (pool_id != null && `${pool_id}`.trim()) {
+    args.push(normalizeUUID(pool_id, "pool_id"));
+    where.push(`pool_id = $${args.length}`);
+  }
+  if (site_license_id != null && `${site_license_id}`.trim()) {
+    args.push(normalizeUUID(site_license_id, "site_license_id"));
+    where.push(`site_license_id = $${args.length}`);
+  }
+  if (account_id != null && `${account_id}`.trim()) {
+    args.push(normalizeUUID(account_id, "account_id"));
+    where.push(`account_id = $${args.length}`);
+  }
+  if (status != null && `${status}`.trim()) {
+    const normalizedStatus = `${status}`.trim();
+    if (
+      normalizedStatus !== "pending-side-effect" &&
+      normalizedStatus !== "granted" &&
+      normalizedStatus !== "failed-retryable" &&
+      normalizedStatus !== "failed-terminal"
+    ) {
+      throw Error("invalid external claim consumption status");
+    }
+    args.push(normalizedStatus);
+    where.push(`status = $${args.length}`);
+  }
+  args.push(Math.max(1, Math.min(1000, Math.floor(Number(limit) || 100))));
+  const { rows } = await getPool().query<RawExternalClaimConsumption>(
+    `SELECT *
+       FROM site_license_external_claim_consumptions
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY consumed_at DESC, id ASC
+      LIMIT $${args.length}`,
+    args,
+  );
+  return rows.map(normalizeConsumptionRow);
+}
+
 async function loadActiveClaimKey({
   pool_id,
   kid,

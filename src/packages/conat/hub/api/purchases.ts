@@ -1298,6 +1298,41 @@ export interface Purchases {
     revoked_at?: Date | string | null;
     metadata?: Record<string, unknown> | null;
   }) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimPools: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    package_id?: string;
+    pool_id?: string;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimPool[]>;
+  disableSiteLicenseExternalClaimPool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    disabled_at?: Date | string | null;
+  }) => Promise<SiteLicenseExternalClaimPool>;
+  listSiteLicenseExternalClaimKeys: (opts?: {
+    account_id?: string;
+    pool_id?: string;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimKey[]>;
+  revokeSiteLicenseExternalClaimKey: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    kid?: string;
+    revoked_at?: Date | string | null;
+  }) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimConsumptions: (opts?: {
+    account_id?: string;
+    pool_id?: string;
+    site_license_id?: string;
+    target_account_id?: string;
+    status?: SiteLicenseExternalClaimConsumptionStatus;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimConsumption[]>;
   consumeSiteLicenseExternalClaimToken: (opts?: {
     account_id?: string;
     token?: string;
@@ -1412,6 +1447,11 @@ export const purchases = {
   addSiteLicensePool: authFirst,
   createSiteLicenseExternalClaimPool: authFirst,
   addSiteLicenseExternalClaimKey: authFirst,
+  listSiteLicenseExternalClaimPools: authFirst,
+  disableSiteLicenseExternalClaimPool: authFirst,
+  listSiteLicenseExternalClaimKeys: authFirst,
+  revokeSiteLicenseExternalClaimKey: authFirst,
+  listSiteLicenseExternalClaimConsumptions: authFirst,
   consumeSiteLicenseExternalClaimToken: authFirst,
   archiveSiteLicensePool: authFirst,
   setSiteLicenseManager: authFirst,

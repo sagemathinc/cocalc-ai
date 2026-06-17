@@ -1214,6 +1214,44 @@ export function registerMembershipCommand(
     .description("admin operations for external site-license claim pools");
 
   externalPool
+    .command("list")
+    .description("admin list external token claim pools")
+    .option("--site-license <siteLicenseId>", "filter by site license id")
+    .option("--package <packageId>", "filter by site-license package/pool id")
+    .option("--pool <poolId>", "filter by external claim pool id")
+    .option("--limit <n>", "maximum rows to return")
+    .action(
+      async (
+        opts: {
+          siteLicense?: string;
+          package?: string;
+          pool?: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license external-pool list",
+          async (ctx) => {
+            return (
+              await ctx.hub.purchases.listSiteLicenseExternalClaimPools({
+                account_id: ctx.accountId,
+                site_license_id:
+                  `${opts.siteLicense ?? ""}`.trim() || undefined,
+                package_id: `${opts.package ?? ""}`.trim() || undefined,
+                pool_id: `${opts.pool ?? ""}`.trim() || undefined,
+                limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
+              })
+            ).map((pool: SiteLicenseExternalClaimPool) =>
+              serializeSiteLicenseExternalClaimPool(pool, toIso),
+            );
+          },
+        );
+      },
+    );
+
+  externalPool
     .command("create")
     .description("admin create or update an external token claim pool")
     .requiredOption("--site-license <siteLicenseId>", "site license id")
@@ -1349,9 +1387,67 @@ export function registerMembershipCommand(
       },
     );
 
+  externalPool
+    .command("disable <poolId>")
+    .description("admin disable an external token claim pool")
+    .option("--disabled-at <iso>", "explicit disabled timestamp")
+    .action(
+      async (
+        poolId: string,
+        opts: { disabledAt?: string },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license external-pool disable",
+          async (ctx) => {
+            return serializeSiteLicenseExternalClaimPool(
+              await ctx.hub.purchases.disableSiteLicenseExternalClaimPool({
+                account_id: ctx.accountId,
+                pool_id: `${poolId ?? ""}`.trim(),
+                disabled_at: `${opts.disabledAt ?? ""}`.trim() || undefined,
+              }),
+              toIso,
+            );
+          },
+        );
+      },
+    );
+
   const externalKey = siteLicense
     .command("external-key")
     .description("admin operations for external site-license claim keys");
+
+  externalKey
+    .command("list")
+    .description("admin list external token verification keys")
+    .requiredOption("--pool <poolId>", "external claim pool id")
+    .option("--limit <n>", "maximum rows to return")
+    .action(
+      async (
+        opts: {
+          pool: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license external-key list",
+          async (ctx) => {
+            return (
+              await ctx.hub.purchases.listSiteLicenseExternalClaimKeys({
+                account_id: ctx.accountId,
+                pool_id: `${opts.pool ?? ""}`.trim(),
+                limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
+              })
+            ).map((key: SiteLicenseExternalClaimKey) =>
+              serializeSiteLicenseExternalClaimKey(key, toIso),
+            );
+          },
+        );
+      },
+    );
 
   externalKey
     .command("add")
@@ -1402,6 +1498,93 @@ export function registerMembershipCommand(
                 metadata: parseMetadataJson(opts.metadataJson) ?? null,
               }),
               toIso,
+            );
+          },
+        );
+      },
+    );
+
+  externalKey
+    .command("revoke")
+    .description("admin revoke an external token verification key")
+    .requiredOption("--pool <poolId>", "external claim pool id")
+    .requiredOption("--kid <kid>", "token key id")
+    .option("--revoked-at <iso>", "explicit revocation timestamp")
+    .action(
+      async (
+        opts: {
+          pool: string;
+          kid: string;
+          revokedAt?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license external-key revoke",
+          async (ctx) => {
+            return serializeSiteLicenseExternalClaimKey(
+              await ctx.hub.purchases.revokeSiteLicenseExternalClaimKey({
+                account_id: ctx.accountId,
+                pool_id: `${opts.pool ?? ""}`.trim(),
+                kid: `${opts.kid ?? ""}`.trim(),
+                revoked_at: `${opts.revokedAt ?? ""}`.trim() || undefined,
+              }),
+              toIso,
+            );
+          },
+        );
+      },
+    );
+
+  siteLicense
+    .command("external-claim-list")
+    .description("admin list external site-license claim consumptions")
+    .option("--pool <poolId>", "filter by external claim pool id")
+    .option("--site-license <siteLicenseId>", "filter by site license id")
+    .option("--account <accountId>", "filter by consuming account id")
+    .option(
+      "--status <status>",
+      "filter by status: pending-side-effect, granted, failed-retryable, or failed-terminal",
+    )
+    .option("--limit <n>", "maximum rows to return")
+    .action(
+      async (
+        opts: {
+          pool?: string;
+          siteLicense?: string;
+          account?: string;
+          status?: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license external-claim-list",
+          async (ctx) => {
+            const status = `${opts.status ?? ""}`.trim();
+            if (
+              status &&
+              status !== "pending-side-effect" &&
+              status !== "granted" &&
+              status !== "failed-retryable" &&
+              status !== "failed-terminal"
+            ) {
+              throw new Error("--status is not a valid external claim status");
+            }
+            return (
+              await ctx.hub.purchases.listSiteLicenseExternalClaimConsumptions({
+                account_id: ctx.accountId,
+                pool_id: `${opts.pool ?? ""}`.trim() || undefined,
+                site_license_id:
+                  `${opts.siteLicense ?? ""}`.trim() || undefined,
+                target_account_id: `${opts.account ?? ""}`.trim() || undefined,
+                status: status || undefined,
+                limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
+              })
+            ).map((consumption: SiteLicenseExternalClaimConsumption) =>
+              serializeSiteLicenseExternalClaimConsumption(consumption, toIso),
             );
           },
         );

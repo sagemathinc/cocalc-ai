@@ -67,6 +67,11 @@ import {
   addSiteLicenseExternalClaimKey as addSiteLicenseExternalClaimKey0,
   consumeSiteLicenseExternalClaimToken as consumeSiteLicenseExternalClaimToken0,
   createSiteLicenseExternalClaimPool as createSiteLicenseExternalClaimPool0,
+  disableSiteLicenseExternalClaimPool as disableSiteLicenseExternalClaimPool0,
+  listSiteLicenseExternalClaimConsumptions as listSiteLicenseExternalClaimConsumptions0,
+  listSiteLicenseExternalClaimKeys as listSiteLicenseExternalClaimKeys0,
+  listSiteLicenseExternalClaimPools as listSiteLicenseExternalClaimPools0,
+  revokeSiteLicenseExternalClaimKey as revokeSiteLicenseExternalClaimKey0,
 } from "@cocalc/server/membership/site-license-external-claims";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
@@ -92,6 +97,7 @@ import type {
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseExternalClaimConsumption,
+  SiteLicenseExternalClaimConsumptionStatus,
   SiteLicenseExternalClaimKey,
   SiteLicenseExternalClaimPool,
   SiteLicenseExternalClaimSigningAlgorithm,
@@ -1358,6 +1364,172 @@ export async function addSiteLicenseExternalClaimKey({
     ...opts,
     created_by_account_id: actorId,
   });
+}
+
+export async function listSiteLicenseExternalClaimPools({
+  account_id,
+  site_license_id,
+  package_id,
+  pool_id,
+  limit,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+  package_id?: string;
+  pool_id?: string;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimPool[]> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const opts = { site_license_id, package_id, pool_id, limit };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimPools({
+      account_id: actorId,
+      ...opts,
+    });
+  }
+  return await listSiteLicenseExternalClaimPools0(opts);
+}
+
+export async function disableSiteLicenseExternalClaimPool({
+  account_id,
+  browser_id,
+  session_hash,
+  pool_id,
+  disabled_at,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  pool_id?: string;
+  disabled_at?: Date | string | null;
+} = {}): Promise<SiteLicenseExternalClaimPool> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    pool_id: `${pool_id ?? ""}`.trim(),
+    disabled_at,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().disableSiteLicenseExternalClaimPool(
+      opts,
+    );
+  }
+  return await disableSiteLicenseExternalClaimPool0(opts);
+}
+
+export async function listSiteLicenseExternalClaimKeys({
+  account_id,
+  pool_id,
+  limit,
+}: {
+  account_id?: string;
+  pool_id?: string;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimKey[]> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const opts = { pool_id: `${pool_id ?? ""}`.trim(), limit };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimKeys({
+      account_id: actorId,
+      ...opts,
+    });
+  }
+  return await listSiteLicenseExternalClaimKeys0(opts);
+}
+
+export async function revokeSiteLicenseExternalClaimKey({
+  account_id,
+  browser_id,
+  session_hash,
+  pool_id,
+  kid,
+  revoked_at,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  pool_id?: string;
+  kid?: string;
+  revoked_at?: Date | string | null;
+} = {}): Promise<SiteLicenseExternalClaimKey> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    pool_id: `${pool_id ?? ""}`.trim(),
+    kid: `${kid ?? ""}`.trim(),
+    revoked_at,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().revokeSiteLicenseExternalClaimKey(
+      opts,
+    );
+  }
+  return await revokeSiteLicenseExternalClaimKey0(opts);
+}
+
+export async function listSiteLicenseExternalClaimConsumptions({
+  account_id,
+  pool_id,
+  site_license_id,
+  target_account_id,
+  status,
+  limit,
+}: {
+  account_id?: string;
+  pool_id?: string;
+  site_license_id?: string;
+  target_account_id?: string;
+  status?: SiteLicenseExternalClaimConsumptionStatus;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimConsumption[]> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const opts = {
+    pool_id: `${pool_id ?? ""}`.trim() || undefined,
+    site_license_id: `${site_license_id ?? ""}`.trim() || undefined,
+    account_id: `${target_account_id ?? ""}`.trim() || undefined,
+    status,
+    limit,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimConsumptions(
+      {
+        account_id: actorId,
+        pool_id: opts.pool_id,
+        site_license_id: opts.site_license_id,
+        target_account_id: opts.account_id,
+        status,
+        limit,
+      },
+    );
+  }
+  return await listSiteLicenseExternalClaimConsumptions0(opts);
 }
 
 export async function consumeSiteLicenseExternalClaimToken({
