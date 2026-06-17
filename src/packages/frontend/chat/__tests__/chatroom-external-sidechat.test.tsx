@@ -61,6 +61,12 @@ jest.mock("../thread-selection", () => ({
 }));
 
 jest.mock("../use-chat-composer-draft", () => ({
+  useChatComposerAcpPromptDraft: () => ({
+    input: "",
+    setInput: jest.fn(),
+    clearInput: jest.fn(),
+    clearComposerDraft: jest.fn(),
+  }),
   useChatComposerDraft: () => ({
     input: "",
     setInput: jest.fn(),
