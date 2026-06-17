@@ -251,7 +251,7 @@ describe("projects.start", () => {
     expect(publishLroSummaryMock).toHaveBeenCalled();
   });
 
-  it("does not let stuck progress mirror setup block project start", async () => {
+  it("does not initialize optional progress mirroring before project start", async () => {
     mirrorStartLroProgressMock = jest.fn(() => new Promise(() => undefined));
     const { start } = await import("./projects");
 
@@ -273,6 +273,7 @@ describe("projects.start", () => {
         status: "succeeded",
       }),
     );
+    expect(mirrorStartLroProgressMock).not.toHaveBeenCalled();
   });
 
   it("keeps the long control timeout for explicit backup restores", async () => {

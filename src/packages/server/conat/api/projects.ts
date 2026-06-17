@@ -43,7 +43,6 @@ export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
-import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
@@ -2755,21 +2754,10 @@ async function runProjectStartLikeAction({
         context: `${kind}: running`,
       });
     }
-    let stopProgressMirror: (() => Promise<void>) | undefined;
-    void mirrorStartLroProgress({
-      project_id,
-      op_id: op.op_id,
-    })
-      .then((close) => {
-        stopProgressMirror = close;
-      })
-      .catch((err) => {
-        log.warn("unable to initialize project-start progress mirror", {
-          project_id,
-          op_id: op.op_id,
-          err: `${err}`,
-        });
-      });
+    // Keep project start independent of ephemeral progress streams. Move/retry
+    // correctness depends on the durable LRO row and project-host RPC; live
+    // stream mirroring is optional and has caused orphaned queued starts when
+    // the stream backend is unavailable.
     try {
       const ownership = await resolveProjectBay(project_id);
       if (ownership == null) {
@@ -2871,10 +2859,6 @@ async function runProjectStartLikeAction({
         });
       }
       throw err;
-    } finally {
-      if (stopProgressMirror) {
-        await stopProgressMirror();
-      }
     }
   };
 
