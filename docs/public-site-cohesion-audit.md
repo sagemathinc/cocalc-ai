@@ -174,6 +174,14 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Finding: teaching should not be a top starter, but placing it after every runtime and language route makes it feel like a footer orphan; move it after the core workflow group while keeping the styling secondary.
 - [x] Browser QA: validate `/features` plus the five first-click routes on desktop, tablet, and mobile for expected route text, section order, and horizontal overflow.
 
+## Markdown And Open-Format Discovery Pass
+
+- [x] Capture the current public-site state for Markdown, project files, open-format language, RootFS/runtime-image framing, and agent-workflow relevance in `docs/public-site-markdown-open-formats-audit.md`.
+- [ ] Decide whether Markdown/project notes should appear as a compact discovery route on `/features`, likely linking to existing docs instead of becoming a new feature page.
+- [ ] Decide whether `/features/ai` should replace a generic review-notes phrase with more concrete README/task-note/project-instruction language.
+- [ ] Keep RootFS and operating-system language out of high-level public marketing copy unless a technical-doc route is the explicit destination.
+- [ ] Avoid broad "all open formats" claims until the supported scope is defined and reviewed.
+
 ## Workflow To Product Decision Handoff Pass
 
 - [x] Audit `/features`, `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, `/features/teaching`, `/products`, `/pricing`, `/features/compare`, and `/support/new` as one path from workflow fit to operating-model decision.
