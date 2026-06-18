@@ -8,6 +8,7 @@ let publishLroEventMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let initializeProjectRootfsStatesMock: jest.Mock;
 let cloneProjectRootfsStatesMock: jest.Mock;
+let ensurePlacementMock: jest.Mock;
 let takeStartProjectPhaseTimingsMock: jest.Mock;
 let delayMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
@@ -160,6 +161,7 @@ jest.mock("@cocalc/server/lro/stream", () => ({
 
 jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
+  ensurePlacement: (...args: any[]) => ensurePlacementMock(...args),
   takeStartProjectPhaseTimings: (...args: any[]) =>
     takeStartProjectPhaseTimingsMock(...args),
 }));
@@ -277,6 +279,7 @@ describe("projects.createProject start LRO", () => {
     publishLroSummaryMock = jest.fn(async () => undefined);
     initializeProjectRootfsStatesMock = jest.fn(async () => undefined);
     cloneProjectRootfsStatesMock = jest.fn(async () => undefined);
+    ensurePlacementMock = jest.fn(async () => ({ host_id: "host-1" }));
     takeStartProjectPhaseTimingsMock = jest.fn(() => ({ cache_rootfs: 1234 }));
     delayMock = jest.fn(async () => undefined);
     mirrorStartLroProgressMock = jest.fn(async () => async () => undefined);

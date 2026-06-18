@@ -327,6 +327,67 @@ function observedRunningProjectHostVersion(
   return versions.length === 1 ? versions[0] : undefined;
 }
 
+function managedComponentAlignmentFailures({
+  statuses,
+  components,
+  desiredVersion,
+  row,
+}: {
+  statuses?: HostManagedComponentStatus[];
+  components: HostManagedComponentRolloutRequest["components"];
+  desiredVersion?: string;
+  row: any;
+}): string[] {
+  const expectedVersion =
+    normalizeObservedVersion(observedInstalledProjectHostBuildIdFromRow(row)) ??
+    normalizeObservedVersion(desiredVersion);
+  const failures: string[] = [];
+  for (const component of components) {
+    const status = (statuses ?? []).find(
+      (entry) => entry.component === component,
+    );
+    if (!status) {
+      failures.push(`${component}: status missing`);
+      continue;
+    }
+    if (!status.enabled || !status.managed) {
+      continue;
+    }
+    if (status.runtime_state !== "running") {
+      failures.push(`${component}: runtime_state=${status.runtime_state}`);
+      continue;
+    }
+    if (status.version_state !== "aligned") {
+      failures.push(
+        `${component}: version_state=${status.version_state}, running=${(status.running_versions ?? []).join(",") || "none"}, desired=${status.desired_version ?? "unknown"}`,
+      );
+      continue;
+    }
+    if (expectedVersion) {
+      const desired = normalizeObservedVersion(status.desired_version);
+      const running = [
+        ...new Set(
+          (status.running_versions ?? [])
+            .map((version) => normalizeObservedVersion(version))
+            .filter((version): version is string => version != null),
+        ),
+      ];
+      if (desired && desired !== expectedVersion) {
+        failures.push(
+          `${component}: desired=${desired}, expected=${expectedVersion}`,
+        );
+        continue;
+      }
+      if (running.length > 0 && !running.includes(expectedVersion)) {
+        failures.push(
+          `${component}: running=${running.join(",")}, expected=${expectedVersion}`,
+        );
+      }
+    }
+  }
+  return failures;
+}
+
 function projectHostRollbackVersionFromHostAgent({
   hostAgentStatus,
   desiredVersion,
@@ -604,6 +665,7 @@ export async function upgradeHostSoftwareInternalHelper({
   targets,
   base_url,
   align_runtime_stack,
+  record_runtime_deployments = true,
   loadHostForStartStop,
   assertHostRunningForUpgrade,
   computeHostOperationalAvailability,
@@ -623,6 +685,7 @@ export async function upgradeHostSoftwareInternalHelper({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  record_runtime_deployments?: boolean;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   assertHostRunningForUpgrade: (row: any) => void;
   computeHostOperationalAvailability: (row: any) => {
@@ -857,7 +920,7 @@ export async function upgradeHostSoftwareInternalHelper({
       }),
     );
   }
-  if (runtimeDeployments.length) {
+  if (record_runtime_deployments && runtimeDeployments.length) {
     await setProjectHostRuntimeDeployments({
       scope_type: "host",
       host_id: row.id,
@@ -881,6 +944,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   id,
   components,
   reason,
+  record_runtime_deployments = true,
   loadHostForStartStop,
   assertHostRunningForUpgrade,
   hostControlClient,
@@ -907,6 +971,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   id: string;
   components: HostManagedComponentRolloutRequest["components"];
   reason?: string;
+  record_runtime_deployments?: boolean;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   assertHostRunningForUpgrade: (row: any) => void;
   hostControlClient: (
@@ -1054,6 +1119,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   }
   const rolloutStartedAt = Date.now();
   let response: HostManagedComponentRolloutResponse;
+  let rolloutRequestError: unknown;
   try {
     response = await withTimeout({
       promise: client.rolloutManagedComponents({
@@ -1063,25 +1129,19 @@ export async function rolloutHostManagedComponentsInternalHelper({
       timeoutMs: managedComponentRolloutRpcTimeoutMs,
     });
   } catch (err) {
-    if (
-      requestedProjectHostRollout &&
-      err instanceof ManagedComponentRolloutRpcTimeoutError
-    ) {
-      await onProgress?.({
-        rollout_phase: "managed_components.rpc_timeout",
-        rollout_phase_label:
-          "Managed component rollout request timed out; verifying host state",
-        rollout_phase_owner: "managed component alignment",
-        rollout_target_version: desiredProjectHostVersion,
-      });
-      response = assumedManagedComponentRolloutResponse(components);
-    } else {
-      throw await enrichManagedComponentRolloutError({
-        err,
-        client,
-        components,
-      });
-    }
+    rolloutRequestError = err;
+    const timedOut = err instanceof ManagedComponentRolloutRpcTimeoutError;
+    await onProgress?.({
+      rollout_phase: timedOut
+        ? "managed_components.rpc_timeout"
+        : "managed_components.rpc_interrupted",
+      rollout_phase_label: timedOut
+        ? "Managed component rollout request timed out; verifying host state"
+        : "Managed component rollout request was interrupted; verifying host state",
+      rollout_phase_owner: "managed component alignment",
+      rollout_target_version: desiredProjectHostVersion,
+    });
+    response = assumedManagedComponentRolloutResponse(components);
   }
   let refreshedRow = row;
   if (requestedProjectHostRollout) {
@@ -1232,12 +1292,86 @@ export async function rolloutHostManagedComponentsInternalHelper({
         observedProjectHostVersion ?? fallbackProjectHostVersion,
     });
   }
+  const componentsRequiringManagedStatusVerification = components.filter(
+    (component) => component !== "project-host",
+  );
+  if (componentsRequiringManagedStatusVerification.length > 0) {
+    await onProgress?.({
+      rollout_phase: "managed_components.verifying",
+      rollout_phase_label: "Verifying managed component alignment",
+      rollout_phase_owner: "managed component alignment",
+      rollout_target_version: desiredVersion,
+    });
+    const verifyStartedAt = Date.now();
+    let lastFailures: string[] = [];
+    let lastError: unknown;
+    while (Date.now() - verifyStartedAt <= projectHostRolloutSettleTimeoutMs) {
+      try {
+        const statusClient = await hostControlClient(id, 30_000);
+        if (typeof statusClient.getManagedComponentStatus !== "function") {
+          throw new Error(
+            "host control client does not support managed component status",
+          );
+        }
+        const statuses = await statusClient.getManagedComponentStatus();
+        lastFailures = managedComponentAlignmentFailures({
+          statuses,
+          components: componentsRequiringManagedStatusVerification,
+          desiredVersion,
+          row: refreshedRow,
+        });
+        lastError = undefined;
+        if (lastFailures.length === 0) {
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        lastFailures = [];
+      }
+      await delay(projectHostRolloutPollMs);
+      refreshedRow = await loadHostForStartStop(id, account_id);
+    }
+    if (lastError != null) {
+      const err = new Error(
+        `managed component alignment could not be verified: ${lastError instanceof Error ? lastError.message : lastError}`,
+      );
+      throw rolloutRequestError == null
+        ? err
+        : await enrichManagedComponentRolloutError({
+            err: new Error(
+              `${err.message}; rollout request error: ${rolloutRequestError instanceof Error ? rolloutRequestError.message : rolloutRequestError}`,
+            ),
+            client,
+            components,
+          });
+    }
+    if (lastFailures.length > 0) {
+      const err = new Error(
+        `managed component rollout did not converge: ${lastFailures.join("; ")}`,
+      );
+      throw rolloutRequestError == null
+        ? err
+        : await enrichManagedComponentRolloutError({
+            err: new Error(
+              `${err.message}; rollout request error: ${rolloutRequestError instanceof Error ? rolloutRequestError.message : rolloutRequestError}`,
+            ),
+            client,
+            components,
+          });
+    }
+    await onProgress?.({
+      rollout_phase: "managed_components.aligned",
+      rollout_phase_label: "Managed components aligned",
+      rollout_phase_owner: "managed component alignment",
+      rollout_target_version: desiredVersion,
+    });
+  }
   const runtimeDeployments = runtimeDeploymentsForComponentRollout({
     components,
     desired_version: desiredVersion,
     reason,
   });
-  if (runtimeDeployments.length) {
+  if (record_runtime_deployments && runtimeDeployments.length) {
     await setProjectHostRuntimeDeployments({
       scope_type: "host",
       host_id: row.id,

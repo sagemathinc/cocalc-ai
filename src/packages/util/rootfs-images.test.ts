@@ -5,6 +5,7 @@
 
 import {
   normalizeRootfsContentManifest,
+  parseRootfsConfigExport,
   validateRootfsSlug,
 } from "./rootfs-images";
 
@@ -229,5 +230,21 @@ describe("validateRootfsSlug", () => {
     expect(() => validateRootfsSlug("x".repeat(40))).toThrow(
       "name must have at most 39 characters",
     );
+  });
+});
+
+describe("parseRootfsConfigExport", () => {
+  it("normalizes metadata slugs", () => {
+    const result = parseRootfsConfigExport({
+      kind: "cocalc-rootfs-config",
+      version: 1,
+      exported_at: "2026-06-17T00:00:00.000Z",
+      metadata: {
+        label: "Minimal Jupyter",
+        slug: "Minimal-Jupyter",
+      },
+    });
+
+    expect(result.metadata?.slug).toBe("minimal-jupyter");
   });
 });

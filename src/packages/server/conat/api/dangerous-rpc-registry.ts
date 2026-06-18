@@ -331,6 +331,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "aiSessions.list": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "aiSessions.upsertProjectHostSession": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "lro.cancel": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

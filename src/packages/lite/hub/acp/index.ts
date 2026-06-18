@@ -175,6 +175,13 @@ import {
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
+  heartbeatAcpSession,
+  setAcpSessionPublisher,
+  upsertAcpSession,
+  type AcpSessionRow,
+  type AcpSessionState,
+} from "../sqlite/acp-sessions";
+import {
   deleteAcpAutomationsForProject,
   deleteAcpAutomationByThread,
   getAcpAutomationById,
@@ -1850,6 +1857,10 @@ export class ChatStreamWriter {
         pid: process.pid,
         session_id: this.sessionKey ?? undefined,
       });
+      this.upsertSessionRegistry("running", {
+        started_at: Date.now(),
+        last_heartbeat_at: Date.now(),
+      });
     } catch (err) {
       logger.warn("failed to start acp turn lease", {
         chatKey: this.chatKey,
@@ -1866,6 +1877,13 @@ export class ChatStreamWriter {
         owner_instance_id: ACP_INSTANCE_ID,
         pid: process.pid,
         session_id: this.threadId ?? this.sessionKey ?? undefined,
+      });
+      heartbeatAcpSession({
+        session_id: this.threadId ?? this.sessionKey,
+        op_id: this.metadata.message_id,
+        project_id: this.metadata.project_id,
+        path: this.metadata.path,
+        message_id: this.metadata.message_id,
       });
     } catch (err) {
       logger.debug("failed to heartbeat acp turn lease", {
@@ -1894,6 +1912,17 @@ export class ChatStreamWriter {
         reason,
         owner_instance_id: ACP_INSTANCE_ID,
       });
+      this.upsertSessionRegistry(
+        state === "completed"
+          ? this.finishedBy === "interrupt"
+            ? "interrupted"
+            : "completed"
+          : "failed",
+        {
+          finished_at: Date.now(),
+          error: reason,
+        },
+      );
     } catch (err) {
       logger.warn("failed to finalize acp turn lease", {
         chatKey: this.chatKey,
@@ -1902,6 +1931,40 @@ export class ChatStreamWriter {
         err,
       });
     }
+  }
+
+  private upsertSessionRegistry(
+    state: AcpSessionState,
+    extra: {
+      started_at?: number | null;
+      last_heartbeat_at?: number | null;
+      finished_at?: number | null;
+      error?: string | null;
+    } = {},
+  ): void {
+    upsertAcpSession({
+      session_id: this.threadId ?? this.sessionKey,
+      op_id: this.metadata.message_id,
+      project_id: this.metadata.project_id,
+      account_id: this.approverAccountId,
+      approver_account_id: this.approverAccountId,
+      path: this.metadata.path,
+      thread_id: this.metadata.thread_id,
+      message_id: this.metadata.message_id,
+      parent_message_id: this.metadata.parent_message_id,
+      state,
+      payment_source_kind: "unknown",
+      model: undefined,
+      agent_kind: "codex",
+      run_kind: this.metadata.automation_id ? "automation" : "interactive",
+      title: this.metadata.automation_title,
+      prompt_snippet: this.metadata.user_message_content,
+      metadata: {
+        automation_id: this.metadata.automation_id,
+        send_mode: this.metadata.send_mode,
+      },
+      ...extra,
+    });
   }
 
   private finalizeFinishedTurn(): void {
@@ -2282,6 +2345,9 @@ export class ChatStreamWriter {
           this.registerThreadKey(liveThreadId);
           void this.persistSessionId(liveThreadId).catch((err) => {
             logger.debug("persistSessionId(status) failed", err);
+          });
+          this.upsertSessionRegistry("running", {
+            last_heartbeat_at: Date.now(),
           });
         }
       }
@@ -4980,8 +5046,45 @@ function initializeAcpRuntime(client: ConatClient): void {
     `${process.env.COCALC_LITE_SQLITE_FILENAME ?? ""}`.trim() ||
     path.join(data, "hub.db");
   initAcpDatabase({ legacyFilename: sqliteFilename });
+  configureAcpSessionPublisher();
   conatClient = client;
   blobStore = getBlobstore(client);
+}
+
+let acpSessionPublisherConfigured = false;
+let lastAcpSessionPublishWarning = 0;
+
+function configureAcpSessionPublisher(): void {
+  if (acpSessionPublisherConfigured) {
+    return;
+  }
+  acpSessionPublisherConfigured = true;
+  if (!hasRemote) {
+    setAcpSessionPublisher(undefined);
+    return;
+  }
+  setAcpSessionPublisher((row) => {
+    void publishAcpSessionToRemoteHub(row).catch((err) => {
+      const now = Date.now();
+      if (now - lastAcpSessionPublishWarning > 60_000) {
+        lastAcpSessionPublishWarning = now;
+        logger.warn("failed to publish ACP session state to remote hub", err);
+      }
+    });
+  });
+}
+
+async function publishAcpSessionToRemoteHub(row: AcpSessionRow): Promise<void> {
+  await callRemoteHub({
+    name: "aiSessions.upsertProjectHostSession",
+    args: [
+      {
+        ...row,
+        terminal: row.terminal === 1,
+      },
+    ],
+    timeout: 5000,
+  });
 }
 
 export function configureAcpDetachedWorkerRunning(
