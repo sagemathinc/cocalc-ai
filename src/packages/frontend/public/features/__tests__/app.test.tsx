@@ -2,44 +2,33 @@
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
+import {
+  combineLeak,
+  DARK_FEATURE_CARD_STYLE,
+  getDirectCards,
+  getHeadingTexts,
+  HERO_H1_MAX,
+  installMatchMediaStub,
+  INTERNAL_IMPLEMENTATION_TERMS,
+  SECTION_H2_MAX,
+  textLength,
+} from "../../__tests__/test-helpers";
 import PublicFeaturesApp from "../app";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
 
 beforeAll(() => {
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    value: (query: string) => ({
-      addEventListener: () => {},
-      addListener: () => {},
-      dispatchEvent: () => false,
-      matches: false,
-      media: query,
-      onchange: null,
-      removeEventListener: () => {},
-      removeListener: () => {},
-    }),
-  });
+  installMatchMediaStub();
 });
 
-function textLength(element: Element): number {
-  return (element.textContent ?? "").replace(/\s+/g, " ").trim().length;
-}
-
-function getDirectChildren(element: HTMLElement): HTMLElement[] {
-  return Array.from(element.children) as HTMLElement[];
-}
-
-function headingLabels(container: HTMLElement): string[] {
-  return Array.from(container.querySelectorAll("h2, h3, h4"))
-    .map((heading) => (heading.textContent ?? "").replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-}
-
-const DARK_FEATURE_CARD_STYLE =
-  /#10213f|#0b1522|#0b1f47|#111827|rgb\(16,\s*33,\s*63\)|rgb\(11,\s*21,\s*34\)|rgb\(11,\s*31,\s*71\)|rgb\(17,\s*24,\s*39\)/i;
-
-const INTERNAL_CONTEXT_LEAKAGE =
-  /Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious technical work|serious Linux|strongest|workspace model|internal planning|multi-bay|control plane|project hosts|\bstale\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool|Use CoCalc when|competitor comparison|proof packet|evidence register|pitch docs|AGENTS\.md|CLAUDE\.md|GEMINI\.md|public-site cohesion audit|agent operating/i;
+// Internal/implementation language that must never leak into feature copy.
+// The shared INTERNAL_IMPLEMENTATION_TERMS floor supplies the cross-surface
+// bans (serious technical work, project hosts, multi-bay, control plane,
+// RootFS, ...); only the feature-surface-unique phrases are listed here so the
+// floor stays the single source of truth for the shared terms.
+const INTERNAL_CONTEXT_LEAKAGE = combineLeak(
+  INTERNAL_IMPLEMENTATION_TERMS,
+  "Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious Linux|strongest|workspace model|internal planning|\\bstale\\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool|Use CoCalc when|competitor comparison|proof packet|evidence register|pitch docs|AGENTS\\.md|CLAUDE\\.md|GEMINI\\.md|public-site cohesion audit|agent operating",
+);
 
 describe("getFeaturesRouteFromPath", () => {
   it("supports the features index and detail routes", () => {
@@ -193,21 +182,18 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", {
-        name: "Choose the workflow your team needs",
-      }),
-    ).not.toBeNull();
-    expect(screen.getByText(/^Use this index to choose/)).not.toBeNull();
-    expect(
-      screen.queryByText(/Start with Codex in CoCalc/i),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/Launchpad features make/)).toBeNull();
+    // Hero identity is the region + a single capped <h1>; the exact headline
+    // wording is free to change without a test edit.
+    const indexHero = container.querySelector(".cocalc-feature-index-hero");
+    expect(indexHero).not.toBeNull();
+    const indexH1 = container.querySelectorAll("h1");
+    expect(indexH1).toHaveLength(1);
+    expect(textLength(indexH1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
     const startingPoints = screen.getByRole("region", {
       name: "CoCalc feature starting points",
     });
     expect(
-      within(startingPoints).getByText("Begin with AI, notebooks, or runtime."),
+      within(startingPoints).getByRole("heading", { level: 3 }),
     ).not.toBeNull();
     expect(
       Array.from(within(startingPoints).getAllByRole("link"))
@@ -237,7 +223,6 @@ describe("PublicFeaturesApp", () => {
     expect(
       within(startingPoints).queryByRole("link", { name: /Compare CoCalc/i }),
     ).toBeNull();
-    expect(screen.queryByText("Feature map")).toBeNull();
     expect(
       screen.queryByAltText(/CoCalc feature map/i),
     ).not.toBeInTheDocument();
@@ -264,27 +249,12 @@ describe("PublicFeaturesApp", () => {
     expect(indexText.indexOf("Teaching")).toBeLessThan(
       indexText.indexOf("Languages"),
     );
-    expect(screen.queryByText("AI workflows and integration")).toBeNull();
-    expect(screen.queryByText("Runtime and hosted compute")).toBeNull();
-    expect(screen.queryByText("Languages and math")).toBeNull();
-    expect(screen.queryByText("Teaching and workshops")).toBeNull();
-    expect(screen.queryByText("Notebook, writing, and visual work")).toBeNull();
-    expect(screen.queryByText("AI and integration")).toBeNull();
+    // Group-label identity + order is pinned positively above; the prior
+    // per-variant negative prose bans were redundant copy pins and were
+    // removed. Internal-language leakage stays centrally guarded.
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
-    expect(screen.queryByText(/transparent JSONL format/i)).toBeNull();
-    expect(
-      screen.queryByText(/data science, and machine learning/i),
-    ).toBeNull();
-    expect(screen.queryByText(/^Documents$/)).toBeNull();
-    expect(screen.queryByText(/^Compute$/)).toBeNull();
-    expect(screen.queryByText(/^Compute and languages$/)).toBeNull();
-    expect(screen.queryByText(/^Runtime and project hosts$/)).toBeNull();
-    expect(screen.queryByText(/^AI and automation$/)).toBeNull();
-    expect(container.textContent ?? "").not.toMatch(
-      /all open format files|basically an operating system|RootFS architecture/i,
-    );
-    expect(screen.queryByText("Open page")).toBeNull();
+    expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
     expect(screen.queryByRole("link", { name: /Compare CoCalc/i })).toBeNull();
     expect(
       screen.getByRole("link", { name: /CoCalc CLI/i }).getAttribute("href"),
@@ -407,13 +377,14 @@ describe("PublicFeaturesApp", () => {
         level: 1,
       }),
     ).not.toBeNull();
+    // Hero marker is the page identity anchor (treated like a route canary).
     expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
-    expect(screen.queryByText("Start from the project")).toBeNull();
-    expect(screen.queryByText("Give inspectable context")).toBeNull();
-    expect(screen.queryByText("Review before relying on it")).toBeNull();
+    // Body keeps a route-specific keyword rather than pinning the sentence.
     expect(
       screen.getByText(/edit Markdown notes or documentation/i),
     ).not.toBeNull();
+    // Mock-UI labels (not headings): the agent panel says "Agent thread" /
+    // "Durable agent thread", never the prior "Codex"/"chat history" labels.
     expect(screen.getByText("Agent thread")).not.toBeNull();
     expect(screen.queryByText("Codex thread")).toBeNull();
     expect(
@@ -423,20 +394,8 @@ describe("PublicFeaturesApp", () => {
     ).not.toContain("#0b1522");
     expect(screen.getByText("Durable agent thread")).not.toBeNull();
     expect(screen.queryByText("Durable chat history")).toBeNull();
-    expect(screen.getByText("Choose the AI path that fits")).not.toBeNull();
-    expect(screen.queryByText("Ready to use Codex in CoCalc?")).toBeNull();
-    expect(screen.queryByText("Built-in provider support")).toBeNull();
-    expect(
-      screen.queryByText("Other agents can still run in terminals."),
-    ).toBeNull();
-    expect(screen.queryByText("Read the agent sandbox guide")).toBeNull();
-    expect(screen.queryByText("Codex in chat")).toBeNull();
-    expect(screen.queryByText("Give Codex useful context")).toBeNull();
-    expect(screen.queryByText("Review agent work together")).toBeNull();
-    expect(screen.queryByText("rich prompts")).toBeNull();
-    expect(
-      screen.queryByText("A sandbox for agent work, with humans nearby."),
-    ).toBeNull();
+    // Closing section identity without pinning the exact headline wording.
+    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
@@ -459,21 +418,13 @@ describe("PublicFeaturesApp", () => {
         .getByRole("link", { name: "Compare operating models" })
         .getAttribute("href"),
     ).toBe("/products");
-    expect(
-      screen.queryByRole("region", {
-        name: "Feature operating model next steps",
-      }),
-    ).toBeNull();
-    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
+    // next-steps/Decide/Next-Previous absence is centrally backstopped by the
+    // auditedFeaturePages structural test below for all 14 feature slugs.
     expect(
       screen.queryByRole("link", { name: "Pricing and licensing" }),
     ).toBeNull();
     expect(
       screen.queryByRole("link", { name: "Compare CoCalc fit" }),
-    ).toBeNull();
-    expect(screen.queryByRole("link", { name: /Next feature:/ })).toBeNull();
-    expect(
-      screen.queryByRole("link", { name: /Previous feature:/ }),
     ).toBeNull();
   });
 
@@ -528,61 +479,22 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Hero marker = page identity anchor (route-canary equivalent).
     expect(
       screen.getByText("Jupyter notebooks for work that needs to keep going"),
     ).not.toBeNull();
-    expect(screen.getByText("Keep runs alive")).not.toBeNull();
-    expect(screen.getByText("Work together live")).not.toBeNull();
-    expect(screen.getByText("Review and recover changes")).not.toBeNull();
-    expect(
-      screen.getByText("When the notebook depends on more than cells"),
-    ).not.toBeNull();
-    expect(
-      screen.getByText("Choose the notebook path that fits"),
-    ).not.toBeNull();
-    expect(screen.getByText("Ready to use Jupyter in CoCalc?")).not.toBeNull();
-    expect(screen.getByText("Compatibility guide")).not.toBeNull();
-    expect(screen.getByText("Ask about Jupyter workflows")).not.toBeNull();
-    expect(
-      screen
-        .getByRole("link", { name: "Compare operating models" })
-        .getAttribute("href"),
-    ).toBe("/products");
-    expect(
-      screen.queryByRole("region", {
-        name: "Feature operating model next steps",
-      }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("link", { name: "Compare notebook tools" }),
-    ).toBeNull();
-    expect(screen.queryByText("Where to go from here")).toBeNull();
-    expect(screen.queryByText("Bring Codex into a live notebook")).toBeNull();
-    expect(
-      screen.queryByText("Turn notebook work into a visual flow"),
-    ).toBeNull();
-    expect(screen.queryByText("Teach with notebook assignments")).toBeNull();
-    expect(screen.queryByText("Check Jupyter compatibility")).toBeNull();
-    expect(screen.queryByText("A run takes hours")).toBeNull();
-    expect(screen.queryByText("A collaborator joins")).toBeNull();
-    expect(screen.queryByText("A result needs review")).toBeNull();
-    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
-    expect(screen.queryByText("Durable execution")).toBeNull();
-    expect(screen.queryByText("Agent-ready")).toBeNull();
-    expect(screen.queryByText("When notebooks become shared work")).toBeNull();
-    expect(
-      screen.queryByText("Ready to try a notebook workflow in CoCalc?"),
-    ).toBeNull();
-    expect(screen.queryByText("Start using Jupyter on CoCalc")).toBeNull();
+    // Three durable-execution story cards exist — count, not prose.
+    const storyRow = container.querySelector(".cocalc-jupyter-story-row");
+    expect(storyRow).not.toBeNull();
+    expect((storyRow as HTMLElement).querySelectorAll("h4")).toHaveLength(3);
+    // Closing section identity without pinning the exact headline.
+    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
+    // Mock-UI output labels stay qualitative (never invented metrics).
     expect(screen.getByText("data loaded")).not.toBeNull();
     expect(screen.getByText("model summary ready")).not.toBeNull();
     expect(screen.queryByText("42,180 rows loaded")).toBeNull();
     expect(screen.queryByText("R^2 = 0.94")).toBeNull();
-    expect(
-      screen.queryByText(
-        "Let the agent work with the notebook you actually have open",
-      ),
-    ).toBeNull();
+    // Agent details modal identity (aria contract).
     fireEvent.click(screen.getByRole("button", { name: "See agent details" }));
     expect(
       screen.getByRole("dialog", {
@@ -590,12 +502,16 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
-    expect(container.textContent ?? "").not.toMatch(
-      /stale files|Positioning guide|Choose the next workflow when the notebook grows/i,
+    expect(new Set(getHeadingTexts(container)).size).toBe(
+      getHeadingTexts(container).length,
     );
-    expect(new Set(headingLabels(container)).size).toBe(
-      headingLabels(container).length,
-    );
+    // Routing canaries: /products operating-model link + the compatibility
+    // documentation deep link.
+    expect(
+      screen
+        .getByRole("link", { name: "Compare operating models" })
+        .getAttribute("href"),
+    ).toBe("/products");
     expect(
       screen
         .getByRole("link", { name: "Compatibility guide" })
@@ -631,26 +547,16 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Hero marker = page identity anchor.
     expect(
       screen.getByText(
         "Write the paper where the code, figures, and review live",
       ),
     ).not.toBeNull();
-    expect(screen.getByText("Keep the working tree together")).not.toBeNull();
-    expect(
-      screen.getByText("Use computation as part of the writing process"),
-    ).not.toBeNull();
-    expect(screen.getByText("A practical writing loop")).not.toBeNull();
-    expect(screen.getByText("What stays with the paper")).not.toBeNull();
+    // Route-specific body keyword (LaTeX writing loop) instead of pinned prose.
+    expect(screen.getByText(/writing loop/i)).not.toBeNull();
+    // Mock-UI label ban: the agent panel reads "AI review thread", not "Codex".
     expect(screen.queryByText("Codex review thread")).toBeNull();
-    expect(screen.queryByText("PDF build")).toBeNull();
-    expect(screen.queryByText("Recover draft history")).toBeNull();
-    expect(
-      screen.queryByText(
-        "Use Codex as an editor and build assistant, not an author",
-      ),
-    ).toBeNull();
-    expect(screen.queryByText("structure review")).toBeNull();
   });
 
   it("uses projects as the latex CTA for authenticated users", () => {
@@ -681,76 +587,32 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Hero marker = page identity anchor.
     expect(
       screen.getByText("Teach where students compute, write, and collaborate"),
     ).not.toBeNull();
+    // "Technical course workspace" is the section anchor reused below to scope
+    // the doc/route links; it doubles as a presence check.
     expect(screen.getByText("Technical course workspace")).not.toBeNull();
-    expect(
-      screen.getByText(/CoCalc works beside the campus LMS/i),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Keep administration in the LMS. Run coursework in CoCalc.",
-      ),
-    ).not.toBeNull();
-    expect(screen.getByText("Keep in your LMS")).not.toBeNull();
-    expect(
-      screen.getByText("Use CoCalc for technical coursework"),
-    ).not.toBeNull();
-    expect(screen.getByText("Use a notebook hub when")).not.toBeNull();
-    expect(
-      screen.queryByText(
-        "Pair CoCalc with the systems your institution already uses",
-      ),
-    ).toBeNull();
-    expect(screen.queryByText("Give each student a project")).toBeNull();
-    expect(screen.queryByText("Hand out and collect work")).toBeNull();
-    expect(screen.queryByText("Keep the environment consistent")).toBeNull();
+    // Route-specific teaching body keyword (LMS / coursework split) instead of
+    // pinning the exact marketing sentences.
+    expect(screen.getAllByText(/LMS|coursework/i).length).toBeGreaterThan(0);
+    // Mock-UI label stays qualitative, never an invented notebook count; and
+    // the assignment panel stays light.
     expect(screen.getByText("nbgrader queue ready")).not.toBeNull();
+    expect(screen.queryByText("nbgrader: 26 notebooks ready")).toBeNull();
     expect(
       container
         .querySelector(".cocalc-teaching-assignment-panel")
         ?.getAttribute("style") ?? "",
     ).not.toMatch(DARK_FEATURE_CARD_STYLE);
-    expect(screen.queryByText("nbgrader: 26 notebooks ready")).toBeNull();
-    expect(
-      screen.getByText("Run the assignment loop in student projects"),
-    ).not.toBeNull();
-    expect(screen.queryByText("Reduce setup and support friction")).toBeNull();
-    expect(
-      screen.getByText("Choose the teaching path that fits"),
-    ).not.toBeNull();
-    expect(screen.queryByText("Ready to plan a course?")).toBeNull();
+    // Closing section identity without pinning the headline.
+    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
+    // Planning-guides panel + teaching's own unauth CTA identity.
     expect(screen.getByText("Useful planning guides")).not.toBeNull();
     expect(screen.getByText("Use hosted CoCalc.ai")).not.toBeNull();
-    expect(
-      screen.queryByText(
-        "Start students in a browser with course software and data already available.",
-      ),
-    ).toBeNull();
-    expect(
-      screen.getByText(
-        "Teaching guide for assignments, collection, and grading.",
-      ),
-    ).not.toBeNull();
-    expect(
-      screen.queryByRole("region", {
-        name: "Feature operating model next steps",
-      }),
-    ).toBeNull();
-    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
-    expect(screen.queryByText("Assign, collect, grade, return")).toBeNull();
-    expect(
-      screen.queryByText("Grade in the same workspace students used"),
-    ).toBeNull();
-    expect(
-      screen.queryByText("Notebook teaching works with nbgrader"),
-    ).toBeNull();
-    expect(screen.queryByText("Reduce local setup friction")).toBeNull();
-    expect(
-      screen.queryByText("Share a reusable course environment"),
-    ).toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
+    // Documentation deep links (route canaries), scoped via the section anchor.
     expect(
       screen.getByRole("link", { name: "Environment guide" }),
     ).toHaveAttribute(
@@ -767,25 +629,21 @@ describe("PublicFeaturesApp", () => {
         .getByRole("link", { name: "Compare product paths" })
         .getAttribute("href"),
     ).toBe("/products");
-    const disallowedTeachingCopy = [
-      "RootFS",
-      "rootfs",
-      "Live computational classroom",
-      "teaching center",
-      "first minute",
-      "strongest",
-      "institutional shell",
-      ["serious", "technical"].join(" "),
-    ];
+    // Internal-language leakage: shared floor + teaching-surface-unique bans.
     expect(container.textContent ?? "").not.toMatch(
-      new RegExp(disallowedTeachingCopy.join("|"), "i"),
+      combineLeak(
+        INTERNAL_IMPLEMENTATION_TERMS,
+        "Live computational classroom",
+        "teaching center",
+        "first minute",
+        "strongest",
+        "institutional shell",
+      ),
     );
+    // No invented external proof / testimonials.
     expect(container.innerHTML).not.toContain("cocalc.com/testimonials");
-    expect(
-      screen.queryByText("Teach in the same environment where students work"),
-    ).toBeNull();
-    expect(new Set(headingLabels(container)).size).toBe(
-      headingLabels(container).length,
+    expect(new Set(getHeadingTexts(container)).size).toBe(
+      getHeadingTexts(container).length,
     );
   });
 
@@ -817,30 +675,16 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Hero marker = page identity anchor.
     expect(
       screen.getByText("A terminal is a live project document."),
     ).not.toBeNull();
+    // Mock-UI label: the .term-file address line stays in the terminal mock.
     expect(
       screen.getAllByText("A .term file gives the shell an address").length,
     ).toBeGreaterThan(0);
-    expect(
-      screen.getByText("Collaborate in one terminal stream"),
-    ).not.toBeNull();
-    expect(screen.queryByText("Run project commands")).toBeNull();
-    expect(screen.queryByText("Share one live stream")).toBeNull();
-    expect(screen.queryByText("Give agents terminal state")).toBeNull();
-    expect(
-      screen.getByText("Choose the terminal path that fits"),
-    ).not.toBeNull();
-    expect(
-      screen.getByText("Ready to use terminals in CoCalc?"),
-    ).not.toBeNull();
-    expect(
-      screen.queryByRole("region", {
-        name: "Feature operating model next steps",
-      }),
-    ).toBeNull();
-    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
+    // Closing section identity without pinning the headline.
+    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
   });
 
   it("uses projects as the terminal CTA for authenticated users", () => {
@@ -871,32 +715,20 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Hero marker = page identity anchor.
     expect(
       screen.getByText("A Linux workspace you can actually administer."),
     ).not.toBeNull();
+    // Route-specific Linux body keyword instead of pinning the exact prose.
     expect(
-      screen.getByText("Learn and use Linux without risking your own machine"),
-    ).not.toBeNull();
-    expect(
-      screen.getByText("Build course and team environments once"),
-    ).not.toBeNull();
-    expect(screen.queryByText("Install system packages")).toBeNull();
-    expect(screen.queryByText("Give everyone the same setup")).toBeNull();
-    expect(screen.queryByText("Save known-good environments")).toBeNull();
-    expect(screen.getByText("Choose the Linux path that fits")).not.toBeNull();
-    expect(screen.getByText("Ready to use Linux in CoCalc?")).not.toBeNull();
-    expect(
-      screen.getByText("files, system packages, services, and tools"),
-    ).not.toBeNull();
-    expect(
-      screen.queryByRole("region", {
-        name: "Feature operating model next steps",
-      }),
-    ).toBeNull();
-    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
+      screen.getAllByText(/administer|system packages|sudo/i).length,
+    ).toBeGreaterThan(0);
+    // Closing section identity without pinning the headline.
+    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
+    // Mock-UI label stays qualitative, never an invented version string.
     expect(screen.getByText("graphviz version reported")).not.toBeNull();
     expect(screen.queryByText("graphviz version 2.43.0")).toBeNull();
-    expect(screen.queryByText("RootFS images make setup reusable")).toBeNull();
+    // Linux-surface-unique leakage ban (root-filesystem implementation talk).
     expect(screen.queryByText(/root filesystem/i)).toBeNull();
   });
 
@@ -928,15 +760,12 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Hero marker = page identity anchor.
     expect(
       screen.getByText("Python that moves from notebook to script to paper."),
     ).not.toBeNull();
-    expect(screen.getByText("From notebook to script to paper")).not.toBeNull();
-    expect(screen.getByText("Reusable Python environment")).not.toBeNull();
-    expect(
-      screen.queryByRole("heading", { name: "Scripts and modules" }),
-    ).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Terminals" })).toBeNull();
+    // Route-specific section keyword instead of pinned heading prose.
+    expect(screen.getByText(/Reusable Python/i)).not.toBeNull();
   });
 
   it("uses projects as the python CTA for authenticated users", () => {
@@ -967,19 +796,16 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Hero marker = page identity anchor.
     expect(
       screen.getByText(
         "A technical whiteboard for math, code, and collaboration.",
       ),
     ).not.toBeNull();
+    // Route-specific section keyword (whiteboard runs Jupyter cells).
     expect(
       screen.getByText("Put Jupyter cells in a directed graph."),
     ).not.toBeNull();
-    expect(screen.queryByText("Explain with editable text")).toBeNull();
-    expect(
-      screen.queryByText("Run cells when the diagram needs code"),
-    ).toBeNull();
-    expect(screen.queryByText("Transparent format")).toBeNull();
   });
 
   it.each([
@@ -1362,32 +1188,18 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    // Compare-page section identity via keyword + heading uniqueness instead
+    // of pinning each exact headline; the two-sided "fits when" decision is the
+    // load-bearing structure (its panel/row counts are held by the scannable
+    // test below).
+    const compareHeadings = getHeadingTexts(container, "h1, h2, h3, h4");
+    expect(new Set(compareHeadings).size).toBe(compareHeadings.length);
+    expect(textLength(container.querySelector("h2")!)).toBeLessThanOrEqual(
+      SECTION_H2_MAX,
+    );
     expect(
-      screen.getByRole("heading", {
-        name: "When is CoCalc the right fit?",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "The practical split.",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "CoCalc fits when...",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "A focused tool fits when...",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", { name: "Decision checklist." }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", { name: "Where to go next." }),
-    ).not.toBeNull();
+      compareHeadings.filter((heading) => /fits when/i.test(heading)),
+    ).toHaveLength(2);
     expect(
       screen.getByText(/Best fit: work that needs review/i),
     ).not.toBeNull();
@@ -1491,7 +1303,7 @@ describe("PublicFeaturesApp", () => {
     expect(
       container.querySelectorAll(".cocalc-compare-decision-panel"),
     ).toHaveLength(2);
-    expect(getDirectChildren(decisionRows)).toHaveLength(5);
+    expect(getDirectCards(decisionRows)).toHaveLength(5);
     expect(
       container.querySelectorAll(".cocalc-compare-route-row"),
     ).toHaveLength(4);
@@ -1506,7 +1318,7 @@ describe("PublicFeaturesApp", () => {
     )) {
       expect(textLength(panel)).toBeLessThanOrEqual(480);
     }
-    for (const row of getDirectChildren(decisionRows)) {
+    for (const row of getDirectCards(decisionRows)) {
       expect(textLength(row)).toBeLessThanOrEqual(310);
     }
 

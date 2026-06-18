@@ -3,17 +3,16 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
-
-function expectLinkHrefs(
-  container: HTMLElement,
-  expectedHrefs: Array<unknown>,
-) {
-  expect(
-    within(container)
-      .getAllByRole("link")
-      .map((link) => link.getAttribute("href")),
-  ).toEqual(expectedHrefs);
-}
+import {
+  combineLeak,
+  DARK_FEATURE_CARD_STYLE,
+  expectLinkHrefs,
+  HERO_H1_MAX,
+  INTERNAL_IMPLEMENTATION_TERMS,
+  SECTION_H2_MAX,
+  STALE_REPETITIVE_HOME_LINES,
+  textLength,
+} from "../../__tests__/test-helpers";
 
 function getHomepageSectionLabels(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll(".cocalc-public-home > section"))
@@ -88,20 +87,28 @@ describe("PublicHomeApp", () => {
     ]);
     expectHomepageSectionsLabeled(container);
 
+    // Section identity + order are canaried by the aria-label array above.
+    // Here we only hold the h2 count and an anti-sprawl length bound, so the
+    // per-section headline wording can change without a test edit.
+    const sectionHeadings = Array.from(container.querySelectorAll("h2"));
+    expect(sectionHeadings).toHaveLength(5);
+    for (const heading of sectionHeadings) {
+      expect(textLength(heading)).toBeLessThanOrEqual(SECTION_H2_MAX);
+    }
+
     const hero = screen.getByRole("region", {
       name: "CoCalc hero",
     });
-    expect(
-      within(hero).getByRole("heading", {
-        level: 1,
-        name: "Shared projects for research, teaching, and technical teams",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(hero).getByText(
-        /CoCalc gives teams one shared place to work, review changes, and keep going without rebuilding context/i,
-      ),
-    ).not.toBeNull();
+    const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
+    expect(heroHeadings).toHaveLength(1);
+    expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
+    // Select the hero lead by structure (the element after the H1) instead of
+    // pinning the sentence; assert it stays short and carries the key ideas.
+    const heroLead = hero.querySelector(".cocalc-public-home-hero-title + *");
+    expect(heroLead).not.toBeNull();
+    expect(textLength(heroLead as Element)).toBeLessThanOrEqual(180);
+    expect(hero.textContent ?? "").toMatch(/review/i);
+    expect(hero.textContent ?? "").toMatch(/context|continue|keep going/i);
     expect(within(hero).queryByText(/notebooks, code, documents/i)).toBeNull();
     expect(within(hero).queryByText(/hosted, local, single-VM/i)).toBeNull();
     expect(
@@ -122,28 +129,19 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).queryByText(/keeps technical work collaborative/i),
     ).toBeNull();
-    for (const tag of [
-      "Shared project record",
-      "Reviewable context",
-      "Course workflows",
-      "Recoverable work",
-    ]) {
-      expect(within(hero).queryByText(tag)).toBeNull();
-    }
+    // No chip/tag row in the hero, and exactly the two CTAs (links).
+    expect(hero.querySelectorAll(".ant-tag")).toHaveLength(0);
+    expect(within(hero).getAllByRole("link")).toHaveLength(2);
+    // The hero CTA panel must stay a light panel.
+    const heroCtaPanel = hero.querySelector(".cocalc-public-home-actions");
+    expect(heroCtaPanel).not.toBeNull();
+    expect(
+      (heroCtaPanel as HTMLElement).getAttribute("style") ?? "",
+    ).not.toMatch(DARK_FEATURE_CARD_STYLE);
 
     const audiences = screen.getByRole("region", {
       name: "Who CoCalc helps",
     });
-    expect(
-      within(audiences).getByRole("heading", {
-        name: "Built for research, courses, and platform teams.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(audiences).getByText(
-        "Start with the path that matches how your group works.",
-      ),
-    ).not.toBeNull();
     expect(
       within(audiences).queryByText(/Different audiences can start/i),
     ).toBeNull();
@@ -173,11 +171,6 @@ describe("PublicHomeApp", () => {
     const workflows = screen.getByRole("region", {
       name: "Core workflows",
     });
-    expect(
-      within(workflows).getByRole("heading", {
-        name: "Work where the project already lives.",
-      }),
-    ).not.toBeNull();
     expect(
       within(workflows).getByRole("link", {
         name: "Browse feature workflows",
@@ -225,11 +218,6 @@ describe("PublicHomeApp", () => {
     const products = screen.getByRole("region", {
       name: "Ways to run CoCalc",
     });
-    expect(
-      within(products).getByRole("heading", {
-        name: "Choose the operating model that fits your team.",
-      }),
-    ).not.toBeNull();
     expect(
       within(products).getByRole("link", {
         name: "Compare operating models",
@@ -287,11 +275,6 @@ describe("PublicHomeApp", () => {
     const difference = screen.getByRole("region", {
       name: "Why CoCalc is different",
     });
-    expect(
-      within(difference).getByRole("heading", {
-        name: "A workspace built around the project.",
-      }),
-    ).not.toBeNull();
     for (const title of [
       "Project-centered workflow",
       "Inspection before handoff",
@@ -370,11 +353,10 @@ describe("PublicHomeApp", () => {
     ).toHaveAttribute("href", "/products");
 
     const path = screen.getByRole("region", { name: "Next step" });
-    expect(
-      within(path).getByRole("heading", {
-        name: "Ready to choose how CoCalc fits?",
-      }),
-    ).not.toBeNull();
+    // The next-step CTA panel must stay a light panel.
+    expect(path.getAttribute("style") ?? "").not.toMatch(
+      DARK_FEATURE_CARD_STYLE,
+    );
     expect(
       within(path).getByRole("link", { name: "Start on CoCalc.ai" }),
     ).toHaveAttribute("href", "/auth/sign-up");
@@ -395,10 +377,10 @@ describe("PublicHomeApp", () => {
     expect(screen.getAllByText("CoCalc Star").length).toBeGreaterThan(0);
     expect(container.innerHTML).toContain("products/cocalc-star");
     expect(container.innerHTML).not.toMatch(
-      /project hosts|backend state|logs stay scoped|RootFS|multi-bay/i,
+      combineLeak(INTERNAL_IMPLEMENTATION_TERMS),
     );
     expect(container.textContent ?? "").not.toMatch(
-      /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Make computational work easier to share, review, and continue|CoCalc is a shared project workspace for computational work|CoCalc keeps the work in one project/i,
+      STALE_REPETITIVE_HOME_LINES,
     );
   });
 

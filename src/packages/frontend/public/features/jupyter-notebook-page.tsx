@@ -315,7 +315,7 @@ export default function JupyterNotebookFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
+      <Row className="cocalc-jupyter-story-row" gutter={[16, 16]}>
         <Col xs={24} md={8}>
           <StoryCard icon="stopwatch" title="Keep runs alive">
             Start a long cell, disconnect, and return to the captured output.

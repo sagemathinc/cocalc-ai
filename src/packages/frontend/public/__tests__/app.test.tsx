@@ -21,6 +21,90 @@ import { getPoliciesRouteFromPath } from "../policies/routes";
 import { getPublicRouteFromPath, isPublicTarget, publicPath } from "../routes";
 import type { PublicProductsRoute } from "../products/routes";
 import { getProductsRouteFromPath } from "../products/routes";
+import {
+  combineLeak,
+  INTERNAL_IMPLEMENTATION_TERMS,
+  SECTION_H2_MAX,
+  STALE_REPETITIVE_HOME_LINES,
+  textLength,
+} from "./test-helpers";
+
+// Competitor names, invented compliance/proof claims, and stale home taglines
+// must never leak onto the public products/pricing marketing surfaces. The
+// STALE floor is shared with the home surface; the surface-unique bans here are
+// the competitor set plus invented SOC2/GDPR/testimonial proof language. We do
+// NOT fold in the full INTERNAL_IMPLEMENTATION_TERMS floor for this regex
+// because some of those terms (e.g. "Kubernetes" on the Rocket page, "project
+// hosts" on pricing) are legitimate public copy; the pure internal floor is
+// asserted only on surfaces that are verified clean of it (the products
+// overview).
+const MARKETING_SURFACE_LEAK = combineLeak(
+  STALE_REPETITIVE_HOME_LINES,
+  /\bColab\b/,
+  /\bDeepnote\b/,
+  /\bOverleaf\b/,
+  /\bRStudio\b/,
+  /\bPosit\b/,
+  /\bMathematica\b/,
+  /\bMaple\b/,
+  /\bMATLAB\b/,
+  /\bSOC\s?2\b/,
+  /\bGDPR\b/,
+  /\btestimonial/,
+);
+
+function expectNoMarketingLeakage(scope: HTMLElement = document.body) {
+  expect(scope.textContent ?? "").not.toMatch(MARKETING_SURFACE_LEAK);
+}
+
+// Pure internal/implementation-language floor. Only safe on surfaces that do
+// not legitimately use any of these terms (products overview, home); detail
+// product pages and pricing legitimately surface a couple of them.
+function expectNoInternalFloor(scope: HTMLElement = document.body) {
+  expect(scope.textContent ?? "").not.toMatch(INTERNAL_IMPLEMENTATION_TERMS);
+  expect(scope.textContent ?? "").not.toMatch(STALE_REPETITIVE_HOME_LINES);
+}
+
+// The products path chooser renders five operating-model cards in a fixed
+// order. We canary the count and the ordered product titles via a robust
+// header-row selector (NOT a bare strong query) so card body copy can change
+// without a test edit.
+function expectProductPathChooserCards() {
+  const cards = document.querySelectorAll(".cocalc-public-products-path-card");
+  expect(cards).toHaveLength(5);
+  const titles = Array.from(
+    document.querySelectorAll(
+      ".cocalc-public-products-path-card > div:first-child strong",
+    ),
+  ).map((el) => (el.textContent ?? "").trim());
+  expect(titles).toEqual([
+    "CoCalc.ai",
+    "CoCalc Plus",
+    "CoCalc Star",
+    "CoCalc Launchpad",
+    "CoCalc Rocket",
+  ]);
+}
+
+// A product detail page has exactly one <h2> lead headline; assert its presence
+// and an anti-sprawl length bound instead of pinning the marketing wording.
+function expectSingleLeadHeadline() {
+  const h2s = document.querySelectorAll("main h2");
+  expect(h2s).toHaveLength(1);
+  expect(textLength(h2s[0])).toBeLessThanOrEqual(SECTION_H2_MAX);
+}
+
+// A "Boundary: ..." detail card renders an explicit notes list; assert the
+// item count (structure) plus one identity token for the surface.
+function expectBoundaryNotes(
+  name: string,
+  count: number,
+  identityToken: RegExp,
+) {
+  const card = screen.getByRole("region", { name });
+  expect(within(card).getAllByRole("listitem")).toHaveLength(count);
+  expect(within(card).getAllByText(identityToken).length).toBeGreaterThan(0);
+}
 
 const originalFetch = global.fetch;
 
@@ -78,11 +162,16 @@ async function renderPublicApp(ui: React.ReactElement) {
 }
 
 function expectNoProductDetailStalePhrasing() {
+  // Detail pages cannot use the full INTERNAL_IMPLEMENTATION_TERMS floor because
+  // a few of its terms are legitimate public copy here (e.g. "Kubernetes" on the
+  // Rocket page). So we keep the detail-safe internal bans explicitly, alongside
+  // the product-detail-unique stale/invented phrasing.
   for (const phrase of [
     /serious technical/i,
+    /multi-bay/i,
+    /\bRootFS\b/i,
     /What CoCalc/i,
     /not HA/i,
-    /multi-bay/i,
     /production operations matter/i,
     /Production private cloud/i,
     /lower-level operator control plane/i,
@@ -104,13 +193,18 @@ function expectNoProductDetailStalePhrasing() {
     /air-gapped/i,
     /basically an operating system/i,
     /all open format/i,
-    /\bRootFS\b/i,
   ]) {
     expect(screen.queryByText(phrase)).toBeNull();
   }
+  // Cross-surface competitor / invented-proof / stale-tagline floor.
+  expectNoMarketingLeakage();
 }
 
 function expectSharedProjectContextNote() {
+  // Identity + visual contract canary: the note region must exist with its
+  // aria-label and its light, border-left, capped-width styling. The exact
+  // sentences are intentionally NOT pinned — only presence/structure and an
+  // anti-sprawl length bound, so copy can be reworded without a test edit.
   const note = screen.getByRole("note", {
     name: "Shared CoCalc project context",
   });
@@ -118,14 +212,8 @@ function expectSharedProjectContextNote() {
   expect(style).toContain("border-left");
   expect(style).toContain("max-width: 76ch");
   expect(style).not.toContain("background");
-  expect(
-    within(note).getByText("Same project, different operating path."),
-  ).not.toBeNull();
-  expect(
-    within(note).getByText(
-      /project remains the working context for files, notebooks, terminals, chats, and agent context/i,
-    ),
-  ).not.toBeNull();
+  expect(note.querySelector("strong")).not.toBeNull();
+  expect(textLength(note)).toBeLessThanOrEqual(320);
 }
 
 describe("section route parsers", () => {
@@ -586,6 +674,7 @@ describe("PublicApp", () => {
         name: "Quotes and customized invoices",
       }),
     ).not.toBeNull();
+    expectNoMarketingLeakage();
   });
 
   it("keeps pricing useful when hosted plans are unavailable", async () => {
@@ -605,12 +694,10 @@ describe("PublicApp", () => {
         name: "CoCalc.ai Pricing and Licensing",
       }),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Hosted plan prices are not published here yet."),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(/^Hosted memberships are the managed CoCalc\.ai/),
-    ).not.toBeNull();
+    // Structural fallback contract: an informational alert is shown (copy free).
+    const fallbackAlert = document.querySelector(".ant-alert");
+    expect(fallbackAlert).not.toBeNull();
+    expect(fallbackAlert?.className).toContain("ant-alert-info");
     expect(
       screen
         .getAllByRole("link", { name: "Compare operating models" })
@@ -646,6 +733,7 @@ describe("PublicApp", () => {
     expect(
       screen.queryByText(/membership tiers are currently configured/i),
     ).toBeNull();
+    expectNoMarketingLeakage();
   });
 
   it("hides the shared Policies nav item when public policies are disabled", async () => {
@@ -822,9 +910,10 @@ describe("PublicApp", () => {
         style.textContent?.includes("overflow-wrap: anywhere"),
       ),
     ).toBe(true);
-    expect(
-      screen.getByText("Launchpad · Last Updated: June 9, 2026"),
-    ).not.toBeNull();
+    // Keep the mandatory site_name prefix (doubles as a site_name-injection
+    // canary) and the freshness structure, but free the date literal so a
+    // routine "Last Updated" bump needs no test edit.
+    expect(screen.getByText(/^Launchpad · Last Updated:/)).not.toBeNull();
     expect(
       screen.getByText(
         "How does SageMath, Inc. describe privacy practices for CoCalc?",
@@ -900,9 +989,7 @@ describe("PublicApp", () => {
         name: "Data Processing Addendum",
       }),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Launchpad · Last Updated: June 9, 2026"),
-    ).not.toBeNull();
+    expect(screen.getByText(/^Launchpad · Last Updated:/)).not.toBeNull();
     expect(
       screen.getByText(
         "What data-processing terms apply when SageMath, Inc. processes personal data on a user's behalf?",
@@ -1011,7 +1098,10 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Public policy pages are not configured"),
     ).not.toBeNull();
-    expect(screen.queryByText("Terms of service")).toBeNull();
+    // Live non-leak guard: the built-in policy card title is cased
+    // "Terms of Service"; the previous lowercase literal never matched and was
+    // a no-op.
+    expect(screen.queryByText("Terms of Service")).toBeNull();
   });
 
   it("shows an external policy link instead of built-in policy pages", async () => {
@@ -1030,7 +1120,8 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: "Open policy page" }),
     ).not.toBeNull();
-    expect(screen.queryByText("Terms of service")).toBeNull();
+    // Live non-leak guard (cased to match the built-in card title).
+    expect(screen.queryByText("Terms of Service")).toBeNull();
   });
 
   it("uses the external policy link for direct policy routes as well", async () => {
@@ -1181,11 +1272,7 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", {
-        name: "Need local CoCalc before choosing a shared path?",
-      }),
-    ).not.toBeNull();
+    expectSingleLeadHeadline();
     expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Plus positioning",
@@ -1198,15 +1285,12 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Install CoCalc Plus locally" }),
     ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Boundary: local, one-user runtime",
-      }),
-    ).not.toBeNull();
-    expect(screen.getByText(/self-serve local software/i)).not.toBeNull();
-    expect(
-      screen.getByText(/user operates the runtime and local data/i),
-    ).not.toBeNull();
+    // Boundary card: structure (li count) + one Plus identity token, not prose.
+    expectBoundaryNotes(
+      "Boundary: local, one-user runtime",
+      4,
+      /self-serve local software|user operates the runtime|one-user/i,
+    );
     expect(
       screen.getByRole("heading", {
         name: "Choose a shared path after local evaluation",
@@ -1281,43 +1365,12 @@ describe("PublicApp", () => {
     expect(within(pathChooser).getAllByText("Where it runs")).toHaveLength(5);
     expect(within(pathChooser).getAllByText("Best fit")).toHaveLength(5);
     expect(within(pathChooser).getAllByText("What to verify")).toHaveLength(5);
-    expect(
-      screen.getByText("Hosted service operated by CoCalc"),
-    ).not.toBeNull();
-    expect(
-      screen.getByText("Hosted plans and the site-licensing path."),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Individuals and teams that want managed hosted projects without running infrastructure.",
-      ),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Local install command and self-serve ownership boundary.",
-      ),
-    ).not.toBeNull();
-    expect(
-      screen.getByText("Single-VM appliance operated by the user or customer"),
-    ).not.toBeNull();
-    expect(
-      screen.getByText("Public-VM setup guide and one-VM boundary."),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Users or small teams that want a shared CoCalc instance on one public Ubuntu VM.",
-      ),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Installer, supported target, and customer-operated boundary.",
-      ),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Planning context, operator boundary, and support expectations.",
-      ),
-    ).not.toBeNull();
+    // Structure + ordered identity instead of pinning each card's body copy.
+    expectProductPathChooserCards();
+    // Cheap cross-surface canary: the products overview is verified clean of the
+    // pure internal floor, so assert it directly here too.
+    expectNoInternalFloor();
+    expectNoMarketingLeakage();
     expect(screen.queryByText(/local Lima/i)).toBeNull();
     expect(screen.queryByText(/quick team starts/i)).toBeNull();
     expect(screen.queryByText(/Production private cloud/i)).toBeNull();
@@ -1435,11 +1488,7 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", {
-        name: "Need a bounded private CoCalc deployment?",
-      }),
-    ).not.toBeNull();
+    expectSingleLeadHeadline();
     expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Launchpad positioning",
@@ -1460,15 +1509,12 @@ describe("PublicApp", () => {
     expect(
       screen.getByText(/customer-operated CoCalc environment/),
     ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Boundary: bounded private deployment",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(/customer or administrator owns infrastructure/i),
-    ).not.toBeNull();
-    expect(screen.getByText(/ongoing operations/i)).not.toBeNull();
+    // Boundary card: structure (li count) + a Launchpad identity token.
+    expectBoundaryNotes(
+      "Boundary: bounded private deployment",
+      4,
+      /customer or administrator owns infrastructure|customer-operated/i,
+    );
     expect(
       screen.getByText(/deployment rights, rollout planning, licensing/i),
     ).not.toBeNull();
@@ -1529,9 +1575,7 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "Is one public Ubuntu VM enough?" }),
-    ).not.toBeNull();
+    expectSingleLeadHeadline();
     expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Star positioning",
@@ -1554,13 +1598,13 @@ describe("PublicApp", () => {
         /Compare paths first if the organization needs private deployment/i,
       ),
     ).not.toBeNull();
+    // Star identity token kept at page level; boundary asserted structurally.
     expect(screen.getAllByText(/public Ubuntu VM/).length).toBeGreaterThan(0);
-    expect(
-      screen.getByText(/not a high-availability or scale-out/),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", { name: "Boundary: one public VM" }),
-    ).not.toBeNull();
+    expectBoundaryNotes(
+      "Boundary: one public VM",
+      3,
+      /not a high-availability or scale-out|one public VM/i,
+    );
     expect(
       screen.getByRole("link", { name: "Read Star setup guide" }),
     ).toHaveAttribute("href", "/docs/self-hosting/cocalc-star");
@@ -1576,11 +1620,7 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", {
-        name: "Planning an institutional private CoCalc deployment?",
-      }),
-    ).not.toBeNull();
+    expectSingleLeadHeadline();
     expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Rocket positioning",
@@ -1597,20 +1637,18 @@ describe("PublicApp", () => {
       0,
     );
     expect(
-      screen.getByText(/clear ownership of ongoing operations/i),
-    ).not.toBeNull();
-    expect(
       screen.getByText(/deployment-planning expectations/i),
     ).not.toBeNull();
     expect(screen.queryByText(/level of deployment help/i)).toBeNull();
     expect(
       screen.getByRole("heading", { name: "Plan Rocket with CoCalc" }),
     ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Boundary: planned private cloud",
-      }),
-    ).not.toBeNull();
+    // Boundary card: structure (li count) + a Rocket identity token.
+    expectBoundaryNotes(
+      "Boundary: planned private cloud",
+      3,
+      /customer-operated private-cloud|clear ownership of ongoing operations/i,
+    );
     expect(
       screen.getAllByRole("link", {
         name: "Talk with CoCalc about Rocket",
