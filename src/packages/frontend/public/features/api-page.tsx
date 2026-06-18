@@ -114,7 +114,7 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
                 pipeline that runs on its own.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("products")}>
+                <Button href={appPath("products")}>
                   Compare operating models
                 </Button>
               </Flex>
