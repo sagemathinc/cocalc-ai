@@ -16,16 +16,25 @@ export function RootfsPanel({
 }: {
   layout?: "flyout" | "page";
 }): React.JSX.Element {
+  const page = layout === "page";
   return (
     <div
       style={{
-        padding:
-          layout === "flyout"
-            ? `14px ${FLYOUT_PADDING} ${FLYOUT_PADDING} 0`
-            : `16px 24px`,
+        padding: page ? "24px" : `14px ${FLYOUT_PADDING} ${FLYOUT_PADDING} 0`,
       }}
     >
-      <RootFilesystemImage />
+      <div
+        style={
+          page
+            ? {
+                margin: "0 auto",
+                maxWidth: 1120,
+              }
+            : undefined
+        }
+      >
+        <RootFilesystemImage />
+      </div>
     </div>
   );
 }
