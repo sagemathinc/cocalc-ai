@@ -1133,7 +1133,7 @@ describeIfLinux("rootfs option sandbox", () => {
       fs.writeFile("/alpha.txt", "from-home"),
     );
     expect(err.message).toContain(
-      "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the workspace and try again.",
+      "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the project and try again.",
     );
     expect(err.message).not.toContain(rootfs);
     await fs.writeFile("/home/user/home-ok.txt", "ok");
@@ -1152,7 +1152,7 @@ describeIfLinux("rootfs option sandbox", () => {
       fsMissingScratch.writeFile("/tmp/blocked.txt", "blocked"),
     );
     expect(err.message).toContain(
-      "temporary storage is not mounted; cannot access absolute path '/tmp/blocked.txt'. Start the workspace and try again.",
+      "temporary storage is not mounted; cannot access absolute path '/tmp/blocked.txt'. Start the project and try again.",
     );
     expect(err.message).not.toContain(secretScratchPath);
   });
@@ -1356,7 +1356,7 @@ describeIfLinux("rootfs option sandbox", () => {
     await expect(
       fsMissingScratch.writeFile("/tmp/blocked.txt", "blocked"),
     ).rejects.toThrow(
-      "temporary storage is not mounted; cannot access absolute path '/tmp/blocked.txt'. Start the workspace and try again.",
+      "temporary storage is not mounted; cannot access absolute path '/tmp/blocked.txt'. Start the project and try again.",
     );
     await expect(
       fsMissingScratch.writeFile("/scratch/legacy.txt", "blocked"),
