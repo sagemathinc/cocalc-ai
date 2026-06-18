@@ -213,36 +213,23 @@ const FEATURE_INDEX_CSS = `
     line-height: 1.02 !important;
   }
 
-  .cocalc-feature-index-start-grid {
-    display: grid;
-    gap: 12px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .cocalc-feature-link-card,
-  .cocalc-feature-list-link,
-  .cocalc-feature-starter-card {
+  .cocalc-feature-list-link {
     cursor: pointer;
     transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
   }
 
   .cocalc-feature-link-card:hover,
-  .cocalc-feature-list-link:hover,
-  .cocalc-feature-starter-card:hover {
+  .cocalc-feature-list-link:hover {
     border-color: ${PUBLIC_COLORS.linkHover} !important;
     box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.1)} !important;
     transform: translateY(-1px);
   }
 
   .cocalc-feature-link-card:focus-visible,
-  .cocalc-feature-list-link:focus-visible,
-  .cocalc-feature-starter-card:focus-visible {
+  .cocalc-feature-list-link:focus-visible {
     outline: 2px solid ${PUBLIC_COLORS.linkHover};
     outline-offset: 3px;
-  }
-
-  .cocalc-feature-starter-card-featured {
-    grid-column: 1 / -1;
   }
 
   .cocalc-feature-link-list {
@@ -270,15 +257,6 @@ const FEATURE_INDEX_CSS = `
 
     .cocalc-feature-index-title {
       font-size: 34px !important;
-    }
-
-    .cocalc-feature-index-start-grid {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-
-    .cocalc-feature-starter-card {
-      min-height: 0 !important;
-      padding: 14px !important;
     }
 
     .cocalc-feature-link-card {

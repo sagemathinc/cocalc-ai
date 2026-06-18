@@ -8,7 +8,11 @@ import type { CSSProperties } from "react";
 import { Button, Flex, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  alpha,
+  PUBLIC_COLORS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import { LinkButton, featureAppPath } from "./page-components";
 
@@ -80,15 +84,6 @@ const NEXT_ROUTES = [
   },
 ] as const;
 
-function alpha(hexColor: string, opacity: number): string {
-  const hex = hexColor.replace("#", "");
-  if (hex.length !== 6) return hexColor;
-  const red = parseInt(hex.slice(0, 2), 16);
-  const green = parseInt(hex.slice(2, 4), 16);
-  const blue = parseInt(hex.slice(4, 6), 16);
-  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-}
-
 function DecisionRow({
   cocalc,
   other,
@@ -150,12 +145,6 @@ const COMPARE_PAGE_CSS = `
     padding: 18px;
   }
 
-  .cocalc-compare-split {
-    display: grid;
-    gap: 18px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .cocalc-compare-list {
     display: grid;
     gap: 10px;
@@ -208,7 +197,6 @@ const COMPARE_PAGE_CSS = `
 
   @media (max-width: 900px) {
     .cocalc-compare-hero,
-    .cocalc-compare-split,
     .cocalc-compare-row {
       grid-template-columns: minmax(0, 1fr) !important;
     }

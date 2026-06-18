@@ -7,7 +7,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  alpha,
+  PUBLIC_COLORS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -22,15 +26,6 @@ const { Paragraph, Text, Title } = Typography;
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 const PANEL_RADIUS = 8;
 const COURSE_ACCENT = COLORS.RUN;
-
-function alpha(hexColor: string, opacity: number): string {
-  const hex = hexColor.replace("#", "");
-  if (hex.length !== 6) return hexColor;
-  const red = parseInt(hex.slice(0, 2), 16);
-  const green = parseInt(hex.slice(2, 4), 16);
-  const blue = parseInt(hex.slice(4, 6), 16);
-  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-}
 
 function CourseDashboardMock() {
   const students = [
