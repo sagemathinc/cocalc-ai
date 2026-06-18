@@ -6,7 +6,8 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Suspense, lazy } from "react";
 
-import { Button, Empty, Flex, Spin, Typography } from "antd";
+import { App as AntdApp, Button, Empty, Flex, Spin, Typography } from "antd";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getPublicMarketingConfig,
@@ -91,6 +92,69 @@ export function LinkButton({
     <Button href={href} style={{ paddingInline: 0 }} type="link">
       {children}
     </Button>
+  );
+}
+
+const MONO = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+function CodeCopyButton({ value }: { value: string }) {
+  const { message } = AntdApp.useApp();
+  return (
+    <Button
+      aria-label="Copy to clipboard"
+      icon={<Icon name="copy" />}
+      onClick={() => {
+        if (typeof navigator === "undefined" || navigator.clipboard == null) {
+          void message.info("Copy the code manually.");
+          return;
+        }
+        void navigator.clipboard.writeText(value).then(
+          () => void message.success("Copied"),
+          () => void message.error("Could not copy."),
+        );
+      }}
+      size="small"
+      style={{ position: "absolute", right: 8, top: 8 }}
+      type="text"
+    />
+  );
+}
+
+// Shared, copyable code block for public pages — curl examples, install
+// commands, snippets. The one copyable-code pattern across features + products.
+export function CodeBlock({
+  ariaLabel = "Code example",
+  code,
+}: {
+  ariaLabel?: string;
+  code: string;
+}) {
+  return (
+    <div
+      aria-label={ariaLabel}
+      style={{
+        background: PUBLIC_COLORS.surfaceMuted,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 8,
+        position: "relative",
+      }}
+    >
+      <CodeCopyButton value={code} />
+      <pre
+        style={{
+          color: PUBLIC_COLORS.heading,
+          fontFamily: MONO,
+          fontSize: 13,
+          lineHeight: 1.7,
+          margin: 0,
+          overflowX: "auto",
+          padding: "14px 44px 14px 16px",
+          whiteSpace: "pre",
+        }}
+      >
+        {code}
+      </pre>
+    </div>
   );
 }
 

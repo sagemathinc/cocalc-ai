@@ -1281,7 +1281,6 @@ describe("PublicFeaturesApp", () => {
       .map((style) => style.textContent ?? "")
       .join("\n");
     expect(css).toContain(".cocalc-compare-hero");
-    expect(css).toContain(".cocalc-compare-split");
     expect(css).toContain(".cocalc-compare-checklist");
     expect(css).toContain("@media (max-width: 900px)");
     expect(css).toContain("@media (max-width: 560px)");

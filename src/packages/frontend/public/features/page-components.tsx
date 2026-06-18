@@ -5,14 +5,15 @@
 
 import type { ReactNode } from "react";
 
-import { App as AntdApp, Button } from "antd";
+import { Button } from "antd";
 
-import { Icon } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
-const MONO = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+// The one shared copyable-code component lives in ../common; re-export it so
+// feature pages can keep importing it from page-components.
+export { CodeBlock } from "../common";
 
 export function featureAppPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -90,66 +91,5 @@ export function LinkButton({
     <Button type="link" href={href} style={{ paddingInline: 0 }}>
       {children}
     </Button>
-  );
-}
-
-function CodeCopyButton({ value }: { value: string }) {
-  const { message } = AntdApp.useApp();
-  return (
-    <Button
-      aria-label="Copy to clipboard"
-      icon={<Icon name="copy" />}
-      onClick={() => {
-        if (typeof navigator === "undefined" || navigator.clipboard == null) {
-          void message.info("Copy the code manually.");
-          return;
-        }
-        void navigator.clipboard.writeText(value).then(
-          () => void message.success("Copied"),
-          () => void message.error("Could not copy."),
-        );
-      }}
-      size="small"
-      style={{ position: "absolute", right: 8, top: 8 }}
-      type="text"
-    />
-  );
-}
-
-// Shared, copyable multi-line code block for public pages (curl examples,
-// snippets). Light + on-token to match the products install commands.
-export function CodeBlock({
-  ariaLabel = "Code example",
-  code,
-}: {
-  ariaLabel?: string;
-  code: string;
-}) {
-  return (
-    <div
-      aria-label={ariaLabel}
-      style={{
-        background: PUBLIC_COLORS.surfaceMuted,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        position: "relative",
-      }}
-    >
-      <CodeCopyButton value={code} />
-      <pre
-        style={{
-          color: PUBLIC_COLORS.heading,
-          fontFamily: MONO,
-          fontSize: 13,
-          lineHeight: 1.7,
-          margin: 0,
-          overflowX: "auto",
-          padding: "14px 44px 14px 16px",
-          whiteSpace: "pre",
-        }}
-      >
-        {code}
-      </pre>
-    </div>
   );
 }

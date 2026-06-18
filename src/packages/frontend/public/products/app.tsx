@@ -18,7 +18,7 @@ import {
 } from "../common";
 import { publicPath } from "../routes";
 import { PublicGrid, PublicSection } from "../layout/shell";
-import { CodeCommand, CopyCommandButton } from "./components";
+import { CodeBlock } from "../common";
 import type { PublicProductsRoute } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
@@ -692,9 +692,8 @@ function CocalcStarPage() {
           <Paragraph style={{ margin: 0 }}>
             On a fresh Ubuntu 24.04 VM with ports 80 and 443 open, run:
           </Paragraph>
-          <CodeCommand value={installCommand} />
+          <CodeBlock ariaLabel="Install command" code={installCommand} />
           <Flex gap={12} wrap>
-            <CopyCommandButton value={installCommand} />
             <Button href="https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh">
               Open install script
             </Button>
@@ -801,9 +800,8 @@ function CocalcLaunchpadPage() {
             For evaluation or operator setup, copy and run this in your
             terminal:
           </Paragraph>
-          <CodeCommand value={installCommand} />
+          <CodeBlock ariaLabel="Install command" code={installCommand} />
           <Flex gap={12} wrap>
-            <CopyCommandButton value={installCommand} />
             <Button href="https://software.cocalc.ai/software/cocalc-launchpad/install.sh">
               Open install script
             </Button>
@@ -910,9 +908,8 @@ function CocalcPlusPage() {
           <Paragraph style={{ margin: 0 }}>
             The current install flow uses the hosted software distribution:
           </Paragraph>
-          <CodeCommand value={installCommand} />
+          <CodeBlock ariaLabel="Install command" code={installCommand} />
           <Flex gap={12} wrap>
-            <CopyCommandButton value={installCommand} />
             <Button href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
               Open install script
             </Button>
