@@ -87,7 +87,7 @@ if pgrep -f "rspack.*build -w" >/dev/null 2>&1; then
     sleep 1
   done
 else
-  ( cd "$REPO/src" && timeout 240 pnpm -s static:dev >/dev/null 2>&1 ) || true
+  ( cd "$REPO/src/packages/static" && timeout 165 pnpm -s build:dev >/dev/null 2>&1 ) || true
 fi
 
 # --- capture ----------------------------------------------------------------
