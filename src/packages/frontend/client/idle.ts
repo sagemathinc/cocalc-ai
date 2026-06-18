@@ -10,6 +10,7 @@ import { redux } from "../app-framework";
 import { IS_TOUCH } from "../feature";
 import type { WebappClient } from "./client";
 import { lite } from "@cocalc/frontend/lite";
+import { SITE_NAME } from "@cocalc/util/theme";
 
 const CHECK_INTERVAL = 30 * 1000;
 const SOFT_STANDBY_WARNING_DELAY_MS = CHECK_INTERVAL / 2;
@@ -178,11 +179,21 @@ export class IdleClient {
   };
 
   private notification_html = (): string => {
-    const customize = redux.getStore("customize");
-    const site_name = customize.get("site_name");
-    const description = customize.get("site_description");
-    const logo_rect = customize.get("logo_rectangular");
-    const logo_square = customize.get("logo_square");
+    let customize;
+    try {
+      customize = redux.getStore("customize");
+    } catch {
+      customize = undefined;
+    }
+    const customizeValue = (key: string, fallback = ""): string => {
+      const value = customize?.get?.(key);
+      if (value == null) return fallback;
+      return typeof value === "string" ? value : `${value}`;
+    };
+    const site_name = customizeValue("site_name", SITE_NAME);
+    const description = customizeValue("site_description", site_name);
+    const logo_rect = customizeValue("logo_rectangular");
+    const logo_square = customizeValue("logo_square");
 
     // we either have just a customized square logo or square + rectangular -- or just the baked in default
     let html: string = "<div>";

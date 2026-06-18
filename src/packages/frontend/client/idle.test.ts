@@ -8,6 +8,7 @@ type JQueryStub = {
 };
 
 const selectors = new Map<any, JQueryStub>();
+let mockCustomizeStore: { get: jest.Mock } | undefined;
 
 function getStub(selector: any): JQueryStub {
   if (!selectors.has(selector)) {
@@ -50,7 +51,28 @@ jest.mock("jquery", () => {
 
 jest.mock("../app-framework", () => ({
   redux: {
-    getStore: jest.fn(() => ({
+    getStore: jest.fn(() => mockCustomizeStore),
+  },
+}));
+
+jest.mock("@cocalc/frontend/lite", () => ({
+  lite: false,
+}));
+
+jest.mock("../art", () => ({
+  APP_LOGO_WHITE: "/default-logo.svg",
+}));
+
+jest.mock("../feature", () => ({
+  IS_TOUCH: false,
+}));
+
+describe("IdleClient", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.clearAllMocks();
+    selectors.clear();
+    mockCustomizeStore = {
       get: jest.fn((key: string) => {
         switch (key) {
           case "site_name":
@@ -63,23 +85,7 @@ jest.mock("../app-framework", () => ({
             return "";
         }
       }),
-    })),
-  },
-}));
-
-jest.mock("@cocalc/frontend/lite", () => ({
-  lite: false,
-}));
-
-jest.mock("../feature", () => ({
-  IS_TOUCH: false,
-}));
-
-describe("IdleClient", () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-    jest.clearAllMocks();
-    selectors.clear();
+    };
     registerVisibleStub(document);
     registerVisibleStub("body");
     registerVisibleStub("#smc-idle-notification");
@@ -141,5 +147,20 @@ describe("IdleClient", () => {
 
     expect(softStandby).toHaveBeenCalledTimes(1);
     expect(standby).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not crash when the customize store is missing", async () => {
+    mockCustomizeStore = undefined;
+    const { IdleClient } = await import("./idle");
+    const idle = new IdleClient({
+      conat_client: {
+        softStandby: jest.fn(),
+        standby: jest.fn(),
+        resume: jest.fn(),
+      },
+    } as any);
+
+    expect(() => idle.show_notification()).not.toThrow();
+    expect(getStub("body").append).toHaveBeenCalledTimes(1);
   });
 });
