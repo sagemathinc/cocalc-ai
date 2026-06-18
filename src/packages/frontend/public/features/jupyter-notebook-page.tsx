@@ -39,7 +39,7 @@ function StoryCard({
   return (
     <div
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PANEL_RADIUS,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
@@ -167,7 +167,7 @@ function LiveStateDiagram() {
   return (
     <div
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PANEL_RADIUS,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",

@@ -56,7 +56,7 @@ function SlideDeckMock() {
               <div
                 style={{
                   aspectRatio: "16 / 9",
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderRadius: 8,
                   boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
@@ -123,7 +123,7 @@ function SlideFlow() {
         </div>
         <div
           style={{
-            background: "#fff",
+            background: PUBLIC_COLORS.surface,
             border: `1px solid ${PUBLIC_COLORS.border}`,
             borderRadius: 8,
             boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",

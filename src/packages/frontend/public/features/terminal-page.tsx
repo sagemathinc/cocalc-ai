@@ -121,7 +121,7 @@ function TerminalMock() {
                 align="center"
                 gap={8}
                 style={{
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderRadius: 8,
                   padding: "9px 10px",
@@ -142,7 +142,7 @@ function TermFileDiagram() {
   return (
     <div
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",

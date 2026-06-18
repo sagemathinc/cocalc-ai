@@ -51,7 +51,7 @@ function WhiteboardMock() {
 
         <div
           style={{
-            background: "#fff",
+            background: PUBLIC_COLORS.surface,
             border: `1px dashed ${PUBLIC_COLORS.border}`,
             borderRadius: 8,
             padding: 18,
@@ -64,7 +64,7 @@ function WhiteboardMock() {
                   <div
                     key={title}
                     style={{
-                      background: "#fff",
+                      background: PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
                       borderRadius: 8,
                       boxShadow: "0 10px 24px rgba(33, 49, 57, 0.07)",
@@ -108,7 +108,7 @@ function WhiteboardMock() {
                   </Flex>
                   <div
                     style={{
-                      background: "#fff",
+                      background: PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
                       borderRadius: 8,
                       padding: 12,
@@ -191,7 +191,7 @@ function ExecutionGraph() {
         <Col xs={24} lg={12}>
           <div
             style={{
-              background: "#fff",
+              background: PUBLIC_COLORS.surface,
               border: `1px solid ${PUBLIC_COLORS.border}`,
               borderRadius: 8,
               boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",

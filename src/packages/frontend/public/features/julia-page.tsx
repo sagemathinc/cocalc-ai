@@ -55,7 +55,7 @@ function JuliaProjectMock() {
             <Col key={title} xs={24} sm={12}>
               <div
                 style={{
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderRadius: 8,
                   height: "100%",

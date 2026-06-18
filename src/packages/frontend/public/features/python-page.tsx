@@ -79,7 +79,7 @@ function PythonProjectMock() {
             <Col key={panel.title} xs={24} sm={12}>
               <div
                 style={{
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderRadius: 8,
                   height: "100%",
@@ -155,7 +155,7 @@ function PythonProjectMock() {
           align="center"
           gap={12}
           style={{
-            background: "#fff",
+            background: PUBLIC_COLORS.surface,
             border: `1px solid ${PUBLIC_COLORS.border}`,
             borderRadius: 8,
             padding: 14,
@@ -190,7 +190,7 @@ function WorkflowNode({
   return (
     <div
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: 8,
         boxShadow: "0 12px 34px rgba(33, 49, 57, 0.07)",
@@ -314,7 +314,7 @@ function CompactUseCard({
   return (
     <div
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: 8,
         height: "100%",

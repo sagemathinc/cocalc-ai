@@ -61,7 +61,7 @@ export function StoryCard({
   return (
     <div
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: 8,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
