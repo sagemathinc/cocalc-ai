@@ -274,8 +274,10 @@ export default function LinuxFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 This helps students and collaborators work in a real Linux
-                system without turning a personal laptop into the course or
-                project experiment.
+                system without risking a personal laptop. Because the
+                environment lives in the project, teammates can see how it was
+                set up and return to a known-good state instead of rebuilding
+                it.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>

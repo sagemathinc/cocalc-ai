@@ -242,6 +242,11 @@ export default function WhiteboardFeaturePage({
                 live support, and diagrams where code and math should be part of
                 the board instead of pasted screenshots.
               </Paragraph>
+              <Paragraph style={{ margin: 0 }}>
+                Because the board lives in the project, the math, code, and
+                explanations stay together — so collaborators can see how an
+                idea developed and pick it back up later.
+              </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}

@@ -251,8 +251,9 @@ export default function LatexEditorFeaturePage({
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
                 CoCalc gives you the expected online LaTeX workflow: source, PDF
-                preview, builds, collaboration, and history. Its real advantage
-                appears when the paper is more than <code>paper.tex</code>.
+                preview, builds, collaboration, and history. It pays off most
+                when the paper depends on code, figures, and collaborators who
+                need to see how a result was produced.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Keep the draft, bibliography, figures, notebooks, terminal
