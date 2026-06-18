@@ -105,7 +105,6 @@ const EMPTY_DIRECTORY_FILES: DirectoryListing = [];
 function isStartRequiredFilesystemError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
   return (
-    text.includes("project volume does not exist") ||
     text.includes("project host id unavailable") ||
     text.includes("host routing info unavailable") ||
     text.includes("has no host assigned")

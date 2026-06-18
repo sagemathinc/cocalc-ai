@@ -46,7 +46,6 @@ import {
   getProjectHomeDirectory,
   resolveExactProjectHomeDirectory,
 } from "@cocalc/frontend/project/home-directory";
-import { StartButton } from "@cocalc/frontend/project/start-button";
 import {
   NAVIGATOR_SUBMIT_PROMPT_EVENT,
   queueNavigatorPromptIntent,
@@ -297,9 +296,9 @@ export function classifyNavigatorCodexError(
   if (isMissingProjectVolumeError(normalized)) {
     return {
       kind: "missing-volume",
-      title: "Project files are not available on this host yet.",
+      title: "Project files are being prepared on this host.",
       description:
-        "This can happen after a project host is reprovisioned or when a project has not been restored on its assigned host. Start the project to provision or restore its filesystem.",
+        "The project filesystem should be provisioned automatically on first access. Please refresh or retry this action in a moment.",
     };
   }
   if (
@@ -1426,9 +1425,7 @@ export function NavigatorShell({
             )
           }
           action={
-            presentedError?.kind === "missing-volume" ? (
-              <StartButton project_id={project_id} minimal />
-            ) : presentedError?.actionLabel ? (
+            presentedError?.actionLabel ? (
               <Button size="small" onClick={() => setCodexAuthOpen(true)}>
                 {presentedError.actionLabel}
               </Button>

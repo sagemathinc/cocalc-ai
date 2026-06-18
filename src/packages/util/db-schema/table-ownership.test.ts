@@ -87,6 +87,13 @@ function serverSourceFiles(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (
+        entry.name === "node_modules" ||
+        entry.name === "dist" ||
+        entry.name === "build"
+      ) {
+        continue;
+      }
       files.push(...serverSourceFiles(path));
       continue;
     }

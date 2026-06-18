@@ -37,15 +37,16 @@ describe("file-server sandbox policy", () => {
     });
 
     await fs.writeFile("/home/user/home.txt", "home");
+    await fs.mkdir("/home", { recursive: true });
     await fs.writeFile("relative.txt", "relative");
     expect(await fs.readFile("/home/user/home.txt", "utf8")).toBe("home");
     expect(await fs.readFile("relative.txt", "utf8")).toBe("relative");
     await expect(fs.readFile("/root/home.txt", "utf8")).rejects.toThrow(
-      "rootfs is not mounted; cannot access absolute path '/root/home.txt'. Start the workspace and try again.",
+      "rootfs is not mounted; cannot access absolute path '/root/home.txt'. Start the project and try again.",
     );
 
     await expect(fs.writeFile("/tmp/data.txt", "blocked")).rejects.toThrow(
-      "temporary storage is not mounted; cannot access absolute path '/tmp/data.txt'. Start the workspace and try again.",
+      "temporary storage is not mounted; cannot access absolute path '/tmp/data.txt'. Start the project and try again.",
     );
     await expect(fs.writeFile("/scratch/data.txt", "blocked")).rejects.toThrow(
       "'/scratch' is only available on dedicated project hosts with shared scratch enabled. Use '/tmp' for per-project temporary storage.",
