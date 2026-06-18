@@ -3,12 +3,20 @@
 import { render, screen, within } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
-
-const INTERNAL_IMPLEMENTATION_TERMS =
-  /serious\s+technical\s+work|project hosts|backend state|logs stay scoped|RootFS|multi-bay|control plane|postgres|kubernetes|systemd|conat/i;
-
-const STALE_REPETITIVE_HOME_LINES =
-  /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Use the tools you already understand, together|Collaborative computing for research, teaching, and teams|Shared project workspaces for research, teaching, and technical teams|shared project space for notebooks, code, documents, terminals|Make computational work easier to share, review, and continue|CoCalc is a shared project workspace for computational work/i;
+import {
+  expectCardsStayCompact,
+  expectGridTemplate,
+  getCardTitles,
+  getDirectCards,
+  getGrid,
+  getInjectedCss,
+  HERO_H1_MAX,
+  installMatchMediaStub,
+  INTERNAL_IMPLEMENTATION_TERMS,
+  SECTION_H2_MAX,
+  STALE_REPETITIVE_HOME_LINES,
+  textLength,
+} from "../../__tests__/test-helpers";
 
 function renderHome() {
   return render(
@@ -22,75 +30,8 @@ function renderHome() {
   );
 }
 
-function getGrid(container: HTMLElement, selector: string): HTMLElement {
-  const grid = container.querySelector(selector);
-  expect(grid).not.toBeNull();
-  return grid as HTMLElement;
-}
-
-function expectGridTemplate(element: HTMLElement, template: string) {
-  expect(element.getAttribute("style") ?? "").toContain(
-    `grid-template-columns: ${template};`,
-  );
-}
-
-function getDirectCards(grid: HTMLElement): HTMLElement[] {
-  return Array.from(grid.children) as HTMLElement[];
-}
-
-function getCardTitles(grid: HTMLElement): string[] {
-  return getDirectCards(grid).map((card) => {
-    const heading = card.querySelector("h4");
-    expect(heading).not.toBeNull();
-    return heading?.textContent?.trim() ?? "";
-  });
-}
-
-function textLength(element: Element): number {
-  return (element.textContent ?? "").replace(/\s+/g, " ").trim().length;
-}
-
-function getHomeCss(container: HTMLElement): string {
-  return Array.from(container.querySelectorAll("style"))
-    .map((style) => style.textContent ?? "")
-    .join("\n");
-}
-
-function expectCardsStayCompact(
-  grid: HTMLElement,
-  {
-    maxCardText,
-    maxTitleText,
-  }: {
-    maxCardText: number;
-    maxTitleText: number;
-  },
-) {
-  for (const card of getDirectCards(grid)) {
-    expect(textLength(card)).toBeLessThanOrEqual(maxCardText);
-
-    const heading = card.querySelector("h4");
-    expect(heading).not.toBeNull();
-    expect(textLength(heading as HTMLElement)).toBeLessThanOrEqual(
-      maxTitleText,
-    );
-  }
-}
-
 beforeAll(() => {
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addEventListener: jest.fn(),
-      addListener: jest.fn(),
-      dispatchEvent: jest.fn(),
-      removeEventListener: jest.fn(),
-      removeListener: jest.fn(),
-    }),
-  });
+  installMatchMediaStub();
 });
 
 describe("PublicHomeApp visual quality contract", () => {
@@ -189,7 +130,7 @@ describe("PublicHomeApp visual quality contract", () => {
 
   it("keeps responsive grid fallbacks explicit for tablet and phone widths", () => {
     const { container } = renderHome();
-    const css = getHomeCss(container);
+    const css = getInjectedCss(container);
 
     expect(css).toContain("@media (max-width: 920px)");
     expect(css).toContain("@media (max-width: 1120px)");
@@ -244,20 +185,15 @@ describe("PublicHomeApp visual quality contract", () => {
 
     const h1 = container.querySelectorAll("h1");
     expect(h1).toHaveLength(1);
-    expect(textLength(h1[0])).toBeLessThanOrEqual(70);
+    expect(textLength(h1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
 
+    // Section identity and order are canaried by the aria-label array in
+    // app.test.tsx; here we only hold the count and an anti-sprawl length
+    // bound, so headline wording can change without a test edit.
     const sectionHeadings = Array.from(container.querySelectorAll("h2"));
-    expect(
-      sectionHeadings.map((heading) => heading.textContent?.trim()),
-    ).toEqual([
-      "Built for research, courses, and platform teams.",
-      "Work where the project already lives.",
-      "Choose the operating model that fits your team.",
-      "A workspace built around the project.",
-      "Ready to choose how CoCalc fits?",
-    ]);
+    expect(sectionHeadings).toHaveLength(5);
     for (const heading of sectionHeadings) {
-      expect(textLength(heading)).toBeLessThanOrEqual(72);
+      expect(textLength(heading)).toBeLessThanOrEqual(SECTION_H2_MAX);
     }
 
     expect(container.textContent ?? "").not.toMatch(
