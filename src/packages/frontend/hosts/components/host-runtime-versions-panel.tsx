@@ -54,6 +54,18 @@ type VersionRow = HostSoftwareAvailableVersion & {
 
 type ClusterDefaultCandidate = VersionRow;
 
+const CLUSTER_DEFAULT_ARTIFACTS: HostSoftwareArtifact[] = [
+  "project-host",
+  "project",
+  "tools",
+];
+
+function clusterDefaultArtifact(
+  artifact: HostSoftwareArtifact,
+): HostSoftwareArtifact {
+  return artifact === "project-bundle" ? "project" : artifact;
+}
+
 function artifactLabel(artifact: HostSoftwareArtifact): string {
   switch (artifact) {
     case "project-host":
@@ -134,7 +146,9 @@ function buildRows({
       key: `${source}:${row.artifact}:${row.channel}:${row.version ?? "missing"}`,
       source,
       running_hosts: row.version
-        ? (runningCounts.get(`${row.artifact}:${row.version}`) ?? 0)
+        ? (runningCounts.get(
+            `${clusterDefaultArtifact(row.artifact)}:${row.version}`,
+          ) ?? 0)
         : 0,
     }));
   return [...toRows("configured", configured), ...toRows("hub", hub)].sort(
@@ -192,10 +206,11 @@ function buildClusterDefaultCandidates(
   >();
   for (const row of rows) {
     if (!row.version) continue;
-    let artifactRows = deduped.get(row.artifact);
+    const artifact = clusterDefaultArtifact(row.artifact);
+    let artifactRows = deduped.get(artifact);
     if (!artifactRows) {
       artifactRows = new Map();
-      deduped.set(row.artifact, artifactRows);
+      deduped.set(artifact, artifactRows);
     }
     const existing = artifactRows.get(row.version);
     if (
@@ -211,6 +226,19 @@ function buildClusterDefaultCandidates(
       Array.from(versions.values()).sort(compareVersionRows),
     ]),
   );
+}
+
+function clusterDefaultDescription(artifact: HostSoftwareArtifact): string {
+  switch (clusterDefaultArtifact(artifact)) {
+    case "project-host":
+      return "Choose the project-host bundle version that new hosts should use by default. Running hosts that follow the default reconcile automatically.";
+    case "project":
+      return "Choose the project bundle version that newly started projects should use by default. Existing running projects keep their current bundle until restarted or reconciled.";
+    case "tools":
+      return "Choose the tools payload that projects should use by default. The selector is deduped by version across catalog sources.";
+    default:
+      return "Choose the runtime artifact version that hosts should use by default.";
+  }
 }
 
 function defaultSelectionForArtifact({
@@ -230,8 +258,6 @@ function defaultSelectionForArtifact({
   );
   return currentMatch?.key ?? rows[0].key;
 }
-
-const CLUSTER_DEFAULT_ARTIFACTS: HostSoftwareArtifact[] = ["project-host"];
 
 export const HostRuntimeVersionsPanel: React.FC<
   HostRuntimeVersionsPanelProps
@@ -265,20 +291,6 @@ export const HostRuntimeVersionsPanel: React.FC<
   );
   const [selectedClusterDefaultKeys, setSelectedClusterDefaultKeys] =
     React.useState<Partial<Record<HostSoftwareArtifact, string>>>({});
-  const projectHostCandidates =
-    clusterDefaultCandidates.get("project-host") ?? [];
-  const currentProjectHostDefault = globalDefaultMap.get("project-host");
-  const selectedProjectHostKey = selectedClusterDefaultKeys["project-host"];
-  const selectedProjectHostVersion = projectHostCandidates.find(
-    (row) => row.key === selectedProjectHostKey,
-  );
-  const selectedProjectHostActionKey = selectedProjectHostVersion?.version
-    ? `project-host:${selectedProjectHostVersion.version}`
-    : undefined;
-  const selectedProjectHostIsCurrent =
-    !!selectedProjectHostVersion?.version &&
-    selectedProjectHostVersion.version ===
-      currentProjectHostDefault?.desired_version;
 
   React.useEffect(() => {
     setSelectedClusterDefaultKeys((current) => {
@@ -538,103 +550,125 @@ export const HostRuntimeVersionsPanel: React.FC<
             description={globalDeploymentsError}
           />
         ) : null}
-        <Card size="small" title="Project Host Bundle Cluster Default">
-          <Space direction="vertical" size={12} style={{ width: "100%" }}>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              Choose the project-host bundle version that new hosts should use
-              by default. The selector is deduped by version across catalog
-              sources, so each available bundle appears once.
-              {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
-            </Typography.Paragraph>
-            <Space direction="vertical" size={4}>
-              <Typography.Text strong>Current cluster default</Typography.Text>
-              {currentProjectHostDefault?.desired_version ? (
-                <Typography.Text>
-                  <Typography.Text code>
-                    {currentProjectHostDefault.desired_version}
-                  </Typography.Text>{" "}
-                  <Typography.Text type="secondary">
-                    since{" "}
-                    <TimeAgo date={currentProjectHostDefault.updated_at} />
-                  </Typography.Text>
-                </Typography.Text>
-              ) : (
-                <Typography.Text type="secondary">
-                  No project-host bundle default is recorded yet.
-                </Typography.Text>
-              )}
-            </Space>
-            <Space wrap size={8}>
-              <Select
-                style={{ minWidth: 560 }}
-                placeholder="Select a project-host bundle version"
-                value={selectedProjectHostKey}
-                onChange={(value) =>
-                  setSelectedClusterDefaultKeys((current) => ({
-                    ...current,
-                    "project-host": value,
-                  }))
-                }
-                options={projectHostCandidates.map((row) => ({
-                  value: row.key,
-                  label: `${row.version} · ${sourceLabel(row.source)} · ${row.running_hosts} running host${row.running_hosts === 1 ? "" : "s"}${
-                    row.size_bytes
-                      ? ` · ${human_readable_size(row.size_bytes)}`
-                      : ""
-                  }`,
-                }))}
-              />
-              <Popconfirm
-                title="Set project-host bundle cluster default?"
-                description={
-                  selectedProjectHostVersion?.version
-                    ? `Set ${selectedProjectHostVersion.version} as the project-host bundle cluster default. Running hosts that follow the default will reconcile automatically.`
-                    : "Select a version first."
-                }
-                okText="Set default"
-                disabled={
-                  !selectedProjectHostVersion?.version ||
-                  !onSetClusterDefault ||
-                  selectedProjectHostIsCurrent
-                }
-                onConfirm={() => {
-                  if (
-                    !selectedProjectHostVersion?.version ||
-                    !onSetClusterDefault
-                  ) {
-                    return;
-                  }
-                  return onSetClusterDefault({
-                    artifact: "project-host",
-                    desired_version: selectedProjectHostVersion.version,
-                    source: selectedProjectHostVersion.source,
-                  });
-                }}
-              >
-                <Button
-                  type="primary"
-                  disabled={
-                    !selectedProjectHostVersion?.version ||
-                    !onSetClusterDefault ||
-                    selectedProjectHostIsCurrent
-                  }
-                  loading={
-                    !!selectedProjectHostActionKey &&
-                    settingClusterDefaultKey === selectedProjectHostActionKey
-                  }
+        {CLUSTER_DEFAULT_ARTIFACTS.map((artifact) => {
+          const candidates = clusterDefaultCandidates.get(artifact) ?? [];
+          const currentDefault = globalDefaultMap.get(
+            toRuntimeArtifact(artifact),
+          );
+          const selectedKey = selectedClusterDefaultKeys[artifact];
+          const selectedVersion = candidates.find(
+            (row) => row.key === selectedKey,
+          );
+          const selectedActionKey = selectedVersion?.version
+            ? `${toRuntimeArtifact(artifact)}:${selectedVersion.version}`
+            : undefined;
+          const selectedIsCurrent =
+            !!selectedVersion?.version &&
+            selectedVersion.version === currentDefault?.desired_version;
+          const label = artifactLabel(artifact);
+          return (
+            <Card
+              key={artifact}
+              size="small"
+              title={`${label} Cluster Default`}
+            >
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Typography.Paragraph
+                  type="secondary"
+                  style={{ marginBottom: 0 }}
                 >
-                  Set cluster default
-                </Button>
-              </Popconfirm>
-            </Space>
-            {selectedProjectHostIsCurrent ? (
-              <Typography.Text type="secondary">
-                The selected version is already the project-host bundle cluster
-                default.
-              </Typography.Text>
-            ) : null}
-          </Space>
-        </Card>
+                  {clusterDefaultDescription(artifact)}
+                  {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
+                </Typography.Paragraph>
+                <Space direction="vertical" size={4}>
+                  <Typography.Text strong>
+                    Current cluster default
+                  </Typography.Text>
+                  {currentDefault?.desired_version ? (
+                    <Typography.Text>
+                      <Typography.Text code>
+                        {currentDefault.desired_version}
+                      </Typography.Text>{" "}
+                      <Typography.Text type="secondary">
+                        since <TimeAgo date={currentDefault.updated_at} />
+                      </Typography.Text>
+                    </Typography.Text>
+                  ) : (
+                    <Typography.Text type="secondary">
+                      No {label.toLowerCase()} default is recorded yet.
+                    </Typography.Text>
+                  )}
+                </Space>
+                <Space wrap size={8}>
+                  <Select
+                    style={{ minWidth: 560 }}
+                    placeholder={`Select a ${label.toLowerCase()} version`}
+                    value={selectedKey}
+                    onChange={(value) =>
+                      setSelectedClusterDefaultKeys((current) => ({
+                        ...current,
+                        [artifact]: value,
+                      }))
+                    }
+                    options={candidates.map((row) => ({
+                      value: row.key,
+                      label: `${row.version} · ${sourceLabel(row.source)} · ${row.running_hosts} running host${row.running_hosts === 1 ? "" : "s"}${
+                        row.size_bytes
+                          ? ` · ${human_readable_size(row.size_bytes)}`
+                          : ""
+                      }`,
+                    }))}
+                  />
+                  <Popconfirm
+                    title={`Set ${label.toLowerCase()} cluster default?`}
+                    description={
+                      selectedVersion?.version
+                        ? `Set ${selectedVersion.version} as the ${label.toLowerCase()} cluster default. Running hosts that follow the default will reconcile automatically.`
+                        : "Select a version first."
+                    }
+                    okText="Set default"
+                    disabled={
+                      !selectedVersion?.version ||
+                      !onSetClusterDefault ||
+                      selectedIsCurrent
+                    }
+                    onConfirm={() => {
+                      if (!selectedVersion?.version || !onSetClusterDefault) {
+                        return;
+                      }
+                      return onSetClusterDefault({
+                        artifact,
+                        desired_version: selectedVersion.version,
+                        source: selectedVersion.source,
+                      });
+                    }}
+                  >
+                    <Button
+                      type="primary"
+                      disabled={
+                        !selectedVersion?.version ||
+                        !onSetClusterDefault ||
+                        selectedIsCurrent
+                      }
+                      loading={
+                        !!selectedActionKey &&
+                        settingClusterDefaultKey === selectedActionKey
+                      }
+                    >
+                      Set cluster default
+                    </Button>
+                  </Popconfirm>
+                </Space>
+                {selectedIsCurrent ? (
+                  <Typography.Text type="secondary">
+                    The selected version is already the {label.toLowerCase()}{" "}
+                    cluster default.
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            </Card>
+          );
+        })}
         <details>
           <summary>
             <Typography.Text type="secondary">
