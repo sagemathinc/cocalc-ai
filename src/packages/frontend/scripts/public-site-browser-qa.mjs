@@ -891,37 +891,20 @@ async function captureScrollScreenshots(cdp, outDir, route, viewportName) {
       "Math.max(0, document.documentElement.scrollHeight - window.innerHeight)",
   });
   const maxScroll = Number(maxScrollResult.result.value || 0);
-  const positions = [
-    ["top", 0],
-    ["mid", Math.floor(maxScroll * 0.5)],
-    ["bottom", maxScroll],
-  ];
 
-  const paths = [];
-  for (const [name, y] of positions) {
+  // Scroll through the page once to trigger any lazy-loaded content, then return
+  // to the top before capturing.
+  for (const y of [Math.floor(maxScroll * 0.5), maxScroll, 0]) {
     await cdp.send("Runtime.evaluate", {
       expression: `window.scrollTo(0, ${Number(y)})`,
       awaitPromise: true,
     });
-    await sleep(250);
-    const shot = await cdp.send("Page.captureScreenshot", {
-      format: "png",
-      captureBeyondViewport: false,
-    });
-    const filePath = join(outDir, `${slug(route)}-${viewportName}-${name}.png`);
-    writeFileSync(filePath, Buffer.from(shot.data, "base64"));
-    paths.push(filePath);
+    await sleep(200);
   }
 
-  // Full-page capture (entire content height in one image) so nothing between
-  // the top/mid/bottom slices is missed. Best-effort: the slices still cover the
-  // page if a very tall page exceeds the capture limit.
+  // Prefer a single full-page image — the whole page in one shot. The top/mid/
+  // bottom slices are only a fallback for pages too tall to capture at once.
   try {
-    await cdp.send("Runtime.evaluate", {
-      expression: "window.scrollTo(0, 0)",
-      awaitPromise: true,
-    });
-    await sleep(200);
     const metrics = await cdp.send("Page.getLayoutMetrics", {});
     const contentSize = metrics.cssContentSize || metrics.contentSize || {};
     const width = Math.ceil(contentSize.width || 0);
@@ -934,10 +917,31 @@ async function captureScrollScreenshots(cdp, outDir, route, viewportName) {
       });
       const fullPath = join(outDir, `${slug(route)}-${viewportName}-full.png`);
       writeFileSync(fullPath, Buffer.from(full.data, "base64"));
-      paths.push(fullPath);
+      return [fullPath];
     }
   } catch {
-    // ignore — slice screenshots already captured above
+    // fall through to the slice fallback below
+  }
+
+  // Fallback: very tall page or full-page capture failed — top/mid/bottom slices.
+  const paths = [];
+  for (const [name, y] of [
+    ["top", 0],
+    ["mid", Math.floor(maxScroll * 0.5)],
+    ["bottom", maxScroll],
+  ]) {
+    await cdp.send("Runtime.evaluate", {
+      expression: `window.scrollTo(0, ${Number(y)})`,
+      awaitPromise: true,
+    });
+    await sleep(250);
+    const shot = await cdp.send("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+    });
+    const filePath = join(outDir, `${slug(route)}-${viewportName}-${name}.png`);
+    writeFileSync(filePath, Buffer.from(shot.data, "base64"));
+    paths.push(filePath);
   }
   return paths;
 }
