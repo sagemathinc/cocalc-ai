@@ -912,6 +912,33 @@ async function captureScrollScreenshots(cdp, outDir, route, viewportName) {
     writeFileSync(filePath, Buffer.from(shot.data, "base64"));
     paths.push(filePath);
   }
+
+  // Full-page capture (entire content height in one image) so nothing between
+  // the top/mid/bottom slices is missed. Best-effort: the slices still cover the
+  // page if a very tall page exceeds the capture limit.
+  try {
+    await cdp.send("Runtime.evaluate", {
+      expression: "window.scrollTo(0, 0)",
+      awaitPromise: true,
+    });
+    await sleep(200);
+    const metrics = await cdp.send("Page.getLayoutMetrics", {});
+    const contentSize = metrics.cssContentSize || metrics.contentSize || {};
+    const width = Math.ceil(contentSize.width || 0);
+    const height = Math.ceil(contentSize.height || 0);
+    if (width > 0 && height > 0 && height <= 25000) {
+      const full = await cdp.send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width, height, scale: 1 },
+      });
+      const fullPath = join(outDir, `${slug(route)}-${viewportName}-full.png`);
+      writeFileSync(fullPath, Buffer.from(full.data, "base64"));
+      paths.push(fullPath);
+    }
+  } catch {
+    // ignore — slice screenshots already captured above
+  }
   return paths;
 }
 

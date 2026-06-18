@@ -10,7 +10,7 @@
 #   - Guarantees a fresh dist (waits on the running static:watch; falls back to a
 #     one-shot static:dev only if no watch is running).
 #   - Captures home + the touched routes at desktop+mobile via the existing CDP
-#     harness, publishes a stable contact sheet at .preview-snapshots/index.html
+#     harness, publishes a stable contact sheet at preview/index.html
 #     and appends one row to .preview-snapshots/log.md.
 #   - Exits 0 (non-blocking) with an additionalContext summary line.
 #   - The ONLY blocking case: a CTA/canary assertion failed (broken route /
@@ -24,7 +24,7 @@ set -uo pipefail
 REPO="${CLAUDE_PROJECT_DIR:-/home/user/cocalc-ai}"
 PUBLIC="src/packages/frontend/public"
 QA="$REPO/src/packages/frontend/scripts/public-site-browser-qa.mjs"
-SNAP_DIR="$REPO/.preview-snapshots"
+SNAP_DIR="$REPO/preview"
 MARKER="$SNAP_DIR/.last"
 WATCH_LOG="/tmp/cocalc-static-watch.log"
 export CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}"
@@ -122,8 +122,11 @@ routes=r.get("routes",["/"]); failed=r.get("failed",[]); fc=r.get("failedCount",
 shots={os.path.basename(p) for p in glob.glob(os.path.join(sd,"*.png"))}
 def img(route,vp):
     slug="home" if route=="/" else route.strip("/").replace("/","-")
-    name=f"{slug}-{vp}-top.png"
-    return f'<img src="{name}" loading="lazy" style="width:100%;border:1px solid #ddd;border-radius:6px">' if name in shots else '<div style="color:#999">no shot</div>'
+    for suffix in ("full","top"):  # prefer the complete full-page image
+        name=f"{slug}-{vp}-{suffix}.png"
+        if name in shots:
+            return f'<a href="{name}" title="open full image"><img src="{name}" loading="lazy" style="width:100%;border:1px solid #ddd;border-radius:6px;vertical-align:top"></a>'
+    return '<div style="color:#999">no shot</div>'
 banner=(f'<div style="background:#cf1322;color:#fff;padding:10px 14px;border-radius:6px">FAIL ({fc}): '
         + html.escape("; ".join(m.get("message","") for m in failed)[:400]) + '</div>') if fc else \
        '<div style="background:#389e0d;color:#fff;padding:10px 14px;border-radius:6px">PASS — canaries green</div>'
@@ -152,10 +155,10 @@ if [ "${FAILED_COUNT:-0}" != "0" ] && [ "$STOP_ACTIVE" != "true" ]; then
   python3 - "$FAILED_COUNT" <<'PY'
 import json, sys
 print(json.dumps({"decision":"block",
-  "reason": f"Public-site canary FAILED ({sys.argv[1]} assertion(s)) — a broken route, horizontal overflow, or leaked internal phrase. Fix before ending the turn. See .preview-snapshots/index.html."}))
+  "reason": f"Public-site canary FAILED ({sys.argv[1]} assertion(s)) — a broken route, horizontal overflow, or leaked internal phrase. Fix before ending the turn. See preview/index.html."}))
 PY
   exit 0
 fi
 
-emit_context "preview rebuilt + captured. Contact sheet: .preview-snapshots/index.html (commit $COMMIT, routes: $(IFS=,; echo "${!SEEN[*]}"), canaries: $([ "${FAILED_COUNT:-0}" = 0 ] && echo PASS || echo FAIL)). Open it alongside blaec.cocalc.ai to gate ship/revise/revert."
+emit_context "preview rebuilt + captured. Contact sheet: preview/index.html (commit $COMMIT, routes: $(IFS=,; echo "${!SEEN[*]}"), canaries: $([ "${FAILED_COUNT:-0}" = 0 ] && echo PASS || echo FAIL)). Open it alongside blaec.cocalc.ai to gate ship/revise/revert."
 exit 0
