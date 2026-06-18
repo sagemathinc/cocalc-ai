@@ -231,6 +231,7 @@ import {
   computeHostRuntimeDeploymentReconcilePlan,
   normalizeRuntimeArtifactTarget,
   normalizeRuntimeDeploymentUpserts,
+  runtimeDeploymentsForAlignedProjectHostVersion,
   runtimeDeploymentsForComponentRollout,
   runtimeDeploymentsForUpgradeResults,
 } from "./hosts-runtime-deployment-planning";
@@ -6913,7 +6914,24 @@ export async function setHostRuntimeDeployments({
   deployments: HostRuntimeDeploymentUpsert[];
   replace?: boolean;
 }): Promise<HostRuntimeDeploymentRecord[]> {
-  const normalized = normalizeRuntimeDeploymentUpserts(deployments);
+  const expandedDeployments = (deployments ?? []).flatMap((deployment) => {
+    if (
+      deployment?.target_type === "artifact" &&
+      normalizeRuntimeArtifactTarget(
+        deployment.target as HostRuntimeArtifact,
+      ) === "project-host"
+    ) {
+      return [
+        ...runtimeDeploymentsForAlignedProjectHostVersion({
+          version: deployment.desired_version,
+          rolloutReason: deployment.rollout_reason,
+        }),
+        deployment,
+      ];
+    }
+    return [deployment];
+  });
+  const normalized = normalizeRuntimeDeploymentUpserts(expandedDeployments);
   if (scope_type === "global") {
     const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
     const result = await setProjectHostRuntimeDeployments({

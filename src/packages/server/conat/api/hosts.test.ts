@@ -3425,13 +3425,33 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       account_id: ACCOUNT_ID,
       scope_type: "host",
       id: HOST_ID,
-      deployments: [
-        {
+      deployments: expect.arrayContaining([
+        expect.objectContaining({
           target_type: "artifact",
           target: "project-host",
           desired_version: "ph-remote",
-        },
-      ],
+        }),
+        expect.objectContaining({
+          target_type: "component",
+          target: "project-host",
+          desired_version: "ph-remote",
+        }),
+        expect.objectContaining({
+          target_type: "component",
+          target: "conat-router",
+          desired_version: "ph-remote",
+        }),
+        expect.objectContaining({
+          target_type: "component",
+          target: "conat-persist",
+          desired_version: "ph-remote",
+        }),
+        expect.objectContaining({
+          target_type: "component",
+          target: "acp-worker",
+          desired_version: "ph-remote",
+        }),
+      ]),
       replace: true,
     });
     expect(deployments).toEqual([
@@ -4082,6 +4102,140 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
         input: expect.objectContaining({
           account_id: ACCOUNT_ID,
           components: ["acp-worker"],
+        }),
+      }),
+    );
+  });
+
+  it("expands project-host artifact defaults and queues runtime reconcile for already-installed drifted stacks", async () => {
+    const projectHostDefault = [
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "ph-v2",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+      ...["project-host", "conat-router", "conat-persist", "acp-worker"].map(
+        (target) => ({
+          scope_type: "global",
+          scope_id: "global",
+          target_type: "component",
+          target,
+          desired_version: "ph-v2",
+          rollout_policy:
+            target === "acp-worker" ? "drain_then_replace" : "restart_now",
+          requested_by: ACCOUNT_ID,
+          requested_at: "2026-04-15T00:00:00.000Z",
+          updated_at: "2026-04-15T00:00:00.000Z",
+        }),
+      ),
+    ];
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(
+      async () => projectHostDefault,
+    );
+    routedHostControlClientMock = jest.fn(async () => ({
+      getManagedComponentStatus: async () =>
+        ["project-host", "conat-router", "conat-persist", "acp-worker"].map(
+          (component) => ({
+            component,
+            artifact: "project-host",
+            upgrade_policy:
+              component === "acp-worker" ? "drain_then_replace" : "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: "build-ph-v2",
+            runtime_state: "running",
+            version_state: "drifted",
+            running_versions: ["build-ph-v1"],
+            running_pids: [4321],
+          }),
+        ),
+      getInstalledRuntimeArtifacts: async () => [
+        {
+          artifact: "project-host",
+          current_version: "ph-v2",
+          current_build_id: "build-ph-v2",
+          installed_versions: ["ph-v2", "ph-v1"],
+        },
+      ],
+      getHostAgentStatus: async () => ({
+        project_host: {
+          last_known_good_version: "ph-v1",
+        },
+      }),
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+
+    const { setHostRuntimeDeployments } = await import("./hosts");
+    await setHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "global",
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-v2",
+          rollout_reason: "software-deploy-project-host",
+        },
+      ],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope_type: "global",
+        deployments: expect.arrayContaining([
+          expect.objectContaining({
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "ph-v2",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "project-host",
+            desired_version: "ph-v2",
+            rollout_reason: "software-deploy-project-host",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-router",
+            desired_version: "ph-v2",
+            rollout_reason: "software-deploy-project-host",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-persist",
+            desired_version: "ph-v2",
+            rollout_reason: "software-deploy-project-host",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v2",
+            rollout_reason: "software-deploy-project-host",
+          }),
+        ]),
+      }),
+    );
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-reconcile-runtime-deployments",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
+        input: expect.objectContaining({
+          account_id: ACCOUNT_ID,
+          components: [
+            "acp-worker",
+            "conat-persist",
+            "conat-router",
+            "project-host",
+          ],
         }),
       }),
     );
