@@ -228,6 +228,66 @@ function buildClusterDefaultCandidates(
   );
 }
 
+function buildRememberedCurrentCandidate({
+  artifact,
+  version,
+}: {
+  artifact: HostSoftwareArtifact;
+  version: string;
+}): ClusterDefaultCandidate {
+  return {
+    artifact,
+    channel: "latest",
+    os: "linux",
+    arch: "amd64",
+    version,
+    available: true,
+    source: "hub",
+    running_hosts: 0,
+    key: `remembered:${artifact}:${version}`,
+    message: "Remembered from cluster default",
+  };
+}
+
+function mergeClusterDefaultCandidates({
+  base,
+  remembered,
+}: {
+  base: Map<HostSoftwareArtifact, ClusterDefaultCandidate[]>;
+  remembered: ClusterDefaultCandidate[];
+}): Map<HostSoftwareArtifact, ClusterDefaultCandidate[]> {
+  const merged = new Map<
+    HostSoftwareArtifact,
+    Map<string, ClusterDefaultCandidate>
+  >();
+  const add = (row: ClusterDefaultCandidate, overwrite: boolean) => {
+    if (!row.version) return;
+    const artifact = clusterDefaultArtifact(row.artifact);
+    let versions = merged.get(artifact);
+    if (!versions) {
+      versions = new Map();
+      merged.set(artifact, versions);
+    }
+    if (overwrite || !versions.has(row.version)) {
+      versions.set(row.version, row);
+    }
+  };
+  for (const row of remembered) {
+    add(row, false);
+  }
+  for (const rows of base.values()) {
+    for (const row of rows) {
+      add(row, true);
+    }
+  }
+  return new Map(
+    Array.from(merged.entries()).map(([artifact, versions]) => [
+      artifact,
+      Array.from(versions.values()).sort(compareVersionRows),
+    ]),
+  );
+}
+
 function defaultSelectionForArtifact({
   artifact,
   candidates,
@@ -278,9 +338,49 @@ export const HostRuntimeVersionsPanel: React.FC<
     () => buildGlobalDefaultMap(globalDeployments),
     [globalDeployments],
   );
-  const clusterDefaultCandidates = React.useMemo(
+  const baseClusterDefaultCandidates = React.useMemo(
     () => buildClusterDefaultCandidates(rows),
     [rows],
+  );
+  const [
+    rememberedClusterDefaultCandidates,
+    setRememberedClusterDefaultCandidates,
+  ] = React.useState<ClusterDefaultCandidate[]>([]);
+  React.useEffect(() => {
+    const additions: ClusterDefaultCandidate[] = [];
+    for (const rows of baseClusterDefaultCandidates.values()) {
+      additions.push(...rows);
+    }
+    for (const artifact of CLUSTER_DEFAULT_ARTIFACTS) {
+      const desiredVersion = globalDefaultMap.get(
+        toRuntimeArtifact(artifact),
+      )?.desired_version;
+      if (!desiredVersion) continue;
+      additions.push(
+        buildRememberedCurrentCandidate({
+          artifact,
+          version: desiredVersion,
+        }),
+      );
+    }
+    setRememberedClusterDefaultCandidates((current) => {
+      const byKey = new Map(current.map((row) => [row.key, row]));
+      let changed = false;
+      for (const row of additions) {
+        if (byKey.has(row.key)) continue;
+        byKey.set(row.key, row);
+        changed = true;
+      }
+      return changed ? Array.from(byKey.values()) : current;
+    });
+  }, [baseClusterDefaultCandidates, globalDefaultMap]);
+  const clusterDefaultCandidates = React.useMemo(
+    () =>
+      mergeClusterDefaultCandidates({
+        base: baseClusterDefaultCandidates,
+        remembered: rememberedClusterDefaultCandidates,
+      }),
+    [baseClusterDefaultCandidates, rememberedClusterDefaultCandidates],
   );
   const [selectedClusterDefaultKeys, setSelectedClusterDefaultKeys] =
     React.useState<Partial<Record<HostSoftwareArtifact, string>>>({});
@@ -591,7 +691,8 @@ export const HostRuntimeVersionsPanel: React.FC<
                   alignItems: "center",
                   display: "grid",
                   gap: 12,
-                  gridTemplateColumns: "180px minmax(320px, 1fr) auto",
+                  gridTemplateColumns: "180px minmax(260px, 620px) auto",
+                  maxWidth: 980,
                 }}
               >
                 <Typography.Text strong>{label}</Typography.Text>

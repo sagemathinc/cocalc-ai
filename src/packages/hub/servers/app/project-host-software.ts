@@ -1,4 +1,5 @@
 import basePath from "@cocalc/backend/base-path";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { Router, type Request, type Response } from "express";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -25,6 +26,7 @@ type SoftwareManifest = {
 };
 
 const logger = getLogger("hub:software-endpoint");
+const DEFAULT_REMOTE_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
 const fileMetaCache = new Map<string, FileMeta>();
 const buildIdentityCache = new Map<string, BundleBuildIdentity | null>();
 const normalizedBasePath = basePath === "/" ? "" : basePath;
@@ -37,6 +39,66 @@ type BundleBuildIdentity = {
 
 function softwareBaseFromReq(req: Request): string {
   return `${req.protocol}://${req.get("host")}${normalizedBasePath}/software`;
+}
+
+function normalizeSoftwareBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function isSameSoftwareBaseUrl(a: string, b: string): boolean {
+  try {
+    const left = new URL(normalizeSoftwareBaseUrl(a));
+    const right = new URL(normalizeSoftwareBaseUrl(b));
+    return (
+      left.protocol === right.protocol &&
+      left.host === right.host &&
+      left.pathname.replace(/\/+$/, "") === right.pathname.replace(/\/+$/, "")
+    );
+  } catch {
+    return normalizeSoftwareBaseUrl(a) === normalizeSoftwareBaseUrl(b);
+  }
+}
+
+async function remoteSoftwareBaseFromReq(
+  req: Request,
+): Promise<string | undefined> {
+  const mode = `${process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (mode === "local") return undefined;
+  const explicitLocalRoot =
+    `${process.env.COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT ?? ""}`.trim();
+  if (mode !== "remote" && explicitLocalRoot) return undefined;
+  if (mode !== "remote" && process.env.NODE_ENV !== "production") {
+    return undefined;
+  }
+  const settings = await getServerSettings();
+  const configured =
+    `${process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_BASE_URL ?? ""}`.trim() ||
+    `${settings.project_hosts_software_base_url ?? ""}`.trim() ||
+    `${process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ?? ""}`.trim() ||
+    DEFAULT_REMOTE_SOFTWARE_BASE_URL;
+  const own = softwareBaseFromReq(req);
+  if (isSameSoftwareBaseUrl(configured, own)) {
+    return DEFAULT_REMOTE_SOFTWARE_BASE_URL;
+  }
+  return normalizeSoftwareBaseUrl(configured);
+}
+
+async function maybeRedirectToRemoteSoftware(
+  req: Request,
+  res: Response,
+): Promise<boolean> {
+  const remoteBase = await remoteSoftwareBaseFromReq(req);
+  if (!remoteBase) return false;
+  const originalUrl = req.originalUrl || req.url || "";
+  const [pathPart, queryPart] = originalUrl.split("?", 2);
+  const softwareIndex = pathPart.indexOf("/software/");
+  if (softwareIndex < 0) return false;
+  const suffix = pathPart.slice(softwareIndex + "/software/".length);
+  const target = `${remoteBase}/${suffix}${queryPart ? `?${queryPart}` : ""}`;
+  res.redirect(302, target);
+  return true;
 }
 
 function localSoftwarePackagesRoots(): string[] {
@@ -273,6 +335,7 @@ async function sendLatestBundleManifest(
   res: Response,
   opts: { artifact: BundleArtifact; os: string; arch?: string },
 ): Promise<void> {
+  if (await maybeRedirectToRemoteSoftware(req, res)) return;
   if (!validatePlatformTokens(res, opts)) return;
   const manifest = await buildLatestBundleManifest(req, opts);
   res.type("application/json");
@@ -289,6 +352,7 @@ async function sendVersionsIndex(
     arch?: string;
   },
 ): Promise<void> {
+  if (await maybeRedirectToRemoteSoftware(req, res)) return;
   if (!validatePlatformTokens(res, opts)) return;
   const channel = normalizeChannel(opts.channel);
   if (!channel) {
@@ -311,7 +375,7 @@ async function sendVersionsIndex(
 }
 
 async function sendBundleFile(
-  _req: Request,
+  req: Request,
   res: Response,
   opts: {
     artifact: BundleArtifact;
@@ -320,6 +384,7 @@ async function sendBundleFile(
     version: string;
   },
 ): Promise<void> {
+  if (await maybeRedirectToRemoteSoftware(req, res)) return;
   if (!validatePlatformTokens(res, opts)) return;
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
@@ -359,7 +424,7 @@ async function sendBundleFile(
 }
 
 async function sendBundleSha(
-  _req: Request,
+  req: Request,
   res: Response,
   opts: {
     artifact: BundleArtifact;
@@ -368,6 +433,7 @@ async function sendBundleSha(
     version: string;
   },
 ): Promise<void> {
+  if (await maybeRedirectToRemoteSoftware(req, res)) return;
   if (!validatePlatformTokens(res, opts)) return;
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
@@ -406,7 +472,8 @@ async function sendBundleSha(
   sendShaResponse(res, meta.sha256, basename(bundlePath));
 }
 
-async function sendBootstrapFile(_req: Request, res: Response): Promise<void> {
+async function sendBootstrapFile(req: Request, res: Response): Promise<void> {
+  if (await maybeRedirectToRemoteSoftware(req, res)) return;
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
     sendNotFound(
@@ -423,7 +490,8 @@ async function sendBootstrapFile(_req: Request, res: Response): Promise<void> {
   res.sendFile(filePath);
 }
 
-async function sendBootstrapSha(_req: Request, res: Response): Promise<void> {
+async function sendBootstrapSha(req: Request, res: Response): Promise<void> {
+  if (await maybeRedirectToRemoteSoftware(req, res)) return;
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
     sendNotFound(
