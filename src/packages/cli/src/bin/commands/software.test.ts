@@ -2772,7 +2772,7 @@ test("software deploy bay uses the full bay Rocket scope", async () => {
   ]);
 });
 
-test("software deploy project-host publishes compatibility object and runs host upgrade", async () => {
+test("software deploy project-host publishes compatibility object and sets fleet default", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-project-host-"));
   const localStore = join(dir, "store");
   const source = join(dir, "bundle-linux.tar.xz");
@@ -2840,22 +2840,8 @@ test("software deploy project-host publishes compatibility object and runs host 
       .toString("utf8"),
   );
   assert.equal(versions.versions[0].version, artifactId);
-  assert.equal(runs.length, 2);
+  assert.equal(runs.length, 1);
   assert.deepEqual(runs[0].args, [
-    "--profile",
-    "staging",
-    "host",
-    "upgrade",
-    "--all-online",
-    "--artifact",
-    "project-host",
-    "--artifact-version",
-    artifactId,
-    "--base-url",
-    "https://software.example.test/software",
-    "--wait",
-  ]);
-  assert.deepEqual(runs[1].args, [
     "--profile",
     "staging",
     "host",
@@ -2868,6 +2854,85 @@ test("software deploy project-host publishes compatibility object and runs host 
     artifactId,
     "--reason",
     "software-deploy-project-host",
+  ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/project-host/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].artifact_id, artifactId);
+});
+
+test("software deploy project-host --rollout sets fleet default and upgrades online hosts", async () => {
+  const dir = mkdtempSync(
+    join(tmpdir(), "software-deploy-project-host-rollout-"),
+  );
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-rollout",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "bundle-linux.tar.xz",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "--rollout",
+    "project-host",
+    "host-rollout",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = "20260614T235912Z-e882d124-host-rollout";
+  assert.equal(runs.length, 2);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-project-host",
+  ]);
+  assert.deepEqual(runs[1].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "project-host",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
   ]);
   const history = JSON.parse(
     r2.objects
@@ -2947,22 +3012,8 @@ test("software deploy tools publishes both architecture compatibility objects", 
     );
     assert.equal(versions.versions[0].version, artifactId);
   }
-  assert.equal(runs.length, 3);
+  assert.equal(runs.length, 2);
   assert.deepEqual(runs[1].args, [
-    "--profile",
-    "staging",
-    "host",
-    "upgrade",
-    "--all-online",
-    "--artifact",
-    "tools",
-    "--artifact-version",
-    artifactId,
-    "--base-url",
-    "https://software.example.test/software",
-    "--wait",
-  ]);
-  assert.deepEqual(runs[2].args, [
     "--profile",
     "staging",
     "host",
@@ -3081,7 +3132,7 @@ test("software deploy bay-scaffold uses bay artifact and scaffold-only Rocket fl
   ]);
 });
 
-test("software deploy host-conat-router installs project-host artifact and reconciles one component", async () => {
+test("software deploy host-conat-router sets project-host and component fleet defaults", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-router-"));
   const localStore = join(dir, "store");
   const source = join(dir, "bundle-linux.tar.xz");
@@ -3120,22 +3171,8 @@ test("software deploy host-conat-router installs project-host artifact and recon
     r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
   ).artifacts[0].artifact_id;
 
-  assert.equal(runs.length, 4);
+  assert.equal(runs.length, 2);
   assert.deepEqual(runs[0].args.slice(-12), [
-    "--profile",
-    "staging",
-    "host",
-    "upgrade",
-    "--all-online",
-    "--artifact",
-    "project-host",
-    "--artifact-version",
-    artifactId,
-    "--base-url",
-    "https://software.example.test/software",
-    "--wait",
-  ]);
-  assert.deepEqual(runs[1].args.slice(-12), [
     "--profile",
     "staging",
     "host",
@@ -3149,7 +3186,7 @@ test("software deploy host-conat-router installs project-host artifact and recon
     "--reason",
     "software-deploy-host-conat-router",
   ]);
-  assert.deepEqual(runs[2].args.slice(-14), [
+  assert.deepEqual(runs[1].args.slice(-14), [
     "--profile",
     "staging",
     "host",
@@ -3164,6 +3201,103 @@ test("software deploy host-conat-router installs project-host artifact and recon
     "restart_now",
     "--reason",
     "software-deploy-host-conat-router",
+  ]);
+
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/host-conat-router/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].artifact_component, "project-host");
+  assert.equal(history.deployments[0].target.kind, "project-host-fleet");
+});
+
+test("software deploy host-conat-router --rollout reconciles one online component", async () => {
+  const dir = mkdtempSync(
+    join(tmpdir(), "software-deploy-host-router-rollout-"),
+  );
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-router-rollout",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "--rollout",
+    "host-conat-router",
+    "host-router-rollout",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = JSON.parse(
+    r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
+  ).artifacts[0].artifact_id;
+
+  assert.equal(runs.length, 4);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-host-conat-router",
+  ]);
+  assert.deepEqual(runs[1].args.slice(-14), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--component",
+    "conat-router",
+    "--desired-version",
+    artifactId,
+    "--policy",
+    "restart_now",
+    "--reason",
+    "software-deploy-host-conat-router",
+  ]);
+  assert.deepEqual(runs[2].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "project-host",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
   ]);
   assert.deepEqual(runs[3].args.slice(-11), [
     "--profile",

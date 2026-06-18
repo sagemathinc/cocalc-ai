@@ -124,6 +124,7 @@ type DeployOptions = {
   api?: string;
   toolsMinimal?: string;
   build?: boolean;
+  rollout?: boolean;
 };
 
 type HistoryOptions = {
@@ -3468,6 +3469,10 @@ Supported deploy/smoke components:
       "--build",
       "build the component tag before deploying; deploy-only service components build their underlying artifact component",
     )
+    .option(
+      "--rollout",
+      "for host runtime components, immediately upgrade/reconcile all online hosts after setting fleet defaults",
+    )
     .option("--local-store <path>", "local artifact store")
     .option("--config <path>", "rocket config path")
     .option("--remote <ssh-target>", "bay SSH target")
@@ -3640,21 +3645,6 @@ Supported deploy/smoke components:
                 "--profile",
                 deployTarget,
                 "host",
-                "upgrade",
-                "--all-online",
-                "--artifact",
-                hostTarget.upgradeArtifact,
-                "--artifact-version",
-                artifact.artifact_id,
-                "--base-url",
-                hostBaseUrl,
-                "--wait",
-              ],
-              [
-                ...cli.args,
-                "--profile",
-                deployTarget,
-                "host",
                 "deploy",
                 "set",
                 "--global",
@@ -3669,25 +3659,42 @@ Supported deploy/smoke components:
               ],
             ];
             if (hostManagedComponent) {
-              commandArgsList.push(
-                [
-                  ...cli.args,
-                  "--profile",
-                  deployTarget,
-                  "host",
-                  "deploy",
-                  "set",
-                  "--global",
-                  "--component",
-                  hostManagedComponent,
-                  "--desired-version",
-                  artifact.artifact_id,
-                  "--policy",
-                  "restart_now",
-                  "--reason",
-                  reason,
-                ],
-                [
+              commandArgsList.push([
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "set",
+                "--global",
+                "--component",
+                hostManagedComponent,
+                "--desired-version",
+                artifact.artifact_id,
+                "--policy",
+                "restart_now",
+                "--reason",
+                reason,
+              ]);
+            }
+            if (opts.rollout) {
+              commandArgsList.push([
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "upgrade",
+                "--all-online",
+                "--artifact",
+                hostTarget.upgradeArtifact,
+                "--artifact-version",
+                artifact.artifact_id,
+                "--base-url",
+                hostBaseUrl,
+                "--wait",
+              ]);
+              if (hostManagedComponent) {
+                commandArgsList.push([
                   ...cli.args,
                   "--profile",
                   deployTarget,
@@ -3700,8 +3707,8 @@ Supported deploy/smoke components:
                   "--reason",
                   reason,
                   "--wait",
-                ],
-              );
+                ]);
+              }
             }
           } else if (releaseTarget) {
             releaseProduct = releaseProductForArtifactComponent(
@@ -3787,6 +3794,7 @@ Supported deploy/smoke components:
               ...(hostManagedComponent
                 ? { host_managed_component: hostManagedComponent }
                 : {}),
+              ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
               ...(releaseProduct ? { release_product: releaseProduct } : {}),
               ...(releaseChannel ? { release_channel: releaseChannel } : {}),
               ...(releaseInstall ?? {}),
@@ -3950,6 +3958,7 @@ Supported deploy/smoke components:
             ...(hostManagedComponent
               ? { host_managed_component: hostManagedComponent }
               : {}),
+            ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { channel: releaseChannel } : {}),
             ...(releaseInstall ?? {}),
