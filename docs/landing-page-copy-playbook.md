@@ -26,6 +26,11 @@
    cutting-edge, seamless, enterprise-ready,* and the generic *scalable, powerful, easy.* Two
    universal devtool-page rules: **"no salesy BS"** and **"clever and simple wins."** Earn any
    strong claim with a number, a demo, or a concrete example.
+6. **Respect visual density — design for scanning, not reading.** A section that reads as a
+   wall of text loses both audiences *and* hides design flaws in review. Keep paragraphs short
+   (1–3 lines), cap bullet lists, prefer whitespace and *one idea per section* over
+   comprehensive prose. Detail belongs in the docs; the landing page should be skimmable
+   top-to-bottom. (Also a reviewability aid — sparse pages make visual flaws easy to spot.)
 
 ## The dual-audience technique: LAYER, don't average
 
