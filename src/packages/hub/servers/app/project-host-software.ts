@@ -69,7 +69,12 @@ async function remoteSoftwareBaseFromReq(
   const explicitLocalRoot =
     `${process.env.COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT ?? ""}`.trim();
   if (mode !== "remote" && explicitLocalRoot) return undefined;
-  if (mode !== "remote" && process.env.NODE_ENV !== "production") {
+  const runningInBay = !!`${process.env.COCALC_BAY_ID ?? ""}`.trim();
+  if (
+    mode !== "remote" &&
+    !runningInBay &&
+    process.env.NODE_ENV !== "production"
+  ) {
     return undefined;
   }
   const settings = await getServerSettings();
