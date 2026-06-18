@@ -93,10 +93,20 @@ EOF
 - Run `pnpm -C src prettier --write <file>` on modified files as needed.
 - For frontend changes, also run `pnpm -C src lint:frontend`. Treat frontend lint failures the same way as test or typecheck failures.
 
+## Public-Site Work (CoCalc.ai public site)
+
+Any agent (Codex, Claude, Gemini) touching the public site — landing, feature, product, pricing, guides pages, public copy, CTAs — inherits ONE operating system. Start here; do not improvise a workflow.
+
+- **`docs/website-operating-system.md`** — the contract: the frozen Brief, evidence-gated rounds, **solo by default** (multi-agent only for judge / pitch-challenge / a finite queue), and a per-turn rebuild + screenshot human gate. Read it first.
+- Run work through the commands in `src/.claude/commands/`: `/site-round <route>` (the default solo round), `/site-audit`, `/site-verify`, `/site-judge`, `/pitch-challenge`. Codex/Gemini: these are plain prompts — read the matching `*.md`.
+- The edit standard for a single round: `.agents/skills/public-site-landing-page/SKILL.md`.
+- Durable docs (an index — do NOT inline): north-star Brief `docs/landing-page-brief.md` · finite queue `docs/landing-page-issues-and-plans.md` · copy craft `docs/landing-page-copy-playbook.md` · decisions log `docs/landing-page-decisions.md` (append ONE line per durable decision; mechanical detail goes in the commit, not here).
+- Enforcement: **C1** structural tests `src/packages/frontend/public/__tests__/test-helpers.ts` (assert structure/canaries, not exact copy — copy edits should need no test edit) · **D1** design tokens `src/packages/frontend/public/theme.ts`.
+- RETIRED — do not read or append: `docs/public-site-cohesion-audit.md`, `src/.agents/landing-page-agent-operating-audit.md`.
+
 ## Public Site and Artifact Hygiene
 
 - Treat public React routes, public metadata, and files under `src/packages/frontend/public` as user-facing publication surfaces. Do not copy internal pitch language, competitor research, agent planning notes, or compliance interpretation into them unless the user explicitly approves that exact public wording.
-- For CoCalc.ai public-site, landing-page, feature-page, product-page, guides, CTA, or public-copy work, use the repo skill `.agents/skills/public-site-landing-page/SKILL.md` and the operating audit `src/.agents/landing-page-agent-operating-audit.md` as the durable workflow standard.
 - Keep scratch browser-QA screenshots, Playwright traces, generated reports, terminal transcripts, and temporary research files outside the repository, preferably under `/tmp/cocalc-public-qa-*`.
 - Commit only source, tests, and intentional docs. Do not commit generated QA artifacts or candidate screenshots unless they are approved public assets with a clear freshness/source rationale.
 - Before committing public-site work, run `git status --short`, review `git diff --name-only`, and check untracked files with `git ls-files --others --exclude-standard` so accidental scratch artifacts do not enter the repository.
@@ -104,6 +114,7 @@ EOF
 
 ## Docs
 
+- Keep this file an index, not a dump: when a pointer changes, update it here the same turn; record durable decisions in the relevant decisions log, not inline; and delete pointers to retired docs rather than leaving them dangling.
 - Architecture/docs: `docs/`
 - Translation workflow: `docs/translation.md`
 - Browser runtime debugging via `cocalc browser`: `docs/browser-debugging.md`
