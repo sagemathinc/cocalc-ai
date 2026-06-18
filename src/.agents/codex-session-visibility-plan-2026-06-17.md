@@ -348,7 +348,8 @@ Project-host ACP code should upsert lifecycle state at these points:
    - after the owning bay has authoritative proof that the project host was
      stopped, destroyed, or deprovisioned.
 10. `orphaned` or `possibly_active`
-    - by reconciliation when the backend cannot prove a terminal state.
+
+- by reconciliation when the backend cannot prove a terminal state.
 
 Important rule:
 
@@ -695,21 +696,21 @@ Manual tests:
 - Table name: `acp_sessions`, `codex_sessions`, or more generic
   `ai_sessions`.
   - Recommendation: `acp_sessions` internally because the execution primitive is
-    ACP; label it "Codex sessions" in the UI while Codex is the only paid agent.
+    ACP; label it "Codex sessions" in the UI while Codex is the only paid agent.  (USER: yes)
 - Should project collaborators see all sessions in a project or only their own?
   - Recommendation: project owner/admin sees project-level rows; ordinary
-    collaborators see their own rows plus rows using their payment source.
+    collaborators see their own rows plus rows using their payment source. (USER: agreed; only their own)
 - How long should terminal rows be retained?
-  - Recommendation: 30 days for MVP, configurable later.
+  - Recommendation: 30 days for MVP, configurable later. (USER: sounds good)
 - Should prompt snippets be stored?
   - Recommendation: store only a short sanitized title/snippet, and make it
-    hidden unless the viewer has project access.
+    hidden unless the viewer has project access.  (USER: agreed; some minimal snippet to identify it)
 - Should estimated cost be computed at write time or display time?
   - Recommendation: store raw usage tokens and payment source/model; compute
-    display estimate dynamically until pricing configuration is stable.
+    display estimate dynamically until pricing configuration is stable. 
 - How should non-Codex ACP agents appear?
   - Recommendation: same registry with `agent_kind`, but only Codex sessions are
-    emphasized as money-risk initially.
+    emphasized as money-risk initially.   (ANS: we don't support anything non-codex right now, so not too important)
 
 ## Non-Goals
 
@@ -719,3 +720,4 @@ Manual tests:
   MVP.
 - Do not expose full prompt/output contents in the global registry.
 - Do not use missing heartbeat alone as proof that spending stopped.
+
