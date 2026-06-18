@@ -305,11 +305,15 @@ function AboutEventsPage() {
   return (
     <div style={{ display: "grid", gap: "24px" }}>
       <div>
-        <h2 style={{ marginBottom: "10px" }}>Upcoming events</h2>
+        <Title level={2} style={{ marginBottom: 10 }}>
+          Upcoming events
+        </Title>
         <EventList items={payload.upcoming ?? []} />
       </div>
       <div>
-        <h2 style={{ marginBottom: "10px" }}>Past events</h2>
+        <Title level={2} style={{ marginBottom: 10 }}>
+          Past events
+        </Title>
         <EventList items={payload.past ?? []} />
       </div>
     </div>

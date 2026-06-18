@@ -6,7 +6,7 @@
 import type { ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
-import { Button, Flex, Typography } from "antd";
+import { Button, Card, Flex, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
@@ -20,11 +20,12 @@ import {
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { navigatePublic } from "../navigation";
 import type { PublicSupportRoute, SupportView } from "./routes";
 import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
 
-const { Paragraph } = Typography;
+const { Paragraph, Text } = Typography;
 
 const CommunityView = lazy(() => import("./community-view"));
 const SupportNew = lazy(() => import("./new-view"));
@@ -88,20 +89,28 @@ function SupportCard({
   title: string;
 }) {
   return (
-    <PublicSection>
-      <div style={{ fontWeight: 700, fontSize: "18px" }}>{title}</div>
-      <div style={{ color: COLORS.GRAY }}>{description}</div>
-      <div>{children}</div>
-    </PublicSection>
+    <Card
+      className="cocalc-public-card"
+      style={{ height: "100%" }}
+      title={title}
+      variant="outlined"
+    >
+      <Flex vertical gap="middle">
+        <Text style={{ color: PUBLIC_COLORS.mutedText }}>{description}</Text>
+        <div>{children}</div>
+      </Flex>
+    </Card>
   );
 }
 
 function SupportIndex({
   config,
   onNavigate,
+  siteName,
 }: {
   config: SupportConfig;
   onNavigate: (view: SupportView) => void;
+  siteName: string;
 }) {
   const helpEmail = config.help_email?.trim() || HELP_EMAIL;
   const hasZendesk = !!config.zendesk;
@@ -115,10 +124,10 @@ function SupportIndex({
           style={{
             borderRadius: 8,
             padding: "10px 12px",
-            fontSize: 14,
-            background: "#e6f4ff",
-            border: "1px solid #91caff",
-            color: "#0958d9",
+            fontSize: PUBLIC_TYPE.caption,
+            background: PUBLIC_COLORS.brandTint,
+            border: `1px solid ${PUBLIC_COLORS.brandSubtle}`,
+            color: PUBLIC_COLORS.brand,
           }}
         >
           {config.support}
@@ -136,11 +145,10 @@ function SupportIndex({
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <Paragraph style={{ fontSize: "16px", margin: 0 }}>
-        Use support when you need help choosing how CoCalc should run, planning
-        licensing or deployment, clarifying support, privacy, security, or
-        data-location questions, or resolving an existing account or project
-        issue.
+      <Paragraph style={{ fontSize: PUBLIC_TYPE.body, margin: 0 }}>
+        Use support to choose how {siteName} should run, plan licensing or
+        deployment, or resolve an existing account or project issue. We can also
+        answer privacy, security, and data-location questions.
       </Paragraph>
       {trustHref || privacyHref ? (
         <Flex aria-label="Support trust materials" gap={12} role="group" wrap>
@@ -168,7 +176,7 @@ function SupportIndex({
         {hasZendesk ? (
           <SupportCard
             description="Start here when you are ready to ask about pricing, deployment boundaries, site licensing, support expectations, or an existing account or project issue."
-            title="Talk with CoCalc"
+            title={`Talk with ${siteName}`}
           >
             <Button type="primary" onClick={() => onNavigate("new")}>
               Start support request
@@ -185,15 +193,16 @@ function SupportIndex({
         ) : null}
         {config.support_video_call ? (
           <SupportCard
-            description="Book a video call with the CoCalc team."
+            description={`Book a video call with the ${siteName} team.`}
             title="Video chat"
           >
-            <a
+            <Button
               href={config.support_video_call}
-              style={{ color: COLORS.BLUE_D }}
+              rel="noopener noreferrer"
+              target="_blank"
             >
               Book a call
-            </a>
+            </Button>
           </SupportCard>
         ) : null}
         <SupportCard
@@ -208,17 +217,15 @@ function SupportIndex({
           description="Browse user and admin documentation."
           title="Documentation"
         >
-          <a href={appPath("/docs")} style={{ color: COLORS.BLUE_D }}>
-            Read the docs
-          </a>
+          <Button href={appPath("/docs")}>Read the docs</Button>
         </SupportCard>
         <SupportCard
           description="Reach the team directly by email."
-          title={hasZendesk ? "Email" : "Talk with CoCalc"}
+          title={hasZendesk ? "Email" : `Talk with ${siteName}`}
         >
-          <a href={`mailto:${helpEmail}`} style={{ color: COLORS.BLUE_D }}>
-            {hasZendesk ? helpEmail : "Email CoCalc"}
-          </a>
+          <Button href={`mailto:${helpEmail}`}>
+            {hasZendesk ? helpEmail : `Email ${siteName}`}
+          </Button>
         </SupportCard>
       </PublicGrid>
     </div>
@@ -287,6 +294,7 @@ export default function PublicSupportApp({
           <SupportIndex
             config={marketingConfig ?? config}
             onNavigate={navigate}
+            siteName={siteName}
           />
         ) : null}
         {view === "new" ? (

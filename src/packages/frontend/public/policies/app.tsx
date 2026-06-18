@@ -11,6 +11,7 @@ import {
   getSiteName,
   MarkdownSection,
   type PublicConfig,
+  PublicNextStep,
   PublicSectionShell,
 } from "../common";
 import {
@@ -20,7 +21,7 @@ import {
   publicPoliciesUseBuiltin,
   publicPoliciesUseCustom,
 } from "@cocalc/frontend/public/config";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_RADIUS } from "@cocalc/frontend/public/theme";
 import { publicPath } from "../routes";
 import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import {
@@ -73,7 +74,7 @@ const POLICY_EVALUATION_LINKS: PolicyEvaluationLink[] = [
       }).toString()}`,
     ),
     label: "Ask about policy review",
-    title: "Talk with CoCalc",
+    title: "Ask about policy review",
   },
 ];
 
@@ -148,7 +149,7 @@ function PolicyEvidenceSummary({ policy }: { policy: PublicPolicy }) {
     <div
       style={{
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         marginBottom: 24,
         padding: 16,
       }}
@@ -230,7 +231,7 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
   if (!arePublicPoliciesVisible(config)) {
     return (
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Public policy pages are not configured
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -246,7 +247,7 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
 
   return (
     <PublicSection>
-      <Title level={3} style={{ margin: 0 }}>
+      <Title level={2} style={{ margin: 0 }}>
         Public policy information
       </Title>
       <Paragraph style={{ margin: 0 }}>
@@ -328,14 +329,13 @@ function PoliciesHome({ config }: { config: PublicConfig }) {
         <PublicGrid columns={3}>
           {POLICY_EVALUATION_LINKS.map((item) => (
             <PublicCard href={item.href} key={item.href} title={item.title}>
-              <Flex vertical gap="small">
-                <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-                <Text strong>{item.label}</Text>
-              </Flex>
+              <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
             </PublicCard>
           ))}
         </PublicGrid>
       </PublicSection>
+
+      <PublicNextStep authenticated={!!config?.is_authenticated} />
     </Flex>
   );
 }

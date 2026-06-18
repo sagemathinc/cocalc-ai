@@ -7,6 +7,7 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { Flex, Segmented, Tag, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { capitalize } from "@cocalc/util/misc";
 import {
   CHANNELS_DESCRIPTIONS,
   PUBLIC_NEWS_CHANNELS,
@@ -29,11 +30,18 @@ import { publicPath } from "../routes";
 import type { PublicNewsRoute } from "./routes";
 import { contentNewsPath, formatNewsDate, newsHistoryPath } from "./utils";
 import { PublicGrid, PublicSection } from "../layout/shell";
+import { PUBLIC_TYPE } from "../theme";
 
 const StaticMarkdown = lazy(
   () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
 );
 const { Paragraph, Text, Title } = Typography;
+
+// CHANNELS_DESCRIPTIONS is shared with the in-app news admin; override the
+// less-clear public-facing wording here so the filter tooltips read naturally.
+const CHANNEL_TOOLTIPS: Partial<Record<Channel, string>> = {
+  about: "Company news and updates about CoCalc",
+};
 
 interface NewsDetailPayload {
   history?: boolean;
@@ -64,7 +72,7 @@ function NewsMarkdown({
     <Suspense fallback={<div>Loading content…</div>}>
       <StaticMarkdown
         style={{
-          fontSize: preview ? "0.98rem" : undefined,
+          fontSize: preview ? PUBLIC_TYPE.body : undefined,
           overflowX: "auto",
         }}
         value={value}
@@ -77,7 +85,7 @@ function NewsCard({ item }: { item: NewsItem }) {
   return (
     <PublicSection>
       <Flex gap={8} wrap>
-        <Tag color="blue">{item.channel}</Tag>
+        <Tag color="blue">{capitalize(item.channel)}</Tag>
         <Text type="secondary">{formatNewsDate(item.date)}</Text>
       </Flex>
       <Title level={3} style={{ margin: 0 }}>
@@ -155,8 +163,8 @@ function NewsListPage({ isAdmin }: { isAdmin?: boolean }) {
         options={[
           { label: "All", title: "All channels", value: "all" },
           ...PUBLIC_NEWS_CHANNELS.map((name) => ({
-            label: name,
-            title: CHANNELS_DESCRIPTIONS[name],
+            label: capitalize(name),
+            title: CHANNEL_TOOLTIPS[name] ?? CHANNELS_DESCRIPTIONS[name],
             value: name,
           })),
         ]}
@@ -229,7 +237,7 @@ function NewsDetailPage({ route }: { route: PublicNewsDetailRoute }) {
       ) : null}
       <PublicSection>
         <Flex gap={8} wrap>
-          <Tag color="blue">{news.channel}</Tag>
+          <Tag color="blue">{capitalize(news.channel)}</Tag>
           <Text type="secondary">{formatNewsDate(news.date)}</Text>
         </Flex>
         <Title level={2} style={{ margin: 0 }}>
@@ -294,7 +302,10 @@ export default function PublicNewsApp({
     <PublicSectionShell active="news" config={config} title={title}>
       {initialRoute.view === "news-detail" ||
       initialRoute.view === "news-history" ? (
-        <NewsDetailPage route={initialRoute} />
+        <>
+          <NewsDetailPage route={initialRoute} />
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
+        </>
       ) : (
         <>
           <NewsListPage isAdmin={!!config?.is_admin} />

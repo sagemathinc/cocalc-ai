@@ -10,6 +10,11 @@ import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_TYPE,
+  PUBLIC_WEIGHT,
+} from "@cocalc/frontend/public/theme";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
@@ -95,9 +100,9 @@ function Status({ done }: { done: boolean }) {
         borderRadius: "50%",
         background: done ? "#f6ffed" : "#fff7e6",
         border: `1px solid ${done ? "#b7eb8f" : "#ffd591"}`,
-        color: done ? "#389e0d" : "#d46b08",
+        color: done ? PUBLIC_COLORS.success : PUBLIC_COLORS.warning,
         fontSize: 12,
-        fontWeight: 700,
+        fontWeight: PUBLIC_WEIGHT.bold,
         marginRight: 8,
       }}
     >
@@ -114,7 +119,7 @@ function SectionLabel({
   done: boolean;
 }) {
   return (
-    <div style={{ fontSize: 16, fontWeight: 700 }}>
+    <div style={{ fontSize: PUBLIC_TYPE.body, fontWeight: PUBLIC_WEIGHT.bold }}>
       <Status done={done} />
       {children}
     </div>
@@ -423,7 +428,15 @@ function renderBodyFields(params: {
       title={
         supportVideoCall ? (
           <>
-            You can also <a href={supportVideoCall}>book a video call</a>.
+            You can also{" "}
+            <a
+              href={supportVideoCall}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              book a video call
+            </a>
+            .
           </>
         ) : (
           "Video chat request"
@@ -571,10 +584,12 @@ export default function SupportNew({
       <Space orientation="vertical" size="large" style={{ width: "100%" }}>
         <PublicSection>
           <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            <Title level={2} style={{ margin: 0 }}>
-              {initial.title || "Contact CoCalc Support"}
-            </Title>
-            <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+            {initial.title ? (
+              <Title level={2} style={{ margin: 0 }}>
+                {initial.title}
+              </Title>
+            ) : null}
+            <Paragraph style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}>
               This site is not accepting support tickets directly here. Use the
               support page or email CoCalc, and include the context below if it
               applies to your request.
@@ -600,7 +615,9 @@ export default function SupportNew({
               <Button href={mailtoHref}>Email CoCalc</Button>
             </Space>
             {trustHref || privacyHref ? (
-              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+              <Paragraph
+                style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}
+              >
                 For published security and privacy context, review{" "}
                 {trustHref ? <a href={trustHref}>trust materials</a> : null}
                 {trustHref && privacyHref ? " and " : null}
@@ -624,7 +641,7 @@ export default function SupportNew({
             <Title level={2} style={{ margin: 0 }}>
               {initial.title || "Create a New Support Ticket"}
             </Title>
-            <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+            <Paragraph style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}>
               Create a new support ticket below or{" "}
               <a
                 onClick={(e) => {
@@ -637,20 +654,31 @@ export default function SupportNew({
               .
             </Paragraph>
             {helpEmail ? (
-              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+              <Paragraph
+                style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}
+              >
                 You can also email us directly at{" "}
                 <a href={`mailto:${helpEmail}`}>{helpEmail}</a>.
               </Paragraph>
             ) : null}
             {config.support_video_call ? (
-              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+              <Paragraph
+                style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}
+              >
                 Alternatively, you can{" "}
-                <a href={config.support_video_call}>book a video call</a>.
+                <a
+                  href={config.support_video_call}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  book a video call
+                </a>
+                .
               </Paragraph>
             ) : null}
             <Alert
               showIcon
-              type="warning"
+              type="info"
               title="Helpful links"
               description={
                 <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
@@ -670,7 +698,11 @@ export default function SupportNew({
                     </li>
                   ) : null}
                   <li>
-                    <a href="https://github.com/sagemathinc/cocalc-ai/issues">
+                    <a
+                      href="https://github.com/sagemathinc/cocalc-ai/issues"
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
                       Bug reports
                     </a>
                   </li>
@@ -755,8 +787,8 @@ export default function SupportNew({
               <Paragraph
                 style={{ color: COLORS.GRAY_D, margin: "10px 0 12px 0" }}
               >
-                Select any relevant projects and files below. This will make it
-                much easier for us to quickly understand your problem.
+                Select any relevant projects and files below. Attaching them
+                helps us understand and resolve your problem faster.
               </Paragraph>
               <Suspense
                 fallback={

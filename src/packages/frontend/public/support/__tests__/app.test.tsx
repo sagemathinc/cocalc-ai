@@ -33,11 +33,11 @@ describe("PublicSupportApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Choose an operating model")).not.toBeNull();
     expect(screen.getByText("Pricing and licensing")).not.toBeNull();
-    expect(screen.getByText("Talk with CoCalc")).not.toBeNull();
+    expect(screen.getByText("Talk with Launchpad")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
     expect(
       screen.getByText(
-        /support, privacy, security, or data-location questions/,
+        /privacy, security, and data-location questions/,
       ),
     ).not.toBeNull();
     expect(
@@ -102,8 +102,8 @@ describe("PublicSupportApp", () => {
 
     expect(screen.queryByRole("button", { name: "New ticket" })).toBeNull();
     expect(screen.queryByRole("button", { name: "My tickets" })).toBeNull();
-    expect(screen.getByText("Talk with CoCalc")).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Email CoCalc" })).toHaveAttribute(
+    expect(screen.getByText("Talk with Launchpad")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Email Launchpad" })).toHaveAttribute(
       "href",
       "mailto:help@cocalc.com",
     );

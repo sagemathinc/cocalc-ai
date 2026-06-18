@@ -7,18 +7,20 @@ import { useEffect } from "react";
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import type { IconName } from "@cocalc/frontend/components/icon";
 import {
   appPath,
   getPublicMarketingSiteName,
+  PublicNextStep,
   type PublicConfig,
   PublicSectionShell,
 } from "@cocalc/frontend/public/common";
+import { IconBadge } from "@cocalc/frontend/public/features/feature-visuals";
 import {
   PublicHero,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_ELEVATION } from "@cocalc/frontend/public/theme";
 import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
@@ -57,7 +59,7 @@ const GUIDES_PAGE_CSS = `
 .cocalc-guide-link:hover {
   background: ${PUBLIC_COLORS.surface};
   border-color: ${PUBLIC_COLORS.border};
-  box-shadow: 0 8px 24px rgba(33, 49, 57, 0.08);
+  box-shadow: ${PUBLIC_ELEVATION.hover};
   color: inherit;
 }
 
@@ -91,7 +93,7 @@ const FEATURED_GUIDES = [
     title: "Jupyter notebooks",
   },
   {
-    body: "Use `.term` files, shared terminal streams, side chat, Linux tools, and agent-aware command-line work.",
+    body: "Use .term files, shared terminal streams, side chat, Linux tools, and agent-aware command-line work.",
     href: guidePath("terminal"),
     icon: "terminal",
     title: "Terminal workflows",
@@ -182,10 +184,10 @@ const GUIDE_GROUPS = [
         title: "Self-hosting CoCalc",
       },
       {
-        body: "Understand CoCalc as a durable collaborative project cloud for humans and agents.",
+        body: "Use a durable CoCalc project where people and agents work together over time.",
         href: guidePath("agent-sandbox-cloud"),
         icon: "robot",
-        title: "Agent sandbox cloud",
+        title: "Durable collaborative projects",
       },
       {
         body: "Learn the architecture model behind projects, project hosts, routing, storage, and scale.",
@@ -195,7 +197,7 @@ const GUIDE_GROUPS = [
       },
     ],
     intro:
-      "Guides for instructors, local evaluation, self-hosting, agent sandboxes, and architecture.",
+      "Guides for instructors, local evaluation, self-hosting, collaborative projects, and architecture.",
     title: "Teaching and operating paths",
   },
 ] satisfies {
@@ -211,33 +213,6 @@ interface GuideCardSpec {
   title: string;
 }
 
-function GuideIcon({
-  compact = false,
-  icon,
-}: {
-  compact?: boolean;
-  icon: IconName;
-}) {
-  return (
-    <div
-      style={{
-        alignItems: "center",
-        background: PUBLIC_COLORS.surfaceMuted,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        color: PUBLIC_COLORS.brand,
-        display: "flex",
-        fontSize: compact ? 18 : 22,
-        height: compact ? 38 : 46,
-        justifyContent: "center",
-        width: compact ? 38 : 46,
-      }}
-    >
-      <Icon name={icon} />
-    </div>
-  );
-}
-
 function GuideLink({
   body,
   featured,
@@ -245,8 +220,6 @@ function GuideLink({
   icon,
   title,
 }: GuideCardSpec & { featured?: boolean }) {
-  const compact = !featured;
-
   return (
     <a
       className={`cocalc-guide-link ${
@@ -256,7 +229,7 @@ function GuideLink({
       rel="noreferrer"
       target="_blank"
     >
-      <GuideIcon compact={compact} icon={icon} />
+      <IconBadge icon={icon} size={featured ? "md" : "sm"} />
       <span>
         <Text strong style={{ display: "block" }}>
           {title}
@@ -395,25 +368,7 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
           title="Guides"
         />
         <GuideDirectory />
-        <PublicSection
-          intro="Use guides for narrative workflows. Use docs for reference material, exact UI behavior, API details, and site-specific product help."
-          title="Guides and docs work together"
-        >
-          <Flex gap={12} wrap>
-            <Button href={appPath("docs")} type="primary">
-              Open docs
-            </Button>
-            <Button href={appPath("support")}>Get support</Button>
-          </Flex>
-        </PublicSection>
-        <PublicSection>
-          <Flex gap={12} wrap>
-            <Button href={FIELD_GUIDES_URL} rel="noreferrer" target="_blank">
-              Open the full guide library
-            </Button>
-            <Button href={appPath("features")}>Browse workflow features</Button>
-          </Flex>
-        </PublicSection>
+        <PublicNextStep authenticated={!!config?.is_authenticated} />
       </PublicSectionShell>
     </>
   );

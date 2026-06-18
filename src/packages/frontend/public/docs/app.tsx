@@ -20,7 +20,7 @@ import {
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
-import { PUBLIC_COLORS } from "../theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "../theme";
 import type { PublicDocsRoute } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
@@ -48,19 +48,25 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
               style={{
                 color: PUBLIC_COLORS.brand,
                 textTransform: "uppercase",
+                fontSize: PUBLIC_TYPE.eyebrow,
+                letterSpacing: 0,
               }}
             >
-              CoCalc-ai documentation
+              {siteName} documentation
             </Text>
             <Title style={{ marginBottom: 12, marginTop: 10 }}>
               Current docs for this CoCalc instance.
             </Title>
             <Paragraph
-              style={{ fontSize: "1.125em", margin: 0, maxWidth: "72ch" }}
+              style={{
+                fontSize: PUBLIC_TYPE.lead,
+                margin: 0,
+                maxWidth: "72ch",
+              }}
             >
-              These docs are served by CoCalc-ai itself, so they can evolve with
-              the product, link to the current UI, and become source material
-              for agents answering questions inside your workspace.
+              These docs are served by {siteName} itself, so they can evolve
+              with the product, link to the current UI, and become source
+              material for agents answering questions inside your workspace.
             </Paragraph>
           </div>
           <DocsIndexContent
