@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -151,7 +151,7 @@ export default function RStatisticalSoftwareFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Use R for statistics and reproducible reporting.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Fit statistical models, build reproducible reports, and share
                 the analysis with your lab or team — using R in notebooks,
                 scripts, and Quarto or RMarkdown documents.

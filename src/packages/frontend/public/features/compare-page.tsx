@@ -8,7 +8,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { Button, Flex, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import { LinkButton, featureAppPath } from "./page-components";
 
@@ -323,7 +323,13 @@ export default function CompareFeaturePage({
             <Title level={2} style={{ margin: 0 }}>
               When is CoCalc the right fit?
             </Title>
-            <Paragraph style={{ fontSize: 18, margin: 0, maxWidth: "65ch" }}>
+            <Paragraph
+              style={{
+                fontSize: PUBLIC_TYPE.lead,
+                margin: 0,
+                maxWidth: "65ch",
+              }}
+            >
               CoCalc is worth evaluating when the work is larger than one
               notebook, dashboard, or editor. It helps when people need to
               review active work, recover context, and choose where the

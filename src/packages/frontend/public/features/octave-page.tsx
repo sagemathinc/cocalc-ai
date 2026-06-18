@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -154,7 +154,7 @@ export default function OctaveFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Run Octave in notebooks, scripts, and terminals.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 CoCalc supports GNU Octave as part of a real project
                 environment: edit <code>.m</code> files, run Octave in a
                 terminal, use notebook workflows, share files, and teach from a

@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -251,7 +251,7 @@ export default function SageFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Use SageMath inside collaborative mathematics projects.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 CoCalc has long-standing roots in the SageMath community. It
                 gives SageMath a collaborative project environment for
                 notebooks, terminals, LaTeX documents, teaching workflows, and

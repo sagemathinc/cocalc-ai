@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -296,7 +296,7 @@ export default function AIFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Codex where the work happens.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Use Codex next to the files, notebooks, terminals, images, and
                 collaborators involved in the work.
               </Paragraph>

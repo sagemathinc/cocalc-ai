@@ -9,7 +9,7 @@ import { Button, Col, Flex, Modal, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -272,7 +272,7 @@ export default function JupyterNotebookFeaturePage({
                 style={{
                   alignSelf: "flex-start",
                   color: COLORS.BLUE_D,
-                  fontSize: 12,
+                  fontSize: PUBLIC_TYPE.eyebrow,
                   letterSpacing: 0,
                   textTransform: "uppercase",
                 }}
@@ -282,7 +282,7 @@ export default function JupyterNotebookFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Jupyter notebooks for work that needs to keep going
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Run standard notebooks in CoCalc when analysis depends on data
                 files, packages, collaborators, or a course workflow.
               </Paragraph>
@@ -441,7 +441,7 @@ export default function JupyterNotebookFeaturePage({
         width={760}
       >
         <Flex vertical gap={18}>
-          <Paragraph style={{ fontSize: 16, margin: 0 }}>
+          <Paragraph style={{ fontSize: PUBLIC_TYPE.body, margin: 0 }}>
             Saving an `.ipynb` file is not the same as understanding the live
             session. CoCalc gives Codex project-scoped notebook commands, so it
             can inspect cells, start focused runs, and reason from actual

@@ -9,7 +9,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   featureAppPath as appPath,
   featureSupportPath,
@@ -228,7 +228,7 @@ function WorkflowNode({
       <Flex vertical gap={12}>
         <Flex align="center" justify="space-between" gap={12}>
           <IconBadge accent={accent} icon={icon} />
-          <Text strong style={{ color: accent, fontSize: 13 }}>
+          <Text strong style={{ color: accent, fontSize: PUBLIC_TYPE.caption }}>
             {label}
           </Text>
         </Flex>
@@ -445,7 +445,7 @@ export default function PythonFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Python that moves from notebook to script to paper.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Explore data in a notebook, harden the stable parts into scripts
                 and tests, and publish the figures in a paper — using Python in
                 Jupyter, <code>.py</code> files, and terminals that share one

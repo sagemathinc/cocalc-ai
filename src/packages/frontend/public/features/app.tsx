@@ -16,7 +16,7 @@ import {
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
@@ -658,7 +658,7 @@ function FeaturesIndex() {
             strong
             style={{
               color: PUBLIC_COLORS.brand,
-              fontSize: 12,
+              fontSize: PUBLIC_TYPE.eyebrow,
               letterSpacing: 0,
               textTransform: "uppercase",
             }}
@@ -680,7 +680,7 @@ function FeaturesIndex() {
             <Paragraph
               style={{
                 color: PUBLIC_COLORS.mutedText,
-                fontSize: 19,
+                fontSize: PUBLIC_TYPE.lead,
                 lineHeight: 1.5,
                 margin: "20px 0 0",
                 maxWidth: 600,
@@ -931,7 +931,7 @@ function FeatureDetailContent({
         <Title level={2} style={{ margin: 0 }}>
           {page.title}
         </Title>
-        <Paragraph style={{ fontSize: 18, margin: 0 }}>
+        <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
           {page.tagline}
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>

@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -369,7 +369,7 @@ export default function TeachingFeaturePage({
                 style={{
                   alignSelf: "flex-start",
                   color: COURSE_ACCENT,
-                  fontSize: 12,
+                  fontSize: PUBLIC_TYPE.eyebrow,
                   letterSpacing: 0,
                   textTransform: "uppercase",
                 }}
@@ -379,7 +379,7 @@ export default function TeachingFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Teach where students compute, write, and collaborate
               </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Students run real assignments in a shared computing environment
                 that instructors can see into, give feedback on, and recover —
                 with notebooks, code, and data in the same project.

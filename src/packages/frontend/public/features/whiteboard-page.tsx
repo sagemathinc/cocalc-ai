@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -240,7 +240,7 @@ export default function WhiteboardFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 A technical whiteboard for math, code, and collaboration.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 CoCalc whiteboards cover the essential collaborative canvas
                 workflow, but are shaped around technical material: editable
                 explanations, KaTeX math, Jupyter cells, pages, frames, and

@@ -32,6 +32,7 @@ import {
   PublicGrid,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { currency, humanSize, round2 } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -761,7 +762,7 @@ export default function PricingPage({
           <Title level={2} style={{ margin: 0 }}>
             Hosted CoCalc.ai plans
           </Title>
-          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+          <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
             Hosted CoCalc.ai plans let teams share projects, review work
             together, and keep building — hosted and operated by CoCalc, with no
             infrastructure to run. Plan limits below apply to hosted

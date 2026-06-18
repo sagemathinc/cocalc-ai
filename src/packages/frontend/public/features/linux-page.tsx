@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -266,7 +266,7 @@ export default function LinuxFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 A Linux workspace you can actually administer.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 CoCalc projects are Ubuntu environments where you can use
                 terminals, notebooks, editors, services, and <code>sudo</code>{" "}
                 in the browser. Install software, edit configuration, run

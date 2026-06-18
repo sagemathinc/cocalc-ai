@@ -8,7 +8,7 @@ import { type ReactNode, useEffect } from "react";
 import { Button, Flex, Tag, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { getPublicMarketingConfig } from "@cocalc/frontend/public/config";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   appPath,
   builtinPolicyPath,
@@ -184,7 +184,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
         <Title level={2} style={{ margin: 0 }}>
           Choose how CoCalc should run for your team.
         </Title>
-        <Paragraph style={{ fontSize: 18, margin: 0 }}>
+        <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
           CoCalc has one project workspace model across hosted, local, single-VM
           appliance, and private deployment options. Files, notebooks,
           terminals, chats, and agent context stay with the project; the first
@@ -322,7 +322,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                   style={{
                     color: PUBLIC_COLORS.brand,
                     display: "block",
-                    fontSize: 13,
+                    fontSize: PUBLIC_TYPE.caption,
                     fontWeight: 700,
                     marginBottom: 4,
                   }}
@@ -336,7 +336,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                   style={{
                     color: PUBLIC_COLORS.brand,
                     display: "block",
-                    fontSize: 13,
+                    fontSize: PUBLIC_TYPE.caption,
                     fontWeight: 700,
                     marginBottom: 4,
                   }}
@@ -350,7 +350,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                   style={{
                     color: PUBLIC_COLORS.brand,
                     display: "block",
-                    fontSize: 13,
+                    fontSize: PUBLIC_TYPE.caption,
                     fontWeight: 700,
                     marginBottom: 4,
                   }}
@@ -435,7 +435,9 @@ function ProductLeadSection({
       <Title level={2} style={{ margin: 0 }}>
         {title}
       </Title>
-      <Paragraph style={{ fontSize: 18, margin: 0, maxWidth: "72ch" }}>
+      <Paragraph
+        style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: "72ch" }}
+      >
         {body}
       </Paragraph>
       <ProductActions actions={actions} />
@@ -451,7 +453,7 @@ function ProductSharedProjectNote() {
       style={{
         borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
         color: PUBLIC_COLORS.mutedText,
-        fontSize: 15,
+        fontSize: PUBLIC_TYPE.body,
         lineHeight: 1.55,
         maxWidth: "76ch",
         padding: "2px 0 2px 14px",

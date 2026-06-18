@@ -7,7 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -181,7 +181,7 @@ export default function SlidesFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Present from the same canvas where technical ideas are built.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 CoCalc slides are a sequence of slide-sized whiteboards. They
                 keep markdown, math, diagrams, Jupyter cells, drawings, and
                 collaborative editing in the same project as the files and
