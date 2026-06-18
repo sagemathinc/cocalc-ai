@@ -664,12 +664,24 @@ export async function ensurePlacement(
       // Project is already placed. In multi-bay mode the assigned host may be
       // registered on another bay, so only reject if it cannot be resolved at all.
       if (await hostExistsAnywhere(meta.host_id)) {
+        await registerProjectOnHost({
+          project_id,
+          host_id: meta.host_id,
+          meta,
+          account_id,
+        });
         return { host_id: meta.host_id };
       }
       throw Error(
         `project is assigned to host ${meta.host_id} but it is unavailable`,
       );
     }
+    await registerProjectOnHost({
+      project_id,
+      host_id: meta.host_id,
+      meta,
+      account_id,
+    });
     return { host_id: meta.host_id };
   }
 
@@ -687,19 +699,43 @@ export async function ensurePlacement(
     throw Error(`no running project-host available in bay ${projectBayId}`);
   }
 
-  const client = await getRoutedHostControlClient({
+  await registerProjectOnHost({
+    project_id,
     host_id: chosen.id,
+    meta,
+    account_id,
+  });
+
+  const placement: HostPlacement = { host_id: chosen.id };
+
+  await savePlacement(project_id, placement);
+  return placement;
+}
+
+async function registerProjectOnHost({
+  project_id,
+  host_id,
+  meta,
+  account_id,
+}: {
+  project_id: string;
+  host_id: string;
+  meta: ProjectMeta;
+  account_id?: string;
+}): Promise<void> {
+  const client = await getRoutedHostControlClient({
+    host_id,
     account_id,
     timeout: START_PROJECT_TIMEOUT_MS,
   });
 
-  log.debug("createProject on remote project host", {
+  log.debug("createProject on project host", {
     project_id,
-    meta,
-    host_id: chosen.id,
+    host_id,
+    already_assigned: meta.host_id === host_id,
   });
 
-  const run_quota = await applyHostGpuToRunQuota(meta.run_quota, chosen.id);
+  const run_quota = await applyHostGpuToRunQuota(meta.run_quota, host_id);
 
   await client.createProject({
     project_id,
@@ -707,20 +743,15 @@ export async function ensurePlacement(
     users: meta.users,
     image: meta.image,
     ensure_volume: false,
-    // Register the project on the chosen host first, then persist placement
-    // before doing any long-running runtime start. Large OCI image pulls can
-    // take minutes, and they must happen on the explicit startProject RPC with
-    // its long timeout so we never lose host placement on a createProject
-    // timeout.
+    // Register or refresh the project metadata on the chosen host first, then
+    // persist placement before any long-running runtime start. This call is
+    // idempotent and repairs old half-placed projects whose hub row has a
+    // host_id but whose assigned host lacks the local project row needed for
+    // data-plane authorization.
     start: false,
     authorized_keys: meta.authorized_keys,
     run_quota,
   });
-
-  const placement: HostPlacement = { host_id: chosen.id };
-
-  await savePlacement(project_id, placement);
-  return placement;
 }
 
 export async function startProjectOnHost(
