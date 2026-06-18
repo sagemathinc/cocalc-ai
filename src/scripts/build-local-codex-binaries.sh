@@ -114,7 +114,7 @@ git -C "${UPSTREAM_DIR}" restore --source="${CODEX_TAG}" --staged --worktree .
 git -C "${UPSTREAM_DIR}" restore codex-rs/Cargo.lock
 
 for patch_file in "${PATCH_FILES[@]}"; do
-  git -C "${UPSTREAM_DIR}" apply "${patch_file}"
+  git -C "${UPSTREAM_DIR}" apply --whitespace=nowarn "${patch_file}"
 done
 
 cargo fmt --manifest-path "${CARGO_MANIFEST}" --all >/dev/null

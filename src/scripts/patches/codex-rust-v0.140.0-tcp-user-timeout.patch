@@ -2,17 +2,38 @@ diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth
 index ee51edf9b5..a14d916700 100644
 --- a/codex-rs/login/src/auth/default_client.rs
 +++ b/codex-rs/login/src/auth/default_client.rs
-@@ -18,0 +19 @@ use std::sync::RwLock;
+@@ -16,6 +16,7 @@ use reqwest::header::USER_AGENT;
+ use std::sync::LazyLock;
+ use std::sync::Mutex;
+ use std::sync::RwLock;
 +use std::time::Duration;
-@@ -37,0 +39 @@ pub const CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR: &str = "CODEX_INTERNAL_ORI
+ 
+ /// Set this to add a suffix to the User-Agent string.
+ ///
+@@ -35,7 +36,9 @@ use std::sync::RwLock;
+ pub static USER_AGENT_SUFFIX: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+ pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";
+ pub const CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR: &str = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
 +pub const CODEX_TCP_USER_TIMEOUT_MS_ENV_VAR: &str = "CODEX_TCP_USER_TIMEOUT_MS";
-@@ -38,0 +41 @@ pub const RESIDENCY_HEADER_NAME: &str = "x-openai-internal-codex-residency";
+ pub const RESIDENCY_HEADER_NAME: &str = "x-openai-internal-codex-residency";
 +const DEFAULT_TCP_USER_TIMEOUT_MS: u64 = 300_000;
-@@ -223,0 +227,3 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
+ 
+ pub use codex_config::ResidencyRequirement;
+ 
+@@ -221,6 +224,9 @@ pub fn build_reqwest_client() -> reqwest::Client {
+ /// this method directly.
+ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransportError> {
+     let mut builder = reqwest::Client::builder().default_headers(default_headers());
 +    if let Some(timeout) = tcp_user_timeout() {
 +        builder = builder.tcp_user_timeout(timeout);
 +    }
-@@ -231,0 +238,30 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
+     if is_sandboxed() {
+         builder = builder.no_proxy();
+     }
+@@ -229,4 +235,34 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
+     build_reqwest_client_with_custom_ca(builder)
+ }
++
 +fn tcp_user_timeout() -> Option<Duration> {
 +    #[cfg(any(target_os = "linux", target_os = "android", target_os = "fuchsia"))]
 +    {
@@ -42,4 +63,6 @@ index ee51edf9b5..a14d916700 100644
 +        None
 +    }
 +}
-+
+ 
+ pub fn default_headers() -> HeaderMap {
+     let mut headers = HeaderMap::new();
