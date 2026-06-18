@@ -113,6 +113,41 @@ export function expectCardsStayCompact(
   }
 }
 
+// Primary CTAs within a scope, as {href, name}. Public pages render antd
+// <Button type="primary"> as `.ant-btn-primary` (an <a> when it has href).
+export function getPrimaryCtas(
+  scope: HTMLElement,
+): Array<{ href: string | null; name: string }> {
+  return Array.from(scope.querySelectorAll(".ant-btn-primary")).map(
+    (element) => ({
+      href: element.getAttribute("href"),
+      name: (element.textContent ?? "").replace(/\s+/g, " ").trim(),
+    }),
+  );
+}
+
+// Design guardrail: primary-CTA emphasis stays sane. The Brief sanctions ONE
+// main action repeated at most twice (hero + close), so this allows a single
+// primary CTA to appear twice — but flags genuine over-emphasis: any primary
+// rendered 3+ times, or more than one distinct primary repeated. (Whether a
+// given repeated primary is the *right* main action — vs. a secondary action
+// over-styled as primary, like the old duplicated "API documentation" CTA — is
+// structurally identical to the legitimate pattern and stays a human judgment;
+// the copy playbook encodes that rule.)
+export function expectPrimaryCtaEmphasisSane(scope: HTMLElement) {
+  const counts = new Map<string, number>();
+  for (const cta of getPrimaryCtas(scope)) {
+    const key = `${cta.name}|${cta.href ?? ""}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const overRepeated = [...counts.entries()]
+    .filter(([, count]) => count > 2)
+    .map(([key]) => key);
+  const repeated = [...counts.entries()].filter(([, count]) => count >= 2);
+  expect(overRepeated).toEqual([]); // no primary CTA appears 3+ times
+  expect(repeated.length).toBeLessThanOrEqual(1); // at most one repeated primary
+}
+
 // Concatenated text of all injected <style> tags (for @media / class checks).
 export function getInjectedCss(container: HTMLElement): string {
   return Array.from(container.querySelectorAll("style"))

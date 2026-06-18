@@ -5,6 +5,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   combineLeak,
   DARK_FEATURE_CARD_STYLE,
+  expectPrimaryCtaEmphasisSane,
   getDirectCards,
   getHeadingTexts,
   HERO_H1_MAX,
@@ -1050,6 +1051,12 @@ describe("PublicFeaturesApp", () => {
         .map((heading) => heading.textContent?.replace(/\s+/g, " ").trim())
         .filter((heading): heading is string => !!heading);
       expect(new Set(headings).size).toBe(headings.length);
+
+      // Design guardrail: primary-CTA emphasis stays sane — the main action may
+      // repeat hero+close, but flag 3+ repeats or multiple repeated primaries.
+      expectPrimaryCtaEmphasisSane(
+        container.querySelector("main") as HTMLElement,
+      );
 
       for (const paragraph of container.querySelectorAll("main p")) {
         expect(textLength(paragraph)).toBeLessThanOrEqual(390);
