@@ -51,18 +51,17 @@ export const trustPolicy: PublicPolicy = {
         <Row align="top" gutter={["middle", "middle"]}>
           <Col sm={16} xs={24}>
             <p style={{ marginTop: 0 }}>
-              CoCalc by SageMath, Inc. is{" "}
+              CoCalc by SageMath, Inc. has completed a{" "}
               <strong>
                 <A href="https://www.vanta.com/collection/soc-2/what-is-soc-2">
-                  SOC 2 compliant
+                  SOC 2
                 </A>
-              </strong>
-              , meaning we meet rigorous standards for data security and
-              operational integrity. This compliance is verified through
-              independent audits, ensuring that we effectively protect customer
-              information across security, availability, processing integrity,
-              confidentiality, and privacy. Our commitment to these high
-              standards enhances trust and reliability for our users.
+              </strong>{" "}
+              examination — an independent, third-party attestation of the
+              controls we have in place for security and related Trust Services
+              Criteria. A SOC 2 report describes whether those controls were
+              suitably designed and operating over a defined audit period; the
+              specific criteria and period are described in the current report.
             </p>
             <p>
               <strong>
@@ -79,7 +78,7 @@ export const trustPolicy: PublicPolicy = {
               <img
                 style={{ maxWidth: "100%", width: "150px" }}
                 src={policyHref(SOC2LOGO)}
-                alt={"SOC 2 Compliance Logo"}
+                alt={"AICPA SOC 2 logo"}
               />
             </div>
           </Col>

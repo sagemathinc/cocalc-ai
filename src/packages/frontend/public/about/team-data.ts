@@ -53,7 +53,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       "In his role as CEO of SageMath, Inc., William is at the helm, navigating the future of CoCalc. His responsibilities span delegating tasks, driving profitability, and managing the company's overall growth strategy. In addition, he maintains a close eye on developments within the cloud-based software industry, assesses company risks to ensure they're minimized, and ensures that CoCalc remains stable and productive.",
     ],
     cardText:
-      "Get to know the math prodigy behind CoCalc and SageMath, Inc.: William Stein. A Berkeley graduate and an ardent mathematician with over 15 years of experience in teaching and research, William's passion for number theory and computational science has led him down a remarkable path.",
+      "William Stein is the founder of CoCalc and SageMath, Inc. A Berkeley-trained mathematician with over 15 years in teaching and research, his work in number theory and computational science led him from academia to building open tools for technical computing.",
     summary:
       "Founder of SageMath and CoCalc, leading product direction, engineering, and long-term strategy across the entire company.",
     role: [
@@ -65,7 +65,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       "Outside work, he still has the same hands-on interest in mathematics, software, snow, ramps, and open systems that led him to build SageMath and then CoCalc in the first place.",
     ],
     background: [
-      'William\'s academic journey began at the University of California, Berkeley, where he dedicated immense time and energy to using closed-source software like Magma for in-depth analysis and research. Though an admirer of its powerful underlying algorithms, William yearned for more transparent software that didn\'t operate as a "black box." His wish to understand "how things operate under the hood" eventually led him to develop SageMath during his time as Assistant Professor of Mathematics at Harvard.',
+      'William\'s academic path began at the University of California, Berkeley, where he relied on closed-source software like Magma for analysis and research. An admirer of its underlying algorithms but wanting software that didn\'t operate as a "black box," he set out to understand "how things work under the hood" — which led him to develop SageMath while an Assistant Professor of Mathematics at Harvard.',
       "April 2013 marked another momentous chapter in William's professional life: he launched SageMathCloud, now known as CoCalc. Inspired by his experiences in the academic and computational fields, this web application was designed to enable the collaborative use of open-source software (while eliminating typical installation and package maintenance issues), thus enhancing the teaching and research process in mathematics and data science. CoCalc now operates under a corporate model, making it self-sufficient and capable of growth independent of grants or other external funding.",
       "William's not all business either. You can catch him making the most of Seattle's famously dismal winters by splitboarding with his Blue Heeler Bella in the Cascades or skating vert at \"the most rad private ramp in Seattle.\"",
     ],
@@ -124,12 +124,12 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     imageSrc: "/public/about/blaec-bejarano.png",
     imageAlt: "A portrait of Blaec Bejarano.",
     bioTopText: [
-      "If you would like to discuss computational applied mathematics, software development or integration opportunities, or possible partnerships with SageMath, don't hesitate to get in touch with Blaec.",
-      "Blaec is passionate about implementing data-driven decision-making in government, industry, and academia and his advocacy exemplifies his research interests - applied mathematics and numerical modeling of geophysical phenomena.",
-      "His dedication to academic communities is evident through his past roles, notably as the Student Chapter Secretary of the Society of Industrial and Applied Mathematics. Now, it's hard to even name a community he's not involved in after participating in 30 conferences during 2023.",
+      "For partnerships, integrations, or questions about how CoCalc fits a research, engineering, or teaching organization, Blaec is the person to talk to.",
+      "He pairs a background in applied mathematics — numerical modeling of geophysical phenomena — with the work of bringing CoCalc to research labs, technical teams, and academic institutions.",
+      "He stays close to the applied-mathematics and open-source communities, including the Society for Industrial and Applied Mathematics, and represents CoCalc at conferences throughout the year.",
     ],
     cardText:
-      "As a 2021 graduate from Oregon State University with an M.S. in Mathematics, Blaec uniquely combines advanced mathematical modeling skills with a thriving energy for mountain climbing and music. His academic expertise focuses on applying numerical analysis and partial differential equations to model physical phenomena.",
+      "Blaec leads sales and partnerships at SageMath, Inc. He holds an M.S. in Mathematics from Oregon State University, where his work applied numerical analysis and partial differential equations to model physical phenomena — technical grounding he brings to how he helps teams evaluate and adopt CoCalc.",
     summary:
       "CSO at SageMath, Inc., focused on partnerships, outreach, technical demos, and growth.",
     role: [
@@ -141,10 +141,10 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       "Outside work he is also a mountain climber and musician, which fits the same energy and range that he brings to SageMath, Inc.",
     ],
     background: [
-      "Graduating in 2021 with an M.S. in Mathematics from Oregon State University, Blaec's academic expertise are focused on applying numerical analysis and partial differential equations to model physical phenomena.",
-      "Blaec's foundation in modern teaching methods - gained through his years as a teaching assistant and instructor - complements his current role at SageMath, where his responsibilities span from increasing CoCalc's user base through innovative market penetration strategies to social media and advertising campaigns. Moreover, Blaec drives opportunities for CoCalc by demonstrating the platform's most recent features via live demos at premier conferences like the International Congress on Industrial and Applied Mathematics (ICIAM) and the International Conference on Machine Learning (ICML).",
-      "Beyond academic spheres, Blaec is actively engaged in several industry and business societies, including the Seattle Chamber of Commerce, the National Small Business Association Leadership Technology Council, and open-source technology and startup communities like NumFocus and Startup Grind. Blaec directs corporate alliances among his many roles, leading the bid to fuse other proprietary software like MATLAB into the open-source ecosystem.",
-      "Even amidst his busy schedule, Blaec finds time for adventure and creativity. Lovingly known as one of the SageMath resident mountaineers, Blaec often scales the Cascade volcanoes of the Pacific Northwest (and can otherwise be found at home writing songs alongside his cat Fushigi).",
+      "Blaec earned his M.S. in Mathematics from Oregon State University in 2021, applying numerical analysis and partial differential equations to model physical phenomena, after teaching there as a graduate assistant and instructor of record.",
+      "As Chief Sales Officer at SageMath, Inc., he leads sales, partnerships, and go-to-market — translating CoCalc's capabilities for research, engineering, and teaching organizations, and demonstrating new features through live demos at conferences such as the International Congress on Industrial and Applied Mathematics (ICIAM) and the International Conference on Machine Learning (ICML).",
+      "He represents CoCalc across industry and open-source communities — including NumFOCUS, the National Small Business Association Leadership Technology Council, and the Seattle Chamber of Commerce — and leads partnership work that brings tools from proprietary ecosystems such as MATLAB toward open alternatives.",
+      "Outside work, Blaec is a mountaineer who climbs the Cascade volcanoes of the Pacific Northwest and a musician who writes songs at home alongside his cat, Fushigi.",
     ],
     experience: [
       {
@@ -197,9 +197,9 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     imageSrc: "/public/about/harald-schilly.jpg",
     imageAlt: "Harald Schilly with his dog.",
     bioTopText: [
-      "At SageMath, Inc., Harald assumes the role of a tech torchbearer, evaluating new technologies and implementing various libraries for CoCalc projects. His relentless efforts translate into the seamless front-end and back-end software development and maintenance for Sage and CoCalc alike.",
-      "Harald isn't all work, though. He savors his free time by reconnecting with nature and playing maestro in the kitchen, whipping up enticing Italian meals like pasta, pizza, and lasagna. Additionally, he is an enthusiast of Bitcoin and its cryptic brethren.",
-      "Reach out to chat more about his projects or for advice on the perfect marinara sauce.",
+      "As CTO of SageMath, Inc., Harald evaluates new technologies and leads front-end and back-end development and maintenance across Sage and CoCalc.",
+      "Outside work, he spends time outdoors, cooks Italian food, and follows cryptocurrency.",
+      "Reach out to talk about his projects or the engineering behind CoCalc.",
     ],
     cardText:
       "Harald's life-long dedication to coding, profound knowledge, and dynamic personality have been invaluable in shaping CoCalc's operations and success. Initially a key contributor to the SageMath open-source mathematics software while studying Optimization, Harald now exercises his talent for adopting new technologies and algorithms by consistently pushing CoCalc's capabilities into new and exciting territory.",
@@ -214,11 +214,11 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       "That curiosity shows up in CoCalc as sustained attention to infrastructure, performance, Linux systems, and practical engineering details.",
     ],
     background: [
-      "Harald's life-long dedication to coding and his profound knowledge and dynamic personality have been invaluable in shaping CoCalc's operations and success.",
-      "A software maestro, Harald discovered his passion for coding in his teenage years, experimenting with QBasic on the Microsoft Disk Operating System and advancing onto Turbo Pascal, Visual Basic, Java, and C, among others.",
+      "Harald's long experience in software engineering has been central to CoCalc's operations and reliability.",
+      "He started programming as a teenager with QBasic on MS-DOS, then moved on to Turbo Pascal, Visual Basic, Java, and C.",
       "During his studies in Applied Mathematics with a focus on Optimization, he deepened his understanding of the intricate workings of algorithms. As a result, he embraced Java, Python, and later JavaScript as his go-to coding languages. All the while, Harald became a key contributor to the SageMath open-source mathematics software - a testament to his dedication to broadening the horizons of technology and innovation.",
       "Beyond academia, Harald began crafting software solutions for various industry needs. After obtaining his Master's degree, he embarked on a Ph.D. journey at the University of Vienna while teaching Linux system administration and introducing Python to the undergraduates. Fueled by his passion for industry-relevant solutions, he soon founded his own company.",
-      "Fast forward to 2015, Harald became instrumental in CoCalc's ascent. His role demanded in-depth understanding of Software Engineering, Linux administration, system monitoring, and oversight of the entire Kubernetes cluster. Harald's responsibilities didn't just stop there: he managed a towering stack of pre-installed open-source software across all CoCalc projects - a role he fulfills with gusto.",
+      "Since 2015, Harald has led much of CoCalc's engineering — software development, Linux administration, system monitoring, and the Kubernetes cluster — along with the large stack of pre-installed open-source software available in every CoCalc project.",
     ],
     experience: [
       {

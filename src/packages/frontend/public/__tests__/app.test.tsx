@@ -368,9 +368,7 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Meet the People Behind CoCalc" }),
     ).not.toBeNull();
     expect(screen.getByText("William Stein, Founder and CEO")).not.toBeNull();
-    expect(
-      screen.getByText(/Get to know the math prodigy behind CoCalc/),
-    ).not.toBeNull();
+    expect(screen.getByText(/Berkeley-trained mathematician/)).not.toBeNull();
     expect(screen.queryByText("Team")).toBeNull();
   });
 
