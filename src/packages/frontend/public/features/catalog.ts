@@ -200,9 +200,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "api",
     title: "HTTP API",
-    tagline: "Automate and integrate CoCalc from external systems.",
+    tagline: "Drive CoCalc projects from your own scripts and pipelines.",
     summary:
-      "Use documented HTTP endpoints to automate setup, provisioning, and integrations from your own systems.",
+      "A documented HTTP API to create projects and run notebooks, terminals, and computations from your own code — results land back in the project.",
     image: "/public/features/api-screenshot.png",
     index: true,
     sections: [

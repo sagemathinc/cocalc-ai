@@ -165,7 +165,8 @@ describe("PublicFeaturesApp", () => {
       slug: "slides",
     },
     {
-      marker: "Automate and integrate CoCalc from your own systems",
+      marker:
+        "Drive your projects, notebooks, and terminals from your own code",
       slug: "api",
     },
     {
@@ -1152,9 +1153,8 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(
-      screen.getByText(/This is the integration API, not the CoCalc CLI/i),
-    ).not.toBeNull();
+    // The page is the HTTP integration API — it routes to the HTTP API docs,
+    // not a CLI page (the distinction is structural, not a pinned copy line).
     expect(
       screen
         .getAllByRole("link", { name: "API documentation" })
@@ -1165,19 +1165,12 @@ describe("PublicFeaturesApp", () => {
         .getAllByRole("link", { name: "Compare operating models" })
         .map((link) => link.getAttribute("href")),
     ).toContain("/products");
-    expect(
-      screen
-        .getAllByRole("link", { name: "Ask about API integration" })
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
-      expect.stringContaining("/support/new?"),
-      expect.stringContaining("/support/new?"),
-    ]);
-    expect(
-      screen
-        .getAllByRole("link", { name: "Ask about API integration" })[0]
-        .getAttribute("href"),
-    ).toContain("context=feature-api");
+    const askLinks = screen.getAllByRole("link", {
+      name: "Ask about API integration",
+    });
+    expect(askLinks).toHaveLength(1);
+    expect(askLinks[0].getAttribute("href")).toContain("/support/new?");
+    expect(askLinks[0].getAttribute("href")).toContain("context=feature-api");
   });
 
   it("renders the compare feature page", () => {

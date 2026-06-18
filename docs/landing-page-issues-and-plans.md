@@ -158,9 +158,12 @@ Audited all ~25 surfaces against the Brief + home benchmark. Strong as-is: **hom
 guides, policies** (use policies as the trust-page model). Findings, ranked:
 
 **Tier 1 — highest leverage**
-- `features/api-page.tsx`: off-message — leads with infrastructure ("documented HTTP
-  endpoints"), serves the secondary buyer, no continuity tie. Reposition around institutional
-  integration. (High, M)
+- `features/api-page.tsx`: ✅ **DONE** (approved by Blaec). Repositioned off infrastructure/
+  institutional framing toward **research & engineering automation as a proof surface** (per
+  the full-pitch read — NOT institutional/LMS, which doc 30 flags as the riskier lane). Hero
+  leads with the benefit + the persistent-reviewable wedge; added a concrete HTTP-shape
+  example; judge-panel-hardened; 75/75 tests. (First full round through the operating loop +
+  the copy playbook.)
 - `features/teaching-page.tsx`: ✅ **RESOLVED — no change.** Verified teaching is a *feature*
   page, not in any product-path list, so it already satisfies the Brief's "secondary workflow
   destination." The page quality is good; left intact.

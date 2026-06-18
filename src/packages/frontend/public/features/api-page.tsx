@@ -12,14 +12,15 @@ import {
   FeatureImage,
   featureAppPath as appPath,
   featureSupportPath,
-  LinkButton,
 } from "./page-components";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
+
+const MONO = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
 export default function ApiFeaturePage({}: { helpEmail?: string }) {
   const supportHref = featureSupportPath({
-    body: "I want to discuss CoCalc API integration. Helpful context: external system, provisioning or automation needs, product path under evaluation, and any support or deployment constraints.",
+    body: "I want to discuss automating CoCalc through the API. Helpful context: the research or engineering workflow you want to automate, provisioning or scheduling needs, expected volume, and where CoCalc runs.",
     context: "api",
     subject: "CoCalc API integration",
     title: "Ask CoCalc about API integration",
@@ -32,27 +33,23 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={2} style={{ margin: 0 }}>
-                Automate and integrate CoCalc from your own systems
+                Drive your projects, notebooks, and terminals from your own code
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc exposes documented HTTP endpoints for automation,
-                provisioning, and integration workflows, so external systems do
-                not have to drive the web UI to manage projects or interact with
-                platform features.
+                A documented HTTP API lets your scripts, pipelines, and
+                scheduled jobs create projects and run notebooks, terminals, and
+                computations directly.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                This is the integration API, not the CoCalc CLI. Use it when a
-                portal, service, or institution-managed workflow needs to talk
-                to CoCalc directly.
+                The work lands back in a persistent CoCalc project your team can
+                reopen, review, and continue — hosted on CoCalc.ai or in your
+                own deployment — instead of a one-off run that disappears.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={appPath("docs/api/http-api")}>
                   API documentation
                 </Button>
                 <Button href={supportHref}>Ask about API integration</Button>
-                <LinkButton href={appPath("auth/sign-up")}>
-                  Create account
-                </LinkButton>
               </Flex>
             </Flex>
           </Col>
@@ -69,14 +66,14 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
         <Col xs={24} lg={12}>
           <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
-              Common use cases
+              What you can automate
             </Title>
             <BulletList
               items={[
-                "Provision and manage projects programmatically.",
-                "Integrate CoCalc into existing portals, admin tools, or learning platforms.",
-                "Automate workflows around users, support, or project lifecycle events.",
-                "Build external services that need a documented programmatic interface to CoCalc.",
+                "Create and configure project environments — for a study or a pipeline — reproducibly.",
+                "Run notebooks, terminals, and computations from a script, and read the results back.",
+                "Schedule recurring work — data pulls, model runs, report builds — that writes into the project.",
+                "Wire CoCalc into an existing pipeline: provision, run, and collect without driving the browser.",
               ]}
             />
           </PublicSection>
@@ -84,17 +81,42 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
         <Col xs={24} lg={12}>
           <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
-              Works with hosted and self-hosted deployments
+              A typical run is a few calls
             </Title>
-            <Paragraph style={{ margin: 0 }}>
-              The same HTTP API is useful whether you use hosted CoCalc.ai,
-              CoCalc Launchpad, or CoCalc Rocket as part of a larger
-              organization-managed workflow.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              It gives administrators and developers a documented way to
-              automate routine work without depending on browser automation or
-              fragile UI scripts.
+            <div
+              aria-label="Example API call sequence"
+              style={{
+                background: PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: 8,
+                fontFamily: MONO,
+                fontSize: 13,
+                lineHeight: 1.9,
+                padding: "14px 16px",
+              }}
+            >
+              <div>
+                <Text strong style={{ fontFamily: MONO }}>
+                  POST
+                </Text>{" "}
+                create a project
+              </div>
+              <div>
+                <Text strong style={{ fontFamily: MONO }}>
+                  POST
+                </Text>{" "}
+                run a notebook cell or shell command
+              </div>
+              <div>
+                <Text strong style={{ fontFamily: MONO }}>
+                  GET
+                </Text>{" "}
+                read the output back — it stays in the project
+              </div>
+            </div>
+            <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+              Exact endpoints, authentication, and request shapes are in the API
+              documentation.
             </Paragraph>
           </PublicSection>
         </Col>
@@ -105,19 +127,18 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
           <Col xs={24} lg={13}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Programmatic control instead of UI automation
+                A documented route, not fragile UI scripts
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                The API gives integrations a documented route for project and
-                platform work instead of browser scripting. It is most relevant
-                when CoCalc is part of a portal, managed deployment, or
-                organization-operated workflow.
+                The API gives your automation a documented way to reach projects
+                and computations directly, instead of scripting the browser.
+                Reach for it when CoCalc is part of a research or engineering
+                pipeline that runs on its own.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={appPath("docs/api/http-api")}>
                   API documentation
                 </Button>
-                <Button href={supportHref}>Ask about API integration</Button>
                 <Button href={appPath("products")}>
                   Compare operating models
                 </Button>
@@ -134,12 +155,11 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
               }}
             >
               <Title level={4} style={{ margin: "0 0 10px" }}>
-                Ready to plan an integration?
+                Start automating
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Start with the HTTP API docs, then talk with CoCalc if your
-                integration depends on provisioning, product path, deployment
-                boundary, or support expectations.
+                Begin with the HTTP API docs. If your automation depends on
+                provisioning, scheduling, or where CoCalc runs, talk with us.
               </Paragraph>
             </div>
           </Col>
