@@ -762,10 +762,11 @@ export default function PricingPage({
             Hosted CoCalc.ai plans
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Use these plans when CoCalc should be hosted and operated by CoCalc.
-            The plan limits below apply to hosted memberships; local use,
-            single-VM appliances, private deployment, procurement, and support
-            expectations belong in the buying paths below.
+            Hosted CoCalc.ai plans let teams share projects, review work
+            together, and keep building — hosted and operated by CoCalc, with no
+            infrastructure to run. Plan limits below apply to hosted
+            memberships; local, single-VM, and private-deployment options are in
+            the buying paths below.
           </Paragraph>
           <Flex gap={12} wrap>
             <Button
