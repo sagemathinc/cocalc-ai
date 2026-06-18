@@ -8,6 +8,31 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Workspace management uses pnpm (`src/packages/pnpm-workspace.yaml`).
 - Prefer package-local changes and checks over full-repo commands when possible.
 
+## Agent File Architecture Map
+
+`CLAUDE.md` and `GEMINI.md` symlink to this file, so Claude, Gemini, and Codex
+share the same top-level orientation. When multiple branches, worktrees, or
+agent threads are active, read `src/.agents/multi-agent-github-operating-model.md`
+before editing. It contains the current branch/worktree map, public-preview
+ownership rules, cleanup checklist, and a reference diagram of where public-site
+source, operating docs, command prompts, scratch artifacts, and local runtime
+state belong.
+
+Current high-level map:
+
+```text
+/home/user/cocalc-ai            platform UI worktree
+/home/user/cocalc-ai-synthesis  active public-site synthesis worktree
+  .agents/skills/               reusable agent skills
+  docs/landing-page-*.md        public-site brief, queue, decisions, design
+  src/.agents/                  branch/process/prompt operating notes
+  src/.claude/commands/         reusable public-site command prompts
+  src/packages/frontend/public/ public CoCalc.ai routes and tests
+  src/packages/static/dist/     built static/public bundle served by hub
+  src/.local/ and src/data/     ignored local runtime state; never commit
+historical branch: blaec        retained for reference; worktree removed
+```
+
 ## Preferred Commands
 
 - Run these from the repo root unless a command says otherwise.

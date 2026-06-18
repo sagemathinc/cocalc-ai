@@ -18,6 +18,10 @@ describe("public-site agent workflow documentation", () => {
   const landingAgentAudit = readSrcFile(
     ".agents/landing-page-agent-operating-audit.md",
   );
+  const multiAgentGithubModel = readSrcFile(
+    ".agents/multi-agent-github-operating-model.md",
+  );
+  const repoAgentInstructions = readRepoFile("AGENTS.md");
   const promptLog = readSrcFile(".agents/public-site-audit-prompt-log.md");
   const publicSiteSkill = readRepoFile(
     ".agents/skills/public-site-landing-page/SKILL.md",
@@ -69,5 +73,30 @@ describe("public-site agent workflow documentation", () => {
     expect(publicSiteSkill).toContain("Set a small change budget");
     expect(publicSiteSkill).toContain("Do not flatten route-specific evidence");
     expect(publicSiteSkill).toContain("Store browser QA artifacts only under");
+  });
+
+  it("keeps worktree and preview ownership rules discoverable", () => {
+    expect(publicSiteSkill).toContain(
+      "src/.agents/multi-agent-github-operating-model.md",
+    );
+    expect(publicSiteSkill).toContain("Preview ownership");
+    expect(publicSiteSkill).toContain("readlink /proc/<hub-pid>/cwd");
+
+    expect(multiAgentGithubModel).toContain("One active workstream");
+    expect(multiAgentGithubModel).toContain("blaec.cocalc.ai");
+    expect(multiAgentGithubModel).toContain("/home/user/cocalc-ai-synthesis");
+    expect(multiAgentGithubModel).toContain("blaec-synthesis-2026-06-18");
+    expect(multiAgentGithubModel).toContain("Vibe Feedback Translation");
+    expect(multiAgentGithubModel).toContain("Prompt Contract");
+    expect(multiAgentGithubModel).toContain("Do not commit them");
+    expect(multiAgentGithubModel).toContain(
+      "Repository And Agent File Architecture",
+    );
+
+    expect(repoAgentInstructions).toContain("Agent File Architecture Map");
+    expect(repoAgentInstructions).toContain(
+      "src/.agents/multi-agent-github-operating-model.md",
+    );
+    expect(repoAgentInstructions).toContain("/home/user/cocalc-ai-synthesis");
   });
 });

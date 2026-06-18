@@ -26,10 +26,12 @@ This skill runs inside the system in `docs/website-operating-system.md`. Core ru
 Before editing public-site source, read:
 
 1. `AGENTS.md`
-2. `docs/landing-page-brief.md` (FROZEN contract) + `docs/landing-page-issues-and-plans.md`
+2. `src/.agents/multi-agent-github-operating-model.md` when multiple branches,
+   worktrees, or agent threads are active
+3. `docs/landing-page-brief.md` (FROZEN contract) + `docs/landing-page-issues-and-plans.md`
    (the finite queue)
-3. `docs/landing-page-design-system.md` (visual tokens) and `docs/landing-page-decisions.md`
-4. the route source and any route-specific tests
+4. `docs/landing-page-design-system.md` (visual tokens) and `docs/landing-page-decisions.md`
+5. the route source and any route-specific tests
 
 `docs/public-site-cohesion-audit.md` is RETIRED — do not append to it.
 
@@ -68,6 +70,15 @@ The preview at `blaec.cocalc.ai` is served by the running hub from
 `src/packages/static/dist`. It only reflects source changes after that bundle is
 rebuilt. Do not report a public-site change as done without a refreshed preview.
 
+- **Preview ownership:** `blaec.cocalc.ai` is the public-site preview. It must
+  be served from the active public-site synthesis worktree/branch, not a
+  platform-UI or historical landing worktree. Before a public-site pass, verify
+  with `git worktree list` and a hub process cwd check such as
+  `readlink /proc/<hub-pid>/cwd`. If the hub is rooted in the wrong checkout,
+  stop that hub and restart from the synthesis worktree.
+- Keep local preview secrets and tunnel/data plumbing in `.local` or `data/`;
+  never commit them. If the landing worktree needs the existing preview data,
+  configure that only in `.local/hub-daemon.env`.
 - **Keep a watch running** so every save auto-rebuilds the bundle. Once per
   session, confirm it is up; if not, start it:
   `pnpm static:watch` (from `src/`), logging to `/tmp/cocalc-static-watch.log`.
