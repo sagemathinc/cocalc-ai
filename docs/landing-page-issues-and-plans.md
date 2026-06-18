@@ -36,6 +36,28 @@ The product framing we are committing to (from the chat + `docs/pitch/`):
 
 ---
 
+## Status reconciliation (2026-06-18)
+
+Most of the plan below has shipped; this block is the current truth (details live in commits
++ the two audit docs + the decisions log), so the older per-item notes don't have to be
+trusted blind:
+
+- **Done:** P1 (Brief frozen), P3/P4 (operating system — `docs/website-operating-system.md` +
+  decisions log + retired cohesion audit), P5 (preview loop — see below), C1 (tests
+  decoupled), D1 (type scale + tokens + four guardrail tests), D2 (site-wide audit burned
+  down — `docs/landing-page-audit-2026-06-17.md` conversion + `…-supporting-2026-06-18.md`).
+- **Open / human:** P2 (delete the "Landing Page Iterations" scheduled run in the chat UI —
+  Blaec); C2 (home extraction — deprioritized: home is "considered good"); trust SOC 2 scope
+  (Andrey) + Blaec bio sign-off; the products/buyer loop.
+- **Design follow-ups (deferred, not lost):** type-scale guard hardening (render-time
+  hero/lead `PUBLIC_TYPE` assertion + recurse scope + tokenize icon sizes so raw 17/19/20
+  can leave the allow-list); shadow-ink convergence (slate→blue is a *visible* design call);
+  `#fff`→`PUBLIC_COLORS.surface` bulk; D1 RADIUS/WEIGHT/DARK wire-or-delete; auth/support
+  functional-view styles; API section-3 repurpose; an operating-model route on the feature
+  index; accessibility-page legacy wording.
+
+---
+
 ## PROCESS
 
 ### P1 — No single source of truth / "done" is undefined
@@ -92,8 +114,11 @@ The product framing we are committing to (from the chat + `docs/pitch/`):
   preview URL" a required step at the end of every round. (Identify the precise command —
   `pnpm -C src build:dev` / static rebuild — and pin it.)
 - **Done when:** every round ends with a refreshed preview you can see, no reminder needed.
-- **Status:** ✅ DONE — `pnpm static:watch` now runs (auto-rebuilds dist the hub serves);
-  the Preview Loop is documented in the skill. Restart the watch if the session/box resets.
+- **Status:** ✅ DONE — a per-turn **Stop hook** (`scripts/public-site-turn-snapshot.sh`)
+  rebuilds dist (static-package `build:dev`, ~7s) + screenshots each turn; `preview/index.html`
+  and blaec.cocalc.ai stay current with no watch to babysit. (Fixed 2026-06-18: the hook's
+  old `static:dev` fallback ran the full-monorepo `tsc` and overran the 200s hook budget, so
+  it had silently stopped rebuilding — the live preview had drifted ~9h stale.)
 
 ---
 

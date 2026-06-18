@@ -17,10 +17,20 @@
 // value below with a one-line reason. Home is intentionally OUT OF SCOPE (it is
 // hand-tuned and protected, with its own display sizes 30/58 and legacy strays).
 //
-// NOTE (known limit): text and icon glyphs share some values (18/22/24), so this
-// guard cannot tell a mis-sized TEXT 18 from an icon 18. It catches genuinely
-// off-scale values (15/21/25/…). Once icon sizes are tokenized (IconBadge dedup),
-// tighten ALLOWED_RAW to the icon token only and this becomes "no raw fontSize".
+// KNOWN LIMITS (this is a coarse source scan — do not over-trust it; hardening
+// is tracked in landing-page-issues-and-plans.md):
+//   1. Text and icon glyphs share values (17/18/19/20/22/24), so a mis-sized
+//      TEXT 17 reads the same as an icon 17 and passes. It reliably catches only
+//      genuinely off-scale values (15/21/25/…). The original "17-vs-14" hero bug
+//      would slip through both halves: 17 is allowed, and an UNSET size reverting
+//      to the 14px default is invisible to any source scan.
+//   2. The regex matches only `fontSize: <digits>` — it misses `font-size:` in
+//      injected CSS strings, quoted "17px", no-space `fontSize:18`, and tokens.
+//   3. Scope is features/products/pricing, NON-recursive — about/auth/docs/
+//      guides/news/support/layout and top-level shared files are unguarded.
+// The planned fix is a RENDER-time assertion that hero/lead paragraphs carry a
+// PUBLIC_TYPE fontSize (catches the unset-default + off-scale-text the scan
+// can't), plus tokenizing icon sizes so ALLOWED_RAW can shrink to "no raw text".
 
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
