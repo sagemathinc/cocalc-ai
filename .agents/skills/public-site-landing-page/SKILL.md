@@ -7,15 +7,31 @@ description: Use when asked to audit, redesign, QA, or improve CoCalc.ai public-
 
 Use this skill for CoCalc.ai public-site work tested at `blaec.cocalc.ai`.
 
+## Operating System (read first)
+
+This skill runs inside the system in `docs/website-operating-system.md`. Core rules:
+
+- **Solo by default.** One agent, one section/route, one change per round. Multi-agent
+  Workflow only for `/site-judge`, `/pitch-challenge`, or a finite enumerated queue.
+- **Evidence gate.** Every round advances a Brief proof-point or a punch-list item with
+  evidence. Tidy-only edits that move no Brief metric are dropped.
+- **Subtraction bias.** Prefer removing/combining over adding; critics must name what to cut.
+- **Human visual gate.** The Stop hook rebuilds + publishes `.preview-snapshots/index.html`
+  every turn; the human calls ship/revise/revert. Green tests are a floor, not design taste.
+- Use the `/site-round`, `/site-audit`, `/site-verify`, `/site-judge`, `/pitch-challenge`
+  commands so the standard is identical every session.
+
 ## Required Sources
 
 Before editing public-site source, read:
 
 1. `AGENTS.md`
-2. `docs/public-site-cohesion-audit.md`
-3. `src/.agents/public-site-audit-prompt-log.md`
-4. `src/.agents/landing-page-agent-operating-audit.md`
-5. the route source and any route-specific tests
+2. `docs/landing-page-brief.md` (FROZEN contract) + `docs/landing-page-issues-and-plans.md`
+   (the finite queue)
+3. `docs/landing-page-design-system.md` (visual tokens) and `docs/landing-page-decisions.md`
+4. the route source and any route-specific tests
+
+`docs/public-site-cohesion-audit.md` is RETIRED — do not append to it.
 
 Use pitch docs as private grounding only. Do not paste pitch, competitor,
 compliance, or internal planning language into public React routes unless the
@@ -33,15 +49,16 @@ user approves that exact public wording.
    inspect-first and edit-second phases.
 6. For each candidate component, choose one action: keep, omit, combine, move
    lower, move to disclosure/modal, or redesign.
-7. Log findings in `docs/public-site-cohesion-audit.md` before source edits.
+7. State the one hypothesis + its evidence before editing (the evidence gate). Do NOT log to
+   the retired cohesion audit.
 8. Make only high-confidence source/test changes.
 9. Run focused tests, lint/typecheck when relevant, refresh the preview (see
    **Preview Loop** below), and run
    `src/packages/frontend/scripts/public-site-browser-qa.mjs` for the affected
    route group.
 10. Store browser QA artifacts only under `/tmp/cocalc-public-qa-*`.
-11. Update the ledger and `src/.agents/public-site-audit-prompt-log.md` before
-    final response.
+11. Append any durable decision to `docs/landing-page-decisions.md` and mark the punch-list
+    item done; per-round mechanical detail belongs in the commit message.
 12. Commit completed work unless the user asked not to or the change is still
     exploratory.
 
