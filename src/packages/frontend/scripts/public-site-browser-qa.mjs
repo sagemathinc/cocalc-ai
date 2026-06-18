@@ -313,7 +313,7 @@ const ROUTE_RULES = {
       },
     ],
     requireLinks: [
-      { text: "Compare product paths", hrefIncludes: "/products" },
+      { text: "Compare operating models", hrefIncludes: "/products" },
       {
         text: "Ask about teaching workflows",
         hrefIncludes: "context=feature-teaching",
@@ -341,7 +341,7 @@ const ROUTE_RULES = {
   "/features/python": {
     requireText: [
       "Python that moves from notebook to script to paper.",
-      "Use Python as part of the whole project",
+      "The right interface at each stage",
       "Start using Python",
     ],
     requireSelectors: [".cocalc-feature-final-panel"],
@@ -384,7 +384,7 @@ const ROUTE_RULES = {
   },
   "/features/julia": {
     requireText: [
-      "Julia works best in CoCalc when the project matters.",
+      "Keep Julia close to the rest of the research.",
       "Project context",
       "Start in a project",
     ],
