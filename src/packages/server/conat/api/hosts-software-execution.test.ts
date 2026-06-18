@@ -883,6 +883,46 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
             last_known_good_version: desiredVersion,
           },
         }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
       });
     const setLastKnownGoodArtifactVersionInternal = jest.fn(
       async () => undefined,
@@ -1040,6 +1080,46 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
             last_known_good_version: desiredVersion,
           },
         }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
       });
 
     await expect(
@@ -1218,6 +1298,46 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
             last_known_good_version: desiredVersion,
           },
         }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
       });
     const setLastKnownGoodArtifactVersionInternal = jest.fn(
       async () => undefined,
@@ -1332,6 +1452,46 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
             last_known_good_version: desiredVersion,
           },
         }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
       });
     const setLastKnownGoodArtifactVersionInternal = jest.fn(
       async () => undefined,
@@ -1362,6 +1522,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         setProjectHostRuntimeDeployments: async () => undefined,
         loadEffectiveRuntimeDeployments: async () => [],
         managedComponentRolloutRpcTimeoutMs: 1,
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
         onProgress,
       }),
     ).resolves.toEqual({
@@ -1400,6 +1562,107 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         version: desiredVersion,
       }),
     );
+  });
+
+  it("fails timed-out managed rollout when non-project-host services remain drifted", async () => {
+    const desiredVersion = "ph-v2";
+    const loadHostForStartStop = jest.fn(async () => ({
+      id: "host-1",
+      status: "running",
+      version: desiredVersion,
+      last_seen: "2026-04-25T05:00:10.000Z",
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: desiredVersion,
+        },
+      },
+    }));
+    const hostControlClient = jest
+      .fn()
+      .mockResolvedValueOnce({
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => new Promise(() => undefined),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "drifted",
+            running_versions: ["ph-v1"],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "drifted",
+            running_versions: ["ph-v1"],
+            running_pids: [458],
+          },
+        ],
+        getHostAgentStatus: async () => ({
+          project_host: {
+            last_known_good_version: desiredVersion,
+          },
+        }),
+      });
+
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["project-host", "conat-router", "conat-persist"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop,
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient,
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: (row) =>
+          `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+          undefined,
+        recordProjectHostLocalRollbackInternal: async () => ({
+          host_id: "host-1",
+          rollback_version: "ph-v1",
+          source: "host-agent",
+        }),
+        project_host_local_rollback_error_code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        setLastKnownGoodArtifactVersionInternal: async () => undefined,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
+        managedComponentRolloutRpcTimeoutMs: 1,
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
+      }),
+    ).rejects.toThrow(/managed component rollout did not converge/);
   });
 
   it("appends recent host diagnostics when managed component rollout fails", async () => {
