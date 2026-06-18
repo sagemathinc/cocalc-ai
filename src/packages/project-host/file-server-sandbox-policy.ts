@@ -25,7 +25,10 @@ export function createProjectSandboxFilesystem({
     rootfs,
     scratch,
     sharedScratch,
-    homeAliases: [DEFAULT_PROJECT_RUNTIME_HOME],
+    // Creating /home/user/foo walks through /home first. Treat the parent as a
+    // home alias too, so stopped projects remain file-usable before rootfs is
+    // mounted.
+    homeAliases: [DEFAULT_PROJECT_RUNTIME_HOME, "/home"],
   });
   const baseRm = fs.rm.bind(fs);
   const baseRmdir = fs.rmdir.bind(fs);
