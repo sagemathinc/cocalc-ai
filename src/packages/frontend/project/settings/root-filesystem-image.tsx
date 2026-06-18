@@ -1162,13 +1162,14 @@ export default function RootFilesystemImage({
           {activeDisplayEntry?.content
             ? renderRootfsContentPanel({
                 entry: activeDisplayEntry,
-                onCopyToHome: async (action) => {
+                onCopyToHome: async (action, targetPath) => {
                   if (!actions) return;
                   const source =
                     action.source_path?.trim() || action.path?.trim();
                   const dest = rootfsCopyTargetPath(
                     action,
                     getProjectHomeDirectory(project_id),
+                    targetPath,
                   );
                   if (!source || !dest) {
                     message.error("Copy action is missing a source or target.");
@@ -1190,6 +1191,7 @@ export default function RootFilesystemImage({
                 onOpenPath: (path) => {
                   void actions?.open_file({ path, foreground: true });
                 },
+                project_id,
               })
             : null}
 
@@ -4658,11 +4660,16 @@ function renderRootfsContentPanel({
   onCopyToHome,
   onLaunchProjectApp,
   onOpenPath,
+  project_id,
 }: {
   entry: RootfsImageEntry;
-  onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
+  onCopyToHome: (
+    action: RootfsContentAction,
+    targetPath?: string,
+  ) => Promise<string | undefined>;
   onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
+  project_id?: string;
 }): React.JSX.Element | null {
   const content = entry.content;
   if (!content) return null;
@@ -4705,6 +4712,7 @@ function renderRootfsContentPanel({
                 onCopyToHome={onCopyToHome}
                 onLaunchProjectApp={onLaunchProjectApp}
                 onOpenPath={onOpenPath}
+                project_id={project_id}
               />
             ))}
           </Space>
@@ -4750,36 +4758,64 @@ function RootfsContentActionRow({
   onCopyToHome,
   onLaunchProjectApp,
   onOpenPath,
+  project_id,
 }: {
   action: RootfsContentAction;
-  onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
+  onCopyToHome: (
+    action: RootfsContentAction,
+    targetPath?: string,
+  ) => Promise<string | undefined>;
   onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
+  project_id?: string;
 }): React.JSX.Element {
   const [copying, setCopying] = useState<boolean>(false);
+  const [copyChooserOpen, setCopyChooserOpen] = useState<boolean>(false);
+  const [copyTargetPath, setCopyTargetPath] = useState<string>("");
   const [launching, setLaunching] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string>("");
   const label = action.label.trim();
   const description = action.description?.trim();
   const openPath = rootfsContentActionOpenPath(action);
+  const configuredTarget = rootfsCopyTargetRelativePath(action);
+  const defaultTarget = rootfsCopyDefaultTargetPath(action);
+  const normalizedCopyTarget = rootfsNormalizeHomeTargetPath(copyTargetPath);
   const canCopyToHome =
     action.kind === "copy-to-home" &&
     !!(action.source_path?.trim() || action.path?.trim());
 
-  async function copyToHome(): Promise<void> {
+  function openCopyChooser(): void {
+    setCopyTargetPath(configuredTarget ?? defaultTarget ?? "");
+    setCopyChooserOpen(true);
+  }
+
+  async function copyToHome(targetPath?: string): Promise<boolean> {
     setCopying(true);
     setActionError("");
     try {
-      const targetPath = await onCopyToHome(action);
-      if (targetPath) {
-        onOpenPath(targetPath);
+      const copiedPath = await onCopyToHome(action, targetPath);
+      if (copiedPath) {
+        onOpenPath(copiedPath);
+        return true;
       }
+      return false;
     } catch (err) {
       const error = `Could not copy RootFS content: ${rootfsActionErrorMessage(err)}`;
       setActionError(error);
       message.error(error);
+      return false;
     } finally {
       setCopying(false);
+    }
+  }
+
+  async function copyToChosenTarget(): Promise<void> {
+    if (!normalizedCopyTarget) {
+      setActionError("Choose a HOME-relative destination path.");
+      return;
+    }
+    if (await copyToHome(normalizedCopyTarget)) {
+      setCopyChooserOpen(false);
     }
   }
 
@@ -4798,79 +4834,173 @@ function RootfsContentActionRow({
   }
 
   return (
-    <RuntimeAction
-      title={
-        <Space wrap size={[6, 4]}>
-          <span>{label}</span>
-          <Tag style={{ marginInlineEnd: 0 }}>
-            {rootfsContentActionKindLabel(action.kind)}
-          </Tag>
-        </Space>
-      }
-      description={
-        <Space direction="vertical" size={2} style={{ width: "100%" }}>
-          {description ? <span>{description}</span> : null}
-          {rootfsContentActionPathLabel(action) ? (
-            <code style={{ overflowWrap: "anywhere" }}>
-              {rootfsContentActionPathLabel(action)}
-            </code>
-          ) : null}
-          {actionError ? (
-            <Alert
-              message={actionError}
-              showIcon
-              style={{ marginTop: 4 }}
-              type="error"
+    <>
+      <RuntimeAction
+        title={
+          <Space wrap size={[6, 4]}>
+            <span>{label}</span>
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {rootfsContentActionKindLabel(action.kind)}
+            </Tag>
+          </Space>
+        }
+        description={
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {description ? <span>{description}</span> : null}
+            {rootfsContentActionPathLabel(action) ? (
+              <code style={{ overflowWrap: "anywhere" }}>
+                {rootfsContentActionPathLabel(action)}
+              </code>
+            ) : null}
+            {actionError ? (
+              <Alert
+                message={actionError}
+                showIcon
+                style={{ marginTop: 4 }}
+                type="error"
+              />
+            ) : null}
+          </Space>
+        }
+        action={
+          action.kind === "external-link" && action.url ? (
+            <Button
+              href={action.url}
+              icon={<Icon name="external-link" />}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Open
+            </Button>
+          ) : openPath && action.kind !== "copy-to-home" ? (
+            <Button
+              icon={
+                <Icon
+                  name={action.kind === "browse" ? "folder-open" : "file"}
+                />
+              }
+              onClick={() => onOpenPath(openPath)}
+            >
+              {action.kind === "browse" ? "Browse" : "Open"}
+            </Button>
+          ) : action.kind === "copy-to-home" ? (
+            <Space wrap>
+              <Button
+                disabled={!canCopyToHome}
+                icon={<Icon name="copy" />}
+                loading={copying}
+                onClick={() => void copyToHome()}
+              >
+                Copy to HOME
+              </Button>
+              {project_id ? (
+                <Button
+                  disabled={!canCopyToHome}
+                  icon={<Icon name="folder-open" />}
+                  onClick={openCopyChooser}
+                >
+                  Copy...
+                </Button>
+              ) : null}
+            </Space>
+          ) : action.kind === "project-app" ? (
+            <Button
+              disabled={!action.app_spec}
+              icon={<Icon name="rocket" />}
+              loading={launching}
+              onClick={launchProjectApp}
+            >
+              Launch
+            </Button>
+          ) : null
+        }
+      />
+      {copyChooserOpen && project_id ? (
+        <Modal
+          open
+          destroyOnHidden
+          title="Copy RootFS content"
+          okText="Copy"
+          onCancel={() => setCopyChooserOpen(false)}
+          onOk={() => void copyToChosenTarget()}
+          okButtonProps={{
+            disabled: !normalizedCopyTarget,
+            loading: copying,
+          }}
+        >
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Choose or type the destination path under HOME. The copy will not
+              overwrite existing content.
+            </Paragraph>
+            <Input
+              addonBefore="HOME /"
+              value={copyTargetPath}
+              onChange={(e) => setCopyTargetPath(e.target.value)}
+              placeholder={defaultTarget ?? "rootfs-content"}
             />
-          ) : null}
-        </Space>
-      }
-      action={
-        action.kind === "external-link" && action.url ? (
-          <Button
-            href={action.url}
-            icon={<Icon name="external-link" />}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Open
-          </Button>
-        ) : openPath && action.kind !== "copy-to-home" ? (
-          <Button
-            icon={
-              <Icon name={action.kind === "browse" ? "folder-open" : "file"} />
-            }
-            onClick={() => onOpenPath(openPath)}
-          >
-            {action.kind === "browse" ? "Browse" : "Open"}
-          </Button>
-        ) : action.kind === "copy-to-home" ? (
-          <Button
-            disabled={!canCopyToHome}
-            icon={<Icon name="copy" />}
-            loading={copying}
-            onClick={copyToHome}
-          >
-            Copy to HOME
-          </Button>
-        ) : action.kind === "project-app" ? (
-          <Button
-            disabled={!action.app_spec}
-            icon={<Icon name="rocket" />}
-            loading={launching}
-            onClick={launchProjectApp}
-          >
-            Launch
-          </Button>
-        ) : null
-      }
-    />
+            <Space wrap>
+              <Button
+                size="small"
+                onClick={() => setCopyTargetPath(defaultTarget ?? "")}
+              >
+                Home
+              </Button>
+              <Button
+                disabled={!configuredTarget}
+                size="small"
+                onClick={() => setCopyTargetPath(configuredTarget ?? "")}
+              >
+                Configured
+              </Button>
+              <Button
+                disabled={!copyTargetPath.trim()}
+                size="small"
+                onClick={() =>
+                  setCopyTargetPath(rootfsParentTargetPath(copyTargetPath))
+                }
+              >
+                Parent
+              </Button>
+            </Space>
+            <DirectorySelector
+              project_id={project_id}
+              startingPath={copyTargetPath}
+              onSelect={(path) => setCopyTargetPath(path)}
+              style={{ width: "100%" }}
+              bodyStyle={{ maxHeight: 280 }}
+              closable={false}
+            />
+          </Space>
+        </Modal>
+      ) : null}
+    </>
   );
 }
 
 function rootfsCopyTargetPath(
   action: RootfsContentAction,
   projectHome: string,
+  targetOverride?: string,
+): string | undefined {
+  const relativeTarget = rootfsCopyTargetRelativePath(action, targetOverride);
+  if (!relativeTarget) return;
+  return `${projectHome.replace(/\/+$/, "")}/${relativeTarget}`;
+}
+
+function rootfsCopyTargetRelativePath(
+  action: RootfsContentAction,
+  targetOverride?: string,
+): string | undefined {
+  const target = targetOverride?.trim() || action.target_path?.trim();
+  if (target) {
+    return rootfsNormalizeHomeTargetPath(target);
+  }
+  return rootfsCopyDefaultTargetPath(action);
+}
+
+function rootfsCopyDefaultTargetPath(
+  action: RootfsContentAction,
 ): string | undefined {
   const source = action.source_path?.trim() || action.path?.trim();
   const fallbackName = source
@@ -4878,11 +5008,21 @@ function rootfsCopyTargetPath(
     .split("/")
     .filter(Boolean)
     .at(-1);
-  const target = action.target_path?.trim() || fallbackName;
-  if (!target) return;
-  const relativeTarget = target.replace(/^\/+/, "");
-  if (!relativeTarget) return;
-  return `${projectHome.replace(/\/+$/, "")}/${relativeTarget}`;
+  return rootfsNormalizeHomeTargetPath(fallbackName);
+}
+
+function rootfsNormalizeHomeTargetPath(path?: string): string | undefined {
+  const relativePath = path?.trim().replace(/^\/+/, "");
+  if (!relativePath) return;
+  if (relativePath.includes("\0")) return;
+  if (relativePath.split("/").includes("..")) return;
+  return relativePath.replace(/\/+$/, "") || undefined;
+}
+
+function rootfsParentTargetPath(path: string): string {
+  const parts = rootfsNormalizeHomeTargetPath(path)?.split("/") ?? [];
+  parts.pop();
+  return parts.join("/");
 }
 
 function rootfsContentActionOpenPath(
