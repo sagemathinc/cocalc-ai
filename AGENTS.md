@@ -32,6 +32,14 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - When a task depends on upgrading hosts or validating live project-host behavior, assume this step is required unless the current shell definitely just ran it.
 - For dangerous CLI operations that require fresh auth in local dev, use `cocalc auth elevate --dev` when the local hub password and database are available. This bootstraps a cookie-backed dev fresh-auth session; raw bearer, API-key, or hub-password auth alone will still fail fresh-auth checks.
 
+## Live Site CLI Auth
+
+- For live staging/prod control-plane work that needs browser-approved fresh auth, use the repo-built one-line bootstrap and wait for the user to approve the printed URLs:
+  - Staging: `cd src && node packages/cli/dist/bin/cocalc.js --profile staging --api https://staging.cocalc.ai auth bootstrap --email wstein@gmail.com`
+  - Prod: `cd src && node packages/cli/dist/bin/cocalc.js --profile prod --api https://cocalc.ai auth bootstrap --email wstein@gmail.com`
+- `auth bootstrap` performs browser login, browser-approved elevation, and `auth status --check` equivalent validation. Elevation lasts 8 hours by default; use `auth elevate --short` only when a short 15-minute window is intentional.
+- Do not try to satisfy fresh-auth requirements with API keys, bearer tokens, hub-password auth, or project-scoped credentials. Dangerous operator/admin mutations need a cookie-backed interactive CLI session.
+
 ## Live Lite / Browser Env
 
 - Before using `cocalc browser ...` or other live browser automation against the local Lite or Launchpad dev servers, always load the matching env in the current shell:

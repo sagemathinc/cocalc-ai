@@ -3,9 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { delay } from "awaiting";
 import { before, after, getPool } from "@cocalc/server/test";
-import createProject from "@cocalc/server/projects/create";
 import { uuid } from "@cocalc/util/misc";
 import { createTestAccount } from "@cocalc/server/purchases/test-data";
 import {
@@ -22,17 +20,23 @@ describe("project usage attribution", () => {
   const owner_account_id = uuid();
   const student_account_id = uuid();
   const explicit_usage_account_id = uuid();
-  let project_id: string;
+  const project_id = uuid();
 
   beforeAll(async () => {
     await createTestAccount(owner_account_id);
     await createTestAccount(student_account_id);
     await createTestAccount(explicit_usage_account_id);
-    project_id = await createProject({
-      account_id: owner_account_id,
-      title: "Usage attribution test",
-    });
-    await delay(300);
+    await getPool().query(
+      `INSERT INTO projects (project_id, title, users, last_edited)
+       VALUES ($1, $2, $3::jsonb, NOW())`,
+      [
+        project_id,
+        "Usage attribution test",
+        JSON.stringify({
+          [owner_account_id]: { group: "owner" },
+        }),
+      ],
+    );
   });
 
   it("defaults usage attribution to the owner", async () => {
@@ -55,7 +59,6 @@ describe("project usage attribution", () => {
         }),
       ],
     );
-    await delay(300);
     const { rows } = await getPool().query(
       "SELECT course, usage_account_id FROM projects WHERE project_id=$1",
       [project_id],
@@ -73,7 +76,6 @@ describe("project usage attribution", () => {
       project_id,
       account_id: explicit_usage_account_id,
     });
-    await delay(300);
     const { rows } = await getPool().query(
       "SELECT course, usage_account_id FROM projects WHERE project_id=$1",
       [project_id],

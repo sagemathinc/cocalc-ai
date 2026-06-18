@@ -451,7 +451,10 @@ return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
 return { ok: url.ok === true, url };`,
     };
   }
-  if (actionId === "settings.runtime.rootfs") {
+  if (
+    actionId === "settings.runtime.rootfs" ||
+    actionId === "settings.runtime.rootfs.publish"
+  ) {
     return {
       description: "Project Environment settings expose Runtime Image.",
       code: `const environment = api.waitForText({ includes: "Environment", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });

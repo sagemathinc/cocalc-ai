@@ -77,6 +77,7 @@ const DOCS_ENTRY_IDS = [
   "latex.build-papers",
   "editors.r-markdown",
   "projects.runtime-image",
+  "projects.publish-rootfs",
   "self-hosting.cocalc-star",
   "self-hosting.cocalc-star-local-vm",
   "self-hosting.install-chromium",

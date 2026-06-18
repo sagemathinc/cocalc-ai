@@ -230,24 +230,9 @@ function EmptyDirectoryWelcome({
           textAlign: "center",
         }}
       >
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 12px",
-            borderRadius: 999,
-            background: "white",
-            color: COLORS.BLUE_DD,
-            fontWeight: 600,
-            boxShadow: `0 4px 18px ${COLORS.GRAY_DDD}`,
-          }}
-        >
-          <Icon name="folder-open" /> Empty project
-        </div>
         <h2
           style={{
-            margin: "16px 0 6px 0",
+            margin: "0 0 6px 0",
             color: COLORS.GRAY_DD,
             fontSize: 28,
             fontWeight: 700,

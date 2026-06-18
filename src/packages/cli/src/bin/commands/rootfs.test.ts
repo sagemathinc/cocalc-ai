@@ -249,6 +249,7 @@ test("rootfs save accepts portable config json", async () => {
     exported_at: "2026-06-17T00:00:00.000Z",
     metadata: {
       label: "Pluto notebooks",
+      slug: "pluto-notebooks",
       description: "Julia and Pluto examples",
       family: "julia",
       version: "1.11",
@@ -316,6 +317,7 @@ test("rootfs save accepts portable config json", async () => {
     image: "cocalc.local/rootfs/pluto",
     browser_id: undefined,
     label: "Pluto notebooks",
+    slug: "pluto-notebooks",
     description: "Julia and Pluto examples",
     family: "julia",
     version: "1.11",
@@ -374,6 +376,7 @@ test("rootfs publish accepts config json and lets flags override it", async () =
     exported_at: "2026-06-17T00:00:00.000Z",
     metadata: {
       label: "Config label",
+      slug: "config-label",
       visibility: "private",
       tags: ["from-config"],
     },
@@ -411,6 +414,8 @@ test("rootfs publish accepts config json and lets flags override it", async () =
       "cli,pluto",
       "--visibility",
       "public",
+      "--slug",
+      "cli-label",
       "--switch-project",
     ]);
   } finally {
@@ -421,6 +426,7 @@ test("rootfs publish accepts config json and lets flags override it", async () =
     project_id: "project-1",
     browser_id: undefined,
     label: "CLI label",
+    slug: "cli-label",
     family: undefined,
     version: undefined,
     channel: undefined,

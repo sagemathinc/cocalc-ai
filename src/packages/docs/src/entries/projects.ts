@@ -11,6 +11,7 @@ import {
   OPEN_TERMINAL_BODY,
   PROJECT_LIST_BODY,
   PROJECT_SECRETS_BODY,
+  PUBLISH_ROOTFS_BODY,
   ROOTFS_BODY,
   TASKS_BODY,
 } from "../content";
@@ -164,6 +165,31 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     summary:
       "Choose, customize, and reuse the Linux software stack for a project.",
     title: "Runtime images and RootFS",
+  },
+  {
+    actions: [
+      {
+        description: "Open project Settings -> Environment -> Runtime Image.",
+        executable: true,
+        id: "settings.runtime.rootfs.publish",
+        label: "Open RootFS publishing",
+        parameters: projectActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PUBLISH_ROOTFS_BODY.trim(),
+    category: "Projects",
+    id: "projects.publish-rootfs",
+    image: docsIcon(
+      "/public/docs/runtime-image-09add8c9.webp",
+      "A RootFS catalog entry with a public landing page and app launcher",
+    ),
+    lastReviewed: "2026-06-17",
+    slug: "projects/publish-rootfs",
+    status: "ready",
+    summary:
+      "Publish RootFS images with metadata, public slugs, discovery actions, app launchers, and CLI automation.",
+    title: "Publish RootFS images",
   },
   {
     actions: [

@@ -61,6 +61,7 @@ export type DocsActionId =
   | "project.terminal.open"
   | "project.jupyter.create"
   | "settings.runtime.rootfs"
+  | "settings.runtime.rootfs.publish"
   | "settings.people.collaborators"
   | "file.timetravel.open"
   | "project.codex.open"

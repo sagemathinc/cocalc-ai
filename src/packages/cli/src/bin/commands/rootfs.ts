@@ -102,6 +102,7 @@ function parseRootfsConfigFile(value?: string): RootfsConfigExport | undefined {
 function rootfsCatalogConfigPayload(
   opts: {
     label?: string;
+    slug?: string;
     family?: string;
     imageVersion?: string;
     channel?: string;
@@ -123,6 +124,7 @@ function rootfsCatalogConfigPayload(
       : {};
   return {
     label,
+    slug: opts.slug ?? config?.metadata?.slug,
     family: opts.family ?? config?.metadata?.family,
     version: opts.imageVersion ?? config?.metadata?.version,
     channel: opts.channel ?? config?.metadata?.channel,
@@ -159,6 +161,7 @@ function normalizeSection(value?: string): RootfsImageSection | undefined {
 function serializeRootfsImageEntry(entry: RootfsImageEntry) {
   return {
     image_id: entry.id,
+    slug: entry.slug ?? null,
     label: entry.label,
     image: entry.image,
     family: entry.family ?? null,
@@ -1202,6 +1205,7 @@ export function registerRootfsCommand(
     .description("create or update a RootFS catalog entry")
     .requiredOption("--image <image>", "runtime image reference")
     .option("--label <label>", "catalog label")
+    .option("--slug <slug>", "public landing page slug")
     .option("--image-id <id>", "update an existing catalog entry by id")
     .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option(
@@ -1227,6 +1231,7 @@ export function registerRootfsCommand(
         opts: {
           image: string;
           label?: string;
+          slug?: string;
           imageId?: string;
           browserId?: string;
           configFile?: string;
@@ -1266,6 +1271,7 @@ export function registerRootfsCommand(
     .description("publish the current RootFS state of a project")
     .option("-w, --project <project>", "project id or name")
     .option("--label <label>", "catalog label for the published image")
+    .option("--slug <slug>", "public landing page slug")
     .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option(
       "--config-file <path>",
@@ -1295,6 +1301,7 @@ export function registerRootfsCommand(
         opts: {
           project?: string;
           label?: string;
+          slug?: string;
           browserId?: string;
           configFile?: string;
           family?: string;

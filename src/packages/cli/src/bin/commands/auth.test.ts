@@ -434,7 +434,7 @@ test("auth elevate approves the current CLI session via browser polling", async 
           effective.cookie,
       }),
     );
-    await program.parseAsync(["node", "test", "auth", "elevate", "--extended"]);
+    await program.parseAsync(["node", "test", "auth", "elevate"]);
     assert.equal(capture.data.interactive_session, true);
     assert.equal(capture.data.factor_level, "totp");
     assert.equal(capture.data.fresh_auth_until, "2026-05-08T18:00:00.000Z");
@@ -452,7 +452,156 @@ test("auth elevate approves the current CLI session via browser polling", async 
   }
 });
 
-test("auth elevate --dev approves the current CLI session with hub password", async () => {
+test("auth bootstrap runs login, elevation, and session check", async () => {
+  const capture: { data?: any } = {};
+  let config: any = { profiles: {} };
+  const fetchCalls: Array<{ url: string; init: any }> = [];
+  const originalFetch = global.fetch;
+  global.fetch = (async (url: string | URL | Request, init?: any) => {
+    fetchCalls.push({ url: `${url}`, init });
+    if (`${url}`.endsWith("/api/v2/auth/cli/login/start")) {
+      return {
+        json: async () => ({
+          challenge_id: "login-challenge",
+          poll_token: "login-poll",
+          approval_url:
+            "https://hub.example.test/auth/cli-login/login-challenge",
+          expires_at: "2026-05-08T10:00:00.000Z",
+        }),
+      } as any;
+    }
+    if (`${url}`.endsWith("/api/v2/auth/cli/login/status")) {
+      return {
+        json: async () => ({
+          challenge_id: "login-challenge",
+          kind: "login",
+          state: "approved",
+          expires_at: "2026-05-08T10:00:00.000Z",
+          redeem_token: "login-redeem",
+        }),
+      } as any;
+    }
+    if (`${url}`.endsWith("/api/v2/auth/cli/login/redeem")) {
+      return {
+        json: async () => ({
+          account_id: "acct-123",
+          remember_me: "remember-cookie-1",
+          expire: "2026-11-08T10:00:00.000Z",
+          email_address: "user@example.com",
+          first_name: "User",
+          last_name: "Example",
+        }),
+      } as any;
+    }
+    if (`${url}`.endsWith("/api/v2/auth/cli/elevate/start")) {
+      assert.equal(init?.headers?.Cookie, "remember_me=remember-cookie-1");
+      return {
+        json: async () => ({
+          challenge_id: "elevate-challenge",
+          poll_token: "elevate-poll",
+          approval_url:
+            "https://hub.example.test/auth/cli-elevate/elevate-challenge",
+          expires_at: "2026-05-08T10:00:00.000Z",
+        }),
+      } as any;
+    }
+    if (`${url}`.endsWith("/api/v2/auth/cli/elevate/status")) {
+      return {
+        json: async () => ({
+          challenge_id: "elevate-challenge",
+          kind: "elevate",
+          state: "approved",
+          expires_at: "2026-05-08T10:00:00.000Z",
+          factor_level: "passkey",
+          fresh_auth_until: "2026-05-08T18:00:00.000Z",
+        }),
+      } as any;
+    }
+    if (`${url}`.endsWith("/api/v2/accounts/profile")) {
+      assert.equal(init?.headers?.Cookie, "remember_me=remember-cookie-1");
+      return {
+        json: async () => ({
+          profile: {
+            account_id: "acct-123",
+          },
+        }),
+      } as any;
+    }
+    if (`${url}`.endsWith("/api/v2/auth/cli/session-status")) {
+      assert.equal(init?.headers?.Cookie, "remember_me=remember-cookie-1");
+      return {
+        json: async () => ({
+          auth_client: "cli",
+          auth_session_hash: "session-hash-1",
+          factor_level: "passkey",
+          fresh_auth_until: "2026-05-08T18:00:00.000Z",
+          expire: "2026-11-08T10:00:00.000Z",
+        }),
+      } as any;
+    }
+    throw new Error(`unexpected fetch url ${url}`);
+  }) as any;
+  try {
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        defaultApiBaseUrl: () => "https://hub.example.test",
+        loadAuthConfig: () => config,
+        saveAuthConfig: (next: any) => {
+          config = next;
+        },
+        applyAuthProfile: (globals: any) => ({
+          globals: {
+            ...config.profiles.default,
+            ...globals,
+          },
+          profile: "default",
+          fromProfile: true,
+        }),
+        buildCookieHeader: (_apiBaseUrl: string, effective: any) =>
+          effective.cookie,
+      }),
+    );
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "bootstrap",
+      "--email",
+      "user@example.com",
+    ]);
+    assert.equal(capture.data.profile, "default");
+    assert.equal(capture.data.login.account_id, "acct-123");
+    assert.equal(capture.data.elevation.factor_level, "passkey");
+    assert.equal(capture.data.status.ok, true);
+    assert.equal(capture.data.status.account_id, "acct-123");
+    assert.equal(
+      capture.data.status.fresh_auth_until,
+      "2026-05-08T18:00:00.000Z",
+    );
+    assert.deepEqual(
+      fetchCalls.map((call) => call.url.replace(/^https?:\/\/[^/]+/, "")),
+      [
+        "/api/v2/auth/cli/login/start",
+        "/api/v2/auth/cli/login/status",
+        "/api/v2/auth/cli/login/redeem",
+        "/api/v2/auth/cli/elevate/start",
+        "/api/v2/auth/cli/elevate/status",
+        "/api/v2/accounts/profile",
+        "/api/v2/auth/cli/session-status",
+      ],
+    );
+    assert.deepEqual(JSON.parse(fetchCalls[0].init.body), {
+      email: "user@example.com",
+    });
+    assert.equal(JSON.parse(fetchCalls[3].init.body).duration, "extended");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("auth elevate --dev --short approves the current CLI session with hub password", async () => {
   const capture: { data?: any } = {};
   let cookieGlobals: any;
   const fetchCalls: Array<{ url: string; init: any }> = [];
@@ -502,7 +651,14 @@ test("auth elevate --dev approves the current CLI session with hub password", as
         getExplicitAccountId: (globals: any) => globals.accountId,
       }),
     );
-    await program.parseAsync(["node", "test", "auth", "elevate", "--dev"]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "elevate",
+      "--dev",
+      "--short",
+    ]);
     assert.equal(cookieGlobals.hubPassword, "hub-secret");
     assert.equal(cookieGlobals.disableEnvAuthDefaults, false);
     assert.equal(capture.data.interactive_session, true);
@@ -570,7 +726,7 @@ test("auth elevate --dev bootstraps a local dev session when only hub password a
       bootstrapArgs.requestedAccountId,
       "00000000-1000-4000-8000-000000000056",
     );
-    assert.equal(bootstrapArgs.freshAuthDuration, "default");
+    assert.equal(bootstrapArgs.freshAuthDuration, "extended");
     assert.equal(capture.data.bootstrapped_session, true);
     assert.equal(capture.data.dev, true);
     assert.equal(capture.data.factor_level, "totp");
