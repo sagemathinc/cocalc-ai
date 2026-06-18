@@ -126,26 +126,30 @@ export function getPrimaryCtas(
   );
 }
 
-// Design guardrail: primary-CTA emphasis stays sane. The Brief sanctions ONE
-// main action repeated at most twice (hero + close), so this allows a single
-// primary CTA to appear twice — but flags genuine over-emphasis: any primary
-// rendered 3+ times, or more than one distinct primary repeated. (Whether a
-// given repeated primary is the *right* main action — vs. a secondary action
-// over-styled as primary, like the old duplicated "API documentation" CTA — is
-// structurally identical to the legitimate pattern and stays a human judgment;
-// the copy playbook encodes that rule.)
+// Design guardrail: primary-CTA emphasis stays sane (the Brief's "ONE main
+// action"). The real signal is DESTINATION, not label: every primary CTA in the
+// scope must point to ONE href. Two labels for the same destination — a
+// feature-contextual hero ("Start using Python on CoCalc") plus a generic close
+// ("Create account"), both -> /auth/sign-up — is good UX, not over-emphasis;
+// what this catches is competing destinations (the "everything is primary"
+// anti-pattern). It also flags any single button hammered 3+ times.
+// NOTE: it does NOT catch two *identical* primaries placed redundantly close
+// together (the old duplicated "API documentation" case) — that is structurally
+// identical to a legit hero+close repeat, so each such page keeps a bespoke
+// "exactly one <X> button" assertion as the real backstop.
 export function expectPrimaryCtaEmphasisSane(scope: HTMLElement) {
+  const ctas = getPrimaryCtas(scope);
+  const destinations = new Set(ctas.map((cta) => cta.href ?? ""));
+  expect(destinations.size).toBeLessThanOrEqual(1);
   const counts = new Map<string, number>();
-  for (const cta of getPrimaryCtas(scope)) {
+  for (const cta of ctas) {
     const key = `${cta.name}|${cta.href ?? ""}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const overRepeated = [...counts.entries()]
     .filter(([, count]) => count > 2)
     .map(([key]) => key);
-  const repeated = [...counts.entries()].filter(([, count]) => count >= 2);
-  expect(overRepeated).toEqual([]); // no primary CTA appears 3+ times
-  expect(repeated.length).toBeLessThanOrEqual(1); // at most one repeated primary
+  expect(overRepeated).toEqual([]); // no single button rendered 3+ times
 }
 
 // Design guardrail: sane heading structure. No empty headings (any level), and
@@ -168,13 +172,23 @@ export function expectHeadingHierarchy(scope: HTMLElement) {
 }
 
 // Design guardrail: prose density (copy-playbook Principle 6 — design for
-// scanning, not reading). Each body <p> stays under maxChars so no section
-// becomes a wall of text. Shared so any public page can assert scannability.
+// scanning, not reading). Each body paragraph stays under maxChars so no section
+// becomes a wall of text. antd <Paragraph> renders as <div class="ant-typography">
+// (NOT <p>), so we match both — scanning "p" alone made this guard vacuous.
+// A tripwire (minParagraphs) fails loudly if the selector matches nothing, so it
+// can't silently pass again.
 export function expectProseDensity(
   scope: HTMLElement,
-  { maxChars = 390 }: { maxChars?: number } = {},
+  {
+    maxChars = 390,
+    minParagraphs = 1,
+  }: { maxChars?: number; minParagraphs?: number } = {},
 ) {
-  for (const paragraph of scope.querySelectorAll("p")) {
+  const paragraphs = Array.from(
+    scope.querySelectorAll("p, div.ant-typography"),
+  );
+  expect(paragraphs.length).toBeGreaterThanOrEqual(minParagraphs);
+  for (const paragraph of paragraphs) {
     expect(textLength(paragraph)).toBeLessThanOrEqual(maxChars);
   }
 }
