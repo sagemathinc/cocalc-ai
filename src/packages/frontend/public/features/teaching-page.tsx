@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
@@ -15,6 +15,7 @@ import {
   featureSupportPath,
   LinkButton,
 } from "./page-components";
+import { IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -29,34 +30,6 @@ function alpha(hexColor: string, opacity: number): string {
   const green = parseInt(hex.slice(2, 4), 16);
   const blue = parseInt(hex.slice(4, 6), 16);
   return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-}
-
-function IconBadge({
-  accent = PUBLIC_COLORS.brand,
-  icon,
-}: {
-  accent?: string;
-  icon: IconName;
-}) {
-  return (
-    <span
-      style={{
-        alignItems: "center",
-        background: `${accent}14`,
-        border: `1px solid ${accent}33`,
-        borderRadius: PANEL_RADIUS,
-        color: accent,
-        display: "inline-flex",
-        flex: "0 0 auto",
-        fontSize: 24,
-        height: 52,
-        justifyContent: "center",
-        width: 52,
-      }}
-    >
-      <Icon name={icon} />
-    </span>
-  );
 }
 
 function CourseDashboardMock() {

@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
@@ -14,37 +14,9 @@ import {
   featureSupportPath,
   LinkButton,
 } from "./page-components";
-import { ContextList } from "./feature-visuals";
+import { IconBadge, ContextList } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
-
-function IconBadge({
-  accent = PUBLIC_COLORS.brand,
-  icon,
-}: {
-  accent?: string;
-  icon: IconName;
-}) {
-  return (
-    <span
-      style={{
-        alignItems: "center",
-        background: `${accent}14`,
-        border: `1px solid ${accent}33`,
-        borderRadius: 8,
-        color: accent,
-        display: "inline-flex",
-        flex: "0 0 auto",
-        fontSize: 24,
-        height: 52,
-        justifyContent: "center",
-        width: 52,
-      }}
-    >
-      <Icon name={icon} />
-    </span>
-  );
-}
 
 function SageWorkspaceMock() {
   const blocks = [

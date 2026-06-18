@@ -15,10 +15,17 @@ const { Paragraph, Text, Title } = Typography;
 export function IconBadge({
   accent = PUBLIC_COLORS.brand,
   icon,
+  size = "lg",
 }: {
   accent?: string;
   icon: IconName;
+  size?: "sm" | "md" | "lg";
 }) {
+  const { box, font } = {
+    sm: { box: 36, font: 18 },
+    md: { box: 46, font: 22 },
+    lg: { box: 52, font: 24 },
+  }[size];
   return (
     <span
       style={{
@@ -29,10 +36,10 @@ export function IconBadge({
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
-        fontSize: 24,
-        height: 52,
+        fontSize: font,
+        height: box,
         justifyContent: "center",
-        width: 52,
+        width: box,
       }}
     >
       <Icon name={icon} />

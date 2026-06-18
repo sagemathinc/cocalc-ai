@@ -14,45 +14,11 @@ import {
   featureSupportPath,
   LinkButton,
 } from "./page-components";
+import { IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
-
-function IconBadge({
-  accent = PUBLIC_COLORS.brand,
-  icon,
-  size = "lg",
-}: {
-  accent?: string;
-  icon: IconName;
-  size?: "sm" | "md" | "lg";
-}) {
-  const { box, font } = {
-    sm: { box: 36, font: 18 },
-    md: { box: 46, font: 22 },
-    lg: { box: 52, font: 24 },
-  }[size];
-  return (
-    <span
-      style={{
-        alignItems: "center",
-        background: `${accent}14`,
-        border: `1px solid ${accent}33`,
-        borderRadius: 8,
-        color: accent,
-        display: "inline-flex",
-        flex: "0 0 auto",
-        fontSize: font,
-        height: box,
-        justifyContent: "center",
-        width: box,
-      }}
-    >
-      <Icon name={icon} />
-    </span>
-  );
-}
 
 function ThreadMock() {
   const messages = [

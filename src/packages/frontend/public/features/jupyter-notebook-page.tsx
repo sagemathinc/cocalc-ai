@@ -7,7 +7,7 @@ import { useState, type ReactNode } from "react";
 
 import { Button, Col, Flex, Modal, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
@@ -18,39 +18,12 @@ import {
   featureSupportPath,
   LinkButton,
 } from "./page-components";
+import { IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 const PANEL_RADIUS = 8;
-
-function IconBadge({
-  accent = PUBLIC_COLORS.brand,
-  icon,
-}: {
-  accent?: string;
-  icon: IconName;
-}) {
-  return (
-    <span
-      style={{
-        alignItems: "center",
-        background: `${accent}14`,
-        border: `1px solid ${accent}33`,
-        borderRadius: PANEL_RADIUS,
-        color: accent,
-        display: "inline-flex",
-        flex: "0 0 auto",
-        fontSize: 24,
-        height: 52,
-        justifyContent: "center",
-        width: 52,
-      }}
-    >
-      <Icon name={icon} />
-    </span>
-  );
-}
 
 function StoryCard({
   accent = PUBLIC_COLORS.brand,

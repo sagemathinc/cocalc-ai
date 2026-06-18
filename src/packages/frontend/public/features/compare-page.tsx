@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties } from "react";
 
 import { Button, Flex, Typography } from "antd";
 
@@ -87,37 +87,6 @@ function alpha(hexColor: string, opacity: number): string {
   const green = parseInt(hex.slice(2, 4), 16);
   const blue = parseInt(hex.slice(4, 6), 16);
   return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-}
-
-function Panel({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  className,
-  muted = false,
-}: {
-  accent?: string;
-  children: ReactNode;
-  className?: string;
-  muted?: boolean;
-}) {
-  return (
-    <div
-      className={className}
-      style={{
-        background: muted
-          ? PUBLIC_COLORS.paperBackground
-          : PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderTop: `4px solid ${accent}`,
-        borderRadius: PANEL_RADIUS,
-        boxShadow: PANEL_SHADOW,
-        height: "100%",
-        padding: 20,
-      }}
-    >
-      {children}
-    </div>
-  );
 }
 
 function DecisionRow({
