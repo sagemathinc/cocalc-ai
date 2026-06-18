@@ -63,6 +63,27 @@ export const PUBLIC_RADIUS = {
   pill: 999,
 } as const;
 
+// Public type scale — codifies the dominant inline text sizes already in use
+// (lead 18 is the home + site default at 19 uses; strays 17/19 snap to it, 15 →
+// 16, 20 → 18). Headings render via antd <Title> levels; these tokens are for
+// inline eyebrow / caption / body / lead / subhead / panel-title text. The home
+// hero's display sizes (30 / 58) stay home-only. Feature/product pages converge
+// onto these so a paragraph is never an ad-hoc px value again.
+export const PUBLIC_TYPE = {
+  eyebrow: 12,
+  caption: 13,
+  body: 16,
+  lead: 18,
+  subhead: 22,
+  title: 24,
+} as const;
+
+// Two text weights across the public site (a stray 800 snaps to bold).
+export const PUBLIC_WEIGHT = {
+  medium: 600,
+  bold: 700,
+} as const;
+
 // One elevation ink. Derived from the home page's existing shadow values (it
 // uses alpha(brandDark)), so home stays pixel-identical while feature pages —
 // which currently use a parallel slate rgba(33,49,57) ink — converge onto these.

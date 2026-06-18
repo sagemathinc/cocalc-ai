@@ -6,7 +6,7 @@
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   CodeBlock,
@@ -42,12 +42,12 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
               <Title level={2} style={{ margin: 0 }}>
                 Drive your projects, notebooks, and terminals from your own code
               </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 A documented HTTP API lets your scripts, pipelines, and
                 scheduled jobs create projects and run notebooks, terminals, and
                 computations directly.
               </Paragraph>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 The work lands back in a persistent CoCalc project your team can
                 reopen, review, and continue — hosted on CoCalc.ai or in your
                 own deployment — instead of a one-off run that disappears.
