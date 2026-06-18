@@ -116,6 +116,19 @@ export type SoftwareReleaseChannelManifest = {
   version: string;
 };
 
+type HostCompatibilityArtifact = "project-host" | "project" | "tools";
+
+type HostCompatibilityManifest = {
+  url: string;
+  sha256: string;
+  size_bytes: number;
+  built_at: string;
+  version: string;
+  os: "linux";
+  arch?: "amd64" | "arm64";
+  message?: string;
+};
+
 function unquoteShellValue(value: string): string {
   const trimmed = value.trim();
   if (
@@ -215,6 +228,28 @@ export function indexKey(component: SoftwareBuildComponent): string {
 
 export function publicUrl(config: SoftwareRemoteConfig, key: string): string {
   return `${config.publicBaseUrl}/${key}`;
+}
+
+async function readR2Json<T>({
+  client,
+  auth,
+  key,
+}: {
+  client: SoftwareR2Client;
+  auth: SoftwareR2Auth;
+  key: string;
+}): Promise<T | undefined> {
+  try {
+    const body = await client.getR2ObjectBuffer({ auth, key });
+    if (!body) return undefined;
+    return JSON.parse(body.toString("utf8")) as T;
+  } catch (err: any) {
+    const message = `${err?.message || err}`;
+    if (err?.statusCode === 404 || /\b404\b|not found/i.test(message)) {
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 function keySegment(value: string): string {
@@ -548,11 +583,10 @@ export async function publishHostCompatibilityArtifact({
   client: SoftwareR2Client;
   config: SoftwareRemoteConfig;
   entry: SoftwareRemoteIndexEntry;
-}): Promise<{ base_url: string; urls: string[] }> {
-  const artifact = entry.manifest_key.split("/")[2] as
-    | "project-host"
-    | "project"
-    | "tools";
+}): Promise<{ base_url: string; urls: string[]; catalog_urls: string[] }> {
+  const artifact = entry.manifest_key.split(
+    "/",
+  )[2] as HostCompatibilityArtifact;
   if (
     !["project-host", "project", "tools"].includes(artifact) ||
     (artifact !== "tools" && entry.files.length !== 1) ||
@@ -563,6 +597,7 @@ export async function publishHostCompatibilityArtifact({
     );
   }
   const urls: string[] = [];
+  const catalogUrls: string[] = [];
   for (const file of entry.files) {
     const compatKey = `software/${artifact}/${entry.artifact_id}/${file.name}`;
     await client.copyR2Object({
@@ -578,11 +613,150 @@ export async function publishHostCompatibilityArtifact({
       cacheControl: config.artifactCacheControl,
     });
     urls.push(publicUrl(config, compatKey));
+    const catalogKeys = await publishHostCompatibilityCatalog({
+      client,
+      config,
+      artifact,
+      entry,
+      file,
+      url: publicUrl(config, compatKey),
+    });
+    catalogUrls.push(...catalogKeys.map((key) => publicUrl(config, key)));
   }
   return {
     base_url: `${config.publicBaseUrl}/software`,
     urls,
+    catalog_urls: catalogUrls,
   };
+}
+
+function hostCompatibilityPlatform({
+  artifact,
+  fileName,
+}: {
+  artifact: HostCompatibilityArtifact;
+  fileName: string;
+}): { os: "linux"; arch?: "amd64" | "arm64" } {
+  if (artifact === "project-host" || artifact === "project") {
+    const match = /^bundle-(linux)\.tar\.xz$/.exec(fileName);
+    if (match) return { os: "linux" };
+  } else {
+    const match = /^tools-(linux)-(amd64|arm64)\.tar\.xz$/.exec(fileName);
+    if (match) return { os: "linux", arch: match[2] as "amd64" | "arm64" };
+  }
+  throw new Error(
+    `software host compatibility publish cannot infer platform from ${artifact}/${fileName}`,
+  );
+}
+
+function hostCompatibilityLatestKey({
+  artifact,
+  os,
+  arch,
+}: {
+  artifact: HostCompatibilityArtifact;
+  os: "linux";
+  arch?: "amd64" | "arm64";
+}): string {
+  if (artifact === "tools") {
+    if (!arch)
+      throw new Error("tools host compatibility catalog requires arch");
+    return `software/${artifact}/latest-${os}-${arch}.json`;
+  }
+  return `software/${artifact}/latest-${os}.json`;
+}
+
+function hostCompatibilityVersionsKey({
+  artifact,
+  os,
+  arch,
+}: {
+  artifact: HostCompatibilityArtifact;
+  os: "linux";
+  arch?: "amd64" | "arm64";
+}): string {
+  if (artifact === "tools") {
+    if (!arch)
+      throw new Error("tools host compatibility catalog requires arch");
+    return `software/${artifact}/versions-latest-${os}-${arch}.json`;
+  }
+  return `software/${artifact}/versions-latest-${os}.json`;
+}
+
+function normalizeHostCompatibilityVersions(value: any): any[] {
+  if (Array.isArray(value?.versions)) return value.versions;
+  if (Array.isArray(value)) return value;
+  return [];
+}
+
+async function publishHostCompatibilityCatalog({
+  client,
+  config,
+  artifact,
+  entry,
+  file,
+  url,
+}: {
+  client: SoftwareR2Client;
+  config: SoftwareRemoteConfig;
+  artifact: HostCompatibilityArtifact;
+  entry: SoftwareRemoteIndexEntry;
+  file: SoftwareRemoteIndexEntry["files"][number];
+  url: string;
+}): Promise<string[]> {
+  const platform = hostCompatibilityPlatform({
+    artifact,
+    fileName: file.name,
+  });
+  const manifest: HostCompatibilityManifest = {
+    url,
+    sha256: file.sha256,
+    size_bytes: file.size_bytes,
+    built_at: entry.timestamp,
+    version: entry.artifact_id,
+    os: platform.os,
+    ...(platform.arch ? { arch: platform.arch } : {}),
+    message: `${entry.tag} (${entry.git.short}${entry.git.dirty ? " dirty" : ""})`,
+  };
+  const latestKey = hostCompatibilityLatestKey({ artifact, ...platform });
+  const versionsKey = hostCompatibilityVersionsKey({ artifact, ...platform });
+  const currentIndex = await readR2Json<any>({
+    client,
+    auth: config.auth,
+    key: versionsKey,
+  });
+  const versions = [
+    manifest,
+    ...normalizeHostCompatibilityVersions(currentIndex).filter(
+      (candidate) =>
+        candidate?.version !== manifest.version && candidate?.url !== url,
+    ),
+  ];
+  const index: Record<string, unknown> = {
+    artifact,
+    channel: "latest",
+    os: platform.os,
+    generated_at: new Date().toISOString(),
+    versions,
+  };
+  if (platform.arch) {
+    index.arch = platform.arch;
+  }
+  await client.putR2ObjectFromBuffer({
+    auth: config.auth,
+    key: latestKey,
+    body: Buffer.from(JSON.stringify(manifest, null, 2) + "\n", "utf8"),
+    contentType: "application/json",
+    cacheControl: config.indexCacheControl,
+  });
+  await client.putR2ObjectFromBuffer({
+    auth: config.auth,
+    key: versionsKey,
+    body: Buffer.from(JSON.stringify(index, null, 2) + "\n", "utf8"),
+    contentType: "application/json",
+    cacheControl: config.indexCacheControl,
+  });
+  return [latestKey, versionsKey];
 }
 
 function releaseProductForComponent(

@@ -2672,7 +2672,21 @@ test("software deploy project-host publishes compatibility object and runs host 
     ),
     true,
   );
-  assert.equal(runs.length, 1);
+  const latest = JSON.parse(
+    r2.objects.get("software/project-host/latest-linux.json")!.toString("utf8"),
+  );
+  assert.equal(latest.version, artifactId);
+  assert.equal(
+    latest.url,
+    `https://software.example.test/software/project-host/${artifactId}/bundle-linux.tar.xz`,
+  );
+  const versions = JSON.parse(
+    r2.objects
+      .get("software/project-host/versions-latest-linux.json")!
+      .toString("utf8"),
+  );
+  assert.equal(versions.versions[0].version, artifactId);
+  assert.equal(runs.length, 2);
   assert.deepEqual(runs[0].args, [
     "--profile",
     "staging",
@@ -2686,6 +2700,20 @@ test("software deploy project-host publishes compatibility object and runs host 
     "--base-url",
     "https://software.example.test/software",
     "--wait",
+  ]);
+  assert.deepEqual(runs[1].args, [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-project-host",
   ]);
   const history = JSON.parse(
     r2.objects
@@ -2746,7 +2774,26 @@ test("software deploy tools publishes both architecture compatibility objects", 
       true,
     );
   }
-  assert.equal(runs.length, 2);
+  for (const arch of ["amd64", "arm64"]) {
+    const latest = JSON.parse(
+      r2.objects
+        .get(`software/tools/latest-linux-${arch}.json`)!
+        .toString("utf8"),
+    );
+    assert.equal(latest.version, artifactId);
+    assert.equal(latest.arch, arch);
+    assert.equal(
+      latest.url,
+      `https://software.example.test/software/tools/${artifactId}/tools-linux-${arch}.tar.xz`,
+    );
+    const versions = JSON.parse(
+      r2.objects
+        .get(`software/tools/versions-latest-linux-${arch}.json`)!
+        .toString("utf8"),
+    );
+    assert.equal(versions.versions[0].version, artifactId);
+  }
+  assert.equal(runs.length, 3);
   assert.deepEqual(runs[1].args, [
     "--profile",
     "staging",
@@ -2760,6 +2807,20 @@ test("software deploy tools publishes both architecture compatibility objects", 
     "--base-url",
     "https://software.example.test/software",
     "--wait",
+  ]);
+  assert.deepEqual(runs[2].args, [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "tools",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-tools",
   ]);
   const history = JSON.parse(
     r2.objects
@@ -2869,7 +2930,7 @@ test("software deploy bay-scaffold uses bay artifact and scaffold-only Rocket fl
 test("software deploy host-conat-router installs project-host artifact and reconciles one component", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-router-"));
   const localStore = join(dir, "store");
-  const source = join(dir, "project-host.tar.xz");
+  const source = join(dir, "bundle-linux.tar.xz");
   writeFileSync(source, "project host bundle");
   const runs: CapturedRun[] = [];
   const r2 = makeR2Client();
@@ -2905,7 +2966,7 @@ test("software deploy host-conat-router installs project-host artifact and recon
     r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
   ).artifacts[0].artifact_id;
 
-  assert.equal(runs.length, 3);
+  assert.equal(runs.length, 4);
   assert.deepEqual(runs[0].args.slice(-12), [
     "--profile",
     "staging",
@@ -2920,7 +2981,21 @@ test("software deploy host-conat-router installs project-host artifact and recon
     "https://software.example.test/software",
     "--wait",
   ]);
-  assert.deepEqual(runs[1].args.slice(-14), [
+  assert.deepEqual(runs[1].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-host-conat-router",
+  ]);
+  assert.deepEqual(runs[2].args.slice(-14), [
     "--profile",
     "staging",
     "host",
@@ -2936,7 +3011,7 @@ test("software deploy host-conat-router installs project-host artifact and recon
     "--reason",
     "software-deploy-host-conat-router",
   ]);
-  assert.deepEqual(runs[2].args.slice(-11), [
+  assert.deepEqual(runs[3].args.slice(-11), [
     "--profile",
     "staging",
     "host",

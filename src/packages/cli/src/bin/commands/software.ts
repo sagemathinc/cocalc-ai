@@ -1464,6 +1464,12 @@ function hostArtifactForSmoke(
   return undefined;
 }
 
+function runtimeArtifactForHostUpgradeArtifact(
+  artifact: "project-host" | "project" | "tools",
+): "project-host" | "project-bundle" | "tools" {
+  return artifact === "project" ? "project-bundle" : artifact;
+}
+
 function isStarSmokeComponent(component: SoftwareDeployComponent): boolean {
   return component === "star";
 }
@@ -3508,6 +3514,7 @@ Supported deploy/smoke components:
           let rocketScope: string | undefined;
           let hostBaseUrl: string | undefined;
           let hostCompatUrl: string | undefined;
+          let hostCatalogUrls: string[] | undefined;
           let hostManagedComponent: string | undefined;
           let releaseProduct: string | undefined;
           let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
@@ -3553,8 +3560,10 @@ Supported deploy/smoke components:
             });
             hostBaseUrl = compat.base_url;
             hostCompatUrl = compat.urls.join("\n");
+            hostCatalogUrls = compat.catalog_urls;
             hostManagedComponent = hostTarget.managedComponent;
             targetKind = "project-host-fleet";
+            const reason = `software-deploy-${component}`;
             commandArgsList = [
               [
                 ...cli.args,
@@ -3571,9 +3580,25 @@ Supported deploy/smoke components:
                 hostBaseUrl,
                 "--wait",
               ],
+              [
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "set",
+                "--global",
+                "--artifact",
+                runtimeArtifactForHostUpgradeArtifact(
+                  hostTarget.upgradeArtifact,
+                ),
+                "--desired-version",
+                artifact.artifact_id,
+                "--reason",
+                reason,
+              ],
             ];
             if (hostManagedComponent) {
-              const reason = `software-deploy-${component}`;
               commandArgsList.push(
                 [
                   ...cli.args,
@@ -3686,6 +3711,9 @@ Supported deploy/smoke components:
               ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
               ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
               ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
+              ...(hostCatalogUrls?.length
+                ? { host_catalog_urls: hostCatalogUrls }
+                : {}),
               ...(hostManagedComponent
                 ? { host_managed_component: hostManagedComponent }
                 : {}),
