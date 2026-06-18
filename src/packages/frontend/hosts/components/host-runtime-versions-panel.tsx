@@ -231,11 +231,7 @@ function defaultSelectionForArtifact({
   return currentMatch?.key ?? rows[0].key;
 }
 
-const CLUSTER_DEFAULT_ARTIFACTS: HostSoftwareArtifact[] = [
-  "project-host",
-  "project",
-  "tools",
-];
+const CLUSTER_DEFAULT_ARTIFACTS: HostSoftwareArtifact[] = ["project-host"];
 
 export const HostRuntimeVersionsPanel: React.FC<
   HostRuntimeVersionsPanelProps
@@ -269,6 +265,20 @@ export const HostRuntimeVersionsPanel: React.FC<
   );
   const [selectedClusterDefaultKeys, setSelectedClusterDefaultKeys] =
     React.useState<Partial<Record<HostSoftwareArtifact, string>>>({});
+  const projectHostCandidates =
+    clusterDefaultCandidates.get("project-host") ?? [];
+  const currentProjectHostDefault = globalDefaultMap.get("project-host");
+  const selectedProjectHostKey = selectedClusterDefaultKeys["project-host"];
+  const selectedProjectHostVersion = projectHostCandidates.find(
+    (row) => row.key === selectedProjectHostKey,
+  );
+  const selectedProjectHostActionKey = selectedProjectHostVersion?.version
+    ? `project-host:${selectedProjectHostVersion.version}`
+    : undefined;
+  const selectedProjectHostIsCurrent =
+    !!selectedProjectHostVersion?.version &&
+    selectedProjectHostVersion.version ===
+      currentProjectHostDefault?.desired_version;
 
   React.useEffect(() => {
     setSelectedClusterDefaultKeys((current) => {
@@ -528,142 +538,126 @@ export const HostRuntimeVersionsPanel: React.FC<
             description={globalDeploymentsError}
           />
         ) : null}
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Published runtime versions across the configured catalog and the local
-          hub software feed, annotated with how many running hosts are currently
-          on each version. Cluster defaults are explicit version selections for
-          the fleet and for future hosts. You can move a cluster default forward
-          or backward to any available version shown here. For the project-host
-          bundle, that promotes the artifact version only; it does not
-          automatically restart conat-router, conat-persist, or acp-worker.
-          {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
-        </Typography.Paragraph>
-        <Alert
-          type="info"
-          showIcon
-          message="Cluster default is an explicit version, not an automatic newest-wins rule."
-          description={
-            <Space direction="vertical" size={4}>
-              <Typography.Text>
-                Use the selectors below or the per-row actions to choose the
-                exact cluster default version for each artifact, including
-                rolling back from a newer build to an older tested one.
-              </Typography.Text>
-              <Typography.Text>
-                Only <strong>project-host bundle</strong> rows can show an{" "}
-                <strong>Align fleet stack</strong> button in the{" "}
-                <strong>Fleet Rollout</strong> column. Use that only when you
-                intentionally want all running hosts to restart project-host,
-                conat-router, conat-persist, and acp-worker onto that exact
-                project-host build.
-              </Typography.Text>
-            </Space>
-          }
-        />
-        <Card size="small" title="Cluster Defaults">
+        <Card size="small" title="Project Host Bundle Cluster Default">
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
-            {CLUSTER_DEFAULT_ARTIFACTS.map((artifact) => {
-              const current = globalDefaultMap.get(toRuntimeArtifact(artifact));
-              const rows = clusterDefaultCandidates.get(artifact) ?? [];
-              const selectedKey = selectedClusterDefaultKeys[artifact];
-              const selected = rows.find((row) => row.key === selectedKey);
-              const actionKey =
-                selected && selected.version
-                  ? `${toRuntimeArtifact(artifact)}:${selected.version}`
-                  : undefined;
-              return (
-                <Space
-                  key={artifact}
-                  align="start"
-                  size={12}
-                  style={{ width: "100%", justifyContent: "space-between" }}
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Choose the project-host bundle version that new hosts should use
+              by default. The selector is deduped by version across catalog
+              sources, so each available bundle appears once.
+              {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
+            </Typography.Paragraph>
+            <Space direction="vertical" size={4}>
+              <Typography.Text strong>Current cluster default</Typography.Text>
+              {currentProjectHostDefault?.desired_version ? (
+                <Typography.Text>
+                  <Typography.Text code>
+                    {currentProjectHostDefault.desired_version}
+                  </Typography.Text>{" "}
+                  <Typography.Text type="secondary">
+                    since{" "}
+                    <TimeAgo date={currentProjectHostDefault.updated_at} />
+                  </Typography.Text>
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">
+                  No project-host bundle default is recorded yet.
+                </Typography.Text>
+              )}
+            </Space>
+            <Space wrap size={8}>
+              <Select
+                style={{ minWidth: 560 }}
+                placeholder="Select a project-host bundle version"
+                value={selectedProjectHostKey}
+                onChange={(value) =>
+                  setSelectedClusterDefaultKeys((current) => ({
+                    ...current,
+                    "project-host": value,
+                  }))
+                }
+                options={projectHostCandidates.map((row) => ({
+                  value: row.key,
+                  label: `${row.version} · ${sourceLabel(row.source)} · ${row.running_hosts} running host${row.running_hosts === 1 ? "" : "s"}${
+                    row.size_bytes
+                      ? ` · ${human_readable_size(row.size_bytes)}`
+                      : ""
+                  }`,
+                }))}
+              />
+              <Popconfirm
+                title="Set project-host bundle cluster default?"
+                description={
+                  selectedProjectHostVersion?.version
+                    ? `Set ${selectedProjectHostVersion.version} as the project-host bundle cluster default. Running hosts that follow the default will reconcile automatically.`
+                    : "Select a version first."
+                }
+                okText="Set default"
+                disabled={
+                  !selectedProjectHostVersion?.version ||
+                  !onSetClusterDefault ||
+                  selectedProjectHostIsCurrent
+                }
+                onConfirm={() => {
+                  if (
+                    !selectedProjectHostVersion?.version ||
+                    !onSetClusterDefault
+                  ) {
+                    return;
+                  }
+                  return onSetClusterDefault({
+                    artifact: "project-host",
+                    desired_version: selectedProjectHostVersion.version,
+                    source: selectedProjectHostVersion.source,
+                  });
+                }}
+              >
+                <Button
+                  type="primary"
+                  disabled={
+                    !selectedProjectHostVersion?.version ||
+                    !onSetClusterDefault ||
+                    selectedProjectHostIsCurrent
+                  }
+                  loading={
+                    !!selectedProjectHostActionKey &&
+                    settingClusterDefaultKey === selectedProjectHostActionKey
+                  }
                 >
-                  <Space
-                    direction="vertical"
-                    size={4}
-                    style={{ minWidth: 180 }}
-                  >
-                    <Typography.Text strong>
-                      {artifactLabel(artifact)}
-                    </Typography.Text>
-                    {current?.desired_version ? (
-                      <Typography.Text type="secondary">
-                        Current default: <code>{current.desired_version}</code>
-                        {" · "}since <TimeAgo date={current.updated_at} />
-                      </Typography.Text>
-                    ) : (
-                      <Typography.Text type="secondary">
-                        No cluster default recorded yet.
-                      </Typography.Text>
-                    )}
-                  </Space>
-                  <Space
-                    size={8}
-                    style={{ flex: 1, justifyContent: "flex-end" }}
-                  >
-                    <Select
-                      style={{ minWidth: 360 }}
-                      placeholder={`Select ${artifactLabel(artifact).toLowerCase()} version`}
-                      value={selectedKey}
-                      onChange={(value) =>
-                        setSelectedClusterDefaultKeys((current) => ({
-                          ...current,
-                          [artifact]: value,
-                        }))
-                      }
-                      options={rows.map((row) => ({
-                        value: row.key,
-                        label: `${row.version} · ${sourceLabel(row.source)}`,
-                      }))}
-                    />
-                    <Popconfirm
-                      title={`Set ${artifactLabel(artifact)} cluster default?`}
-                      description={
-                        selected?.version
-                          ? `Promote ${selected.version} from ${sourceLabel(selected.source)} and queue automatic reconcile on running hosts that follow the cluster default.`
-                          : "Select a version first."
-                      }
-                      okText="Set default"
-                      disabled={!selected?.version || !onSetClusterDefault}
-                      onConfirm={() => {
-                        if (!selected?.version || !onSetClusterDefault) return;
-                        return onSetClusterDefault({
-                          artifact,
-                          desired_version: selected.version,
-                          source: selected.source,
-                        });
-                      }}
-                    >
-                      <Button
-                        type="primary"
-                        disabled={!selected?.version || !onSetClusterDefault}
-                        loading={
-                          !!actionKey && settingClusterDefaultKey === actionKey
-                        }
-                      >
-                        Set cluster default
-                      </Button>
-                    </Popconfirm>
-                  </Space>
-                </Space>
-              );
-            })}
+                  Set cluster default
+                </Button>
+              </Popconfirm>
+            </Space>
+            {selectedProjectHostIsCurrent ? (
+              <Typography.Text type="secondary">
+                The selected version is already the project-host bundle cluster
+                default.
+              </Typography.Text>
+            ) : null}
           </Space>
         </Card>
-        <Table<VersionRow>
-          size="small"
-          rowKey="key"
-          columns={columns}
-          dataSource={rows}
-          loading={loading}
-          pagination={false}
-          locale={{
-            emptyText: loading
-              ? "Loading runtime versions..."
-              : "No published runtime versions found.",
-          }}
-          scroll={{ x: 1360 }}
-        />
+        <details>
+          <summary>
+            <Typography.Text type="secondary">
+              Advanced: raw catalog rows and fleet rollout controls
+            </Typography.Text>
+          </summary>
+          <div style={{ marginTop: 12 }}>
+            <Table<VersionRow>
+              size="small"
+              rowKey="key"
+              columns={columns}
+              dataSource={rows}
+              loading={loading}
+              pagination={false}
+              locale={{
+                emptyText: loading
+                  ? "Loading runtime versions..."
+                  : "No published runtime versions found.",
+              }}
+              scroll={{ x: 1360 }}
+            />
+          </div>
+        </details>
       </Space>
     </Card>
   );
