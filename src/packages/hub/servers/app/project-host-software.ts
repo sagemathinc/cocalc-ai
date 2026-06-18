@@ -66,10 +66,12 @@ async function remoteSoftwareBaseFromReq(
     .trim()
     .toLowerCase();
   if (mode === "local") return undefined;
+  const runningInBay = !!`${process.env.COCALC_BAY_ID ?? ""}`.trim();
   const explicitLocalRoot =
     `${process.env.COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT ?? ""}`.trim();
-  if (mode !== "remote" && explicitLocalRoot) return undefined;
-  const runningInBay = !!`${process.env.COCALC_BAY_ID ?? ""}`.trim();
+  if (mode !== "remote" && explicitLocalRoot && !runningInBay) {
+    return undefined;
+  }
   if (
     mode !== "remote" &&
     !runningInBay &&
