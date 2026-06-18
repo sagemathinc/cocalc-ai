@@ -191,40 +191,9 @@ describe("PublicFeaturesApp", () => {
     const indexH1 = container.querySelectorAll("h1");
     expect(indexH1).toHaveLength(1);
     expect(textLength(indexH1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
-    const startingPoints = screen.getByRole("region", {
-      name: "CoCalc feature starting points",
-    });
-    expect(
-      within(startingPoints).getByRole("heading", { level: 3 }),
-    ).not.toBeNull();
-    expect(
-      Array.from(within(startingPoints).getAllByRole("link"))
-        .map((link) => link.getAttribute("href"))
-        .includes("/features/terminal"),
-    ).toBe(true);
-    expect(
-      Array.from(within(startingPoints).getAllByRole("link")).map((link) =>
-        link.getAttribute("href"),
-      ),
-    ).toEqual([
-      "/features/ai",
-      "/features/jupyter-notebook",
-      "/features/terminal",
-    ]);
-    expect(
-      within(startingPoints)
-        .getByRole("link", { name: /AI agents in CoCalc/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(startingPoints).queryByRole("link", { name: /Courses and labs/i }),
-    ).toBeNull();
     expect(
       screen.getAllByRole("link", { name: /Courses and labs/i }),
     ).toHaveLength(1);
-    expect(
-      within(startingPoints).queryByRole("link", { name: /Compare CoCalc/i }),
-    ).toBeNull();
     expect(
       screen.queryByAltText(/CoCalc feature map/i),
     ).not.toBeInTheDocument();
@@ -291,17 +260,6 @@ describe("PublicFeaturesApp", () => {
       container.querySelector(".cocalc-feature-index-hero"),
     ).not.toBeNull();
     expect(
-      container.querySelectorAll(".cocalc-feature-starter-card"),
-    ).toHaveLength(3);
-    expect(
-      container.querySelectorAll(".cocalc-feature-starter-card-featured"),
-    ).toHaveLength(1);
-    for (const card of container.querySelectorAll(
-      ".cocalc-feature-starter-card",
-    )) {
-      expect(card.getAttribute("style") ?? "").not.toContain("230, 244, 255");
-    }
-    expect(
       container.querySelectorAll(".cocalc-feature-group-label"),
     ).toHaveLength(4);
     expect(container.querySelectorAll(".cocalc-feature-link-card").length).toBe(
@@ -349,7 +307,6 @@ describe("PublicFeaturesApp", () => {
       .map((style) => style.textContent ?? "")
       .join("\n");
     expect(css).toContain(".cocalc-feature-link-card:hover");
-    expect(css).toContain(".cocalc-feature-starter-card:hover");
     expect(css).toContain("cursor: pointer");
   });
 

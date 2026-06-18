@@ -88,7 +88,7 @@ const FEATURE_GROUPS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     description:
-      "Use Codex inside CoCalc projects, or use API and CLI routes when workflows need automation around CoCalc.",
+      "Use Codex inside CoCalc projects, or drive a project from your own code — create it and run notebooks from a script via the API.",
     icon: "robot",
     slugs: ["ai", "api", "cli"],
     title: "AI workflows",
@@ -179,34 +179,6 @@ const TECHNICAL_SURFACE_CARDS = {
   string,
   { href: string; slug: string; summary: string; title: string }
 >;
-
-const FEATURE_STARTERS = [
-  {
-    body: "Work with Codex near the notebooks, files, terminals, and review history your team already uses.",
-    featured: true,
-    icon: "robot",
-    slug: "ai",
-    title: "AI agents in CoCalc",
-  },
-  {
-    body: "Keep computation, output, review, and collaboration in one notebook workflow.",
-    icon: "jupyter",
-    slug: "jupyter-notebook",
-    title: "Notebooks",
-  },
-  {
-    body: "Use a Linux shell and project compute for packages, services, and debugging.",
-    icon: "terminal",
-    slug: "terminal",
-    title: "Terminals",
-  },
-] satisfies {
-  body: string;
-  featured?: boolean;
-  icon: IconName;
-  slug: string;
-  title: string;
-}[];
 
 const FEATURE_PANEL_RADIUS = 8;
 
@@ -714,95 +686,13 @@ function FeaturesIndex() {
                 maxWidth: 600,
               }}
             >
-              Use this index to choose the route that matches the decision in
-              front of you: AI-assisted work, notebooks, runtime environments,
-              language stacks, teaching workflows, or platform integration. Each
-              page gives a workflow example and a route-specific next step.
+              For research, engineering, and technical teams. Each page shows
+              one workflow — AI-assisted work, notebooks, runtime environments,
+              language stacks, or teaching — with a concrete example and a
+              route-specific next step.
             </Paragraph>
           </div>
         </Flex>
-
-        <section
-          aria-label="CoCalc feature starting points"
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: FEATURE_PANEL_RADIUS,
-            boxShadow: FEATURE_PANEL_SHADOW,
-            padding: 22,
-          }}
-        >
-          <Flex vertical gap={18}>
-            <div>
-              <Text
-                strong
-                style={{
-                  color: PUBLIC_COLORS.brand,
-                  display: "block",
-                  fontSize: 12,
-                  letterSpacing: 0,
-                  textTransform: "uppercase",
-                }}
-              >
-                Start with
-              </Text>
-              <Title level={3} style={{ margin: "8px 0 0" }}>
-                Begin with AI, notebooks, or runtime.
-              </Title>
-            </div>
-            <div className="cocalc-feature-index-start-grid">
-              {FEATURE_STARTERS.map((starter) => {
-                const meta = featureMeta(starter.slug);
-                return (
-                  <a
-                    className={`cocalc-feature-starter-card${
-                      starter.featured
-                        ? " cocalc-feature-starter-card-featured"
-                        : ""
-                    }`}
-                    href={featurePath(starter.slug)}
-                    key={starter.slug}
-                    style={{
-                      background: PUBLIC_COLORS.surface,
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: FEATURE_PANEL_RADIUS,
-                      color: "inherit",
-                      display: "grid",
-                      gap: 10,
-                      gridTemplateColumns: "42px minmax(0, 1fr)",
-                      minHeight: 126,
-                      padding: 16,
-                      textDecoration: "none",
-                    }}
-                  >
-                    <span
-                      style={{
-                        alignItems: "center",
-                        background: `${meta.accent}12`,
-                        border: `1px solid ${meta.accent}2e`,
-                        borderRadius: FEATURE_PANEL_RADIUS,
-                        color: meta.accent,
-                        display: "flex",
-                        fontSize: 20,
-                        height: 42,
-                        justifyContent: "center",
-                        width: 42,
-                      }}
-                    >
-                      <Icon name={starter.icon} />
-                    </span>
-                    <span>
-                      <Text strong style={{ display: "block" }}>
-                        {starter.title}
-                      </Text>
-                      <Text type="secondary">{starter.body}</Text>
-                    </span>
-                  </a>
-                );
-              })}
-            </div>
-          </Flex>
-        </section>
       </section>
 
       {FEATURE_GROUPS.map((group) => (
