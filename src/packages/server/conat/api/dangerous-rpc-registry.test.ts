@@ -18,6 +18,7 @@ type SourceModule = {
 
 const SOURCE_MODULES: SourceModule[] = [
   { filename: "agent.ts", hubGroup: "agent" },
+  { filename: "ai-sessions.ts", hubGroup: "aiSessions" },
   { filename: "admin-data-explorer.ts", hubGroup: "adminData" },
   { filename: "db.ts", hubGroup: "db" },
   { filename: "lro.ts", hubGroup: "lro" },
