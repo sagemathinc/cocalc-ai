@@ -651,7 +651,7 @@ export async function savePlacement(
   });
 }
 
-async function ensurePlacement(
+export async function ensurePlacement(
   project_id: string,
   account_id?: string,
 ): Promise<HostPlacement> {
