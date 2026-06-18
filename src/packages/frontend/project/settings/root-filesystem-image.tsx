@@ -95,6 +95,7 @@ import {
   isManagedRootfsImageName,
   normalizeRootfsContentManifest,
   parseRootfsConfigExport,
+  validateRootfsSlug,
 } from "@cocalc/util/rootfs-images";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
@@ -463,6 +464,14 @@ export default function RootFilesystemImage({
     publishSourceEntry,
   });
   const rootfsLandingUrl = absoluteRootfsPublicUrl(rootfsLandingPath);
+  const publishSlugError = useMemo(
+    () => rootfsSlugValidationError(publishDraft.slug),
+    [publishDraft.slug],
+  );
+  const normalizedPublishSlug = useMemo(
+    () => rootfsNormalizedSlug(publishDraft.slug),
+    [publishDraft.slug],
+  );
   const publishTagOptions = useMemo(
     () =>
       Array.from(
@@ -744,6 +753,10 @@ export default function RootFilesystemImage({
           if (!project) {
             throw new Error("project is not available");
           }
+          const slug = validateRootfsSlug(publishDraft.slug);
+          if (slug !== publishDraft.slug.trim()) {
+            setPublishDraft((cur) => ({ ...cur, slug: slug ?? "" }));
+          }
           const tags = publishDraft.tags
             .split(",")
             .map((tag) => tag.trim())
@@ -757,7 +770,7 @@ export default function RootFilesystemImage({
             const op = await publishProjectRootfsImage({
               project_id: project.get("project_id"),
               label: publishDraft.label,
-              slug: publishDraft.slug.trim() || undefined,
+              slug,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -782,7 +795,7 @@ export default function RootFilesystemImage({
                   : undefined,
               image: publishDraft.image,
               label: publishDraft.label,
-              slug: publishDraft.slug.trim() || undefined,
+              slug,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -830,6 +843,10 @@ export default function RootFilesystemImage({
       await runFreshAuthAction(async () => {
         setPublishing(true);
         try {
+          const slug = validateRootfsSlug(publishDraft.slug);
+          if (slug !== publishDraft.slug.trim()) {
+            setPublishDraft((cur) => ({ ...cur, slug: slug ?? "" }));
+          }
           const tags = publishDraft.tags
             .split(",")
             .map((tag) => tag.trim())
@@ -844,7 +861,7 @@ export default function RootFilesystemImage({
                 : undefined,
             image: publishDraft.image,
             label: publishDraft.label,
-            slug: publishDraft.slug.trim() || undefined,
+            slug,
             family: publishDraft.family.trim() || undefined,
             version: publishDraft.version.trim() || undefined,
             channel: publishDraft.channel.trim() || undefined,
@@ -1091,6 +1108,25 @@ export default function RootFilesystemImage({
       setError(`${err}`);
       throw err;
     }
+  }
+
+  function generatePublishSlug(): void {
+    setPublishDraft((cur) => ({
+      ...cur,
+      slug: generateRootfsSlugSuggestion(
+        cur.label,
+        publishContentDraft.title,
+        publishSourceEntry?.label,
+        cur.image,
+      ),
+    }));
+  }
+
+  function normalizePublishSlug(): void {
+    setPublishDraft((cur) => ({
+      ...cur,
+      slug: rootfsNormalizedSlug(cur.slug),
+    }));
   }
 
   const activeImage = value || effectiveDefaultRootfs;
@@ -1870,7 +1906,7 @@ export default function RootFilesystemImage({
                 : "Save Metadata"
           }
           cancelText="Cancel"
-          okButtonProps={{ loading: publishing }}
+          okButtonProps={{ disabled: !!publishSlugError, loading: publishing }}
           styles={{
             body: { maxHeight: "calc(100vh - 230px)", overflowY: "auto" },
           }}
@@ -2216,25 +2252,50 @@ export default function RootFilesystemImage({
                           <Paragraph strong style={{ marginBottom: 6 }}>
                             Public slug
                           </Paragraph>
-                          <Input
-                            addonBefore="/rootfs/"
-                            value={publishDraft.slug}
-                            onChange={(e) =>
-                              setPublishDraft((cur) => ({
-                                ...cur,
-                                slug: e.target.value,
-                              }))
-                            }
-                            placeholder="auto-generated on save"
-                          />
-                          <Paragraph
-                            type="secondary"
-                            style={{ marginTop: 6, marginBottom: 0 }}
-                          >
-                            Leave blank to generate one when saving or
-                            publishing. Use lowercase letters, numbers, and
-                            hyphens.
-                          </Paragraph>
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              addonBefore="/rootfs/"
+                              status={publishSlugError ? "error" : undefined}
+                              value={publishDraft.slug}
+                              onBlur={normalizePublishSlug}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  slug: e.target.value,
+                                }))
+                              }
+                              placeholder="auto-generated on save"
+                            />
+                            <Button onClick={generatePublishSlug}>
+                              Generate
+                            </Button>
+                          </Space.Compact>
+                          {publishSlugError ? (
+                            <Alert
+                              showIcon
+                              type="error"
+                              message={`Invalid slug: ${publishSlugError}`}
+                              style={{ marginTop: 8 }}
+                            />
+                          ) : normalizedPublishSlug &&
+                            normalizedPublishSlug !==
+                              publishDraft.slug.trim() ? (
+                            <Paragraph
+                              type="secondary"
+                              style={{ marginTop: 6, marginBottom: 0 }}
+                            >
+                              Will save as <code>{normalizedPublishSlug}</code>.
+                            </Paragraph>
+                          ) : (
+                            <Paragraph
+                              type="secondary"
+                              style={{ marginTop: 6, marginBottom: 0 }}
+                            >
+                              Leave blank to generate one when saving or
+                              publishing. Use lowercase letters, numbers, and
+                              hyphens. Duplicate slugs are rejected on save.
+                            </Paragraph>
+                          )}
                         </div>
                         <div>
                           <Paragraph strong style={{ marginBottom: 8 }}>
@@ -2971,6 +3032,49 @@ function parseRootfsTagString(tags: string): string[] {
   return normalizeRootfsTags(tags.split(","));
 }
 
+function rootfsSlugValidationError(slug: string): string | undefined {
+  try {
+    validateRootfsSlug(slug);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : `${err}`;
+  }
+}
+
+function rootfsNormalizedSlug(slug: string): string {
+  try {
+    return validateRootfsSlug(slug) ?? "";
+  } catch {
+    return slug;
+  }
+}
+
+function rootfsValidSlug(slug: string): string | undefined {
+  try {
+    return validateRootfsSlug(slug);
+  } catch {
+    return undefined;
+  }
+}
+
+function generateRootfsSlugSuggestion(
+  ...parts: (string | undefined)[]
+): string {
+  const source = parts.find((part) => part?.trim())?.trim() ?? "rootfs";
+  const base =
+    source
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/--+/g, "-")
+      .slice(0, 28)
+      .replace(/-+$/g, "") || "rootfs";
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return rootfsNormalizedSlug(`${base}-${suffix}`);
+}
+
 function rootfsConfigMetadataFromPublishDraft(
   draft: PublishDraft,
 ): RootfsConfigExportMetadata {
@@ -2994,7 +3098,8 @@ function rootfsPublicLandingPath({
   publishDraft: PublishDraft;
   publishSourceEntry?: RootfsImageEntry;
 }): string | undefined {
-  const slug = publishDraft.slug.trim() || publishSourceEntry?.slug?.trim();
+  const slug =
+    rootfsValidSlug(publishDraft.slug) || publishSourceEntry?.slug?.trim();
   if (slug) {
     return rootfsPath({ id: publishSourceEntry?.id ?? "", slug });
   }

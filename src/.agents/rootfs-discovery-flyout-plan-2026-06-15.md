@@ -210,9 +210,13 @@ Current implementation note:
 
 - The landing page route exists and works, including `/rootfs/<slug>` and
   `/rootfs/id/<image_id>`.
-- The remaining product gap is discoverability: the catalog-management RootFS
-  config UI must show and link the public landing URL, and it must provide a
-  place to create or edit the slug.
+- The catalog-management RootFS config UI shows the public landing URL, with
+  open/copy actions, and exposes a public slug field.
+- Backend save/publish auto-generates a short globally unique slug when none is
+  provided, validates user-provided slugs, and rejects duplicates.
+- Remaining slug polish: make slug editing more self-explanatory, add
+  client-side validation/normalization, provide an easy generated suggestion,
+  and consider a lightweight availability check before save.
 
 Initial page contents:
 
@@ -366,9 +370,11 @@ security and content subsystems.
 - Add CLI support for the same portable config JSON on `rootfs save` and
   `rootfs publish`.
 - Allow users with manage permission to accept an auto-generated slug or choose
-  a valid unique slug.
+  a valid unique slug. Initial support exists; remaining work is polish around
+  generated suggestions, validation messaging, and uniqueness feedback.
 - Link to the public landing page from the catalog-management/config UI so the
-  share page is discoverable while authors are editing RootFS metadata.
+  share page is discoverable while authors are editing RootFS metadata. Initial
+  link/copy/open support exists.
 - Hide trust/scan/version UI from ordinary users for now.
 
 ### Phase 3: Rootfs Flyout Skeleton
@@ -455,6 +461,8 @@ security and content subsystems.
   reached through a short rootfs slug.
 - The public landing URL is shown in RootFS config/catalog management and can be
   copied/opened by authors.
+- Authors can leave slug blank for backend generation or choose a user-facing
+  slug with immediate validation feedback.
 - The implementation works with seed-global catalog authority and project-owned
   bay routing.
 
