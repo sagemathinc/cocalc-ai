@@ -9,6 +9,7 @@ import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
+  CodeBlock,
   FeatureImage,
   featureAppPath as appPath,
   featureSupportPath,
@@ -16,15 +17,12 @@ import {
 
 const { Paragraph, Title } = Typography;
 
-const MONO = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-
 // A real, documented call (POST /api/v2/exec): basic auth with an API key as the
 // username, run a command in a project, get stdout/stderr/exit_code back.
 const EXEC_EXAMPLE = [
   `curl -u "$COCALC_API_KEY:" \\`,
   `  https://cocalc.ai/api/v2/exec \\`,
-  `  -d '{"project_id": "...", "command": "python3",`,
-  `       "args": ["analysis.py"]}'`,
+  `  -d '{"project_id": "...", "command": "python3", "args": ["analysis.py"]}'`,
 ].join("\n");
 
 export default function ApiFeaturePage({}: { helpEmail?: string }) {
@@ -92,22 +90,7 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
             <Title level={3} style={{ margin: 0 }}>
               Run code, get the output back
             </Title>
-            <div
-              aria-label="Example API call"
-              style={{
-                background: PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
-                fontFamily: MONO,
-                fontSize: 13,
-                lineHeight: 1.7,
-                overflowX: "auto",
-                padding: "14px 16px",
-                whiteSpace: "pre",
-              }}
-            >
-              {EXEC_EXAMPLE}
-            </div>
+            <CodeBlock ariaLabel="Example API call" code={EXEC_EXAMPLE} />
             <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
               Returns the stdout, stderr, and exit code — and the run stays in
               the project. Calls use a scoped API key; the full reference is in
