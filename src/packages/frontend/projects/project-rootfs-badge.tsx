@@ -67,6 +67,10 @@ export function projectRootfsEntryLabel({
     : `${base} ${version}`;
 }
 
+function shouldHideRootfsBadgeLabel(label: string): boolean {
+  return label.trim().toLowerCase() === "empty project";
+}
+
 function findRootfsEntry({
   image,
   imageId,
@@ -149,6 +153,10 @@ export function ProjectRootfsBadge({
   }
 
   const label = projectRootfsEntryLabel({ entry, image: fallbackImage });
+  if (shouldHideRootfsBadgeLabel(label)) {
+    return null;
+  }
+
   const upgradeLabel = upgradeEntry
     ? projectRootfsEntryLabel({
         entry: upgradeEntry,
