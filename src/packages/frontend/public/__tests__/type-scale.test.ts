@@ -28,9 +28,10 @@
 //      injected CSS strings, quoted "17px", no-space `fontSize:18`, and tokens.
 //   3. Scope is features/products/pricing, NON-recursive — about/auth/docs/
 //      guides/news/support/layout and top-level shared files are unguarded.
-// The planned fix is a RENDER-time assertion that hero/lead paragraphs carry a
-// PUBLIC_TYPE fontSize (catches the unset-default + off-scale-text the scan
-// can't), plus tokenizing icon sizes so ALLOWED_RAW can shrink to "no raw text".
+// The render-time half is now implemented as `expectTextSizesOnScale` in
+// test-helpers.ts (paragraphs with an inline fontSize must be a PUBLIC_TYPE
+// value, with a tripwire for the unset-default), run across every feature page.
+// Still pending: tokenizing icon sizes so ALLOWED_RAW can shrink to "no raw text".
 
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";

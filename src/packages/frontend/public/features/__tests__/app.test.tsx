@@ -8,6 +8,7 @@ import {
   expectHeadingHierarchy,
   expectPrimaryCtaEmphasisSane,
   expectProseDensity,
+  expectTextSizesOnScale,
   getDirectCards,
   getHeadingTexts,
   HERO_H1_MAX,
@@ -1026,6 +1027,9 @@ describe("PublicFeaturesApp", () => {
       expectProseDensity(container.querySelector("main") as HTMLElement, {
         maxChars: 390,
       });
+
+      // Design guardrail: every inline-sized paragraph uses a PUBLIC_TYPE size.
+      expectTextSizesOnScale(container.querySelector("main") as HTMLElement);
 
       const nextSteps = screen.queryByRole("region", {
         name: "Feature operating model next steps",

@@ -18,6 +18,12 @@
 
 import { within } from "@testing-library/react";
 
+import { PUBLIC_TYPE } from "../theme";
+
+// PUBLIC_TYPE sizes as rendered fontSize strings (e.g. "18px"), for the
+// render-time type-scale guard below.
+const PUBLIC_TYPE_PX = new Set(Object.values(PUBLIC_TYPE).map((n) => `${n}px`));
+
 // --- Anti-sprawl thresholds (single source so the same element has one cap) ---
 export const HERO_H1_MAX = 70;
 export const SECTION_H2_MAX = 72;
@@ -190,6 +196,28 @@ export function expectProseDensity(
   expect(paragraphs.length).toBeGreaterThanOrEqual(minParagraphs);
   for (const paragraph of paragraphs) {
     expect(textLength(paragraph)).toBeLessThanOrEqual(maxChars);
+  }
+}
+
+// Design guardrail (render-time complement to the source-scan type-scale test).
+// Any PARAGRAPH carrying an inline fontSize must be a PUBLIC_TYPE size: the
+// source scan can't tell a mis-sized text 17 from an icon glyph 17, but this
+// reads the rendered <Paragraph> (div.ant-typography) fontSize and can. The
+// minSized tripwire fails loudly if NO paragraph is explicitly sized, so a lead
+// reverting to the unstyled default (the "17-vs-14 hero" bug) can't pass
+// silently on a page that should carry a lead size.
+export function expectTextSizesOnScale(
+  scope: HTMLElement,
+  { minSized = 1 }: { minSized?: number } = {},
+) {
+  const sized = Array.from(scope.querySelectorAll("div.ant-typography")).filter(
+    (paragraph) => (paragraph as HTMLElement).style.fontSize,
+  );
+  expect(sized.length).toBeGreaterThanOrEqual(minSized);
+  for (const paragraph of sized) {
+    expect(PUBLIC_TYPE_PX.has((paragraph as HTMLElement).style.fontSize)).toBe(
+      true,
+    );
   }
 }
 
