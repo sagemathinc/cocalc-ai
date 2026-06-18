@@ -45,7 +45,7 @@ describe("rolloutComponentsForUpgradeResults", () => {
     ).toEqual(["project-host", "conat-router", "conat-persist", "acp-worker"]);
   });
 
-  it("does not roll out managed components for explicit project-host noops", () => {
+  it("rolls out the full managed runtime stack for align-runtime-stack project-host noops", () => {
     expect(
       rolloutComponentsForUpgradeResults(
         [
@@ -60,7 +60,7 @@ describe("rolloutComponentsForUpgradeResults", () => {
           alignRuntimeStack: true,
         },
       ),
-    ).toEqual([]);
+    ).toEqual(["project-host", "conat-router", "conat-persist", "acp-worker"]);
   });
 });
 
