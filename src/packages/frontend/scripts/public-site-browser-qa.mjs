@@ -247,10 +247,10 @@ const ROUTE_RULES = {
       "Languages",
     ],
     forbidText: ["Notebook, writing, and visual work"],
-    requireSelectors: [".cocalc-feature-starter-card"],
+    requireSelectors: [".cocalc-feature-link-card"],
     styleChecks: [
       {
-        selector: ".cocalc-feature-starter-card",
+        selector: ".cocalc-feature-link-card",
         property: "backgroundColor",
         not: ["rgb(230, 244, 255)"],
       },
