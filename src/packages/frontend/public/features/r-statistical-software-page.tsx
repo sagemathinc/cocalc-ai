@@ -104,15 +104,16 @@ function RProjectFitBand() {
               Keep R close to the rest of the analysis.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Dedicated R environments are often the right tool when the work is
-              mainly R editing. CoCalc is useful when R is part of a broader
-              collaborative project: notebooks, terminals, Python, LaTeX,
-              teaching, Linux setup, files, and Codex context all live together.
+              A dedicated R environment is the right tool when the work is
+              mainly R editing. CoCalc earns its place when R is one part of a
+              larger research or engineering project — notebooks, Python, LaTeX,
+              data, and shared files in one place, so collaborators and
+              reviewers work from the same state.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              That makes CoCalc a good fit for courses, mixed-language
-              computational work, and reproducible reports that need project
-              infrastructure around R rather than only an R IDE.
+              That fits reproducible research reports, statistical work that
+              mixes R with Python or shell tools, and team review — with
+              teaching courses a natural extension, not the only use.
             </Paragraph>
           </Flex>
         </Col>
@@ -120,7 +121,7 @@ function RProjectFitBand() {
           <ContextList
             accent="#386cb0"
             items={[
-              { icon: "r", label: "Use R where it fits" },
+              { icon: "r", label: "Model, analyze, and report in R" },
               { icon: "python", label: "Mix with Python or shell tools" },
               {
                 icon: "tex",
@@ -149,7 +150,6 @@ export default function RStatisticalSoftwareFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalLabel = isAuthenticated ? "Open projects" : "Start using R";
   const supportHref = featureSupportPath({
     body: "I want to discuss R workflows in CoCalc. Helpful context: statistics, reporting, teaching, or research use case; packages or command-line needs; expected collaborators; and whether hosted or customer-operated CoCalc matters.",
     context: "r-statistical-software",
@@ -167,14 +167,9 @@ export default function RStatisticalSoftwareFeaturePage({
                 Use R for statistics and reproducible reporting.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc supports R through Jupyter notebooks, terminals, scripts,
-                RMarkdown-style documents, Quarto-style workflows, Knitr, LaTeX,
-                shared files, and course projects.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                It is useful when R analysis needs to live beside other
-                technical work: Python, shell commands, generated reports,
-                teaching infrastructure, and collaborative review.
+                Fit statistical models, build reproducible reports, and share
+                the analysis with your lab or team — using R in notebooks,
+                scripts, and Quarto or RMarkdown documents.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -200,32 +195,35 @@ export default function RStatisticalSoftwareFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>When R belongs in CoCalc</Title>
-            <BulletList
-              items={[
-                "Use notebooks, terminals, scripts, and reproducible document workflows in one place.",
-                "Share an R environment with collaborators or students without local setup drift.",
-                "Keep R near Python, Linux tools, LaTeX, Git, and project chat.",
-                "Best fit when project context matters more than a dedicated R IDE.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/python")}>Python</Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              <Button href={appPath("products")}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                From analysis to a shared report
+              </Title>
+              <BulletList
+                items={[
+                  "Develop the model in a notebook or script, with packages and data in the project.",
+                  "Render a Quarto or RMarkdown report to HTML or PDF from the same project.",
+                  "Collaborators and reviewers open the project and see the exact code, output, and history.",
+                  "Re-run it later — the environment, data, and report build are still there.",
+                ]}
+              />
+              <Flex wrap gap={12}>
+                <Button href={appPath("features/python")}>Python</Button>
+                <Button href={appPath("features/latex-editor")}>
+                  LaTeX editor
+                </Button>
+                <Button href={supportHref}>Ask about R workflows</Button>
+              </Flex>
+              <LinkButton href={appPath("products")}>
                 Compare operating models
-              </Button>
-              <Button href={supportHref}>Ask about R workflows</Button>
+              </LinkButton>
             </Flex>
-            <LinkButton href={appPath("features/linux")}>
-              Linux environment
-            </LinkButton>
           </Col>
           <Col xs={24} lg={11}>
             <StartCard
               body="Open a project and use R in notebooks, terminals, reports, or teaching workflows."
               href={primaryHref}
-              label={finalLabel}
+              label={primaryLabel}
               title="Start in a project"
             />
           </Col>
