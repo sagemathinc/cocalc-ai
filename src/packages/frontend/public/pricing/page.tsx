@@ -776,17 +776,6 @@ export default function PricingPage({
             >
               Compare operating models
             </Button>
-            <Button
-              href={supportPurchasePath({
-                body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, data-location, privacy, or security questions, and support coordination needs.",
-                context: "pricing-site-license",
-                subject: "Site licensing",
-                title: "Ask CoCalc about site licensing",
-              })}
-              icon={<DecorativeButtonIcon name="bank" />}
-            >
-              Talk with CoCalc about site licensing
-            </Button>
           </Flex>
         </PublicSection>
         {publicTiers.length > 0 ? (

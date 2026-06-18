@@ -754,7 +754,7 @@ function CocalcLaunchpadPage() {
     "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
   const detailItems = [
     {
-      body: "Academic IT, lab operators, platform teams, workshops, and departments that need a customer-operated CoCalc environment for a bounded group.",
+      body: "Research labs, engineering and platform teams, workshops, and departments that need a customer-operated CoCalc environment for a bounded group, run by their own IT or operations team.",
       icon: "servers",
       title: "Who it fits",
     },
