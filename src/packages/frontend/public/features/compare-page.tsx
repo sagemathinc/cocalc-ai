@@ -9,7 +9,6 @@ import { Button, Flex, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import { LinkButton, featureAppPath } from "./page-components";
 
@@ -18,42 +17,24 @@ const { Paragraph, Text, Title } = Typography;
 const PANEL_RADIUS = 8;
 const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
 
-const COCALC_FITS = [
-  "The project is more than one notebook, editor, terminal, or dashboard.",
-  "People need to review work while it is still changing.",
-  "AI agents should work from the same files, notebooks, terminals, and chat as the team.",
-  "History, TimeTravel, snapshots, or backups need to stay close to the work.",
-  "The operating model may change: hosted, local, single-VM, or customer-operated.",
-] as const;
-
-const FOCUSED_TOOL_FITS = [
-  "A single notebook, dashboard, IDE, or reporting surface is enough.",
-  "Collaboration mostly happens after the work is finished.",
-  "Course administration is separate from the computational environment.",
-  "Your organization wants to assemble and maintain separate open-source pieces itself.",
-  "Governance, hosting, and operations are already settled around one tool.",
-] as const;
-
 const DECISION_ROWS = [
   {
     cocalc:
       "Files, notebooks, terminals, documents, output, discussion, and recovery should stay with the project.",
     other:
-      "A focused tool can work when the surrounding artifacts already live somewhere stable.",
+      "Fine to keep separate when those artifacts already live somewhere stable.",
     question: "What needs to stay together?",
   },
   {
     cocalc:
       "Researchers, instructors, support staff, and AI agents need to inspect the same working state.",
-    other:
-      "A focused tool can work when collaboration mostly happens in one surface.",
+    other: "A single surface is enough when collaboration stays in one place.",
     question: "Who needs to inspect the work?",
   },
   {
     cocalc:
       "Teammates review, explain, and hand off work while it is still active.",
-    other:
-      "A focused tool can work when review happens after the work is complete.",
+    other: "A lighter tool works when review only happens at the end.",
     question: "When does collaboration happen?",
   },
   {
@@ -67,7 +48,7 @@ const DECISION_ROWS = [
     cocalc:
       "The group may need hosted use, local evaluation, a single VM, or a customer-operated deployment.",
     other:
-      "A focused tool can work when the hosting and operations model is already fixed.",
+      "A fixed setup is fine when hosting and operations are already decided.",
     question: "Who operates it?",
   },
 ] as const;
@@ -136,29 +117,6 @@ function Panel({
     >
       {children}
     </div>
-  );
-}
-
-function DecisionList({
-  accent,
-  items,
-  title,
-}: {
-  accent: string;
-  items: readonly string[];
-  title: string;
-}) {
-  return (
-    <Panel accent={accent} className="cocalc-compare-decision-panel">
-      <Title level={3} style={{ margin: 0 }}>
-        {title}
-      </Title>
-      <ul className="cocalc-compare-list">
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </Panel>
   );
 }
 
@@ -375,9 +333,6 @@ export default function CompareFeaturePage({
               <Button type="primary" href={featureAppPath("products")}>
                 Compare operating models
               </Button>
-              <Button href={featureAppPath("pricing")}>
-                Pricing and licensing
-              </Button>
               <Button href={supportHref}>Talk with CoCalc</Button>
             </Flex>
           </Flex>
@@ -395,28 +350,9 @@ export default function CompareFeaturePage({
       </section>
 
       <PublicSection
-        ariaLabel="CoCalc compare fit"
-        intro="Start with the shape of the work, not the names of competing tools."
-        title="The practical split."
-      >
-        <div className="cocalc-compare-split">
-          <DecisionList
-            accent={PUBLIC_COLORS.brand}
-            items={COCALC_FITS}
-            title="CoCalc fits when..."
-          />
-          <DecisionList
-            accent={COLORS.GRAY_M}
-            items={FOCUSED_TOOL_FITS}
-            title="A focused tool fits when..."
-          />
-        </div>
-      </PublicSection>
-
-      <PublicSection
         ariaLabel="CoCalc compare decision checklist"
-        intro="These questions help decide whether CoCalc belongs in the evaluation before pricing, procurement, or deployment details take over."
-        title="Decision checklist."
+        intro="Start with the shape of the work, not the names of competing tools. These questions decide whether CoCalc belongs in the evaluation before pricing, procurement, or deployment details take over."
+        title="Decision checklist"
       >
         <div
           aria-label="CoCalc compare decision rows"
@@ -432,7 +368,7 @@ export default function CompareFeaturePage({
       <PublicSection
         ariaLabel="CoCalc compare next routes"
         intro="Follow the route that matches the question your group is trying to answer next."
-        title="Where to go next."
+        title="Where to go next"
       >
         <div className="cocalc-compare-route-panel">
           {nextRoutes.map((route) => (

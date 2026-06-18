@@ -141,12 +141,12 @@ const ROUTE_RULES = {
     requireText: [
       "Compare CoCalc",
       "When is CoCalc the right fit?",
-      "The practical split.",
-      "Where to go next.",
+      "Decision checklist",
+      "Where to go next",
     ],
     requireLinks: [
       { text: "Compare operating models", hrefIncludes: "/products" },
-      { text: "Pricing and licensing", hrefIncludes: "/pricing" },
+      { text: "Review pricing options", hrefIncludes: "/pricing" },
       { text: "Talk with CoCalc", hrefIncludes: "context=feature-compare" },
       { text: "AI workflows", hrefIncludes: "/features/ai" },
     ],

@@ -1158,9 +1158,6 @@ describe("PublicFeaturesApp", () => {
       SECTION_H2_MAX,
     );
     expect(
-      compareHeadings.filter((heading) => /fits when/i.test(heading)),
-    ).toHaveLength(2);
-    expect(
       screen.getByText(/Best fit: work that needs review/i),
     ).not.toBeNull();
     expect(
@@ -1169,10 +1166,8 @@ describe("PublicFeaturesApp", () => {
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/products", "/products"]);
     expect(
-      screen
-        .getAllByRole("link", { name: "Pricing and licensing" })
-        .map((link) => link.getAttribute("href")),
-    ).toEqual(["/pricing"]);
+      screen.queryByRole("link", { name: "Pricing and licensing" }),
+    ).toBeNull();
     expect(
       screen
         .getByRole("link", { name: "Review pricing options" })
@@ -1262,7 +1257,7 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       container.querySelectorAll(".cocalc-compare-decision-panel"),
-    ).toHaveLength(2);
+    ).toHaveLength(0);
     expect(getDirectCards(decisionRows)).toHaveLength(5);
     expect(
       container.querySelectorAll(".cocalc-compare-route-row"),
