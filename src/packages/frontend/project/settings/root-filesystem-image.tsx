@@ -4206,17 +4206,21 @@ function RuntimeAction({
         alignItems: "center",
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 10,
-        display: "grid",
+        display: "flex",
+        flexWrap: "wrap",
         gap: 10,
-        gridTemplateColumns: "minmax(0, 1fr) auto",
         padding: "10px 12px",
       }}
     >
-      <div style={{ minWidth: 0 }}>
+      <div style={{ flex: "1 1 220px", minWidth: 0 }}>
         <div style={{ fontWeight: 600 }}>{title}</div>
         <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{description}</div>
       </div>
-      {action}
+      {action ? (
+        <div style={{ flex: "0 0 auto", marginLeft: "auto", maxWidth: "100%" }}>
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }
