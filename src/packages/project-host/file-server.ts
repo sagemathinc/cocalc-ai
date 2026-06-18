@@ -1516,11 +1516,14 @@ async function mount({
   scratch?: boolean;
 }): Promise<{ path: string }> {
   logger.debug("mount", { project_id, scratch });
-  return {
-    path: scratch
-      ? getScratchMountpoint(project_id)
-      : projectMountpoint(project_id),
-  };
+  const path = scratch
+    ? getScratchMountpoint(project_id)
+    : projectMountpoint(project_id);
+  if (await exists(path)) {
+    return { path };
+  }
+  const vol = await ensureVolume(project_id, scratch);
+  return { path: vol.path };
 }
 
 async function clone({
