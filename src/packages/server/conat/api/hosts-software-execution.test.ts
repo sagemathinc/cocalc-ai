@@ -262,6 +262,47 @@ describe("upgradeHostSoftwareInternalHelper", () => {
     );
   });
 
+  it("can realign project-host upgrades without recording host-scoped desired state", async () => {
+    const row = {
+      id: "host-1",
+      status: "running",
+      version: "ph-v2",
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: "ph-v2",
+        },
+      },
+    };
+    const setProjectHostRuntimeDeployments = jest.fn(async () => []);
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        align_runtime_stack: true,
+        record_runtime_deployments: false,
+        loadHostForStartStop: async () => row,
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh: async () => undefined,
+        hostControlClient: async () => ({
+          upgradeSoftware: async () => ({ results: [] }),
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments,
+      }),
+    ).resolves.toEqual({ results: [] });
+
+    expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
+  });
+
   it("uses the installed project-host artifact version when upgrade results report a build id", async () => {
     const loadHostForStartStop = jest
       .fn()

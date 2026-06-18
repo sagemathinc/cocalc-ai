@@ -7349,6 +7349,7 @@ export async function reconcileHostSoftwareInternal({
           account_id,
           id,
           targets,
+          record_runtime_deployments: false,
         });
       }
       if (shouldRollManagedComponents) {
@@ -7362,6 +7363,7 @@ export async function reconcileHostSoftwareInternal({
             "acp-worker",
           ],
           reason: "host_software_reconcile",
+          record_runtime_deployments: false,
         });
       }
       let refreshedRow = row;
@@ -7591,6 +7593,7 @@ export async function upgradeHostSoftwareInternal({
   targets,
   base_url,
   align_runtime_stack,
+  record_runtime_deployments,
   onProgress,
 }: {
   account_id?: string;
@@ -7598,6 +7601,7 @@ export async function upgradeHostSoftwareInternal({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  record_runtime_deployments?: boolean;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
@@ -7608,6 +7612,7 @@ export async function upgradeHostSoftwareInternal({
     targets,
     base_url,
     align_runtime_stack,
+    record_runtime_deployments,
     loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     computeHostOperationalAvailability,
@@ -7648,6 +7653,7 @@ export async function rolloutHostManagedComponentsInternal({
   components,
   base_url,
   reason,
+  record_runtime_deployments,
   onProgress,
 }: {
   account_id?: string;
@@ -7655,6 +7661,7 @@ export async function rolloutHostManagedComponentsInternal({
   components: HostManagedComponentRolloutRequest["components"];
   base_url?: string;
   reason?: string;
+  record_runtime_deployments?: boolean;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
@@ -7664,6 +7671,7 @@ export async function rolloutHostManagedComponentsInternal({
     id,
     components,
     reason,
+    record_runtime_deployments,
     loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     hostControlClient,

@@ -4224,6 +4224,51 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
           id: HOST_ID,
           account_id: ACCOUNT_ID,
           targets: [{ artifact: "project-bundle", version: "bundle-v5" }],
+          record_runtime_deployments: false,
+        }),
+      }),
+    );
+  });
+
+  it("queues automatic project-host upgrade for a running host after a global default changes", async () => {
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "ph-v3",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+    ]);
+    const { setHostRuntimeDeployments } = await import("./hosts");
+    await setHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "global",
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-v3",
+        },
+      ],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-upgrade-software",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          account_id: ACCOUNT_ID,
+          targets: [{ artifact: "project-host", version: "ph-v3" }],
+          align_runtime_stack: true,
+          record_runtime_deployments: false,
         }),
       }),
     );

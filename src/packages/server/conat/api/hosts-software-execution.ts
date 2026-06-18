@@ -604,6 +604,7 @@ export async function upgradeHostSoftwareInternalHelper({
   targets,
   base_url,
   align_runtime_stack,
+  record_runtime_deployments = true,
   loadHostForStartStop,
   assertHostRunningForUpgrade,
   computeHostOperationalAvailability,
@@ -623,6 +624,7 @@ export async function upgradeHostSoftwareInternalHelper({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  record_runtime_deployments?: boolean;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   assertHostRunningForUpgrade: (row: any) => void;
   computeHostOperationalAvailability: (row: any) => {
@@ -857,7 +859,7 @@ export async function upgradeHostSoftwareInternalHelper({
       }),
     );
   }
-  if (runtimeDeployments.length) {
+  if (record_runtime_deployments && runtimeDeployments.length) {
     await setProjectHostRuntimeDeployments({
       scope_type: "host",
       host_id: row.id,
@@ -881,6 +883,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   id,
   components,
   reason,
+  record_runtime_deployments = true,
   loadHostForStartStop,
   assertHostRunningForUpgrade,
   hostControlClient,
@@ -907,6 +910,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   id: string;
   components: HostManagedComponentRolloutRequest["components"];
   reason?: string;
+  record_runtime_deployments?: boolean;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   assertHostRunningForUpgrade: (row: any) => void;
   hostControlClient: (
@@ -1237,7 +1241,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
     desired_version: desiredVersion,
     reason,
   });
-  if (runtimeDeployments.length) {
+  if (record_runtime_deployments && runtimeDeployments.length) {
     await setProjectHostRuntimeDeployments({
       scope_type: "host",
       host_id: row.id,
