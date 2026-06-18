@@ -1654,7 +1654,7 @@ async function cp({
     throw Error("file server not initialized");
   }
   const srcVolume = await getVolume(src.project_id);
-  const destVolume = await getVolume(dest.project_id);
+  const destVolume = await getOrEnsureVolume(dest.project_id);
   // Paths may be project-relative or absolute (/..., /root/..., /tmp/...).
   // Resolve using the same home/rootfs/temp-volume policy as the fs server API.
   const srcFs = createProjectSandboxFilesystem({
