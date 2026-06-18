@@ -20,6 +20,7 @@ let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostControlCreateProjectMock: jest.Mock;
+let ensurePlacementMock: jest.Mock;
 let copyProjectSecretsMock: jest.Mock;
 let initializeProjectRootfsStatesMock: jest.Mock;
 let cloneProjectRootfsStatesMock: jest.Mock;
@@ -191,6 +192,12 @@ jest.mock("@cocalc/server/project-backup", () => ({
     resolveProjectBackupRepoAssignmentMock(...args),
 }));
 
+jest.mock("@cocalc/server/project-host/control", () => ({
+  __esModule: true,
+  ensurePlacement: (...args: any[]) => ensurePlacementMock(...args),
+  takeStartProjectPhaseTimings: jest.fn(() => undefined),
+}));
+
 jest.mock("@cocalc/server/projects/project-secrets", () => ({
   __esModule: true,
   copyProjectSecrets: (...args: any[]) => copyProjectSecretsMock(...args),
@@ -243,6 +250,7 @@ describe("projects.createProject clone routing", () => {
       project_id: insertedProjectId,
       state: { state: "stopped" },
     }));
+    ensurePlacementMock = jest.fn(async () => ({ host_id: HOST_ID }));
     copyProjectSecretsMock = jest.fn(async () => ({
       copied: ["API_KEY"],
       conflicts: [],
@@ -529,6 +537,7 @@ describe("projects.createProject clone routing", () => {
       image_id: STAR_ROOTFS_IMAGE_ID,
       set_by_account_id: ACCOUNT_ID,
     });
+    expect(ensurePlacementMock).toHaveBeenCalledWith(project_id, ACCOUNT_ID);
   });
 
   it("validates the cloned current RootFS state before copying files", async () => {

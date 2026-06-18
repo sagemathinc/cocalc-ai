@@ -506,6 +506,83 @@ describe("startProjectOnHost placement", () => {
     });
   });
 
+  it("re-registers a project that already has an assigned host", async () => {
+    const createProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "opened",
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      createProject: createProjectMock,
+    }));
+
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        expect(params).toEqual(["proj-1"]);
+        return {
+          rows: [
+            {
+              title: "Already placed",
+              users: { owner: { group: "owner" } },
+              image: "cocalc.local/rootfs/course",
+              host_id: "host-1",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        expect(params).toEqual(["host-1"]);
+        return {
+          rows: [
+            {
+              id: "host-1",
+              bay_id: "bay-0",
+              name: "Host 1",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        expect(params).toEqual(["host-1"]);
+        return { rows: [{ metadata: { machine: {} } }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { ensurePlacement } = await import("./control");
+    await expect(ensurePlacement("proj-1", "account-1")).resolves.toEqual({
+      host_id: "host-1",
+    });
+
+    expect(createProjectMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      title: "Already placed",
+      users: { owner: { group: "owner" } },
+      image: "cocalc.local/rootfs/course",
+      ensure_volume: false,
+      start: false,
+      authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      run_quota: {},
+    });
+  });
+
   it("passes account_id when automatic placement registers a project on a remote shared-pool host", async () => {
     let loadProjectCalls = 0;
     let placementQuery = 0;
@@ -894,6 +971,7 @@ describe("startProjectOnHost placement", () => {
       state: "running",
     }));
     createHostControlClientMock = jest.fn(() => ({
+      createProject: jest.fn(async () => ({ project_id: "proj-1" })),
       startProject: startProjectMock,
       getProjectStatus: getProjectStatusMock,
     }));
@@ -1322,6 +1400,7 @@ describe("startProjectOnHost placement", () => {
       phase_timings_ms: { runner_start: 1234 },
     }));
     createHostControlClientMock = jest.fn(() => ({
+      createProject: jest.fn(async () => ({ project_id: "proj-1" })),
       startProject: startProjectMock,
       getProjectStatus: jest.fn(async () => ({ state: "stopped" })),
     }));
@@ -1424,6 +1503,7 @@ describe("startProjectOnHost placement", () => {
       state: "running",
     }));
     createHostControlClientMock = jest.fn(() => ({
+      createProject: jest.fn(async () => ({ project_id: "proj-1" })),
       startProject: startProjectMock,
       getProjectStatus: getProjectStatusMock,
     }));
@@ -1532,6 +1612,7 @@ describe("startProjectOnHost placement", () => {
       .mockReturnValueOnce(firstStart)
       .mockReturnValueOnce(secondStart);
     createHostControlClientMock = jest.fn(() => ({
+      createProject: jest.fn(async () => ({ project_id: "proj-1" })),
       startProject: startProjectMock,
       getProjectStatus: jest.fn(async () => ({ state: "stopped" })),
     }));

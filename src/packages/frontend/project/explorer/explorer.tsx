@@ -66,8 +66,6 @@ import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { isProjectRecentlyCreated } from "@cocalc/frontend/project/recently-created-project";
-import { useProjectCreated } from "@cocalc/frontend/project/use-project-created";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -125,11 +123,15 @@ const ERROR_STYLE: CSSProperties = {
 } as const;
 
 const LIFECYCLE_LISTING_REFRESH_DELAYS_MS = [0, 1000, 2000, 5000] as const;
-const RECENT_PROJECT_MISSING_VOLUME_REFRESH_MS = 1500;
 
-function isMissingProjectVolumeError(error: unknown): boolean {
+function isStartRequiredFilesystemError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
-  return text.includes("project volume does not exist");
+  return (
+    text.includes("project volume does not exist") ||
+    text.includes("project host id unavailable") ||
+    text.includes("host routing info unavailable") ||
+    text.includes("has no host assigned")
+  );
 }
 
 function sortDesc(active_file_sort?: ActiveFileSort): {
@@ -317,13 +319,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
-  const { created: projectCreated } = useProjectCreated(project_id);
-  const suppressMissingVolumeListingError =
-    isMissingProjectVolumeError(listingError) &&
-    isProjectRecentlyCreated({ project_id, created: projectCreated });
-  const displayListingError = suppressMissingVolumeListingError
-    ? null
-    : listingError;
+  const displayListingError = listingError;
   const applyNavigationWorkspaceSelection = useCallback(
     (path: string) => {
       const nextSelection = selectionForPathFollowThrough(
@@ -597,27 +593,13 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   useEffect(() => {
     if (!isVisible) return;
     if (listing != null) return;
-    if (listingError != null && !suppressMissingVolumeListingError) return;
+    if (listingError != null) return;
     if (projectStateName !== "running" && projectStateName !== "opened") {
       return;
     }
 
     let canceled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-
-    if (suppressMissingVolumeListingError) {
-      timer = setTimeout(() => {
-        if (!canceled) {
-          refresh();
-        }
-      }, RECENT_PROJECT_MISSING_VOLUME_REFRESH_MS);
-      return () => {
-        canceled = true;
-        if (timer != null) {
-          clearTimeout(timer);
-        }
-      };
-    }
 
     const refreshAfterDelay = (attempt: number): void => {
       const delay =
@@ -645,7 +627,6 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     isVisible,
     listing,
     listingError,
-    suppressMissingVolumeListingError,
     projectStateName,
     effective_current_path,
     refresh,
@@ -793,7 +774,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     !project_is_running &&
     !project_is_archived &&
     !project_is_new &&
-    isMissingProjectVolumeError(displayListingError);
+    isStartRequiredFilesystemError(displayListingError);
 
   if (hostUnavailable && !project_is_running) {
     return (

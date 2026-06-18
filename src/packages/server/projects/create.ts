@@ -38,7 +38,10 @@ import {
 import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
+import {
+  ensurePlacement,
+  takeStartProjectPhaseTimings,
+} from "@cocalc/server/project-host/control";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -579,6 +582,32 @@ export default async function createProject(opts: CreateProjectOptions) {
       image_id: projectRootfsImageId,
       set_by_account_id: account_id,
     });
+  }
+
+  if (!host_id && account_id) {
+    try {
+      await ensurePlacement(project_id, account_id);
+    } catch (err) {
+      log.warn("createProject: failed to assign project to a host", {
+        project_id,
+        account_id,
+        err: `${err}`,
+      });
+      try {
+        await pool.query("DELETE FROM projects WHERE project_id=$1", [
+          project_id,
+        ]);
+      } catch (cleanupErr) {
+        log.warn(
+          "createProject: failed to cleanup project row after placement error",
+          {
+            project_id,
+            err: `${cleanupErr}`,
+          },
+        );
+      }
+      throw Error(`failed to assign workspace to a host: ${err}`);
+    }
   }
 
   // If this is a clone with a known host, register the project row on that host
