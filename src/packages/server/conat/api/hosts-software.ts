@@ -152,14 +152,6 @@ export function rolloutComponentsForUpgradeResults(
     alignRuntimeStack &&
     (targets ?? []).some((target) => target.artifact === "project-host")
   ) {
-    const projectHostResults = (results ?? []).filter(
-      (result) => result.artifact === "project-host",
-    );
-    if (projectHostResults.length > 0) {
-      return projectHostResults.some((result) => result.status === "updated")
-        ? [...PROJECT_HOST_RUNTIME_STACK_COMPONENTS]
-        : [];
-    }
     return [...PROJECT_HOST_RUNTIME_STACK_COMPONENTS];
   }
   const components = new Set<ManagedComponentKind>();

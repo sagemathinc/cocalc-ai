@@ -941,6 +941,7 @@ export interface HostSoftwareUpgradeRequest {
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  record_runtime_deployments?: boolean;
 }
 
 export interface HostSoftwareUpgradeResponse {

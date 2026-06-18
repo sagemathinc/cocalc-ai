@@ -291,6 +291,10 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcileInternal({
       id: row.id,
       ...(requestedBy ? { account_id: requestedBy } : {}),
       targets,
+      align_runtime_stack: targets.some(
+        (target) => target.artifact === "project-host",
+      ),
+      record_runtime_deployments: false,
     },
     dedupe_key: hostUpgradeDedupeKey({
       hostId: row.id,

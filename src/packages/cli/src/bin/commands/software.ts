@@ -113,6 +113,7 @@ type ListOptions = {
 type PushOptions = {
   localStore?: string;
   envFile?: string;
+  build?: boolean;
 };
 
 type DeployOptions = {
@@ -123,6 +124,7 @@ type DeployOptions = {
   api?: string;
   toolsMinimal?: string;
   build?: boolean;
+  rollout?: boolean;
 };
 
 type HistoryOptions = {
@@ -275,12 +277,14 @@ function parseBuildComponentSelector({
 function parsePushComponentSelector({
   componentSelectorArg,
   legacySelectorArg,
+  allowMissingSelector = false,
 }: {
   componentSelectorArg: string;
   legacySelectorArg?: string;
+  allowMissingSelector?: boolean;
 }): {
   component: SoftwareBuildComponent;
-  selector: string;
+  selector: string | undefined;
 } {
   const { componentRaw, selectorRaw } = splitSoftwareComponentSelector({
     value: componentSelectorArg,
@@ -291,12 +295,28 @@ function parsePushComponentSelector({
       ? legacySelectorArg
       : selectorRaw;
   if (selector == null || `${selector}`.trim() === "") {
+    if (allowMissingSelector) {
+      return {
+        component: parseSoftwareBuildComponent(componentRaw),
+        selector: undefined,
+      };
+    }
     throw new Error("software push requires <component:tag-or-id>");
   }
   return {
     component: parseSoftwareBuildComponent(componentRaw),
     selector: validateSoftwareDeploySelector(selector),
   };
+}
+
+function isHostCompatibilityComponent(
+  component: SoftwareBuildComponent,
+): component is "project-host" | "project" | "tools" {
+  return (
+    component === "project-host" ||
+    component === "project" ||
+    component === "tools"
+  );
 }
 
 function splitSoftwareComponentSelector({
@@ -1462,6 +1482,12 @@ function hostArtifactForSmoke(
   if (component === "project") return "project-bundle";
   if (component === "tools") return "tools";
   return undefined;
+}
+
+function runtimeArtifactForHostUpgradeArtifact(
+  artifact: "project-host" | "project" | "tools",
+): "project-host" | "project-bundle" | "tools" {
+  return artifact === "project" ? "project-bundle" : artifact;
 }
 
 function isStarSmokeComponent(component: SoftwareDeployComponent): boolean {
@@ -3321,6 +3347,10 @@ Supported deploy/smoke components:
       `${BUILD_COMPONENT_ARGUMENT}; artifact tag or id`,
     )
     .allowExcessArguments(true)
+    .option(
+      "--build",
+      "build the component tag before pushing; tag is generated if omitted",
+    )
     .option("--local-store <path>", "local artifact store")
     .option(
       "--env-file <path>",
@@ -3336,15 +3366,40 @@ Supported deploy/smoke components:
         if (command.args.length > 2) {
           throw new Error("software push accepts <component:tag-or-id>");
         }
-        const { component, selector } = parsePushComponentSelector({
+        let { component, selector } = parsePushComponentSelector({
           componentSelectorArg,
           legacySelectorArg: command.args[1],
+          allowMissingSelector: opts.build,
         });
         const startedAt = deps.now?.() ?? new Date();
         const localStore = resolveSoftwareLocalStore({
           option: opts.localStore,
           env: deps.env ?? process.env,
         });
+        let builtArtifact:
+          | (SoftwareArtifactManifest & { local_dir: string })
+          | undefined;
+        if (opts.build) {
+          builtArtifact = await buildFromFile({
+            component,
+            tagArg: selector,
+            opts: {
+              localStore: opts.localStore,
+            },
+            deps: {
+              cwd: deps.cwd,
+              env: deps.env ?? process.env,
+              now: deps.now ?? (() => new Date()),
+              gitMetadata: deps.gitMetadata,
+              repoRoot: deps.repoRoot,
+              runCommand: deps.runCommand,
+            },
+          });
+          selector = builtArtifact.artifact_id;
+        }
+        if (!selector) {
+          throw new Error("software push requires <component:tag-or-id>");
+        }
         const { manifest, path } = await resolveLocalManifestBySelector({
           localStore,
           component,
@@ -3361,8 +3416,16 @@ Supported deploy/smoke components:
           manifest,
           manifestPath: path,
           now: deps.now?.() ?? new Date(),
+          allowExisting: true,
         });
         const entry = manifestRemoteEntry({ manifest, config });
+        const hostCompat = isHostCompatibilityComponent(component)
+          ? await publishHostCompatibilityArtifact({
+              client,
+              config,
+              entry,
+            })
+          : undefined;
         emitSuccess(
           { globals: command.optsWithGlobals() as any },
           "software push",
@@ -3371,9 +3434,23 @@ Supported deploy/smoke components:
             tag: manifest.tag,
             artifact_id: manifest.artifact_id,
             duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+            ...(builtArtifact
+              ? {
+                  built: true,
+                  built_component: builtArtifact.component,
+                  built_artifact_id: builtArtifact.artifact_id,
+                }
+              : {}),
             remote_manifest: entry.manifest_url,
             index: `${config.publicBaseUrl}/${indexKey(component)}`,
             files: entry.files.map((file) => file.url),
+            ...(hostCompat
+              ? {
+                  host_base_url: hostCompat.base_url,
+                  host_files: hostCompat.urls,
+                  host_catalogs: hostCompat.catalog_urls,
+                }
+              : {}),
           },
         );
       },
@@ -3391,6 +3468,10 @@ Supported deploy/smoke components:
     .option(
       "--build",
       "build the component tag before deploying; deploy-only service components build their underlying artifact component",
+    )
+    .option(
+      "--rollout",
+      "for host runtime components, immediately upgrade/reconcile all online hosts after setting fleet defaults",
     )
     .option("--local-store <path>", "local artifact store")
     .option("--config <path>", "rocket config path")
@@ -3508,6 +3589,7 @@ Supported deploy/smoke components:
           let rocketScope: string | undefined;
           let hostBaseUrl: string | undefined;
           let hostCompatUrl: string | undefined;
+          let hostCatalogUrls: string[] | undefined;
           let hostManagedComponent: string | undefined;
           let releaseProduct: string | undefined;
           let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
@@ -3553,10 +3635,50 @@ Supported deploy/smoke components:
             });
             hostBaseUrl = compat.base_url;
             hostCompatUrl = compat.urls.join("\n");
+            hostCatalogUrls = compat.catalog_urls;
             hostManagedComponent = hostTarget.managedComponent;
             targetKind = "project-host-fleet";
+            const reason = `software-deploy-${component}`;
             commandArgsList = [
               [
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "set",
+                "--global",
+                "--artifact",
+                runtimeArtifactForHostUpgradeArtifact(
+                  hostTarget.upgradeArtifact,
+                ),
+                "--desired-version",
+                artifact.artifact_id,
+                "--reason",
+                reason,
+              ],
+            ];
+            if (hostManagedComponent) {
+              commandArgsList.push([
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "set",
+                "--global",
+                "--component",
+                hostManagedComponent,
+                "--desired-version",
+                artifact.artifact_id,
+                "--policy",
+                "restart_now",
+                "--reason",
+                reason,
+              ]);
+            }
+            if (opts.rollout) {
+              commandArgsList.push([
                 ...cli.args,
                 "--profile",
                 deployTarget,
@@ -3570,29 +3692,9 @@ Supported deploy/smoke components:
                 "--base-url",
                 hostBaseUrl,
                 "--wait",
-              ],
-            ];
-            if (hostManagedComponent) {
-              const reason = `software-deploy-${component}`;
-              commandArgsList.push(
-                [
-                  ...cli.args,
-                  "--profile",
-                  deployTarget,
-                  "host",
-                  "deploy",
-                  "set",
-                  "--global",
-                  "--component",
-                  hostManagedComponent,
-                  "--desired-version",
-                  artifact.artifact_id,
-                  "--policy",
-                  "restart_now",
-                  "--reason",
-                  reason,
-                ],
-                [
+              ]);
+              if (hostManagedComponent) {
+                commandArgsList.push([
                   ...cli.args,
                   "--profile",
                   deployTarget,
@@ -3605,8 +3707,8 @@ Supported deploy/smoke components:
                   "--reason",
                   reason,
                   "--wait",
-                ],
-              );
+                ]);
+              }
             }
           } else if (releaseTarget) {
             releaseProduct = releaseProductForArtifactComponent(
@@ -3686,9 +3788,13 @@ Supported deploy/smoke components:
               ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
               ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
               ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
+              ...(hostCatalogUrls?.length
+                ? { host_catalog_urls: hostCatalogUrls }
+                : {}),
               ...(hostManagedComponent
                 ? { host_managed_component: hostManagedComponent }
                 : {}),
+              ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
               ...(releaseProduct ? { release_product: releaseProduct } : {}),
               ...(releaseChannel ? { release_channel: releaseChannel } : {}),
               ...(releaseInstall ?? {}),
@@ -3852,6 +3958,7 @@ Supported deploy/smoke components:
             ...(hostManagedComponent
               ? { host_managed_component: hostManagedComponent }
               : {}),
+            ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { channel: releaseChannel } : {}),
             ...(releaseInstall ?? {}),

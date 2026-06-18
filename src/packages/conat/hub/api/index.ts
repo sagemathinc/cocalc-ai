@@ -15,6 +15,7 @@ import { type ReflectApi, reflect } from "./reflect";
 import { type AgentApi, agent } from "./agent";
 import { type Notifications, notifications } from "./notifications";
 import { type AdminData, adminData } from "./admin-data-explorer";
+import { type AiSessionsApi, aiSessions } from "./ai-sessions";
 
 export interface HubApi {
   system: System;
@@ -32,6 +33,7 @@ export interface HubApi {
   agent: AgentApi;
   notifications: Notifications;
   adminData: AdminData;
+  aiSessions: AiSessionsApi;
 }
 
 const HubApiStructure = {
@@ -50,6 +52,7 @@ const HubApiStructure = {
   agent,
   notifications,
   adminData,
+  aiSessions,
 } as const;
 
 export function transformArgs({

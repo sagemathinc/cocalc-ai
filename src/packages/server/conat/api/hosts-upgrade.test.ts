@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { runtimeDeploymentsForUpgradeResults } from "./hosts-runtime-deployment-planning";
+import {
+  computeAutomaticArtifactUpgradeTargets,
+  runtimeDeploymentsForUpgradeResults,
+} from "./hosts-runtime-deployment-planning";
 import { rolloutComponentsForUpgradeResults } from "./hosts";
 
 describe("rolloutComponentsForUpgradeResults", () => {
@@ -42,7 +45,7 @@ describe("rolloutComponentsForUpgradeResults", () => {
     ).toEqual(["project-host", "conat-router", "conat-persist", "acp-worker"]);
   });
 
-  it("does not roll out managed components for explicit project-host noops", () => {
+  it("rolls out the full managed runtime stack for align-runtime-stack project-host noops", () => {
     expect(
       rolloutComponentsForUpgradeResults(
         [
@@ -57,7 +60,7 @@ describe("rolloutComponentsForUpgradeResults", () => {
           alignRuntimeStack: true,
         },
       ),
-    ).toEqual([]);
+    ).toEqual(["project-host", "conat-router", "conat-persist", "acp-worker"]);
   });
 });
 
@@ -202,5 +205,36 @@ describe("runtimeDeploymentsForUpgradeResults", () => {
         },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("computeAutomaticArtifactUpgradeTargets", () => {
+  it("includes project-host when an inherited default is not installed", () => {
+    expect(
+      computeAutomaticArtifactUpgradeTargets({
+        status: {
+          configured: [],
+          effective: [
+            {
+              scope_type: "global",
+              scope_id: "global",
+              target_type: "artifact",
+              target: "project-host",
+              desired_version: "project-host-2",
+            },
+          ],
+          observed_targets: [
+            {
+              target_type: "artifact",
+              target: "project-host",
+              desired_version: "project-host-2",
+              observed_version_state: "missing",
+              current_version: "project-host-1",
+              installed_versions: ["project-host-1"],
+            },
+          ],
+        } as any,
+      }),
+    ).toEqual([{ artifact: "project-host", version: "project-host-2" }]);
   });
 });
