@@ -108,6 +108,10 @@ The product framing we are committing to (from the chat + `docs/pitch/`):
   contracts). Drop exact-string assertions and stale-text guards; keep a few canary
   assertions for the one promise only.
 - **Done when:** routine copy edits no longer require a test edit.
+- **Status:** ✅ DONE — shared `public/__tests__/test-helpers.ts`; home/features/products
+  tests + visual-quality decoupled (net −566/+334). Proven: full suite 227/227 green,
+  breaking a CTA route fails a canary, rewording a headline stays green. Tier-2 copy work
+  is now free of the test tax.
 
 ### C2 — Monolithic page + content baked into JSX
 - **Symptom:** `home/app.tsx` is 1,092 lines; `IconBadge` duplicated across 15 feature
