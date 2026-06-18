@@ -174,14 +174,15 @@ guides, policies** (use policies as the trust-page model). Findings, ranked:
 **Tier 2 — strong improvements**
 - ✅ **Dead-end pages** — `PublicNextStep` now on About, News, Docs index, and Community.
   Remaining minor ones if wanted: About team-member, News detail, Docs not-found. (S each)
-- `pricing/page.tsx`: opens defensively ("Use these plans when CoCalc should be hosted…")
-  instead of promise-first. (Med, S)
-- `features/linux-page.tsx`: audience split (learner vs researcher); missing continuity tie. (Med, M)
-- One-line continuity reframes: `whiteboard-page`, `slides-page`, `latex-editor-page` (line ~255
-  defensive phrasing), `ai-page`. (Low–Med, S each)
-- Modal detours ("See agent details") break narrative on `ai-page`, `jupyter-notebook-page`. (Med, S)
-- `python-page.tsx`: competing equal-weight CTA (Button should be LinkButton); `sage-page.tsx`:
-  phrasing echoes Python; `octave-page.tsx`: underweight, no eyebrow. (Low–Med, S)
+- ✅ `pricing/page.tsx`: opening reframed defensive → promise-first (keeps "operated by CoCalc").
+- ✅ `features/linux-page.tsx`: continuity/recovery tie added to the body.
+- Continuity reframes: ✅ `whiteboard-page`, ✅ `latex-editor-page` (line ~255 defensive→positive).
+  `slides-page` SKIPPED — already ties to "the same project as the files and notebooks." `ai-page`
+  held (entangled with the modal detour below).
+- Modal detours ("See agent details") on `ai-page`, `jupyter-notebook-page` — HELD (inlining could
+  add density; needs a careful pass, not a quick tweak). (Med, S)
+- `python-page` Button→LinkButton / `sage-page` phrasing-echo / `octave-page` eyebrow — SKIPPED as
+  low-altitude churn (forcing them is exactly the micro-tweak pattern we diagnosed).
 
 **Tier 3 — consistency / tech-debt (fold into C2)**
 - `IconBadge` redefined in ~6 feature pages; `TerminalMock` sprawl; one-off `CompactUseCard`;
