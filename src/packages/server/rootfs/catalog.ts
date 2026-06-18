@@ -144,6 +144,7 @@ type RootfsRusticArtifactPath = {
 type RootfsLifecycleSnapshot = {
   image_id: string;
   release_id: string | null;
+  slug: string | null;
   owner_id: string | null;
   hidden: boolean | null;
   blocked: boolean | null;
@@ -155,6 +156,23 @@ function trimString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const v = value.trim();
   return v.length > 0 ? v : undefined;
+}
+
+function generateRootfsSlugCandidate(): string {
+  return `rfs-${v4().replace(/-/g, "").slice(0, 12)}`;
+}
+
+async function generateUniqueRootfsSlug(): Promise<string> {
+  const pool = getPool("medium");
+  for (let i = 0; i < 10; i += 1) {
+    const slug = generateRootfsSlugCandidate();
+    const { rows } = await pool.query<{ slug: string }>(
+      `SELECT slug FROM rootfs_images WHERE slug=$1 LIMIT 1`,
+      [slug],
+    );
+    if (rows.length === 0) return slug;
+  }
+  throw Error("failed to generate a unique rootfs slug");
 }
 
 function normalizeTags(tags?: unknown): string[] {
@@ -1278,7 +1296,7 @@ async function upsertRootfsRow({
   digest?: string | null;
   content_key?: string | null;
   release_id?: string | null;
-}): Promise<{ image_id: string; entry?: RootfsImageEntry }> {
+}): Promise<{ image_id: string; slug: string; entry?: RootfsImageEntry }> {
   const pool = getPool("medium");
   const admin = await isAdmin(account_id);
   const image = trimString(body.image);
@@ -1300,11 +1318,12 @@ async function upsertRootfsRow({
       owner_id: string | null;
       deleted: boolean | null;
       release_id: string | null;
+      slug: string | null;
       hidden: boolean | null;
       blocked: boolean | null;
       blocked_reason: string | null;
     }>(
-      `SELECT image_id, owner_id, release_id, hidden, blocked, blocked_reason, deleted
+      `SELECT image_id, owner_id, release_id, slug, hidden, blocked, blocked_reason, deleted
        FROM rootfs_images
        WHERE image_id=$1`,
       [image_id],
@@ -1333,7 +1352,7 @@ async function upsertRootfsRow({
     image_id = rows[0]?.image_id ?? v4();
     if (rows[0]?.image_id) {
       const existingRows = await pool.query<RootfsLifecycleSnapshot>(
-        `SELECT image_id, owner_id, release_id, hidden, blocked, blocked_reason, deleted
+        `SELECT image_id, owner_id, release_id, slug, hidden, blocked, blocked_reason, deleted
          FROM rootfs_images
          WHERE image_id=$1`,
         [image_id],
@@ -1361,7 +1380,20 @@ async function upsertRootfsRow({
   const hidden = admin && body.hidden === true;
   const blocked = admin && body.blocked === true;
   const blocked_reason = trimString(body.blocked_reason) ?? null;
-  const slug = validateRootfsSlug(body.slug) ?? null;
+  const slug =
+    validateRootfsSlug(body.slug) ??
+    previous?.slug ??
+    (await generateUniqueRootfsSlug());
+  const existingSlugRows = await pool.query<{ image_id: string }>(
+    `SELECT image_id
+     FROM rootfs_images
+     WHERE slug=$1 AND image_id<>$2
+     LIMIT 1`,
+    [slug, image_id],
+  );
+  if (existingSlugRows.rows.length > 0) {
+    throw Error(`rootfs slug '${slug}' is already in use`);
+  }
   const contentSpecified =
     hasOwn(body, "content") && body.content !== undefined;
   const extraContentWarnings =
@@ -1561,6 +1593,7 @@ async function upsertRootfsRow({
   const manifest = await listVisibleRootfsImages(account_id);
   return {
     image_id,
+    slug,
     entry: manifest.images.find((item) => item.id === image_id),
   };
 }
@@ -1572,7 +1605,7 @@ export async function saveRootfsImage({
   account_id: string;
   body: RootfsCatalogSaveBody;
 }): Promise<RootfsImageEntry> {
-  const { image_id, entry } = await upsertRootfsRow({
+  const { image_id, slug, entry } = await upsertRootfsRow({
     account_id,
     body,
   });
@@ -1596,7 +1629,6 @@ export async function saveRootfsImage({
   const prepull = admin && body.prepull === true;
   const hidden = admin && body.hidden === true;
   const blocked = admin && body.blocked === true;
-  const slug = validateRootfsSlug(body.slug);
   const contentResult =
     hasOwn(body, "content") && body.content != null
       ? normalizeRootfsContentManifest(body.content)
@@ -1671,7 +1703,7 @@ export async function publishProjectRootfsCatalogEntry({
     requested_size_bytes: artifact.size_bytes,
     operation: "publish",
   });
-  const { image_id, entry } = await upsertRootfsRow({
+  const { image_id, slug, entry } = await upsertRootfsRow({
     account_id,
     body: {
       image: artifact.image,
@@ -1701,7 +1733,6 @@ export async function publishProjectRootfsCatalogEntry({
     return entry;
   }
   const visibility = normalizeVisibility(body.visibility);
-  const slug = validateRootfsSlug(body.slug);
   const contentResult =
     content != null ? normalizeRootfsContentManifest(content) : undefined;
   return normalizeRootfsEntry(

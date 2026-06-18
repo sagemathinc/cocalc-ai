@@ -121,6 +121,7 @@ export type RootfsContentValidationResult = {
 
 export type RootfsConfigExportMetadata = {
   label?: string;
+  slug?: string;
   description?: string;
   family?: string;
   version?: string;
@@ -851,6 +852,7 @@ function parseRootfsConfigExportMetadata(
   const visibility = trimString(input.visibility, 64);
   return {
     label: trimString(input.label, 160),
+    slug: validateRootfsSlug(input.slug),
     description: trimString(input.description, 2000),
     family: trimString(input.family, 160),
     version: trimString(input.version, 160),
