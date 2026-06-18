@@ -45,6 +45,7 @@ import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import {
   dispatchNavigatorPromptIntent,
@@ -5086,6 +5087,10 @@ async function launchRootfsProjectAppAction({
   if (!embeddedSpec || !appId) {
     message.error("App action is missing an app spec.");
     return;
+  }
+  const running = await ensure_project_running(project_id, "launch this app");
+  if (!running) {
+    throw new Error("project must be running to launch this app");
   }
   const api = webapp_client.conat_client.projectApi({ project_id });
   const saved = await api.apps.upsertAppSpec(embeddedSpec);
