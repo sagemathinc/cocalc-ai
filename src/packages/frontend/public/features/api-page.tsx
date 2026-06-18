@@ -47,7 +47,7 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
                 scheduled jobs create projects and run notebooks, terminals, and
                 computations directly.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
+              <Paragraph style={{ fontSize: 17, margin: 0 }}>
                 The work lands back in a persistent CoCalc project your team can
                 reopen, review, and continue — hosted on CoCalc.ai or in your
                 own deployment — instead of a one-off run that disappears.
@@ -114,10 +114,7 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
                 pipeline that runs on its own.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("docs/api/http-api")}>
-                  API documentation
-                </Button>
-                <Button href={appPath("products")}>
+                <Button type="primary" href={appPath("products")}>
                   Compare operating models
                 </Button>
               </Flex>

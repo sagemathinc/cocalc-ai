@@ -1155,11 +1155,12 @@ describe("PublicFeaturesApp", () => {
 
     // The page is the HTTP integration API — it routes to the HTTP API docs,
     // not a CLI page (the distinction is structural, not a pinned copy line).
+    // One (not duplicated) "API documentation" CTA, in the hero.
     expect(
       screen
         .getAllByRole("link", { name: "API documentation" })
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/docs/api/http-api", "/docs/api/http-api"]);
+    ).toEqual(["/docs/api/http-api"]);
     expect(
       screen
         .getAllByRole("link", { name: "Compare operating models" })
