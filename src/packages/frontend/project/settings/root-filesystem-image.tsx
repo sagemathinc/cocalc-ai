@@ -25,6 +25,7 @@ import {
   Spin,
   Tabs,
   Tag,
+  Typography,
 } from "antd";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -33,11 +34,18 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
-import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
+import {
+  Icon,
+  isIconName,
+  Paragraph,
+  ThemeEditorModal,
+  type IconName,
+} from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import {
   dispatchNavigatorPromptIntent,
@@ -61,6 +69,7 @@ import {
   sectionLabel,
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
+import { rootfsPath } from "@cocalc/frontend/public/rootfs/routes";
 import { openProjectAppStatus } from "@cocalc/frontend/project/app-server-open";
 import {
   RootfsScanDetailsButton,
@@ -76,16 +85,23 @@ import {
   themeFromDraft,
   type ThemeEditorDraft,
 } from "@cocalc/frontend/theme/types";
+import { docsPath } from "@cocalc/docs";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  ROOTFS_CONFIG_EXPORT_KIND,
+  ROOTFS_CONFIG_EXPORT_VERSION,
   isManagedRootfsImageName,
   normalizeRootfsContentManifest,
+  parseRootfsConfigExport,
+  validateRootfsSlug,
 } from "@cocalc/util/rootfs-images";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import type {
+  RootfsConfigExport,
+  RootfsConfigExportMetadata,
   ProjectRootfsStateEntry,
   RootfsContentAction,
   RootfsContentManifest,
@@ -98,6 +114,7 @@ import type { RootfsProjectPreflightScanResult } from "@cocalc/util/rootfs-scan"
 type PublishDraft = {
   image: string;
   label: string;
+  slug: string;
   description: string;
   family: string;
   version: string;
@@ -133,36 +150,13 @@ type RootfsContentDirectoryPicker = {
   pendingPath: string;
 } | null;
 
-const ROOTFS_CONFIG_EXPORT_KIND = "cocalc-rootfs-config";
-const ROOTFS_CONFIG_EXPORT_VERSION = 1;
-
-type RootfsConfigExportMetadata = {
-  label?: string;
-  description?: string;
-  family?: string;
-  version?: string;
-  channel?: string;
-  supersedes_image_id?: string;
-  visibility?: RootfsImageVisibility;
-  tags?: string[];
-};
-
-type RootfsConfigExport = {
-  kind: typeof ROOTFS_CONFIG_EXPORT_KIND;
-  version: typeof ROOTFS_CONFIG_EXPORT_VERSION;
-  exported_at: string;
-  metadata?: RootfsConfigExportMetadata;
-  theme?: RootfsImageTheme;
-  content?: RootfsContentManifest;
-};
-
 type RootfsConfigImportOptions = {
   metadata: boolean;
   theme: boolean;
   content: boolean;
 };
 
-type RootFilesystemImageMode = "inline" | "modal";
+type RootFilesystemImageMode = "inline" | "modal" | "page";
 
 interface RootFilesystemImageProps {
   mode?: RootFilesystemImageMode;
@@ -177,6 +171,7 @@ export default function RootFilesystemImage({
   mode = "inline",
 }: RootFilesystemImageProps = {}) {
   const isModal = mode === "modal";
+  const isPage = mode === "page";
   const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
   const [upgradeOpen, setUpgradeOpen] = useState<boolean>(false);
@@ -228,6 +223,7 @@ export default function RootFilesystemImage({
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
+    slug: "",
     description: "",
     family: "",
     version: "",
@@ -463,6 +459,19 @@ export default function RootFilesystemImage({
       switchPublishedProject,
     ],
   );
+  const rootfsLandingPath = rootfsPublicLandingPath({
+    publishDraft,
+    publishSourceEntry,
+  });
+  const rootfsLandingUrl = absoluteRootfsPublicUrl(rootfsLandingPath);
+  const publishSlugError = useMemo(
+    () => rootfsSlugValidationError(publishDraft.slug),
+    [publishDraft.slug],
+  );
+  const normalizedPublishSlug = useMemo(
+    () => rootfsNormalizedSlug(publishDraft.slug),
+    [publishDraft.slug],
+  );
   const publishTagOptions = useMemo(
     () =>
       Array.from(
@@ -627,6 +636,7 @@ export default function RootFilesystemImage({
     setPublishDraft({
       image: currentImage,
       label: nextLabel,
+      slug: currentEntry?.slug ?? "",
       description: nextDescription,
       family: currentEntry?.family ?? "",
       version: currentEntry?.version ?? "",
@@ -743,6 +753,10 @@ export default function RootFilesystemImage({
           if (!project) {
             throw new Error("project is not available");
           }
+          const slug = validateRootfsSlug(publishDraft.slug);
+          if (slug !== publishDraft.slug.trim()) {
+            setPublishDraft((cur) => ({ ...cur, slug: slug ?? "" }));
+          }
           const tags = publishDraft.tags
             .split(",")
             .map((tag) => tag.trim())
@@ -756,6 +770,7 @@ export default function RootFilesystemImage({
             const op = await publishProjectRootfsImage({
               project_id: project.get("project_id"),
               label: publishDraft.label,
+              slug,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -780,6 +795,7 @@ export default function RootFilesystemImage({
                   : undefined,
               image: publishDraft.image,
               label: publishDraft.label,
+              slug,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -795,6 +811,10 @@ export default function RootFilesystemImage({
               hidden: isAdmin ? publishDraft.hidden : undefined,
             });
             setPublishOpen(false);
+            setPublishDraft((cur) => ({
+              ...cur,
+              slug: entry.slug ?? cur.slug,
+            }));
             setCatalogRefresh(Date.now());
             if (entry.image === value) {
               setImageId(entry.id);
@@ -823,6 +843,10 @@ export default function RootFilesystemImage({
       await runFreshAuthAction(async () => {
         setPublishing(true);
         try {
+          const slug = validateRootfsSlug(publishDraft.slug);
+          if (slug !== publishDraft.slug.trim()) {
+            setPublishDraft((cur) => ({ ...cur, slug: slug ?? "" }));
+          }
           const tags = publishDraft.tags
             .split(",")
             .map((tag) => tag.trim())
@@ -837,6 +861,7 @@ export default function RootFilesystemImage({
                 : undefined,
             image: publishDraft.image,
             label: publishDraft.label,
+            slug,
             family: publishDraft.family.trim() || undefined,
             version: publishDraft.version.trim() || undefined,
             channel: publishDraft.channel.trim() || undefined,
@@ -852,6 +877,10 @@ export default function RootFilesystemImage({
             hidden: isAdmin ? publishDraft.hidden : undefined,
           });
           setPublishSourceEntry(entry);
+          setPublishDraft((cur) => ({
+            ...cur,
+            slug: entry.slug ?? cur.slug,
+          }));
           setCatalogRefresh(Date.now());
           if (entry.image === value) {
             setImageId(entry.id);
@@ -909,6 +938,7 @@ export default function RootFilesystemImage({
       setPublishDraft((cur) => ({
         ...cur,
         label: candidate.metadata?.label ?? cur.label,
+        slug: candidate.metadata?.slug ?? cur.slug,
         description: candidate.metadata?.description ?? cur.description,
         family: candidate.metadata?.family ?? cur.family,
         version: candidate.metadata?.version ?? cur.version,
@@ -1080,6 +1110,25 @@ export default function RootFilesystemImage({
     }
   }
 
+  function generatePublishSlug(): void {
+    setPublishDraft((cur) => ({
+      ...cur,
+      slug: generateRootfsSlugSuggestion(
+        cur.label,
+        publishContentDraft.title,
+        publishSourceEntry?.label,
+        cur.image,
+      ),
+    }));
+  }
+
+  function normalizePublishSlug(): void {
+    setPublishDraft((cur) => ({
+      ...cur,
+      slug: rootfsNormalizedSlug(cur.slug),
+    }));
+  }
+
   const activeImage = value || effectiveDefaultRootfs;
   const isCustomRootfs = !rootfsLoading && !activeDisplayEntry;
   const activeLabel = activeDisplayEntry
@@ -1100,30 +1149,35 @@ export default function RootFilesystemImage({
 
   return (
     <div
-      style={isModal ? undefined : { marginTop: "-4px", marginLeft: "-10px" }}
+      style={
+        isModal || isPage
+          ? undefined
+          : { marginTop: "-4px", marginLeft: "-10px" }
+      }
     >
       <FreshAuthModal {...freshAuthModalProps} />
-      <div style={isModal ? undefined : { marginLeft: "15px" }}>
+      <div style={isModal || isPage ? undefined : { marginLeft: "15px" }}>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <div
             style={{
               ...rootfsHeroCardStyle(activeDisplayEntry),
-              maxWidth: isModal ? undefined : 760,
+              maxWidth: isModal || isPage ? undefined : 760,
+              padding: isPage ? 24 : undefined,
             }}
           >
             <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-              {renderRootfsThemePreview(activeDisplayEntry)}
+              {renderRootfsThemePreview(activeDisplayEntry, isPage ? 112 : 56)}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <Space
                   wrap
                   size={[8, 6]}
-                  style={{ marginBottom: 6, width: "100%" }}
+                  style={{ marginBottom: isPage ? 10 : 6, width: "100%" }}
                 >
                   <span
                     style={{
-                      fontSize: 18,
+                      fontSize: isPage ? 34 : 18,
                       fontWeight: 700,
-                      lineHeight: "24px",
+                      lineHeight: isPage ? "40px" : "24px",
                     }}
                   >
                     {activeLabel}
@@ -1141,7 +1195,14 @@ export default function RootFilesystemImage({
                     <Tag color="blue">Upgrade available</Tag>
                   ) : null}
                 </Space>
-                <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                <Paragraph
+                  type="secondary"
+                  style={{
+                    fontSize: isPage ? 16 : undefined,
+                    lineHeight: isPage ? "24px" : undefined,
+                    marginBottom: 8,
+                  }}
+                >
                   {activeDescription}
                 </Paragraph>
               </div>
@@ -1151,13 +1212,14 @@ export default function RootFilesystemImage({
           {activeDisplayEntry?.content
             ? renderRootfsContentPanel({
                 entry: activeDisplayEntry,
-                onCopyToHome: async (action) => {
+                onCopyToHome: async (action, targetPath) => {
                   if (!actions) return;
                   const source =
                     action.source_path?.trim() || action.path?.trim();
                   const dest = rootfsCopyTargetPath(
                     action,
                     getProjectHomeDirectory(project_id),
+                    targetPath,
                   );
                   if (!source || !dest) {
                     message.error("Copy action is missing a source or target.");
@@ -1179,6 +1241,7 @@ export default function RootFilesystemImage({
                 onOpenPath: (path) => {
                   void actions?.open_file({ path, foreground: true });
                 },
+                project_id,
               })
             : null}
 
@@ -1843,7 +1906,7 @@ export default function RootFilesystemImage({
                 : "Save Metadata"
           }
           cancelText="Cancel"
-          okButtonProps={{ loading: publishing }}
+          okButtonProps={{ disabled: !!publishSlugError, loading: publishing }}
           styles={{
             body: { maxHeight: "calc(100vh - 230px)", overflowY: "auto" },
           }}
@@ -1914,6 +1977,15 @@ export default function RootFilesystemImage({
                   >
                     {publishDraft.image}
                   </div>
+                  <Button
+                    href={docsPath("projects/publish-rootfs")}
+                    icon={<Icon name="external-link" />}
+                    size="small"
+                    style={{ marginTop: 10 }}
+                    target="_blank"
+                  >
+                    RootFS publishing docs
+                  </Button>
                 </div>
               </div>
             </div>
@@ -2177,6 +2249,55 @@ export default function RootFilesystemImage({
                           </Paragraph>
                         </div>
                         <div>
+                          <Paragraph strong style={{ marginBottom: 6 }}>
+                            Public slug
+                          </Paragraph>
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              addonBefore="/rootfs/"
+                              status={publishSlugError ? "error" : undefined}
+                              value={publishDraft.slug}
+                              onBlur={normalizePublishSlug}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  slug: e.target.value,
+                                }))
+                              }
+                              placeholder="auto-generated on save"
+                            />
+                            <Button onClick={generatePublishSlug}>
+                              Generate
+                            </Button>
+                          </Space.Compact>
+                          {publishSlugError ? (
+                            <Alert
+                              showIcon
+                              type="error"
+                              message={`Invalid slug: ${publishSlugError}`}
+                              style={{ marginTop: 8 }}
+                            />
+                          ) : normalizedPublishSlug &&
+                            normalizedPublishSlug !==
+                              publishDraft.slug.trim() ? (
+                            <Paragraph
+                              type="secondary"
+                              style={{ marginTop: 6, marginBottom: 0 }}
+                            >
+                              Will save as <code>{normalizedPublishSlug}</code>.
+                            </Paragraph>
+                          ) : (
+                            <Paragraph
+                              type="secondary"
+                              style={{ marginTop: 6, marginBottom: 0 }}
+                            >
+                              Leave blank to generate one when saving or
+                              publishing. Use lowercase letters, numbers, and
+                              hyphens. Duplicate slugs are rejected on save.
+                            </Paragraph>
+                          )}
+                        </div>
+                        <div>
                           <Paragraph strong style={{ marginBottom: 8 }}>
                             Visibility
                           </Paragraph>
@@ -2224,6 +2345,53 @@ export default function RootFilesystemImage({
                               title="Public"
                             />
                           </div>
+                        </div>
+                        <div>
+                          <Paragraph strong style={{ marginBottom: 8 }}>
+                            Public landing page
+                          </Paragraph>
+                          {rootfsLandingUrl ? (
+                            <Space
+                              direction="vertical"
+                              size={8}
+                              style={{ width: "100%" }}
+                            >
+                              <Typography.Text
+                                copyable={{ text: rootfsLandingUrl }}
+                              >
+                                <Typography.Link
+                                  href={rootfsLandingPath}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {rootfsLandingUrl}
+                                </Typography.Link>
+                              </Typography.Text>
+                              <Space wrap>
+                                <Button
+                                  href={rootfsLandingPath}
+                                  icon={<Icon name="external-link" />}
+                                  target="_blank"
+                                >
+                                  Open landing page
+                                </Button>
+                                <Button
+                                  icon={<Icon name="copy" />}
+                                  onClick={() =>
+                                    void copyRootfsPublicUrl(rootfsLandingUrl)
+                                  }
+                                >
+                                  Copy link
+                                </Button>
+                              </Space>
+                            </Space>
+                          ) : (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="Save or publish this catalog entry to create a public landing URL."
+                            />
+                          )}
                         </div>
                       </Space>
                     </RuntimePanel>
@@ -2864,11 +3032,55 @@ function parseRootfsTagString(tags: string): string[] {
   return normalizeRootfsTags(tags.split(","));
 }
 
+function rootfsSlugValidationError(slug: string): string | undefined {
+  try {
+    validateRootfsSlug(slug);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : `${err}`;
+  }
+}
+
+function rootfsNormalizedSlug(slug: string): string {
+  try {
+    return validateRootfsSlug(slug) ?? "";
+  } catch {
+    return slug;
+  }
+}
+
+function rootfsValidSlug(slug: string): string | undefined {
+  try {
+    return validateRootfsSlug(slug);
+  } catch {
+    return undefined;
+  }
+}
+
+function generateRootfsSlugSuggestion(
+  ...parts: (string | undefined)[]
+): string {
+  const source = parts.find((part) => part?.trim())?.trim() ?? "rootfs";
+  const base =
+    source
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/--+/g, "-")
+      .slice(0, 28)
+      .replace(/-+$/g, "") || "rootfs";
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return rootfsNormalizedSlug(`${base}-${suffix}`);
+}
+
 function rootfsConfigMetadataFromPublishDraft(
   draft: PublishDraft,
 ): RootfsConfigExportMetadata {
   return {
     label: draft.label,
+    slug: draft.slug.trim() || undefined,
     description: draft.description,
     family: draft.family.trim() || undefined,
     version: draft.version.trim() || undefined,
@@ -2879,80 +3091,34 @@ function rootfsConfigMetadataFromPublishDraft(
   };
 }
 
-function parseRootfsConfigExport(input: unknown): RootfsConfigExport {
-  if (!isPlainObject(input)) {
-    throw new Error("expected a JSON object");
+function rootfsPublicLandingPath({
+  publishDraft,
+  publishSourceEntry,
+}: {
+  publishDraft: PublishDraft;
+  publishSourceEntry?: RootfsImageEntry;
+}): string | undefined {
+  const slug =
+    rootfsValidSlug(publishDraft.slug) || publishSourceEntry?.slug?.trim();
+  if (slug) {
+    return rootfsPath({ id: publishSourceEntry?.id ?? "", slug });
   }
-  if (input.kind !== ROOTFS_CONFIG_EXPORT_KIND) {
-    throw new Error("expected a CoCalc RootFS config export");
+  if (publishSourceEntry?.id) {
+    return rootfsPath({ id: publishSourceEntry.id });
   }
-  if (input.version !== ROOTFS_CONFIG_EXPORT_VERSION) {
-    throw new Error(`unsupported RootFS config version ${input.version}`);
-  }
-  const metadata = parseRootfsConfigExportMetadata(input.metadata);
-  const theme = parseRootfsConfigExportTheme(input.theme);
-  const content = parseRootfsConfigExportContent(input.content);
-  if (!metadata && !theme && !content) {
-    throw new Error("config does not contain metadata, theme, or discovery");
-  }
-  return {
-    kind: ROOTFS_CONFIG_EXPORT_KIND,
-    version: ROOTFS_CONFIG_EXPORT_VERSION,
-    exported_at: `${input.exported_at ?? ""}`,
-    metadata,
-    theme,
-    content,
-  };
+  return undefined;
 }
 
-function parseRootfsConfigExportMetadata(
-  input: unknown,
-): RootfsConfigExportMetadata | undefined {
-  if (input == null) return undefined;
-  if (!isPlainObject(input)) {
-    throw new Error("metadata must be an object");
-  }
-  const visibility = `${input.visibility ?? ""}`.trim();
-  return {
-    label: optionalString(input.label),
-    description: optionalString(input.description),
-    family: optionalString(input.family),
-    version: optionalString(input.version),
-    channel: optionalString(input.channel),
-    supersedes_image_id: optionalString(input.supersedes_image_id),
-    visibility: isRootfsImageVisibility(visibility) ? visibility : undefined,
-    tags: Array.isArray(input.tags)
-      ? normalizeRootfsTags(input.tags.map((tag) => `${tag}`))
-      : undefined,
-  };
+function absoluteRootfsPublicUrl(path?: string): string | undefined {
+  if (!path) return undefined;
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).toString();
 }
 
-function parseRootfsConfigExportTheme(
-  input: unknown,
-): RootfsImageTheme | undefined {
-  if (input == null) return undefined;
-  if (!isPlainObject(input)) {
-    throw new Error("theme must be an object");
-  }
-  return {
-    title: optionalString(input.title) ?? "",
-    description: optionalString(input.description) ?? "",
-    color: optionalString(input.color) ?? null,
-    accent_color: optionalString(input.accent_color) ?? null,
-    icon: optionalString(input.icon) ?? null,
-    image_blob: optionalString(input.image_blob) ?? null,
-  };
-}
-
-function parseRootfsConfigExportContent(
-  input: unknown,
-): RootfsContentManifest | undefined {
-  if (input == null) return undefined;
-  const result = normalizeRootfsContentManifest(input);
-  if (!result.content) {
-    throw new Error("discovery config is invalid");
-  }
-  return result.content;
+async function copyRootfsPublicUrl(url?: string): Promise<void> {
+  if (!url) return;
+  await navigator.clipboard.writeText(url);
+  message.success("Copied RootFS landing page link.");
 }
 
 function rootfsConfigImportOptionsFor(
@@ -2969,21 +3135,6 @@ function rootfsConfigImportOptionsHasSelection(
   options: RootfsConfigImportOptions,
 ): boolean {
   return options.metadata || options.theme || options.content;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-function optionalString(value: unknown): string | undefined {
-  if (value == null) return undefined;
-  return `${value}`;
-}
-
-function isRootfsImageVisibility(
-  value: string,
-): value is RootfsImageVisibility {
-  return value === "private" || value === "collaborators" || value === "public";
 }
 
 function safeJsonFilenamePart(value: string): string {
@@ -3038,22 +3189,28 @@ function rootfsSummaryCardStyle(entry?: {
   };
 }
 
-function renderRootfsThemePreview(entry?: {
-  theme?: RootfsImageTheme;
-  label?: string;
-  image?: string;
-}): React.JSX.Element {
+function renderRootfsThemePreview(
+  entry?: {
+    theme?: RootfsImageTheme;
+    label?: string;
+    image?: string;
+  },
+  size = 56,
+): React.JSX.Element {
   const imageUrl = rootfsThemeImageUrl(entry?.theme);
   const accentColor = entry?.theme?.accent_color?.trim();
   const color = entry?.theme?.color?.trim();
-  const iconName = entry?.theme?.icon?.trim() || "cube";
+  const requestedIconName = entry?.theme?.icon?.trim();
+  const iconName: IconName = isIconName(requestedIconName)
+    ? requestedIconName
+    : "docker";
   return imageUrl ? (
     <img
       src={imageUrl}
       alt={`${entry?.label || entry?.image || "RootFS"} theme`}
       style={{
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         borderRadius: 12,
         objectFit: "cover",
         flex: "0 0 auto",
@@ -3062,8 +3219,8 @@ function renderRootfsThemePreview(entry?: {
   ) : (
     <div
       style={{
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         borderRadius: 12,
         display: "flex",
         alignItems: "center",
@@ -3073,7 +3230,7 @@ function renderRootfsThemePreview(entry?: {
         flex: "0 0 auto",
       }}
     >
-      <Icon name={iconName as any} style={{ fontSize: "24px" }} />
+      <Icon name={iconName as any} style={{ fontSize: size <= 56 ? 24 : 56 }} />
     </div>
   );
 }
@@ -4170,17 +4327,21 @@ function RuntimeAction({
         alignItems: "center",
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 10,
-        display: "grid",
+        display: "flex",
+        flexWrap: "wrap",
         gap: 10,
-        gridTemplateColumns: "minmax(0, 1fr) auto",
         padding: "10px 12px",
       }}
     >
-      <div style={{ minWidth: 0 }}>
+      <div style={{ flex: "1 1 220px", minWidth: 0 }}>
         <div style={{ fontWeight: 600 }}>{title}</div>
         <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{description}</div>
       </div>
-      {action}
+      {action ? (
+        <div style={{ flex: "0 0 auto", marginLeft: "auto", maxWidth: "100%" }}>
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -4625,11 +4786,16 @@ function renderRootfsContentPanel({
   onCopyToHome,
   onLaunchProjectApp,
   onOpenPath,
+  project_id,
 }: {
   entry: RootfsImageEntry;
-  onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
+  onCopyToHome: (
+    action: RootfsContentAction,
+    targetPath?: string,
+  ) => Promise<string | undefined>;
   onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
+  project_id?: string;
 }): React.JSX.Element | null {
   const content = entry.content;
   if (!content) return null;
@@ -4672,6 +4838,7 @@ function renderRootfsContentPanel({
                 onCopyToHome={onCopyToHome}
                 onLaunchProjectApp={onLaunchProjectApp}
                 onOpenPath={onOpenPath}
+                project_id={project_id}
               />
             ))}
           </Space>
@@ -4717,108 +4884,249 @@ function RootfsContentActionRow({
   onCopyToHome,
   onLaunchProjectApp,
   onOpenPath,
+  project_id,
 }: {
   action: RootfsContentAction;
-  onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
+  onCopyToHome: (
+    action: RootfsContentAction,
+    targetPath?: string,
+  ) => Promise<string | undefined>;
   onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
+  project_id?: string;
 }): React.JSX.Element {
   const [copying, setCopying] = useState<boolean>(false);
+  const [copyChooserOpen, setCopyChooserOpen] = useState<boolean>(false);
+  const [copyTargetPath, setCopyTargetPath] = useState<string>("");
   const [launching, setLaunching] = useState<boolean>(false);
+  const [actionError, setActionError] = useState<string>("");
   const label = action.label.trim();
   const description = action.description?.trim();
   const openPath = rootfsContentActionOpenPath(action);
+  const configuredTarget = rootfsCopyTargetRelativePath(action);
+  const defaultTarget = rootfsCopyDefaultTargetPath(action);
+  const normalizedCopyTarget = rootfsNormalizeHomeTargetPath(copyTargetPath);
   const canCopyToHome =
     action.kind === "copy-to-home" &&
     !!(action.source_path?.trim() || action.path?.trim());
 
-  async function copyToHome(): Promise<void> {
+  function openCopyChooser(): void {
+    setCopyTargetPath(configuredTarget ?? defaultTarget ?? "");
+    setCopyChooserOpen(true);
+  }
+
+  async function copyToHome(targetPath?: string): Promise<boolean> {
     setCopying(true);
+    setActionError("");
     try {
-      const targetPath = await onCopyToHome(action);
-      if (targetPath) {
-        onOpenPath(targetPath);
+      const copiedPath = await onCopyToHome(action, targetPath);
+      if (copiedPath) {
+        onOpenPath(copiedPath);
+        return true;
       }
+      return false;
+    } catch (err) {
+      const error = `Could not copy RootFS content: ${rootfsActionErrorMessage(err)}`;
+      setActionError(error);
+      message.error(error);
+      return false;
     } finally {
       setCopying(false);
     }
   }
 
+  async function copyToChosenTarget(): Promise<void> {
+    if (!normalizedCopyTarget) {
+      setActionError("Choose a HOME-relative destination path.");
+      return;
+    }
+    if (await copyToHome(normalizedCopyTarget)) {
+      setCopyChooserOpen(false);
+    }
+  }
+
   async function launchProjectApp(): Promise<void> {
     setLaunching(true);
+    setActionError("");
     try {
       await onLaunchProjectApp(action);
+    } catch (err) {
+      const error = `Could not launch app: ${rootfsActionErrorMessage(err)}`;
+      setActionError(error);
+      message.error(error);
     } finally {
       setLaunching(false);
     }
   }
 
   return (
-    <RuntimeAction
-      title={
-        <Space wrap size={[6, 4]}>
-          <span>{label}</span>
-          <Tag style={{ marginInlineEnd: 0 }}>
-            {rootfsContentActionKindLabel(action.kind)}
-          </Tag>
-        </Space>
-      }
-      description={
-        <Space direction="vertical" size={2} style={{ width: "100%" }}>
-          {description ? <span>{description}</span> : null}
-          {rootfsContentActionPathLabel(action) ? (
-            <code style={{ overflowWrap: "anywhere" }}>
-              {rootfsContentActionPathLabel(action)}
-            </code>
-          ) : null}
-        </Space>
-      }
-      action={
-        action.kind === "external-link" && action.url ? (
-          <Button
-            href={action.url}
-            icon={<Icon name="external-link" />}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Open
-          </Button>
-        ) : openPath && action.kind !== "copy-to-home" ? (
-          <Button
-            icon={
-              <Icon name={action.kind === "browse" ? "folder-open" : "file"} />
-            }
-            onClick={() => onOpenPath(openPath)}
-          >
-            {action.kind === "browse" ? "Browse" : "Open"}
-          </Button>
-        ) : action.kind === "copy-to-home" ? (
-          <Button
-            disabled={!canCopyToHome}
-            icon={<Icon name="copy" />}
-            loading={copying}
-            onClick={copyToHome}
-          >
-            Copy to HOME
-          </Button>
-        ) : action.kind === "project-app" ? (
-          <Button
-            disabled={!action.app_spec}
-            icon={<Icon name="rocket" />}
-            loading={launching}
-            onClick={launchProjectApp}
-          >
-            Launch
-          </Button>
-        ) : null
-      }
-    />
+    <>
+      <RuntimeAction
+        title={
+          <Space wrap size={[6, 4]}>
+            <span>{label}</span>
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {rootfsContentActionKindLabel(action.kind)}
+            </Tag>
+          </Space>
+        }
+        description={
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {description ? <span>{description}</span> : null}
+            {rootfsContentActionPathLabel(action) ? (
+              <code style={{ overflowWrap: "anywhere" }}>
+                {rootfsContentActionPathLabel(action)}
+              </code>
+            ) : null}
+            {actionError ? (
+              <Alert
+                message={actionError}
+                showIcon
+                style={{ marginTop: 4 }}
+                type="error"
+              />
+            ) : null}
+          </Space>
+        }
+        action={
+          action.kind === "external-link" && action.url ? (
+            <Button
+              href={action.url}
+              icon={<Icon name="external-link" />}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Open
+            </Button>
+          ) : openPath && action.kind !== "copy-to-home" ? (
+            <Button
+              icon={
+                <Icon
+                  name={action.kind === "browse" ? "folder-open" : "file"}
+                />
+              }
+              onClick={() => onOpenPath(openPath)}
+            >
+              {action.kind === "browse" ? "Browse" : "Open"}
+            </Button>
+          ) : action.kind === "copy-to-home" ? (
+            <Space wrap>
+              <Button
+                disabled={!canCopyToHome}
+                icon={<Icon name="copy" />}
+                loading={copying}
+                onClick={() => void copyToHome()}
+              >
+                Copy to HOME
+              </Button>
+              {project_id ? (
+                <Button
+                  disabled={!canCopyToHome}
+                  icon={<Icon name="folder-open" />}
+                  onClick={openCopyChooser}
+                >
+                  Copy...
+                </Button>
+              ) : null}
+            </Space>
+          ) : action.kind === "project-app" ? (
+            <Button
+              disabled={!action.app_spec}
+              icon={<Icon name="rocket" />}
+              loading={launching}
+              onClick={launchProjectApp}
+            >
+              Launch
+            </Button>
+          ) : null
+        }
+      />
+      {copyChooserOpen && project_id ? (
+        <Modal
+          open
+          destroyOnHidden
+          title="Copy RootFS content"
+          okText="Copy"
+          onCancel={() => setCopyChooserOpen(false)}
+          onOk={() => void copyToChosenTarget()}
+          okButtonProps={{
+            disabled: !normalizedCopyTarget,
+            loading: copying,
+          }}
+        >
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Choose or type the destination path under HOME. The copy will not
+              overwrite existing content.
+            </Paragraph>
+            <Input
+              addonBefore="HOME /"
+              value={copyTargetPath}
+              onChange={(e) => setCopyTargetPath(e.target.value)}
+              placeholder={defaultTarget ?? "rootfs-content"}
+            />
+            <Space wrap>
+              <Button
+                size="small"
+                onClick={() => setCopyTargetPath(defaultTarget ?? "")}
+              >
+                Home
+              </Button>
+              <Button
+                disabled={!configuredTarget}
+                size="small"
+                onClick={() => setCopyTargetPath(configuredTarget ?? "")}
+              >
+                Configured
+              </Button>
+              <Button
+                disabled={!copyTargetPath.trim()}
+                size="small"
+                onClick={() =>
+                  setCopyTargetPath(rootfsParentTargetPath(copyTargetPath))
+                }
+              >
+                Parent
+              </Button>
+            </Space>
+            <DirectorySelector
+              project_id={project_id}
+              startingPath={copyTargetPath}
+              onSelect={(path) => setCopyTargetPath(path)}
+              style={{ width: "100%" }}
+              bodyStyle={{ maxHeight: 280 }}
+              closable={false}
+            />
+          </Space>
+        </Modal>
+      ) : null}
+    </>
   );
 }
 
 function rootfsCopyTargetPath(
   action: RootfsContentAction,
   projectHome: string,
+  targetOverride?: string,
+): string | undefined {
+  const relativeTarget = rootfsCopyTargetRelativePath(action, targetOverride);
+  if (!relativeTarget) return;
+  return `${projectHome.replace(/\/+$/, "")}/${relativeTarget}`;
+}
+
+function rootfsCopyTargetRelativePath(
+  action: RootfsContentAction,
+  targetOverride?: string,
+): string | undefined {
+  const target = targetOverride?.trim() || action.target_path?.trim();
+  if (target) {
+    return rootfsNormalizeHomeTargetPath(target);
+  }
+  return rootfsCopyDefaultTargetPath(action);
+}
+
+function rootfsCopyDefaultTargetPath(
+  action: RootfsContentAction,
 ): string | undefined {
   const source = action.source_path?.trim() || action.path?.trim();
   const fallbackName = source
@@ -4826,11 +5134,21 @@ function rootfsCopyTargetPath(
     .split("/")
     .filter(Boolean)
     .at(-1);
-  const target = action.target_path?.trim() || fallbackName;
-  if (!target) return;
-  const relativeTarget = target.replace(/^\/+/, "");
-  if (!relativeTarget) return;
-  return `${projectHome.replace(/\/+$/, "")}/${relativeTarget}`;
+  return rootfsNormalizeHomeTargetPath(fallbackName);
+}
+
+function rootfsNormalizeHomeTargetPath(path?: string): string | undefined {
+  const relativePath = path?.trim().replace(/^\/+/, "");
+  if (!relativePath) return;
+  if (relativePath.includes("\0")) return;
+  if (relativePath.split("/").includes("..")) return;
+  return relativePath.replace(/\/+$/, "") || undefined;
+}
+
+function rootfsParentTargetPath(path: string): string {
+  const parts = rootfsNormalizeHomeTargetPath(path)?.split("/") ?? [];
+  parts.pop();
+  return parts.join("/");
 }
 
 function rootfsContentActionOpenPath(
@@ -4895,14 +5213,13 @@ async function launchRootfsProjectAppAction({
     message.error("App action is missing an app spec.");
     return;
   }
-  const api = webapp_client.conat_client.projectApi({ project_id });
-  let spec: AppSpec | undefined;
-  try {
-    spec = await api.apps.getAppSpec(appId);
-  } catch {
-    const saved = await api.apps.upsertAppSpec(embeddedSpec);
-    spec = saved.spec;
+  const running = await ensure_project_running(project_id, "launch this app");
+  if (!running) {
+    throw new Error("project must be running to launch this app");
   }
+  const api = webapp_client.conat_client.projectApi({ project_id });
+  const saved = await api.apps.upsertAppSpec(embeddedSpec);
+  const spec = saved.spec;
   const status =
     spec.kind === "service"
       ? await api.apps.ensureRunning(appId, {
@@ -4916,6 +5233,10 @@ async function launchRootfsProjectAppAction({
     spec,
     status,
   });
+}
+
+function rootfsActionErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : `${err}`;
 }
 
 function renderRootfsScan(
@@ -5145,6 +5466,7 @@ function buildRootfsPublishAssistCommand(opts: {
     pushCliOption(parts, "--image-id", publishSourceEntry.id);
   }
   pushCliOption(parts, "--description", publishDraft.description);
+  pushCliOption(parts, "--slug", publishDraft.slug);
   pushCliOption(parts, "--family", publishDraft.family);
   pushCliOption(parts, "--image-version", publishDraft.version);
   pushCliOption(parts, "--channel", publishDraft.channel);
@@ -5215,6 +5537,7 @@ function buildRootfsPublishAgentPrompt(opts: {
     "Desired metadata:",
     `- label: ${publishDraft.label}`,
     `- description: ${publishDraft.description || "(empty)"}`,
+    `- slug: ${publishDraft.slug || "(auto)"}`,
     `- family: ${publishDraft.family || "(none)"}`,
     `- version: ${publishDraft.version || "(none)"}`,
     `- channel: ${publishDraft.channel || "(none)"}`,

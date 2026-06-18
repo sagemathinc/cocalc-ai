@@ -5,7 +5,7 @@
 
 import { Tag } from "antd";
 
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, isIconName, type IconName } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
 import { RootfsScanStatusTag } from "@cocalc/frontend/rootfs/scan-status";
 import {
@@ -314,7 +314,7 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
             }}
           >
             <Icon
-              name={(entry.theme?.icon?.trim() as any) || "cube"}
+              name={rootfsCatalogIconName(entry)}
               style={{ fontSize: "22px" }}
             />
           </div>
@@ -379,4 +379,9 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
       </div>
     </div>
   );
+}
+
+function rootfsCatalogIconName(entry: RootfsImageEntry): IconName {
+  const icon = entry.theme?.icon?.trim();
+  return isIconName(icon) ? icon : "docker";
 }

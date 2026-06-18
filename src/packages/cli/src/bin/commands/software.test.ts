@@ -1106,6 +1106,160 @@ test("software push uploads files manifest and component index", async () => {
   assert.equal(payload.data.duration, "0ms");
 });
 
+test("software push publishes host compatibility catalog for project bundle", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-push-project-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project bundle contents");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project:update",
+    "--from-file",
+    source,
+  ]);
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "push",
+      "project:update",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const artifactId = "20260614T235912Z-e882d124-update";
+  const compatKey = `software/project/${artifactId}/bundle-linux.tar.xz`;
+  assert.equal(r2.objects.has(compatKey), true);
+  assert.equal(r2.objects.has(`${compatKey}.sha256`), true);
+  assert.equal(r2.objects.has("software/project/latest-linux.json"), true);
+  assert.equal(
+    r2.objects.has("software/project/versions-latest-linux.json"),
+    true,
+  );
+
+  const latest = JSON.parse(
+    r2.objects.get("software/project/latest-linux.json")!.toString("utf8"),
+  );
+  assert.equal(latest.version, artifactId);
+  assert.equal(latest.url, `https://software.example.test/${compatKey}`);
+
+  const versions = JSON.parse(
+    r2.objects
+      .get("software/project/versions-latest-linux.json")!
+      .toString("utf8"),
+  );
+  assert.equal(versions.versions[0].version, artifactId);
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(
+    payload.data.host_base_url,
+    "https://software.example.test/software",
+  );
+  assert.deepEqual(payload.data.host_catalogs, [
+    "https://software.example.test/software/project/latest-linux.json",
+    "https://software.example.test/software/project/versions-latest-linux.json",
+  ]);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "push",
+    "project:update",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const componentIndex = JSON.parse(
+    r2.objects.get("software/indexes/project.json")!.toString("utf8"),
+  );
+  assert.equal(componentIndex.artifacts.length, 1);
+});
+
+test("software push --build builds then pushes host compatibility catalog", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-push-build-project-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "push",
+      "--build",
+      "project:update",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].command, "pnpm");
+  assert.equal(runs[0].args.includes("@cocalc/project"), true);
+  assert.equal(runs[0].args.includes("build:bundle"), true);
+
+  const artifactId = "20260614T235912Z-e882d124-update";
+  assert.equal(
+    r2.objects.has(
+      `software/artifacts/project/${artifactId}/files/bundle-linux.tar.xz`,
+    ),
+    true,
+  );
+  assert.equal(
+    r2.objects.has(`software/project/${artifactId}/bundle-linux.tar.xz`),
+    true,
+  );
+
+  const versions = JSON.parse(
+    r2.objects
+      .get("software/project/versions-latest-linux.json")!
+      .toString("utf8"),
+  );
+  assert.equal(versions.versions[0].version, artifactId);
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.built, true);
+  assert.equal(payload.data.built_component, "project");
+  assert.equal(payload.data.built_artifact_id, artifactId);
+  assert.equal(payload.data.host_catalogs.length, 2);
+});
+
 test("software list merges local and remote artifacts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-list-remote-"));
   const localStore = join(dir, "store");
@@ -2618,7 +2772,7 @@ test("software deploy bay uses the full bay Rocket scope", async () => {
   ]);
 });
 
-test("software deploy project-host publishes compatibility object and runs host upgrade", async () => {
+test("software deploy project-host publishes compatibility object and sets fleet default", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-project-host-"));
   const localStore = join(dir, "store");
   const source = join(dir, "bundle-linux.tar.xz");
@@ -2672,8 +2826,101 @@ test("software deploy project-host publishes compatibility object and runs host 
     ),
     true,
   );
+  const latest = JSON.parse(
+    r2.objects.get("software/project-host/latest-linux.json")!.toString("utf8"),
+  );
+  assert.equal(latest.version, artifactId);
+  assert.equal(
+    latest.url,
+    `https://software.example.test/software/project-host/${artifactId}/bundle-linux.tar.xz`,
+  );
+  const versions = JSON.parse(
+    r2.objects
+      .get("software/project-host/versions-latest-linux.json")!
+      .toString("utf8"),
+  );
+  assert.equal(versions.versions[0].version, artifactId);
   assert.equal(runs.length, 1);
   assert.deepEqual(runs[0].args, [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-project-host",
+  ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/project-host/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].artifact_id, artifactId);
+});
+
+test("software deploy project-host --rollout sets fleet default and upgrades online hosts", async () => {
+  const dir = mkdtempSync(
+    join(tmpdir(), "software-deploy-project-host-rollout-"),
+  );
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-rollout",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "bundle-linux.tar.xz",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "--rollout",
+    "project-host",
+    "host-rollout",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = "20260614T235912Z-e882d124-host-rollout";
+  assert.equal(runs.length, 2);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-project-host",
+  ]);
+  assert.deepEqual(runs[1].args.slice(-12), [
     "--profile",
     "staging",
     "host",
@@ -2746,20 +2993,39 @@ test("software deploy tools publishes both architecture compatibility objects", 
       true,
     );
   }
+  for (const arch of ["amd64", "arm64"]) {
+    const latest = JSON.parse(
+      r2.objects
+        .get(`software/tools/latest-linux-${arch}.json`)!
+        .toString("utf8"),
+    );
+    assert.equal(latest.version, artifactId);
+    assert.equal(latest.arch, arch);
+    assert.equal(
+      latest.url,
+      `https://software.example.test/software/tools/${artifactId}/tools-linux-${arch}.tar.xz`,
+    );
+    const versions = JSON.parse(
+      r2.objects
+        .get(`software/tools/versions-latest-linux-${arch}.json`)!
+        .toString("utf8"),
+    );
+    assert.equal(versions.versions[0].version, artifactId);
+  }
   assert.equal(runs.length, 2);
   assert.deepEqual(runs[1].args, [
     "--profile",
     "staging",
     "host",
-    "upgrade",
-    "--all-online",
+    "deploy",
+    "set",
+    "--global",
     "--artifact",
     "tools",
-    "--artifact-version",
+    "--desired-version",
     artifactId,
-    "--base-url",
-    "https://software.example.test/software",
-    "--wait",
+    "--reason",
+    "software-deploy-tools",
   ]);
   const history = JSON.parse(
     r2.objects
@@ -2866,10 +3132,10 @@ test("software deploy bay-scaffold uses bay artifact and scaffold-only Rocket fl
   ]);
 });
 
-test("software deploy host-conat-router installs project-host artifact and reconciles one component", async () => {
+test("software deploy host-conat-router sets project-host and component fleet defaults", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-router-"));
   const localStore = join(dir, "store");
-  const source = join(dir, "project-host.tar.xz");
+  const source = join(dir, "bundle-linux.tar.xz");
   writeFileSync(source, "project host bundle");
   const runs: CapturedRun[] = [];
   const r2 = makeR2Client();
@@ -2905,20 +3171,20 @@ test("software deploy host-conat-router installs project-host artifact and recon
     r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
   ).artifacts[0].artifact_id;
 
-  assert.equal(runs.length, 3);
+  assert.equal(runs.length, 2);
   assert.deepEqual(runs[0].args.slice(-12), [
     "--profile",
     "staging",
     "host",
-    "upgrade",
-    "--all-online",
+    "deploy",
+    "set",
+    "--global",
     "--artifact",
     "project-host",
-    "--artifact-version",
+    "--desired-version",
     artifactId,
-    "--base-url",
-    "https://software.example.test/software",
-    "--wait",
+    "--reason",
+    "software-deploy-host-conat-router",
   ]);
   assert.deepEqual(runs[1].args.slice(-14), [
     "--profile",
@@ -2936,7 +3202,104 @@ test("software deploy host-conat-router installs project-host artifact and recon
     "--reason",
     "software-deploy-host-conat-router",
   ]);
-  assert.deepEqual(runs[2].args.slice(-11), [
+
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/host-conat-router/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].artifact_component, "project-host");
+  assert.equal(history.deployments[0].target.kind, "project-host-fleet");
+});
+
+test("software deploy host-conat-router --rollout reconciles one online component", async () => {
+  const dir = mkdtempSync(
+    join(tmpdir(), "software-deploy-host-router-rollout-"),
+  );
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-router-rollout",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "--rollout",
+    "host-conat-router",
+    "host-router-rollout",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = JSON.parse(
+    r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
+  ).artifacts[0].artifact_id;
+
+  assert.equal(runs.length, 4);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-host-conat-router",
+  ]);
+  assert.deepEqual(runs[1].args.slice(-14), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--component",
+    "conat-router",
+    "--desired-version",
+    artifactId,
+    "--policy",
+    "restart_now",
+    "--reason",
+    "software-deploy-host-conat-router",
+  ]);
+  assert.deepEqual(runs[2].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "project-host",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
+  ]);
+  assert.deepEqual(runs[3].args.slice(-11), [
     "--profile",
     "staging",
     "host",

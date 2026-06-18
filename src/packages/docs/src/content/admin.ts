@@ -182,19 +182,19 @@ recommended commands.
 cocalc-ai source
       |
       v
-software build <component> [tag]
+software build <component>[:<tag>]
       |
       v
 local immutable artifact store
       |
       v
-software push <component> <tag-or-id>
+software push <component>[:<tag-or-id>]
       |
       v
 R2 software artifacts + indexes
       |
       v
-software deploy <component> <tag-or-id> <profile-or-channel>
+software deploy <component>[:<tag-or-id>] <profile-or-channel>
       |
       v
 target: Rocket bay, project-host fleet, release channel, or GitHub Star channel
@@ -226,7 +226,9 @@ GitHub Star channel target
 ~~~
 
 Site-profile targets use a profile from \`cocalc auth list\`. Release-channel
-targets use \`dev\`, \`candidate\`, or \`stable\`.
+targets use \`dev\`, \`candidate\`, or \`stable\`. Deploying a project-host
+fleet component updates the fleet default; add \`--rollout\` only when you also
+want to immediately upgrade or reconcile all online hosts.
 
 ## Components
 

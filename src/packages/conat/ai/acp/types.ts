@@ -140,6 +140,12 @@ export type AcpInterruptRequest = {
   note?: string;
 };
 
+export type AcpInterruptResponse = {
+  ok: boolean;
+  state: "interrupted" | "repaired" | "queued" | "missing";
+  threadId?: string | null;
+};
+
 export type AcpSteerRequest = {
   request_kind?: "codex";
   project_id: string;

@@ -580,6 +580,220 @@ export function registerAuthCommand(
     };
   }
 
+  async function runAuthElevate(
+    globals: any,
+    opts: {
+      extended?: boolean;
+      short?: boolean;
+      dev?: boolean;
+      pollMs?: string;
+    },
+  ): Promise<Record<string, unknown>> {
+    const freshAuthDuration = opts.short ? "default" : "extended";
+    const effective = resolveEffectiveGlobals(globals);
+    const apiBaseUrl = effective.api
+      ? normalizeUrl(effective.api)
+      : defaultApiBaseUrl();
+    const hubPassword =
+      effective.hubPassword ?? globals.hubPassword ?? env.COCALC_HUB_PASSWORD;
+    let cookieHeader = buildCookieHeader(
+      apiBaseUrl,
+      opts.dev
+        ? {
+            ...effective,
+            hubPassword,
+            disableEnvAuthDefaults: false,
+          }
+        : effective,
+    );
+    let bootstrappedDevSession:
+      | {
+          value: string;
+          account_id?: string | null;
+          fresh_auth_until?: string | Date | null;
+          factor_level?: string | null;
+        }
+      | undefined;
+    if (opts.dev && !cookieHeaderHasRememberMe(cookieHeader)) {
+      const requestedAccountId =
+        getExplicitAccountId(effective) ??
+        (!effective.disableEnvAuthDefaults ? env.COCALC_ACCOUNT_ID : undefined);
+      if (!requestedAccountId) {
+        throw new Error(
+          "dev CLI elevation without an existing cookie requires --account-id or COCALC_ACCOUNT_ID",
+        );
+      }
+      bootstrappedDevSession = await maybeCreateLocalDevRememberMeCookie({
+        globals: {
+          ...effective,
+          hubPassword,
+          disableEnvAuthDefaults: false,
+        },
+        apiBaseUrl,
+        requestedAccountId,
+        freshAuthDuration,
+      });
+      if (!bootstrappedDevSession?.value) {
+        throw new Error(
+          "dev CLI elevation without an existing cookie requires local dev hub-password access",
+        );
+      }
+      bootstrappedDevSession = {
+        ...bootstrappedDevSession,
+        account_id: requestedAccountId,
+      };
+      cookieHeader = buildCookieHeader(apiBaseUrl, {
+        ...effective,
+        cookie: buildRememberMeCookieHeader(
+          apiBaseUrl,
+          bootstrappedDevSession.value,
+        ),
+        hubPassword,
+        disableEnvAuthDefaults: false,
+      });
+      const configPath = authConfigPath();
+      const config = loadAuthConfig(configPath);
+      const profileName = sanitizeProfileName(globals.profile);
+      const next = {
+        ...(config.profiles[profileName] ?? {}),
+        api: apiBaseUrl,
+        account_id: requestedAccountId,
+        cookie: buildRememberMeCookieHeader(
+          apiBaseUrl,
+          bootstrappedDevSession.value,
+        ),
+      };
+      delete (next as any).api_key;
+      delete (next as any).bearer;
+      delete (next as any).hub_password;
+      config.profiles[profileName] = next;
+      config.current_profile = profileName;
+      saveAuthConfig(config, configPath);
+    }
+    if (!cookieHeader) {
+      throw new Error("interactive CLI sign-in is required before elevation");
+    }
+    if (opts.dev) {
+      if (bootstrappedDevSession) {
+        return {
+          account_id:
+            (`${bootstrappedDevSession.account_id ?? ""}`.trim() ||
+              getExplicitAccountId(effective)) ??
+            null,
+          factor_level:
+            `${bootstrappedDevSession.factor_level ?? "totp"}`.trim() || null,
+          fresh_auth_until: bootstrappedDevSession.fresh_auth_until
+            ? new Date(bootstrappedDevSession.fresh_auth_until).toISOString()
+            : null,
+          interactive_session: true,
+          bootstrapped_session: true,
+          dev: true,
+        };
+      }
+      const status = await postCliAuthApi<{
+        dev?: boolean;
+        factor_level?: string;
+        fresh_auth_until?: string | Date | null;
+      }>({
+        apiBaseUrl,
+        endpoint: "auth/cli/elevate/dev",
+        body: {
+          duration: freshAuthDuration,
+        },
+        cookieHeader,
+      });
+      return {
+        account_id: getExplicitAccountId(effective) ?? null,
+        factor_level: `${status.factor_level ?? ""}`.trim() || null,
+        fresh_auth_until: status.fresh_auth_until
+          ? new Date(status.fresh_auth_until).toISOString()
+          : null,
+        interactive_session: true,
+        dev: status.dev === true,
+      };
+    }
+    const start = await postCliAuthApi<CliChallengeStart>({
+      apiBaseUrl,
+      endpoint: "auth/cli/elevate/start",
+      body: {
+        duration: freshAuthDuration,
+      },
+      cookieHeader,
+    });
+    process.stderr.write(
+      `Open this URL in your browser to approve CLI elevation:\n${start.approval_url}\n`,
+    );
+    const status = await waitForCliChallenge({
+      apiBaseUrl,
+      endpoint: "auth/cli/elevate/status",
+      challenge_id: start.challenge_id,
+      poll_token: start.poll_token,
+      pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
+    });
+    if (status.state !== "approved") {
+      throw new Error(
+        `unexpected CLI elevation challenge state '${status.state}'`,
+      );
+    }
+    return {
+      account_id: getExplicitAccountId(effective) ?? null,
+      factor_level: `${status.factor_level ?? ""}`.trim() || null,
+      fresh_auth_until: status.fresh_auth_until
+        ? new Date(status.fresh_auth_until).toISOString()
+        : null,
+      interactive_session: true,
+    };
+  }
+
+  async function checkCookieSession(
+    globals: any,
+  ): Promise<Record<string, unknown>> {
+    const effective = resolveEffectiveGlobals(globals);
+    const apiBaseUrl = effective.api
+      ? normalizeUrl(effective.api)
+      : defaultApiBaseUrl();
+    const cookieHeader = buildCookieHeader(apiBaseUrl, effective);
+    if (!cookieHeader) {
+      throw new Error("cookie-backed CLI session is required");
+    }
+    const profile = await postCliAuthApi<{
+      profile?: {
+        account_id?: string | null;
+      };
+    }>({
+      apiBaseUrl,
+      endpoint: "accounts/profile",
+      body: {},
+      cookieHeader,
+    });
+    const sessionStatus = await postCliAuthApi<{
+      auth_client?: string;
+      factor_level?: string;
+      fresh_auth_until?: string | Date | null;
+      expire?: string | Date | null;
+      auth_session_hash?: string | null;
+    }>({
+      apiBaseUrl,
+      endpoint: "auth/cli/session-status",
+      body: {},
+      cookieHeader,
+    });
+    return {
+      ok: true,
+      account_id: `${profile?.profile?.account_id ?? ""}`.trim() || null,
+      auth_session_hash:
+        `${sessionStatus?.auth_session_hash ?? ""}`.trim() || null,
+      auth_client: `${sessionStatus?.auth_client ?? "cli"}`,
+      factor_level: `${sessionStatus?.factor_level ?? ""}`.trim() || null,
+      fresh_auth_until: sessionStatus?.fresh_auth_until
+        ? new Date(sessionStatus.fresh_auth_until).toISOString()
+        : null,
+      session_expire: sessionStatus?.expire
+        ? new Date(sessionStatus.expire).toISOString()
+        : null,
+    };
+  }
+
   auth
     .command("login")
     .description("sign in via browser approval or store explicit credentials")
@@ -638,7 +852,8 @@ Examples:
   auth
     .command("elevate")
     .description("elevate the current CLI session via browser approval")
-    .option("--extended", "keep this elevation active for 8 hours")
+    .option("--short", "keep this elevation active for 15 minutes")
+    .option("--extended", "keep this elevation active for 8 hours (default)")
     .option(
       "--dev",
       "dev-only: elevate using the hub password instead of browser approval",
@@ -646,155 +861,71 @@ Examples:
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .action(
       async (
-        opts: { extended?: boolean; dev?: boolean; pollMs?: string },
+        opts: {
+          extended?: boolean;
+          short?: boolean;
+          dev?: boolean;
+          pollMs?: string;
+        },
         command: Command,
       ) => {
         await runLocalCommand(command, "auth elevate", async (globals: any) => {
-          const effective = resolveEffectiveGlobals(globals);
-          const apiBaseUrl = effective.api
-            ? normalizeUrl(effective.api)
-            : defaultApiBaseUrl();
-          const hubPassword =
-            effective.hubPassword ??
-            globals.hubPassword ??
-            env.COCALC_HUB_PASSWORD;
-          let cookieHeader = buildCookieHeader(
-            apiBaseUrl,
-            opts.dev
-              ? {
-                  ...effective,
-                  hubPassword,
-                  disableEnvAuthDefaults: false,
-                }
-              : effective,
-          );
-          let bootstrappedDevSession:
-            | {
-                value: string;
-                account_id?: string | null;
-                fresh_auth_until?: string | Date | null;
-                factor_level?: string | null;
-              }
-            | undefined;
-          if (opts.dev && !cookieHeaderHasRememberMe(cookieHeader)) {
-            const requestedAccountId =
-              getExplicitAccountId(effective) ??
-              (!effective.disableEnvAuthDefaults
-                ? env.COCALC_ACCOUNT_ID
-                : undefined);
-            if (!requestedAccountId) {
-              throw new Error(
-                "dev CLI elevation without an existing cookie requires --account-id or COCALC_ACCOUNT_ID",
-              );
-            }
-            bootstrappedDevSession = await maybeCreateLocalDevRememberMeCookie({
-              globals: {
-                ...effective,
-                hubPassword,
-                disableEnvAuthDefaults: false,
-              },
-              apiBaseUrl,
-              requestedAccountId,
-              freshAuthDuration: opts.extended ? "extended" : "default",
-            });
-            if (!bootstrappedDevSession?.value) {
-              throw new Error(
-                "dev CLI elevation without an existing cookie requires local dev hub-password access",
-              );
-            }
-            bootstrappedDevSession = {
-              ...bootstrappedDevSession,
-              account_id: requestedAccountId,
-            };
-            cookieHeader = buildCookieHeader(apiBaseUrl, {
-              ...effective,
-              cookie: buildRememberMeCookieHeader(
-                apiBaseUrl,
-                bootstrappedDevSession.value,
-              ),
-              hubPassword,
-              disableEnvAuthDefaults: false,
-            });
-          }
-          if (!cookieHeader) {
-            throw new Error(
-              "interactive CLI sign-in is required before elevation",
-            );
-          }
-          if (opts.dev) {
-            if (bootstrappedDevSession) {
-              return {
-                account_id:
-                  (`${bootstrappedDevSession.account_id ?? ""}`.trim() ||
-                    getExplicitAccountId(effective)) ??
-                  null,
-                factor_level:
-                  `${bootstrappedDevSession.factor_level ?? "totp"}`.trim() ||
-                  null,
-                fresh_auth_until: bootstrappedDevSession.fresh_auth_until
-                  ? new Date(
-                      bootstrappedDevSession.fresh_auth_until,
-                    ).toISOString()
-                  : null,
-                interactive_session: true,
-                bootstrapped_session: true,
-                dev: true,
-              };
-            }
-            const status = await postCliAuthApi<{
-              dev?: boolean;
-              factor_level?: string;
-              fresh_auth_until?: string | Date | null;
-            }>({
-              apiBaseUrl,
-              endpoint: "auth/cli/elevate/dev",
-              body: {
-                duration: opts.extended ? "extended" : "default",
-              },
-              cookieHeader,
-            });
-            return {
-              account_id: getExplicitAccountId(effective) ?? null,
-              factor_level: `${status.factor_level ?? ""}`.trim() || null,
-              fresh_auth_until: status.fresh_auth_until
-                ? new Date(status.fresh_auth_until).toISOString()
-                : null,
-              interactive_session: true,
-              dev: status.dev === true,
-            };
-          }
-          const start = await postCliAuthApi<CliChallengeStart>({
-            apiBaseUrl,
-            endpoint: "auth/cli/elevate/start",
-            body: {
-              duration: opts.extended ? "extended" : "default",
-            },
-            cookieHeader,
-          });
-          process.stderr.write(
-            `Open this URL in your browser to approve CLI elevation:\n${start.approval_url}\n`,
-          );
-          const status = await waitForCliChallenge({
-            apiBaseUrl,
-            endpoint: "auth/cli/elevate/status",
-            challenge_id: start.challenge_id,
-            poll_token: start.poll_token,
-            pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
-          });
-          if (status.state !== "approved") {
-            throw new Error(
-              `unexpected CLI elevation challenge state '${status.state}'`,
-            );
-          }
-          return {
-            account_id: getExplicitAccountId(effective) ?? null,
-            factor_level: `${status.factor_level ?? ""}`.trim() || null,
-            fresh_auth_until: status.fresh_auth_until
-              ? new Date(status.fresh_auth_until).toISOString()
-              : null,
-            interactive_session: true,
-          };
+          return await runAuthElevate(globals, opts);
         });
+      },
+    );
+
+  auth
+    .command("bootstrap")
+    .description("sign in, elevate, and verify a cookie-backed CLI profile")
+    .option("--email <email>", "optional email hint shown during browser login")
+    .option("--short", "keep this elevation active for 15 minutes")
+    .option("--extended", "keep this elevation active for 8 hours (default)")
+    .option(
+      "--dev",
+      "dev-only: elevate using the hub password instead of browser approval",
+    )
+    .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
+    .option("--no-set-current", "do not set this profile as current")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  cocalc --profile staging --api https://staging.cocalc.ai auth bootstrap --email user@example.com
+  cocalc --profile prod --api https://cocalc.ai auth bootstrap --email user@example.com
+`,
+    )
+    .action(
+      async (
+        opts: {
+          email?: string;
+          extended?: boolean;
+          short?: boolean;
+          dev?: boolean;
+          pollMs?: string;
+          setCurrent?: boolean;
+        },
+        command: Command,
+      ) => {
+        await runLocalCommand(
+          command,
+          "auth bootstrap",
+          async (globals: any) => {
+            const login = hasLegacyStoredCredentials(globals)
+              ? await saveAuthProfile(globals, opts)
+              : await runBrowserLogin(globals, opts);
+            const elevation = await runAuthElevate(globals, opts);
+            const status = await checkCookieSession(globals);
+            return {
+              profile:
+                (login as any).profile ?? sanitizeProfileName(globals.profile),
+              api: (login as any).api ?? null,
+              login,
+              elevation,
+              status,
+            };
+          },
+        );
       },
     );
 

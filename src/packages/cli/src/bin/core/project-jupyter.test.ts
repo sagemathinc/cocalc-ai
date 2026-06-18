@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   getUnseenJupyterLiveRunBatches,
+  mapNotebookCellDetails,
   mapSyncDbNotebookCells,
   parseNotebookCells,
   selectJupyterLiveRunSnapshot,
+  selectNotebookCellsOptional,
   selectNotebookCells,
 } from "./project-jupyter";
 
@@ -83,6 +85,53 @@ test("mapSyncDbNotebookCells orders by live notebook position", () => {
       { id: "c1", index: 1, cell_type: "code" },
       { id: "c2", index: 2, cell_type: "code" },
     ],
+  );
+});
+
+test("mapNotebookCellDetails preserves live output and metadata fields", () => {
+  const cells = mapNotebookCellDetails([
+    {
+      type: "cell",
+      id: "c1",
+      pos: 1,
+      input: "2 + 3",
+      output: { "0": { text: "5\n" } },
+      exec_count: 4,
+      metadata: { tags: ["demo"] },
+    },
+  ]);
+
+  assert.equal(cells.length, 1);
+  assert.deepEqual(cells[0], {
+    id: "c1",
+    index: 0,
+    cell_type: "code",
+    input: "2 + 3",
+    preview: "2 + 3",
+    line_count: 1,
+    generated_id: false,
+    output: { "0": { text: "5\n" } },
+    exec_count: 4,
+    metadata: { tags: ["demo"] },
+    has_output: true,
+  });
+});
+
+test("selectNotebookCellsOptional defaults to all cells and supports indexes", () => {
+  const cells = mapNotebookCellDetails([
+    { type: "cell", id: "m1", pos: 0, cell_type: "markdown", input: "intro" },
+    { type: "cell", id: "c1", pos: 1, input: "2 + 3" },
+  ]);
+
+  assert.deepEqual(
+    selectNotebookCellsOptional(cells, {}).map((cell) => cell.id),
+    ["m1", "c1"],
+  );
+  assert.deepEqual(
+    selectNotebookCellsOptional(cells, { cellIndices: [1] }).map(
+      (cell) => cell.id,
+    ),
+    ["c1"],
   );
 });
 

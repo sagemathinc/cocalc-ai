@@ -441,6 +441,21 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(["ai_sessions"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      host_id: "Runtime location for the observed session, not host authority.",
+      project_id:
+        "Project context for the observed session, not project ownership.",
+    },
+    source: "server AI session visibility schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Account-scoped Codex/ACP session visibility state created outside util/db-schema. Account-home routing owns user-visible session history; host/project/payment fields are observability dimensions.",
+  }),
+
   ...adHocEntries(["account_usage_epochs", "account_usage_epoch_resets"], {
     ownership: "seed-global",
     authority: "seed",

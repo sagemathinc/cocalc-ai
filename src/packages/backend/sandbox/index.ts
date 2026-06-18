@@ -883,7 +883,7 @@ export class SandboxedFilesystem {
       // handled below
     }
     throw new Error(
-      `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+      `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the project and try again.`,
     );
   }
 
@@ -908,7 +908,7 @@ export class SandboxedFilesystem {
       // handled below
     }
     throw new Error(
-      `temporary storage is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+      `temporary storage is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the project and try again.`,
     );
   }
 
@@ -933,7 +933,7 @@ export class SandboxedFilesystem {
       // handled below
     }
     throw new Error(
-      `shared scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+      `shared scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the project and try again.`,
     );
   }
 

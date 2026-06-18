@@ -5,6 +5,8 @@
 
 export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
 export const ROOTFS_CONTENT_MANIFEST_VERSION = 1;
+export const ROOTFS_CONFIG_EXPORT_KIND = "cocalc-rootfs-config";
+export const ROOTFS_CONFIG_EXPORT_VERSION = 1;
 export const ROOTFS_CONTENT_MAX_JSON_BYTES = 32_000;
 export const ROOTFS_CONTENT_MAX_ACTIONS = 20;
 export const ROOTFS_CONTENT_MAX_HIGHLIGHTS = 20;
@@ -115,6 +117,27 @@ export type RootfsContentValidationWarning = {
 export type RootfsContentValidationResult = {
   content?: RootfsContentManifest;
   warnings: RootfsContentValidationWarning[];
+};
+
+export type RootfsConfigExportMetadata = {
+  label?: string;
+  slug?: string;
+  description?: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
+  visibility?: RootfsImageVisibility;
+  tags?: string[];
+};
+
+export type RootfsConfigExport = {
+  kind: typeof ROOTFS_CONFIG_EXPORT_KIND;
+  version: typeof ROOTFS_CONFIG_EXPORT_VERSION;
+  exported_at: string;
+  metadata?: RootfsConfigExportMetadata;
+  theme?: RootfsImageTheme;
+  content?: RootfsContentManifest;
 };
 
 export type RootfsScanSummary = {
@@ -791,6 +814,116 @@ function normalizeContentAction(
     return undefined;
   }
   return { kind, label, path: actionPath, description };
+}
+
+export function parseRootfsConfigExport(input: unknown): RootfsConfigExport {
+  if (!isPlainObject(input)) {
+    throw new Error("expected a JSON object");
+  }
+  if (input.kind !== ROOTFS_CONFIG_EXPORT_KIND) {
+    throw new Error("expected a CoCalc RootFS config export");
+  }
+  if (input.version !== ROOTFS_CONFIG_EXPORT_VERSION) {
+    throw new Error(`unsupported RootFS config version ${input.version}`);
+  }
+  const metadata = parseRootfsConfigExportMetadata(input.metadata);
+  const theme = parseRootfsConfigExportTheme(input.theme);
+  const content = parseRootfsConfigExportContent(input.content);
+  if (!metadata && !theme && !content) {
+    throw new Error("config does not contain metadata, theme, or discovery");
+  }
+  return {
+    kind: ROOTFS_CONFIG_EXPORT_KIND,
+    version: ROOTFS_CONFIG_EXPORT_VERSION,
+    exported_at: `${input.exported_at ?? ""}`,
+    metadata,
+    theme,
+    content,
+  };
+}
+
+function parseRootfsConfigExportMetadata(
+  input: unknown,
+): RootfsConfigExportMetadata | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("metadata must be an object");
+  }
+  const visibility = trimString(input.visibility, 64);
+  return {
+    label: trimString(input.label, 160),
+    slug: validateRootfsSlug(input.slug),
+    description: trimString(input.description, 2000),
+    family: trimString(input.family, 160),
+    version: trimString(input.version, 160),
+    channel: trimString(input.channel, 80),
+    supersedes_image_id: trimString(input.supersedes_image_id, 160),
+    visibility: isRootfsImageVisibility(visibility) ? visibility : undefined,
+    tags: Array.isArray(input.tags)
+      ? normalizeRootfsTagArray(input.tags)
+      : parseRootfsTagString(input.tags),
+  };
+}
+
+function parseRootfsConfigExportTheme(
+  input: unknown,
+): RootfsImageTheme | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("theme must be an object");
+  }
+  return {
+    title: trimString(input.title, 160),
+    description: trimString(input.description, 2000),
+    color: nullableTrimmedString(input.color, 80),
+    accent_color: nullableTrimmedString(input.accent_color, 80),
+    icon: nullableTrimmedString(input.icon, 80),
+    image_blob: nullableTrimmedString(
+      input.image_blob,
+      ROOTFS_CONTENT_MAX_JSON_BYTES,
+    ),
+  };
+}
+
+function parseRootfsConfigExportContent(
+  input: unknown,
+): RootfsContentManifest | undefined {
+  if (input == null) return undefined;
+  const result = normalizeRootfsContentManifest(input);
+  if (!result.content) {
+    throw new Error("discovery config is invalid");
+  }
+  return result.content;
+}
+
+function parseRootfsTagString(tags: unknown): string[] | undefined {
+  if (typeof tags !== "string") return undefined;
+  return normalizeRootfsTagArray(tags.split(","));
+}
+
+function normalizeRootfsTagArray(tags: unknown[]): string[] | undefined {
+  const values = Array.from(
+    new Set(
+      tags
+        .map((tag) => trimString(tag, 80))
+        .filter((tag): tag is string => tag != null),
+    ),
+  );
+  return values.length ? values : undefined;
+}
+
+function nullableTrimmedString(
+  value: unknown,
+  maxLength: number,
+): string | null | undefined {
+  if (value == null) return null;
+  return trimString(value, maxLength) ?? null;
+}
+
+function isRootfsImageVisibility(
+  value: string | undefined,
+): value is RootfsImageVisibility {
+  return value === "private" || value === "collaborators" || value === "public";
 }
 
 export function validateRootfsSlug(slug?: unknown): string | undefined {

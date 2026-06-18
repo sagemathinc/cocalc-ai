@@ -7,6 +7,7 @@ export const jupyter = {
   start: true,
   stop: true,
   save: true,
+  getKernelStatus: true,
   stripNotebook: true,
   nbconvert: true,
   runNotebook: true,
@@ -33,6 +34,10 @@ export interface Jupyter {
   start: (path: string) => Promise<void>;
   stop: (path: string) => Promise<void>;
   save: (opts: JupyterSaveOptions) => Promise<void>;
+  getKernelStatus: (opts: { path: string }) => Promise<{
+    backend_state: string;
+    kernel_state: string;
+  }>;
 
   nbconvert: (opts: NbconvertParams) => Promise<void>;
 
