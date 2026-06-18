@@ -14,9 +14,18 @@ import {
   featureSupportPath,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+// A real, documented call (POST /api/v2/exec): basic auth with an API key as the
+// username, run a command in a project, get stdout/stderr/exit_code back.
+const EXEC_EXAMPLE = [
+  `curl -u "$COCALC_API_KEY:" \\`,
+  `  https://cocalc.ai/api/v2/exec \\`,
+  `  -d '{"project_id": "...", "command": "python3",`,
+  `       "args": ["analysis.py"]}'`,
+].join("\n");
 
 export default function ApiFeaturePage({}: { helpEmail?: string }) {
   const supportHref = featureSupportPath({
@@ -81,42 +90,28 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
         <Col xs={24} lg={12}>
           <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
-              A typical run is a few calls
+              Run code, get the output back
             </Title>
             <div
-              aria-label="Example API call sequence"
+              aria-label="Example API call"
               style={{
                 background: PUBLIC_COLORS.surfaceMuted,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: 8,
                 fontFamily: MONO,
                 fontSize: 13,
-                lineHeight: 1.9,
+                lineHeight: 1.7,
+                overflowX: "auto",
                 padding: "14px 16px",
+                whiteSpace: "pre",
               }}
             >
-              <div>
-                <Text strong style={{ fontFamily: MONO }}>
-                  POST
-                </Text>{" "}
-                create a project
-              </div>
-              <div>
-                <Text strong style={{ fontFamily: MONO }}>
-                  POST
-                </Text>{" "}
-                run a notebook cell or shell command
-              </div>
-              <div>
-                <Text strong style={{ fontFamily: MONO }}>
-                  GET
-                </Text>{" "}
-                read the output back — it stays in the project
-              </div>
+              {EXEC_EXAMPLE}
             </div>
             <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-              Exact endpoints, authentication, and request shapes are in the API
-              documentation.
+              Returns the stdout, stderr, and exit code — and the run stays in
+              the project. Calls use a scoped API key; the full reference is in
+              the API documentation.
             </Paragraph>
           </PublicSection>
         </Col>
