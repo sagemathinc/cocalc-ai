@@ -822,6 +822,21 @@ export async function getVolume(project_id: string) {
   return vol;
 }
 
+async function getOrEnsureVolume(project_id: string) {
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const vol = await fs.subvolumes.get(volName(project_id));
+  if (!(await exists(vol.path))) {
+    return await ensureVolume(project_id);
+  }
+  const isSubvolume = await isBtrfsSubvolume(vol.path);
+  if (!isSubvolume) {
+    throw new Error(`project volume is not a btrfs subvolume: ${vol.path}`);
+  }
+  return vol;
+}
+
 export async function ensureVolume(project_id: string, scratch?: boolean) {
   if (fs == null) {
     throw Error("file server not initialized");
@@ -3946,7 +3961,7 @@ export async function initFsServer({
         throw Error("fsServer requires subject");
       }
       const project_id = projectIdFromSubject(subject);
-      const { path } = await getVolume(project_id);
+      const { path } = await getOrEnsureVolume(project_id);
       return createProjectSandboxFilesystem({
         project_id,
         home: path,
@@ -3980,7 +3995,7 @@ export async function ensureFileDownloadReadServer({
       project_id,
       name: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
       createReadStream: async (containerPath: string, opts?: any) => {
-        const { path: home } = await getVolume(project_id);
+        const { path: home } = await getOrEnsureVolume(project_id);
         const fs = createProjectSandboxFilesystem({
           project_id,
           home,
@@ -4022,7 +4037,7 @@ export async function ensureFileUploadWriteServer({
       project_id,
       name: PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
       createWriteStream: async (containerPath: string) => {
-        const { path: home } = await getVolume(project_id);
+        const { path: home } = await getOrEnsureVolume(project_id);
         const fs = createProjectSandboxFilesystem({
           project_id,
           home,
@@ -4063,7 +4078,7 @@ export async function initViewerFsServer({
         throw Error("fsReadOnlyServer requires subject");
       }
       const { project_id, account_id } = viewerSubjectFromSubject(subject);
-      const { path } = await getVolume(project_id);
+      const { path } = await getOrEnsureVolume(project_id);
       const projectFs = createProjectSandboxFilesystem({
         project_id,
         home: path,
