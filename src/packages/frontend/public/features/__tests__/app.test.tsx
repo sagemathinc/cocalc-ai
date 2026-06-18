@@ -5,7 +5,9 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   combineLeak,
   DARK_FEATURE_CARD_STYLE,
+  expectHeadingHierarchy,
   expectPrimaryCtaEmphasisSane,
+  expectProseDensity,
   getDirectCards,
   getHeadingTexts,
   HERO_H1_MAX,
@@ -1017,9 +1019,13 @@ describe("PublicFeaturesApp", () => {
         container.querySelector("main") as HTMLElement,
       );
 
-      for (const paragraph of container.querySelectorAll("main p")) {
-        expect(textLength(paragraph)).toBeLessThanOrEqual(390);
-      }
+      // Design guardrail: no empty headings and no skipped heading levels.
+      expectHeadingHierarchy(container.querySelector("main") as HTMLElement);
+
+      // Design guardrail: prose density — no body paragraph is a wall of text.
+      expectProseDensity(container.querySelector("main") as HTMLElement, {
+        maxChars: 390,
+      });
 
       const nextSteps = screen.queryByRole("region", {
         name: "Feature operating model next steps",

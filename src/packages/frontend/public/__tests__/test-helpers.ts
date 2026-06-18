@@ -148,6 +148,37 @@ export function expectPrimaryCtaEmphasisSane(scope: HTMLElement) {
   expect(repeated.length).toBeLessThanOrEqual(1); // at most one repeated primary
 }
 
+// Design guardrail: sane heading structure. No empty headings (any level), and
+// no skipped level in the document OUTLINE (h1->h2->h3). h4-h6 are used for
+// card / mock-illustration labels in this codebase, not the page outline, so
+// they're no-empty-checked but don't gate the level sequence. Going back up a
+// level is fine; only a deeper jump of more than one within the outline fails.
+export function expectHeadingHierarchy(scope: HTMLElement) {
+  let previous = 0;
+  for (const heading of scope.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+    expect(textLength(heading)).toBeGreaterThan(0);
+    const level = Number(heading.tagName[1]);
+    if (level <= 3) {
+      if (previous > 0) {
+        expect(level).toBeLessThanOrEqual(previous + 1);
+      }
+      previous = level;
+    }
+  }
+}
+
+// Design guardrail: prose density (copy-playbook Principle 6 — design for
+// scanning, not reading). Each body <p> stays under maxChars so no section
+// becomes a wall of text. Shared so any public page can assert scannability.
+export function expectProseDensity(
+  scope: HTMLElement,
+  { maxChars = 390 }: { maxChars?: number } = {},
+) {
+  for (const paragraph of scope.querySelectorAll("p")) {
+    expect(textLength(paragraph)).toBeLessThanOrEqual(maxChars);
+  }
+}
+
 // Concatenated text of all injected <style> tags (for @media / class checks).
 export function getInjectedCss(container: HTMLElement): string {
   return Array.from(container.querySelectorAll("style"))
