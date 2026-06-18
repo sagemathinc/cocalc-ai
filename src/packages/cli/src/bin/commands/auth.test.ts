@@ -434,7 +434,7 @@ test("auth elevate approves the current CLI session via browser polling", async 
           effective.cookie,
       }),
     );
-    await program.parseAsync(["node", "test", "auth", "elevate", "--extended"]);
+    await program.parseAsync(["node", "test", "auth", "elevate"]);
     assert.equal(capture.data.interactive_session, true);
     assert.equal(capture.data.factor_level, "totp");
     assert.equal(capture.data.fresh_auth_until, "2026-05-08T18:00:00.000Z");
@@ -452,7 +452,7 @@ test("auth elevate approves the current CLI session via browser polling", async 
   }
 });
 
-test("auth elevate --dev approves the current CLI session with hub password", async () => {
+test("auth elevate --dev --short approves the current CLI session with hub password", async () => {
   const capture: { data?: any } = {};
   let cookieGlobals: any;
   const fetchCalls: Array<{ url: string; init: any }> = [];
@@ -502,7 +502,14 @@ test("auth elevate --dev approves the current CLI session with hub password", as
         getExplicitAccountId: (globals: any) => globals.accountId,
       }),
     );
-    await program.parseAsync(["node", "test", "auth", "elevate", "--dev"]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "elevate",
+      "--dev",
+      "--short",
+    ]);
     assert.equal(cookieGlobals.hubPassword, "hub-secret");
     assert.equal(cookieGlobals.disableEnvAuthDefaults, false);
     assert.equal(capture.data.interactive_session, true);
@@ -570,7 +577,7 @@ test("auth elevate --dev bootstraps a local dev session when only hub password a
       bootstrapArgs.requestedAccountId,
       "00000000-1000-4000-8000-000000000056",
     );
-    assert.equal(bootstrapArgs.freshAuthDuration, "default");
+    assert.equal(bootstrapArgs.freshAuthDuration, "extended");
     assert.equal(capture.data.bootstrapped_session, true);
     assert.equal(capture.data.dev, true);
     assert.equal(capture.data.factor_level, "totp");

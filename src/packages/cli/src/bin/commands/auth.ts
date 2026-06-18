@@ -638,7 +638,8 @@ Examples:
   auth
     .command("elevate")
     .description("elevate the current CLI session via browser approval")
-    .option("--extended", "keep this elevation active for 8 hours")
+    .option("--short", "keep this elevation active for 15 minutes")
+    .option("--extended", "keep this elevation active for 8 hours (default)")
     .option(
       "--dev",
       "dev-only: elevate using the hub password instead of browser approval",
@@ -646,10 +647,16 @@ Examples:
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .action(
       async (
-        opts: { extended?: boolean; dev?: boolean; pollMs?: string },
+        opts: {
+          extended?: boolean;
+          short?: boolean;
+          dev?: boolean;
+          pollMs?: string;
+        },
         command: Command,
       ) => {
         await runLocalCommand(command, "auth elevate", async (globals: any) => {
+          const freshAuthDuration = opts.short ? "default" : "extended";
           const effective = resolveEffectiveGlobals(globals);
           const apiBaseUrl = effective.api
             ? normalizeUrl(effective.api)
@@ -695,7 +702,7 @@ Examples:
               },
               apiBaseUrl,
               requestedAccountId,
-              freshAuthDuration: opts.extended ? "extended" : "default",
+              freshAuthDuration,
             });
             if (!bootstrappedDevSession?.value) {
               throw new Error(
@@ -767,7 +774,7 @@ Examples:
               apiBaseUrl,
               endpoint: "auth/cli/elevate/dev",
               body: {
-                duration: opts.extended ? "extended" : "default",
+                duration: freshAuthDuration,
               },
               cookieHeader,
             });
@@ -785,7 +792,7 @@ Examples:
             apiBaseUrl,
             endpoint: "auth/cli/elevate/start",
             body: {
-              duration: opts.extended ? "extended" : "default",
+              duration: freshAuthDuration,
             },
             cookieHeader,
           });

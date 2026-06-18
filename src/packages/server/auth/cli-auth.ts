@@ -31,7 +31,7 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
 
-const CHALLENGE_TTL_MS = 10 * 60_000;
+const CHALLENGE_TTL_MS = 8 * 60 * 60_000;
 const PENDING_CLI_LOGIN_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 const CLI_LOGIN_START_IP_LIMIT_10M = 20;
 const CLI_LOGIN_START_IP_LIMIT_DAY = 100;
