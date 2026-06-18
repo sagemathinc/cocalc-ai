@@ -217,7 +217,13 @@ function WorkflowStrip() {
                         icon={step.icon}
                         size="md"
                       />
-                      <Text style={{ color: step.accent, fontSize: 22 }} strong>
+                      <Text
+                        style={{
+                          color: step.accent,
+                          fontSize: PUBLIC_TYPE.subhead,
+                        }}
+                        strong
+                      >
                         {step.label}
                       </Text>
                     </Flex>

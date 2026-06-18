@@ -16,7 +16,11 @@ import {
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  alpha,
+  PUBLIC_COLORS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
@@ -181,18 +185,6 @@ const TECHNICAL_SURFACE_CARDS = {
 >;
 
 const FEATURE_PANEL_RADIUS = 8;
-
-function alpha(hexColor: string, opacity: number): string {
-  if (hexColor === COLORS.TOP_BAR.ACTIVE) {
-    return `rgba(255, 255, 255, ${opacity})`;
-  }
-  const hex = hexColor.replace("#", "");
-  if (hex.length !== 6) return hexColor;
-  const red = parseInt(hex.slice(0, 2), 16);
-  const green = parseInt(hex.slice(2, 4), 16);
-  const blue = parseInt(hex.slice(4, 6), 16);
-  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-}
 
 const FEATURE_PANEL_SHADOW = `0 14px 34px ${alpha(
   PUBLIC_COLORS.heading,

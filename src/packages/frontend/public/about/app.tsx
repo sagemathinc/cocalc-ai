@@ -9,6 +9,8 @@ import { Flex, Tag, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { NewsItem } from "@cocalc/util/types/news";
 import { COLORS } from "@cocalc/util/theme";
+
+import { PUBLIC_TYPE } from "../theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   EmptySection,
@@ -253,7 +255,13 @@ function EventList({ items }: { items: NewsItem[] }) {
     <PublicGrid columns={2}>
       {items.map((item) => (
         <PublicSection key={`${item.id ?? item.title}-${item.date}`}>
-          <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
+          <div
+            style={{
+              ...MUTED_STYLE,
+              fontSize: PUBLIC_TYPE.caption,
+              fontWeight: 700,
+            }}
+          >
             {formatNewsDate(item.date)}
           </div>
           <Title level={3} style={{ margin: 0 }}>
