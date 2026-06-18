@@ -364,23 +364,27 @@ export async function uploadSoftwareArtifact({
   manifest,
   manifestPath,
   now,
+  allowExisting = false,
 }: {
   client: SoftwareR2Client;
   config: SoftwareRemoteConfig;
   manifest: SoftwareArtifactManifest;
   manifestPath: string;
   now: Date;
+  allowExisting?: boolean;
 }): Promise<SoftwareRemoteIndex> {
   const current = await readRemoteIndex({
     client,
     auth: config.auth,
     component: manifest.component,
   });
-  if (
-    current.artifacts.some(
-      (entry) => entry.artifact_id === manifest.artifact_id,
-    )
-  ) {
+  const existingEntry = current.artifacts.find(
+    (entry) => entry.artifact_id === manifest.artifact_id,
+  );
+  if (existingEntry && allowExisting) {
+    return current;
+  }
+  if (existingEntry) {
     throw new Error(
       `remote software artifact already exists for ${manifest.component}: ${manifest.artifact_id}`,
     );

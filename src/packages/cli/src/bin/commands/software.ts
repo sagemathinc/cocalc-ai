@@ -113,6 +113,7 @@ type ListOptions = {
 type PushOptions = {
   localStore?: string;
   envFile?: string;
+  build?: boolean;
 };
 
 type DeployOptions = {
@@ -275,12 +276,14 @@ function parseBuildComponentSelector({
 function parsePushComponentSelector({
   componentSelectorArg,
   legacySelectorArg,
+  allowMissingSelector = false,
 }: {
   componentSelectorArg: string;
   legacySelectorArg?: string;
+  allowMissingSelector?: boolean;
 }): {
   component: SoftwareBuildComponent;
-  selector: string;
+  selector: string | undefined;
 } {
   const { componentRaw, selectorRaw } = splitSoftwareComponentSelector({
     value: componentSelectorArg,
@@ -291,12 +294,28 @@ function parsePushComponentSelector({
       ? legacySelectorArg
       : selectorRaw;
   if (selector == null || `${selector}`.trim() === "") {
+    if (allowMissingSelector) {
+      return {
+        component: parseSoftwareBuildComponent(componentRaw),
+        selector: undefined,
+      };
+    }
     throw new Error("software push requires <component:tag-or-id>");
   }
   return {
     component: parseSoftwareBuildComponent(componentRaw),
     selector: validateSoftwareDeploySelector(selector),
   };
+}
+
+function isHostCompatibilityComponent(
+  component: SoftwareBuildComponent,
+): component is "project-host" | "project" | "tools" {
+  return (
+    component === "project-host" ||
+    component === "project" ||
+    component === "tools"
+  );
 }
 
 function splitSoftwareComponentSelector({
@@ -3327,6 +3346,10 @@ Supported deploy/smoke components:
       `${BUILD_COMPONENT_ARGUMENT}; artifact tag or id`,
     )
     .allowExcessArguments(true)
+    .option(
+      "--build",
+      "build the component tag before pushing; tag is generated if omitted",
+    )
     .option("--local-store <path>", "local artifact store")
     .option(
       "--env-file <path>",
@@ -3342,15 +3365,40 @@ Supported deploy/smoke components:
         if (command.args.length > 2) {
           throw new Error("software push accepts <component:tag-or-id>");
         }
-        const { component, selector } = parsePushComponentSelector({
+        let { component, selector } = parsePushComponentSelector({
           componentSelectorArg,
           legacySelectorArg: command.args[1],
+          allowMissingSelector: opts.build,
         });
         const startedAt = deps.now?.() ?? new Date();
         const localStore = resolveSoftwareLocalStore({
           option: opts.localStore,
           env: deps.env ?? process.env,
         });
+        let builtArtifact:
+          | (SoftwareArtifactManifest & { local_dir: string })
+          | undefined;
+        if (opts.build) {
+          builtArtifact = await buildFromFile({
+            component,
+            tagArg: selector,
+            opts: {
+              localStore: opts.localStore,
+            },
+            deps: {
+              cwd: deps.cwd,
+              env: deps.env ?? process.env,
+              now: deps.now ?? (() => new Date()),
+              gitMetadata: deps.gitMetadata,
+              repoRoot: deps.repoRoot,
+              runCommand: deps.runCommand,
+            },
+          });
+          selector = builtArtifact.artifact_id;
+        }
+        if (!selector) {
+          throw new Error("software push requires <component:tag-or-id>");
+        }
         const { manifest, path } = await resolveLocalManifestBySelector({
           localStore,
           component,
@@ -3367,8 +3415,16 @@ Supported deploy/smoke components:
           manifest,
           manifestPath: path,
           now: deps.now?.() ?? new Date(),
+          allowExisting: true,
         });
         const entry = manifestRemoteEntry({ manifest, config });
+        const hostCompat = isHostCompatibilityComponent(component)
+          ? await publishHostCompatibilityArtifact({
+              client,
+              config,
+              entry,
+            })
+          : undefined;
         emitSuccess(
           { globals: command.optsWithGlobals() as any },
           "software push",
@@ -3377,9 +3433,23 @@ Supported deploy/smoke components:
             tag: manifest.tag,
             artifact_id: manifest.artifact_id,
             duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+            ...(builtArtifact
+              ? {
+                  built: true,
+                  built_component: builtArtifact.component,
+                  built_artifact_id: builtArtifact.artifact_id,
+                }
+              : {}),
             remote_manifest: entry.manifest_url,
             index: `${config.publicBaseUrl}/${indexKey(component)}`,
             files: entry.files.map((file) => file.url),
+            ...(hostCompat
+              ? {
+                  host_base_url: hostCompat.base_url,
+                  host_files: hostCompat.urls,
+                  host_catalogs: hostCompat.catalog_urls,
+                }
+              : {}),
           },
         );
       },

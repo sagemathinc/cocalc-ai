@@ -1106,6 +1106,160 @@ test("software push uploads files manifest and component index", async () => {
   assert.equal(payload.data.duration, "0ms");
 });
 
+test("software push publishes host compatibility catalog for project bundle", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-push-project-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project bundle contents");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project:update",
+    "--from-file",
+    source,
+  ]);
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "push",
+      "project:update",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const artifactId = "20260614T235912Z-e882d124-update";
+  const compatKey = `software/project/${artifactId}/bundle-linux.tar.xz`;
+  assert.equal(r2.objects.has(compatKey), true);
+  assert.equal(r2.objects.has(`${compatKey}.sha256`), true);
+  assert.equal(r2.objects.has("software/project/latest-linux.json"), true);
+  assert.equal(
+    r2.objects.has("software/project/versions-latest-linux.json"),
+    true,
+  );
+
+  const latest = JSON.parse(
+    r2.objects.get("software/project/latest-linux.json")!.toString("utf8"),
+  );
+  assert.equal(latest.version, artifactId);
+  assert.equal(latest.url, `https://software.example.test/${compatKey}`);
+
+  const versions = JSON.parse(
+    r2.objects
+      .get("software/project/versions-latest-linux.json")!
+      .toString("utf8"),
+  );
+  assert.equal(versions.versions[0].version, artifactId);
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(
+    payload.data.host_base_url,
+    "https://software.example.test/software",
+  );
+  assert.deepEqual(payload.data.host_catalogs, [
+    "https://software.example.test/software/project/latest-linux.json",
+    "https://software.example.test/software/project/versions-latest-linux.json",
+  ]);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "push",
+    "project:update",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const componentIndex = JSON.parse(
+    r2.objects.get("software/indexes/project.json")!.toString("utf8"),
+  );
+  assert.equal(componentIndex.artifacts.length, 1);
+});
+
+test("software push --build builds then pushes host compatibility catalog", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-push-build-project-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "push",
+      "--build",
+      "project:update",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].command, "pnpm");
+  assert.equal(runs[0].args.includes("@cocalc/project"), true);
+  assert.equal(runs[0].args.includes("build:bundle"), true);
+
+  const artifactId = "20260614T235912Z-e882d124-update";
+  assert.equal(
+    r2.objects.has(
+      `software/artifacts/project/${artifactId}/files/bundle-linux.tar.xz`,
+    ),
+    true,
+  );
+  assert.equal(
+    r2.objects.has(`software/project/${artifactId}/bundle-linux.tar.xz`),
+    true,
+  );
+
+  const versions = JSON.parse(
+    r2.objects
+      .get("software/project/versions-latest-linux.json")!
+      .toString("utf8"),
+  );
+  assert.equal(versions.versions[0].version, artifactId);
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.built, true);
+  assert.equal(payload.data.built_component, "project");
+  assert.equal(payload.data.built_artifact_id, artifactId);
+  assert.equal(payload.data.host_catalogs.length, 2);
+});
+
 test("software list merges local and remote artifacts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-list-remote-"));
   const localStore = join(dir, "store");
