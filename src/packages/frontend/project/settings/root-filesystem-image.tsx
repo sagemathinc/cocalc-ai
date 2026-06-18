@@ -84,6 +84,7 @@ import {
   themeFromDraft,
   type ThemeEditorDraft,
 } from "@cocalc/frontend/theme/types";
+import { docsPath } from "@cocalc/docs";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -1924,6 +1925,15 @@ export default function RootFilesystemImage({
                   >
                     {publishDraft.image}
                   </div>
+                  <Button
+                    href={docsPath("projects/publish-rootfs")}
+                    icon={<Icon name="external-link" />}
+                    size="small"
+                    style={{ marginTop: 10 }}
+                    target="_blank"
+                  >
+                    RootFS publishing docs
+                  </Button>
                 </div>
               </div>
             </div>

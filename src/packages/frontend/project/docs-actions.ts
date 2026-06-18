@@ -1197,6 +1197,11 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
     isAvailable: ({ projectId }) => validateProjectId(projectId),
     run: ({ projectId }) => revealRuntimeImage(projectId),
   },
+  "settings.runtime.rootfs.publish": {
+    id: "settings.runtime.rootfs.publish",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealRuntimeImage(projectId),
+  },
   "settings.people.collaborators": {
     id: "settings.people.collaborators",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
