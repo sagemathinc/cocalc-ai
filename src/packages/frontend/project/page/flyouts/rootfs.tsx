@@ -33,7 +33,7 @@ export function RootfsPanel({
             : undefined
         }
       >
-        <RootFilesystemImage />
+        <RootFilesystemImage mode={page ? "page" : "inline"} />
       </div>
     </div>
   );

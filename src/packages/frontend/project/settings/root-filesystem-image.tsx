@@ -155,7 +155,7 @@ type RootfsConfigImportOptions = {
   content: boolean;
 };
 
-type RootFilesystemImageMode = "inline" | "modal";
+type RootFilesystemImageMode = "inline" | "modal" | "page";
 
 interface RootFilesystemImageProps {
   mode?: RootFilesystemImageMode;
@@ -170,6 +170,7 @@ export default function RootFilesystemImage({
   mode = "inline",
 }: RootFilesystemImageProps = {}) {
   const isModal = mode === "modal";
+  const isPage = mode === "page";
   const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
   const [upgradeOpen, setUpgradeOpen] = useState<boolean>(false);
@@ -1112,30 +1113,35 @@ export default function RootFilesystemImage({
 
   return (
     <div
-      style={isModal ? undefined : { marginTop: "-4px", marginLeft: "-10px" }}
+      style={
+        isModal || isPage
+          ? undefined
+          : { marginTop: "-4px", marginLeft: "-10px" }
+      }
     >
       <FreshAuthModal {...freshAuthModalProps} />
-      <div style={isModal ? undefined : { marginLeft: "15px" }}>
+      <div style={isModal || isPage ? undefined : { marginLeft: "15px" }}>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <div
             style={{
               ...rootfsHeroCardStyle(activeDisplayEntry),
-              maxWidth: isModal ? undefined : 760,
+              maxWidth: isModal || isPage ? undefined : 760,
+              padding: isPage ? 24 : undefined,
             }}
           >
             <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-              {renderRootfsThemePreview(activeDisplayEntry)}
+              {renderRootfsThemePreview(activeDisplayEntry, isPage ? 112 : 56)}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <Space
                   wrap
                   size={[8, 6]}
-                  style={{ marginBottom: 6, width: "100%" }}
+                  style={{ marginBottom: isPage ? 10 : 6, width: "100%" }}
                 >
                   <span
                     style={{
-                      fontSize: 18,
+                      fontSize: isPage ? 34 : 18,
                       fontWeight: 700,
-                      lineHeight: "24px",
+                      lineHeight: isPage ? "40px" : "24px",
                     }}
                   >
                     {activeLabel}
@@ -1153,7 +1159,14 @@ export default function RootFilesystemImage({
                     <Tag color="blue">Upgrade available</Tag>
                   ) : null}
                 </Space>
-                <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                <Paragraph
+                  type="secondary"
+                  style={{
+                    fontSize: isPage ? 16 : undefined,
+                    lineHeight: isPage ? "24px" : undefined,
+                    marginBottom: 8,
+                  }}
+                >
                   {activeDescription}
                 </Paragraph>
               </div>
@@ -3071,11 +3084,14 @@ function rootfsSummaryCardStyle(entry?: {
   };
 }
 
-function renderRootfsThemePreview(entry?: {
-  theme?: RootfsImageTheme;
-  label?: string;
-  image?: string;
-}): React.JSX.Element {
+function renderRootfsThemePreview(
+  entry?: {
+    theme?: RootfsImageTheme;
+    label?: string;
+    image?: string;
+  },
+  size = 56,
+): React.JSX.Element {
   const imageUrl = rootfsThemeImageUrl(entry?.theme);
   const accentColor = entry?.theme?.accent_color?.trim();
   const color = entry?.theme?.color?.trim();
@@ -3088,8 +3104,8 @@ function renderRootfsThemePreview(entry?: {
       src={imageUrl}
       alt={`${entry?.label || entry?.image || "RootFS"} theme`}
       style={{
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         borderRadius: 12,
         objectFit: "cover",
         flex: "0 0 auto",
@@ -3098,8 +3114,8 @@ function renderRootfsThemePreview(entry?: {
   ) : (
     <div
       style={{
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         borderRadius: 12,
         display: "flex",
         alignItems: "center",
@@ -3109,7 +3125,7 @@ function renderRootfsThemePreview(entry?: {
         flex: "0 0 auto",
       }}
     >
-      <Icon name={iconName as any} style={{ fontSize: "24px" }} />
+      <Icon name={iconName as any} style={{ fontSize: size <= 56 ? 24 : 56 }} />
     </div>
   );
 }
