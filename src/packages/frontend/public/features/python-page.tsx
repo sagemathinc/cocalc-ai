@@ -245,131 +245,6 @@ function WorkflowNode({
   );
 }
 
-function MiniTerminal() {
-  return (
-    <div
-      style={{
-        background: "#0b1522",
-        borderRadius: 8,
-        color: "#dbeafe",
-        height: "100%",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          alignItems: "center",
-          background: "rgba(255,255,255,0.08)",
-          display: "flex",
-          gap: 8,
-          padding: "10px 12px",
-        }}
-      >
-        {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
-          <span
-            aria-hidden="true"
-            key={color}
-            style={{
-              background: color,
-              borderRadius: "50%",
-              height: 9,
-              width: 9,
-            }}
-          />
-        ))}
-        <Text style={{ color: "#dbeafe", marginLeft: 6 }}>terminal</Text>
-      </div>
-      <Flex
-        vertical
-        gap={8}
-        style={{
-          fontFamily:
-            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: 13,
-          padding: 14,
-        }}
-      >
-        <Text style={{ color: "#bfdbfe" }}>$ uv pip install pandas pytest</Text>
-        <Text style={{ color: "#86efac" }}>resolved packages</Text>
-        <Text style={{ color: "#bfdbfe" }}>$ pytest && python model.py</Text>
-        <Text style={{ color: "#86efac" }}>tests passed, wrote figure.pdf</Text>
-      </Flex>
-    </div>
-  );
-}
-
-function PackageRail() {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        height: "100%",
-        padding: 16,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <Flex align="center" gap={12}>
-          <IconBadge accent="#278c83" icon="linux" />
-          <div>
-            <Text strong>Reusable Python environment</Text>
-            <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              use normal project tools
-            </div>
-          </div>
-        </Flex>
-        <Flex gap={10} wrap>
-          {["sudo", "apt", "uv", "pip", "conda", "venv"].map((label) => (
-            <Text key={label} code>
-              {label}
-            </Text>
-          ))}
-        </Flex>
-      </Flex>
-    </div>
-  );
-}
-
-function CodexPanel() {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        height: "100%",
-        padding: 16,
-      }}
-    >
-      <Flex vertical gap={12}>
-        <Flex align="center" gap={12}>
-          <IconBadge accent="#7c3aed" icon="robot" />
-          <div>
-            <Text strong>Codex at the boundaries</Text>
-            <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              files + notebooks + terminals
-            </div>
-          </div>
-        </Flex>
-        <div
-          style={{
-            background: "#f7f9fc",
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 8,
-            padding: 12,
-          }}
-        >
-          <Text style={{ color: PUBLIC_COLORS.mutedText }}>
-            Diagnose the import error, pin the dependency, move notebook code
-            into <code>model.py</code>, and update the paper figure.
-          </Text>
-        </div>
-      </Flex>
-    </div>
-  );
-}
-
 function PythonWorkflowMap() {
   const top = [
     {
@@ -407,7 +282,7 @@ function PythonWorkflowMap() {
         <Flex align="end" justify="space-between" wrap gap={16}>
           <div>
             <Title level={3} style={{ margin: 0 }}>
-              From notebook to script to paper
+              The right interface at each stage
             </Title>
           </div>
           <Paragraph
@@ -417,8 +292,9 @@ function PythonWorkflowMap() {
               maxWidth: 520,
             }}
           >
-            The point is not one perfect Python interface. It is one project
-            where the right interface is available at each stage.
+            A live notebook, a versioned module, and a rendered paper each use
+            the interface that fits, while reading and writing the same files,
+            packages, and results in one project.
           </Paragraph>
         </Flex>
 
@@ -443,27 +319,6 @@ function PythonWorkflowMap() {
                   </Flex>
                 </Col>
               ))}
-            </Row>
-
-            <div
-              aria-hidden="true"
-              style={{
-                background:
-                  "linear-gradient(90deg, transparent, rgba(42,143,130,0.55), transparent)",
-                height: 2,
-              }}
-            />
-
-            <Row gutter={[14, 14]} align="stretch">
-              <Col xs={24} lg={8}>
-                <MiniTerminal />
-              </Col>
-              <Col xs={24} lg={8}>
-                <PackageRail />
-              </Col>
-              <Col xs={24} lg={8}>
-                <CodexPanel />
-              </Col>
             </Row>
           </Flex>
         </div>
@@ -528,10 +383,10 @@ function PythonUseCases() {
         <Row gutter={[14, 14]}>
           <Col xs={24} lg={8}>
             <CompactUseCard
-              accent="#389e0d"
-              icon="graduation-cap"
-              title="Teaching and teams"
-              body="Reusable project environments, shared notebooks, side chat, TimeTravel, and snapshots help everyone use the same Python stack."
+              accent="#ad6800"
+              icon="tex"
+              title="Reproducible analysis and papers"
+              body="Develop the analysis in a notebook, then drop the generated figure straight into a LaTeX or markdown write-up in the same workspace."
             />
           </Col>
           <Col xs={24} lg={8}>
@@ -541,19 +396,19 @@ function PythonUseCases() {
               title="Package-heavy work"
               body={
                 <>
-                  Use <code>sudo</code>, <code>apt</code>, <code>uv</code>,{" "}
-                  <code>pip</code>, <code>conda</code>, and virtual environments
-                  where the code actually runs.
+                  Use <code>sudo</code>, <code>apt</code>, <code>uv</code>, and{" "}
+                  <code>pip</code> in a virtual environment, right where the
+                  code runs.
                 </>
               }
             />
           </Col>
           <Col xs={24} lg={8}>
             <CompactUseCard
-              accent="#ad6800"
-              icon="tex"
-              title="Papers and reports"
-              body="Keep the notebook, script, generated figure, terminal setup, and LaTeX or markdown explanation in one shared workspace."
+              accent="#389e0d"
+              icon="graduation-cap"
+              title="Teaching and teams"
+              body="Shared notebooks, side chat, and TimeTravel let a class or team work from the same Python stack."
             />
           </Col>
         </Row>
@@ -591,15 +446,10 @@ export default function PythonFeaturePage({
                 Python that moves from notebook to script to paper.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc is not only a browser notebook, it is a full Linux
-                environment where Python lives in Jupyter notebooks,{" "}
-                <code>.py</code> files, terminals, LaTeX workflows, package
-                environments, courses, and Codex conversations at the same time.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                That helps when exploratory work becomes reusable code, when a
-                figure must land in a paper, or when a class needs everyone to
-                share the same working Python stack.
+                Explore data in a notebook, harden the stable parts into scripts
+                and tests, and publish the figures in a paper — using Python in
+                Jupyter, <code>.py</code> files, and terminals that share one
+                runtime, packages, and collaborators.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -608,9 +458,6 @@ export default function PythonFeaturePage({
                 <LinkButton href={`${GUIDE_BASE}/python-workflow/`}>
                   Python workflow guide
                 </LinkButton>
-                <Button href={appPath("features/jupyter-notebook")}>
-                  Jupyter details
-                </Button>
               </Flex>
             </Flex>
           </Col>
@@ -627,26 +474,29 @@ export default function PythonFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={14}>
-            <Title level={3} style={{ margin: 0 }}>
-              Use Python as part of the whole project
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              CoCalc is useful when Python is connected to the rest of the
-              technical work: notebooks, scripts, terminals, papers, GitHub,
-              classes, long-running jobs, and AI assistance around the same
-              project state.
-            </Paragraph>
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/linux")}>
-                Linux environment
-              </Button>
-              <Button href={appPath("features/terminal")}>
-                Linux terminal
-              </Button>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                Run the same Python project where you need it
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Start hosted on CoCalc.ai, or run the same project in a setup
+                your team operates — same notebooks, scripts, and Python
+                environment either way.
+              </Paragraph>
               <Button href={appPath("products")}>
                 Compare operating models
               </Button>
-              <Button href={supportHref}>Ask about Python workflows</Button>
+              <Flex wrap gap={16}>
+                <LinkButton href={appPath("features/linux")}>
+                  Linux environment
+                </LinkButton>
+                <LinkButton href={appPath("features/terminal")}>
+                  Linux terminal
+                </LinkButton>
+                <LinkButton href={supportHref}>
+                  Ask about Python workflows
+                </LinkButton>
+              </Flex>
             </Flex>
           </Col>
           <Col xs={24} lg={10}>

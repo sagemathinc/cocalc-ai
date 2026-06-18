@@ -13,12 +13,7 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import {
-  ContextList,
-  IconBadge,
-  StartCard,
-  TerminalMock,
-} from "./feature-visuals";
+import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -78,16 +73,6 @@ function JuliaProjectMock() {
             </Col>
           ))}
         </Row>
-
-        <TerminalMock
-          title="julia"
-          rows={[
-            "$ julia --project",
-            "(@v1) pkg> instantiate",
-            'julia> include("src/Model.jl")',
-            "results written to output/",
-          ]}
-        />
       </Flex>
     </div>
   );
@@ -100,18 +85,18 @@ function JuliaProjectFit() {
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              Julia works best in CoCalc when the project matters.
+              Keep Julia close to the rest of the research.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Julia has strong native tools and notebook ecosystems. CoCalc is
-              useful when the Julia work needs a collaborative project around
-              it: notebooks, source files, package environments, terminals,
-              teaching workflows, and supporting Python, R, or shell scripts.
+              Julia's own editors and notebook tools are the right choice when
+              the work is mainly Julia. CoCalc earns its place when Julia is one
+              part of a larger research or engineering project, so collaborators
+              and reviewers work from the same files, environment, and history.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              Use Jupyter for collaborative notebooks, terminals for normal
-              Julia package and script work, and Pluto when reactive notebooks
-              are the right fit.
+              That fits shared package environments, models that mix Julia with
+              Python or R, and team review — with teaching courses a natural
+              extension, not the only use.
             </Paragraph>
           </Flex>
         </Col>
@@ -126,8 +111,8 @@ function JuliaProjectFit() {
                 label: "Julia packages and scripts in a shell",
               },
               {
-                icon: "graduation-cap",
-                label: "Shared environments for courses",
+                icon: "python",
+                label: "Mix with Python, R, and shell tools",
               },
             ]}
             title="Project context"
@@ -148,7 +133,6 @@ export default function JuliaFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalLabel = isAuthenticated ? "Open projects" : "Start using Julia";
   const supportHref = featureSupportPath({
     body: "I want to discuss Julia workflows in CoCalc. Helpful context: notebooks, Pluto, source files, package environments, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
     context: "julia",
@@ -166,14 +150,14 @@ export default function JuliaFeaturePage({
                 Use Julia with reactive Pluto notebooks, Jupyter, and terminals.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc supports Julia as part of the same collaborative project
-                environment as your files, notebooks, terminals, teaching
-                workflows, and Codex conversations.
+                Model, run simulations, and share the analysis with your lab or
+                team — using Julia in Jupyter, Pluto, source files, and
+                terminals.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                It is a good fit for classes, research groups, and
-                mixed-language technical projects where Julia should live
-                alongside the rest of the computational work.
+                The package environment stays reproducible, so a teammate can
+                instantiate it and continue the work — a fit for research groups
+                and mixed-language technical projects.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -223,7 +207,7 @@ export default function JuliaFeaturePage({
             <StartCard
               body="Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows."
               href={primaryHref}
-              label={finalLabel}
+              label={primaryLabel}
               title="Start in a project"
             />
           </Col>

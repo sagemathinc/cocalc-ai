@@ -13,6 +13,7 @@ import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
+  CodeBlock,
   featureAppPath as appPath,
   featureSupportPath,
   LinkButton,
@@ -210,20 +211,12 @@ function LiveStateDiagram() {
             </div>
           </div>
         </Flex>
-        <pre
-          style={{
-            background: "#10213f",
-            borderRadius: PANEL_RADIUS,
-            color: "#dbeafe",
-            margin: 0,
-            overflowX: "auto",
-            padding: 18,
-          }}
-        >
-          <code>{`cocalc project jupyter cells --path analysis.ipynb
+        <CodeBlock
+          ariaLabel="Project-scoped Jupyter commands"
+          code={`cocalc project jupyter cells --path analysis.ipynb
 cocalc project jupyter run --path analysis.ipynb --cell-index 3
-cocalc project jupyter exec --path analysis.ipynb --stdin`}</code>
-        </pre>
+cocalc project jupyter exec --path analysis.ipynb --stdin`}
+        />
         <Row gutter={[10, 10]}>
           {["inspect cells", "run focused code", "summarize output"].map(
             (label) => (
@@ -289,10 +282,9 @@ export default function JupyterNotebookFeaturePage({
               <Title level={2} style={{ margin: 0 }}>
                 Jupyter notebooks for work that needs to keep going
               </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
                 Run standard notebooks in CoCalc when analysis depends on data
-                files, packages, collaborators, review history, or a course
-                workflow.
+                files, packages, collaborators, or a course workflow.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 For research groups, classes, and technical teams, the notebook
@@ -370,80 +362,77 @@ export default function JupyterNotebookFeaturePage({
         </Flex>
       </PublicSection>
 
-      <div style={{ marginBottom: 44 }}>
-        <PublicSection>
-          <Row gutter={[24, 24]} align="middle">
-            <Col xs={24} lg={13}>
+      <PublicSection>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={13}>
+            <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
                 Choose the notebook path that fits
               </Title>
-              <Paragraph style={{ margin: "8px 0 0" }}>
-                Start with a hosted notebook on CoCalc.ai. Use the Jupyter guide
-                for compatibility details, bring Codex in when review or
-                debugging needs live notebook state, and compare operating
-                models when your team needs a different deployment path.
+              <Paragraph style={{ margin: 0 }}>
+                The same notebooks stay portable — pick the path that matches
+                how your team needs to run them.
               </Paragraph>
               <BulletList
                 items={[
-                  "Use CoCalc.ai for hosted notebooks with shared files, terminals, and review history.",
+                  "Use CoCalc.ai for hosted notebooks with shared files and terminals.",
                   "Use teaching workflows when notebooks become assignments in student projects.",
-                  "Use product comparison when procurement, licensing, or deployment control matters.",
+                  "Compare operating models when procurement, licensing, or deployment control matters.",
                 ]}
               />
               <Flex wrap gap={12}>
-                <Button onClick={() => setShowAgentDetails(true)}>
+                <Button
+                  type="link"
+                  onClick={() => setShowAgentDetails(true)}
+                  style={{ paddingInline: 0 }}
+                >
                   See agent details
                 </Button>
-                <Button href={appPath("features/teaching")}>
+                <LinkButton href={appPath("features/teaching")}>
                   Teaching workflows
-                </Button>
+                </LinkButton>
                 <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
                   Compatibility guide
                 </LinkButton>
               </Flex>
-            </Col>
-            <Col xs={24} lg={11}>
-              <Flex
-                className="cocalc-feature-final-panel"
-                vertical
-                gap={14}
-                style={{
-                  background: PUBLIC_COLORS.surfaceMuted,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: PANEL_RADIUS,
-                  boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
-                  color: PUBLIC_COLORS.heading,
-                  padding: 26,
-                }}
+            </Flex>
+          </Col>
+          <Col xs={24} lg={11}>
+            <Flex
+              className="cocalc-feature-final-panel"
+              vertical
+              gap={14}
+              style={{
+                background: PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
+                color: PUBLIC_COLORS.heading,
+                padding: 26,
+              }}
+            >
+              <Title
+                level={4}
+                style={{ color: PUBLIC_COLORS.heading, margin: 0 }}
               >
-                <Title
-                  level={4}
-                  style={{ color: PUBLIC_COLORS.heading, margin: 0 }}
-                >
-                  Ready to use Jupyter in CoCalc?
-                </Title>
-                <Paragraph
-                  style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}
-                >
-                  Open a hosted notebook, ask about notebook workflows, or
-                  compare how CoCalc should run for your team.
-                </Paragraph>
-                <Flex wrap gap={12}>
-                  <Button type="primary" href={primaryCtaHref}>
-                    {primaryCtaLabel}
-                  </Button>
-                  <Button href={supportHref}>
-                    Ask about Jupyter workflows
-                  </Button>
-                  <Button href={appPath("products")}>
-                    Compare operating models
-                  </Button>
-                </Flex>
+                Ready to use Jupyter in CoCalc?
+              </Title>
+              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+                Open a hosted notebook on CoCalc.ai and bring your team into the
+                same workspace.
+              </Paragraph>
+              <Flex wrap gap={12}>
+                <Button type="primary" href={primaryCtaHref}>
+                  {primaryCtaLabel}
+                </Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
               </Flex>
-            </Col>
-          </Row>
-        </PublicSection>
-      </div>
+            </Flex>
+          </Col>
+        </Row>
+      </PublicSection>
       <Modal
         footer={null}
         onCancel={() => setShowAgentDetails(false)}

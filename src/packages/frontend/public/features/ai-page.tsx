@@ -22,10 +22,17 @@ const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 function IconBadge({
   accent = PUBLIC_COLORS.brand,
   icon,
+  size = "lg",
 }: {
   accent?: string;
   icon: IconName;
+  size?: "sm" | "md" | "lg";
 }) {
+  const { box, font } = {
+    sm: { box: 36, font: 18 },
+    md: { box: 46, font: 22 },
+    lg: { box: 52, font: 24 },
+  }[size];
   return (
     <span
       style={{
@@ -36,10 +43,10 @@ function IconBadge({
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
-        fontSize: 24,
-        height: 52,
+        fontSize: font,
+        height: box,
         justifyContent: "center",
-        width: 52,
+        width: box,
       }}
     >
       <Icon name={icon} />
@@ -239,22 +246,11 @@ function WorkflowStrip() {
                 >
                   <Flex vertical gap={12}>
                     <Flex align="center" justify="space-between">
-                      <span
-                        style={{
-                          alignItems: "center",
-                          background: `${step.accent}12`,
-                          border: `1px solid ${step.accent}2e`,
-                          borderRadius: 8,
-                          color: step.accent,
-                          display: "inline-flex",
-                          fontSize: 22,
-                          height: 46,
-                          justifyContent: "center",
-                          width: 46,
-                        }}
-                      >
-                        <Icon name={step.icon} />
-                      </span>
+                      <IconBadge
+                        accent={step.accent}
+                        icon={step.icon}
+                        size="md"
+                      />
                       <Text style={{ color: step.accent, fontSize: 22 }} strong>
                         {step.label}
                       </Text>
@@ -284,6 +280,12 @@ export default function AIFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss AI agent workflows in CoCalc. Helpful context: the kind of project, who will review agent work, notebook or terminal needs, and any deployment or policy constraints.",
+    context: "ai",
+    subject: "CoCalc AI workflows",
+    title: "Ask CoCalc about AI workflows",
+  });
 
   return (
     <Flex vertical gap={22}>
@@ -326,20 +328,19 @@ export default function AIFeaturePage({
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Let Codex work with the live project, not just a pasted prompt.
+                Review agent work with the people who own it.
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                CoCalc gives Codex project-scoped guidance and tool access for
-                the environment it is working in. It can use terminal sessions,
-                read and edit synchronized documents, work with live notebooks,
-                and report back in the same durable thread.
+                Because the thread lives in the project, a collaborator or
+                reviewer can open it later, read the exact diff and discussion,
+                and decide what to keep — without rebuilding the context the
+                agent had.
               </Paragraph>
               <BulletList
                 items={[
-                  "Ask Codex to diagnose a failing command and run the focused check.",
-                  "Have it edit files while you review the exact diff and discussion.",
-                  "Use images and screenshots as part of the prompt when visual context matters.",
-                  "Keep long-running turns durable across browser refreshes and project restarts.",
+                  "A teammate picks up a long-running computation and continues it from where the agent stopped.",
+                  "A reviewer checks notebook results and the diff before the change is handed on.",
+                  "Mixed work — code, notebooks, and shell steps — stays together for the next person.",
                 ]}
               />
             </Flex>
@@ -361,7 +362,7 @@ export default function AIFeaturePage({
             <Col xs={24} lg={15}>
               <Flex vertical gap={12}>
                 <Title level={3} style={{ margin: 0 }}>
-                  Choose the AI path that fits
+                  Choose the AI path that fits.
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
                   Start with Codex when the agent should work beside the project
@@ -382,22 +383,17 @@ export default function AIFeaturePage({
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
                 </Button>
-                <Button href={appPath("features/terminal")}>
-                  Terminal workflows
-                </Button>
-                <Button
-                  href={featureSupportPath({
-                    body: "I want to discuss AI agent workflows in CoCalc. Helpful context: the kind of project, who will review agent work, notebook or terminal needs, and any deployment or policy constraints.",
-                    context: "ai",
-                    subject: "CoCalc AI workflows",
-                    title: "Ask CoCalc about AI workflows",
-                  })}
-                >
-                  Ask about AI workflows
-                </Button>
-                <LinkButton href={appPath("products")}>
+                <Button href={appPath("products")}>
                   Compare operating models
-                </LinkButton>
+                </Button>
+                <Flex wrap gap={16}>
+                  <LinkButton href={appPath("features/terminal")}>
+                    Terminal workflows
+                  </LinkButton>
+                  <LinkButton href={supportHref}>
+                    Ask about AI workflows
+                  </LinkButton>
+                </Flex>
               </Flex>
             </Col>
           </Row>

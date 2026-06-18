@@ -18,8 +18,6 @@ import { ContextList } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
-const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
-
 function IconBadge({
   accent = PUBLIC_COLORS.brand,
   icon,
@@ -237,9 +235,6 @@ export default function SageFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalCtaLabel = isAuthenticated
-    ? "Open projects"
-    : "Start using SageMath on CoCalc";
   const supportHref = featureSupportPath({
     body: "I want to discuss SageMath workflows in CoCalc. Helpful context: course, research, or notebook use case; LaTeX/SageTeX needs; expected collaborators; and whether hosted or customer-operated CoCalc matters.",
     context: "sage",
@@ -264,8 +259,8 @@ export default function SageFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Use SageMath for computational mathematics while keeping the
-                surrounding work close enough for students, collaborators, and
-                reviewers to follow.
+                surrounding work close enough for collaborators, reviewers, and
+                students to follow.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -284,8 +279,6 @@ export default function SageFeaturePage({
         </Row>
       </PublicSection>
 
-      <TeachingComparison />
-
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
@@ -299,16 +292,16 @@ export default function SageFeaturePage({
                 notes.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                A CoCalc project keeps those materials beside notebooks and
-                LaTeX documents so a collaborator or instructor can inspect how
-                the result was produced.
+                A CoCalc project keeps those materials beside the notebooks, so
+                the work can be picked up and continued later without rebuilding
+                the setup.
               </Paragraph>
               <BulletList
                 items={[
-                  "Keep Sage notebooks, source files, logs, and notes in the same project.",
-                  "Use terminals for package tools, scripts, and generated outputs.",
-                  "Keep longer computations, terminal output, notes, and reusable results close to the computation.",
-                  "Let collaborators or Codex inspect errors with the surrounding context.",
+                  "Keep Sage notebooks, source files, logs, and notes together in one project.",
+                  "Run package tools, scripts, and generated outputs from the project terminal.",
+                  "Continue a long-running computation later — its output and history stay with the work.",
+                  "Let a collaborator or Codex inspect an error with the surrounding context.",
                 ]}
               />
             </Flex>
@@ -327,34 +320,36 @@ export default function SageFeaturePage({
           </Col>
         </Row>
       </PublicSection>
+
+      <TeachingComparison />
+
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3} style={{ margin: 0 }}>
-              When SageMath belongs in CoCalc
-            </Title>
-            <BulletList
-              items={[
-                "Use SageMath in collaborative projects built around notebooks, terminals, LaTeX, and course workflows.",
-                "A free, open source Python-based environment for computational math courses.",
-                "Integrated SageTeX support in the collaborative LaTeX editor.",
-                "A Linux project environment for Sage notebooks, source files, scripts, and research computations.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/latex-editor")}>
-                LaTeX editor
-              </Button>
-              <Button href={appPath("features/terminal")}>
-                Terminal workflows
-              </Button>
-              <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
-                SageTeX documentation
-              </LinkButton>
-              <Button href={appPath("products")}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                When SageMath belongs in CoCalc.
+              </Title>
+              <BulletList
+                items={[
+                  "When the math is one part of a larger research or engineering project, not a standalone worksheet.",
+                  "When a paper or handout needs Sage output rendered inline, with SageTeX in the collaborative LaTeX editor.",
+                  "When several people need to run, review, or continue the same computation from one shared project.",
+                  "When a course needs a shared environment students can use without installing anything.",
+                ]}
+              />
+              <Flex wrap gap={12}>
+                <Button href={appPath("features/latex-editor")}>
+                  LaTeX editor
+                </Button>
+                <Button href={appPath("features/terminal")}>
+                  Terminal workflows
+                </Button>
+                <Button href={supportHref}>Ask about SageMath workflows</Button>
+              </Flex>
+              <LinkButton href={appPath("products")}>
                 Compare operating models
-              </Button>
-              <Button href={supportHref}>Ask about SageMath workflows</Button>
+              </LinkButton>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>
@@ -385,7 +380,7 @@ export default function SageFeaturePage({
                 style={{ marginTop: 22, width: "fit-content" }}
                 type="primary"
               >
-                {finalCtaLabel}
+                {primaryCtaLabel}
               </Button>
             </div>
           </Col>

@@ -264,9 +264,9 @@ export default function LatexEditorFeaturePage({
                 <Button type="primary" href={primaryCtaHref}>
                   {primaryCtaLabel}
                 </Button>
-                <Button href={`${GUIDE_BASE}/cocalc-for-latex/`}>
+                <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
                   Read the LaTeX guide
-                </Button>
+                </LinkButton>
                 <LinkButton href={`${GUIDE_BASE}/paper-polishing/`}>
                   Paper polishing workflow
                 </LinkButton>
@@ -315,7 +315,7 @@ export default function LatexEditorFeaturePage({
 
       <PublicSection>
         <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={12}>
+          <Col xs={24} lg={14}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
                 Use computation as part of the writing process
@@ -326,14 +326,6 @@ export default function LatexEditorFeaturePage({
                 and keep the source of the result close to the paragraph that
                 cites it.
               </Paragraph>
-              <BulletList
-                items={[
-                  "Use Jupyter, Python, Sage, R, or shell scripts beside the paper.",
-                  "Keep generated tables and figures in the same project.",
-                  "Let collaborators inspect both the claim and the computation behind it.",
-                  "Use project history, Git review, and focused Codex assistance to keep changes reviewable.",
-                ]}
-              />
               <Button
                 href={appPath("features/ai")}
                 style={{ width: "fit-content" }}

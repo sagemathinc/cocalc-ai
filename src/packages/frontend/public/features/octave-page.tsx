@@ -13,12 +13,7 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import {
-  ContextList,
-  IconBadge,
-  StartCard,
-  TerminalMock,
-} from "./feature-visuals";
+import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -76,16 +71,6 @@ function OctaveProjectMock() {
             </Col>
           ))}
         </Row>
-
-        <TerminalMock
-          title="octave"
-          rows={[
-            "$ octave solver.m",
-            "solver completed",
-            "$ open figure.png",
-            "opened output in the project",
-          ]}
-        />
       </Flex>
     </div>
   );
@@ -101,14 +86,15 @@ function OctaveFlow() {
               Teach and run Octave without local setup drift.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              GNU Octave is useful when you want an open numerical environment
-              for assignments, examples, and lightweight research workflows.
-              CoCalc gives it the surrounding project workspace: files,
-              terminals, notebooks, history, chat, and course tools.
+              Everyone opens the same project, so an Octave script that runs for
+              one person runs the same way for the next. The environment,
+              packages, and data stay with the work, not on a laptop that drifts
+              out of sync.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              It is a practical way to run Octave online when setup consistency
-              and collaboration matter.
+              Project history keeps earlier states close, so a collaborator — or
+              you, weeks later — can reopen a result, see how it was produced,
+              and continue from it.
             </Paragraph>
           </Flex>
         </Col>
@@ -116,12 +102,21 @@ function OctaveFlow() {
           <ContextList
             accent="#d4380d"
             items={[
-              { icon: "jupyter", label: "Explore interactively in notebooks" },
-              { icon: "file", label: "Edit .m files in the project" },
-              { icon: "terminal", label: "Run Octave commands and scripts" },
+              {
+                icon: "users",
+                label: "Collaborators open the same environment",
+              },
               {
                 icon: "history",
-                label: "Recover earlier versions with project history",
+                label: "Reopen earlier versions from project history",
+              },
+              {
+                icon: "sync",
+                label: "Setup, packages, and data stay together",
+              },
+              {
+                icon: "share-square",
+                label: "Hand off the project without rebuilding it",
               },
             ]}
             title="Project context"
@@ -166,9 +161,9 @@ export default function OctaveFeaturePage({
                 common setup.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That makes Octave useful for numerical courses and lightweight
-                numerical work without asking every student or collaborator to
-                maintain a local install.
+                That makes it a practical way to run numerical courses,
+                research, and prototyping — without asking every student or
+                collaborator to maintain a local install.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -197,10 +192,10 @@ export default function OctaveFeaturePage({
             <Title level={3}>When Octave belongs in CoCalc</Title>
             <BulletList
               items={[
-                "Use notebook and terminal Octave workflows in one project.",
-                "Teach numerical computing without local installation friction.",
-                "Keep .m files, plots, data, and explanations together.",
-                "Use collaboration, chat, history, and course tooling around Octave.",
+                "A numerical course where students share one consistent environment.",
+                "Numerical research and prototyping that benefits from shared files and history.",
+                "Work that mixes Octave with notebooks, data, and write-ups in one project.",
+                "A team that opens each other's Octave work and reviews it together.",
               ]}
             />
             <Flex wrap gap={12}>

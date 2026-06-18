@@ -135,6 +135,34 @@ function WhiteboardMock() {
   );
 }
 
+function GraphNode({
+  accent,
+  highlight,
+  icon,
+  label,
+}: {
+  accent: string;
+  highlight?: boolean;
+  icon: IconName;
+  label: string;
+}) {
+  return (
+    <div
+      style={{
+        background: highlight ? "#fff7e6" : "#f7fbff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 8,
+        padding: 14,
+      }}
+    >
+      <Flex vertical gap={8} align="center">
+        <IconBadge accent={accent} icon={icon} />
+        <Text strong>{label}</Text>
+      </Flex>
+    </div>
+  );
+}
+
 function ExecutionGraph() {
   return (
     <PublicSection>
@@ -153,10 +181,9 @@ function ExecutionGraph() {
             </Paragraph>
             <BulletList
               items={[
-                "Use markdown and Slate-based rich text for explanations.",
-                "Write precise mathematics with KaTeX.",
-                "Mix sketches, notes, frames, and executable cells.",
-                "Organize large topics with an infinite canvas and multiple pages.",
+                "Connect Jupyter cells so the board runs them in dependency order, not file order.",
+                "Lay out branching analyses that are not a single linear column.",
+                "Keep each cell's code, output, and the math that explains it together in one frame.",
               ]}
             />
           </Flex>
@@ -172,34 +199,19 @@ function ExecutionGraph() {
             }}
           >
             <Flex align="center" gap={12} wrap>
-              {["data", "clean", "fit", "plot"].map((label, index) => (
-                <Flex
-                  align="center"
-                  gap={10}
-                  key={label}
-                  style={{ flex: "0 1 112px" }}
-                >
-                  <div
-                    style={{
-                      background: index === 3 ? "#fff7e6" : "#f7fbff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 8,
-                      padding: 14,
-                    }}
-                  >
-                    <Flex vertical gap={8} align="center">
-                      <IconBadge
-                        accent={index === 3 ? "#ad6800" : "#2f6fda"}
-                        icon={index === 3 ? "line-chart" : "jupyter"}
-                      />
-                      <Text strong>{label}</Text>
-                    </Flex>
-                  </div>
-                  {index < 3 ? (
-                    <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
-                  ) : null}
-                </Flex>
-              ))}
+              <GraphNode accent="#2f6fda" icon="jupyter" label="data" />
+              <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
+              <GraphNode accent="#2f6fda" icon="jupyter" label="clean" />
+              <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
+              <Flex vertical gap={12}>
+                <GraphNode accent="#2f6fda" icon="jupyter" label="fit" />
+                <GraphNode
+                  accent="#ad6800"
+                  highlight
+                  icon="line-chart"
+                  label="plot"
+                />
+              </Flex>
             </Flex>
           </div>
         </Col>
@@ -218,9 +230,6 @@ export default function WhiteboardFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalLabel = isAuthenticated
-    ? "Open projects"
-    : "Start using CoCalc whiteboards";
 
   return (
     <Flex vertical gap={22}>
@@ -238,9 +247,9 @@ export default function WhiteboardFeaturePage({
                 drawings.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                They are useful for teaching, office hours, research sketches,
-                live support, and diagrams where code and math should be part of
-                the board instead of pasted screenshots.
+                They suit research and engineering work as much as teaching,
+                wherever code and math should be editable parts of the board
+                rather than pasted screenshots.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Because the board lives in the project, the math, code, and
@@ -269,39 +278,42 @@ export default function WhiteboardFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>When a whiteboard belongs in CoCalc</Title>
-            <BulletList
-              items={[
-                "Explain ideas with text, math, sketches, and live code together.",
-                "Use an infinite canvas with multiple pages for large technical topics.",
-                "Keep board work close to notebooks, terminals, files, and chat.",
-                "Collaborate on the same board instead of sharing exported screenshots.",
-                "Turn a whiteboard into slides when the same material becomes a presentation.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/slides")}>Slides</Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              <Button href={appPath("products")}>
-                Compare operating models
-              </Button>
-              <Button
-                href={featureSupportPath({
-                  body: "I want to discuss CoCalc whiteboards. Helpful context: teaching, research, support, or presentation use case; need for Jupyter cells or math; and expected collaborators.",
-                  context: "whiteboard",
-                  subject: "CoCalc whiteboards",
-                  title: "Ask CoCalc about whiteboards",
-                })}
-              >
-                Ask about whiteboards
-              </Button>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                When a whiteboard belongs in CoCalc
+              </Title>
+              <BulletList
+                items={[
+                  "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
+                  "Review a collaborator's work in place — the code, output, and math are all on the board to inspect.",
+                  "Run office hours or a live support session on a shared board everyone can edit.",
+                  "Move to slides when that same board becomes a talk, lecture, or demo.",
+                ]}
+              />
+              <Flex wrap gap={12}>
+                <Button href={appPath("features/slides")}>Slides</Button>
+                <Button href={appPath("features/teaching")}>Teaching</Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
+                <Button
+                  href={featureSupportPath({
+                    body: "I want to discuss CoCalc whiteboards. Helpful context: teaching, research, support, or presentation use case; need for Jupyter cells or math; and expected collaborators.",
+                    context: "whiteboard",
+                    subject: "CoCalc whiteboards",
+                    title: "Ask CoCalc about whiteboards",
+                  })}
+                >
+                  Ask about whiteboards
+                </Button>
+              </Flex>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>
             <StartCard
               body="Open a project and create a board for technical diagrams, lecture notes, research sketches, or computational workflows."
               href={primaryHref}
-              label={finalLabel}
+              label={primaryLabel}
               title="Start with a board"
             />
           </Col>

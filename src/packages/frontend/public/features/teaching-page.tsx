@@ -380,14 +380,14 @@ export default function TeachingFeaturePage({
                 Teach where students compute, write, and collaborate
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc works beside the campus LMS as the place where students
-                use notebooks, code, terminals, files, feedback, and recovery.
+                Students run real assignments in a shared computing environment
+                that instructors can see into, give feedback on, and recover —
+                with notebooks, code, and data in the same project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Keep rosters, calendars, announcements, and institution-wide
-                communication in the LMS. Bring assignments into CoCalc when
-                they need a real computing environment and instructor visibility
-                into student work.
+                It works beside your existing LMS, so course coordination stays
+                where it already lives while the technical work moves into
+                student projects.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -395,7 +395,7 @@ export default function TeachingFeaturePage({
                 </Button>
                 <Button href={`${GUIDE_BASE}/teaching/`}>Teaching guide</Button>
                 <LinkButton href={appPath("products")}>
-                  Compare product paths
+                  Compare operating models
                 </LinkButton>
               </Flex>
             </Flex>
@@ -467,16 +467,16 @@ export default function TeachingFeaturePage({
               </Title>
               <Paragraph style={{ margin: "8px 0 0" }}>
                 Start hosted for a course on CoCalc.ai. Use the guides when
-                planning assignments or shared course software. Compare product
-                paths or talk to CoCalc when procurement, licensing, or
-                deployment questions matter.
+                planning assignments or shared course software. Compare
+                operating models or talk to CoCalc when procurement, licensing,
+                or deployment questions matter.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
                   {finalCtaLabel}
                 </Button>
                 <Button href={appPath("products")}>
-                  Compare product paths
+                  Compare operating models
                 </Button>
                 <Button href={supportHref}>Ask about teaching workflows</Button>
               </Flex>
@@ -491,13 +491,6 @@ export default function TeachingFeaturePage({
                 }}
               >
                 <Text strong>Useful planning guides</Text>
-                <BulletList
-                  items={[
-                    "Teaching guide for assignments, collection, and grading.",
-                    "Environment guide for shared course software and data.",
-                    "Jupyter page when notebooks are the main course medium.",
-                  ]}
-                />
                 <Flex wrap gap={12}>
                   <LinkButton href={`${GUIDE_BASE}/teaching/`}>
                     Teaching guide

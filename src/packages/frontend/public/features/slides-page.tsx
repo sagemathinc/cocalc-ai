@@ -107,7 +107,7 @@ function SlideFlow() {
       <Flex vertical gap={18}>
         <div>
           <Title level={3} style={{ margin: 0 }}>
-            Slides are structured whiteboards.
+            How a deck comes together
           </Title>
           <Paragraph
             style={{
@@ -116,9 +116,9 @@ function SlideFlow() {
               maxWidth: "72ch",
             }}
           >
-            CoCalc slides use the same technical canvas ideas as whiteboards,
-            but organize them into a sequence of slide-sized pages with useful
-            presets for talks, lectures, and demos.
+            Build a deck in a few steps: choose a slide size, write the story in
+            markdown and math, add Jupyter cells, diagrams, or drawings, then
+            present — with presets for talks, lectures, and demos.
           </Paragraph>
         </div>
         <div
@@ -215,31 +215,37 @@ export default function SlidesFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>When slides belong in CoCalc</Title>
-            <BulletList
-              items={[
-                "Build presentations from slide-sized whiteboard pages.",
-                "Keep slides close to notebooks, files, data, and terminal work.",
-                "Use math, diagrams, markdown, and code in technical talks.",
-                "Collaborate on the deck and keep TimeTravel history around it.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/whiteboard")}>Whiteboard</Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              <Button href={appPath("products")}>
-                Compare operating models
-              </Button>
-              <Button
-                href={featureSupportPath({
-                  body: "I want to discuss CoCalc slides. Helpful context: lecture, research talk, demo, or course workflow; expected collaborators; and whether slides need math, diagrams, or notebook-backed material.",
-                  context: "slides",
-                  subject: "CoCalc slides",
-                  title: "Ask CoCalc about slides",
-                })}
-              >
-                Ask about slides
-              </Button>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                When slides belong in CoCalc
+              </Title>
+              <BulletList
+                items={[
+                  "Present research talks, lectures, classroom demos, and technical walkthroughs.",
+                  "Keep slides close to notebooks, files, data, and terminal work.",
+                  "Use math, diagrams, markdown, and code in technical talks.",
+                  "Collaborate on the deck and keep TimeTravel history around it.",
+                ]}
+              />
+              <Flex wrap gap={12}>
+                <Button href={appPath("features/whiteboard")}>
+                  Whiteboard
+                </Button>
+                <Button href={appPath("features/teaching")}>Teaching</Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
+                <Button
+                  href={featureSupportPath({
+                    body: "I want to discuss CoCalc slides. Helpful context: lecture, research talk, demo, or course workflow; expected collaborators; and whether slides need math, diagrams, or notebook-backed material.",
+                    context: "slides",
+                    subject: "CoCalc slides",
+                    title: "Ask CoCalc about slides",
+                  })}
+                >
+                  Ask about slides
+                </Button>
+              </Flex>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

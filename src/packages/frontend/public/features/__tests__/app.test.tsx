@@ -585,7 +585,7 @@ describe("PublicFeaturesApp", () => {
     ).toEqual(["https://sagemathinc.github.io/cocalc-guides/teaching/"]);
     expect(
       within(screen.getByText("Technical course workspace").closest("section")!)
-        .getByRole("link", { name: "Compare product paths" })
+        .getByRole("link", { name: "Compare operating models" })
         .getAttribute("href"),
     ).toBe("/products");
     // Internal-language leakage: shared floor + teaching-surface-unique bans.
@@ -724,7 +724,9 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Python that moves from notebook to script to paper."),
     ).not.toBeNull();
     // Route-specific section keyword instead of pinned heading prose.
-    expect(screen.getByText(/Reusable Python/i)).not.toBeNull();
+    expect(
+      screen.getByText("The right interface at each stage"),
+    ).not.toBeNull();
   });
 
   it("uses projects as the python CTA for authenticated users", () => {
@@ -778,7 +780,7 @@ describe("PublicFeaturesApp", () => {
       contextLabels: ["Project context"],
       slug: "julia",
       title: "Use Julia with reactive Pluto notebooks, Jupyter, and terminals.",
-      section: "Julia works best in CoCalc when the project matters.",
+      section: "Keep Julia close to the rest of the research.",
     },
     {
       contextLabels: ["Project context"],
@@ -795,7 +797,7 @@ describe("PublicFeaturesApp", () => {
     {
       slug: "slides",
       title: "Present from the same canvas where technical ideas are built.",
-      section: "Slides are structured whiteboards.",
+      section: "How a deck comes together",
     },
   ])(
     "renders the richer $slug feature page",

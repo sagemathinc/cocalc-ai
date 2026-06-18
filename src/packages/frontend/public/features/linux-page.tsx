@@ -273,11 +273,11 @@ export default function LinuxFeaturePage({
                 servers, and keep the environment with the project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                This helps students and collaborators work in a real Linux
-                system without risking a personal laptop. Because the
-                environment lives in the project, teammates can see how it was
-                set up and return to a known-good state instead of rebuilding
-                it.
+                A research or engineering team can stand up a real Ubuntu
+                environment for analysis, builds, and local services. Because
+                the environment lives in the project, teammates can see how it
+                was set up and return to a known-good state instead of
+                rebuilding it.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -306,10 +306,11 @@ export default function LinuxFeaturePage({
                 Learn and use Linux without risking your own machine
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                A student can learn <code>apt</code>, shells, compilers,
-                services, permissions, Python environments, and Git without
-                turning their laptop into the course experiment. A researcher
-                can try a system install without corrupting their daily driver.
+                A researcher or engineer can try a system install — new packages
+                with <code>apt</code>, services, or compilers — without
+                corrupting their daily driver. A student can learn shells,
+                permissions, Python environments, and Git without turning their
+                laptop into the course experiment.
               </Paragraph>
               <BulletList
                 items={[
@@ -375,9 +376,8 @@ PY`}</code>
                 can understand.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Codex is especially good at this kind of Linux work: it can read
-                the exact error, choose the right layer, run the command, and
-                check that the package or binary is really available.
+                Codex can read the exact error, choose the right layer, run the
+                command, and verify that the package or binary is available.
               </Paragraph>
             </Flex>
           </Col>
