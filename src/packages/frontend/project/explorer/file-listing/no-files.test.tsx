@@ -67,6 +67,7 @@ describe("NoFiles", () => {
     expect(screen.getByText("Chat with AI")).not.toBeNull();
     expect(screen.getByText("Upload Files")).not.toBeNull();
     expect(screen.getByText("Browse file types")).not.toBeNull();
+    expect(screen.queryByText("Empty project")).toBeNull();
     expect(screen.getByText("Upload Files").closest("button")).toHaveClass(
       "upload-button",
     );
