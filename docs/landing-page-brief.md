@@ -1,11 +1,11 @@
 # CoCalc.ai Landing Page — Brief
 
 > North star for the public landing page. Fits on one screen on purpose.
-> Status: **PROPOSED REVISION — awaiting Blaec's sign-off.** Supersedes the FROZEN 2026-06-17
-> version on approval. Grounded in a full read of `docs/pitch/` (not a paraphrase); holds two
-> founder constraints: (1) keep the continuity-benefit hero; (2) foreground research +
-> research-automation as the primary proof. Changing the promise or primary CTA requires
-> Blaec's sign-off + a note in the decisions log.
+> Status: **FROZEN — approved by Blaec 2026-06-17.** Supersedes the prior FROZEN version.
+> Grounded in a full read of `docs/pitch/` (not a paraphrase); holds two founder constraints:
+> (1) keep the continuity-benefit hero; (2) foreground research + research-automation as the
+> primary proof. Changing the promise or primary CTA requires Blaec's sign-off + a note in the
+> decisions log.
 
 ## The one promise (hero)
 

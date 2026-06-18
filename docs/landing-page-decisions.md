@@ -26,3 +26,7 @@
 - 2026-06-17 — **Operating system** adopted (`docs/website-operating-system.md`): two
   cadences, solo-by-default, evidence-gated rounds, finite punch-list, per-turn rebuild +
   screenshot Stop hook. `docs/public-site-cohesion-audit.md` retired (no new appends).
+- 2026-06-17 — **Brief RE-FROZEN** (approved by Blaec): research-forward proof spine; buyer =
+  operating-model/procurement decision-maker (NOT university-IT/LMS); teaching = valued
+  audience + MATLAB-style adoption pipeline; automation/CLI/API = proof surface only; home
+  page protected. Supersedes the prior frozen version.
