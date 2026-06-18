@@ -107,6 +107,7 @@ import { getDefaultNewThreadSetup } from "./chatroom-thread-panel";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
 import { CodexQuotaHelp } from "./codex-quota-help";
+import { AcpPromptModal } from "./acp-prompt-modal";
 import {
   linkifyCommitHashes,
   parseGitCommitLink,
@@ -124,6 +125,7 @@ import {
   resolveRenderedMessageValue,
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
+  shouldShowAcpResubmitToAgentButton,
   shouldShowQueuedMessageEditedVersionSent,
   shouldSuppressAcpPlaceholderBody,
   shouldUseSelectableMessageBody,
@@ -167,6 +169,21 @@ export function resolveThreadMetadataLookup({
     threadLookupKey: threadRootMs != null ? `${threadRootMs}` : undefined,
     threadId: undefined,
   };
+}
+
+export function safeRenderSyncdbGetOne(
+  syncdb: any,
+  where: Record<string, unknown>,
+): any | undefined {
+  if (syncdb == null || typeof syncdb.get_one !== "function") return undefined;
+  const state =
+    typeof syncdb.get_state === "function" ? syncdb.get_state() : undefined;
+  if (state != null && state !== "ready") return undefined;
+  try {
+    return syncdb.get_one(where);
+  } catch {
+    return undefined;
+  }
 }
 
 export function resolveForkThreadNavigation({
@@ -436,7 +453,7 @@ export default function Message({
     const replyThreadKey =
       `${field<string>(message, "thread_id") ?? ""}`.trim() || `${date}`;
     const replyDate = stableDraftKeyFromThreadKey(replyThreadKey);
-    const draft = actions?.syncdb?.get_one({
+    const draft = safeRenderSyncdbGetOne(actions?.syncdb, {
       event: "draft",
       sender_id: account_id,
       date: replyDate,
@@ -465,6 +482,7 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const [showAcpPromptModal, setShowAcpPromptModal] = useState<boolean>(false);
   const [interruptRequested, setInterruptRequested] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
@@ -475,9 +493,13 @@ export default function Message({
   );
   const [openCommitSelectionRequestToken, setOpenCommitSelectionRequestToken] =
     useState(0);
+  const [resubmittingAgentParentId, setResubmittingAgentParentId] = useState<
+    string | undefined
+  >(undefined);
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
+  const acpPrompt = field<string>(message, "acp_prompt") ?? "";
   const acpInterrupted = useMemo(
     () => field<boolean>(message, "acp_interrupted") === true,
     [message],
@@ -906,6 +928,95 @@ export default function Message({
         : linkifyCommitHashes(renderedMessageValue),
     [is_viewers_message, renderedMessageValue],
   );
+  const acpResubmitParentMessage = (() => {
+    if (!actions) return undefined;
+    const parentId = parentMessageId(message);
+    if (!parentId) return undefined;
+    const parentMessage = actions.getMessageById(parentId);
+    if (parentMessage == null) return undefined;
+    const messageId = field<string>(message, "message_id");
+    const parentMessageIdValue =
+      field<string>(parentMessage, "message_id") ?? parentId;
+    const acpStore = actions.store?.get("acpState") as any;
+    const parentAcpState = `${
+      acpStore?.get?.(`message:${parentMessageIdValue}`) ??
+      field<string>(parentMessage, "acp_state") ??
+      ""
+    }`;
+    const threadState = messageThreadId
+      ? safeRenderSyncdbGetOne(actions.syncdb, {
+          event: "chat-thread-state",
+          thread_id: messageThreadId,
+        })
+      : undefined;
+    const terminalThreadErrorActive =
+      `${field<string>(threadState, "state") ?? ""}`.trim() === "error" &&
+      `${field<string>(threadState, "active_message_id") ?? ""}`.trim() ===
+        messageId;
+    if (
+      !shouldShowAcpResubmitToAgentButton({
+        hasActions: true,
+        hasParentMessage: true,
+        isTurnRunning: acpState === "running",
+        isViewersMessage: is_viewers_message,
+        parentAcpState,
+        readOnly: read_only,
+        renderedValue: renderedMessageValue,
+        terminalThreadErrorActive,
+      })
+    ) {
+      return undefined;
+    }
+    return parentMessage;
+  })();
+  const acpResubmitParentMessageId = acpResubmitParentMessage
+    ? field<string>(acpResubmitParentMessage, "message_id")
+    : undefined;
+
+  async function handleResubmitToAgent() {
+    if (!actions || !acpResubmitParentMessage) return;
+    setResubmittingAgentParentId(acpResubmitParentMessageId);
+    try {
+      const ok = await resendCanceledAcpTurn({
+        actions,
+        message: acpResubmitParentMessage,
+      });
+      if (!ok) {
+        antdMessage.error("Unable to resubmit this request to Agent.");
+      }
+    } catch (err) {
+      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
+    } finally {
+      setResubmittingAgentParentId((current) =>
+        current === acpResubmitParentMessageId ? undefined : current,
+      );
+    }
+  }
+
+  function renderResubmitToAgentButton() {
+    if (!acpResubmitParentMessage) return null;
+    return (
+      <div style={{ marginTop: "8px" }}>
+        <Tooltip title="Resubmit the original request, including hidden agent context.">
+          <Button
+            size="small"
+            type="primary"
+            loading={
+              acpResubmitParentMessageId != null &&
+              resubmittingAgentParentId === acpResubmitParentMessageId
+            }
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void handleResubmitToAgent();
+            }}
+          >
+            <Icon name="paper-plane" /> Resubmit to Agent
+          </Button>
+        </Tooltip>
+      </div>
+    );
+  }
 
   const threadLookup = useMemo(
     () =>
@@ -1633,6 +1744,14 @@ export default function Message({
       },
     ];
 
+    if (acpPrompt.trim()) {
+      overflowItems.push({
+        key: "agent-prompt",
+        label: "Full agent prompt",
+        onClick: () => setShowAcpPromptModal(true),
+      });
+    }
+
     if (allowReply && !replying && actions) {
       overflowItems.push({
         key: "reply",
@@ -2096,6 +2215,7 @@ export default function Message({
         {!showCodexActivity ? (
           <AttachedSteerStatusList attachedSteers={attachedSteers} />
         ) : null}
+        {renderResubmitToAgentButton()}
       </>
     );
   }
@@ -2725,13 +2845,15 @@ export default function Message({
               Edit
             </Button>
           ) : null}
-          <Button
-            size="small"
-            type="text"
-            onClick={handleSendQueuedImmediately}
-          >
-            Steer
-          </Button>
+          <Tooltip title="Steer running turn (Ctrl+Enter)">
+            <Button
+              size="small"
+              type="text"
+              onClick={handleSendQueuedImmediately}
+            >
+              Steer
+            </Button>
+          </Tooltip>
           <Button size="small" type="text" onClick={handleCancelQueued}>
             Cancel
           </Button>
@@ -2774,6 +2896,29 @@ export default function Message({
     >
       {renderCols()}
       {renderZenMessageDrawer()}
+      <AcpPromptModal
+        open={showAcpPromptModal}
+        title="Full agent prompt for this message"
+        value={acpPrompt}
+        fontSize={font_size}
+        onSave={(value) => {
+          const ok = actions?.saveAcpPrompt?.(
+            {
+              date: dateValue(message) ?? new Date(date),
+              sender_id: field<string>(message, "sender_id"),
+              message_id: field<string>(message, "message_id"),
+              thread_id: field<string>(message, "thread_id"),
+              parent_message_id: field<string>(message, "parent_message_id"),
+              history: historyArray(message) as any,
+            },
+            value,
+          );
+          if (ok === false) {
+            antdMessage.error("Unable to save agent prompt");
+          }
+        }}
+        onClose={() => setShowAcpPromptModal(false)}
+      />
       {onOpenGitBrowser == null ? (
         <GitCommitDrawer
           projectId={project_id}

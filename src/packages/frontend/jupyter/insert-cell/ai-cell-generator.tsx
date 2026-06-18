@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Modal, Space } from "antd";
+import { Alert, Button, Checkbox, Modal, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -14,6 +14,12 @@ import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/n
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/app-framework";
+import {
+  AgentSessionError,
+  AgentSessionSelect,
+  usePersistentAgentSessionSelection,
+} from "@cocalc/frontend/frame-editors/ai/agent-session-selector";
+import { useAgentAutoSubmit } from "@cocalc/frontend/frame-editors/ai/agent-auto-submit";
 import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
 import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
 
@@ -109,8 +115,15 @@ export function AIGenerateCodeCell({
   const [prompt, setPrompt] = useState("");
   const [querying, setQuerying] = useState(false);
   const [error, setError] = useState("");
-
+  const [autoSubmit, setAutoSubmit] = useAgentAutoSubmit();
   const open = showAICellGen != null;
+  const agentSessionSelection = usePersistentAgentSessionSelection({
+    project_id,
+    path,
+    cacheContext: "jupyter-generate-cell",
+    enabled: open,
+  });
+
   const anchorCellType = useMemo(
     () =>
       normalizeCellType(
@@ -168,7 +181,10 @@ export function AIGenerateCodeCell({
       codexConfig: { model: DEFAULT_GENERATE_AGENT_MODEL },
       openFloating: true,
       waitForAgent: false,
+      agentSession: agentSessionSelection.selectedAgentSession,
+      submitToAgent: autoSubmit,
     });
+    agentSessionSelection.saveSelectedAgentSession();
     setShowAICellGen(null);
     void send
       .then((sent) => {
@@ -218,6 +234,11 @@ export function AIGenerateCodeCell({
           <div style={{ color: "rgba(0,0,0,0.65)" }}>
             Target: generate new cells {placement}.
           </div>
+          <AgentSessionSelect
+            selection={agentSessionSelection}
+            disabled={querying}
+          />
+          <AgentSessionError selection={agentSessionSelection} />
           <PopupAgentComposer
             value={prompt}
             onChange={setPrompt}
@@ -227,21 +248,40 @@ export function AIGenerateCodeCell({
             autoFocus
           />
           {error ? <Alert type="error" title={error} /> : null}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <Button onClick={() => setShowAICellGen(null)} disabled={querying}>
-              {intl.formatMessage(labels.cancel)}
-            </Button>
-            <Button
-              type="primary"
-              onClick={() => void submit()}
-              disabled={!canSubmit}
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <Checkbox
+              checked={autoSubmit}
+              disabled={querying}
+              onChange={(event) => setAutoSubmit(event.target.checked)}
             >
-              <Icon
-                name={querying ? "spinner" : "paper-plane"}
-                spin={querying}
-              />{" "}
-              Send to Agent
-            </Button>
+              Automatically submit to Agent
+            </Checkbox>
+            <Space>
+              <Button
+                onClick={() => setShowAICellGen(null)}
+                disabled={querying}
+              >
+                {intl.formatMessage(labels.cancel)}
+              </Button>
+              <Button
+                type="primary"
+                onClick={() => void submit()}
+                disabled={!canSubmit}
+              >
+                <Icon
+                  name={querying ? "spinner" : "paper-plane"}
+                  spin={querying}
+                />{" "}
+                Send
+              </Button>
+            </Space>
           </div>
         </Space>
       </Modal>

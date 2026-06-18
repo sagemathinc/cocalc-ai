@@ -11,6 +11,7 @@ import TableError from "./table-error";
 // Legacy component for backward compatibility - now just renders account settings
 export const AccountPreferences: React.FC = () => {
   const account_id = useTypedRedux("account", "account_id");
+  const display_name = useTypedRedux("account", "display_name");
   const first_name = useTypedRedux("account", "first_name");
   const last_name = useTypedRedux("account", "last_name");
   const email_address = useTypedRedux("account", "email_address");
@@ -30,6 +31,7 @@ export const AccountPreferences: React.FC = () => {
       <TableError />
       <AccountSettings
         account_id={account_id}
+        display_name={display_name}
         first_name={first_name}
         last_name={last_name}
         email_address={email_address}

@@ -26,6 +26,7 @@ export interface AccountState {
   account_id: string;
   groups?: List<string>;
   terminal: Map<string, any>;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   unlisted?: boolean;
@@ -61,6 +62,7 @@ export interface AccountState {
     [OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY]?: string;
     notification_preferences?: Record<string, any>;
     use_balance_toward_subscriptions?: boolean;
+    use_balance_toward_team_licenses?: boolean;
     hide_button_tooltips?: boolean;
     auto_update_file_listing?: boolean;
     follow_current_path?: boolean;

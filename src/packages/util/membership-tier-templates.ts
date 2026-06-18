@@ -29,11 +29,7 @@ const STORE_MARKETING = {
   },
   basic: {
     store_description: "For occasional light use.",
-    store_highlights: [
-      "More shared resources",
-      "Access better shared hosts",
-      "Modest included AI usage",
-    ],
+    store_highlights: ["More shared resources", "Access better shared hosts"],
     site_license_pool_description: "Light CoCalc access for occasional work.",
   },
   student: {
@@ -51,7 +47,7 @@ const STORE_MARKETING = {
     store_highlights: [
       "Stronger shared resources",
       "Dedicated project host access, including GPU",
-      "Larger included AI allowance",
+      "Many projects for different tasks",
     ],
     site_license_pool_description: "Everyday CoCalc access for regular work.",
   },
@@ -82,8 +78,8 @@ const STORE_MARKETING = {
       "For advanced users and teams working on demanding projects.",
     store_highlights: [
       "Best shared resources",
-      "Run CoCalc Launchpad wherever you want to stay in full control",
       "Postpaid billing for dedicated hosts",
+      "Many running projects at once",
     ],
     site_license_pool_description:
       "Advanced CoCalc access for demanding projects.",
@@ -177,6 +173,14 @@ function blobUsageLimits({
   };
 }
 
+function totalStorageLimits(gb: number) {
+  const bytes = Math.floor(gb * 1_000_000_000);
+  return {
+    total_storage_soft_bytes: bytes,
+    total_storage_hard_bytes: bytes,
+  };
+}
+
 function inviteUsageLimits({
   sendEnabled,
   dailyCount,
@@ -247,12 +251,14 @@ export const TIER_TEMPLATES = {
     course_store_visible: false,
     price_monthly: 0,
     price_yearly: 0,
+    trial_days: 0,
     course_price: undefined,
     course_duration_days: undefined,
     course_grace_days: undefined,
     priority: TEMPLATE_PRIORITY.free,
     project_defaults: quotaTemplate({
-      memory: 2000,
+      disk_quota: 4000,
+      memory: 4000,
     }),
     ai_limits: {
       units_5h: 0,
@@ -264,6 +270,8 @@ export const TIER_TEMPLATES = {
     },
     usage_limits: usageLimitsTemplate(1, 1, {
       ...cpuUsageLimits(4, 16),
+      max_projects: 1,
+      ...totalStorageLimits(4),
       ...acpUsageLimits({
         queuedPerAccount: 20,
         queuedPerThread: 5,
@@ -372,21 +380,27 @@ export const TIER_TEMPLATES = {
     course_store_visible: false,
     price_monthly: 8,
     price_yearly: 9 * 8,
+    trial_days: 0,
     course_price: undefined,
     course_duration_days: undefined,
     course_grace_days: undefined,
     priority: TEMPLATE_PRIORITY.basic,
     project_defaults: quotaTemplate({
-      disk_quota: 1000,
-      memory: 4000,
+      disk_quota: 16000,
+      memory: 8000,
     }),
-    ai_limits: aiLimitsFromYearly(9 * 8),
+    ai_limits: {
+      units_5h: 0,
+      units_7d: 0,
+    },
     features: {
       create_hosts: false,
       project_host_tier: 0,
     },
-    usage_limits: usageLimitsTemplate(2, 3, {
+    usage_limits: usageLimitsTemplate(2, 2, {
       ...cpuUsageLimits(20, 80),
+      max_projects: 5,
+      ...totalStorageLimits(16),
       notification_email_send_limit_5h: 50,
       notification_email_send_limit_7d: 200,
       ...acpUsageLimits({
@@ -436,20 +450,26 @@ export const TIER_TEMPLATES = {
     priority: TEMPLATE_PRIORITY.standard,
     price_monthly: 24,
     price_yearly: 18 * 12,
+    trial_days: 7,
     course_price: undefined,
     course_duration_days: undefined,
     course_grace_days: undefined,
     project_defaults: quotaTemplate({
-      disk_quota: 10000,
-      memory: 8000,
+      disk_quota: 32000,
+      memory: 16000,
     }),
-    ai_limits: aiLimitsFromYearly(18 * 12),
+    ai_limits: {
+      units_5h: 0,
+      units_7d: 0,
+    },
     features: {
       create_hosts: true,
       project_host_tier: 1,
     },
-    usage_limits: usageLimitsTemplate(3, 3, {
+    usage_limits: usageLimitsTemplate(4, 4, {
       ...cpuUsageLimits(80, 400),
+      max_projects: 25,
+      ...totalStorageLimits(64),
       notification_email_send_limit_5h: 200,
       notification_email_send_limit_7d: 1000,
       prepaid_host_usage_limit_5h_usd: 300,
@@ -628,25 +648,31 @@ export const TIER_TEMPLATES = {
     id: "pro",
     label: "Pro",
     ...STORE_MARKETING.pro,
-    store_visible: true,
+    store_visible: false,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.pro,
-    price_monthly: 160,
-    price_yearly: 120 * 12,
+    price_monthly: 200,
+    price_yearly: 150 * 12,
+    trial_days: 0,
     course_price: undefined,
     course_duration_days: undefined,
     course_grace_days: undefined,
     project_defaults: quotaTemplate({
-      disk_quota: 10000,
+      disk_quota: 64000,
       memory: 16000,
     }),
-    ai_limits: aiLimitsFromYearly(120 * 12),
+    ai_limits: {
+      units_5h: 0,
+      units_7d: 0,
+    },
     features: {
       create_hosts: true,
       project_host_tier: 2,
     },
-    usage_limits: usageLimitsTemplate(4, 1000, {
+    usage_limits: usageLimitsTemplate(8, 32, {
       ...cpuUsageLimits(1000, 5000),
+      max_projects: 250,
+      ...totalStorageLimits(512),
       notification_email_send_limit_5h: 1000,
       notification_email_send_limit_7d: 5000,
       credit_spend_limit_5h_usd: 300,
@@ -704,7 +730,9 @@ type TierTemplateFields = {
   store_description?: string;
   store_highlights?: readonly string[];
   site_license_pool_description?: string;
+  team_visible?: boolean;
   course_store_visible?: boolean;
+  course_allowed_domains?: readonly string[] | null;
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
@@ -758,8 +786,14 @@ export function applyMembershipTierTemplateFallbacks<
     site_license_pool_description:
       tier.site_license_pool_description ??
       templateFields.site_license_pool_description,
+    team_visible: tier.team_visible ?? templateFields.team_visible,
     course_store_visible:
       tier.course_store_visible ?? template.course_store_visible,
+    course_allowed_domains:
+      tier.course_allowed_domains ??
+      (templateFields.course_allowed_domains == null
+        ? undefined
+        : [...templateFields.course_allowed_domains]),
     course_price: tier.course_price ?? template.course_price,
     course_duration_days:
       tier.course_duration_days ?? template.course_duration_days,

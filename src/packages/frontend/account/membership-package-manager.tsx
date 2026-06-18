@@ -10,7 +10,6 @@ import {
   Checkbox,
   Collapse,
   DatePicker,
-  Descriptions,
   Divider,
   Drawer,
   Input,
@@ -22,7 +21,6 @@ import {
   Select,
   Space,
   Spin,
-  Statistic,
   Table,
   Tag,
   Typography,
@@ -44,11 +42,10 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { MembershipTierBenefits } from "./membership-tier-benefits";
 import type { MembershipTierLike } from "./membership-tiers";
-import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
-import Payments from "@cocalc/frontend/purchases/payments";
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
@@ -56,16 +53,13 @@ import {
   assignMembershipPackageSeat,
   cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
-  getSiteLicenseAffiliationReverificationStatus,
   getClaimableMembershipPackages,
-  getMembershipPackageQuote,
-  getMembershipPackages,
-  isPurchaseAllowed,
+  getTeamLicense,
+  getTeamLicenseQuote,
   listSiteLicenseOverviews,
   processPaymentIntents,
-  purchaseMembershipPackage,
+  purchaseTeamLicenseChange,
   releaseSiteLicensePoolSeat,
-  refreshSiteLicenseAffiliationVerification,
   removeSiteLicenseManager,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
@@ -77,21 +71,22 @@ import {
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { UseTeamLicenseBalance } from "./balance-toward-subs";
 import type {
   ClaimableMembershipPackage,
   MembershipClass,
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipPackageKind,
-  MembershipPackageQuote,
   SiteLicenseManagerRole,
-  SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
   SiteLicenseVerificationPolicy,
+  TeamLicenseOverview,
+  TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
-import { MEMBERSHIP_PACKAGE_PURCHASE } from "@cocalc/util/db-schema/purchases";
+import { TEAM_LICENSE_CHANGE } from "@cocalc/util/db-schema/purchases";
 import {
   capitalize,
   currency,
@@ -100,10 +95,24 @@ import {
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { COLORS } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import type { LineItem } from "@cocalc/util/stripe/types";
-import { openAccountSettings } from "./settings-routing";
 
 const { Paragraph, Text, Title } = Typography;
+const TEAM_LICENSE_FINALIZATION_TIMEOUT_MS = 75_000;
+const TEAM_LICENSE_FINALIZATION_POLL_MS = 6_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayFromError(err: unknown, fallbackMs: number): number {
+  const match = `${err}`.match(/try again in (\d+) seconds/i);
+  if (match?.[1]) {
+    return (Number(match[1]) + 1) * 1000;
+  }
+  return fallbackMs;
+}
 
 interface Props {
   tiers: MembershipTierLike[];
@@ -111,14 +120,21 @@ interface Props {
   user_account_id?: string;
 }
 
+interface TeamSeatAssignmentTarget {
+  membershipPackage: MembershipPackageDetails;
+  seatLabel: string;
+}
+
 interface PackageUserSearchResult {
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   email_address?: string;
 }
 
 interface AccountNameInfo {
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   email_address?: string;
@@ -131,10 +147,12 @@ type SiteLicenseRecentAuditEvent = NonNullable<
 >[number];
 
 function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
-  const displayName = [user.first_name, user.last_name]
-    .map((part) => `${part ?? ""}`.trim())
-    .filter(Boolean)
-    .join(" ");
+  const displayName =
+    user.display_name ||
+    [user.first_name, user.last_name]
+      .map((part) => `${part ?? ""}`.trim())
+      .filter(Boolean)
+      .join(" ");
   return (
     <Space orientation="vertical" size={0}>
       <Text>{displayName || user.email_address || user.account_id}</Text>
@@ -146,10 +164,9 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 }
 
 interface ClaimableMembershipPackagesPanelProps {
-  compact?: boolean;
-  hasSiteLicenseMembership?: boolean;
   onChanged?: () => void;
-  tiers?: MembershipTierLike[];
+  onSiteLicenseTitleChange?: (title?: string) => void;
+  refreshToken?: number;
 }
 
 function CompactField({
@@ -223,24 +240,10 @@ function getProvisionPoolTheme(
   };
 }
 
-function toTime(value?: Date | null): number {
-  return value instanceof Date ? value.valueOf() : 0;
-}
-
 function isActiveAssignment(
   assignment?: MembershipPackageAssignment | null,
 ): boolean {
   return !!assignment && !assignment.revoked_at;
-}
-
-function sortPackagesByRecent(
-  packages: MembershipPackageDetails[],
-): MembershipPackageDetails[] {
-  return [...packages].sort(
-    (left, right) =>
-      toTime(right.updated) - toTime(left.updated) ||
-      toTime(right.created) - toTime(left.created),
-  );
 }
 
 function getPackageKindLabel(kind: MembershipPackageKind): string {
@@ -256,13 +259,7 @@ function getPackageKindLabel(kind: MembershipPackageKind): string {
 
 function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
   return sortMembershipTiersByDisplayOrder(
-    tiers.filter(
-      (tier) =>
-        !tier.disabled &&
-        tier.store_visible !== false &&
-        tier.id !== "free" &&
-        tier.id !== "student",
-    ),
+    tiers.filter((tier) => !tier.disabled && tier.team_visible === true),
   );
 }
 
@@ -452,6 +449,7 @@ function getAccountSecondaryLabel(
   const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
   const email =
     `${assignment.email_address ?? ""}`.trim() ||
+    `${assignment.account_email_address ?? ""}`.trim() ||
     `${name?.email_address ?? ""}`.trim();
   if (email) return email;
   if (!fullName) return;
@@ -492,9 +490,16 @@ function accountIdentityText(
 
 function getAssignmentEmail(
   assignment: MembershipPackageAssignment,
+  names?: AccountNames,
 ): string | undefined {
   const email = `${assignment.email_address ?? ""}`.trim();
-  return email || undefined;
+  if (email) return email;
+  const accountEmail = `${assignment.account_email_address ?? ""}`.trim();
+  if (accountEmail) return accountEmail;
+  if (!assignment.account_id) return;
+  return (
+    `${names?.[assignment.account_id]?.email_address ?? ""}`.trim() || undefined
+  );
 }
 
 function getRequestAccountDisplay({
@@ -525,7 +530,7 @@ function assignmentSearchText({
 }): string {
   return [
     getAccountDisplayName(assignment, names),
-    getAssignmentEmail(assignment),
+    getAssignmentEmail(assignment, names),
     assignment.account_id,
   ]
     .filter(Boolean)
@@ -609,7 +614,7 @@ function revokeSeatConfirmationTitle({
   return `Revoke the ${pool.pool_name} seat for ${getAccountDisplayName(
     assignment,
     names,
-  )} (${getAssignmentEmail(assignment) ?? "email not recorded"})?`;
+  )} (${getAssignmentEmail(assignment, names) ?? "email not recorded"})?`;
 }
 
 async function revokeSeatOrThrow({
@@ -642,6 +647,22 @@ function ClaimablePoolSummary({
     return null;
   }
   return <Text type="secondary">{description}</Text>;
+}
+
+function getClaimablePoolDisplayName(
+  claimablePackage: ClaimableMembershipPackage,
+): string {
+  return (
+    `${claimablePackage.pool_name ?? ""}`.trim() || "Site license membership"
+  );
+}
+
+function getClaimableSiteLicenseDisplayName(
+  claimablePackage?: ClaimableMembershipPackage,
+): string | undefined {
+  const title = `${claimablePackage?.site_license_name ?? ""}`.trim();
+  const organization = `${claimablePackage?.organization_name ?? ""}`.trim();
+  return title || organization || undefined;
 }
 
 function getClaimableSeatStatus(
@@ -813,9 +834,9 @@ function canManageSiteLicenseOverview({
 }
 
 export function ClaimableMembershipPackagesPanel({
-  compact,
-  hasSiteLicenseMembership = false,
   onChanged,
+  onSiteLicenseTitleChange,
+  refreshToken,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
   const email_address = useTypedRedux("account", "email_address");
@@ -829,6 +850,9 @@ export function ClaimableMembershipPackagesPanel({
   const [requestingPackageId, setRequestingPackageId] = useState<string>("");
   const [releasingPackageId, setReleasingPackageId] = useState<string>("");
   const [cancelingRequestId, setCancelingRequestId] = useState<string>("");
+  const [sendingVerification, setSendingVerification] =
+    useState<boolean>(false);
+  const [verificationSent, setVerificationSent] = useState<boolean>(false);
   const [replacementClaimTarget, setReplacementClaimTarget] = useState<{
     claimablePackage: ClaimableMembershipPackage;
     accepted_terms: boolean;
@@ -836,7 +860,6 @@ export function ClaimableMembershipPackagesPanel({
   const [termsTarget, setTermsTarget] =
     useState<ClaimableMembershipPackage | null>(null);
   const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
-  const [compactModalOpen, setCompactModalOpen] = useState<boolean>(false);
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -850,10 +873,12 @@ export function ClaimableMembershipPackagesPanel({
     setLoading(true);
     setError("");
     try {
-      setClaimables(
-        await getClaimableMembershipPackages({
-          include_claimed_site_license_pools: true,
-        }),
+      const nextClaimables = await getClaimableMembershipPackages({
+        include_claimed_site_license_pools: true,
+      });
+      setClaimables(nextClaimables);
+      onSiteLicenseTitleChange?.(
+        getClaimableSiteLicenseDisplayName(nextClaimables[0]),
       );
     } catch (err) {
       setError(`${err}`);
@@ -864,7 +889,21 @@ export function ClaimableMembershipPackagesPanel({
 
   useEffect(() => {
     void refreshClaimables();
-  }, [account_id]);
+  }, [account_id, refreshToken]);
+
+  async function resendVerificationEmail(): Promise<void> {
+    setError("");
+    setSendingVerification(true);
+    try {
+      await webapp_client.account_client.send_verification_email();
+      setVerificationSent(true);
+    } catch (err) {
+      setVerificationSent(false);
+      setError(`Problem sending email verification: ${err}`);
+    } finally {
+      setSendingVerification(false);
+    }
+  }
 
   async function claimPackage(
     claimablePackage: ClaimableMembershipPackage,
@@ -878,7 +917,6 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
-      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -900,7 +938,6 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
-      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -1003,21 +1040,49 @@ export function ClaimableMembershipPackagesPanel({
   }
   const emailVerified =
     !!email_address && !!email_address_verified?.get?.(email_address);
-  const compactButtonPrimary =
-    !hasSiteLicenseMembership &&
-    claimables.some(
-      (claimablePackage) =>
-        getClaimableSeatStatus(claimablePackage) === "claimable",
+
+  function renderVerifyEmailClaimCallout() {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Verify your email to claim site-license memberships"
+        description={
+          <Space vertical size="small">
+            <span>
+              Verify your signed-in email address{" "}
+              <Text code>{email_address}</Text> to claim reserved seats or
+              matching site-license memberships.
+            </span>
+            {verificationSent ? (
+              <Text type="success">
+                Verification email sent to {email_address}.
+              </Text>
+            ) : null}
+            <Space wrap>
+              <Button
+                type="primary"
+                size="small"
+                loading={sendingVerification}
+                disabled={verificationSent}
+                onClick={() => void resendVerificationEmail()}
+              >
+                {verificationSent ? "Verification sent" : "Resend verification"}
+              </Button>
+            </Space>
+          </Space>
+        }
+        style={{ marginBottom: 12 }}
+      />
     );
+  }
 
   function renderClaimablePackages() {
     return (
       <Space vertical size="middle" style={{ width: "100%" }}>
         {claimables.map((claimablePackage) => {
           const seatStatus = getClaimableSeatStatus(claimablePackage);
-          const title =
-            `${claimablePackage.pool_name ?? ""}`.trim() ||
-            "Site license membership";
+          const title = getClaimablePoolDisplayName(claimablePackage);
           return (
             <Card
               key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
@@ -1039,7 +1104,7 @@ export function ClaimableMembershipPackagesPanel({
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   {seatStatus === "claimed" ? (
                     <Popconfirm
-                      title="Release this seat?"
+                      title={`Release ${title} seat?`}
                       description="This will remove this site-license membership from your account."
                       okText="Release seat"
                       okButtonProps={{ danger: true }}
@@ -1057,7 +1122,7 @@ export function ClaimableMembershipPackagesPanel({
                   ) : claimablePackage.requires_approval ? (
                     seatStatus === "pending" ? (
                       <Popconfirm
-                        title="Withdraw this request?"
+                        title={`Withdraw ${title} request?`}
                         description="This will remove your pending request for this site-license membership."
                         okText="Withdraw request"
                         okButtonProps={{ danger: true }}
@@ -1190,214 +1255,34 @@ export function ClaimableMembershipPackagesPanel({
     </Modal>
   );
 
-  if (compact) {
-    const disabledReason =
-      claimables.length > 0
-        ? undefined
-        : emailVerified
-          ? `Your signed-in email address ${email_address} is verified, but no reserved seats or matching site-license pools are available for it right now.`
-          : `Verify your signed-in email address ${email_address} to claim reserved seats or matching site-license memberships.`;
-    return (
-      <>
-        <Tooltip title={disabledReason}>
-          <span>
-            <Button
-              disabled={!loading && claimables.length === 0}
-              loading={loading}
-              onClick={() => setCompactModalOpen(true)}
-              type={compactButtonPrimary ? "primary" : undefined}
-            >
-              Claim site license membership
-            </Button>
-          </span>
-        </Tooltip>
-        {error ? <Alert type="error" message={error} showIcon /> : null}
-        <Modal
-          open={compactModalOpen}
-          title="Claim site license membership"
-          footer={null}
-          onCancel={() => setCompactModalOpen(false)}
-          destroyOnHidden
-        >
-          {renderClaimablePackages()}
-        </Modal>
-        {termsModal}
-        {replacementClaimModal}
-      </>
-    );
-  }
-
   return (
     <div>
-      <Text strong>Claim memberships</Text>
-      <Paragraph type="secondary" style={{ marginTop: "6px" }}>
-        If a seat was reserved for one of your verified email addresses, or if
-        your verified domain matches an available site license, you can claim
-        that membership here.
-      </Paragraph>
       {loading ? <Loading /> : null}
       {error ? (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
       ) : null}
       {!loading && !error && claimables.length === 0 ? (
-        <Alert
-          type="info"
-          showIcon
-          title="No claimable memberships right now"
-          description={
-            emailVerified ? (
+        emailVerified ? (
+          <Alert
+            type="info"
+            showIcon
+            title="No claimable memberships right now"
+            description={
               <span>
                 Your signed-in email address <Text code>{email_address}</Text>{" "}
                 is verified, but no reserved seats or matching site-license
                 pools are available for it right now.
               </span>
-            ) : (
-              <Space orientation="vertical" size="small">
-                <span>
-                  Verify your signed-in email address{" "}
-                  <Text code>{email_address}</Text> to claim reserved seats or
-                  matching site-license memberships.
-                </span>
-                <Button
-                  size="small"
-                  onClick={() => openAccountSettings({ page: "profile" })}
-                >
-                  Open Profile email verification
-                </Button>
-              </Space>
-            )
-          }
-        />
+            }
+          />
+        ) : (
+          renderVerifyEmailClaimCallout()
+        )
       ) : null}
       {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
       {termsModal}
       {replacementClaimModal}
     </div>
-  );
-}
-
-export function SiteLicenseReverificationPanel({
-  onChanged,
-}: {
-  onChanged?: () => void;
-}) {
-  const account_id = useTypedRedux("account", "account_id");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [refreshing, setRefreshing] = useState<string>("");
-  const [error, setError] = useState<string>("");
-  const [status, setStatus] =
-    useState<SiteLicenseAffiliationReverificationUserStatus | null>(null);
-
-  async function refreshStatus() {
-    if (!account_id) {
-      setStatus(null);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      setStatus(await getSiteLicenseAffiliationReverificationStatus());
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [account_id]);
-
-  async function refreshAffiliation(site_license_id?: string) {
-    setRefreshing(site_license_id ?? "all");
-    setError("");
-    try {
-      await refreshSiteLicenseAffiliationVerification({ site_license_id });
-      await refreshStatus();
-      onChanged?.();
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setRefreshing("");
-    }
-  }
-
-  if (!account_id) return null;
-  if (loading && status == null) return null;
-  if (!error && (!status || status.seats.length === 0)) return null;
-
-  return (
-    <Card
-      size="small"
-      title={
-        <Space>
-          <Icon name="refresh" />
-          <span>Site-license affiliation</span>
-          {status?.pending_count ? (
-            <Tag color="gold">{status.pending_count} need review</Tag>
-          ) : null}
-          {status?.grace_expired_count ? (
-            <Tag color="red">{status.grace_expired_count} grace expired</Tag>
-          ) : null}
-        </Space>
-      }
-      extra={
-        <Button
-          size="small"
-          loading={refreshing === "all"}
-          onClick={() => void refreshAffiliation()}
-        >
-          Refresh with verified email
-        </Button>
-      }
-    >
-      {error ? (
-        <Alert type="error" title={error} style={{ marginBottom: 12 }} />
-      ) : null}
-      <Space orientation="vertical" style={{ width: "100%" }}>
-        {(status?.seats ?? []).map((seat) => (
-          <div
-            key={`${seat.site_license_id}-${seat.package_id}`}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 12,
-              borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
-              paddingBottom: 8,
-            }}
-          >
-            <Space orientation="vertical" size={1}>
-              <Space wrap>
-                <Text strong>
-                  {seat.organization_name ||
-                    seat.site_license_name ||
-                    seat.site_license_id}
-                </Text>
-                <Tag color={seat.state === "current" ? "green" : "gold"}>
-                  {seat.state.replace(/_/g, " ")}
-                </Tag>
-                <Tag>{capitalize(seat.membership_class)}</Tag>
-                {seat.pool_name ? <Tag>{seat.pool_name}</Tag> : null}
-              </Space>
-              <Text type="secondary">
-                Verified {dateLabel(seat.affiliation_verified_at)} using{" "}
-                {seat.matched_email_address || seat.verification_policy}.
-                Reverify by {dateLabel(seat.reverification_due_at)}; grace ends{" "}
-                {dateLabel(seat.reverification_grace_expires_at)}.
-              </Text>
-            </Space>
-            <Button
-              size="small"
-              disabled={!seat.can_refresh_with_verified_email}
-              loading={refreshing === seat.site_license_id}
-              onClick={() => void refreshAffiliation(seat.site_license_id)}
-            >
-              Refresh
-            </Button>
-          </div>
-        ))}
-      </Space>
-    </Card>
   );
 }
 
@@ -1410,28 +1295,25 @@ export function TeamPackageManager({
   const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const [membershipPackages, setMembershipPackages] = useState<
-    MembershipPackageDetails[]
-  >([]);
-  const [refreshToken, setRefreshToken] = useState<number>(0);
+  const [teamLicense, setTeamLicense] = useState<TeamLicenseOverview | null>(
+    null,
+  );
   const [purchaseTarget, setPurchaseTarget] = useState<
     MembershipPackageDetails | null | undefined
   >(undefined);
   const [assignmentTarget, setAssignmentTarget] =
-    useState<MembershipPackageDetails | null>(null);
+    useState<TeamSeatAssignmentTarget | null>(null);
   const [accountNames, setAccountNames] = useState<AccountNames>({});
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const refreshPackages = async () => {
     setLoading(true);
     setError("");
     try {
-      const next = await getMembershipPackages(
-        user_account_id ? { user_account_id } : {},
-      );
-      setMembershipPackages(sortPackagesByRecent(next));
+      if (user_account_id) {
+        throw Error("team-license user lookup is not supported here");
+      }
+      setTeamLicense(await getTeamLicense());
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -1441,28 +1323,33 @@ export function TeamPackageManager({
 
   useEffect(() => {
     if (!ownerAccountId) {
-      setMembershipPackages([]);
+      setTeamLicense(null);
       setAccountNames({});
       setError("");
       setLoading(false);
       return;
     }
     void refreshPackages();
-  }, [ownerAccountId, refreshToken, user_account_id]);
+  }, [ownerAccountId, user_account_id]);
+
+  const teamSeatLines = useMemo(
+    () => (teamLicense?.seat_lines ?? []).filter((line) => line.seat_count > 0),
+    [teamLicense],
+  );
 
   const assignedAccountIds = useMemo(() => {
     return Array.from(
       new Set(
         [
-          ...membershipPackages.flatMap((membershipPackage) =>
-            membershipPackage.assignments
+          ...teamSeatLines.flatMap((line) =>
+            (line.package?.assignments ?? [])
               .filter(isActiveAssignment)
               .map((assignment) => assignment.account_id),
           ),
         ].filter((value): value is string => !!value),
       ),
     );
-  }, [membershipPackages]);
+  }, [teamSeatLines]);
 
   useEffect(() => {
     let canceled = false;
@@ -1489,14 +1376,6 @@ export function TeamPackageManager({
     };
   }, [assignedAccountIds]);
 
-  const teamPackages = useMemo(
-    () =>
-      membershipPackages.filter(
-        (membershipPackage) => membershipPackage.kind === "team",
-      ),
-    [membershipPackages],
-  );
-
   const handleChanged = async () => {
     await refreshPackages();
     onChanged?.();
@@ -1511,58 +1390,101 @@ export function TeamPackageManager({
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
       )}
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Button type="primary" onClick={() => setPurchaseTarget(null)}>
-          <Icon name="shopping-cart" /> Buy team seats
-        </Button>
-        <Button onClick={() => setRefreshToken((value) => value + 1)}>
-          <Icon name="refresh" /> Refresh
-        </Button>
-      </Space>
       {loading ? (
         <Loading />
+      ) : teamLicense == null ? (
+        <Space vertical>
+          <Text>
+            Create a team license to give membership seats to other CoCalc
+            accounts.
+            <br />
+            After setup, you can assign seats to the people who should receive
+            membership access.
+          </Text>
+          <Button type="primary" onClick={() => setPurchaseTarget(null)}>
+            <Icon name="shopping-cart" /> Set up team license
+          </Button>
+        </Space>
       ) : (
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <PackageGroup
-            title="Team packages"
-            emptyTitle="No team packages yet"
-            emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
-            membershipPackages={teamPackages}
-            tiers={tiers}
-            accountNames={accountNames}
-            onAddSeats={(membershipPackage) =>
-              setPurchaseTarget(membershipPackage)
-            }
-            onAssignSeat={(membershipPackage) =>
-              setAssignmentTarget(membershipPackage)
-            }
-            onRevokeSeat={async (membershipPackage, assignment) => {
-              setError("");
-              try {
-                await runFreshAuthAction(async () => {
-                  await revokeSeatOrThrow({
-                    package_id: membershipPackage.id,
-                    assignment,
-                  });
-                  await handleChanged();
-                });
-              } catch (err) {
-                setError(`${err}`);
-              }
-            }}
-          />
+        <Space vertical size="middle" style={{ width: "100%" }}>
+          {teamLicense.status === "past_due" ? (
+            <Alert
+              showIcon
+              type="warning"
+              title="Team license renewal is past due"
+              description={`The existing seats are still active, but this license was paid through ${formatTeamLicenseRenewalDate(
+                teamLicense.current_period_end,
+              )}.`}
+            />
+          ) : null}
+          <Space vertical>
+            <Text>
+              Renews on{" "}
+              {formatTeamLicenseRenewalDate(teamLicense.current_period_end)},{" "}
+              {currency(teamLicenseAnnualTotal(teamLicense))}/year.
+            </Text>
+            <UseTeamLicenseBalance />
+          </Space>
+          <div>
+            <Button onClick={() => setPurchaseTarget(null)}>
+              <Icon name="shopping-cart" /> Add seats
+            </Button>
+          </div>
+          {teamSeatLines.length === 0 ? (
+            <Alert
+              showIcon
+              type="info"
+              title="No team seats configured yet"
+              description="Add seats to start assigning memberships."
+            />
+          ) : (
+            <Space vertical size="middle" style={{ width: "100%" }}>
+              {teamSeatLines.map((line) => {
+                const tierLabel = teamLicenseSeatLineLabel(line, tiers);
+                return (
+                  <TeamLicenseSeatCard
+                    key={line.id}
+                    accountNames={accountNames}
+                    line={line}
+                    onAssignSeat={(membershipPackage) =>
+                      setAssignmentTarget({
+                        membershipPackage,
+                        seatLabel: tierLabel,
+                      })
+                    }
+                    onRevokeSeat={async (membershipPackage, assignment) => {
+                      setError("");
+                      try {
+                        await runFreshAuthAction(async () => {
+                          await revokeSeatOrThrow({
+                            package_id: membershipPackage.id,
+                            assignment,
+                          });
+                          await handleChanged();
+                        });
+                      } catch (err) {
+                        setError(`${err}`);
+                      }
+                    }}
+                    tierLabel={tierLabel}
+                  />
+                );
+              })}
+            </Space>
+          )}
         </Space>
       )}
       <TeamPackagePurchaseModal
         open={purchaseTarget !== undefined}
-        membershipPackage={purchaseTarget ?? undefined}
+        teamLicense={teamLicense}
         tiers={tiers}
         onClose={() => setPurchaseTarget(undefined)}
         onPurchased={handleChanged}
       />
       <AssignMembershipSeatModal
         open={assignmentTarget != null}
-        membershipPackage={assignmentTarget}
+        membershipPackage={assignmentTarget?.membershipPackage ?? null}
+        seatLabel={assignmentTarget?.seatLabel}
         onClose={() => setAssignmentTarget(null)}
         onAssigned={async () => {
           setAssignmentTarget(null);
@@ -1594,9 +1516,7 @@ export function SiteLicenseManager({
   const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
     useState<string>("");
   const [accountNames, setAccountNames] = useState<AccountNames>({});
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const refreshSiteLicenseOverviews = async () => {
     if (!account_id) {
@@ -1797,9 +1717,7 @@ export function SiteLicenseAdminPanel({
   );
   const [accountNames, setAccountNames] = useState<AccountNames>({});
   const [reviewingRequestId, setReviewingRequestId] = useState("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function refreshOverviews() {
     if (!account_id) {
@@ -2858,6 +2776,117 @@ function SiteLicenseDashboard({
   );
 }
 
+function SeatAssignmentsTable({
+  accountNames,
+  canManage,
+  emptyText,
+  onRevokeSeat,
+  revokeConfirmationTitle,
+  revokeDescription,
+  revokingSeat,
+  revokeKeyPrefix,
+  scrollY,
+  setRevokingSeat,
+  shownAssignments,
+  tableWidth = canManage ? 690 : 570,
+}: {
+  accountNames: AccountNames;
+  canManage: boolean;
+  emptyText: string;
+  onRevokeSeat?: (assignment: MembershipPackageAssignment) => Promise<void>;
+  revokeConfirmationTitle?: (assignment: MembershipPackageAssignment) => string;
+  revokeDescription?: string;
+  revokingSeat: string;
+  revokeKeyPrefix: string;
+  scrollY?: string | number;
+  setRevokingSeat: (value: string) => void;
+  shownAssignments: MembershipPackageAssignment[];
+  tableWidth?: number;
+}) {
+  return (
+    <Table<MembershipPackageAssignment>
+      dataSource={shownAssignments}
+      locale={{ emptyText }}
+      pagination={false}
+      rowKey={(assignment) => assignment.id}
+      scroll={{ x: tableWidth, ...(scrollY == null ? {} : { y: scrollY }) }}
+      size="small"
+      tableLayout="fixed"
+    >
+      <Table.Column<MembershipPackageAssignment>
+        title="User"
+        width={220}
+        render={(_, assignment) => {
+          const name = getAccountDisplayName(assignment, accountNames);
+          return (
+            <Tooltip title={name}>
+              <Text ellipsis style={{ display: "block", maxWidth: 200 }}>
+                {name}
+              </Text>
+            </Tooltip>
+          );
+        }}
+      />
+      <Table.Column<MembershipPackageAssignment>
+        title="Email"
+        width={240}
+        render={(_, assignment) => {
+          const email = getAssignmentEmail(assignment, accountNames);
+          if (!email) {
+            return <Text type="secondary">-</Text>;
+          }
+          return (
+            <Tooltip title={email}>
+              <Text ellipsis style={{ display: "block", maxWidth: 220 }}>
+                {email}
+              </Text>
+            </Tooltip>
+          );
+        }}
+      />
+      <Table.Column<MembershipPackageAssignment>
+        title="Seat given on"
+        width={140}
+        render={(_, assignment) => formatSeatGivenOn(assignment.assigned_at)}
+      />
+      {canManage ? (
+        <Table.Column<MembershipPackageAssignment>
+          align="right"
+          title=""
+          width={90}
+          render={(_, assignment) => {
+            const key = `${revokeKeyPrefix}-${assignment.id}`;
+            return (
+              <Popconfirm
+                title={revokeConfirmationTitle?.(assignment)}
+                description={revokeDescription}
+                okButtonProps={{
+                  danger: true,
+                  loading: revokingSeat === key,
+                }}
+                okText="Revoke seat"
+                onConfirm={async () => {
+                  if (!onRevokeSeat) return;
+                  setRevokingSeat(key);
+                  try {
+                    await onRevokeSeat(assignment);
+                  } finally {
+                    setRevokingSeat("");
+                  }
+                }}
+              >
+                <Button danger size="small" loading={revokingSeat === key}>
+                  Revoke
+                </Button>
+              </Popconfirm>
+            );
+          }}
+        />
+      ) : null}
+    </Table>
+  );
+}
+
 function PoolUsersDrawer({
   accountNames,
   canManageLicense,
@@ -2898,6 +2927,12 @@ function PoolUsersDrawer({
     );
   }, [accountNames, activeAssignments, search]);
   const tableWidth = canManageLicense ? 690 : 570;
+  const emptyText =
+    activeAssignments.length === 0
+      ? "No active users."
+      : search.trim()
+        ? "No users match this search."
+        : "No active users.";
 
   return (
     <Drawer
@@ -2921,102 +2956,26 @@ function PoolUsersDrawer({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          <Table<MembershipPackageAssignment>
-            dataSource={filteredAssignments}
-            locale={{
-              emptyText:
-                activeAssignments.length === 0
-                  ? "No active users."
-                  : search.trim()
-                    ? "No users match this search."
-                    : "No active users.",
-            }}
-            pagination={false}
-            rowKey={(assignment) => assignment.id}
-            scroll={{ x: tableWidth, y: "calc(100vh - 240px)" }}
-            size="small"
-            tableLayout="fixed"
-          >
-            <Table.Column<MembershipPackageAssignment>
-              title="User"
-              width={220}
-              render={(_, assignment) => {
-                const name = getAccountDisplayName(assignment, accountNames);
-                return (
-                  <Tooltip title={name}>
-                    <Text ellipsis style={{ display: "block", maxWidth: 200 }}>
-                      {name}
-                    </Text>
-                  </Tooltip>
-                );
-              }}
-            />
-            <Table.Column<MembershipPackageAssignment>
-              title="Email"
-              width={240}
-              render={(_, assignment) => {
-                const email = getAssignmentEmail(assignment);
-                if (!email) {
-                  return <Text type="secondary">-</Text>;
-                }
-                return (
-                  <Tooltip title={email}>
-                    <Text ellipsis style={{ display: "block", maxWidth: 220 }}>
-                      {email}
-                    </Text>
-                  </Tooltip>
-                );
-              }}
-            />
-            <Table.Column<MembershipPackageAssignment>
-              title="Seat given on"
-              width={140}
-              render={(_, assignment) =>
-                formatSeatGivenOn(assignment.assigned_at)
-              }
-            />
-            {canManageLicense ? (
-              <Table.Column<MembershipPackageAssignment>
-                align="right"
-                title=""
-                width={90}
-                render={(_, assignment) => {
-                  const key = `${pool.id}-${assignment.id}`;
-                  return (
-                    <Popconfirm
-                      title={revokeSeatConfirmationTitle({
-                        assignment,
-                        names: accountNames,
-                        pool,
-                      })}
-                      description="This removes the active seat from this pool."
-                      okButtonProps={{
-                        danger: true,
-                        loading: revokingSeat === key,
-                      }}
-                      okText="Revoke seat"
-                      onConfirm={async () => {
-                        setRevokingSeat(key);
-                        try {
-                          await onRevokeSeat(pool, assignment);
-                        } finally {
-                          setRevokingSeat("");
-                        }
-                      }}
-                    >
-                      <Button
-                        danger
-                        size="small"
-                        loading={revokingSeat === key}
-                      >
-                        Revoke
-                      </Button>
-                    </Popconfirm>
-                  );
-                }}
-              />
-            ) : null}
-          </Table>
+          <SeatAssignmentsTable
+            accountNames={accountNames}
+            canManage={canManageLicense}
+            emptyText={emptyText}
+            onRevokeSeat={(assignment) => onRevokeSeat(pool, assignment)}
+            revokeConfirmationTitle={(assignment) =>
+              revokeSeatConfirmationTitle({
+                assignment,
+                names: accountNames,
+                pool,
+              })
+            }
+            revokeDescription="This removes the active seat from this pool."
+            revokingSeat={revokingSeat}
+            revokeKeyPrefix={pool.id}
+            scrollY="calc(100vh - 240px)"
+            setRevokingSeat={setRevokingSeat}
+            shownAssignments={filteredAssignments}
+            tableWidth={tableWidth}
+          />
         </Space>
       ) : null}
     </Drawer>
@@ -3269,14 +3228,26 @@ function SiteLicenseManagersEditor({
   async function addOrUpdateManager() {
     const target = selectedAccountId.trim();
     if (!target) return;
+    const ok = await updateManagerRole(target, role);
+    if (!ok) {
+      return;
+    }
+    setSelectedAccountId("");
+    setSearchResults([]);
+  }
+
+  async function updateManagerRole(
+    target: string,
+    nextRole: SiteLicenseManagerRole,
+  ) {
     setWorking(`set-${target}`);
     setError("");
     try {
-      await onSetManager(overview.site_license.id, target, role);
-      setSelectedAccountId("");
-      setSearchResults([]);
+      await onSetManager(overview.site_license.id, target, nextRole);
+      return true;
     } catch (err) {
       setError(`${err}`);
+      return false;
     } finally {
       setWorking("");
     }
@@ -3333,11 +3304,7 @@ function SiteLicenseManagersEditor({
                           { label: "Viewer", value: "viewer" },
                         ]}
                         onChange={(nextRole) =>
-                          void onSetManager(
-                            overview.site_license.id,
-                            manager.account_id,
-                            nextRole,
-                          )
+                          void updateManagerRole(manager.account_id, nextRole)
                         }
                       />
                       <Popconfirm
@@ -3421,78 +3388,16 @@ function SiteLicenseManagersEditor({
   );
 }
 
-function PackageGroup({
-  title,
-  emptyTitle,
-  emptyDescription,
-  membershipPackages,
-  tiers,
-  accountNames,
-  onAddSeats,
-  onAssignSeat,
-  onRevokeSeat,
-}: {
-  title: string;
-  emptyTitle: string;
-  emptyDescription: string;
-  membershipPackages: MembershipPackageDetails[];
-  tiers: MembershipTierLike[];
-  accountNames: AccountNames;
-  onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
-  onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
-  onRevokeSeat: (
-    membershipPackage: MembershipPackageDetails,
-    assignment: MembershipPackageAssignment,
-  ) => Promise<void>;
-}) {
-  if (membershipPackages.length === 0) {
-    return (
-      <Alert
-        type="info"
-        showIcon
-        title={emptyTitle}
-        description={emptyDescription}
-      />
-    );
-  }
-  return (
-    <div>
-      <Title level={5} style={{ marginTop: 0 }}>
-        {title}
-      </Title>
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        {membershipPackages.map((membershipPackage) => (
-          <MembershipPackageCard
-            key={membershipPackage.id}
-            membershipPackage={membershipPackage}
-            tierLabel={
-              tiers.find(
-                (tier) => tier.id === membershipPackage.membership_class,
-              )?.label ?? capitalize(membershipPackage.membership_class)
-            }
-            accountNames={accountNames}
-            onAddSeats={onAddSeats}
-            onAssignSeat={onAssignSeat}
-            onRevokeSeat={onRevokeSeat}
-          />
-        ))}
-      </Space>
-    </div>
-  );
-}
-
-function MembershipPackageCard({
-  membershipPackage,
+function TeamLicenseSeatCard({
+  line,
   tierLabel,
   accountNames,
-  onAddSeats,
   onAssignSeat,
   onRevokeSeat,
 }: {
-  membershipPackage: MembershipPackageDetails;
+  line: TeamLicenseOverview["seat_lines"][number];
   tierLabel: string;
   accountNames: AccountNames;
-  onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
@@ -3500,136 +3405,90 @@ function MembershipPackageCard({
   ) => Promise<void>;
 }) {
   const [revokingAccountId, setRevokingAccountId] = useState<string>("");
+  const membershipPackage = line.package;
   const activeAssignments =
-    membershipPackage.assignments.filter(isActiveAssignment);
-  const domains = getPackageDomains(membershipPackage);
-  const interval =
-    `${membershipPackage.metadata?.interval ?? ""}` === "year"
-      ? "yearly"
-      : `${membershipPackage.metadata?.interval ?? ""}` === "month"
-        ? "monthly"
-        : undefined;
+    membershipPackage?.assignments.filter(isActiveAssignment) ?? [];
+  const assignedCount =
+    membershipPackage?.active_assignment_count ?? activeAssignments.length;
+  const availableCount =
+    membershipPackage?.available_seat_count ??
+    Math.max(0, line.seat_count - assignedCount);
+  const canManageSeats = membershipPackage != null;
 
   return (
     <Card
       size="small"
-      title={
-        <Space wrap>
-          <span>{getPackageKindLabel(membershipPackage.kind)}</span>
-          <Tag color="blue">{tierLabel}</Tag>
-          {interval ? <Tag>{interval}</Tag> : null}
-        </Space>
-      }
-      extra={
-        <Space wrap>
+      title={`${tierLabel} - ${assignedCount} of ${line.seat_count} seats assigned`}
+    >
+      <Space vertical size="middle" style={{ width: "100%" }}>
+        <SeatAssignmentsTable
+          accountNames={accountNames}
+          canManage={canManageSeats}
+          emptyText="No seats assigned yet."
+          onRevokeSeat={async (assignment) => {
+            if (!membershipPackage) return;
+            await onRevokeSeat(membershipPackage, assignment);
+          }}
+          revokeConfirmationTitle={(assignment) =>
+            `Revoke the ${tierLabel} seat for ${assignmentConfirmationName(
+              assignment,
+              accountNames,
+            )}?`
+          }
+          revokeDescription="This removes the active seat from this team license."
+          revokingSeat={revokingAccountId}
+          revokeKeyPrefix={line.id}
+          setRevokingSeat={setRevokingAccountId}
+          shownAssignments={activeAssignments}
+          tableWidth={canManageSeats ? 690 : 570}
+        />
+        <div>
           <Button
-            type="primary"
-            onClick={() => onAssignSeat(membershipPackage)}
-            disabled={membershipPackage.available_seat_count <= 0}
+            onClick={() => membershipPackage && onAssignSeat(membershipPackage)}
+            disabled={!membershipPackage || availableCount <= 0}
           >
             Assign seat
           </Button>
-          {membershipPackage.kind === "team" && onAddSeats ? (
-            <Button onClick={() => onAddSeats(membershipPackage)}>
-              Add seats
-            </Button>
-          ) : null}
-        </Space>
-      }
-    >
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Tag>{`${membershipPackage.seat_count} purchased`}</Tag>
-        <Tag color="green">{`${membershipPackage.active_assignment_count} assigned`}</Tag>
-        <Tag color="gold">{`${membershipPackage.available_seat_count} available`}</Tag>
+        </div>
       </Space>
-      <Descriptions size="small" column={1}>
-        {membershipPackage.starts_at ? (
-          <Descriptions.Item label="Starts">
-            <TimeAgo date={membershipPackage.starts_at} />
-          </Descriptions.Item>
-        ) : null}
-        {membershipPackage.expires_at ? (
-          <Descriptions.Item label="Expires">
-            <TimeAgo date={membershipPackage.expires_at} />
-          </Descriptions.Item>
-        ) : null}
-        {membershipPackage.kind === "team" &&
-        typeof membershipPackage.metadata?.seat_price === "number" ? (
-          <Descriptions.Item label="Seat price">
-            {currency(Number(membershipPackage.metadata?.seat_price))}
-          </Descriptions.Item>
-        ) : null}
-        {domains.length > 0 ? (
-          <Descriptions.Item label="Allowed domains">
-            <Space wrap>
-              {domains.map((domain) => (
-                <Tag key={domain}>{domain}</Tag>
-              ))}
-            </Space>
-          </Descriptions.Item>
-        ) : null}
-      </Descriptions>
-      <Divider style={{ margin: "12px 0" }} />
-      <Text strong>Assigned seats</Text>
-      {activeAssignments.length === 0 ? (
-        <div style={{ marginTop: 6 }}>
-          <Text type="secondary">No seats assigned yet.</Text>
-        </div>
-      ) : (
-        <div style={{ marginTop: 6 }}>
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            {activeAssignments.map((assignment) => (
-              <div
-                key={assignment.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  alignItems: "flex-start",
-                }}
-              >
-                <Space orientation="vertical" size={0}>
-                  <Text>{getAccountDisplayName(assignment, accountNames)}</Text>
-                  <Space wrap>
-                    {getAccountSecondaryLabel(assignment, accountNames) ? (
-                      <Text type="secondary">
-                        {getAccountSecondaryLabel(assignment, accountNames)}
-                      </Text>
-                    ) : null}
-                    {assignment.assigned_at ? (
-                      <Text type="secondary">
-                        Assigned <TimeAgo date={assignment.assigned_at} />
-                      </Text>
-                    ) : null}
-                  </Space>
-                </Space>
-                <Button
-                  danger
-                  size="small"
-                  loading={
-                    revokingAccountId ===
-                    (assignment.account_id ?? assignment.email_address ?? "")
-                  }
-                  onClick={async () => {
-                    setRevokingAccountId(
-                      assignment.account_id ?? assignment.email_address ?? "",
-                    );
-                    try {
-                      await onRevokeSeat(membershipPackage, assignment);
-                    } finally {
-                      setRevokingAccountId("");
-                    }
-                  }}
-                >
-                  Revoke
-                </Button>
-              </div>
-            ))}
-          </Space>
-        </div>
-      )}
     </Card>
   );
+}
+
+function teamLicenseSeatLineLabel(
+  line: TeamLicenseOverview["seat_lines"][number],
+  tiers: MembershipTierLike[],
+): string {
+  return (
+    tiers.find((tier) => tier.id === line.membership_class)?.label ??
+    capitalize(line.membership_class)
+  );
+}
+
+function teamLicenseAnnualTotal(teamLicense: TeamLicenseOverview): number {
+  return moneyRound2Up(
+    teamLicense.seat_lines.reduce(
+      (sum, line) =>
+        sum.add(toDecimal(line.annual_price_per_seat).mul(line.seat_count)),
+      toDecimal(0),
+    ),
+  ).toNumber();
+}
+
+function assignmentConfirmationName(
+  assignment: MembershipPackageAssignment,
+  names: AccountNames,
+): string {
+  const displayName = getAccountDisplayName(assignment, names);
+  const secondary = getAccountSecondaryLabel(assignment, names);
+  if (
+    !secondary ||
+    secondary === displayName ||
+    secondary === "Reserved by email"
+  ) {
+    return displayName;
+  }
+  return `${displayName} (${secondary})`;
 }
 
 function ProvisionSiteLicenseModal({
@@ -3666,9 +3525,7 @@ function ProvisionSiteLicenseModal({
   const [editingPoolIndex, setEditingPoolIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     if (!open) return;
@@ -4657,150 +4514,113 @@ function EditSiteLicenseModal({
 
 function TeamPackagePurchaseModal({
   open,
-  membershipPackage,
+  teamLicense,
   tiers,
   onClose,
   onPurchased,
 }: {
   open: boolean;
-  membershipPackage?: MembershipPackageDetails;
+  teamLicense: TeamLicenseOverview | null;
   tiers: MembershipTierLike[];
   onClose: () => void;
   onPurchased: () => Promise<void>;
 }) {
   const purchaseableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
-  const [selectedTierId, setSelectedTierId] = useState<string>("");
-  const [interval, setInterval] = useState<"month" | "year">("month");
-  const [seatCount, setSeatCount] = useState<number>(1);
-  const [quote, setQuote] = useState<MembershipPackageQuote | null>(null);
+  const [seatTargets, setSeatTargets] = useState<Record<string, number>>({});
+  const [quote, setQuote] = useState<TeamLicenseQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionError, setActionError] = useState<string>("");
   const [disabled, setDisabled] = useState<boolean>(false);
-  const [place, setPlace] = useState<"checkout" | "processing" | "done">(
-    "checkout",
-  );
-  const numPaymentsRef = useRef<number | null>(null);
-  const [chargeAmount, setChargeAmount] = useState<number>(0);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const [place, setPlace] = useState<
+    "choose" | "review" | "processing" | "done"
+  >("choose");
+  const modalWasOpenRef = useRef(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const hasExistingLicense = teamLicense != null;
+
+  const initialSeatCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tier of purchaseableTiers) {
+      counts[tier.id] =
+        teamLicense?.seat_lines.find(
+          (line) => line.membership_class === tier.id,
+        )?.seat_count ?? 0;
+    }
+    return counts;
+  }, [purchaseableTiers, teamLicense]);
+
+  const assignedSeatCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tier of purchaseableTiers) {
+      counts[tier.id] =
+        teamLicense?.seat_lines.find(
+          (line) => line.membership_class === tier.id,
+        )?.package?.active_assignment_count ?? 0;
+    }
+    return counts;
+  }, [purchaseableTiers, teamLicense]);
 
   useEffect(() => {
-    if (!open) return;
-    setPlace("checkout");
+    if (!open) {
+      modalWasOpenRef.current = false;
+      return;
+    }
+    if (modalWasOpenRef.current) return;
+    modalWasOpenRef.current = true;
+    setPlace("choose");
     setQuote(null);
     setQuoteError("");
     setActionError("");
     setDisabled(false);
-    setSeatCount(1);
-    if (membershipPackage) {
-      setSelectedTierId(membershipPackage.membership_class);
-      setInterval(
-        `${membershipPackage.metadata?.interval ?? ""}` === "year"
-          ? "year"
-          : "month",
-      );
-    } else {
-      setSelectedTierId(purchaseableTiers[0]?.id ?? "");
-      setInterval("month");
-    }
-  }, [open, membershipPackage, purchaseableTiers]);
+    setSeatTargets(initialSeatCounts);
+  }, [open, initialSeatCounts]);
 
-  const product = useMemo(
+  const hasSeatIncrease = useMemo(
     () =>
-      membershipPackage
-        ? {
-            package_id: membershipPackage.id,
-            kind: "team" as const,
-            seat_count: seatCount,
-            membership_class:
-              (membershipPackage.membership_class as MembershipClass) ??
-              undefined,
-            interval: (`${membershipPackage.metadata?.interval ?? interval}` ===
-            "year"
-              ? "year"
-              : "month") as "month" | "year",
-          }
-        : {
-            kind: "team" as const,
-            membership_class:
-              (selectedTierId as MembershipClass | "") || undefined,
-            seat_count: seatCount,
-            interval,
-          },
-    [membershipPackage, seatCount, selectedTierId, interval],
+      purchaseableTiers.some((tier) => {
+        const initial = initialSeatCounts[tier.id] ?? 0;
+        const target = seatTargets[tier.id] ?? initial;
+        return target > initial;
+      }),
+    [initialSeatCounts, purchaseableTiers, seatTargets],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    if (!seatCount || seatCount < 1) {
-      setQuote(null);
-      return;
-    }
-    if (!membershipPackage && !selectedTierId) {
-      setQuote(null);
-      return;
-    }
-    let canceled = false;
-    async function loadQuote() {
-      setQuoteLoading(true);
-      setQuoteError("");
-      try {
-        const nextQuote = await getMembershipPackageQuote(product);
-        const purchaseAllowed = await isPurchaseAllowed(
-          "membership",
-          nextQuote.total_price,
-        );
-        if (!canceled) {
-          setQuote(nextQuote);
-          setChargeAmount(
-            purchaseAllowed.chargeAmount ?? nextQuote.total_price ?? 0,
-          );
-        }
-      } catch (err) {
-        if (!canceled) {
-          setQuoteError(`${err}`);
-          setQuote(null);
-        }
-      } finally {
-        if (!canceled) {
-          setQuoteLoading(false);
-        }
-      }
-    }
-    void loadQuote();
-    return () => {
-      canceled = true;
-    };
-  }, [open, product, seatCount, membershipPackage, selectedTierId]);
+  const lineItems: LineItem[] = (quote?.line_items ?? []).map((item) => ({
+    description: item.description,
+    amount: moneyRound2Up(toDecimal(item.amount)).toNumber(),
+  }));
 
-  const selectedTier = purchaseableTiers.find(
-    (tier) => tier.id === selectedTierId,
-  );
-  const selectedTierLabel =
-    selectedTier?.label ??
-    capitalize(selectedTierId || membershipPackage?.membership_class || "team");
-  const totalValue = toDecimal(quote?.total_price ?? 0);
-  const chargeAmountValue = toDecimal(chargeAmount);
-  const lineItems: LineItem[] = [];
-  if (quote) {
-    lineItems.push({
-      description: `${seatCount} ${selectedTierLabel} team seat${seatCount === 1 ? "" : "s"} (${currency(
-        quote.seat_price,
-      )} each)`,
-      amount: moneyRound2Up(totalValue).toNumber(),
-    });
-    if (chargeAmountValue.lt(totalValue)) {
-      lineItems.push({
-        description: "Apply account credit toward team seats",
-        amount: chargeAmountValue.sub(totalValue).toNumber(),
-      });
-    } else if (chargeAmountValue.gt(totalValue)) {
-      lineItems.push({
-        description: "Minimum charge top-up added to account credit",
-        amount: chargeAmountValue.sub(totalValue).toNumber(),
-      });
+  function setTargetSeatCount(tierId: string, value: number) {
+    const initial = initialSeatCounts[tierId] ?? 0;
+    const next = Number.isFinite(value)
+      ? Math.max(initial, Math.floor(value))
+      : initial;
+    setSeatTargets((current) => ({
+      ...current,
+      [tierId]: next,
+    }));
+    setQuote(null);
+    setQuoteError("");
+    setActionError("");
+  }
+
+  async function loadQuotes() {
+    if (!hasSeatIncrease) {
+      setQuoteError("Increase at least one team seat count to continue.");
+      return;
+    }
+    setQuoteLoading(true);
+    setQuoteError("");
+    setActionError("");
+    try {
+      setQuote(await getTeamLicenseQuote({ target_seats: seatTargets }));
+      setPlace("review");
+    } catch (err) {
+      setQuoteError(`${err}`);
+      setQuote(null);
+    } finally {
+      setQuoteLoading(false);
     }
   }
 
@@ -4809,7 +4629,7 @@ function TeamPackagePurchaseModal({
     setDisabled(true);
     try {
       const completed = await runFreshAuthAction(async () => {
-        await purchaseMembershipPackage(product);
+        await purchaseTeamLicenseChange({ target_seats: seatTargets });
         await onPurchased();
         setPlace("done");
       });
@@ -4826,14 +4646,151 @@ function TeamPackagePurchaseModal({
   async function refreshProcessing() {
     setActionError("");
     try {
-      const { count } = await processPaymentIntents();
-      if (count > 0) {
+      const deadline = Date.now() + TEAM_LICENSE_FINALIZATION_TIMEOUT_MS;
+      while (Date.now() <= deadline) {
+        try {
+          await processPaymentIntents({ strict: true });
+        } catch (err) {
+          const remainingMs = deadline - Date.now();
+          if (remainingMs <= 0) {
+            throw err;
+          }
+          await delay(
+            Math.min(
+              retryDelayFromError(err, TEAM_LICENSE_FINALIZATION_POLL_MS),
+              remainingMs,
+            ),
+          );
+          continue;
+        }
+        const updated = await getTeamLicense();
         await onPurchased();
-        setPlace("done");
+        if (
+          teamLicenseMatchesTargets(updated, seatTargets, purchaseableTiers)
+        ) {
+          setPlace("done");
+          return;
+        }
+        await delay(TEAM_LICENSE_FINALIZATION_POLL_MS);
       }
+      setActionError(
+        "Payment was submitted, but CoCalc could not confirm the team license update yet. Please check again shortly or contact support if the license does not update.",
+      );
     } catch (err) {
       setActionError(`${err}`);
     }
+  }
+
+  function renderChooseStep() {
+    return (
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Text>Choose annual team seats.</Text>
+        {purchaseableTiers.length === 0 ? (
+          <Alert
+            showIcon
+            type="info"
+            title="No team-license tiers are currently available."
+          />
+        ) : (
+          <Table
+            columns={[
+              {
+                title: "Tier",
+                render: (_, { tier }) => tier.label ?? capitalize(tier.id),
+              },
+              {
+                title: "Seats",
+                render: (_, { tier, initial, target }) => (
+                  <InputNumber
+                    min={initial}
+                    precision={0}
+                    style={{ width: 80 }}
+                    value={target}
+                    onChange={(value) =>
+                      setTargetSeatCount(
+                        tier.id,
+                        typeof value === "number" ? value : initial,
+                      )
+                    }
+                    onBlur={(event) =>
+                      setTargetSeatCount(
+                        tier.id,
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  />
+                ),
+              },
+              {
+                title: "Assigned",
+                render: (_, { assigned }) => `${assigned} used`,
+              },
+            ]}
+            dataSource={purchaseableTiers.map((tier) => ({
+              tier,
+              assigned: assignedSeatCounts[tier.id] ?? 0,
+              initial: initialSeatCounts[tier.id] ?? 0,
+              target: seatTargets[tier.id] ?? initialSeatCounts[tier.id] ?? 0,
+            }))}
+            pagination={false}
+            rowKey={({ tier }) => tier.id}
+            size="small"
+          />
+        )}
+        <Space wrap>
+          <Button
+            href={joinUrlPath(appBasePath, "pricing")}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Compare membership details <Icon name="external-link" />
+          </Button>
+          <Button
+            disabled={!hasSeatIncrease || quoteLoading}
+            loading={quoteLoading}
+            onClick={loadQuotes}
+            type="primary"
+          >
+            Continue
+          </Button>
+        </Space>
+      </Space>
+    );
+  }
+
+  function renderReviewStep() {
+    return (
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert
+          showIcon={false}
+          type="info"
+          title={`These seats will become available now and renew on ${formatTeamLicenseRenewalDate(
+            quote?.current_period_end,
+          )}.`}
+        />
+        <Button disabled={disabled} onClick={() => setPlace("choose")}>
+          Change selection
+        </Button>
+        <StripePayment
+          disabled={disabled}
+          description="Team license"
+          lineItems={lineItems}
+          purpose={TEAM_LICENSE_CHANGE}
+          title={null}
+          metadata={{
+            team_license_target_seats: JSON.stringify(seatTargets),
+          }}
+          onFinished={async (total) => {
+            if (!total) {
+              await completePurchase();
+              return;
+            }
+            setPlace("processing");
+            await refreshProcessing();
+          }}
+        />
+      </Space>
+    );
   }
 
   return (
@@ -4847,7 +4804,7 @@ function TeamPackagePurchaseModal({
       title={
         <>
           <Icon name="shopping-cart" style={{ marginRight: 10 }} />
-          {membershipPackage ? "Add team seats" : "Purchase team seats"}
+          {hasExistingLicense ? "Update team license" : "Set up team license"}
         </>
       }
     >
@@ -4863,152 +4820,15 @@ function TeamPackagePurchaseModal({
             }}
           />
         ) : null}
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Team seats grant account-wide membership access. Mid-term seat
-          increases use the same per-seat price as the original package.
-        </Paragraph>
-        <Space wrap>
-          <Tag color="blue">
-            {membershipPackage ? "Existing team package" : "New team package"}
-          </Tag>
-          {membershipPackage ? <Tag>{selectedTierLabel}</Tag> : null}
-        </Space>
-        {!membershipPackage ? (
-          <>
-            <div>
-              <Text strong>Membership tier</Text>
-              <div style={{ marginTop: 8 }}>
-                <Radio.Group
-                  value={selectedTierId}
-                  onChange={(e) => setSelectedTierId(e.target.value)}
-                >
-                  <Space orientation="vertical">
-                    {purchaseableTiers.map((tier) => (
-                      <Radio key={tier.id} value={tier.id}>
-                        {tier.label ?? capitalize(tier.id)}
-                      </Radio>
-                    ))}
-                  </Space>
-                </Radio.Group>
-              </div>
-              {selectedTier != null ? (
-                <div style={{ marginTop: 8 }}>
-                  <MembershipTierBenefits
-                    compact
-                    showBilling={false}
-                    tier={selectedTier}
-                  />
-                </div>
-              ) : null}
-            </div>
-            <div>
-              <Text strong>Billing interval</Text>
-              <div style={{ marginTop: 8 }}>
-                <Radio.Group
-                  value={interval}
-                  onChange={(e) => setInterval(e.target.value)}
-                >
-                  <Space>
-                    <Radio.Button value="month">Monthly</Radio.Button>
-                    <Radio.Button value="year">Yearly</Radio.Button>
-                  </Space>
-                </Radio.Group>
-              </div>
-            </div>
-          </>
-        ) : null}
-        <div>
-          <Text strong>
-            {membershipPackage ? "Additional seats" : "Seats to purchase"}
-          </Text>
-          <div style={{ marginTop: 8 }}>
-            <InputNumber
-              min={1}
-              precision={0}
-              value={seatCount}
-              onChange={(value) =>
-                setSeatCount(typeof value === "number" ? value : 1)
-              }
-            />
-          </div>
-        </div>
-        {quoteLoading ? <Spin /> : null}
-        {quote ? (
-          <>
-            <Space wrap>
-              <MoneyStatistic title="Total price" value={quote.total_price} />
-              <MoneyStatistic title="Seat price" value={quote.seat_price} />
-              <Statistic
-                title="Seats after purchase"
-                value={(membershipPackage?.seat_count ?? 0) + seatCount}
-                precision={0}
-              />
-            </Space>
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              Access runs
-              {quote.starts_at ? (
-                <>
-                  {" "}
-                  from <TimeAgo date={quote.starts_at} />
-                </>
-              ) : null}
-              {quote.expires_at ? (
-                <>
-                  {" "}
-                  until <TimeAgo date={quote.expires_at} />
-                </>
-              ) : null}
-              .
-            </Paragraph>
-            {chargeAmountValue.gt(totalValue) ? (
-              <Alert
-                type="warning"
-                showIcon
-                title={`The minimum immediate charge is ${currency(
-                  chargeAmountValue.toNumber(),
-                )}.`}
-                description="Any amount above the seat price is added to account credit and can be used for future purchases."
-              />
-            ) : null}
-          </>
-        ) : null}
-        <Divider style={{ margin: "8px 0" }} />
-        {place === "checkout" && quote ? (
-          <StripePayment
-            disabled={disabled}
-            description={
-              membershipPackage ? "Add team seats" : "Purchase team seats"
-            }
-            lineItems={lineItems}
-            purpose={MEMBERSHIP_PACKAGE_PURCHASE}
-            metadata={{
-              membership_package_product: JSON.stringify({
-                type: "membership-package",
-                ...product,
-              }),
-            }}
-            onFinished={async (total) => {
-              if (!total) {
-                await completePurchase();
-                return;
-              }
-              setPlace("processing");
-              await refreshProcessing();
-            }}
-          />
-        ) : null}
+        {place === "choose" ? renderChooseStep() : null}
+        {place === "review" ? renderReviewStep() : null}
         {place === "processing" ? (
           <>
             <Alert
               type="info"
               showIcon
               title="Payment submitted"
-              description="We are waiting for the payment to finish processing. When it does, the purchased seats will appear in this package."
-            />
-            <Payments
-              purpose={MEMBERSHIP_PACKAGE_PURCHASE}
-              numPaymentsRef={numPaymentsRef}
-              limit={5}
+              description="CoCalc is updating your team license. This can take a few seconds."
             />
             <Button onClick={refreshProcessing}>
               <Icon name="refresh" /> Refresh status
@@ -5016,12 +4836,15 @@ function TeamPackagePurchaseModal({
           </>
         ) : null}
         {place === "done" ? (
-          <Alert
-            type="success"
-            showIcon
-            title="Team seats purchased"
-            description="The package seat count has been updated. You can assign seats immediately."
-          />
+          <Space orientation="vertical" style={{ width: "100%" }}>
+            <Alert
+              type="success"
+              showIcon
+              title="Team license updated"
+              description="The seat counts have been updated. You can assign seats immediately."
+            />
+            <Button onClick={onClose}>Close</Button>
+          </Space>
         ) : null}
         <FreshAuthModal {...freshAuthModalProps} />
       </Space>
@@ -5029,14 +4852,40 @@ function TeamPackagePurchaseModal({
   );
 }
 
+function teamLicenseMatchesTargets(
+  teamLicense: TeamLicenseOverview | null,
+  targets: Record<string, number>,
+  tiers: MembershipTierLike[],
+): boolean {
+  if (!teamLicense) return false;
+  return tiers.every((tier) => {
+    const target = targets[tier.id] ?? 0;
+    const actual =
+      teamLicense.seat_lines.find((line) => line.membership_class === tier.id)
+        ?.seat_count ?? 0;
+    return actual >= target;
+  });
+}
+
+function formatTeamLicenseRenewalDate(value?: Date | string): string {
+  return new Date(value ?? Date.now()).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 function AssignMembershipSeatModal({
   open,
   membershipPackage,
+  seatLabel,
   onClose,
   onAssigned,
 }: {
   open: boolean;
   membershipPackage: MembershipPackageDetails | null;
+  seatLabel?: string;
   onClose: () => void;
   onAssigned: () => Promise<void>;
 }) {
@@ -5046,9 +4895,12 @@ function AssignMembershipSeatModal({
   const [searchError, setSearchError] = useState<string>("");
   const [selectedTarget, setSelectedTarget] = useState<string>("");
   const [assigning, setAssigning] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setSearchError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const seatName =
+    seatLabel ??
+    (membershipPackage
+      ? getPackageKindLabel(membershipPackage.kind).toLowerCase()
+      : "membership");
   const activeAccountIds = useMemo(
     () =>
       new Set(
@@ -5164,16 +5016,14 @@ function AssignMembershipSeatModal({
       okText="Assign seat"
       okButtonProps={{ disabled: !selectedTarget, loading: assigning }}
       destroyOnHidden
-      title={`Assign ${membershipPackage ? getPackageKindLabel(membershipPackage.kind).toLowerCase() : "package"} seat`}
+      title={`Assign ${seatName} seat`}
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         {membershipPackage ? (
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Search related existing accounts or enter an email address to
-            reserve a seat from the{" "}
-            {getPackageKindLabel(membershipPackage.kind).toLowerCase()}.
-            Reserved email seats appear as claimable memberships once that user
-            verifies the address on their account.
+            reserve a {seatName} seat. Reserved email seats appear as claimable
+            memberships once that user verifies the address on their account.
           </Paragraph>
         ) : null}
         {searchError ? (

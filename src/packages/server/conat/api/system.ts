@@ -91,11 +91,24 @@ import {
 } from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { isAiLaunchDisabled } from "@cocalc/server/launch/kill-switches";
+import {
+  enqueueRootfsPrepullForHost,
+  enqueueRootfsPrepullForRunningHosts,
+  isRootfsPrepullSiteSetting,
+} from "@cocalc/server/cloud/rootfs-prepull";
+import {
+  isAiLaunchDisabled,
+  LAUNCH_KILL_SWITCHES,
+} from "@cocalc/server/launch/kill-switches";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { is_valid_email_address } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
+import {
+  displayNameFromParts,
+  legacyNamePartsFromDisplayName,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import {
   normalizeSignupEmailDomainPolicy,
   SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
@@ -170,6 +183,7 @@ import {
 import {
   listRootfsImagesAdmin,
   listRootfsImagesAdminPage,
+  listVisibleRootfsImagesById,
   listVisibleRootfsImages,
   listVisibleRootfsImagesPage,
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
@@ -177,6 +191,7 @@ import {
 } from "@cocalc/server/rootfs/catalog";
 import { getRootfsReleaseScanReport } from "@cocalc/server/rootfs/scans";
 import {
+  queueRootfsReleaseScan,
   runProjectRootfsPreflightScan,
   runRootfsReleaseScan,
 } from "@cocalc/server/rootfs/scan-execution";
@@ -245,6 +260,7 @@ import {
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
 import {
+  getUxLatencySlaThresholdsFromSettings,
   getUxLatencySummary as getUxLatencySummary0,
   recordUxLatencyEvent as recordUxLatencyEvent0,
 } from "@cocalc/server/monitoring/ux-latency";
@@ -287,6 +303,12 @@ import type {
   ServiceAdmissionDenialSummary,
   GlobalConfigPropagationBayState,
   GlobalConfigPropagationStatus,
+  LaunchHealthCheck,
+  LaunchHealthCounts,
+  LaunchHealthKillSwitches,
+  LaunchHealthLevel,
+  LaunchHealthStatus,
+  LaunchSmokeResult,
   ProjectBackupShardAdminStatus,
   SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
@@ -720,6 +742,19 @@ async function setSiteSettingLocal(update: SiteSettingUpdate): Promise<void> {
   const normalized = normalizeSiteSettingUpdate(update);
   await assertSiteSettingWritable(normalized.name);
   await callback2(db().set_server_setting, normalized);
+  if (isRootfsPrepullSiteSetting(normalized.name)) {
+    try {
+      await enqueueRootfsPrepullForRunningHosts({
+        source: "site_settings",
+        reason: normalized.name,
+      });
+    } catch (err) {
+      logger.warn("failed to queue RootFS pre-pull after site setting update", {
+        setting: normalized.name,
+        err,
+      });
+    }
+  }
 }
 
 function isSignupEmailDomainPolicySetting(name: string): boolean {
@@ -1561,6 +1596,575 @@ export async function getBayBackups({
     projects: infra.projects,
     backup_admission: backupAdmission,
     backup_execution: backupExecution,
+  };
+}
+
+const LAUNCH_HEALTH_LEVEL_RANK: Record<LaunchHealthLevel, number> = {
+  healthy: 0,
+  unknown: 1,
+  warning: 2,
+  critical: 3,
+};
+
+function worstLaunchHealthLevel(
+  levels: Iterable<LaunchHealthLevel>,
+): LaunchHealthLevel {
+  let worst: LaunchHealthLevel = "healthy";
+  for (const level of levels) {
+    if (LAUNCH_HEALTH_LEVEL_RANK[level] > LAUNCH_HEALTH_LEVEL_RANK[worst]) {
+      worst = level;
+    }
+  }
+  return worst;
+}
+
+function launchHealthCheck({
+  id,
+  label,
+  level,
+  summary,
+  details,
+}: LaunchHealthCheck): LaunchHealthCheck {
+  return {
+    id,
+    label,
+    level,
+    summary,
+    details: details?.filter((detail) => detail.trim()),
+  };
+}
+
+function projectionBacklogTotal(load?: BayLoadInfo): number | null {
+  if (!load) return null;
+  return Object.values(load.projections).reduce(
+    (sum, projection) => sum + (projection.unpublished_events ?? 0),
+    0,
+  );
+}
+
+function oldestProjectionBacklogAgeMs(load?: BayLoadInfo): number | null {
+  if (!load) return null;
+  const ages = Object.values(load.projections)
+    .map((projection) => projection.oldest_unpublished_event_age_ms)
+    .filter((age): age is number => typeof age === "number");
+  return ages.length ? Math.max(...ages) : null;
+}
+
+function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return "unknown";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}
+
+function uxLatencyP95({
+  summary,
+  metric,
+  segment,
+}: {
+  summary?: UxLatencySummary;
+  metric: string;
+  segment?: string;
+}): number | null {
+  const rows = segment ? summary?.segments : summary?.metrics;
+  const row = rows?.find(
+    (entry) =>
+      entry.metric === metric && (segment == null || entry.segment === segment),
+  );
+  return row?.p95_ms ?? null;
+}
+
+function launchHealthKillSwitches(
+  settings: Record<string, any> | undefined,
+): LaunchHealthKillSwitches {
+  const values = {
+    read_mostly_maintenance: boolSetting(
+      settings?.[LAUNCH_KILL_SWITCHES.readMostlyMaintenance],
+    ),
+    disable_project_creation: boolSetting(
+      settings?.[LAUNCH_KILL_SWITCHES.disableProjectCreation],
+    ),
+    disable_free_project_starts: boolSetting(
+      settings?.[LAUNCH_KILL_SWITCHES.disableFreeProjectStarts],
+    ),
+    disable_user_host_create: boolSetting(
+      settings?.[LAUNCH_KILL_SWITCHES.disableUserHostCreate],
+    ),
+    disable_ai: boolSetting(settings?.[LAUNCH_KILL_SWITCHES.disableAi]),
+    disable_payment_checkout: boolSetting(
+      settings?.[LAUNCH_KILL_SWITCHES.disablePaymentCheckout],
+    ),
+  };
+  return {
+    ...values,
+    active: Object.entries(values)
+      .filter(([, enabled]) => enabled)
+      .map(([key]) => key),
+  };
+}
+
+function classifyLatencyP95({
+  p95,
+  warningMs,
+  criticalMs,
+}: {
+  p95: number | null;
+  warningMs: number;
+  criticalMs: number;
+}): LaunchHealthLevel {
+  if (p95 == null) return "unknown";
+  if (p95 >= criticalMs) return "critical";
+  if (p95 >= warningMs) return "warning";
+  return "healthy";
+}
+
+let launchSmokeSchemaReady: Promise<void> | undefined;
+
+async function ensureLaunchSmokeSchema(): Promise<void> {
+  launchSmokeSchemaReady ??= getPool().query(`
+    CREATE TABLE IF NOT EXISTS launch_smoke_results (
+      id UUID PRIMARY KEY,
+      account_id UUID,
+      project_id UUID NOT NULL,
+      status TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL,
+      finished_at TIMESTAMPTZ NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      steps JSONB NOT NULL,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS launch_smoke_results_created_idx
+      ON launch_smoke_results (created_at DESC);
+  `) as unknown as Promise<void>;
+  await launchSmokeSchemaReady;
+}
+
+function normalizeLaunchSmokeResult({
+  result,
+  account_id,
+  id,
+}: {
+  result: LaunchSmokeResult;
+  account_id?: string;
+  id?: string;
+}): LaunchSmokeResult {
+  const steps = Array.isArray(result.steps) ? result.steps : [];
+  const status = result.status === "succeeded" ? "succeeded" : "failed";
+  return {
+    id: id ?? result.id ?? uuid(),
+    account_id: account_id ?? result.account_id ?? null,
+    project_id: `${result.project_id}`,
+    status,
+    started_at: new Date(result.started_at).toISOString(),
+    finished_at: new Date(result.finished_at).toISOString(),
+    duration_ms: Math.max(0, Math.round(Number(result.duration_ms) || 0)),
+    steps: steps.map((step) => ({
+      id: `${step.id}`,
+      label: `${step.label}`,
+      status:
+        step.status === "succeeded"
+          ? "succeeded"
+          : step.status === "skipped"
+            ? "skipped"
+            : "failed",
+      duration_ms: Math.max(0, Math.round(Number(step.duration_ms) || 0)),
+      summary: `${step.summary ?? ""}`,
+      details: step.details ?? undefined,
+    })),
+    error: result.error ? `${result.error}` : null,
+  };
+}
+
+function launchSmokeResultFromRow(row: any): LaunchSmokeResult {
+  return {
+    id: `${row.id}`,
+    account_id: row.account_id ?? null,
+    project_id: `${row.project_id}`,
+    status: row.status === "succeeded" ? "succeeded" : "failed",
+    started_at: toIsoString(row.started_at) ?? new Date(0).toISOString(),
+    finished_at: toIsoString(row.finished_at) ?? new Date(0).toISOString(),
+    duration_ms: Number(row.duration_ms) || 0,
+    steps: Array.isArray(row.steps) ? row.steps : [],
+    error: row.error ?? null,
+  };
+}
+
+async function getLatestLaunchSmokeResult(): Promise<LaunchSmokeResult | null> {
+  await ensureLaunchSmokeSchema();
+  const { rows } = await getPool().query(
+    `
+    SELECT id, account_id, project_id, status, started_at, finished_at,
+           duration_ms, steps, error
+      FROM launch_smoke_results
+     ORDER BY created_at DESC
+     LIMIT 1
+    `,
+  );
+  return rows[0] ? launchSmokeResultFromRow(rows[0]) : null;
+}
+
+export async function recordLaunchSmokeResult({
+  account_id,
+  result,
+}: {
+  account_id?: string;
+  result: LaunchSmokeResult;
+}): Promise<LaunchSmokeResult> {
+  await assertAdmin(account_id);
+  await ensureLaunchSmokeSchema();
+  const normalized = normalizeLaunchSmokeResult({ result, account_id });
+  await getPool().query(
+    `
+    INSERT INTO launch_smoke_results
+      (id, account_id, project_id, status, started_at, finished_at,
+       duration_ms, steps, error)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `,
+    [
+      normalized.id,
+      normalized.account_id,
+      normalized.project_id,
+      normalized.status,
+      normalized.started_at,
+      normalized.finished_at,
+      normalized.duration_ms,
+      JSON.stringify(normalized.steps),
+      normalized.error,
+    ],
+  );
+  return normalized;
+}
+
+export async function getLaunchHealth({
+  account_id,
+  window_minutes,
+}: {
+  account_id?: string;
+  window_minutes?: number;
+} = {}): Promise<LaunchHealthStatus> {
+  await assertAdmin(account_id);
+  const latencyWindowMinutes = Math.min(
+    Math.max(1, Math.round(Number(window_minutes) || 60)),
+    7 * 24 * 60,
+  );
+  const checkedAt = new Date().toISOString();
+  const currentBay = getSingleBayInfo();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const [
+    dbResult,
+    settingsResult,
+    loadResult,
+    backupsResult,
+    latencyResult,
+    setupResult,
+    configResult,
+    smokeResult,
+  ] = await Promise.allSettled([
+    getPool("medium").query("SELECT 1"),
+    getServerSettings(),
+    getBayLoad({ account_id, bay_id: currentBay.bay_id }),
+    getBayBackups({ account_id, bay_id: currentBay.bay_id }),
+    getUxLatencySummary({ account_id, window_minutes: latencyWindowMinutes }),
+    getSiteSetupStatus({ account_id }),
+    getGlobalConfigPropagationStatus({
+      account_id,
+      scope: SERVER_SETTINGS_CONFIG_SCOPE,
+    }),
+    getLatestLaunchSmokeResult(),
+  ]);
+
+  const settings =
+    settingsResult.status === "fulfilled"
+      ? (settingsResult.value as Record<string, any>)
+      : undefined;
+  const load = loadResult.status === "fulfilled" ? loadResult.value : undefined;
+  const backups =
+    backupsResult.status === "fulfilled" ? backupsResult.value : undefined;
+  const latency =
+    latencyResult.status === "fulfilled" ? latencyResult.value : undefined;
+  const setup =
+    setupResult.status === "fulfilled" ? setupResult.value : undefined;
+  const config =
+    configResult.status === "fulfilled" ? configResult.value : undefined;
+  const smoke =
+    smokeResult.status === "fulfilled" ? smokeResult.value : undefined;
+  const sla = getUxLatencySlaThresholdsFromSettings(settings);
+  const killSwitches = launchHealthKillSwitches(settings);
+  const projectionTotal = projectionBacklogTotal(load);
+  const oldestProjectionAgeMs = oldestProjectionBacklogAgeMs(load);
+  const terminalP95 = uxLatencyP95({
+    summary: latency,
+    metric: "project_terminal_ready",
+  });
+  const jupyterP95 = uxLatencyP95({
+    summary: latency,
+    metric: "project_jupyter_ready",
+  });
+  const execP95 = uxLatencyP95({
+    summary: latency,
+    metric: "project_exec_ready",
+  });
+  const lifecycleP95 = uxLatencyP95({
+    summary: latency,
+    metric: "project_start_running",
+    segment: "warm_provisioned",
+  });
+  const fileVisibleP95 = uxLatencyP95({
+    summary: latency,
+    metric: "file_open_visible",
+  });
+  const fileSyncReadyP95 = uxLatencyP95({
+    summary: latency,
+    metric: "file_open_sync_ready",
+  });
+  const configBayStates =
+    config?.scopes.flatMap((scope) => scope.bays.map((bay) => bay.status)) ??
+    [];
+  const configLevel: LaunchHealthLevel = configBayStates.includes("error")
+    ? "critical"
+    : configBayStates.some((state) => state === "stale" || state === "missing")
+      ? "warning"
+      : config
+        ? "healthy"
+        : "unknown";
+  const restoreReadiness = backups?.restore_readiness;
+  const restoreStatus = restoreReadiness?.latest_backup_restore_test_status;
+  const pitrStatus = restoreReadiness?.latest_backup_pitr_test_status;
+  const backupLevel: LaunchHealthLevel = !backups
+    ? "unknown"
+    : restoreStatus === "failed" || pitrStatus === "failed"
+      ? "critical"
+      : restoreReadiness?.gold_star
+        ? "healthy"
+        : backups.bay_backup.enabled
+          ? "warning"
+          : "warning";
+  const latencyLevel = worstLaunchHealthLevel([
+    classifyLatencyP95({
+      p95: lifecycleP95,
+      warningMs: sla.project_start_warm_p95_ms,
+      criticalMs: sla.project_start_warm_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: terminalP95,
+      warningMs: sla.project_terminal_ready_p95_ms,
+      criticalMs: sla.project_terminal_ready_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: jupyterP95,
+      warningMs: sla.project_jupyter_ready_p95_ms,
+      criticalMs: sla.project_jupyter_ready_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: execP95,
+      warningMs: sla.project_exec_ready_p95_ms,
+      criticalMs: sla.project_exec_ready_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: fileVisibleP95,
+      warningMs: sla.file_open_visible_p95_ms,
+      criticalMs: sla.file_open_visible_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: fileSyncReadyP95,
+      warningMs: sla.file_open_sync_ready_p95_ms,
+      criticalMs: sla.file_open_sync_ready_p95_ms * 2,
+    }),
+  ]);
+
+  const checks: LaunchHealthCheck[] = [
+    launchHealthCheck({
+      id: "postgres",
+      label: "Postgres",
+      level: dbResult.status === "fulfilled" ? "healthy" : "critical",
+      summary:
+        dbResult.status === "fulfilled"
+          ? "Postgres answered the operator health probe."
+          : "Postgres health probe failed.",
+      details: dbResult.status === "rejected" ? [`${dbResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "kill-switches",
+      label: "Emergency switches",
+      level:
+        settingsResult.status === "rejected"
+          ? "critical"
+          : killSwitches.active.length
+            ? "warning"
+            : "healthy",
+      summary:
+        settingsResult.status === "rejected"
+          ? "Unable to read launch emergency switches."
+          : killSwitches.active.length
+            ? `${killSwitches.active.length} launch emergency switch${killSwitches.active.length === 1 ? "" : "es"} active.`
+            : "No launch emergency switches are active.",
+      details:
+        settingsResult.status === "rejected"
+          ? [`${settingsResult.reason}`]
+          : killSwitches.active,
+    }),
+    launchHealthCheck({
+      id: "project-hosts",
+      label: "Project hosts",
+      level: !load
+        ? "critical"
+        : load.hosts.total_hosts > 0
+          ? "healthy"
+          : "critical",
+      summary: !load
+        ? "Unable to read local bay project host status."
+        : load.hosts.total_hosts > 0
+          ? `${load.hosts.total_hosts} project host${load.hosts.total_hosts === 1 ? "" : "s"} registered on this bay.`
+          : "No project hosts are registered on this bay.",
+      details: loadResult.status === "rejected" ? [`${loadResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "parallel-ops",
+      label: "Parallel operations",
+      level: !load
+        ? "unknown"
+        : load.parallel_ops.stale_running_total > 0
+          ? "critical"
+          : load.parallel_ops.queued_total > 50
+            ? "warning"
+            : "healthy",
+      summary: !load
+        ? "Unable to read parallel operation queues."
+        : `${load.parallel_ops.queued_total} queued, ${load.parallel_ops.running_total} running, ${load.parallel_ops.stale_running_total} stale running.`,
+      details:
+        load?.parallel_ops.hotspots.map(
+          (hotspot) =>
+            `${hotspot.worker_kind}: queued=${hotspot.queued_count}, running=${hotspot.running_count}, stale=${hotspot.stale_running_count ?? 0}`,
+        ) ?? [],
+    }),
+    launchHealthCheck({
+      id: "projections",
+      label: "Projection backlog",
+      level:
+        projectionTotal == null
+          ? "unknown"
+          : projectionTotal > 0 || (oldestProjectionAgeMs ?? 0) > 60_000
+            ? "warning"
+            : "healthy",
+      summary:
+        projectionTotal == null
+          ? "Unable to read projection backlog."
+          : `${projectionTotal} unpublished projection event${projectionTotal === 1 ? "" : "s"}; oldest age ${formatDurationMs(oldestProjectionAgeMs)}.`,
+    }),
+    launchHealthCheck({
+      id: "backups",
+      label: "Backups and restore drills",
+      level: backupsResult.status === "rejected" ? "critical" : backupLevel,
+      summary: !backups
+        ? "Unable to read bay backup status."
+        : restoreReadiness?.gold_star
+          ? "Bay backup restore and PITR tests are current."
+          : backups.bay_backup.enabled
+            ? `Backup is enabled; restore test=${restoreStatus ?? "unknown"}, PITR test=${pitrStatus ?? "unknown"}.`
+            : "Bay backup is not enabled.",
+      details:
+        backupsResult.status === "rejected" ? [`${backupsResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "site-setup",
+      label: "Site setup gates",
+      level:
+        setupResult.status === "rejected"
+          ? "critical"
+          : setup?.ready
+            ? "healthy"
+            : "warning",
+      summary: setup
+        ? `${setup.hard_gates_done}/${setup.hard_gates_total} hard setup gates are done.`
+        : "Unable to read site setup gates.",
+      details:
+        setupResult.status === "rejected"
+          ? [`${setupResult.reason}`]
+          : (setup?.steps
+              .filter((step) => step.hard_gate && step.state !== "done")
+              .map((step) => `${step.title}: ${step.summary}`) ?? []),
+    }),
+    launchHealthCheck({
+      id: "config-propagation",
+      label: "Config propagation",
+      level: configResult.status === "rejected" ? "critical" : configLevel,
+      summary: config
+        ? configLevel === "healthy"
+          ? "Global launch settings are current on configured bays."
+          : "One or more configured bays have missing, stale, or errored launch settings."
+        : "Unable to read global launch setting propagation.",
+      details:
+        configResult.status === "rejected"
+          ? [`${configResult.reason}`]
+          : (config?.scopes.flatMap((scope) =>
+              scope.bays
+                .filter((bay) => bay.status !== "current")
+                .map(
+                  (bay) =>
+                    `${scope.scope}/${bay.bay_id}: ${bay.status}${bay.last_error ? ` (${bay.last_error})` : ""}`,
+                ),
+            ) ?? []),
+    }),
+    launchHealthCheck({
+      id: "ux-latency",
+      label: "Browser-observed latency",
+      level: latencyResult.status === "rejected" ? "critical" : latencyLevel,
+      summary: latency
+        ? `P95 over ${latency.window_minutes}m: lifecycle=${formatDurationMs(lifecycleP95)} (SLA ${formatDurationMs(sla.project_start_warm_p95_ms)}), terminal=${formatDurationMs(terminalP95)} (SLA ${formatDurationMs(sla.project_terminal_ready_p95_ms)}), Jupyter=${formatDurationMs(jupyterP95)} (SLA ${formatDurationMs(sla.project_jupyter_ready_p95_ms)}), exec=${formatDurationMs(execP95)} (SLA ${formatDurationMs(sla.project_exec_ready_p95_ms)}), file visible=${formatDurationMs(fileVisibleP95)} (SLA ${formatDurationMs(sla.file_open_visible_p95_ms)}), file sync=${formatDurationMs(fileSyncReadyP95)} (SLA ${formatDurationMs(sla.file_open_sync_ready_p95_ms)}).`
+        : "Unable to read UX latency summary.",
+      details:
+        latencyResult.status === "rejected" ? [`${latencyResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "synthetic-smoke",
+      label: "Synthetic smoke probe",
+      level:
+        smokeResult.status === "rejected"
+          ? "critical"
+          : smoke == null
+            ? "unknown"
+            : smoke.status === "succeeded"
+              ? Date.now() - Date.parse(smoke.finished_at) > 60 * 60 * 1000
+                ? "warning"
+                : "healthy"
+              : "critical",
+      summary:
+        smokeResult.status === "rejected"
+          ? "Unable to read the latest synthetic smoke result."
+          : smoke == null
+            ? "No synthetic smoke probe result has been recorded."
+            : `${smoke.status} ${formatDurationMs(smoke.duration_ms)} on project ${smoke.project_id} at ${new Date(smoke.finished_at).toLocaleString()}.`,
+      details:
+        smokeResult.status === "rejected"
+          ? [`${smokeResult.reason}`]
+          : (smoke?.steps.map(
+              (step) =>
+                `${step.label}: ${step.status} in ${formatDurationMs(step.duration_ms)} (${step.summary})`,
+            ) ?? []),
+    }),
+  ];
+
+  const counts: LaunchHealthCounts = {
+    project_hosts_total: load?.hosts.total_hosts ?? null,
+    parallel_ops_queued: load?.parallel_ops.queued_total ?? null,
+    parallel_ops_running: load?.parallel_ops.running_total ?? null,
+    parallel_ops_stale_running: load?.parallel_ops.stale_running_total ?? null,
+    projection_unpublished_events: projectionTotal,
+    active_browser_connections:
+      load?.browser_control.active_connections ?? null,
+  };
+
+  return {
+    checked_at: checkedAt,
+    bay_id: currentBay.bay_id,
+    seed_bay_id: seedBayId,
+    overall: worstLaunchHealthLevel(checks.map((check) => check.level)),
+    latency_window_minutes: latencyWindowMinutes,
+    latency_sla_ms: sla,
+    latest_smoke: smoke ?? null,
+    kill_switches: killSwitches,
+    counts,
+    checks,
   };
 }
 
@@ -3859,6 +4463,18 @@ export async function getRootfsCatalogPage(
   return await listVisibleRootfsImagesPage(opts.account_id, opts);
 }
 
+export async function getRootfsCatalogEntries(
+  opts: {
+    account_id?: string;
+    image_ids?: string[];
+  } = {},
+) {
+  return await listVisibleRootfsImagesById(
+    opts.account_id,
+    opts.image_ids ?? [],
+  );
+}
+
 export async function getRootfsCatalogAdmin(
   opts: {
     account_id?: string;
@@ -3955,6 +4571,51 @@ export async function saveRootfsCatalogEntry(
   return await saveRootfsImage({ account_id, body });
 }
 
+export async function enqueueRootfsPrepull({
+  account_id,
+  host_id,
+  limit,
+}: {
+  account_id?: string;
+  host_id?: string;
+  limit?: number;
+} = {}): Promise<{
+  considered: number;
+  enqueued: number;
+  host_id?: string;
+}> {
+  await assertAdmin(account_id);
+  const normalizedHostId = `${host_id ?? ""}`.trim();
+  if (normalizedHostId) {
+    const { rows } = await getPool().query(
+      `SELECT id, metadata, last_seen
+         FROM project_hosts
+        WHERE id=$1 AND deleted IS NULL
+        LIMIT 1`,
+      [normalizedHostId],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw Error(`host not found: ${normalizedHostId}`);
+    }
+    const enqueued = await enqueueRootfsPrepullForHost({
+      row,
+      source: "operator",
+      reason: "manual",
+    });
+    return {
+      considered: 1,
+      enqueued: enqueued ? 1 : 0,
+      host_id: normalizedHostId,
+    };
+  }
+  return await enqueueRootfsPrepullForRunningHosts({
+    source: "operator",
+    reason: "manual",
+    limit,
+  });
+}
+
 export async function requestRootfsImageDeletion(opts: {
   account_id?: string;
   browser_id?: string | null;
@@ -4015,6 +4676,7 @@ export async function scanRootfsRelease(opts: {
   memory_limit?: string;
   cpu_limit?: string;
   tmpfs_size?: string;
+  wait?: boolean;
 }): Promise<RootfsReleaseScanRun> {
   const {
     account_id,
@@ -4035,7 +4697,9 @@ export async function scanRootfsRelease(opts: {
     session_hash,
     require_second_factor: true,
   });
-  return await runRootfsReleaseScan({
+  const scan =
+    opts.wait === false ? queueRootfsReleaseScan : runRootfsReleaseScan;
+  return await scan({
     release_id,
     host_id,
     requested_by: account_id,
@@ -4545,6 +5209,7 @@ export async function adminCreateUser({
   session_hash,
   email,
   password,
+  display_name,
   first_name,
   last_name,
   tags,
@@ -4554,12 +5219,14 @@ export async function adminCreateUser({
   session_hash?: string | null;
   email: string;
   password?: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   tags?: string[];
 }): Promise<{
   account_id: string;
   email_address: string;
+  display_name: string;
   first_name: string;
   last_name: string;
   created_by: string;
@@ -4591,13 +5258,23 @@ export async function adminCreateUser({
   }
 
   const defaultName = defaultUserNameFromEmail(emailAddress);
-  const firstName = `${first_name ?? ""}`.trim() || defaultName.first_name;
-  const lastName = `${last_name ?? ""}`.trim() || defaultName.last_name;
+  const displayName =
+    normalizeDisplayName(display_name) ||
+    displayNameFromParts({
+      first_name,
+      last_name,
+    }) ||
+    displayNameFromParts(defaultName);
+  const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
+  const firstName =
+    normalizeDisplayName(first_name) || legacyNameParts.first_name;
+  const lastName = normalizeDisplayName(last_name) || legacyNameParts.last_name;
   try {
     const created = await createClusterAccount({
       account_id: uuid(),
       email_address: emailAddress,
       password: finalPassword,
+      display_name: displayName,
       first_name: firstName,
       last_name: lastName,
       home_bay_id: getConfiguredBayId(),
@@ -4608,6 +5285,7 @@ export async function adminCreateUser({
     return {
       account_id: created.account_id,
       email_address: emailAddress,
+      display_name: displayName,
       first_name: firstName,
       last_name: lastName,
       created_by: account_id,
@@ -5552,6 +6230,49 @@ export async function getCodexPaymentSource({
     hasSiteApiKey,
     sharedHomeMode,
     project_id,
+  };
+}
+
+export async function getCodexUsageStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+  timeout?: number;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const checkedAt = new Date().toISOString();
+  const paymentSource = await getCodexPaymentSource({
+    account_id,
+    project_id,
+  });
+  if (paymentSource.source !== "subscription") {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      project_id,
+      reason:
+        paymentSource.source === "none"
+          ? "Codex is not connected."
+          : "Live ChatGPT Codex usage is only available when Codex is using a ChatGPT Plan.",
+    };
+  }
+
+  if (project_id) {
+    await assertProjectCollaborator(account_id, project_id);
+  }
+  return {
+    available: false,
+    checkedAt,
+    paymentSource,
+    project_id,
+    reason: project_id
+      ? "Live ChatGPT Codex usage must be checked through the running project's project-host. Open the project and retry."
+      : "Open a running project before checking live ChatGPT Codex usage in CoCalc.",
   };
 }
 

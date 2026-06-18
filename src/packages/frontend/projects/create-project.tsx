@@ -185,9 +185,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   );
 
   useEffect(() => {
+    if (!open) {
+      return;
+    }
     form.setFieldsValue({ title: draft.title });
     setTitlePreview(draft.title);
-  }, [draft.title, form]);
+  }, [draft.title, form, open]);
 
   const is_mounted_ref = useIsMountedRef();
 
@@ -254,7 +257,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       // switch_to=true is perhaps suggested by #4088
       actions.open_project({
         project_id,
-        target: "project-home",
+        target: "files/",
         switch_to: true,
       });
     }
@@ -543,12 +546,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </code>
           )}
           {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
-          {selectedRootfsEntry && (
-            <RootfsScanSummaryButton
-              entry={selectedRootfsEntry}
-              title={`RootFS scan details: ${selectedRootfsEntry.label}`}
-            />
-          )}
           {renderRootfsPicker()}
         </Space>
       </Card>

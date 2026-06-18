@@ -186,14 +186,24 @@ export interface MembershipResolution {
   source: "subscription" | "admin" | "grant" | "free";
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
+  starts?: Date;
   subscription_id?: number;
-  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_status?: "active" | "canceled";
   subscription_cost?: number;
   subscription_interval?: "month" | "year";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;
   grant_purchase_id?: number;
+  pool_name?: string;
+  pool_description?: string | null;
+  site_license_id?: string;
+  site_license_name?: string;
+  organization_name?: string;
+  team_license_id?: string;
+  team_license_status?: TeamLicenseStatus;
+  team_license_period_end?: Date | string;
+  team_license_warning?: TeamLicenseWarning;
   expires?: Date;
 }
 
@@ -203,14 +213,24 @@ export interface MembershipCandidate {
   priority: number;
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
+  starts?: Date;
   subscription_id?: number;
-  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_status?: "active" | "canceled";
   subscription_cost?: number;
   subscription_interval?: "month" | "year";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;
   grant_purchase_id?: number;
+  pool_name?: string;
+  pool_description?: string | null;
+  site_license_id?: string;
+  site_license_name?: string;
+  organization_name?: string;
+  team_license_id?: string;
+  team_license_status?: TeamLicenseStatus;
+  team_license_period_end?: Date | string;
+  team_license_warning?: TeamLicenseWarning;
   expires?: Date;
 }
 
@@ -245,6 +265,7 @@ export interface MembershipPackageAssignment {
   package_id: string;
   account_id?: string | null;
   email_address?: string | null;
+  account_email_address?: string | null;
   assigned_by_account_id?: string | null;
   assigned_at?: Date;
   revoked_at?: Date | null;
@@ -267,6 +288,8 @@ export interface ClaimableMembershipPackage {
   reason: "email-assignment" | "domain-match";
   requires_approval?: boolean;
   site_license_id?: string;
+  site_license_name?: string | null;
+  organization_name?: string | null;
   pool_name?: string;
   pool_description?: string;
   verification_policy?: SiteLicenseVerificationPolicy;
@@ -299,6 +322,67 @@ export interface MembershipPackageDetails extends MembershipPackageRecord {
   active_assignment_count: number;
   available_seat_count: number;
   assignments: MembershipPackageAssignment[];
+}
+
+export type TeamLicenseStatus = "active" | "past_due" | "canceled";
+
+export interface TeamLicenseWarning {
+  type: "past_due";
+  team_license_id: string;
+  expired_at: Date | string;
+  message: string;
+}
+
+export interface TeamLicenseRecord {
+  id: string;
+  owner_account_id: string;
+  status: TeamLicenseStatus;
+  current_period_start: Date | string;
+  current_period_end: Date | string;
+  latest_purchase_id?: number | null;
+  payment?: Record<string, unknown> | null;
+  last_renewal_attempt_at?: Date | string | null;
+  last_renewal_notice_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date | string;
+  updated?: Date | string;
+}
+
+export interface TeamLicenseSeatLine {
+  id: string;
+  team_license_id: string;
+  owner_account_id: string;
+  membership_class: MembershipClass;
+  package_id?: string | null;
+  seat_count: number;
+  annual_price_per_seat: number;
+  metadata?: Record<string, unknown> | null;
+  created?: Date | string;
+  updated?: Date | string;
+  package?: MembershipPackageDetails;
+}
+
+export interface TeamLicenseOverview extends TeamLicenseRecord {
+  seat_lines: TeamLicenseSeatLine[];
+  packages: MembershipPackageDetails[];
+}
+
+export interface TeamLicenseQuoteLineItem {
+  description: string;
+  amount: number;
+}
+
+export interface TeamLicenseQuote {
+  team_license_id?: string;
+  current_period_start: Date | string;
+  current_period_end: Date | string;
+  target_seats: Record<string, number>;
+  current_seats: Record<string, number>;
+  assigned_seats: Record<string, number>;
+  added_seats: Record<string, number>;
+  line_items: TeamLicenseQuoteLineItem[];
+  total_price: number;
+  interval: "year";
 }
 
 export type SiteLicenseManagerRole = "manager" | "viewer";
@@ -404,6 +488,9 @@ export type SiteLicenseAuditAction =
   | "pool-request-canceled"
   | "pool-request-approved"
   | "pool-request-rejected"
+  | "external-claim-consumed"
+  | "external-claim-granted"
+  | "external-claim-side-effect-failed"
   | "seat-released-by-user"
   | "seat-released-for-upgrade"
   | "seat-affiliation-reverified"
@@ -419,6 +506,86 @@ export interface SiteLicenseAuditEvent {
   request_id?: string | null;
   metadata?: Record<string, unknown> | null;
   created?: Date;
+}
+
+export type SiteLicenseExternalClaimSigningAlgorithm = "EdDSA" | "ES256";
+
+export type SiteLicenseExternalClaimConsumptionStatus =
+  | "pending-side-effect"
+  | "granted"
+  | "failed-retryable"
+  | "failed-terminal";
+
+export interface SiteLicenseExternalClaimPool {
+  id: string;
+  slug?: string | null;
+  site_license_id: string;
+  package_id: string;
+  name: string;
+  issuer: string;
+  audience: string;
+  default_membership_class?: MembershipClass | null;
+  allow_membership_class_override: boolean;
+  default_membership_duration_days?: number | null;
+  default_membership_expires_at?: Date | null;
+  allow_membership_expires_at_override: boolean;
+  min_membership_duration_days?: number | null;
+  max_membership_duration_days?: number | null;
+  max_membership_expires_at?: Date | null;
+  default_rootfs_id?: string | null;
+  max_claims?: number | null;
+  max_claims_per_account?: number | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  disabled_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created_by_account_id?: string | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface SiteLicenseExternalClaimKey {
+  id: string;
+  pool_id: string;
+  kid: string;
+  alg: SiteLicenseExternalClaimSigningAlgorithm;
+  public_key_jwk?: Record<string, unknown> | null;
+  public_key_pem?: string | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  revoked_at?: Date | null;
+  created_by_account_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface SiteLicenseExternalClaimConsumption {
+  id: string;
+  pool_id: string;
+  site_license_id: string;
+  package_id: string;
+  jti: string;
+  token_hash: string;
+  issuer: string;
+  kid?: string | null;
+  account_id: string;
+  status: SiteLicenseExternalClaimConsumptionStatus;
+  side_effect_key: string;
+  assignment_id?: string | null;
+  membership_grant_id?: string | null;
+  membership_class: MembershipClass;
+  membership_expires_at?: Date | null;
+  rootfs_id?: string | null;
+  external_subject?: string | null;
+  token_expires_at?: Date | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  retry_count: number;
+  last_retry_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  consumed_at: Date;
+  updated: Date;
 }
 
 export interface SiteLicenseAccountDetails {
@@ -965,6 +1132,36 @@ export interface Purchases {
     expires_at?: Date | string;
     metadata?: Record<string, unknown> | null;
   }) => Promise<{ package_id: string; purchase_id: number }>;
+  purchaseMembershipPackages: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    products?: {
+      type: "membership-package";
+      package_id?: string;
+      kind: MembershipPackageKind;
+      membership_class: MembershipClass;
+      seat_count: number;
+      interval?: "month" | "year";
+      course_project_id?: string;
+      starts_at?: Date | string;
+      expires_at?: Date | string;
+      metadata?: Record<string, unknown> | null;
+    }[];
+  }) => Promise<{ package_id: string; purchase_id: number }[]>;
+  getTeamLicense: (opts?: {
+    account_id?: string;
+  }) => Promise<TeamLicenseOverview | null>;
+  getTeamLicenseQuote: (opts?: {
+    account_id?: string;
+    target_seats?: Record<string, number>;
+  }) => Promise<TeamLicenseQuote>;
+  purchaseTeamLicenseChange: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    target_seats?: Record<string, number>;
+  }) => Promise<TeamLicenseOverview>;
   updateMembershipPackage: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1061,6 +1258,85 @@ export interface Purchases {
     site_license_id?: string;
     pool?: SiteLicensePoolConfig;
   }) => Promise<SiteLicenseOverview>;
+  createSiteLicenseExternalClaimPool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    site_license_id?: string;
+    package_id?: string;
+    name?: string;
+    issuer?: string;
+    slug?: string | null;
+    audience?: string;
+    default_membership_class?: MembershipClass | null;
+    allow_membership_class_override?: boolean;
+    default_membership_duration_days?: number | null;
+    default_membership_expires_at?: Date | string | null;
+    allow_membership_expires_at_override?: boolean;
+    min_membership_duration_days?: number | null;
+    max_membership_duration_days?: number | null;
+    max_membership_expires_at?: Date | string | null;
+    default_rootfs_id?: string | null;
+    max_claims?: number | null;
+    max_claims_per_account?: number | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    disabled_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+  }) => Promise<SiteLicenseExternalClaimPool>;
+  addSiteLicenseExternalClaimKey: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    kid?: string;
+    alg?: SiteLicenseExternalClaimSigningAlgorithm;
+    public_key_jwk?: Record<string, unknown> | null;
+    public_key_pem?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    revoked_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+  }) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimPools: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    package_id?: string;
+    pool_id?: string;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimPool[]>;
+  disableSiteLicenseExternalClaimPool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    disabled_at?: Date | string | null;
+  }) => Promise<SiteLicenseExternalClaimPool>;
+  listSiteLicenseExternalClaimKeys: (opts?: {
+    account_id?: string;
+    pool_id?: string;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimKey[]>;
+  revokeSiteLicenseExternalClaimKey: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    kid?: string;
+    revoked_at?: Date | string | null;
+  }) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimConsumptions: (opts?: {
+    account_id?: string;
+    pool_id?: string;
+    site_license_id?: string;
+    target_account_id?: string;
+    status?: SiteLicenseExternalClaimConsumptionStatus;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimConsumption[]>;
+  consumeSiteLicenseExternalClaimToken: (opts?: {
+    account_id?: string;
+    token?: string;
+  }) => Promise<SiteLicenseExternalClaimConsumption>;
   archiveSiteLicensePool: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1154,6 +1430,10 @@ export const purchases = {
   getMembershipDetails: authFirst,
   getMembershipPackageQuote: authFirst,
   purchaseMembershipPackage: authFirst,
+  purchaseMembershipPackages: authFirst,
+  getTeamLicense: authFirst,
+  getTeamLicenseQuote: authFirst,
+  purchaseTeamLicenseChange: authFirst,
   updateMembershipPackage: authFirst,
   getMembershipPackages: authFirst,
   assignMembershipPackageSeat: authFirst,
@@ -1165,6 +1445,14 @@ export const purchases = {
   getSiteLicenseOverview: authFirst,
   updateSiteLicense: authFirst,
   addSiteLicensePool: authFirst,
+  createSiteLicenseExternalClaimPool: authFirst,
+  addSiteLicenseExternalClaimKey: authFirst,
+  listSiteLicenseExternalClaimPools: authFirst,
+  disableSiteLicenseExternalClaimPool: authFirst,
+  listSiteLicenseExternalClaimKeys: authFirst,
+  revokeSiteLicenseExternalClaimKey: authFirst,
+  listSiteLicenseExternalClaimConsumptions: authFirst,
+  consumeSiteLicenseExternalClaimToken: authFirst,
   archiveSiteLicensePool: authFirst,
   setSiteLicenseManager: authFirst,
   removeSiteLicenseManager: authFirst,

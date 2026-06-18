@@ -45,6 +45,8 @@ import * as software from "./software";
 import * as lro from "./lro";
 import * as agent from "./agent";
 import * as notifications from "./notifications";
+import * as adminData from "./admin-data-explorer";
+import * as aiSessions from "./ai-sessions";
 
 import getLogger from "@cocalc/backend/logger";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
@@ -78,6 +80,8 @@ export const hubApi: HubApi = {
   lro,
   agent,
   notifications,
+  adminData,
+  aiSessions,
   ssh,
   reflect,
 };

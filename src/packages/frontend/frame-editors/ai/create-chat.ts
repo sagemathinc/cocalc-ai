@@ -5,6 +5,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import {
   dispatchNavigatorPromptIntent,
+  stageNavigatorPromptInWorkspaceChat,
   submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { getMaxTokens as getModelMaxTokens } from "@cocalc/util/db-schema/ai-models";
@@ -14,6 +15,7 @@ import type {
   CodeEditorState,
 } from "../base-editor/actions-base";
 import { AI_ASSIST_TAG } from "./consts";
+import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 
 export interface Options {
   codegen?: boolean;
@@ -21,7 +23,33 @@ export interface Options {
   allowEmpty?: boolean;
   tag?: string;
   model: string;
+  agentSession?: AssistantAgentSessionTarget;
+  submitToAgent?: boolean;
+  createNewThread?: boolean;
 }
+
+export type AssistantAgentSessionTarget = Pick<
+  AgentSessionRecord,
+  | "session_id"
+  | "project_id"
+  | "account_id"
+  | "chat_path"
+  | "thread_key"
+  | "title"
+  | "created_at"
+  | "updated_at"
+  | "status"
+  | "entrypoint"
+  | "working_directory"
+  | "mode"
+  | "model"
+  | "reasoning"
+  | "serviceTier"
+  | "thread_color"
+  | "thread_accent_color"
+  | "thread_icon"
+  | "thread_image"
+>;
 
 interface TerminalAssistantContext {
   terminal_session_id?: string;
@@ -59,7 +87,6 @@ export default async function createChat({
   const frameType = actions._get_frame_type(frameId);
   const { model } = options;
 
-  const visiblePrompt = createAssistantVisiblePrompt(options.command);
   const { message } = await createChatMessage(actions, frameId, options, input);
   const codexModel = resolveAssistantCodexModel(model);
   const prompt = createNavigatorAssistantPrompt({
@@ -69,23 +96,47 @@ export default async function createChat({
     options,
     codexModel,
   });
-  const title = createAssistantThreadTitle(options.command);
+  const visiblePrompt = createAssistantVisiblePrompt(options.command);
+  const title = createAssistantThreadTitle({
+    command: options.command,
+    path: actions.path,
+    createNewThread: options.createNewThread,
+  });
   const intent =
     frameType === "terminal"
       ? "intent:terminal-assistant"
       : "intent:editor-assistant";
-  const sent = await submitNavigatorPromptInWorkspaceChat({
-    project_id: actions.project_id,
-    path: actions.path,
-    prompt,
-    visiblePrompt,
-    title,
-    tag: intent,
-    forceCodex: true,
-    codexConfig: { model: codexModel },
-    openFloating: true,
-    waitForAgent: false,
-  });
+  const submitToAgent = options.submitToAgent !== false;
+  const sent = submitToAgent
+    ? await submitNavigatorPromptInWorkspaceChat({
+        project_id: actions.project_id,
+        path: actions.path,
+        prompt,
+        visiblePrompt,
+        title,
+        tag: intent,
+        forceCodex: true,
+        codexConfig: { model: codexModel },
+        agentSession: options.agentSession,
+        createNewThread: options.createNewThread,
+        openFloating: true,
+        waitForAgent: false,
+      })
+    : await stageNavigatorPromptInWorkspaceChat({
+        project_id: actions.project_id,
+        path: actions.path,
+        prompt,
+        visiblePrompt,
+        title,
+        tag: intent,
+        forceCodex: true,
+        codexConfig: { model: codexModel },
+        agentSession: options.agentSession,
+        createNewThread: options.createNewThread,
+        stageInComposer: true,
+        openFloating: true,
+        waitForAgent: false,
+      });
   if (!sent) {
     dispatchNavigatorPromptIntent({
       prompt,
@@ -94,11 +145,27 @@ export default async function createChat({
       tag: intent,
       forceCodex: true,
       codexConfig: { model: codexModel },
+      createNewThread: options.createNewThread,
     });
   }
 }
 
-function createAssistantThreadTitle(command?: string): string | undefined {
+function createAssistantThreadTitle({
+  command,
+  path,
+  createNewThread,
+}: {
+  command?: string;
+  path?: string;
+  createNewThread?: boolean;
+}): string | undefined {
+  if (createNewThread) {
+    const trimmedPath = `${path ?? ""}`.trim();
+    const basename = trimmedPath.split("/").filter(Boolean).pop();
+    if (basename) {
+      return `Agent: ${basename}`;
+    }
+  }
   const trimmed = `${command ?? ""}`.trim();
   if (!trimmed) return;
   return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77).trim()}...`;

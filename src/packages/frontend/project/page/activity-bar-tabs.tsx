@@ -23,7 +23,12 @@ import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useAccountStoreReady } from "@cocalc/frontend/app/account-store-ready";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
-import { Icon, Tooltip, type IconName } from "@cocalc/frontend/components";
+import {
+  Icon,
+  isIconName,
+  Tooltip,
+  type IconName,
+} from "@cocalc/frontend/components";
 import {
   DragHandle,
   SortableItem,
@@ -43,6 +48,10 @@ import SettingsButton from "@cocalc/frontend/account/settings-button";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
+import {
+  managedRootfsCatalogUrl,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
 import {
   getDefaultFixedTabOrder,
   getDefaultHiddenFixedTabs,
@@ -71,15 +80,103 @@ const VIEWER_FIXED_TABS = new Set<FixedTab>([
   "users",
 ]);
 
+interface ThemedFixedTab {
+  backgroundColor?: string;
+  color?: string;
+  iconName?: IconName;
+}
+
+function useRootfsFixedTabTheme(enabled = true): ThemedFixedTab {
+  const { project } = useProjectContext();
+  const rootfsImageId = enabled
+    ? `${project?.get?.("rootfs_image_id") ?? ""}`.trim()
+    : "";
+  const { images } = useRootfsImages(
+    rootfsImageId ? [managedRootfsCatalogUrl()] : [],
+    {
+      imageIds: rootfsImageId ? [rootfsImageId] : [],
+      limit: 1,
+    },
+  );
+  const entry = rootfsImageId
+    ? images.find((candidate) => candidate.id === rootfsImageId)
+    : undefined;
+  const iconName = isIconName(entry?.theme?.icon)
+    ? entry.theme.icon
+    : undefined;
+  const color = entry?.theme?.color?.trim() || undefined;
+  const backgroundColor = entry?.theme?.accent_color?.trim() || undefined;
+  return { backgroundColor, color, iconName };
+}
+
+function themedRootfsIconStyle({
+  condensed,
+  theme,
+}: {
+  condensed: boolean;
+  theme: ThemedFixedTab;
+}): React.CSSProperties | undefined {
+  if (!theme.backgroundColor && !theme.color) return undefined;
+  const size = condensed ? 24 : 32;
+  return {
+    alignItems: "center",
+    backgroundColor: theme.backgroundColor,
+    borderRadius: 8,
+    color: theme.color,
+    display: "inline-flex",
+    height: size,
+    justifyContent: "center",
+    width: size,
+  };
+}
+
 function filterTabsForProjectAccess({
+  agentAIEnabled,
   names,
   viewer,
 }: {
+  agentAIEnabled: boolean;
   names: readonly FixedTab[];
   viewer: boolean;
 }): FixedTab[] {
-  if (!viewer) return [...names];
-  return names.filter((name) => VIEWER_FIXED_TABS.has(name));
+  return names.filter((name) => {
+    if (!agentAIEnabled && name === "agents") return false;
+    if (viewer && !VIEWER_FIXED_TABS.has(name)) return false;
+    return true;
+  });
+}
+
+function preserveUnavailableTabs(opts: {
+  agentAIEnabled: boolean;
+  hiddenTabs: readonly FixedTab[];
+  nextHidden: FixedTab[];
+  nextOrder: FixedTab[];
+  originalOrder: readonly FixedTab[];
+  viewer: boolean;
+}): { hidden: FixedTab[]; order: FixedTab[] } {
+  const available = new Set(
+    filterTabsForProjectAccess({
+      agentAIEnabled: opts.agentAIEnabled,
+      names: opts.originalOrder,
+      viewer: opts.viewer,
+    }),
+  );
+  const unavailableOrder = opts.originalOrder.filter(
+    (name) => !available.has(name),
+  );
+  const unavailableHidden = opts.hiddenTabs.filter(
+    (name) => !available.has(name),
+  );
+  return {
+    order: [
+      ...opts.nextOrder,
+      ...unavailableOrder.filter((name) => !opts.nextOrder.includes(name)),
+    ],
+    hidden: [
+      ...opts.nextHidden,
+      ...unavailableHidden.filter((name) => !opts.nextHidden.includes(name)),
+    ],
+  };
 }
 
 interface PTProps {
@@ -150,6 +247,7 @@ export function VerticalFixedTabs({
   const intl = useIntl();
   const {
     actions,
+    agentAIEnabled,
     project_id,
     active_project_tab: activeTab,
     projectAccess,
@@ -159,6 +257,8 @@ export function VerticalFixedTabs({
   const { showActBarLabels } = useAppContext();
   const account_id = useTypedRedux("account", "account_id");
   const active_flyout = useTypedRedux({ project_id }, "flyout");
+  const viewer = projectAccess?.role === "viewer";
+  const rootfsTheme = useRootfsFixedTabTheme(!viewer);
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const breakPoint = useRef<number>(0);
@@ -170,19 +270,20 @@ export function VerticalFixedTabs({
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
     liteMode: lite,
   });
-  const viewer = projectAccess?.role === "viewer";
   const projectLabel = intl.formatMessage(labels.project);
   const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(() => {
     const filteredOrder = filterTabsForProjectAccess({
+      agentAIEnabled,
       names: tabOrder,
       viewer,
     });
     const filteredHidden = filterTabsForProjectAccess({
+      agentAIEnabled,
       names: hiddenTabs,
       viewer,
     });
     return splitRailTabs(filteredOrder, filteredHidden);
-  }, [hiddenTabs, tabOrder, viewer]);
+  }, [agentAIEnabled, hiddenTabs, tabOrder, viewer]);
 
   const calcCondensed = throttle(
     () => {
@@ -280,11 +381,19 @@ export function VerticalFixedTabs({
       name === "workspaces"
         ? (workspaces.current?.theme?.icon?.trim() as IconName | undefined) ||
           undefined
+        : name === "rootfs"
+          ? rootfsTheme.iconName
+          : undefined;
+    const rootfsIconStyle =
+      name === "rootfs"
+        ? themedRootfsIconStyle({ condensed, theme: rootfsTheme })
         : undefined;
     const themedIconStyle =
       name === "workspaces" && workspaces.current?.theme?.color
         ? { color: workspaces.current.theme.color }
-        : undefined;
+        : name === "rootfs"
+          ? rootfsIconStyle
+          : undefined;
 
     const tab = (
       <FileTab
@@ -367,6 +476,15 @@ export function VerticalFixedTabs({
           : undefined,
       sectionKeyPrefix: "overflow",
       showActBarLabels: showActBarLabels === true,
+      tabIcons: {
+        rootfs: rootfsTheme.iconName,
+      },
+      tabIconStyles: {
+        rootfs: themedRootfsIconStyle({
+          condensed,
+          theme: rootfsTheme,
+        }),
+      },
     });
     return (
       <Tooltip title="More" placement="rightTop">
@@ -473,11 +591,23 @@ export function VerticalFixedTabs({
         open={showCustomize}
         onClose={() => setShowCustomize(false)}
         onSave={(nextOrder, nextHidden) => {
-          setActivityBarTabOrder(nextOrder, { liteMode: lite });
-          setActivityBarHiddenTabs(nextHidden, { liteMode: lite });
+          const preserved = preserveUnavailableTabs({
+            agentAIEnabled,
+            hiddenTabs,
+            nextHidden,
+            nextOrder,
+            originalOrder: tabOrder,
+            viewer,
+          });
+          setActivityBarTabOrder(preserved.order, { liteMode: lite });
+          setActivityBarHiddenTabs(preserved.hidden, { liteMode: lite });
           setShowCustomize(false);
         }}
-        order={tabOrder}
+        order={filterTabsForProjectAccess({
+          agentAIEnabled,
+          names: tabOrder,
+          viewer,
+        })}
       />
     </div>
   );
@@ -485,10 +615,13 @@ export function VerticalFixedTabs({
 
 export function HiddenActivityBarLauncher() {
   const intl = useIntl();
-  const { actions, project_id, projectAccess } = useProjectContext();
+  const { actions, agentAIEnabled, project_id, projectAccess } =
+    useProjectContext();
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const account_id = useTypedRedux("account", "account_id");
+  const viewer = projectAccess?.role === "viewer";
+  const rootfsTheme = useRootfsFixedTabTheme(!viewer);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
@@ -496,11 +629,14 @@ export function HiddenActivityBarLauncher() {
   });
   if (!accountStoreReady) return null;
 
-  const viewer = projectAccess?.role === "viewer";
   const projectLabel = intl.formatMessage(labels.project);
   const items = createRailMenuItems({
     intl,
-    names: filterTabsForProjectAccess({ names: tabOrder, viewer }),
+    names: filterTabsForProjectAccess({
+      agentAIEnabled,
+      names: tabOrder,
+      viewer,
+    }),
     onCustomize: () => setShowCustomize(true),
     onToggleActivityBar: () => {
       setActivityBarCollapsed(false);
@@ -544,6 +680,15 @@ export function HiddenActivityBarLauncher() {
         : undefined,
     sectionKeyPrefix: "launcher",
     showActBarLabels: showActBarLabels === true,
+    tabIcons: {
+      rootfs: rootfsTheme.iconName,
+    },
+    tabIconStyles: {
+      rootfs: themedRootfsIconStyle({
+        condensed: false,
+        theme: rootfsTheme,
+      }),
+    },
   });
 
   return (
@@ -577,11 +722,23 @@ export function HiddenActivityBarLauncher() {
         open={showCustomize}
         onClose={() => setShowCustomize(false)}
         onSave={(nextOrder, nextHidden) => {
-          setActivityBarTabOrder(nextOrder, { liteMode: lite });
-          setActivityBarHiddenTabs(nextHidden, { liteMode: lite });
+          const preserved = preserveUnavailableTabs({
+            agentAIEnabled,
+            hiddenTabs,
+            nextHidden,
+            nextOrder,
+            originalOrder: tabOrder,
+            viewer,
+          });
+          setActivityBarTabOrder(preserved.order, { liteMode: lite });
+          setActivityBarHiddenTabs(preserved.hidden, { liteMode: lite });
           setShowCustomize(false);
         }}
-        order={tabOrder}
+        order={filterTabsForProjectAccess({
+          agentAIEnabled,
+          names: tabOrder,
+          viewer,
+        })}
       />
     </>
   );
@@ -624,6 +781,8 @@ function createRailMenuItems(opts: {
   };
   sectionKeyPrefix: string;
   showActBarLabels: boolean;
+  tabIconStyles?: Partial<Record<FixedTab, React.CSSProperties | undefined>>;
+  tabIcons?: Partial<Record<FixedTab, IconName | undefined>>;
 }): NonNullable<MenuProps["items"]> {
   const {
     intl,
@@ -638,11 +797,16 @@ function createRailMenuItems(opts: {
     requestCollaboratorAccess,
     sectionKeyPrefix,
     showActBarLabels,
+    tabIconStyles,
+    tabIcons,
   } = opts;
   const items: NonNullable<MenuProps["items"]> = names.map((name) => ({
     key: `${sectionKeyPrefix}:${name}`,
     label: renderMenuLabel(
-      <Icon name={FIXED_PROJECT_TABS[name].icon} />,
+      <Icon
+        name={tabIcons?.[name] ?? FIXED_PROJECT_TABS[name].icon}
+        style={tabIconStyles?.[name]}
+      />,
       renderFixedTabLabel(name, intl),
     ),
     onClick: ({ domEvent }) => onTabClick(name, domEvent),

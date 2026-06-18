@@ -20,6 +20,7 @@ import {
   isActiveOpStartLike,
   isStartActive,
   isStartInProgressActive,
+  type RestartRequest,
 } from "./start-in-progress-state";
 
 const START_PANEL_DELAY_MS = 5000;
@@ -134,13 +135,18 @@ export function getStartProgressMessage({
   lifecycleState,
   startLroActive,
   activeOpStartLike,
+  restartRequested,
 }: {
   phase: StartPhaseKey;
   rawMessage: string;
   lifecycleState?: string;
   startLroActive: boolean;
   activeOpStartLike: boolean;
+  restartRequested?: boolean;
 }): string {
+  if (restartRequested) {
+    return "Project restart was requested. Open terminals and runtime sessions are reconnecting.";
+  }
   if (rawMessage && rawMessage.toLowerCase() !== phase) {
     return rawMessage;
   }
@@ -185,6 +191,11 @@ export default function StartInProgress({
     () => startLroRecord?.toJS() as StartLroState | undefined,
     [startLroRecord],
   );
+  const restartRequestRecord = useTypedRedux({ project_id }, "restart_request");
+  const restartRequest = useMemo(
+    () => restartRequestRecord?.toJS() as RestartRequest | undefined,
+    [restartRequestRecord],
+  );
   const lifecycleState = `${projectState ?? ""}`.trim().toLowerCase();
   const startLroActive = isStartActive(startLro);
   const { activeOp } = useProjectActiveOperation(project_id, {
@@ -198,6 +209,7 @@ export default function StartInProgress({
   const active = isStartInProgressActive({
     startLro,
     activeOp,
+    restartRequest,
     lifecycleState,
   });
   const startTsFromLro = toTimestamp(
@@ -215,11 +227,14 @@ export default function StartInProgress({
       return;
     }
     setDetectedStartTs((current) => current ?? Date.now());
-  }, [active, project_id, startLro?.op_id]);
+  }, [active, project_id, restartRequest?.token, startLro?.op_id]);
 
-  const startTs = startTsFromLro ?? detectedStartTs;
+  const restartRequestTs = toTimestamp(restartRequest?.requested_at);
+  const restartRequested = !!restartRequest?.token;
+  const startTs = startTsFromLro ?? restartRequestTs ?? detectedStartTs;
   const activeKey =
     startLro?.op_id ??
+    restartRequest?.token ??
     (active
       ? `${project_id}:${startTs ?? "no-start-ts"}:${lifecycleState || "active"}`
       : undefined);
@@ -228,6 +243,10 @@ export default function StartInProgress({
     if (!active) {
       setVisible(false);
       setDismissedKey(undefined);
+      return;
+    }
+    if (restartRequested) {
+      setVisible(true);
       return;
     }
     const elapsed = startTs == null ? 0 : Math.max(0, Date.now() - startTs);
@@ -241,7 +260,7 @@ export default function StartInProgress({
       START_PANEL_DELAY_MS - elapsed,
     );
     return () => window.clearTimeout(timer);
-  }, [active, startTs, startLro?.op_id]);
+  }, [active, restartRequested, startTs, startLro?.op_id]);
 
   if (!active || !visible || (activeKey && dismissedKey === activeKey)) {
     return null;
@@ -262,17 +281,21 @@ export default function StartInProgress({
     startLro?.last_progress?.message ??
     startLro?.summary?.progress_summary?.message ??
     activeOp?.message ??
+    (restartRequested ? "Project restart requested" : undefined) ??
     ""
   }`.trim();
   const phaseLabel = START_PHASES[current]?.label ?? "Starting";
   const actionLabel =
-    activeOp?.action === "restart" ? "Restarting" : "Starting";
+    activeOp?.action === "restart" || restartRequested
+      ? "Restarting"
+      : "Starting";
   const message = getStartProgressMessage({
     phase,
     rawMessage,
     lifecycleState,
     startLroActive,
     activeOpStartLike,
+    restartRequested,
   });
 
   return (

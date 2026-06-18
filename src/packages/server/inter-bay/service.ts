@@ -73,6 +73,7 @@ import {
   redeemResetLocal as redeemPasswordResetLocal,
 } from "@cocalc/server/auth/password-reset";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import sendEmailVerificationLocal from "@cocalc/server/accounts/send-email-verification";
 import {
   grantAdminRole as grantAdminRoleLocal,
   revokeAdminRole as revokeAdminRoleLocal,
@@ -118,6 +119,7 @@ import {
   updateClusterAccountHomeBay,
   upsertClusterAccountApiKeyDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
+import isAdmin from "@cocalc/server/accounts/is-admin";
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
@@ -150,6 +152,11 @@ import {
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
+  getTeamLicenseOverviewForOwner,
+  resolveTeamLicenseQuote,
+} from "@cocalc/server/membership/team-licenses";
+import { purchaseTeamLicenseChange } from "@cocalc/server/purchases/team-license";
+import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
@@ -168,6 +175,16 @@ import {
   updateSiteLicense,
   updateSiteLicensePool,
 } from "@cocalc/server/membership/site-licenses";
+import {
+  addSiteLicenseExternalClaimKey,
+  consumeSiteLicenseExternalClaimToken,
+  createSiteLicenseExternalClaimPool,
+  disableSiteLicenseExternalClaimPool,
+  listSiteLicenseExternalClaimConsumptions,
+  listSiteLicenseExternalClaimKeys,
+  listSiteLicenseExternalClaimPools,
+  revokeSiteLicenseExternalClaimKey,
+} from "@cocalc/server/membership/site-license-external-claims";
 import {
   createLicenseOnSeed,
   listLicensesOnSeed,
@@ -743,6 +760,8 @@ async function startAccountLocalService(): Promise<void> {
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },
+    sendEmailVerification: async ({ account_id, only_verify }) =>
+      await sendEmailVerificationLocal(account_id, only_verify),
     adminVerifyEmailAddress: async ({ account_id }) =>
       await adminVerifyEmailAddressLocal({ account_id }),
     adminDisableTwoFactor: async ({ account_id }) =>
@@ -843,6 +862,20 @@ async function startAccountLocalService(): Promise<void> {
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,
+      }),
+    getTeamLicense: async ({ account_id }) =>
+      await getTeamLicenseOverviewForOwner({
+        owner_account_id: account_id,
+      }),
+    getTeamLicenseQuote: async ({ account_id, target_seats }) =>
+      await resolveTeamLicenseQuote({
+        owner_account_id: account_id,
+        target_seats,
+      }),
+    purchaseTeamLicenseChange: async ({ account_id, target_seats }) =>
+      await purchaseTeamLicenseChange({
+        account_id,
+        target_seats: target_seats ?? {},
       }),
     adminProvisionSiteLicense: async (opts) =>
       isSeedSiteLicenseBay()
@@ -956,6 +989,137 @@ async function startAccountLocalService(): Promise<void> {
       isSeedSiteLicenseBay()
         ? await addSiteLicensePool(opts)
         : await getSeedSiteLicenseClient().addSiteLicensePool(opts),
+    createSiteLicenseExternalClaimPool: async ({
+      actor_account_id,
+      ...opts
+    }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().createSiteLicenseExternalClaimPool(
+          {
+            actor_account_id,
+            ...opts,
+          },
+        );
+      }
+      if (!(await isAdmin(actor_account_id))) {
+        throw Error("must be an admin");
+      }
+      return await createSiteLicenseExternalClaimPool({
+        ...opts,
+        created_by_account_id: actor_account_id,
+      });
+    },
+    addSiteLicenseExternalClaimKey: async ({ actor_account_id, ...opts }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().addSiteLicenseExternalClaimKey({
+          actor_account_id,
+          ...opts,
+        });
+      }
+      if (!(await isAdmin(actor_account_id))) {
+        throw Error("must be an admin");
+      }
+      return await addSiteLicenseExternalClaimKey({
+        ...opts,
+        created_by_account_id: actor_account_id,
+      });
+    },
+    listSiteLicenseExternalClaimPools: async ({ account_id, ...opts }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimPools(
+          {
+            account_id,
+            ...opts,
+          },
+        );
+      }
+      if (!(await isAdmin(account_id))) {
+        throw Error("must be an admin");
+      }
+      return await listSiteLicenseExternalClaimPools(opts);
+    },
+    disableSiteLicenseExternalClaimPool: async ({
+      actor_account_id,
+      ...opts
+    }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().disableSiteLicenseExternalClaimPool(
+          {
+            actor_account_id,
+            ...opts,
+          },
+        );
+      }
+      if (!(await isAdmin(actor_account_id))) {
+        throw Error("must be an admin");
+      }
+      return await disableSiteLicenseExternalClaimPool(opts);
+    },
+    listSiteLicenseExternalClaimKeys: async ({ account_id, ...opts }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimKeys(
+          {
+            account_id,
+            ...opts,
+          },
+        );
+      }
+      if (!(await isAdmin(account_id))) {
+        throw Error("must be an admin");
+      }
+      return await listSiteLicenseExternalClaimKeys(opts);
+    },
+    revokeSiteLicenseExternalClaimKey: async ({
+      actor_account_id,
+      ...opts
+    }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().revokeSiteLicenseExternalClaimKey(
+          {
+            actor_account_id,
+            ...opts,
+          },
+        );
+      }
+      if (!(await isAdmin(actor_account_id))) {
+        throw Error("must be an admin");
+      }
+      return await revokeSiteLicenseExternalClaimKey(opts);
+    },
+    listSiteLicenseExternalClaimConsumptions: async ({
+      account_id,
+      ...opts
+    }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimConsumptions(
+          {
+            account_id,
+            ...opts,
+          },
+        );
+      }
+      if (!(await isAdmin(account_id))) {
+        throw Error("must be an admin");
+      }
+      return await listSiteLicenseExternalClaimConsumptions({
+        ...opts,
+        account_id: opts.target_account_id,
+      });
+    },
+    consumeSiteLicenseExternalClaimToken: async ({ account_id, token }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "claim site-license external token",
+      );
+      return isSeedSiteLicenseBay()
+        ? await consumeSiteLicenseExternalClaimToken({ token, account_id })
+        : await getSeedSiteLicenseClient().consumeSiteLicenseExternalClaimToken(
+            {
+              account_id,
+              token,
+            },
+          );
+    },
     archiveSiteLicensePool: async (opts) =>
       isSeedSiteLicenseBay()
         ? await archiveSiteLicensePool(opts)
@@ -1715,12 +1879,14 @@ async function startHostConnectionService(): Promise<void> {
       account_id,
       id,
       components,
+      base_url,
       reason,
     }) =>
       await rolloutHostManagedComponents({
         account_id,
         id,
         components,
+        base_url,
         reason,
       }),
     deleteHost: async ({
@@ -2105,6 +2271,10 @@ async function startHostControlService(): Promise<void> {
       ).removeHostSshAuthorizedKey(remove),
     getBackupExecutionStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getBackupExecutionStatus(),
+    invalidateBackupConfig: async ({ host_id, invalidate }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).invalidateBackupConfig(invalidate),
     getManagedComponentStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getManagedComponentStatus(),
     getInstalledRuntimeArtifacts: async ({ host_id, get }) =>

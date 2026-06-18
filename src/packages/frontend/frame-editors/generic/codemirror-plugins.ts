@@ -11,6 +11,8 @@ It was ridiculously hard to figure out how to declare this in TypeScript!
 import { SetMap } from "../frame-tree/types";
 
 import * as CodeMirror from "codemirror";
+import "@cocalc/frontend/codemirror/extensions";
+import "@cocalc/frontend/codemirror/addon/delete-trailing-whitespace";
 
 declare module "codemirror" {
   interface Editor {

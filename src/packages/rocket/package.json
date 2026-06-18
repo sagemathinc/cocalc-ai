@@ -6,11 +6,19 @@
     "preinstall": "npx only-allow pnpm",
     "build:bundle": "bay/build-bundle.sh",
     "build:bay-bundle": "bay/build-bundle.sh",
+    "build:bay-hub-bundle": "bay/build-hub-bundle.sh",
     "build:bay-static-bundle": "bay/build-static-bundle.sh",
+    "build:project-host-software-bundle": "bay/build-project-host-software-bundle.sh",
     "build:bay": "pnpm run build:bay-bundle",
     "build": "exit 0"
   },
-  "files": ["bay/**", "bin/**", "helm/**", "README.md", "package.json"],
+  "files": [
+    "bay/**",
+    "bin/**",
+    "helm/**",
+    "README.md",
+    "package.json"
+  ],
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {

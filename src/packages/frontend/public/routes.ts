@@ -20,6 +20,8 @@ import type { PublicPoliciesRoute } from "./policies/routes";
 import { getPoliciesRouteFromPath } from "./policies/routes";
 import type { PublicProductsRoute } from "./products/routes";
 import { getProductsRouteFromPath } from "./products/routes";
+import type { PublicRootfsRoute } from "./rootfs/routes";
+import { getRootfsRouteFromPath } from "./rootfs/routes";
 import type { PublicSupportRoute } from "./support/routes";
 import { getSupportViewFromPath } from "./support/routes";
 
@@ -36,6 +38,7 @@ export type PublicRoute =
   | { route: PublicPoliciesRoute; section: "policies" }
   | { section: "pricing" }
   | { route: PublicProductsRoute; section: "products" }
+  | { route: PublicRootfsRoute; section: "rootfs" }
   | { route: PublicSupportRoute; section: "support" };
 
 function getBaseOffset(): number {
@@ -107,6 +110,10 @@ export function getPublicRouteFromPath(
     return { route: getProductsRouteFromPath(pathname), section: "products" };
   }
 
+  if (routeParts[0] === "rootfs") {
+    return { route: getRootfsRouteFromPath(pathname), section: "rootfs" };
+  }
+
   if (routeParts[0] === "support") {
     const view = getSupportViewFromPath(pathname);
     if (view == null) {
@@ -130,7 +137,7 @@ export function isPublicTarget(target?: string | null): target is string {
   ) {
     return true;
   }
-  return /\/(about|auth|invites|sso|redeem|docs|features|guides|lang|news|policies|pricing|products|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
+  return /\/(about|auth|invites|sso|redeem|docs|features|guides|lang|news|policies|pricing|products|rootfs|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
     target,
   );
 }

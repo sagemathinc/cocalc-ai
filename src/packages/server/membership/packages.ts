@@ -94,6 +94,7 @@ interface RawMembershipPackageAssignment {
   package_id: string;
   account_id?: string | null;
   email_address?: string | null;
+  account_email_address?: string | null;
   assigned_by_account_id?: string | null;
   assigned_at?: Date | string;
   revoked_at?: Date | string | null;
@@ -253,6 +254,7 @@ function normalizeAssignmentRecord(
     ...row,
     account_id: row.account_id ?? undefined,
     email_address: row.email_address ?? undefined,
+    account_email_address: row.account_email_address ?? undefined,
     assigned_at: asDate(row.assigned_at),
     revoked_at: asDate(row.revoked_at),
     metadata,
@@ -283,7 +285,40 @@ function grantSourceForAssignment(
   ) {
     return "student-course-purchase";
   }
+  if (
+    pkg.kind === "site" &&
+    metadata?.grant_source === "site-license-external-claim"
+  ) {
+    return "site-license-external-claim";
+  }
   return grantSourceForKind(pkg.kind);
+}
+
+function externalClaimGrantOverride<T extends string | Date | null>({
+  pkg,
+  metadata,
+  key,
+  fallback,
+}: {
+  pkg: MembershipPackageRecord;
+  metadata?: Record<string, unknown> | null;
+  key: string;
+  fallback: T;
+}): T {
+  if (
+    pkg.kind !== "site" ||
+    metadata?.grant_source !== "site-license-external-claim"
+  ) {
+    return fallback;
+  }
+  const value = metadata[key];
+  if (value == null || value === "") {
+    return fallback;
+  }
+  if (fallback instanceof Date || key.endsWith("_at")) {
+    return asDate(value as string) as T;
+  }
+  return `${value}` as T;
 }
 
 function getPackageDomains(
@@ -705,6 +740,7 @@ function getSiteLicenseAffiliationMetadata({
     site_license_owner_account_id:
       site_license?.owner_account_id ?? pkg.owner_account_id,
     pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
+    pool_description: `${pkg.metadata?.pool_description ?? ""}`.trim() || null,
     verification_policy:
       `${pkg.metadata?.verification_policy ?? ""}`.trim() || "email-domain",
     exclusive_group: getPackageExclusiveGroup(pkg),
@@ -833,17 +869,29 @@ async function prepareGrantForAssignment({
   }
   const grant_id = uuid();
   const grant_source = grantSourceForAssignment(pkg, metadata);
+  const membership_class = externalClaimGrantOverride({
+    pkg,
+    metadata,
+    key: "grant_membership_class",
+    fallback: pkg.membership_class,
+  });
+  const expires_at = externalClaimGrantOverride({
+    pkg,
+    metadata,
+    key: "grant_expires_at",
+    fallback: pkg.expires_at ?? null,
+  });
   return {
     grant: {
       id: grant_id,
       account_id,
-      membership_class: pkg.membership_class,
+      membership_class,
       source: grant_source,
       package_id,
       purchase_id: pkg.purchase_id ?? null,
       granted_by_account_id: assigned_by_account_id ?? null,
       starts_at: pkg.starts_at ?? null,
-      expires_at: pkg.expires_at ?? null,
+      expires_at,
       metadata: {
         ...normalizeMetadata(metadata),
         assignment_id,
@@ -857,7 +905,48 @@ async function prepareGrantForAssignment({
   };
 }
 
-async function getHomeBayForAccount(account_id: string): Promise<string> {
+async function getHomeBayForAccount(
+  account_id: string,
+  client?: PoolClient,
+): Promise<string> {
+  if (client != null) {
+    const localBayId = getConfiguredBayId();
+    const directoryTable = await client.query<{ table_name: string | null }>(
+      "SELECT to_regclass($1) AS table_name",
+      ["public.cluster_account_directory"],
+    );
+    if (directoryTable.rows[0]?.table_name) {
+      const { rows } = await client.query(
+        `
+          SELECT home_bay_id
+            FROM cluster_account_directory
+           WHERE account_id = $1
+             AND provisioned = TRUE
+           LIMIT 1
+        `,
+        [account_id],
+      );
+      const directoryHomeBayId = `${rows[0]?.home_bay_id ?? ""}`.trim();
+      if (directoryHomeBayId) {
+        return directoryHomeBayId;
+      }
+    }
+    const { rows } = await client.query(
+      `
+        SELECT home_bay_id
+          FROM accounts
+         WHERE account_id = $1
+           AND deleted IS NOT TRUE
+         LIMIT 1
+      `,
+      [account_id],
+    );
+    const localHomeBayId = `${rows[0]?.home_bay_id ?? ""}`.trim();
+    if (rows[0]) {
+      return localHomeBayId || localBayId;
+    }
+    throw Error(`account ${account_id} not found`);
+  }
   const account = await getClusterAccountById(account_id);
   if (!account) {
     throw Error(`account ${account_id} not found`);
@@ -890,7 +979,7 @@ async function createGrantForAssignment({
     metadata,
     client,
   });
-  const home_bay_id = await getHomeBayForAccount(account_id);
+  const home_bay_id = await getHomeBayForAccount(account_id, client);
   if (home_bay_id === getConfiguredBayId()) {
     await createMembershipGrant(grant, client);
   }
@@ -1432,7 +1521,7 @@ async function syncUpdatedGrantForAssignment({
       assignment_id: assignment.id,
     },
   };
-  const home_bay_id = await getHomeBayForAccount(assignment.account_id);
+  const home_bay_id = await getHomeBayForAccount(assignment.account_id, client);
   if (home_bay_id === getConfiguredBayId()) {
     await getQueryClient(client).query(
       `
@@ -1729,6 +1818,7 @@ export async function listMembershipPackageAssignments({
         a.package_id,
         a.account_id,
         a.email_address,
+        accounts.email_address AS account_email_address,
         a.assigned_by_account_id,
         a.assigned_at,
         a.revoked_at,
@@ -1737,6 +1827,8 @@ export async function listMembershipPackageAssignments({
         g.source AS grant_source,
         g.purchase_id AS grant_purchase_id
       FROM membership_package_assignments a
+      LEFT JOIN accounts
+        ON accounts.account_id = a.account_id
       LEFT JOIN membership_grants g
         ON g.package_id = a.package_id
        AND g.account_id = a.account_id
@@ -1971,7 +2063,7 @@ export async function revokeMembershipPackageSeat(
         return false;
       }
       const currentGrantHomeBayId = assignment.account_id
-        ? await getHomeBayForAccount(assignment.account_id)
+        ? await getHomeBayForAccount(assignment.account_id, dbClient)
         : getConfiguredBayId();
       if (
         assignment.account_id &&
@@ -2179,6 +2271,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "domain-match",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
@@ -2216,6 +2310,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "email-assignment",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
@@ -2293,6 +2389,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "domain-match",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(

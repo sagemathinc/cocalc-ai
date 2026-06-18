@@ -623,4 +623,110 @@ describe("connected terminal resizing", () => {
       terminal?.close();
     }
   });
+
+  it("keeps first-connect autostart intent while project startup is in progress", async () => {
+    let terminal: any;
+    try {
+      const { Terminal, terminalClient, ensureProjectRunning, projectStore } =
+        loadTerminalModule({
+          projectState: "starting",
+          project: { autostart_enabled: true },
+        });
+      const parent = document.createElement("div");
+      document.body.appendChild(parent);
+      const actions = {
+        project_id: "project-1",
+        path: "/tmp/example.term",
+        get_term_env: jest.fn(() => ({})),
+        set_connection_status: jest.fn(),
+        set_title: jest.fn(),
+        set_error: jest.fn(),
+        _tree_is_single_leaf: jest.fn(() => false),
+        close_frame: jest.fn(),
+        open_code_editor_frame: jest.fn(),
+        _get_project_actions: jest.fn(() => ({
+          flag_file_activity: jest.fn(),
+          open_file: jest.fn(),
+          close_tab: jest.fn(),
+          isTabClosed: jest.fn(() => false),
+          open_directory: jest.fn(),
+        })),
+      } as any;
+
+      terminal = new Terminal(
+        actions,
+        0,
+        "term-1",
+        parent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { autoStartProjectOnFirstConnect: true },
+      );
+
+      await terminal.connect();
+
+      expect(terminalClient).not.toHaveBeenCalled();
+      expect(ensureProjectRunning).not.toHaveBeenCalled();
+
+      projectStore.setStatus("opened");
+      await terminal.connect();
+
+      expect(ensureProjectRunning).toHaveBeenCalledWith(
+        "project-1",
+        "use this terminal",
+      );
+      expect(terminalClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "project-1",
+        }),
+      );
+    } finally {
+      terminal?.close();
+    }
+  });
+
+  it("disconnects the stale pty when a running project enters restart startup", async () => {
+    let terminal: any;
+    try {
+      const { Terminal, ptys, projectStore } = loadTerminalModule({
+        projectState: "running",
+      });
+      const parent = document.createElement("div");
+      document.body.appendChild(parent);
+      const actions = {
+        project_id: "project-1",
+        path: "/tmp/example.term",
+        get_term_env: jest.fn(() => ({})),
+        set_connection_status: jest.fn(),
+        set_title: jest.fn(),
+        set_error: jest.fn(),
+        _tree_is_single_leaf: jest.fn(() => false),
+        close_frame: jest.fn(),
+        open_code_editor_frame: jest.fn(),
+        _get_project_actions: jest.fn(() => ({
+          flag_file_activity: jest.fn(),
+          open_file: jest.fn(),
+          close_tab: jest.fn(),
+          isTabClosed: jest.fn(() => false),
+          open_directory: jest.fn(),
+        })),
+      } as any;
+
+      terminal = new Terminal(actions, 0, "term-1", parent);
+      await terminal.connect();
+      expect(ptys[0].close).not.toHaveBeenCalled();
+
+      projectStore.setStatus("starting");
+
+      expect(ptys[0].close).toHaveBeenCalled();
+      expect(actions.set_connection_status).toHaveBeenCalledWith(
+        "term-1",
+        "disconnected",
+      );
+    } finally {
+      terminal?.close();
+    }
+  });
 });

@@ -9,7 +9,7 @@ NAME="cocalc-cli"
 # shellcheck source=../../project-host/sea/node-bin.sh
 source "$ROOT/packages/project-host/sea/node-bin.sh"
 NODE_BIN="$(resolve_sea_node_bin)"
-VERSION="${npm_package_version:-$("$NODE_BIN" -p "require('$ROOT/packages/cli/package.json').version")}"
+VERSION="${COCALC_SOFTWARE_ARTIFACT_ID:-${npm_package_version:-$("$NODE_BIN" -p "require('$ROOT/packages/cli/package.json').version")}}"
 MACHINE="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 TARGET="$BUILD_DIR/$NAME-$VERSION-$MACHINE-$OS"

@@ -1,9 +1,20 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
-import { CodexCredentialsPanel } from "./codex-credentials-panel";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import {
+  CodexCredentialsPanel,
+  CodexUsageMeters,
+} from "./codex-credentials-panel";
 
 const getCodexPaymentSource = jest.fn();
+const getCodexUsageStatus = jest.fn();
 const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
+const mockClipboardWriteText = jest.fn();
 
 jest.mock("antd", () => {
   const Button = ({ children, disabled, href, loading, onClick }: any) =>
@@ -58,12 +69,16 @@ jest.mock("antd", () => {
     );
   };
   const TextArea = ({ value }: any) => <div>{value}</div>;
+  const Progress = ({ percent }: any) => (
+    <div role="progressbar" aria-valuenow={percent} />
+  );
   return {
     Alert: Div,
     Button,
     Collapse,
     Input: { TextArea },
     Popconfirm: Div,
+    Progress,
     Space: Div,
     Table: Div,
     Tag: Div,
@@ -107,7 +122,9 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   }),
 }));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
-  TimeAgo: () => null,
+  TimeAgo: ({ date }: any) => (
+    <span>{date instanceof Date ? "time-ago-date" : "time-ago"}</span>
+  ),
 }));
 jest.mock("@cocalc/frontend/lite", () => ({
   lite: true,
@@ -129,6 +146,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         system: {
           getCodexPaymentSource: (...args: any[]) =>
             getCodexPaymentSource(...args),
+          getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
         },
       },
     },
@@ -147,6 +165,10 @@ describe("CodexCredentialsPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: mockClipboardWriteText },
+    });
   });
 
   it("clears the previous payment source label immediately when the project changes", async () => {
@@ -155,6 +177,28 @@ describe("CodexCredentialsPanel", () => {
     getCodexPaymentSource
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      account: {
+        account: {
+          type: "chatgpt",
+          email: "user@example.com",
+          planType: "pro",
+        },
+      },
+      rateLimits: {
+        rateLimits: {
+          primary: { usedPercent: 42, windowDurationMins: 300 },
+          secondary: {
+            usedPercent: 7,
+            windowDurationMins: 10_080,
+            resetsAt: 1_800_000_000,
+          },
+        },
+      },
+    });
 
     const { rerender } = render(
       <CodexCredentialsPanel embedded defaultProjectId="project-1" />,
@@ -168,6 +212,16 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(screen.getAllByText("ChatGPT Plan").length).toBeGreaterThan(0);
       expect(screen.getByText("Current Codex payment source:")).toBeTruthy();
+      expect(
+        screen.getAllByText("Open ChatGPT Codex Usage").length,
+      ).toBeGreaterThan(0);
+      expect(screen.getByText("user@example.com")).toBeTruthy();
+      expect(screen.getByText("5-hour limit")).toBeTruthy();
+      expect(screen.getByText("58%")).toBeTruthy();
+      expect(screen.getAllByText("Remaining").length).toBeGreaterThan(0);
+      expect(screen.getByText("7-day limit")).toBeTruthy();
+      expect(screen.getByText("93%")).toBeTruthy();
+      expect(screen.getByText("time-ago-date")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
@@ -184,6 +238,128 @@ describe("CodexCredentialsPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
+    });
+  });
+
+  it("shows a visible reauth CTA for stale ChatGPT subscriptions", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason:
+        "account/rateLimits/read: codex account authentication required to read rate limits",
+    });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      verificationUrl: "https://chatgpt.com/device",
+      userCode: "ABCD-EFGH",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Refresh your ChatGPT sign-in")).toBeTruthy();
+      expect(screen.getByText("Sign-in needs refresh")).toBeTruthy();
+      expect(screen.queryByText("Connect Codex with ChatGPT")).toBeNull();
+      expect(screen.getByText("Sign in again with ChatGPT")).toBeTruthy();
+      expect(
+        screen.getByText((text) =>
+          text.includes("live rate-limit details are not available"),
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText((text) => text.includes("account/rateLimits/read")),
+      ).toBeNull();
+    });
+
+    await act(async () => {
+      screen.getByText("Sign in again with ChatGPT").click();
+    });
+
+    expect(codexDeviceAuthStart).toHaveBeenCalledWith({
+      project_id: "project-1",
+    });
+    await waitFor(() => {
+      expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
+    });
+  });
+
+  it("refreshes Codex usage without reloading the whole payment panel", async () => {
+    const refreshedUsage = deferred<any>();
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus
+      .mockResolvedValueOnce({
+        available: true,
+        checkedAt: "2026-06-10T00:00:00.000Z",
+        paymentSource: { source: "subscription" },
+        account: {
+          account: {
+            type: "chatgpt",
+            email: "user@example.com",
+            planType: "pro",
+          },
+        },
+        rateLimits: {
+          rateLimits: {
+            primary: { usedPercent: 42, windowDurationMins: 300 },
+            secondary: { usedPercent: 7, windowDurationMins: 10_080 },
+          },
+        },
+      })
+      .mockReturnValueOnce(refreshedUsage.promise);
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("5-hour limit")).toBeTruthy();
+      expect(screen.getByText("58%")).toBeTruthy();
+      expect(screen.getByText("7-day limit")).toBeTruthy();
+      expect(screen.getByText("93%")).toBeTruthy();
+    });
+    expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      screen.getByText("Refresh usage").click();
+      await Promise.resolve();
+    });
+
+    expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("loading")).toBeNull();
+    expect(screen.getByText("58%")).toBeTruthy();
+
+    await act(async () => {
+      refreshedUsage.resolve({
+        available: true,
+        checkedAt: "2026-06-10T00:00:01.000Z",
+        paymentSource: { source: "subscription" },
+        account: {
+          account: {
+            type: "chatgpt",
+            email: "user@example.com",
+            planType: "pro",
+          },
+        },
+        rateLimits: {
+          rateLimits: {
+            primary: { usedPercent: 43, windowDurationMins: 300 },
+            secondary: { usedPercent: 8, windowDurationMins: 10_080 },
+          },
+        },
+      });
+      await refreshedUsage.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("57%")).toBeTruthy();
+      expect(screen.getByText("92%")).toBeTruthy();
     });
   });
 
@@ -399,5 +575,44 @@ describe("CodexCredentialsPanel", () => {
       expect(screen.getByText("WXYZ-1234")).toBeTruthy();
       expect(screen.getByText("Copy URL")).toBeTruthy();
     });
+
+    fireEvent.click(screen.getByText("1. Copy this one-time code"));
+    await waitFor(() => {
+      expect(mockClipboardWriteText).toHaveBeenCalledWith("WXYZ-1234");
+    });
+  });
+});
+
+describe("CodexUsageMeters", () => {
+  it("shows compact reset times in the top-right card row", () => {
+    render(
+      <CodexUsageMeters
+        compact
+        status={
+          {
+            rateLimits: {
+              rateLimits: {
+                primary: {
+                  usedPercent: 42,
+                  windowDurationMins: 300,
+                  resetsAt: 1_800_000_000,
+                },
+                secondary: {
+                  usedPercent: 7,
+                  windowDurationMins: 10_080,
+                  resetsAt: 1_800_000_001,
+                },
+              },
+            },
+          } as any
+        }
+      />,
+    );
+
+    expect(screen.getByText("5-hour limit")).toBeTruthy();
+    expect(screen.getByText("58%")).toBeTruthy();
+    expect(screen.getByText("7-day limit")).toBeTruthy();
+    expect(screen.getByText("93%")).toBeTruthy();
+    expect(screen.getAllByText("time-ago-date")).toHaveLength(2);
   });
 });

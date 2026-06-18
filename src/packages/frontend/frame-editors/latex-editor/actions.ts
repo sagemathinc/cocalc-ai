@@ -46,7 +46,6 @@ import {
   project_api,
   server_time,
 } from "@cocalc/frontend/frame-editors/generic/client";
-import { once } from "@cocalc/util/async-utils";
 import { ExecOutput } from "@cocalc/util/db-schema/projects";
 import {
   change_filename_extension,
@@ -347,16 +346,9 @@ export class Actions extends BaseActions<LatexEditorState> {
     // https://github.com/sagemathinc/cocalc/issues/2839
     if (this.engine_config !== undefined) return;
 
-    // Wait until the syncstring is loaded from disk.
-    if (this._syncstring.get_state() == "init") {
-      try {
-        await once(this._syncstring, "ready");
-      } catch {
-        // closed before finished opening
-        return;
-      }
-    }
-    if (this._state == "closed") {
+    // Wait until the syncstring is loaded from disk. During fast-open and
+    // reconnects it can be non-ready without being in the old "init" state.
+    if (!(await this.wait_until_syncdoc_ready(this._syncstring))) {
       return;
     }
 
@@ -426,15 +418,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     if (this._syncdb == null) {
       throw Error("syncdb must be defined");
     }
-    if (this._syncdb.get_state() == "init") {
-      try {
-        await once(this._syncdb, "ready");
-      } catch {
-        // user closed it
-        return;
-      }
-      if (this._state == "closed") return;
-    }
+    if (!(await this.wait_until_syncdoc_ready(this._syncdb))) return;
 
     // If the build command is NOT already
     // set in syncdb, we wait for file to load,
@@ -725,6 +709,39 @@ export class Actions extends BaseActions<LatexEditorState> {
       console.warn(err);
       this.set_error(err);
     }
+  }
+
+  private get_streamed_latex_output(): BuildLog | undefined {
+    const log = this.store.getIn(["build_logs", "latex"]) as any;
+    const output = typeof log?.toJS === "function" ? log.toJS() : log;
+    if (output == null || typeof output !== "object") return;
+    if (!`${output.stdout ?? ""}`.trim() && !`${output.stderr ?? ""}`.trim()) {
+      return;
+    }
+    return {
+      ...output,
+      time: typeof output.time === "number" ? output.time : Date.now(),
+    } as BuildLog;
+  }
+
+  private is_generic_latex_transport_error(err: unknown): boolean {
+    let message =
+      err instanceof Error
+        ? err.message
+        : typeof err === "string"
+          ? err
+          : `${(err as any)?.message ?? err ?? ""}`;
+    message = message
+      .replace(/^unable to run the compilation\.?\s*/i, "")
+      .replace(/^error\s*:?\s*/i, "")
+      .replace(/\.+$/, "")
+      .trim()
+      .toLowerCase();
+    return (
+      !message ||
+      message === "an error occurred" ||
+      message === "error occurred"
+    );
   }
 
   _forget_pdf_document(): void {
@@ -1071,9 +1088,17 @@ export class Actions extends BaseActions<LatexEditorState> {
       );
       // console.log(output);
     } catch (err) {
-      //console.info("LaTeX Editor/actions/run_latex error=", err);
-      this.set_error(err);
-      return;
+      const streamedOutput = this.get_streamed_latex_output();
+      if (
+        streamedOutput != null &&
+        this.is_generic_latex_transport_error(err)
+      ) {
+        output = streamedOutput;
+      } else {
+        //console.info("LaTeX Editor/actions/run_latex error=", err);
+        this.set_error(err);
+        return;
+      }
     } finally {
       // In all cases, we want the status info to clear
       this.set_status("");
@@ -1769,7 +1794,9 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.setState({ word_count: output.stdout });
       }
     } catch (err) {
-      this.set_error(err);
+      this.setState({
+        word_count: `Error running word count:\n${err instanceof Error ? err.message : `${err}`}`,
+      });
     }
   }
 

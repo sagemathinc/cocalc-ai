@@ -16,7 +16,7 @@ import { Button, Dropdown, Input, InputNumber, Popover } from "antd";
 import type * as CodeMirror from "codemirror";
 import type { MenuProps } from "antd/lib";
 import { List } from "immutable";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useIntl } from "react-intl";
 import {
   CSS,
@@ -115,6 +115,7 @@ const title_bar_style: CSS = {
   flexDirection: "row",
   flexWrap: "nowrap",
   flex: "0 0 auto",
+  minWidth: 0,
   display: "flex",
 } as const;
 
@@ -219,6 +220,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   }>({ main: false, popover: false });
 
   const [helpSearch, setHelpSearch] = useState<string>("");
+  const titleBarRef = useRef<HTMLDivElement | null>(null);
+  const [titleBarWidth, setTitleBarWidth] = useState<number | undefined>();
 
   const student_project_functionality = useStudentProjectFunctionality(
     props.project_id,
@@ -307,6 +310,22 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     return true;
   }, [tours, props.type]);
 
+  useEffect(() => {
+    const node = titleBarRef.current;
+    if (node == null || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const updateWidth = () =>
+      setTitleBarWidth(node.getBoundingClientRect().width);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const compactFrameControls = titleBarWidth != null && titleBarWidth < 360;
+  const compactDragHandle = titleBarWidth != null && titleBarWidth < 240;
+
   // comes from actions's store:
   const switch_to_files: List<string> = useRedux([
     props.actions.name,
@@ -346,11 +365,17 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         title={intl.formatMessage({
           id: "frame_editors.frame_tree.title_bar.close",
           defaultMessage:
-            "Close this frame. To restore the default layout, close all frames.",
+            "Close this frame. Closing the last frame closes the file.",
           description: "Click this X button to close the frame",
         })}
       >
-        <Button key={"close"} size="small" type="text" onClick={click_close}>
+        <Button
+          key={"close"}
+          size="small"
+          type="text"
+          onClick={click_close}
+          style={{ flex: "0 0 auto" }}
+        >
           <Icon name={"times"} />
         </Button>
       </Tooltip>
@@ -390,30 +415,72 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     );
   }
 
-  function renderFrameControls(): Rendered {
+  function renderPinnedClose(): Rendered {
+    return (
+      <div
+        key="pinned-close-button"
+        ref={getTourRef("control")}
+        style={{
+          position: "absolute",
+          right: "1px",
+          top: "1px",
+          height: button_height(),
+          display: "flex",
+          alignItems: "flex-start",
+          zIndex: 3,
+        }}
+      >
+        {render_x()}
+      </div>
+    );
+  }
+
+  function renderFrameControls(popup = false): Rendered {
+    const showSecondaryControls = popup || !compactFrameControls;
+    if (!popup && !showSecondaryControls) {
+      return;
+    }
     return (
       <div
         key="control-buttons-group"
         style={{
-          overflow: "hidden",
-          display: "inline-block",
+          display: "flex",
+          flex: "0 0 auto",
+          alignItems: "stretch",
+          marginLeft: "auto",
+          minWidth: "fit-content",
+          position: "relative",
+          zIndex: 1,
         }}
-        ref={getTourRef("control")}
+        ref={popup ? getTourRef("control") : undefined}
       >
         <ButtonGroup
           style={{
             padding: "3.5px 0 0 0",
             height: button_height(),
-            float: "right",
+            display: "flex",
+            flex: "0 0 auto",
           }}
           key={"control-buttons"}
         >
-          <span style={is_active ? undefined : { opacity: 0.3 }}>
-            {render_terminal_button()}
-            {!props.is_full ? render_split_row() : undefined}
-            {!props.is_full ? render_split_col() : undefined}
-            {!props.is_only ? render_full() : undefined}
-            {render_x()}
+          <span
+            style={{
+              display: "flex",
+              flex: "0 0 auto",
+              ...(is_active ? undefined : { opacity: 0.3 }),
+            }}
+          >
+            {showSecondaryControls ? render_terminal_button() : undefined}
+            {showSecondaryControls && !props.is_full
+              ? render_split_row()
+              : undefined}
+            {showSecondaryControls && !props.is_full
+              ? render_split_col()
+              : undefined}
+            {showSecondaryControls && !props.is_only
+              ? render_full()
+              : undefined}
+            {popup ? render_x() : undefined}
           </span>
         </ButtonGroup>
       </div>
@@ -799,22 +866,27 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
                 background: COLORS.BLUE_D,
                 color: "#fff",
                 borderRight: `1px solid ${COLORS.BLUE_D}`,
+                flex: "0 0 auto",
               }
-            : undefined
+            : { flex: "0 0 auto" }
         }
       >
         <Icon name="bars" />
-        <span style={{ marginLeft: 4, fontWeight: 450, whiteSpace: "nowrap" }}>
-          {(() => {
-            const spec = props.editor_spec?.[props.type];
-            if (!spec) return props.type;
-            return (
-              manageCommands.spec2display(spec, "short") ||
-              manageCommands.spec2display(spec, "name") ||
-              props.type
-            );
-          })()}
-        </span>
+        {!compactDragHandle && (
+          <span
+            style={{ marginLeft: 4, fontWeight: 450, whiteSpace: "nowrap" }}
+          >
+            {(() => {
+              const spec = props.editor_spec?.[props.type];
+              if (!spec) return props.type;
+              return (
+                manageCommands.spec2display(spec, "short") ||
+                manageCommands.spec2display(spec, "name") ||
+                props.type
+              );
+            })()}
+          </span>
+        )}
       </div>
     );
 
@@ -907,7 +979,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         style={{
           flexFlow: "row nowrap",
           display: "flex",
-          flex: 1,
+          flex: "1 1 auto",
+          minWidth: 0,
           whiteSpace: "nowrap",
           overflow: "hidden",
         }}
@@ -949,7 +1022,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
                 )}
               </div>
               <div>
-                {renderFrameControls()}
+                {renderFrameControls(true)}
                 <Button
                   style={{ float: "right" }}
                   onClick={() => setShowMainButtonsPopover(false)}
@@ -1230,7 +1303,17 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       );
     } else {
       return wrapButtonBarContextMenu(
-        <div style={{ marginTop: "3px" }}>{v}</div>,
+        <div
+          style={{
+            marginTop: "3px",
+            display: "flex",
+            flex: "0 1 auto",
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+        >
+          {v}
+        </div>,
       );
     }
   }
@@ -1343,6 +1426,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   // position relative, so we can absolute position the
   // frame controls to the right
   style.position = "relative";
+  style.paddingRight = "30px";
 
   if (is_safari()) {
     // ugly hack....
@@ -1362,6 +1446,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           style={style}
           id={`titlebar-${props.id}`}
           className={"cc-frame-tree-title-bar"}
+          ref={titleBarRef}
         >
           {renderDragHandle()}
           {renderMainMenusAndButtons()}
@@ -1369,6 +1454,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           {is_active && allButtonsPopover()}
           {!showSymbolBarLabels ? renderButtonBar() : undefined}
           {renderFrameControls()}
+          {renderPinnedClose()}
         </div>
         {showSymbolBarLabels ? renderButtonBar() : undefined}
         {renderConfirmBar()}

@@ -41,6 +41,7 @@ export async function copyPaths({
   dest,
   id,
   only_contents,
+  options,
   fs,
   setActivity,
   log,
@@ -50,6 +51,7 @@ export async function copyPaths({
   dest: string;
   id?: string;
   only_contents?: boolean;
+  options?: CopyOptions;
   fs: () => FilesystemClient;
   setActivity: SetActivity;
   log: LogProjectEvent;
@@ -86,7 +88,11 @@ export async function copyPaths({
   });
 
   try {
-    await fs().cp(normalizedSrc, dest, { recursive: true, reflink: true });
+    await fs().cp(normalizedSrc, dest, {
+      recursive: true,
+      reflink: true,
+      ...options,
+    });
     setActivity({ id, stop: "" });
   } catch (err) {
     setActivity({ id, error: `${err}` });

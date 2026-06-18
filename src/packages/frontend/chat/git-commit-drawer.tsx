@@ -21,6 +21,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { matchFontSizeShortcut } from "@cocalc/frontend/editors/markdown-input/font-size-shortcut";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { containingPath } from "@cocalc/util/misc";
@@ -30,6 +31,7 @@ import {
   exportReviewBundle,
   importReviewBundle,
   loadReviewRecord,
+  loadReviewRecords,
   loadReviewDraft,
   mergeRecordWithDraft,
   type GitReviewCommentV2,
@@ -237,6 +239,15 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   label: `Context ${value}`,
 }));
 const DELETE_ALL_REVIEWS_CONFIRM_TEXT = "delete all";
+const GIT_REVIEW_FONT_MIN = 11;
+const GIT_REVIEW_FONT_MAX = 24;
+
+function clampGitReviewFontSize(value: number): number {
+  return Math.max(
+    GIT_REVIEW_FONT_MIN,
+    Math.min(GIT_REVIEW_FONT_MAX, Math.round(value)),
+  );
+}
 
 interface GitCommitDrawerProps {
   projectId?: string;
@@ -260,6 +271,8 @@ interface GitCommitDrawerProps {
   }) => void | Promise<void>;
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
+  onIncreaseFontSize?: () => void;
+  onDecreaseFontSize?: () => void;
   reviewSubmissionHelpText?: ReactNode;
 }
 
@@ -433,10 +446,15 @@ export function GitCommitDrawer({
   onDirectCommitLogged,
   onFindInChat,
   onOpenActivityLog,
+  onIncreaseFontSize,
+  onDecreaseFontSize,
   reviewSubmissionHelpText,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
   const editorTheme = useEffectiveEditorThemeForPath(projectId, sourcePath);
+  const [localFontSize, setLocalFontSize] = useState(() =>
+    clampGitReviewFontSize(fontSize),
+  );
   const [drawerSize, setDrawerSize] = useState<number>(readDrawerSize);
   const [contextLines, setContextLines] = useState<number>(
     DEFAULT_CONTEXT_LINES,
@@ -506,6 +524,27 @@ export function GitCommitDrawer({
     requestTokenChanged: hasPendingCommitSelectionRequest,
   });
   const isHeadSelected = isHeadCommit(commit);
+  const effectiveFontSize =
+    onIncreaseFontSize != null || onDecreaseFontSize != null
+      ? fontSize
+      : localFontSize;
+
+  useEffect(() => {
+    if (onIncreaseFontSize != null || onDecreaseFontSize != null) return;
+    setLocalFontSize(clampGitReviewFontSize(fontSize));
+  }, [fontSize, onDecreaseFontSize, onIncreaseFontSize]);
+
+  const changeFontSize = useCallback(
+    (delta: -1 | 1) => {
+      const external = delta < 0 ? onDecreaseFontSize : onIncreaseFontSize;
+      if (external != null) {
+        external();
+        return;
+      }
+      setLocalFontSize((current) => clampGitReviewFontSize(current + delta));
+    },
+    [onDecreaseFontSize, onIncreaseFontSize],
+  );
 
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -1217,12 +1256,10 @@ export function GitCommitDrawer({
     let cancelled = false;
     (async () => {
       try {
-        const entries = await Promise.all(
-          hashes.map(async (hash) => {
-            const rec = await loadReviewRecord({ accountId, commitSha: hash });
-            return [hash, rec] as const;
-          }),
-        );
+        const entries = await loadReviewRecords({
+          accountId,
+          commitShas: hashes,
+        });
         if (cancelled) return;
         setReviewedByCommit((prev) =>
           applyGitReviewedByCommitEntries({
@@ -2756,6 +2793,12 @@ export function GitCommitDrawer({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (evt: KeyboardEvent) => {
+      const fontSizeDelta = matchFontSizeShortcut(evt);
+      if (fontSizeDelta != null) {
+        evt.preventDefault();
+        changeFontSize(fontSizeDelta);
+        return;
+      }
       if (
         shouldCaptureGitDrawerFindShortcut({
           key: evt.key,
@@ -2854,6 +2897,7 @@ export function GitCommitDrawer({
     reviewSaving,
     saveReview,
     scrollStorageId,
+    changeFontSize,
   ]);
 
   const showCommitLoading =
@@ -3031,7 +3075,7 @@ export function GitCommitDrawer({
             reviewNote={reviewNote}
             reviewNoteDraft={reviewNoteDraft}
             reviewNoteHistoryId={reviewNoteHistoryId}
-            fontSize={fontSize}
+            fontSize={effectiveFontSize}
             editorTheme={editorTheme}
             reviewError={reviewError}
             inlineCommentCount={inlineComments.length}
@@ -3112,7 +3156,7 @@ export function GitCommitDrawer({
                 summary={currentData.summary}
                 commit={commit}
                 isHeadSelected={isHeadSelected}
-                fontSize={fontSize}
+                fontSize={effectiveFontSize}
                 editorTheme={editorTheme}
                 headRefLabel={HEAD_REF}
               />
@@ -3130,7 +3174,7 @@ export function GitCommitDrawer({
                   files={currentData.files}
                   drawerScrollParent={drawerScrollParent}
                   virtuosoRef={virtuosoRef}
-                  fontSize={fontSize}
+                  fontSize={effectiveFontSize}
                   editorTheme={editorTheme}
                   reviewEditorScope={reviewEditorScope}
                   inlineCommentsByFile={inlineCommentsByFile}

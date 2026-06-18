@@ -81,10 +81,30 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function shouldSendProjectStop(project: any): boolean {
+function readMaybeImmutable(value: any, key: string): any {
+  if (value == null) return undefined;
+  if (typeof value.get === "function") return value.get(key);
+  return value[key];
+}
+
+function hostStatusAllowsProjectStop(hostInfo: any): boolean {
+  const status = `${readMaybeImmutable(hostInfo, "status") ?? ""}`
+    .trim()
+    .toLowerCase();
+  const deleted = readMaybeImmutable(hostInfo, "deleted");
+  if (deleted != null) return false;
+  if (!status) return true;
+  return status === "running" || status === "active";
+}
+
+export function shouldSendProjectStop(project: any, hostInfo?: any): boolean {
   const state = `${project?.getIn?.(["state", "state"]) ?? ""}`;
   const hostId = `${project?.get?.("host_id") ?? ""}`.trim();
-  return !!hostId && ["pending", "running", "starting"].includes(state);
+  return (
+    !!hostId &&
+    ["pending", "running", "starting"].includes(state) &&
+    hostStatusAllowsProjectStop(hostInfo)
+  );
 }
 
 function shouldSendProjectStart(project: any): boolean {
@@ -108,6 +128,7 @@ export function ProjectsOperations({
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = projectsLabel.toLowerCase();
   const actions = useActions("projects");
+  const host_info = useTypedRedux("projects", "host_info");
   const [leaveDeleteModalOpen, setLeaveDeleteModalOpen] = useState(false);
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const project_map = useTypedRedux("projects", "project_map");
@@ -116,13 +137,7 @@ export function ProjectsOperations({
   const [bulkLeaveDeleteProgress, setBulkLeaveDeleteProgress] =
     useState<BulkLeaveOrDeleteProgress | null>(null);
   const deleteQueue = useProjectDeleteQueue();
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) =>
-      Modal.error({
-        title: "Unable to leave or delete projects",
-        content: `${err}`,
-      }),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const hidden = useTypedRedux("projects", "hidden");
   const search: string = useTypedRedux("projects", "search");
@@ -364,7 +379,9 @@ export function ProjectsOperations({
       BULK_PROJECT_CONTROL_CONCURRENCY,
       async (project_id) => {
         const project = project_map?.get(project_id);
-        if (!shouldSendProjectStop(project)) {
+        const hostId = project?.get?.("host_id");
+        const hostInfo = hostId ? host_info?.get(hostId) : undefined;
+        if (!shouldSendProjectStop(project, hostInfo)) {
           return { project_id, ok: true as const, skipped: true as const };
         }
         try {

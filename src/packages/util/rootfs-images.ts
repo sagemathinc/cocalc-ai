@@ -4,6 +4,12 @@
  */
 
 export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
+export const ROOTFS_CONTENT_MANIFEST_VERSION = 1;
+export const ROOTFS_CONFIG_EXPORT_KIND = "cocalc-rootfs-config";
+export const ROOTFS_CONFIG_EXPORT_VERSION = 1;
+export const ROOTFS_CONTENT_MAX_JSON_BYTES = 32_000;
+export const ROOTFS_CONTENT_MAX_ACTIONS = 20;
+export const ROOTFS_CONTENT_MAX_HIGHLIGHTS = 20;
 
 export type RootfsImageArch = "amd64" | "arm64" | "any";
 export type RootfsPhaseTimings = Record<string, number>;
@@ -61,6 +67,77 @@ export type RootfsImageTheme = {
   accent_color?: string | null;
   icon?: string | null;
   image_blob?: string | null;
+};
+
+export type RootfsContentActionKind =
+  | "open"
+  | "browse"
+  | "copy-to-home"
+  | "external-link"
+  | "project-app";
+
+export type RootfsContentAction = {
+  kind: RootfsContentActionKind;
+  label: string;
+  path?: string;
+  source_path?: string;
+  target_path?: string;
+  url?: string;
+  app_spec?: Record<string, unknown>;
+  description?: string;
+};
+
+export type RootfsContentPublisher = {
+  name?: string;
+  url?: string;
+};
+
+export type RootfsContentLicense = {
+  name?: string;
+  url?: string;
+};
+
+export type RootfsContentManifest = {
+  version: 1;
+  title?: string;
+  subtitle?: string;
+  description?: string;
+  publisher?: RootfsContentPublisher;
+  license?: RootfsContentLicense;
+  highlights?: string[];
+  actions?: RootfsContentAction[];
+};
+
+export type RootfsContentValidationWarning = {
+  code: string;
+  message: string;
+  path?: string;
+};
+
+export type RootfsContentValidationResult = {
+  content?: RootfsContentManifest;
+  warnings: RootfsContentValidationWarning[];
+};
+
+export type RootfsConfigExportMetadata = {
+  label?: string;
+  slug?: string;
+  description?: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
+  visibility?: RootfsImageVisibility;
+  tags?: string[];
+};
+
+export type RootfsConfigExport = {
+  kind: typeof ROOTFS_CONFIG_EXPORT_KIND;
+  version: typeof ROOTFS_CONFIG_EXPORT_VERSION;
+  exported_at: string;
+  metadata?: RootfsConfigExportMetadata;
+  theme?: RootfsImageTheme;
+  content?: RootfsContentManifest;
 };
 
 export type RootfsScanSummary = {
@@ -131,6 +208,7 @@ export type RootfsScanAdminNote = {
 export type RootfsImageEntry = {
   id: string;
   release_id?: string;
+  slug?: string;
   label: string;
   image: string;
   created?: string;
@@ -158,6 +236,7 @@ export type RootfsImageEntry = {
   section?: RootfsImageSection;
   warning?: RootfsImageWarning;
   theme?: RootfsImageTheme;
+  content?: RootfsContentManifest;
   can_manage?: boolean;
   scan?: RootfsScanSummary;
 };
@@ -203,6 +282,7 @@ export type RootfsCatalogPageRequest = {
     owner_id?: string;
     family?: string;
     channel?: string;
+    image_ids?: string[];
   };
 };
 
@@ -239,6 +319,7 @@ export type RootfsImageCatalogPage = {
 
 export type RootfsCatalogSaveBody = {
   image_id?: string;
+  slug?: string;
   image: string;
   label: string;
   family?: string;
@@ -252,6 +333,8 @@ export type RootfsCatalogSaveBody = {
   size_gb?: number;
   tags?: string[];
   theme?: RootfsImageTheme;
+  content?: unknown | null;
+  content_warnings?: RootfsContentValidationWarning[];
   official?: boolean;
   prepull?: boolean;
   hidden?: boolean;
@@ -263,6 +346,7 @@ export type RootfsCatalogSaveBody = {
 
 export type PublishProjectRootfsBody = {
   project_id: string;
+  slug?: string;
   label: string;
   family?: string;
   version?: string;
@@ -272,10 +356,13 @@ export type PublishProjectRootfsBody = {
   visibility?: RootfsImageVisibility;
   tags?: string[];
   theme?: RootfsImageTheme;
+  content?: unknown | null;
+  content_warnings?: RootfsContentValidationWarning[];
   official?: boolean;
   prepull?: boolean;
   hidden?: boolean;
   source_mode?: RootfsPublishSourceMode;
+  switch_project?: boolean;
   browser_id?: string | null;
   session_hash?: string | null;
 };
@@ -291,6 +378,8 @@ export type PublishProjectRootfsArtifact = {
   source_image: string;
   artifact_kind?: RootfsReleaseArtifactKind;
   inspect_data?: Record<string, any>;
+  rootfs_content?: unknown;
+  rootfs_content_warnings?: RootfsContentValidationWarning[];
   upload_result?: RootfsUploadedArtifactResult;
   phase_timings_ms?: RootfsPhaseTimings;
 };
@@ -452,6 +541,7 @@ export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   scanned_at?: string;
   events?: RootfsImageEvent[];
   storage_locations?: RootfsStorageLocation[];
+  content_warnings?: RootfsContentValidationWarning[];
 };
 
 export type ProjectRootfsStateEntry = {
@@ -544,6 +634,423 @@ function normalizeArch(value?: RootfsImageEntry["arch"]): RootfsImageArch[] {
   if (!value) return ["any"];
   if (Array.isArray(value)) return value.length ? value : ["any"];
   return [value];
+}
+
+function trimString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
+}
+
+function warning(
+  warnings: RootfsContentValidationWarning[],
+  code: string,
+  message: string,
+  path?: string,
+): void {
+  warnings.push({ code, message, path });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype ||
+      Object.getPrototypeOf(value) === null)
+  );
+}
+
+function isSafeRootfsPath(path: string): boolean {
+  if (!path.startsWith("/")) return false;
+  if (path.includes("\0")) return false;
+  return !path.split("/").includes("..");
+}
+
+function isSafeHomeTargetPath(path: string): boolean {
+  if (path.startsWith("/")) return false;
+  if (path.includes("\0")) return false;
+  return path.length > 0 && !path.split("/").includes("..");
+}
+
+function isSafeProjectAppId(id: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9._-]{0,63})$/i.test(id);
+}
+
+function normalizeHttpsUrl(
+  value: unknown,
+  warnings: RootfsContentValidationWarning[],
+  path: string,
+): string | undefined {
+  const url = trimString(value, 2048);
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      warning(warnings, "invalid-url", "URL must use https", path);
+      return undefined;
+    }
+    return parsed.toString();
+  } catch {
+    warning(warnings, "invalid-url", "URL is not valid", path);
+    return undefined;
+  }
+}
+
+function normalizeContentPerson(
+  value: unknown,
+  warnings: RootfsContentValidationWarning[],
+  path: string,
+): RootfsContentPublisher | RootfsContentLicense | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const name = trimString(value.name, 160);
+  const url = normalizeHttpsUrl(value.url, warnings, `${path}.url`);
+  return name || url ? { name, url } : undefined;
+}
+
+function normalizeContentAction(
+  value: unknown,
+  warnings: RootfsContentValidationWarning[],
+  index: number,
+): RootfsContentAction | undefined {
+  const path = `actions[${index}]`;
+  if (!isPlainObject(value)) {
+    warning(warnings, "invalid-action", "Action must be an object", path);
+    return undefined;
+  }
+  const kind = trimString(value.kind, 64) as
+    | RootfsContentActionKind
+    | undefined;
+  if (
+    kind !== "open" &&
+    kind !== "browse" &&
+    kind !== "copy-to-home" &&
+    kind !== "external-link" &&
+    kind !== "project-app"
+  ) {
+    warning(
+      warnings,
+      "invalid-action-kind",
+      "Action kind is not supported",
+      path,
+    );
+    return undefined;
+  }
+  const label = trimString(value.label, 120);
+  if (!label) {
+    warning(warnings, "missing-action-label", "Action label is required", path);
+    return undefined;
+  }
+  const description = trimString(value.description, 500);
+  if (kind === "external-link") {
+    const url = normalizeHttpsUrl(value.url, warnings, `${path}.url`);
+    return url ? { kind, label, url, description } : undefined;
+  }
+  if (kind === "project-app") {
+    const app_spec = value.app_spec;
+    if (!isPlainObject(app_spec)) {
+      warning(
+        warnings,
+        "invalid-app-spec",
+        "Project app action must include an app_spec object",
+        `${path}.app_spec`,
+      );
+      return undefined;
+    }
+    const appId = trimString(app_spec.id, 64);
+    if (!appId || !isSafeProjectAppId(appId)) {
+      warning(
+        warnings,
+        "invalid-app-spec-id",
+        "Project app spec must include a valid app id",
+        `${path}.app_spec.id`,
+      );
+      return undefined;
+    }
+    const appKind = trimString(app_spec.kind, 32);
+    if (appKind && appKind !== "service" && appKind !== "static") {
+      warning(
+        warnings,
+        "invalid-app-spec-kind",
+        "Project app spec kind must be service or static",
+        `${path}.app_spec.kind`,
+      );
+      return undefined;
+    }
+    return { kind, label, app_spec, description };
+  }
+  if (kind === "copy-to-home") {
+    const source_path = trimString(value.source_path, 2048);
+    const target_path = trimString(value.target_path, 2048);
+    if (!source_path || !isSafeRootfsPath(source_path)) {
+      warning(
+        warnings,
+        "invalid-source-path",
+        "Copy source path must be an absolute safe RootFS path",
+        `${path}.source_path`,
+      );
+      return undefined;
+    }
+    if (!target_path || !isSafeHomeTargetPath(target_path)) {
+      warning(
+        warnings,
+        "invalid-target-path",
+        "Copy target path must be relative to HOME and must not use ..",
+        `${path}.target_path`,
+      );
+      return undefined;
+    }
+    return { kind, label, source_path, target_path, description };
+  }
+  const actionPath = trimString(value.path, 2048);
+  if (!actionPath || !isSafeRootfsPath(actionPath)) {
+    warning(
+      warnings,
+      "invalid-path",
+      "Action path must be an absolute safe RootFS path",
+      `${path}.path`,
+    );
+    return undefined;
+  }
+  return { kind, label, path: actionPath, description };
+}
+
+export function parseRootfsConfigExport(input: unknown): RootfsConfigExport {
+  if (!isPlainObject(input)) {
+    throw new Error("expected a JSON object");
+  }
+  if (input.kind !== ROOTFS_CONFIG_EXPORT_KIND) {
+    throw new Error("expected a CoCalc RootFS config export");
+  }
+  if (input.version !== ROOTFS_CONFIG_EXPORT_VERSION) {
+    throw new Error(`unsupported RootFS config version ${input.version}`);
+  }
+  const metadata = parseRootfsConfigExportMetadata(input.metadata);
+  const theme = parseRootfsConfigExportTheme(input.theme);
+  const content = parseRootfsConfigExportContent(input.content);
+  if (!metadata && !theme && !content) {
+    throw new Error("config does not contain metadata, theme, or discovery");
+  }
+  return {
+    kind: ROOTFS_CONFIG_EXPORT_KIND,
+    version: ROOTFS_CONFIG_EXPORT_VERSION,
+    exported_at: `${input.exported_at ?? ""}`,
+    metadata,
+    theme,
+    content,
+  };
+}
+
+function parseRootfsConfigExportMetadata(
+  input: unknown,
+): RootfsConfigExportMetadata | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("metadata must be an object");
+  }
+  const visibility = trimString(input.visibility, 64);
+  return {
+    label: trimString(input.label, 160),
+    slug: validateRootfsSlug(input.slug),
+    description: trimString(input.description, 2000),
+    family: trimString(input.family, 160),
+    version: trimString(input.version, 160),
+    channel: trimString(input.channel, 80),
+    supersedes_image_id: trimString(input.supersedes_image_id, 160),
+    visibility: isRootfsImageVisibility(visibility) ? visibility : undefined,
+    tags: Array.isArray(input.tags)
+      ? normalizeRootfsTagArray(input.tags)
+      : parseRootfsTagString(input.tags),
+  };
+}
+
+function parseRootfsConfigExportTheme(
+  input: unknown,
+): RootfsImageTheme | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("theme must be an object");
+  }
+  return {
+    title: trimString(input.title, 160),
+    description: trimString(input.description, 2000),
+    color: nullableTrimmedString(input.color, 80),
+    accent_color: nullableTrimmedString(input.accent_color, 80),
+    icon: nullableTrimmedString(input.icon, 80),
+    image_blob: nullableTrimmedString(
+      input.image_blob,
+      ROOTFS_CONTENT_MAX_JSON_BYTES,
+    ),
+  };
+}
+
+function parseRootfsConfigExportContent(
+  input: unknown,
+): RootfsContentManifest | undefined {
+  if (input == null) return undefined;
+  const result = normalizeRootfsContentManifest(input);
+  if (!result.content) {
+    throw new Error("discovery config is invalid");
+  }
+  return result.content;
+}
+
+function parseRootfsTagString(tags: unknown): string[] | undefined {
+  if (typeof tags !== "string") return undefined;
+  return normalizeRootfsTagArray(tags.split(","));
+}
+
+function normalizeRootfsTagArray(tags: unknown[]): string[] | undefined {
+  const values = Array.from(
+    new Set(
+      tags
+        .map((tag) => trimString(tag, 80))
+        .filter((tag): tag is string => tag != null),
+    ),
+  );
+  return values.length ? values : undefined;
+}
+
+function nullableTrimmedString(
+  value: unknown,
+  maxLength: number,
+): string | null | undefined {
+  if (value == null) return null;
+  return trimString(value, maxLength) ?? null;
+}
+
+function isRootfsImageVisibility(
+  value: string | undefined,
+): value is RootfsImageVisibility {
+  return value === "private" || value === "collaborators" || value === "public";
+}
+
+export function validateRootfsSlug(slug?: unknown): string | undefined {
+  if (typeof slug !== "string") return undefined;
+  const value = slug.trim().toLowerCase();
+  if (!value) return undefined;
+  if (value.length > 39) {
+    throw Error("name must have at most 39 characters");
+  }
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  ) {
+    throw Error("name must not be a v4 UUID");
+  }
+  if (value.includes("--")) {
+    throw Error("name must not contain consecutive hyphens");
+  }
+  if (!/^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i.test(value)) {
+    throw Error(
+      "name must contain only a-z,A-Z,0-9, or -, and not start with hyphen.",
+    );
+  }
+  return value;
+}
+
+export function normalizeRootfsContentManifest(
+  value: unknown,
+): RootfsContentValidationResult {
+  const warnings: RootfsContentValidationWarning[] = [];
+  if (value == null) return { warnings };
+  let jsonBytes = 0;
+  try {
+    jsonBytes = JSON.stringify(value).length;
+  } catch {
+    warning(
+      warnings,
+      "invalid-json",
+      "Content manifest is not JSON serializable",
+    );
+    return { warnings };
+  }
+  if (jsonBytes > ROOTFS_CONTENT_MAX_JSON_BYTES) {
+    warning(
+      warnings,
+      "content-too-large",
+      `Content manifest must be at most ${ROOTFS_CONTENT_MAX_JSON_BYTES} bytes`,
+    );
+    return { warnings };
+  }
+  if (!isPlainObject(value)) {
+    warning(warnings, "invalid-content", "Content manifest must be an object");
+    return { warnings };
+  }
+  const version = value.version ?? ROOTFS_CONTENT_MANIFEST_VERSION;
+  if (version !== ROOTFS_CONTENT_MANIFEST_VERSION) {
+    warning(
+      warnings,
+      "unsupported-version",
+      `Content manifest version must be ${ROOTFS_CONTENT_MANIFEST_VERSION}`,
+      "version",
+    );
+    return { warnings };
+  }
+  const content: RootfsContentManifest = {
+    version: ROOTFS_CONTENT_MANIFEST_VERSION,
+  };
+  content.title = trimString(value.title, 160);
+  content.subtitle = trimString(value.subtitle, 240);
+  content.description = trimString(value.description, 5000);
+  content.publisher = normalizeContentPerson(
+    value.publisher,
+    warnings,
+    "publisher",
+  );
+  content.license = normalizeContentPerson(value.license, warnings, "license");
+  if (Array.isArray(value.highlights)) {
+    content.highlights = value.highlights
+      .slice(0, ROOTFS_CONTENT_MAX_HIGHLIGHTS)
+      .map((item) => trimString(item, 240))
+      .filter(Boolean) as string[];
+    if (value.highlights.length > ROOTFS_CONTENT_MAX_HIGHLIGHTS) {
+      warning(
+        warnings,
+        "too-many-highlights",
+        `Only the first ${ROOTFS_CONTENT_MAX_HIGHLIGHTS} highlights are kept`,
+        "highlights",
+      );
+    }
+  } else if (value.highlights != null) {
+    warning(
+      warnings,
+      "invalid-highlights",
+      "Highlights must be an array",
+      "highlights",
+    );
+  }
+  if (Array.isArray(value.actions)) {
+    content.actions = value.actions
+      .slice(0, ROOTFS_CONTENT_MAX_ACTIONS)
+      .map((action, index) => normalizeContentAction(action, warnings, index))
+      .filter(Boolean) as RootfsContentAction[];
+    if (value.actions.length > ROOTFS_CONTENT_MAX_ACTIONS) {
+      warning(
+        warnings,
+        "too-many-actions",
+        `Only the first ${ROOTFS_CONTENT_MAX_ACTIONS} actions are kept`,
+        "actions",
+      );
+    }
+  } else if (value.actions != null) {
+    warning(warnings, "invalid-actions", "Actions must be an array", "actions");
+  }
+  return {
+    content:
+      content.title ||
+      content.subtitle ||
+      content.description ||
+      content.publisher ||
+      content.license ||
+      content.highlights?.length ||
+      content.actions?.length
+        ? content
+        : undefined,
+    warnings,
+  };
 }
 
 export function normalizeRootfsEntry(

@@ -433,7 +433,11 @@ async function handleRequest({
     project_id,
     path: liveRunPath,
   });
-  const liveRunStore = await openJupyterLiveRunStore({ client, project_id });
+  const liveRunStore = await openJupyterLiveRunStore({
+    client,
+    project_id,
+    path: liveRunPath,
+  });
   const liveRunKey = jupyterLiveRunKey({ path: liveRunPath, run_id });
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
@@ -687,6 +691,8 @@ async function handleRequest({
         liveRunStore.delete(liveRunKey);
       } catch {
         // ignore cleanup failures for ephemeral replay state
+      } finally {
+        liveRunStore.close();
       }
     }, LIVE_RUN_REPLAY_GRACE_MS);
     cleanupTimer.unref?.();
@@ -734,7 +740,9 @@ export class JupyterClient {
     }) => Promise<string>,
   ) {
     this.socket = this.client.socket.connect(this.subject);
-    this.socket.once("close", () => this.iter?.end());
+    const endIterator = () => this.iter?.end();
+    this.socket.once("closed", endIterator);
+    this.socket.once("close", endIterator);
     this.socket.on("request", async (mesg) => {
       const { data } = mesg;
       try {

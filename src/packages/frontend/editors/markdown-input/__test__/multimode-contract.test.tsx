@@ -167,6 +167,22 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
   });
 
+  it("opts unbounded markdown edit cells out of browser scroll anchoring", () => {
+    const { container } = render(
+      <MultiMarkdownInput
+        value="hello"
+        onChange={() => {}}
+        defaultMode="markdown"
+        height="auto"
+        unboundedAutoGrow
+      />,
+    );
+
+    expect(
+      (container.firstElementChild as HTMLElement).style.overflowAnchor,
+    ).toBe("none");
+  });
+
   it("allows the rich text overflow menu outside editor frames", () => {
     mockFrameContext = {
       id: "",

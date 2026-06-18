@@ -17,7 +17,6 @@ import { Terminal as XTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import "@xterm/xterm/css/xterm.css";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ProjectActions, redux } from "@cocalc/frontend/app-framework";
 import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
@@ -713,7 +712,6 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     const readyTimer = startUxTimer();
     const autoStartProject =
       options.autoStartProject === true || this.autoStartProjectOnNextConnect;
-    this.autoStartProjectOnNextConnect = false;
 
     try {
       const projectState =
@@ -734,6 +732,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           await this.showManualStartMessage();
           return;
         }
+        this.autoStartProjectOnNextConnect = false;
         if (!this.manualStartMessageShown) {
           this.terminal.reset();
           await this.handleDataFromProject(
@@ -747,6 +746,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           return;
         }
       }
+      this.autoStartProjectOnNextConnect = false;
       this.clearProjectStartingRetry();
       this.manualStartMessageShown = false;
       const preserveVisibleContent = (this.history?.length ?? 0) > 0;

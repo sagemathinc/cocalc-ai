@@ -6,6 +6,7 @@
 import {
   redux,
   useEffect,
+  useRef,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -17,16 +18,26 @@ export function useAccountStoreReady(): boolean {
     const store = redux.getStore("account");
     return !!(store?.get?.("is_ready") ?? is_ready);
   });
+  const mountedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    mountedRef.current = true;
     let store = redux.getStore("account");
+    const setLoadedLater = (ready: boolean) => {
+      queueMicrotask(() => {
+        if (!mountedRef.current) {
+          return;
+        }
+        setLoaded((current) => (current === ready ? current : ready));
+      });
+    };
     const onReady = () => {
-      setLoaded(true);
+      setLoadedLater(true);
     };
 
     function syncLoaded(nextStore = redux.getStore("account")): void {
       const ready = !!(nextStore?.get?.("is_ready") ?? is_ready);
-      setLoaded(ready);
+      setLoadedLater(ready);
     }
 
     syncLoaded(store);
@@ -43,6 +54,7 @@ export function useAccountStoreReady(): boolean {
     });
 
     return () => {
+      mountedRef.current = false;
       unsubscribe?.();
       store?.removeListener("is_ready", onReady);
     };

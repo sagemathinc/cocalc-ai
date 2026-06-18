@@ -22,6 +22,11 @@ import {
   type RunCellOverlay,
 } from "./run-cell-overlay";
 
+export const OUTPUT_COLUMN_STYLE: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+};
+
 interface CellOutputProps {
   actions?: JupyterActions;
   name?: string;
@@ -66,15 +71,16 @@ export function CellOutput({
   const outputRef = useRef<HTMLDivElement | null>(null);
   const [stableOutputHeight, setStableOutputHeight] = useState<number>(0);
   const running = isRunningState(cell.get("state"));
+  const scrolled = !!cell.get("scrolled");
   const output = getDisplayedCellOutput(cell, runOverlay);
   const outputCount = output?.size ?? 0;
   const moreOutputCount = more_output?.get("mesg_list")?.size ?? 0;
-
-  const minHeight = complete
-    ? "60vh"
-    : running && stableOutputHeight > 0
-      ? `${stableOutputHeight}px`
-      : undefined;
+  const minHeight = outputMinHeight({
+    complete,
+    running,
+    scrolled,
+    stableOutputHeight,
+  });
 
   const setOutputRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -158,7 +164,7 @@ export function CellOutput({
           runOverlay={runOverlay}
         />
       )}
-      <div style={{ flex: 1 }}>
+      <div style={OUTPUT_COLUMN_STYLE}>
         <OutputColumn
           cell={cell}
           actions={actions}
@@ -182,6 +188,24 @@ export function CellOutput({
       </div>
     </div>
   );
+}
+
+export function outputMinHeight({
+  complete,
+  running,
+  scrolled,
+  stableOutputHeight,
+}: {
+  complete?: boolean;
+  running: boolean;
+  scrolled: boolean;
+  stableOutputHeight: number;
+}): string | undefined {
+  if (complete) return "60vh";
+  if (scrolled) return undefined;
+  return running && stableOutputHeight > 0
+    ? `${stableOutputHeight}px`
+    : undefined;
 }
 
 interface OutputColumnProps {

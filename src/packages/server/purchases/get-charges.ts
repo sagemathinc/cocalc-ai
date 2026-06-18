@@ -1,5 +1,5 @@
 import getPool from "@cocalc/database/pool";
-import { getLastClosingDate } from "./closing-date";
+import { calendarMonthStart } from "./billing-period";
 import type { Service } from "@cocalc/util/db-schema/purchase-quotas";
 import { COST_OR_METERED_COST } from "./get-balance";
 import type { PoolClient } from "@cocalc/database/pool";
@@ -11,9 +11,9 @@ export async function getTotalChargesThisMonth(
   client?: PoolClient,
 ): Promise<MoneyValue> {
   const pool = client ?? getPool();
-  const closing_date = await getLastClosingDate(account_id);
+  const periodStart = calendarMonthStart();
   let query = `SELECT SUM(${COST_OR_METERED_COST}) as total FROM purchases WHERE account_id=$1 AND time > $2 AND cost > 0`;
-  const params = [account_id, closing_date];
+  const params = [account_id, periodStart];
   if (service != null) {
     query += " AND service=$3";
     params.push(service);
@@ -28,9 +28,9 @@ export async function getChargesThisMonthByService(
   account_id: string,
 ): Promise<{ [service: string]: MoneyValue }> {
   const pool = getPool();
-  const closing_date = await getLastClosingDate(account_id);
+  const periodStart = calendarMonthStart();
   let query = `SELECT service, SUM(${COST_OR_METERED_COST}) as total FROM purchases WHERE account_id=$1 AND time > $2 GROUP BY service`;
-  const params = [account_id, closing_date];
+  const params = [account_id, periodStart];
   const { rows } = await pool.query(query, params);
   return rows.reduce(
     (map, { service, total }) => ({

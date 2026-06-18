@@ -6,6 +6,7 @@ Only call this for the account_id of the signed in user.
 */
 
 import getPool from "@cocalc/database/pool";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { Profile } from "./types";
 
 export default async function getPrivateProfile(
@@ -14,7 +15,7 @@ export default async function getPrivateProfile(
 ): Promise<Profile> {
   const pool = getPool(noCache ? undefined : "medium");
   const { rows } = await pool.query(
-    "SELECT first_name, last_name, profile, groups, email_address FROM accounts WHERE account_id=$1",
+    "SELECT display_name, first_name, last_name, profile, groups, email_address FROM accounts WHERE account_id=$1",
     [account_id],
   );
   if (rows.length == 0) {
@@ -26,6 +27,7 @@ export default async function getPrivateProfile(
 
   return {
     account_id,
+    display_name: displayNameFromAccount(rows[0]) || "Anonymous User",
     first_name: rows[0].first_name ?? "Anonymous",
     last_name: rows[0].last_name ?? "User",
     image: rows[0].profile?.image,

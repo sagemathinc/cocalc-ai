@@ -356,3 +356,37 @@ export function getQueuedMessageEditHelpText({
   }
   return "If you edit and save this message before the next turn, then it will be used.";
 }
+
+export function shouldShowAcpResubmitToAgentButton({
+  hasActions,
+  hasParentMessage,
+  isTurnRunning,
+  isViewersMessage,
+  parentAcpState,
+  readOnly,
+  renderedValue,
+  terminalThreadErrorActive,
+}: {
+  hasActions: boolean;
+  hasParentMessage: boolean;
+  isTurnRunning?: boolean;
+  isViewersMessage: boolean;
+  parentAcpState?: string;
+  readOnly: boolean;
+  renderedValue: string;
+  terminalThreadErrorActive?: boolean;
+}): boolean {
+  if (
+    !hasActions ||
+    readOnly ||
+    isViewersMessage ||
+    !hasParentMessage ||
+    isTurnRunning
+  ) {
+    return false;
+  }
+  if (parentAcpState !== "not-sent" && terminalThreadErrorActive !== true) {
+    return false;
+  }
+  return renderedValue.trim().length > 0;
+}

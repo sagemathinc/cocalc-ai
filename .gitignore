@@ -67,6 +67,7 @@ src/conf/tinc_hosts/
 *.synctex.gz
 *.toc
 *.term
+*.ipynb
 *.term.init
 *.sagews
 

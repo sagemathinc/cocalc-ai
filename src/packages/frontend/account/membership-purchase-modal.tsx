@@ -3,20 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Card,
-  Flex,
-  Divider,
-  Modal,
-  Radio,
-  Space,
-  Spin,
-  Tag,
-  Typography,
-} from "antd";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, Flex, Modal, Space, Spin, Typography } from "antd";
+import { delay } from "awaiting";
+import dayjs from "dayjs";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   FreshAuthModal,
@@ -24,35 +14,46 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import api from "@cocalc/frontend/client/api";
 import { Icon } from "@cocalc/frontend/components";
-import { TimeAgo } from "@cocalc/frontend/components/time-ago";
-import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
-import Payments from "@cocalc/frontend/purchases/payments";
+import StripePayment, {
+  BillingSetupModal,
+} from "@cocalc/frontend/purchases/stripe-payment";
+import {
+  useEmailVerificationRequired,
+  VerifyEmailRequiredPanel,
+} from "@cocalc/frontend/app/verify-email-banner";
 import {
   applyMembershipChange,
   getMembershipChangeQuote,
   type MembershipChangeQuote,
 } from "@cocalc/frontend/purchases/api";
 import {
-  MembershipTierBenefits,
-  type MembershipTierWithPresentation,
-} from "./membership-tier-benefits";
+  filterMembershipTiersForBillingInterval,
+  isFreeMembershipTier,
+  MembershipBillingSelector,
+  MembershipPricingTierGrid,
+  MembershipPricingTierTile,
+  membershipPriceValue,
+  type BillingInterval,
+  type MembershipPricingTier,
+} from "./membership-pricing-chooser";
 import { MEMBERSHIP_CHANGE } from "@cocalc/util/db-schema/purchases";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { currency } from "@cocalc/util/misc";
-import {
-  moneyRound2Up,
-  moneyToCurrency,
-  toDecimal,
-  type MoneyValue,
-} from "@cocalc/util/money";
+import { moneyRound2Up, toDecimal, type MoneyValue } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
-import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
+import type {
+  MembershipDetails,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
+const MEMBERSHIP_FINALIZATION_TIMEOUT_MS = 30_000;
+const MEMBERSHIP_FINALIZATION_POLL_MS = 1_000;
 
-interface MembershipTier extends MembershipTierWithPresentation {
+interface MembershipTier extends MembershipPricingTier {
   id: string;
   label?: string;
   store_visible?: boolean;
@@ -67,15 +68,104 @@ interface MembershipTiersResponse {
   tiers?: MembershipTier[];
 }
 
+interface MembershipSnapshot {
+  details?: MembershipDetails | null;
+  membership: MembershipResolution;
+}
+
+function billingAdjective(interval: BillingInterval): string {
+  return interval === "year" ? "annual" : "monthly";
+}
+
+function billingDescription(interval: BillingInterval): string {
+  return interval === "year" ? "billed annually" : "billed monthly";
+}
+
+function formatCompactCurrency(value: unknown): string {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return currency(0, 0);
+  const rounded = Math.round(numberValue);
+  return Math.abs(numberValue - rounded) < 0.005
+    ? currency(rounded, 0)
+    : currency(numberValue);
+}
+
+function formatLongDate(value?: Date | string): string | undefined {
+  if (value == null) return;
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return;
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
+function projectedPeriodEnd({
+  interval,
+  quote,
+}: {
+  interval: BillingInterval;
+  quote: MembershipChangeQuote;
+}): Date {
+  if (quote.trial_available && quote.trial_days) {
+    return dayjs().add(quote.trial_days, "day").toDate();
+  }
+  return dayjs()
+    .add(1, interval === "year" ? "year" : "month")
+    .toDate();
+}
+
+function monthlyRate({
+  interval,
+  tier,
+}: {
+  interval: BillingInterval;
+  tier: MembershipTier;
+}): string | undefined {
+  const price =
+    interval === "year"
+      ? membershipPriceValue(tier.price_yearly)
+      : membershipPriceValue(tier.price_monthly);
+  if (price == null || price <= 0) return;
+  const monthly = interval === "year" ? price / 12 : price;
+  return `${formatCompactCurrency(monthly)}/month`;
+}
+
 interface Props {
   currentClassOverride?: string;
+  currentIntervalOverride?: BillingInterval;
   open: boolean;
   onClose: () => void;
   onChanged?: () => void;
 }
 
-export default function MembershipPurchaseModal({
+export default function MembershipPurchaseModal(props: Props) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  if (emailVerificationRequired) {
+    return (
+      <Modal
+        footer={null}
+        open={props.open}
+        onCancel={props.onClose}
+        onOk={props.onClose}
+        width={620}
+        title="Change Membership"
+      >
+        <VerifyEmailRequiredPanel
+          compact
+          title="Verify your email before upgrading membership"
+          description="Please verify your email address before upgrading or changing your membership."
+        />
+      </Modal>
+    );
+  }
+  return <MembershipPurchaseModalInner {...props} />;
+}
+
+function MembershipPurchaseModalInner({
   currentClassOverride,
+  currentIntervalOverride,
   open,
   onClose,
   onChanged,
@@ -84,7 +174,7 @@ export default function MembershipPurchaseModal({
     null,
   );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
-  const [interval, setInterval] = useState<"month" | "year">("month");
+  const [interval, setInterval] = useState<BillingInterval>("year");
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [selectedTierId, setSelectedTierId] = useState<string | null>(null);
@@ -92,16 +182,18 @@ export default function MembershipPurchaseModal({
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
-  const [place, setPlace] = useState<"checkout" | "processing" | "done">(
-    "checkout",
-  );
-  const numPaymentsRef = useRef<number | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setQuoteError(`${err}`),
-  });
+  const [paymentSubmitting, setPaymentSubmitting] = useState<boolean>(false);
+  const [billingSetupOpen, setBillingSetupOpen] = useState<boolean>(false);
+  const [quoteRefreshKey, setQuoteRefreshKey] = useState<number>(0);
+  const [place, setPlace] = useState<
+    "choose" | "checkout" | "processing" | "done"
+  >("choose");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ showLoading = true } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError("");
     try {
       const [membershipResult, tiersResult] = await Promise.all([
@@ -110,11 +202,27 @@ export default function MembershipPurchaseModal({
       ]);
       setMembership(membershipResult as MembershipResolution);
       setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
+      return membershipResult as MembershipResolution;
     } catch (err) {
       setError(`${err}`);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
+  };
+
+  const refreshMembershipSnapshot = async (): Promise<MembershipSnapshot> => {
+    const [membershipResult, detailsResult] = await Promise.all([
+      api("purchases/get-membership"),
+      webapp_client.conat_client.hub.purchases.getMembershipDetails(),
+    ]);
+    const nextMembership = membershipResult as MembershipResolution;
+    setMembership(nextMembership);
+    return {
+      details: (detailsResult as MembershipDetails) ?? null,
+      membership: nextMembership,
+    };
   };
 
   useEffect(() => {
@@ -122,28 +230,36 @@ export default function MembershipPurchaseModal({
     setSelectedTierId(null);
     setQuote(null);
     setQuoteError("");
-    setPlace("checkout");
+    setInterval("year");
+    setBillingSetupOpen(false);
+    setQuoteRefreshKey(0);
+    setPaymentSubmitting(false);
+    setPlace("choose");
     load();
   }, [open]);
 
-  const visibleTiers = useMemo(() => {
+  const availableTiers = useMemo(() => {
     return sortMembershipTiersByDisplayOrder(
       tiers.filter((tier) => tier.store_visible && !tier.disabled),
     );
   }, [tiers]);
+  const visibleTiers = useMemo(
+    () => filterMembershipTiersForBillingInterval(availableTiers, interval),
+    [availableTiers, interval],
+  );
 
   const tierById = useMemo(() => {
-    return visibleTiers.reduce(
+    return availableTiers.reduce(
       (acc, tier) => {
         acc[tier.id] = tier;
         return acc;
       },
       {} as Record<string, MembershipTier>,
     );
-  }, [visibleTiers]);
+  }, [availableTiers]);
 
   useEffect(() => {
-    if (!open || !selectedTierId) return;
+    if (!open || !selectedTierId || place !== "checkout") return;
     const loadQuote = async () => {
       setQuote(null);
       setQuoteError("");
@@ -162,13 +278,23 @@ export default function MembershipPurchaseModal({
       }
     };
     loadQuote();
-  }, [open, selectedTierId, interval]);
+  }, [open, selectedTierId, interval, place, quoteRefreshKey]);
 
-  const currentClass = currentClassOverride ?? membership?.class ?? "free";
+  const currentPersonalClass =
+    currentClassOverride ??
+    (membership?.source === "subscription" || membership?.source === "free"
+      ? membership.class
+      : undefined);
+  const currentPersonalInterval =
+    currentIntervalOverride ??
+    (membership?.source === "subscription"
+      ? membership.subscription_interval
+      : undefined);
   const selectedTier = selectedTierId ? tierById[selectedTierId] : undefined;
   const selectedLabel = selectedTier?.label ?? selectedTier?.id ?? "";
 
   const quoteChargeValue = toDecimal(quote?.charge ?? 0);
+  const quotePriceValue = toDecimal(quote?.price ?? 0);
   const rawChargeAmount =
     quote?.charge_amount ??
     (quote as { chargeAmount?: number } | null)?.chargeAmount;
@@ -181,28 +307,142 @@ export default function MembershipPurchaseModal({
   const refundValue = toDecimal(quote?.refund ?? 0);
 
   const lineItems: LineItem[] = [];
-  if (quote && quoteChargeValue.gt(0)) {
+  if (quote && selectedTier && chargeAmountValue.gt(0)) {
+    const targetLineDescription = `${selectedLabel} membership, ${billingAdjective(interval)}`;
     lineItems.push({
-      description: `${selectedLabel} membership (${interval})`,
-      amount: moneyRound2Up(quoteChargeValue).toNumber(),
+      description: targetLineDescription,
+      amount: moneyRound2Up(
+        refundValue.gt(0) ? quotePriceValue : quoteChargeValue,
+      ).toNumber(),
     });
-    if (chargeAmountValue.lt(quoteChargeValue)) {
+    if (refundValue.gt(0)) {
+      const existingLabel = quote.existing_class
+        ? (tierById[quote.existing_class]?.label ?? quote.existing_class)
+        : "current";
       lineItems.push({
-        description: "Apply account balance toward membership change",
-        amount: chargeAmountValue.sub(quoteChargeValue).toNumber(),
+        description: `Prorated credit for current ${existingLabel} membership`,
+        amount: moneyRound2Up(refundValue.neg()).toNumber(),
+      });
+    }
+    const lineItemTotal = lineItems.reduce(
+      (total, lineItem) => total.add(toDecimal(lineItem.amount)),
+      toDecimal(0),
+    );
+    if (chargeAmountValue.lt(lineItemTotal)) {
+      lineItems.push({
+        description: "Account credit applied",
+        amount: chargeAmountValue.sub(lineItemTotal).toNumber(),
+      });
+    } else if (chargeAmountValue.gt(lineItemTotal)) {
+      lineItems.push({
+        description: "Additional account credit",
+        amount: chargeAmountValue.sub(lineItemTotal).toNumber(),
       });
     }
   }
 
-  const changeLabel =
-    quote?.change === "upgrade"
-      ? "Upgrade"
-      : quote?.change === "downgrade"
-        ? "Downgrade"
-        : "Start";
   const canProceed = quote?.allowed !== false || paymentRequired;
+  const showFullPaymentSummary = lineItems.length > 1;
+  const targetMonthlyRate = selectedTier
+    ? monthlyRate({ interval, tier: selectedTier })
+    : undefined;
+  const targetSummary =
+    selectedTier == null
+      ? ""
+      : targetMonthlyRate == null
+        ? `${selectedLabel} membership`
+        : `${selectedLabel}: ${targetMonthlyRate}, ${billingDescription(
+            interval,
+          )}${
+            quote?.change === "downgrade"
+              ? ""
+              : quote?.trial_available && quote?.trial_days
+                ? `, ${Math.floor(quote.trial_days)}-day free trial`
+                : ", starts today"
+          }`;
+  const targetSummaryText = targetSummary ? `${targetSummary}.` : "";
+  const currentPeriodEndText = formatLongDate(quote?.current_period_end);
+  const upcomingRenewalText =
+    quote && quote.change !== "downgrade" && quotePriceValue.gt(0)
+      ? formatLongDate(projectedPeriodEnd({ interval, quote }))
+      : undefined;
+  const confirmChangeLabel =
+    quote?.change === "downgrade" ? "Confirm downgrade" : "Confirm change";
+  const trialRequiresBillingDetails =
+    quote?.allowed === false && !!quote.trial_requires_billing_details;
+  const trialRequiresPaymentMethod =
+    quote?.allowed === false && !!quote.trial_requires_payment_method;
+  const trialSetupRequired =
+    trialRequiresBillingDetails || trialRequiresPaymentMethod;
+  const trialSetupButtonLabel =
+    trialRequiresBillingDetails && trialRequiresPaymentMethod
+      ? "Add billing details and payment method to start free trial"
+      : trialRequiresBillingDetails
+        ? "Add billing details to start free trial"
+        : "Add payment method to start free trial";
 
-  const isCurrent = selectedTierId != null && selectedTierId === currentClass;
+  function isCurrentChoice(tier: MembershipTier): boolean {
+    if (tier.id !== currentPersonalClass) return false;
+    if (isFreeMembershipTier(tier)) return true;
+    return (
+      currentPersonalInterval == null || currentPersonalInterval === interval
+    );
+  }
+
+  function selectTier(tier: MembershipTier) {
+    if (isCurrentChoice(tier)) return;
+    setSelectedTierId(tier.id);
+    setQuote(null);
+    setQuoteError("");
+    setPaymentSubmitting(false);
+    setPlace("checkout");
+  }
+
+  function backToChooser() {
+    setSelectedTierId(null);
+    setQuote(null);
+    setQuoteError("");
+    setPaymentSubmitting(false);
+    setPlace("choose");
+  }
+
+  function snapshotHasSelectedPersonalMembership({
+    details,
+    membership,
+  }: MembershipSnapshot): boolean {
+    if (selectedTierId == null) return false;
+    if (
+      membership.source === "subscription" &&
+      membership.class === selectedTierId &&
+      (membership.subscription_interval == null ||
+        membership.subscription_interval === interval)
+    ) {
+      return true;
+    }
+    return (
+      details?.candidates.some(
+        (candidate) =>
+          candidate.source === "subscription" &&
+          candidate.class === selectedTierId &&
+          candidate.subscription_status !== "canceled" &&
+          (candidate.subscription_interval == null ||
+            candidate.subscription_interval === interval),
+      ) ?? false
+    );
+  }
+
+  async function waitForSelectedPersonalMembership(): Promise<boolean> {
+    const deadline = Date.now() + MEMBERSHIP_FINALIZATION_TIMEOUT_MS;
+    while (Date.now() <= deadline) {
+      const snapshot = await refreshMembershipSnapshot();
+      onChanged?.();
+      if (snapshotHasSelectedPersonalMembership(snapshot)) {
+        return true;
+      }
+      await delay(MEMBERSHIP_FINALIZATION_POLL_MS);
+    }
+    return false;
+  }
 
   const directChange = async () => {
     if (!selectedTierId) return;
@@ -229,259 +469,268 @@ export default function MembershipPurchaseModal({
     }
   };
 
-  const refreshStatus = async () => {
-    await load();
-    onChanged?.();
+  const finalizePaidChange = async () => {
+    setActionLoading(true);
+    setQuoteError("");
+    setPlace("processing");
+    try {
+      await load({ showLoading: false });
+      onChanged?.();
+      if (await waitForSelectedPersonalMembership()) {
+        setPlace("done");
+        return;
+      }
+      setQuoteError(
+        "Payment was submitted, but CoCalc could not confirm the membership update. Please check again shortly or contact support if the membership does not update.",
+      );
+    } catch (err) {
+      await load({ showLoading: false });
+      onChanged?.();
+      setQuoteError(`${err}`);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
-  return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      onOk={onClose}
-      width={900}
-      title={
-        <Flex align="center" gap="small">
-          <Icon name="user" />
-          <Title level={4} style={{ margin: 0 }}>
-            Change Membership
-          </Title>
+  const modalWidth = place === "choose" ? 1180 : 600;
+
+  function renderChooseStep() {
+    return (
+      <Space vertical size="large" style={{ width: "100%" }}>
+        <MembershipBillingSelector
+          billingInterval={interval}
+          setBillingInterval={setInterval}
+        />
+        {visibleTiers.length === 0 ? (
+          <Alert
+            showIcon
+            type="info"
+            title={`No ${interval === "month" ? "monthly" : "annual"} membership tiers are currently available.`}
+          />
+        ) : (
+          <MembershipPricingTierGrid>
+            {visibleTiers.map((tier) => {
+              const current = isCurrentChoice(tier);
+              return (
+                <MembershipPricingTierTile
+                  billingInterval={interval}
+                  current={current}
+                  key={tier.id}
+                  onClick={current ? undefined : () => selectTier(tier)}
+                  tier={tier}
+                />
+              );
+            })}
+          </MembershipPricingTierGrid>
+        )}
+        <Flex justify="center">
+          <Button
+            href={joinUrlPath(appBasePath, "pricing")}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Compare membership details <Icon name="external-link" />
+          </Button>
         </Flex>
-      }
-    >
-      {loading && (
+      </Space>
+    );
+  }
+
+  function renderCheckoutStep() {
+    if (!quote || !selectedTierId) return null;
+    return (
+      <Space align="center" vertical style={{ width: "100%" }}>
+        <Alert
+          type="info"
+          showIcon={false}
+          style={{ width: "100%" }}
+          message={
+            <Space align="center" vertical>
+              {targetSummaryText ? (
+                <Text strong style={{ fontSize: 16 }}>
+                  {targetSummaryText}
+                </Text>
+              ) : null}
+              {quote.change === "downgrade" ? (
+                <>
+                  {currentPeriodEndText ? (
+                    <Text>
+                      Your current membership remains active until{" "}
+                      {currentPeriodEndText}. {selectedLabel} starts after that
+                      date.
+                    </Text>
+                  ) : null}
+                  <Text>No payment is due now.</Text>
+                </>
+              ) : upcomingRenewalText ? (
+                <Text>
+                  Upcoming renewal: {formatCompactCurrency(quote.price)} on{" "}
+                  {upcomingRenewalText}, unless canceled.
+                </Text>
+              ) : null}
+            </Space>
+          }
+        />
+        {paymentSubmitting && (
+          <Alert
+            showIcon
+            type="info"
+            message="Processing payment"
+            description="Creating the invoice and charging your saved payment method. This can take a few seconds."
+          />
+        )}
+        <Button
+          disabled={paymentSubmitting || actionLoading}
+          onClick={backToChooser}
+        >
+          Change selection
+        </Button>
+        {trialSetupRequired && (
+          <Button
+            disabled={paymentSubmitting || actionLoading}
+            onClick={() => setBillingSetupOpen(true)}
+            type="primary"
+          >
+            {trialSetupButtonLabel}
+          </Button>
+        )}
+        {canProceed && quoteChargeValue.gt(0) && chargeAmountValue.gt(0) && (
+          <StripePayment
+            disabled={actionLoading}
+            lineItems={lineItems}
+            description={`${selectedLabel} membership, ${billingAdjective(
+              interval,
+            )}`}
+            purpose={MEMBERSHIP_CHANGE}
+            summaryMode={showFullPaymentSummary ? "full" : "total-only"}
+            title={null}
+            metadata={{
+              membership_class: selectedTierId,
+              membership_interval: interval,
+              allow_downgrade: "true",
+            }}
+            onSubmittingChange={setPaymentSubmitting}
+            onFinished={async (total) => {
+              if (!total) {
+                await directChange();
+              } else {
+                await finalizePaidChange();
+              }
+            }}
+          />
+        )}
+        {canProceed && (quoteChargeValue.eq(0) || chargeAmountValue.eq(0)) && (
+          <Space>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              type="primary"
+              loading={actionLoading}
+              onClick={directChange}
+            >
+              {confirmChangeLabel}
+            </Button>
+          </Space>
+        )}
+      </Space>
+    );
+  }
+
+  function renderProcessingStep() {
+    if (quoteError) {
+      return (
+        <Space align="center" vertical size="middle" style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="error"
+            message="Membership update not confirmed"
+            description={quoteError}
+          />
+          <Button type="primary" onClick={onClose}>
+            Close
+          </Button>
+        </Space>
+      );
+    }
+    return (
+      <Space align="center" vertical size="middle" style={{ width: "100%" }}>
+        <Alert
+          type="info"
+          message="Finalizing membership change"
+          description="Payment was submitted. CoCalc is updating your membership and confirming the new state."
+        />
+        <Spin />
+        <Button type="primary" onClick={onClose}>
+          Close
+        </Button>
+      </Space>
+    );
+  }
+
+  function renderSelectedStep() {
+    if (!selectedTierId) return null;
+    return (
+      <Space vertical size="middle" style={{ width: "100%" }}>
+        {quoteLoading && <Spin />}
+        {quoteError && place !== "processing" && (
+          <Alert type="error" title={quoteError} />
+        )}
+        {quote &&
+          quote.allowed === false &&
+          quote.reason &&
+          !paymentRequired &&
+          !trialSetupRequired && <Alert type="error" title={quote.reason} />}
+        {place === "checkout" && renderCheckoutStep()}
+        {place === "processing" && renderProcessingStep()}
+        {place === "done" && (
+          <Space align="center" vertical style={{ width: "100%" }}>
+            <Alert type="success" title="Membership updated." />
+            <Button type="primary" onClick={onClose}>
+              Close
+            </Button>
+          </Space>
+        )}
+      </Space>
+    );
+  }
+
+  function renderModalBody() {
+    if (loading) {
+      return (
         <div style={{ textAlign: "center", padding: "20px 0" }}>
           <Spin />
         </div>
-      )}
-      {error && <Alert type="error" title={error} />}
-      {!loading && !error && (
-        <>
-          <div style={{ marginBottom: "12px" }}>
-            <Text type="secondary">
-              Current{" "}
-              {currentClassOverride ? "personal membership" : "membership"}:{" "}
-              <Tag color={currentClass === "free" ? "default" : "blue"}>
-                {currentClass}
-              </Tag>
-            </Text>
-          </div>
-          <div style={{ marginBottom: "16px" }}>
-            <Radio.Group
-              value={interval}
-              onChange={(e) => setInterval(e.target.value)}
-              optionType="button"
-              buttonStyle="solid"
-            >
-              <Radio.Button value="month">Monthly</Radio.Button>
-              <Radio.Button value="year">Yearly</Radio.Button>
-            </Radio.Group>
-          </div>
-          <Flex gap="large" wrap={false} style={{ overflowX: "auto" }}>
-            {visibleTiers.length === 0 && (
-              <Alert
-                type="info"
-                title="No membership tiers are currently available."
-              />
-            )}
-            {visibleTiers.map((tier) => {
-              const price =
-                interval === "month" ? tier.price_monthly : tier.price_yearly;
-              const priceValue = price != null ? toDecimal(price) : null;
-              const trialDays =
-                typeof tier.trial_days === "number" && tier.trial_days > 0
-                  ? Math.floor(tier.trial_days)
-                  : 0;
-              const isCurrentTier = tier.id === currentClass;
-              const tierPriority = tier.priority ?? 0;
-              const currentPriority = tierById[currentClass]?.priority ?? 0;
-              const actionLabel = isCurrentTier
-                ? "Current plan"
-                : tierPriority > currentPriority
-                  ? `Upgrade to ${tier.label ?? tier.id}`
-                  : `Downgrade to ${tier.label ?? tier.id}`;
-              return (
-                <Card
-                  key={tier.id}
-                  style={{
-                    minWidth: "320px",
-                    flex: "1 1 0",
-                    borderColor:
-                      selectedTierId === tier.id ? "#1677ff" : undefined,
-                  }}
-                >
-                  <Title level={4}>{tier.label ?? tier.id}</Title>
-                  <div style={{ marginBottom: "8px" }}>
-                    {priceValue != null ? (
-                      <Text strong>{moneyToCurrency(priceValue)}</Text>
-                    ) : (
-                      <Text type="secondary">Pricing not configured</Text>
-                    )}{" "}
-                    <Text type="secondary">/ {interval}</Text>
-                  </div>
-                  {trialDays > 0 && (
-                    <div style={{ marginBottom: "8px" }}>
-                      <Tag color="green">{trialDays}-day free trial</Tag>
-                    </div>
-                  )}
-                  <div style={{ marginBottom: "12px" }}>
-                    <MembershipTierBenefits
-                      compact
-                      showBilling={false}
-                      tier={tier}
-                    />
-                  </div>
-                  <Button
-                    type={selectedTierId === tier.id ? "primary" : "default"}
-                    disabled={isCurrentTier || priceValue == null}
-                    onClick={() => {
-                      if (!isCurrentTier) {
-                        setSelectedTierId(tier.id);
-                        setPlace("checkout");
-                      }
-                    }}
-                  >
-                    {actionLabel}
-                  </Button>
-                </Card>
-              );
-            })}
-          </Flex>
-        </>
-      )}
+      );
+    }
+    if (error) {
+      return <Alert type="error" title={error} />;
+    }
+    if (place === "choose") {
+      return renderChooseStep();
+    }
+    return renderSelectedStep();
+  }
 
-      {selectedTierId && !isCurrent && (
-        <div style={{ marginTop: "20px" }}>
-          <Divider />
-          {quoteLoading && <Spin />}
-          {quoteError && <Alert type="error" title={quoteError} />}
-          {quote && quote.allowed === false && quote.reason && (
-            <Alert
-              type={paymentRequired ? "warning" : "error"}
-              title={quote.reason}
-            />
-          )}
-          {quote && place === "checkout" && (
-            <div>
-              <div style={{ marginBottom: "12px" }}>
-                <Text strong>
-                  {changeLabel} to {selectedLabel} ({interval})
-                </Text>
-              </div>
-              {refundValue.gt(0) && (
-                <Alert
-                  type="info"
-                  title={`Prorated credit applied: ${currency(
-                    moneyRound2Up(refundValue).toNumber(),
-                  )}`}
-                />
-              )}
-              {quote.trial_available && quote.trial_days ? (
-                <Alert
-                  type="success"
-                  showIcon
-                  style={{ marginBottom: "12px" }}
-                  title={`${quote.trial_days}-day free trial`}
-                  description="You can cancel before the trial ends and you will not be charged. A payment method is required so the subscription can renew automatically if you keep it."
-                />
-              ) : null}
-              {quote.trial_requires_payment_method &&
-                quote.allowed === false && (
-                  <div style={{ marginTop: "12px" }}>
-                    <Button
-                      href={joinUrlPath(
-                        appBasePath,
-                        "settings/payment-methods",
-                      )}
-                      target="_blank"
-                    >
-                      Add payment method
-                    </Button>
-                  </div>
-                )}
-              {quote.change === "downgrade" && quote.current_period_end && (
-                <Alert
-                  type="info"
-                  title={
-                    <span>
-                      Downgrades take effect immediately. Current period ends{" "}
-                      <TimeAgo date={quote.current_period_end} />.
-                    </span>
-                  }
-                />
-              )}
-              {canProceed &&
-                quoteChargeValue.gt(0) &&
-                chargeAmountValue.gt(0) && (
-                  <div style={{ marginTop: "12px" }}>
-                    <StripePayment
-                      disabled={actionLoading}
-                      lineItems={lineItems}
-                      description={`Membership change to ${selectedLabel} (${interval})`}
-                      purpose={MEMBERSHIP_CHANGE}
-                      metadata={{
-                        membership_class: selectedTierId,
-                        membership_interval: interval,
-                        allow_downgrade: "true",
-                      }}
-                      onFinished={async (total) => {
-                        if (!total) {
-                          await directChange();
-                        } else {
-                          setPlace("processing");
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-              {canProceed &&
-                (quoteChargeValue.eq(0) || chargeAmountValue.eq(0)) && (
-                  <div style={{ marginTop: "12px" }}>
-                    <Space>
-                      <Button onClick={onClose}>Cancel</Button>
-                      <Button
-                        type="primary"
-                        loading={actionLoading}
-                        onClick={directChange}
-                      >
-                        Confirm change
-                      </Button>
-                    </Space>
-                  </div>
-                )}
-            </div>
-          )}
-          {place === "processing" && (
-            <div>
-              <Alert
-                type="info"
-                title="Payment is processing. Your membership will update once the payment completes."
-                style={{ marginBottom: "12px" }}
-              />
-              <Payments
-                purpose={MEMBERSHIP_CHANGE}
-                numPaymentsRef={numPaymentsRef}
-                limit={5}
-              />
-              <div style={{ marginTop: "12px" }}>
-                <Space>
-                  <Button onClick={refreshStatus}>Refresh membership</Button>
-                  <Button type="primary" onClick={onClose}>
-                    Close
-                  </Button>
-                </Space>
-              </div>
-            </div>
-          )}
-          {place === "done" && (
-            <Alert
-              type="success"
-              title="Membership updated."
-              style={{ marginTop: "12px" }}
-            />
-          )}
-        </div>
-      )}
+  return (
+    <Modal
+      footer={null}
+      open={open}
+      onCancel={onClose}
+      onOk={onClose}
+      style={{ maxWidth: "calc(100vw - 32px)" }}
+      width={modalWidth}
+      title="Change Membership"
+    >
+      {renderModalBody()}
+      {billingSetupOpen ? (
+        <BillingSetupModal
+          onCancel={() => setBillingSetupOpen(false)}
+          onFinished={() => {
+            setBillingSetupOpen(false);
+            setQuoteRefreshKey((value) => value + 1);
+          }}
+          requirePaymentMethod={trialRequiresPaymentMethod}
+        />
+      ) : null}
       <FreshAuthModal {...freshAuthModalProps} />
     </Modal>
   );

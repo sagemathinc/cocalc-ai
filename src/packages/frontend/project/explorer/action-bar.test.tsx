@@ -165,6 +165,31 @@ describe("ActionBar", () => {
     });
   });
 
+  it("renders selected-file actions without the legacy toolbar wrapper", () => {
+    const actions = {
+      open_file: jest.fn(),
+      project_id: "project-1",
+    } as any;
+
+    render(
+      <ActionBar
+        project_id="project-1"
+        checked_files={immutable.Set(["/work/a.txt", "/work/b.txt"])}
+        listing={
+          [
+            { isDir: false, name: "a.txt" },
+            { isDir: false, name: "b.txt" },
+          ] as any
+        }
+        current_path="/work"
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByText("Open")).toBeInTheDocument();
+    expect(screen.getByText(/2 of 2 .* selected/)).toBeInTheDocument();
+  });
+
   it("ignores stale backup metadata when the project changes", async () => {
     const first = deferred<any[]>();
     const second = deferred<any[]>();

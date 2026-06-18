@@ -1455,6 +1455,7 @@ export async function main(
     host,
     port,
     masterConatToken,
+    controlClient: conatClient,
     waitUntilReady: async () => {
       if (healthState.ready) return;
       await startupReady;
@@ -1570,7 +1571,7 @@ export async function main(
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
   applyProjectHostProcessTitle();
-  process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT ??= __filename;
+  process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT = __filename;
   if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {
     runConatRouterClusterNodeMain().catch((err) => {
       console.error("project-host conat router cluster node failed:", err);

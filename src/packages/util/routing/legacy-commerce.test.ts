@@ -31,7 +31,7 @@ describe("routing/legacy-commerce", () => {
     expect(getLegacyCommerceTargetPath("/pricing")).toBeUndefined();
     expect(getLegacyCommerceTargetPath("/settings/store")).toBeUndefined();
     expect(
-      getLegacyCommerceTargetPath("/store/vouchers?id=123"),
+      getLegacyCommerceTargetPath("/store/not-real?id=123"),
     ).toBeUndefined();
   });
 });

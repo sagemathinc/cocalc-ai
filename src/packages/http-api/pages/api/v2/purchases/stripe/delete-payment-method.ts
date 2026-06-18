@@ -1,7 +1,6 @@
 import deletePaymentMethod from "@cocalc/server/purchases/stripe/delete-payment-method";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
@@ -17,11 +16,13 @@ export default async function handle(req, res) {
 }
 
 async function set(req): Promise<{ success: true }> {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to modify Stripe billing details");
+  }
   const account_id = await getAccountId(req);
   if (account_id == null) {
     throw Error("must be signed in to delete payment method");
   }
-  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   throttle({ account_id, endpoint: "purchases/stripe/delete-payment-method" });
   const { payment_method } = getParams(req);
   if (!payment_method) {

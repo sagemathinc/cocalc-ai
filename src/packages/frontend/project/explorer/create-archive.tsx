@@ -10,10 +10,16 @@ import { path_split, plural } from "@cocalc/util/misc";
 import CheckedFiles from "./checked-files";
 import { join } from "path";
 import { OUCH_FORMATS } from "@cocalc/conat/files/fs";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export const defaultFormat = OUCH_FORMATS.includes("tar.gz")
   ? "tar.gz"
   : OUCH_FORMATS[0];
+export const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
+export const STALE_DOWNLOAD_ARCHIVE_MS = 6 * 60 * 60_000;
+const DOWNLOAD_ARCHIVE_PATH = "/tmp";
+const TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX = ".cocalc-download-archive-";
+export type DownloadArchiveProgressStage = "scratch" | "cleanup" | "compress";
 
 const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
   (a, b) => b.length - a.length,
@@ -135,14 +141,118 @@ export default function CreateArchive({
 export async function createArchive({ path, files, target, format, actions }) {
   const fs = actions.fs();
   const archiveName = getArchiveTargetName(target, format);
-  const { code, stderr } = await fs.ouch([
-    "compress",
-    ...files,
-    join(path, archiveName),
-  ]);
-  if (code) {
-    throw Error(Buffer.from(stderr).toString());
+  const finalPath = join(path, archiveName);
+  const tmpPath = join(
+    path,
+    `.cocalc-archive-${Date.now()}-${Math.random().toString(36).slice(2)}-${archiveName}`,
+  );
+  try {
+    await fs.rm(tmpPath, { force: true });
+    const output = await fs.ouch(["compress", ...files, tmpPath], {
+      timeout: ARCHIVE_TIMEOUT_MS,
+    });
+    const stderr = Buffer.from(output.stderr ?? Buffer.alloc(0)).toString();
+    if (output.truncated) {
+      throw Error(
+        stderr ||
+          `Archive creation exceeded the ${Math.round(
+            ARCHIVE_TIMEOUT_MS / 60_000,
+          )} minute timeout.`,
+      );
+    }
+    if (output.code) {
+      throw Error(
+        stderr || `Archive creation failed with code ${output.code}.`,
+      );
+    }
+    await fs.rename(tmpPath, finalPath);
+    return finalPath;
+  } catch (err) {
+    try {
+      await fs.rm(tmpPath, { force: true });
+    } catch {
+      // Best effort cleanup; preserve the original archive error.
+    }
+    throw err;
   }
+}
+
+export async function createDownloadArchive({
+  files,
+  target,
+  format,
+  actions,
+  onProgress,
+}) {
+  onProgress?.("scratch");
+  await ensureProjectScratchVolume(actions.project_id);
+  onProgress?.("cleanup");
+  await removeStaleDownloadArchives({ actions });
+  const filename = getSafeDownloadArchiveFilename(target, format);
+  onProgress?.("compress");
+  const path = await createArchive({
+    path: DOWNLOAD_ARCHIVE_PATH,
+    files,
+    target: `${TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX}${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}-${filename}`,
+    format,
+    actions,
+  });
+  return { path, filename };
+}
+
+export async function removeStaleDownloadArchives({
+  actions,
+  maxAgeMs = STALE_DOWNLOAD_ARCHIVE_MS,
+  now = Date.now(),
+}: {
+  actions: any;
+  maxAgeMs?: number;
+  now?: number;
+}) {
+  const fs = actions.fs();
+  let names: string[];
+  try {
+    names = await fs.readdir(DOWNLOAD_ARCHIVE_PATH);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (
+      typeof name != "string" ||
+      !name.startsWith(TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX)
+    ) {
+      continue;
+    }
+    const path = join(DOWNLOAD_ARCHIVE_PATH, name);
+    try {
+      const stat = await fs.stat(path);
+      if (now - newestFileTimestampMs(stat) < maxAgeMs) {
+        continue;
+      }
+      await fs.rm(path, { force: true });
+    } catch {
+      // Best effort cleanup; a stale archive must not block a new download.
+    }
+  }
+}
+
+export async function removeDownloadArchive({
+  path,
+  actions,
+}: {
+  path: string;
+  actions: any;
+}) {
+  const fs = actions.fs();
+  await fs.rm(path, { force: true });
+}
+
+async function ensureProjectScratchVolume(project_id: string) {
+  await webapp_client.conat_client.hub.projects.ensureProjectScratchVolume({
+    project_id,
+  });
 }
 
 export function getArchiveTargetName(target: string, format: string): string {
@@ -155,6 +265,42 @@ export function getArchiveTargetName(target: string, format: string): string {
     }
   }
   return `${base}.${format}`;
+}
+
+function getSafeDownloadArchiveFilename(
+  target: string,
+  format: string,
+): string {
+  const archiveName = getArchiveTargetName(target, format)
+    .replace(/[\\/]+/g, "-")
+    .replace(/^[.\-_\s]+/, "");
+  return archiveName || `download.${format}`;
+}
+
+function newestFileTimestampMs(stat: any): number {
+  let newest = 0;
+  for (const field of [
+    "atimeMs",
+    "mtimeMs",
+    "ctimeMs",
+    "birthtimeMs",
+    "atime",
+    "mtime",
+    "ctime",
+    "birthtime",
+  ]) {
+    const value = stat?.[field];
+    const ms =
+      value instanceof Date
+        ? value.valueOf()
+        : typeof value === "number"
+          ? value
+          : NaN;
+    if (Number.isFinite(ms)) {
+      newest = Math.max(newest, ms);
+    }
+  }
+  return newest;
 }
 
 export function SelectFormat({ format, setFormat }) {

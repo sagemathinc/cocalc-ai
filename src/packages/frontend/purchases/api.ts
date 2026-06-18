@@ -26,6 +26,8 @@ import type {
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
+  TeamLicenseOverview,
+  TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
@@ -103,14 +105,6 @@ export async function getBalanceAdmin(account_id: string): Promise<MoneyValue> {
   return await api("purchases/get-balance-admin", { account_id });
 }
 
-export async function getClosingDates(): Promise<{ last: Date; next: Date }> {
-  return await api("purchases/get-closing-dates");
-}
-
-export async function resetClosingDate() {
-  return await api("purchases/reset-closing-date");
-}
-
 export async function isPurchaseAllowed(
   service: Service,
   cost?: MoneyValue,
@@ -134,6 +128,8 @@ interface PurchasesOptions {
   day_statement_id?: number;
   month_statement_id?: number;
   no_statement?: boolean;
+  tag?: string;
+  includeName?: boolean;
 }
 
 function parsePurchaseDates(v) {
@@ -161,7 +157,7 @@ export const getPurchases: PurchasesFunction = shortCache(
 // Admins can get purchases for any specified user -- error if called by non-admin.
 // Same options as getPurchases, but specify the account_id.
 export async function getPurchasesAdmin(
-  opts: PurchasesOptions & { account_id: string },
+  opts: PurchasesOptions & { account_id?: string },
 ): Promise<{ purchases: Purchase[]; balance: MoneyValue }> {
   return parsePurchaseDates(await api("purchases/get-purchases-admin", opts));
 }
@@ -287,8 +283,14 @@ export async function createPaymentIntent(opts: {
   return await api("purchases/stripe/create-payment-intent", opts);
 }
 
-export async function processPaymentIntents(): Promise<{ count: number }> {
-  return await api("purchases/stripe/process-payment-intents");
+export async function processPaymentIntents(
+  opts: {
+    checkout_session_id?: string;
+    payment_intent_id?: string;
+    strict?: boolean;
+  } = {},
+): Promise<{ count: number }> {
+  return await api("purchases/stripe/process-payment-intents", opts);
 }
 
 export async function createSetupIntent(opts: {
@@ -326,6 +328,7 @@ export interface MembershipChangeQuote {
   current_period_end?: Date | string;
   trial_days?: number;
   trial_available?: boolean;
+  trial_requires_billing_details?: boolean;
   trial_requires_payment_method?: boolean;
   trial_email?: string;
   trial_reason?: string;
@@ -348,7 +351,7 @@ export async function applyMembershipChange(opts: {
   interval: "month" | "year";
   allow_downgrade?: boolean;
 }): Promise<
-  MembershipChangeQuote & { subscription_id: number; purchase_id: number }
+  MembershipChangeQuote & { subscription_id?: number; purchase_id?: number }
 > {
   return await api("purchases/membership-change", opts);
 }
@@ -382,6 +385,51 @@ export async function purchaseMembershipPackage(opts: {
   return await (
     await getPurchasesHubRpc()
   ).purchaseMembershipPackage({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
+export async function purchaseMembershipPackages(opts: {
+  products: {
+    type: "membership-package";
+    package_id?: string;
+    kind: MembershipPackageKind;
+    membership_class: MembershipClass;
+    seat_count: number;
+    interval?: "month" | "year";
+    course_project_id?: string;
+    starts_at?: Date | string;
+    expires_at?: Date | string;
+    metadata?: Record<string, unknown> | null;
+  }[];
+}): Promise<{ package_id: string; purchase_id: number }[]> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).purchaseMembershipPackages({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
+export async function getTeamLicense(): Promise<TeamLicenseOverview | null> {
+  return await (await getPurchasesHubRpc()).getTeamLicense();
+}
+
+export async function getTeamLicenseQuote(opts: {
+  target_seats: Record<string, number>;
+}): Promise<TeamLicenseQuote> {
+  return await (await getPurchasesHubRpc()).getTeamLicenseQuote(opts);
+}
+
+export async function purchaseTeamLicenseChange(opts: {
+  target_seats: Record<string, number>;
+}): Promise<TeamLicenseOverview> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).purchaseTeamLicenseChange({
     ...opts,
     browser_id: webapp_client.browser_id,
   });

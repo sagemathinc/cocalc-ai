@@ -10,6 +10,7 @@ import {
 import { runtimeDeploymentsForUpgradeResults } from "./hosts-runtime-deployment-planning";
 
 let getServerSettingsMock: jest.Mock;
+let originalFetch: typeof globalThis.fetch | undefined;
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   __esModule: true,
@@ -19,10 +20,173 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 describe("upgradeHostSoftwareInternalHelper", () => {
   beforeEach(() => {
     getServerSettingsMock = jest.fn(async () => ({}));
+    originalFetch = global.fetch;
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    if (originalFetch) {
+      global.fetch = originalFetch;
+    } else {
+      delete (global as any).fetch;
+    }
+  });
+
+  it("preflights host-control before running direct artifact upgrades", async () => {
+    const waitFor = jest.fn(async () => ["pong"]);
+    const upgradeSoftware = jest.fn(async () => ({
+      results: [
+        {
+          artifact: "project" as const,
+          version: "project-v1",
+          status: "noop" as const,
+        },
+      ],
+    }));
+    const onProgress = jest.fn();
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh: async () => undefined,
+        hostControlClient: async () => ({
+          conat: { waitFor },
+          upgradeSoftware,
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => [],
+        onProgress,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          artifact: "project",
+          version: "project-v1",
+          status: "noop",
+        },
+      ],
+    });
+
+    expect(waitFor).toHaveBeenCalledWith({ maxWait: 8000 });
+    expect(upgradeSoftware).toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rollout_phase: "host_control.preflight",
+      }),
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rollout_phase: "host_control.ready",
+      }),
+    );
+  });
+
+  it("fails direct non-project-host upgrades quickly when host-control preflight fails", async () => {
+    const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
+    const upgradeSoftware = jest.fn();
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh,
+        hostControlClient: async () => ({
+          conat: {
+            waitFor: async () => {
+              throw new Error("no services matching");
+            },
+          },
+          upgradeSoftware,
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => [],
+      }),
+    ).rejects.toThrow(/host-control service unavailable/);
+
+    expect(upgradeSoftware).not.toHaveBeenCalled();
+    expect(reconcileCloudHostBootstrapOverSsh).not.toHaveBeenCalled();
+  });
+
+  it("uses bootstrap reconcile fallback for latest project-host preflight failures", async () => {
+    const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
+    const logWarn = jest.fn();
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn,
+        reconcileCloudHostBootstrapOverSsh,
+        hostControlClient: async () => ({
+          conat: {
+            waitFor: async () => {
+              throw new Error("no services matching");
+            },
+          },
+          upgradeSoftware: async () => {
+            throw new Error("should not call upgrade after failed preflight");
+          },
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => [],
+      }),
+    ).resolves.toEqual({ results: [] });
+
+    expect(reconcileCloudHostBootstrapOverSsh).toHaveBeenCalledWith({
+      host_id: "host-1",
+      row: expect.objectContaining({ id: "host-1" }),
+    });
+    expect(logWarn).toHaveBeenCalledWith(
+      "host upgrade: host control upgrade failed; retry via ssh",
+      expect.objectContaining({
+        host_id: "host-1",
+      }),
+    );
   });
 
   it("realigns the full runtime stack on noop project-host upgrades when requested", async () => {
@@ -96,6 +260,47 @@ describe("upgradeHostSoftwareInternalHelper", () => {
         ]),
       }),
     );
+  });
+
+  it("can realign project-host upgrades without recording host-scoped desired state", async () => {
+    const row = {
+      id: "host-1",
+      status: "running",
+      version: "ph-v2",
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: "ph-v2",
+        },
+      },
+    };
+    const setProjectHostRuntimeDeployments = jest.fn(async () => []);
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        align_runtime_stack: true,
+        record_runtime_deployments: false,
+        loadHostForStartStop: async () => row,
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh: async () => undefined,
+        hostControlClient: async () => ({
+          upgradeSoftware: async () => ({ results: [] }),
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments,
+      }),
+    ).resolves.toEqual({ results: [] });
+
+    expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
   });
 
   it("uses the installed project-host artifact version when upgrade results report a build id", async () => {
@@ -327,10 +532,10 @@ describe("upgradeHostSoftwareInternalHelper", () => {
     const upgradeSoftware = jest.fn(async () => ({ results: [] }));
     const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
     const setProjectHostRuntimeDeployments = jest.fn(async () => []);
-    jest.spyOn(global, "fetch").mockResolvedValue({
+    global.fetch = jest.fn(async () => ({
       ok: true,
       text: async () => "bootstrap-sha-20260430  bootstrap.py\n",
-    } as Response);
+    })) as any;
 
     await expect(
       upgradeHostSoftwareInternalHelper({
@@ -388,6 +593,70 @@ describe("upgradeHostSoftwareInternalHelper", () => {
       row: expect.objectContaining({ id: "host-1" }),
     });
   });
+
+  it("does not reconcile bootstrap-environment when the installed bootstrap already matches", async () => {
+    const upgradeSoftware = jest.fn(async () => ({ results: [] }));
+    const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
+    const setProjectHostRuntimeDeployments = jest.fn(async () => []);
+    const updateProjectHostSoftwareRecord = jest.fn(async () => undefined);
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      text: async () =>
+        "365e2c415f1fbed7eec7c12fd8d79db4c6c0f6ea64e8f599ca2f673557d8cd28  bootstrap.py\n",
+    })) as any;
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "bootstrap-environment", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+            bootstrap_lifecycle: {
+              items: [
+                {
+                  key: "bootstrap",
+                  installed: "365e2c415f1f",
+                },
+              ],
+            },
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () =>
+          "https://software.example.invalid/software",
+        resolveReachableUpgradeBaseUrl: async () =>
+          "https://software.example.invalid/software",
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh,
+        hostControlClient: async () => ({
+          upgradeSoftware,
+        }),
+        updateProjectHostSoftwareRecord,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          artifact: "bootstrap-environment",
+          version:
+            "365e2c415f1fbed7eec7c12fd8d79db4c6c0f6ea64e8f599ca2f673557d8cd28",
+          status: "noop",
+        },
+      ],
+    });
+
+    expect(upgradeSoftware).not.toHaveBeenCalled();
+    expect(updateProjectHostSoftwareRecord).not.toHaveBeenCalled();
+    expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
+    expect(reconcileCloudHostBootstrapOverSsh).not.toHaveBeenCalled();
+  });
 });
 
 describe("rolloutHostManagedComponentsInternalHelper", () => {
@@ -439,6 +708,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         account_id: "account-1",
         id: "host-1",
         components: ["project-host"],
+        base_url: "https://hub.example.test/software",
         reason: "host_software_upgrade",
         loadHostForStartStop,
         assertHostRunningForUpgrade: () => undefined,
@@ -613,6 +883,46 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
             last_known_good_version: desiredVersion,
           },
         }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
       });
     const setLastKnownGoodArtifactVersionInternal = jest.fn(
       async () => undefined,
@@ -628,6 +938,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         account_id: "account-1",
         id: "host-1",
         components: ["project-host"],
+        base_url: "https://hub.example.test/software",
         reason: "host_software_upgrade",
         loadHostForStartStop,
         assertHostRunningForUpgrade: () => undefined,
@@ -769,6 +1080,46 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
             last_known_good_version: desiredVersion,
           },
         }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
       });
 
     await expect(
@@ -947,6 +1298,46 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
             last_known_good_version: desiredVersion,
           },
         }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
       });
     const setLastKnownGoodArtifactVersionInternal = jest.fn(
       async () => undefined,
@@ -997,6 +1388,283 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
     );
   });
 
+  it("verifies project-host convergence when the managed rollout RPC is disrupted by restart", async () => {
+    const desiredVersion = "ph-v2";
+    const onProgress = jest.fn();
+    const loadHostForStartStop = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: "host-1",
+        status: "running",
+        version: desiredVersion,
+        last_seen: "2026-04-25T05:00:00.000Z",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: desiredVersion,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        id: "host-1",
+        status: "running",
+        version: desiredVersion,
+        last_seen: "2026-04-25T05:00:10.000Z",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: desiredVersion,
+          },
+          host_agent: {
+            project_host: {
+              last_known_good_version: desiredVersion,
+            },
+          },
+        },
+      });
+    const hostControlClient = jest
+      .fn()
+      .mockResolvedValueOnce({
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => new Promise(() => undefined),
+      })
+      .mockResolvedValueOnce({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+        ],
+        getHostAgentStatus: async () => ({
+          project_host: {
+            last_known_good_version: desiredVersion,
+          },
+        }),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [458],
+          },
+        ],
+      });
+    const setLastKnownGoodArtifactVersionInternal = jest.fn(
+      async () => undefined,
+    );
+
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["project-host", "conat-router", "conat-persist"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop,
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient,
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: (row) =>
+          `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+          undefined,
+        recordProjectHostLocalRollbackInternal: async () => ({
+          host_id: "host-1",
+          rollback_version: "ph-v1",
+          source: "host-agent",
+        }),
+        project_host_local_rollback_error_code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        setLastKnownGoodArtifactVersionInternal,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
+        managedComponentRolloutRpcTimeoutMs: 1,
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
+        onProgress,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          component: "project-host",
+          action: "restart_scheduled",
+          message:
+            "project-host rollout RPC timed out; verifying host convergence",
+        },
+        {
+          component: "conat-router",
+          action: "restarted",
+          message:
+            "managed component rollout RPC timed out; verifying host convergence",
+        },
+        {
+          component: "conat-persist",
+          action: "restarted",
+          message:
+            "managed component rollout RPC timed out; verifying host convergence",
+        },
+      ],
+    });
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rollout_phase: "managed_components.rpc_timeout",
+        rollout_phase_label:
+          "Managed component rollout request timed out; verifying host state",
+      }),
+    );
+    expect(setLastKnownGoodArtifactVersionInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        version: desiredVersion,
+      }),
+    );
+  });
+
+  it("fails timed-out managed rollout when non-project-host services remain drifted", async () => {
+    const desiredVersion = "ph-v2";
+    const loadHostForStartStop = jest.fn(async () => ({
+      id: "host-1",
+      status: "running",
+      version: desiredVersion,
+      last_seen: "2026-04-25T05:00:10.000Z",
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: desiredVersion,
+        },
+      },
+    }));
+    const hostControlClient = jest
+      .fn()
+      .mockResolvedValueOnce({
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => new Promise(() => undefined),
+      })
+      .mockResolvedValue({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "drifted",
+            running_versions: ["ph-v1"],
+            running_pids: [457],
+          },
+          {
+            component: "conat-persist",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "drifted",
+            running_versions: ["ph-v1"],
+            running_pids: [458],
+          },
+        ],
+        getHostAgentStatus: async () => ({
+          project_host: {
+            last_known_good_version: desiredVersion,
+          },
+        }),
+      });
+
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["project-host", "conat-router", "conat-persist"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop,
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient,
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: (row) =>
+          `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+          undefined,
+        recordProjectHostLocalRollbackInternal: async () => ({
+          host_id: "host-1",
+          rollback_version: "ph-v1",
+          source: "host-agent",
+        }),
+        project_host_local_rollback_error_code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        setLastKnownGoodArtifactVersionInternal: async () => undefined,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
+        managedComponentRolloutRpcTimeoutMs: 1,
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
+      }),
+    ).rejects.toThrow(/managed component rollout did not converge/);
+  });
+
   it("appends recent host diagnostics when managed component rollout fails", async () => {
     await expect(
       rolloutHostManagedComponentsInternalHelper({
@@ -1031,7 +1699,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           },
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal: async () => ({
           host_id: "host-1",
           rollback_version: "ph-v1",
@@ -1043,14 +1712,93 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
         loadEffectiveRuntimeDeployments: async () => [],
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
       }),
     ).rejects.toThrow(
       /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[conat-router\]/,
     );
   });
 
+  it("accepts interrupted managed rollout RPCs when status verification converges", async () => {
+    const response = await rolloutHostManagedComponentsInternalHelper({
+      account_id: "account-1",
+      id: "host-1",
+      components: ["conat-router"],
+      reason: "automatic_runtime_deployment_reconcile",
+      loadHostForStartStop: async () => ({
+        id: "host-1",
+        status: "running",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: "ph-v1",
+          },
+        },
+      }),
+      assertHostRunningForUpgrade: () => undefined,
+      hostControlClient: async () => ({
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => {
+          throw new Error("socket has been disconnected");
+        },
+        getManagedComponentStatus: async () => [
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: "ph-v1",
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: ["ph-v1"],
+            running_pids: [4321],
+          },
+        ],
+      }),
+      waitForHostHeartbeatAfter: async () => undefined,
+      installedProjectHostArtifactVersion: (row) =>
+        row?.metadata?.software?.project_host,
+      recordProjectHostLocalRollbackInternal: async () => ({
+        host_id: "host-1",
+        rollback_version: "ph-v1",
+        source: "host-agent",
+      }),
+      project_host_local_rollback_error_code: "project_host_local_rollback",
+      setLastKnownGoodArtifactVersionInternal: async () => undefined,
+      runtimeDeploymentsForComponentRollout: () => [],
+      requestedByForRuntimeDeployments: () => "account-1",
+      setProjectHostRuntimeDeployments: async () => undefined,
+      loadEffectiveRuntimeDeployments: async () => [],
+      projectHostRolloutSettleTimeoutMs: 5,
+      projectHostRolloutPollMs: 0,
+    });
+
+    expect(response.results).toEqual([
+      expect.objectContaining({
+        component: "conat-router",
+        action: "restarted",
+      }),
+    ]);
+  });
+
   it("uses the effective runtime deployment target as the desired project-host version", async () => {
     const runtimeDeploymentsForComponentRollout = jest.fn(() => []);
+    const upgradeSoftware = jest.fn(async () => ({
+      results: [
+        {
+          artifact: "project-host" as const,
+          version: "ph-v2",
+          status: "updated" as const,
+        },
+      ],
+    }));
+    const updateProjectHostSoftwareRecord = jest.fn(async () => undefined);
     const recordProjectHostLocalRollbackInternal = jest.fn(async () => ({
       host_id: "host-1",
       rollback_version: "ph-v1",
@@ -1065,6 +1813,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         account_id: "account-1",
         id: "host-1",
         components: ["project-host"],
+        base_url: "https://hub.example.test/software",
         reason: "host_software_upgrade",
         loadHostForStartStop: jest
           .fn()
@@ -1083,12 +1832,24 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           .mockResolvedValueOnce({
             id: "host-1",
             status: "running",
-            version: "ph-v1",
+            version: "ph-v2",
+            last_seen: "2026-04-25T05:00:00.000Z",
+            metadata: {
+              owner: "account-1",
+              software: {
+                project_host: "ph-v2",
+              },
+            },
+          })
+          .mockResolvedValueOnce({
+            id: "host-1",
+            status: "running",
+            version: "ph-v2",
             last_seen: "2026-04-25T05:00:05.000Z",
             metadata: {
               owner: "account-1",
               software: {
-                project_host: "ph-v1",
+                project_host: "ph-v2",
               },
             },
           }),
@@ -1107,6 +1868,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
               },
             ],
           }),
+          upgradeSoftware,
           getManagedComponentStatus: async () => [
             {
               component: "project-host",
@@ -1123,7 +1885,11 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           ],
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
+        resolveHostSoftwareBaseUrl: async (baseUrl) => baseUrl,
+        resolveReachableUpgradeBaseUrl: async ({ baseUrl }) => baseUrl,
+        updateProjectHostSoftwareRecord,
         recordProjectHostLocalRollbackInternal,
         project_host_local_rollback_error_code: "project_host_local_rollback",
         setLastKnownGoodArtifactVersionInternal,
@@ -1147,6 +1913,23 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
       ],
     });
 
+    expect(upgradeSoftware).toHaveBeenCalledWith({
+      targets: [{ artifact: "project-host", version: "ph-v2" }],
+      base_url: "https://hub.example.test/software",
+      restart_project_host: false,
+      retention_policy: expect.any(Object),
+    });
+    expect(updateProjectHostSoftwareRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        results: [
+          {
+            artifact: "project-host",
+            version: "ph-v2",
+            status: "updated",
+          },
+        ],
+      }),
+    );
     expect(recordProjectHostLocalRollbackInternal).not.toHaveBeenCalled();
     expect(setLastKnownGoodArtifactVersionInternal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1195,7 +1978,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           },
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal: async () => ({
           host_id: "host-1",
           rollback_version: "ph-v1",
@@ -1207,6 +1991,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
         loadEffectiveRuntimeDeployments: async () => [],
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
       }),
     ).rejects.toThrow(
       /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[acp-worker\]/,
@@ -1288,7 +2074,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           ],
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal,
         project_host_local_rollback_error_code: "project_host_local_rollback",
         setLastKnownGoodArtifactVersionInternal,
@@ -1387,7 +2174,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           },
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal,
         project_host_local_rollback_error_code: "project_host_local_rollback",
         setLastKnownGoodArtifactVersionInternal,

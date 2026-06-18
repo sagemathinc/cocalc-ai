@@ -23,9 +23,37 @@ class ProjectsStore extends EventEmitter {
   }
 }
 
+function projectStateFromStore(store: ProjectsStore) {
+  return jest.fn(async () => ({ state: store.get_state("project-1") as any }));
+}
+
 describe("ensureProjectRunningForJupyter", () => {
+  it("reports an already running project without starting it", async () => {
+    const store = new ProjectsStore("running");
+    const getProjectState = projectStateFromStore(store);
+    const start_project = jest.fn();
+
+    const result = await ensureProjectRunningForJupyter({
+      redux: {
+        getStore: () => store as any,
+        getActions: () => ({ start_project }),
+      },
+      project_id: "project-1",
+      isClosed: () => false,
+      getProjectState,
+    });
+
+    expect(start_project).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      initialState: "running",
+      started: false,
+      wasRunning: true,
+    });
+  });
+
   it("starts a stopped project before waiting for the notebook runtime", async () => {
     const store = new ProjectsStore("stopped");
+    const getProjectState = projectStateFromStore(store);
     const start_project = jest.fn(async (_project_id: string) => {
       store.setState("starting");
       setTimeout(() => {
@@ -33,43 +61,86 @@ describe("ensureProjectRunningForJupyter", () => {
       }, 0);
     });
 
-    await ensureProjectRunningForJupyter({
+    const result = await ensureProjectRunningForJupyter({
       redux: {
         getStore: () => store as any,
         getActions: () => ({ start_project }),
       },
       project_id: "project-1",
       isClosed: () => false,
+      getProjectState,
     });
 
     expect(start_project).toHaveBeenCalledWith("project-1", {
       autostart: true,
+    });
+    expect(result).toEqual({
+      initialState: "stopped",
+      started: true,
+      wasRunning: false,
     });
     expect(store.get_state("project-1")).toBe("running");
   });
 
   it("does not issue another start request when the project is already starting", async () => {
     const store = new ProjectsStore("starting");
+    const getProjectState = projectStateFromStore(store);
     const start_project = jest.fn();
     setTimeout(() => {
       store.setState("running");
     }, 0);
 
-    await ensureProjectRunningForJupyter({
+    const result = await ensureProjectRunningForJupyter({
       redux: {
         getStore: () => store as any,
         getActions: () => ({ start_project }),
       },
       project_id: "project-1",
       isClosed: () => false,
+      getProjectState,
     });
 
     expect(start_project).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      initialState: "starting",
+      started: false,
+      wasRunning: false,
+    });
     expect(store.get_state("project-1")).toBe("running");
+  });
+
+  it("uses fresh project state instead of stale local running state", async () => {
+    const store = new ProjectsStore("running");
+    const freshStates = ["stopped", "running"];
+    const getProjectState = jest.fn(async () => ({
+      state: (freshStates.shift() ?? "running") as any,
+    }));
+    const start_project = jest.fn();
+
+    const result = await ensureProjectRunningForJupyter({
+      redux: {
+        getStore: () => store as any,
+        getActions: () => ({ start_project }),
+      },
+      project_id: "project-1",
+      isClosed: () => false,
+      getProjectState,
+    });
+
+    expect(start_project).toHaveBeenCalledWith("project-1", {
+      autostart: true,
+    });
+    expect(result).toEqual({
+      initialState: "stopped",
+      started: true,
+      wasRunning: false,
+    });
+    expect(getProjectState).toHaveBeenCalledTimes(2);
   });
 
   it("does not autostart when automatic starts are disabled", async () => {
     const store = new ProjectsStore("stopped", { autostart_enabled: false });
+    const getProjectState = projectStateFromStore(store);
     const start_project = jest.fn();
 
     await expect(
@@ -80,6 +151,7 @@ describe("ensureProjectRunningForJupyter", () => {
         },
         project_id: "project-1",
         isClosed: () => false,
+        getProjectState,
       }),
     ).rejects.toThrow("Automatic starts are disabled");
 

@@ -464,17 +464,20 @@ export class MultiLroOpsManager {
     if (!op_id) {
       return;
     }
-    void this.opts
-      .dismissLro({ op_id })
-      .then(() => {
-        this.removeOp(op_id);
-      })
-      .catch((err) => {
-        this.log("unable to dismiss lro operation", err);
-        this.bootstrap().catch((bootstrapErr) => {
-          this.log("unable to bootstrap lro operations", bootstrapErr);
+    const previous = this.state[op_id];
+    this.removeOp(op_id);
+    void this.opts.dismissLro({ op_id }).catch((err) => {
+      this.log("unable to dismiss lro operation", err);
+      if (previous != null && !this.opts.isClosed()) {
+        this.setState({
+          ...this.state,
+          [op_id]: previous,
         });
+      }
+      this.bootstrap().catch((bootstrapErr) => {
+        this.log("unable to bootstrap lro operations", bootstrapErr);
       });
+    });
   };
 
   private bootstrap = reuseInFlight(async () => {

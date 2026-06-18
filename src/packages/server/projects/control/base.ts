@@ -82,19 +82,44 @@ function isActiveProjectState(state?: string | null): boolean {
   return state === "running" || state === "starting" || state === "pending";
 }
 
+function isRunningProjectHostStatus(status?: string | null): boolean {
+  const normalized = `${status ?? ""}`.trim().toLowerCase();
+  return normalized === "running" || normalized === "active";
+}
+
 async function loadProjectStopState(project_id: string): Promise<{
   host_id: string;
+  host_deleted: Date | string | null;
+  host_found: boolean;
+  host_status: string | null;
   state: string | null;
 }> {
   const { rows } = await getPool().query<{
     host_id: string | null;
+    host_deleted: Date | string | null;
+    host_found: boolean | null;
+    host_status: string | null;
     state: string | null;
   }>(
-    "SELECT host_id, state->>'state' AS state FROM projects WHERE project_id=$1",
+    `
+    SELECT
+      projects.host_id,
+      projects.state->>'state' AS state,
+      project_hosts.id IS NOT NULL AS host_found,
+      project_hosts.status AS host_status,
+      project_hosts.deleted AS host_deleted
+    FROM projects
+    LEFT JOIN project_hosts
+      ON project_hosts.id = projects.host_id
+    WHERE projects.project_id=$1
+    `,
     [project_id],
   );
   return {
     host_id: `${rows[0]?.host_id ?? ""}`.trim(),
+    host_deleted: rows[0]?.host_deleted ?? null,
+    host_found: rows[0]?.host_found === true,
+    host_status: rows[0]?.host_status ?? null,
     state: rows[0]?.state ?? null,
   };
 }
@@ -360,7 +385,8 @@ export class BaseProject extends EventEmitter {
     if (force) {
       logger.debug("stop -- TODO -- force not implemented");
     }
-    const { host_id, state } = await loadProjectStopState(this.project_id);
+    const { host_deleted, host_found, host_id, host_status, state } =
+      await loadProjectStopState(this.project_id);
     if (!host_id) {
       logger.debug(
         `(project_id=${this.project_id}).stop: no assigned host; treating as already stopped`,
@@ -370,6 +396,16 @@ export class BaseProject extends EventEmitter {
     if (!isActiveProjectState(state)) {
       logger.debug(
         `(project_id=${this.project_id}).stop: state=${state ?? "unknown"}; treating as already stopped`,
+      );
+      return;
+    }
+    if (
+      !host_found ||
+      host_deleted != null ||
+      !isRunningProjectHostStatus(host_status)
+    ) {
+      logger.debug(
+        `(project_id=${this.project_id}).stop: host=${host_id} status=${host_status ?? "missing"}; treating as already stopped`,
       );
       return;
     }

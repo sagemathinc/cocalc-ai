@@ -24,17 +24,17 @@ function getLiteInitialProjectState(
       const projectTarget = segments.slice(2).join("/");
       return {
         switch_to: true,
-        target: projectTarget || "project-home",
+        target: projectTarget || "files/",
       };
     }
     return {
       switch_to: true,
-      target: "project-home",
+      target: "files/",
     };
   }
   return {
     switch_to: false,
-    target: "project-home",
+    target: "files/",
   };
 }
 
@@ -65,10 +65,7 @@ export function init(redux, configuration: CustomizeState) {
       restore_session: false,
     })
     .catch((err) => {
-      console.warn(
-        "lite/init: failed to open default project-home target",
-        err,
-      );
+      console.warn("lite/init: failed to open default files target", err);
     });
 
   if (remote_sync) {

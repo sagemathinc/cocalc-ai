@@ -26,6 +26,12 @@ export function shouldHydrateUserIdentity(user?: any): boolean {
   if (user == null) {
     return true;
   }
+  const display = `${
+    user.get?.("display_name") ?? user.display_name ?? ""
+  }`.trim();
+  if (display) {
+    return display === "Deleted User";
+  }
   const first = `${user.get?.("first_name") ?? user.first_name ?? ""}`.trim();
   const last = `${user.get?.("last_name") ?? user.last_name ?? ""}`.trim();
   return !first || !last || (first === "Deleted" && last === "User");
@@ -105,9 +111,11 @@ export class UsersStore extends Store<UsersState> {
       if (shouldHydrateUserIdentity(m)) {
         actions.fetch_non_collaborator(account_id);
       }
-      const name = `${m.get("first_name") ?? ""} ${m.get("last_name") ?? ""}`
-        .trim()
-        .replace(/\s+/g, " ");
+      const name =
+        `${m.get("display_name") ?? ""}`.trim() ||
+        `${m.get("first_name") ?? ""} ${m.get("last_name") ?? ""}`
+          .trim()
+          .replace(/\s+/g, " ");
       return name || undefined;
     } else {
       // look it up, which causes it to get saved in the store, which causes a new render later.

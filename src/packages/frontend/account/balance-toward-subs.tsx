@@ -1,17 +1,27 @@
 import { Space, Switch, Typography } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT } from "@cocalc/util/db-schema/accounts";
+import {
+  USE_BALANCE_TOWARD_SUBSCRIPTIONS,
+  USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT,
+  USE_BALANCE_TOWARD_TEAM_LICENSES,
+  USE_BALANCE_TOWARD_TEAM_LICENSES_DEFAULT,
+} from "@cocalc/util/db-schema/accounts";
 
 const { Text } = Typography;
 
-export function UseBalance() {
-  const use_balance_toward_subscriptions = useTypedRedux(
-    "account",
-    "other_settings",
-  )?.get("use_balance_toward_subscriptions");
-  const checked =
-    use_balance_toward_subscriptions ??
-    USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT;
+interface UseBalanceForRenewalsProps {
+  defaultValue: boolean;
+  settingKey: string;
+}
+
+export function UseBalanceForRenewals({
+  defaultValue,
+  settingKey,
+}: UseBalanceForRenewalsProps) {
+  const storedSetting = useTypedRedux("account", "other_settings")?.get(
+    settingKey,
+  );
+  const checked = storedSetting ?? defaultValue;
 
   return (
     <Space vertical>
@@ -21,19 +31,34 @@ export function UseBalance() {
           checked={checked}
           onChange={(value) => {
             const actions = redux.getActions("account");
-            actions.set_other_settings(
-              "use_balance_toward_subscriptions",
-              value,
-            );
+            actions.set_other_settings(settingKey, value);
           }}
         />
-        <Text strong>Use account balance for renewals</Text>
+        <Text>Use account balance for renewals</Text>
       </Space>
-      <Text type="secondary">
+      <Text>
         {checked
           ? "Renewals use your account balance only when it covers the full renewal amount; otherwise CoCalc charges your payment method in full."
           : "Renewals charge your payment method."}
       </Text>
     </Space>
+  );
+}
+
+export function UseBalance() {
+  return (
+    <UseBalanceForRenewals
+      defaultValue={USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT}
+      settingKey={USE_BALANCE_TOWARD_SUBSCRIPTIONS}
+    />
+  );
+}
+
+export function UseTeamLicenseBalance() {
+  return (
+    <UseBalanceForRenewals
+      defaultValue={USE_BALANCE_TOWARD_TEAM_LICENSES_DEFAULT}
+      settingKey={USE_BALANCE_TOWARD_TEAM_LICENSES}
+    />
   );
 }

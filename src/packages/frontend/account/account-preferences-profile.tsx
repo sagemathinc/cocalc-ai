@@ -27,6 +27,7 @@ export const ACCOUNT_PREFERENCES_PROFILE_PAGE = {
 
 export function AccountPreferencesProfile() {
   const account_id = useTypedRedux("account", "account_id");
+  const display_name = useTypedRedux("account", "display_name");
   const first_name = useTypedRedux("account", "first_name");
   const last_name = useTypedRedux("account", "last_name");
   const email_address = useTypedRedux("account", "email_address");
@@ -45,6 +46,7 @@ export function AccountPreferencesProfile() {
     <>
       <AccountSettings
         account_id={account_id}
+        display_name={display_name}
         first_name={first_name}
         last_name={last_name}
         email_address={email_address}
@@ -58,6 +60,7 @@ export function AccountPreferencesProfile() {
       />
       <SecuritySettings
         email_address={email_address}
+        display_name={display_name}
         first_name={first_name}
         last_name={last_name}
       />

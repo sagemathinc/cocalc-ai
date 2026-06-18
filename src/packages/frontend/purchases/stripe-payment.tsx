@@ -17,17 +17,18 @@ import {
   useElements,
 } from "@stripe/react-stripe-js";
 import type {
+  CheckoutSessionSecret,
   LineItem,
-  PaymentIntentSecret,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   createPaymentIntent,
   createSetupIntent,
   getCheckoutSession,
   getCustomerSession,
   getPaymentMethods,
+  getStripeCustomer,
   processPaymentIntents,
 } from "./api";
 import { Alert, Button, Card, Modal, Space, Spin } from "antd";
@@ -46,21 +47,70 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
 import { moneyToStripe, stripeToMoney } from "@cocalc/util/money";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { LineItemsTable } from "./line-items";
-import { AddressButton } from "./address";
+import {
+  useEmailVerificationRequired,
+  VerifyEmailRequiredPanel,
+} from "@cocalc/frontend/app/verify-email-banner";
+import { LineItemsTable, moneyToString } from "./line-items";
+import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
+const PAYMENT_INTENT_PROCESSING_TIMEOUT_MS = 75_000;
+const PAYMENT_INTENT_PROCESSING_POLL_MS = 6_000;
 
-export default function StripePayment({
-  description = "",
-  lineItems = [],
-  purpose = "add-credit",
-  metadata,
-  onFinished,
-  style,
-  disabled,
-}: {
+function hasUsableBillingDetails(customer: any): boolean {
+  const address = customer?.address ?? {};
+  return (
+    !!`${customer?.name ?? ""}`.trim() &&
+    !!`${address.line1 ?? ""}`.trim() &&
+    !!`${address.city ?? ""}`.trim() &&
+    !!`${address.country ?? ""}`.trim() &&
+    !!`${address.postal_code ?? ""}`.trim()
+  );
+}
+
+function retryDelayFromError(err: unknown, fallbackMs: number): number {
+  const match = `${err}`.match(/try again in (\d+) seconds/i);
+  if (match?.[1]) {
+    return (Number(match[1]) + 1) * 1000;
+  }
+  return fallbackMs;
+}
+
+async function processCreatedPaymentIntent(payment_intent?: string) {
+  if (!payment_intent) {
+    throw Error("payment intent was not returned by checkout");
+  }
+  const deadline = Date.now() + PAYMENT_INTENT_PROCESSING_TIMEOUT_MS;
+  let lastError: unknown;
+  while (Date.now() <= deadline) {
+    try {
+      await processPaymentIntents({
+        payment_intent_id: payment_intent,
+        strict: true,
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+      await delay(
+        Math.min(
+          retryDelayFromError(err, PAYMENT_INTENT_PROCESSING_POLL_MS),
+          remainingMs,
+        ),
+      );
+    }
+  }
+  throw Error(
+    `Your payment appears to have gone through, but CoCalc has not yet recorded it. Please close this dialog and check the payment status panel. ${lastError}`,
+  );
+}
+
+interface StripePaymentProps {
   description?: string;
   lineItems?: LineItem[];
   purpose: string;
@@ -69,10 +119,45 @@ export default function StripePayment({
   //   - this means the paymentIntent was created when total > 0
   //   - if total = 0, this means user confirmed "I want to make this purchase using credit"; the
   //     caller then needs to actually allocate the thing they want to purchase.
-  onFinished?: (total: number) => void;
+  onFinished?: (total: number) => void | Promise<void>;
+  onSubmittingChange?: (submitting: boolean) => void;
+  summaryMode?: "full" | "total-only";
   style?;
+  title?: ReactNode | null;
   disabled?: boolean;
-}) {
+}
+
+export default function StripePayment(props: StripePaymentProps) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  const safeLineItems = props.lineItems ?? [];
+  if (safeLineItems.length == 0) {
+    // no payment needed.
+    return null;
+  }
+  if (emailVerificationRequired) {
+    return (
+      <VerifyEmailRequiredPanel
+        compact
+        title="Verify your email before purchasing"
+        description="Please verify your email address before making purchases, adding account credit, or changing paid services."
+      />
+    );
+  }
+  return <StripePaymentInner {...props} />;
+}
+
+function StripePaymentInner({
+  description = "",
+  lineItems = [],
+  purpose = "add-credit",
+  metadata,
+  onFinished,
+  onSubmittingChange,
+  summaryMode = "full",
+  style,
+  title = description,
+  disabled,
+}: StripePaymentProps) {
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [requiresPayment, setRequiresPayment] = useState<boolean>(false);
@@ -80,9 +165,7 @@ export default function StripePayment({
     null,
   );
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
@@ -102,11 +185,6 @@ export default function StripePayment({
     setRequiresPayment(false);
   }, [JSON.stringify(safeLineItems)]);
 
-  if (safeLineItems.length == 0) {
-    // no payment needed.
-    return null;
-  }
-
   let totalStripe = 0;
   for (const lineItem of safeLineItems) {
     totalStripe += moneyToStripe(lineItem.amount);
@@ -118,19 +196,36 @@ export default function StripePayment({
     !requiresPayment &&
     totalStripe > 0;
 
+  const amountDue = stripeToMoney(totalStripe).toNumber();
+  const amountDueLineItem: LineItem = {
+    description: "Amount due (excluding tax)",
+    amount: amountDue,
+    extra: true,
+    bold: true,
+  };
+  const displayedLineItems = safeLineItems.concat(amountDueLineItem);
+
   return (
     <Card style={{ textAlign: "left" }}>
-      <div style={{ margin: "0 0 5px 15px" }}>
-        <b>{description}</b>
-      </div>
-      <LineItemsTable
-        lineItems={safeLineItems.concat({
-          description: "Amount due (excluding tax)",
-          amount: stripeToMoney(totalStripe).toNumber(),
-          extra: true,
-          bold: true,
-        })}
-      />
+      {title != null && title !== "" && (
+        <div style={{ margin: "0 0 5px 15px" }}>
+          <b>{title}</b>
+        </div>
+      )}
+      {summaryMode === "total-only" ? (
+        <div
+          style={{
+            fontSize: "12pt",
+            fontWeight: "bold",
+            marginBottom: "12px",
+            textAlign: "center",
+          }}
+        >
+          Amount due (excluding tax) {moneyToString(amountDue)}
+        </div>
+      ) : (
+        <LineItemsTable lineItems={displayedLineItems} />
+      )}
       <div>
         <div style={{ textAlign: "center" }}>
           <Space>
@@ -146,18 +241,25 @@ export default function StripePayment({
                   onClick={async () => {
                     try {
                       setLoading(true);
+                      onSubmittingChange?.(true);
                       await runFreshAuthAction(async () => {
-                        await createPaymentIntent({
+                        const paymentIntent = await createPaymentIntent({
                           description,
                           lineItems: safeLineItems,
                           purpose,
                           metadata,
                         });
-                        onFinished?.(stripeToMoney(totalStripe).toNumber());
+                        await processCreatedPaymentIntent(
+                          paymentIntent.payment_intent,
+                        );
+                        await onFinished?.(
+                          stripeToMoney(totalStripe).toNumber(),
+                        );
                       });
                     } catch (err) {
                       setError(`${err}`);
                     } finally {
+                      onSubmittingChange?.(false);
                       setLoading(false);
                     }
                   }}
@@ -256,7 +358,7 @@ function StripeCheckout({
   totalStripe,
   hasPaymentMethods,
 }) {
-  const [secret, setSecret] = useState<PaymentIntentSecret | null>(null);
+  const [secret, setSecret] = useState<CheckoutSessionSecret | null>(null);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -350,8 +452,20 @@ function StripeCheckout({
       <EmbeddedCheckoutProvider
         options={{
           fetchClientSecret: async () => secret.clientSecret,
-          onComplete: () => {
-            onFinished?.(stripeToMoney(totalStripe).toNumber());
+          onComplete: async () => {
+            try {
+              setError("");
+              setLoading(true);
+              await processPaymentIntents({
+                checkout_session_id: secret.sessionId,
+                strict: true,
+              });
+              onFinished?.(stripeToMoney(totalStripe).toNumber());
+            } catch (err) {
+              setError(`${err}`);
+            } finally {
+              setLoading(false);
+            }
           },
         }}
         stripe={loadStripe()}
@@ -362,7 +476,26 @@ function StripeCheckout({
   );
 }
 
-export function FinishStripePayment({
+export function FinishStripePayment(props: {
+  paymentIntent;
+  style?;
+  onFinished?;
+}) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  if (emailVerificationRequired) {
+    return (
+      <VerifyEmailRequiredPanel
+        compact
+        title="Verify your email before completing payment"
+        description="Please verify your email address before completing purchases."
+        style={props.style}
+      />
+    );
+  }
+  return <FinishStripePaymentInner {...props} />;
+}
+
+function FinishStripePaymentInner({
   paymentIntent,
   style,
   onFinished,
@@ -374,9 +507,7 @@ export function FinishStripePayment({
   const [error, setError] = useState<string>("");
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     (async () => {
@@ -458,7 +589,10 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
       });
 
       try {
-        await processPaymentIntents();
+        await processPaymentIntents({
+          payment_intent_id: paymentIntent.id,
+          strict: true,
+        });
       } catch (err) {
         console.warn("issue processing payment", err);
         // would usually be due to throttling, but could be network went down or
@@ -466,11 +600,14 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
         console.log("try again in 15s...");
         await delay(15000);
         try {
-          await processPaymentIntents();
+          await processPaymentIntents({
+            payment_intent_id: paymentIntent.id,
+            strict: true,
+          });
         } catch (err) {
-          console.warn("still failing to processing payment", err);
+          console.warn("still failing to process payment", err);
           setMessage(
-            `Your payment appears to have went through, but CoCalc has not yet received the funds.  Please close this dialog and check the payment status panel. ${err}`,
+            `Your payment appears to have gone through, but CoCalc has not yet recorded it. Please close this dialog and check the payment status panel. ${err}`,
           );
           return;
           // still failing -- a backend maintenance task does
@@ -616,10 +753,10 @@ export function ConfirmButton({
   );
 }
 
-export function BigSpin({ style }: { style? }) {
+export function BigSpin({ style, tip = "Loading" }: { style?; tip?: string }) {
   return (
     <div style={{ ...style, textAlign: "center" }}>
-      <Spin tip="Loading" size="large">
+      <Spin tip={tip} size="large">
         <div
           style={{
             padding: 50,
@@ -659,43 +796,149 @@ export function AddPaymentMethodButton({
     >
       {button}
       {show && (
-        <Modal
-          open
-          title={"Add Payment Method"}
+        <AddPaymentMethodModal
           onCancel={() => setShow(false)}
-          onOk={() => setShow(false)}
-          footer={[]}
-        >
-          <CollectPaymentMethod
-            onFinished={() => {
-              setShow(false);
-              onFinished?.();
-            }}
-          />
-        </Modal>
+          onFinished={() => {
+            setShow(false);
+            onFinished?.();
+          }}
+        />
       )}
     </div>
   );
 }
 
-function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
+export function AddPaymentMethodModal({
+  onCancel,
+  onFinished,
+}: {
+  onCancel: () => void;
+  onFinished?: () => void;
+}) {
+  return (
+    <BillingSetupModal
+      onCancel={onCancel}
+      onFinished={onFinished}
+      requirePaymentMethod
+      title="Add Payment Method"
+    />
+  );
+}
+
+export function BillingSetupModal({
+  onCancel,
+  onFinished,
+  requirePaymentMethod,
+  title = requirePaymentMethod ? "Add Payment Method" : "Billing Details",
+}: {
+  onCancel: () => void;
+  onFinished?: () => void;
+  requirePaymentMethod: boolean;
+  title?: ReactNode;
+}) {
+  const [addressSaved, setAddressSaved] = useState<boolean>(false);
+  const [checkingAddress, setCheckingAddress] =
+    useState<boolean>(requirePaymentMethod);
+  const [addressCheckError, setAddressCheckError] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+
+    if (!requirePaymentMethod) {
+      setAddressSaved(false);
+      setCheckingAddress(false);
+      setAddressCheckError("");
+      return;
+    }
+
+    setCheckingAddress(true);
+    setAddressCheckError("");
+    (async () => {
+      try {
+        const customer = await getStripeCustomer();
+        if (active) {
+          setAddressSaved(hasUsableBillingDetails(customer));
+        }
+      } catch (err) {
+        if (active) {
+          setAddressCheckError(`${err}`);
+        }
+      } finally {
+        if (active) {
+          setCheckingAddress(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [requirePaymentMethod]);
+
+  const finishAddress = () => {
+    if (requirePaymentMethod) {
+      setAddressSaved(true);
+    } else {
+      onFinished?.();
+    }
+  };
+  return (
+    <Modal open title={title} onCancel={onCancel} onOk={onCancel} footer={[]}>
+      {checkingAddress ? (
+        <BigSpin tip="Checking billing details..." />
+      ) : addressCheckError ? (
+        <ShowError error={addressCheckError} setError={setAddressCheckError} />
+      ) : !addressSaved ? (
+        <Space vertical size="middle" style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            message="Enter your billing name and address first."
+            description="CoCalc uses this for receipts, invoices, and tax calculation."
+          />
+          <StripeAddressElement onFinished={finishAddress} showCancel={false} />
+        </Space>
+      ) : (
+        <CollectPaymentMethod onFinished={onFinished} />
+      )}
+    </Modal>
+  );
+}
+
+function CollectPaymentMethod(props: { style?; onFinished? }) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  if (emailVerificationRequired) {
+    return (
+      <VerifyEmailRequiredPanel
+        compact
+        title="Verify your email before adding a payment method"
+        description="Please verify your email address before adding payment methods or starting membership trials."
+        style={props.style}
+      />
+    );
+  }
+  return <CollectPaymentMethodInner {...props} />;
+}
+
+function CollectPaymentMethodInner({
+  style,
+  onFinished,
+}: {
+  style?;
+  onFinished?;
+}) {
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
 
   const load = async () => {
     try {
       setLoading(true);
       setError("");
-      await runFreshAuthAction(async () => {
-        const intent = await createSetupIntent({
-          description: "Add a new payment method.",
-        });
-        setSecret(intent);
+      const intent = await createSetupIntent({
+        description: "Add a new payment method.",
       });
+      setSecret(intent);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -708,27 +951,24 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   }, []);
 
   if (loading) {
-    return <BigSpin style={style} />;
+    return <BigSpin style={style} tip="Loading payment form..." />;
   }
 
   if (error) {
     return (
-      <>
-        <ShowError
-          style={style}
-          error={error}
-          setError={(error) => {
-            setError(error);
-            load();
-          }}
-        />
-        <FreshAuthModal {...freshAuthModalProps} />
-      </>
+      <ShowError
+        style={style}
+        error={error}
+        setError={(error) => {
+          setError(error);
+          load();
+        }}
+      />
     );
   }
 
   if (secret == null) {
-    return <BigSpin style={style} />;
+    return <BigSpin style={style} tip="Loading payment form..." />;
   }
 
   return (
@@ -749,7 +989,6 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
           setError={setError}
         />
       </Elements>
-      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }
@@ -765,7 +1004,7 @@ function FinishCollectingPaymentMethod({ style, onFinished, setError }) {
   }, []);
 
   if (!stripe || !elements) {
-    return <BigSpin style={style} />;
+    return <BigSpin style={style} tip="Loading payment form..." />;
   }
 
   const handleSubmit = async (e) => {
@@ -798,7 +1037,7 @@ function FinishCollectingPaymentMethod({ style, onFinished, setError }) {
 
   return (
     <div style={style}>
-      {loading && <BigSpin />}
+      {loading && <BigSpin tip="Loading payment form..." />}
       <PaymentElement />
       <ConfirmButton
         disabled={loading}

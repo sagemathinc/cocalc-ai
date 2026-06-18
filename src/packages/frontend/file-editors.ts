@@ -23,6 +23,7 @@ import {
   markEditorExtensionRegistered,
   wasEditorExtensionRegistered,
 } from "./file-editor-registry";
+import { warnEditorLoadFailure } from "./editor-load-diagnostics";
 import { EditorLoadError } from "./file-editors-error";
 
 declare let DEBUG: boolean;
@@ -205,7 +206,12 @@ export async function initializeAsync(
     try {
       return await editor.initAsync(path, redux, project_id, content);
     } catch (err) {
-      console.error(`Failed to initialize async editor for ${path}: ${err}`);
+      warnEditorLoadFailure({
+        path,
+        ext: ext ?? filename_extension(path).toLowerCase(),
+        phase: "initializeAsync",
+        error: err,
+      });
       // Single point where all async editor load errors are reported to user
       alert_message({
         type: "error",
@@ -255,7 +261,12 @@ export async function generateAsync(
         return await componentAsync();
       } catch (err) {
         const error = err as Error;
-        console.error(`Failed to load editor component for ${path}: ${error}`);
+        warnEditorLoadFailure({
+          path,
+          ext: ext ?? filename_extension(path).toLowerCase(),
+          phase: "generateAsync.componentAsync",
+          error,
+        });
         // Single point where all async editor load errors are reported to user
         alert_message({
           type: "error",

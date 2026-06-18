@@ -1,5 +1,6 @@
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
+import { upsertAcpSessionFromJob } from "./acp-sessions";
 
 const TABLE = "acp_jobs";
 const THREAD_QUEUE_ORDER = `
@@ -122,6 +123,11 @@ function ensureInit(): void {
   }
 }
 
+function mirrorAcpJobSession(row: AcpJobRow | undefined): void {
+  if (!row) return;
+  upsertAcpSessionFromJob(row);
+}
+
 function normalizeRequest(request: AcpJobRequest): AcpJobRequest {
   if (request.request_kind === "command") {
     return request;
@@ -226,11 +232,13 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
     now,
     now,
   );
-  return getAcpJob({
+  const job = getAcpJob({
     project_id,
     path,
     user_message_id,
   })!;
+  mirrorAcpJobSession(job);
+  return job;
 }
 
 export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
@@ -521,6 +529,7 @@ export function claimNextQueuedAcpJobForThread({
       .prepare(`SELECT * FROM ${TABLE} WHERE op_id = ?`)
       .get(next.op_id) as AcpJobRow | undefined;
     db.exec("COMMIT");
+    mirrorAcpJobSession(claimed);
     return claimed;
   } catch (err) {
     db.exec("ROLLBACK");
@@ -556,6 +565,7 @@ export function setAcpJobState({
             OR worker_id = ?
           )`,
     ).run(state, error ?? null, now, now, op_id, worker_id);
+    mirrorAcpJobSession(getAcpJobByOpId(op_id));
     return;
   }
   db.prepare(
@@ -566,6 +576,7 @@ export function setAcpJobState({
           finished_at = ?
       WHERE op_id = ?`,
   ).run(state, error ?? null, now, now, op_id);
+  mirrorAcpJobSession(getAcpJobByOpId(op_id));
 }
 
 export function requeueRunningAcpJob({
@@ -597,6 +608,7 @@ export function requeueRunningAcpJob({
             OR worker_id = ?
           )`,
     ).run(error ?? null, now, op_id, worker_id);
+    mirrorAcpJobSession(getAcpJobByOpId(op_id));
     return;
   }
   db.prepare(
@@ -611,6 +623,7 @@ export function requeueRunningAcpJob({
       WHERE op_id = ?
         AND state = 'running'`,
   ).run(error ?? null, now, op_id);
+  mirrorAcpJobSession(getAcpJobByOpId(op_id));
 }
 
 export function reprioritizeAcpJobImmediate({
@@ -635,7 +648,9 @@ export function reprioritizeAcpJobImmediate({
         AND user_message_id = ?
         AND state = 'queued'`,
   ).run(now, project_id, path, user_message_id);
-  return getAcpJob({ project_id, path, user_message_id });
+  const job = getAcpJob({ project_id, path, user_message_id });
+  mirrorAcpJobSession(job);
+  return job;
 }
 
 export function cancelQueuedAcpJob({
@@ -660,7 +675,9 @@ export function cancelQueuedAcpJob({
         AND user_message_id = ?
         AND state = 'queued'`,
   ).run(now, now, project_id, path, user_message_id);
-  return getAcpJob({ project_id, path, user_message_id });
+  const job = getAcpJob({ project_id, path, user_message_id });
+  mirrorAcpJobSession(job);
+  return job;
 }
 
 export function resendCanceledAcpJob({
@@ -675,6 +692,8 @@ export function resendCanceledAcpJob({
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  // Historical name: this also retries terminal error jobs, which keep the
+  // original request_json needed to resubmit the same user turn.
   db.prepare(
     `UPDATE ${TABLE}
       SET state = 'queued',
@@ -690,15 +709,20 @@ export function resendCanceledAcpJob({
       WHERE project_id = ?
         AND path = ?
         AND user_message_id = ?
-        AND state = 'canceled'`,
+        AND state IN ('canceled', 'error')`,
   ).run(now, project_id, path, user_message_id);
-  return getAcpJob({ project_id, path, user_message_id });
+  const job = getAcpJob({ project_id, path, user_message_id });
+  mirrorAcpJobSession(job);
+  return job;
 }
 
 export function markRunningAcpJobsInterrupted(reason = "server restart"): void {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  const rows = db
+    .prepare(`SELECT op_id FROM ${TABLE} WHERE state = 'running'`)
+    .all() as Array<{ op_id: string }>;
   db.prepare(
     `UPDATE ${TABLE}
       SET state = 'interrupted',
@@ -707,6 +731,9 @@ export function markRunningAcpJobsInterrupted(reason = "server restart"): void {
           finished_at = COALESCE(finished_at, ?)
       WHERE state = 'running'`,
   ).run(reason, now, now);
+  for (const row of rows) {
+    mirrorAcpJobSession(getAcpJobByOpId(row.op_id));
+  }
 }
 
 export function decodeAcpJobRequest(row: AcpJobRow): AcpJobRequest {

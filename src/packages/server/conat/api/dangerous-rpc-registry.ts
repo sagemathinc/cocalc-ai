@@ -23,6 +23,22 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "adminData.deleteView": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer shared view deletion",
+  },
+  "adminData.saveView": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer shared view mutation",
+  },
+  "adminData.runSql": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer SQL execution against operational data",
+  },
+  "adminData.runView": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer saved view execution against operational data",
+  },
   "agent.run": {
     decision: "fresh-auth-not-required",
     reason: "agent run is not implemented; normal account auth is sufficient",
@@ -183,6 +199,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
+  "system.recordLaunchSmokeResult": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
   "system.recordUxLatencyEvent": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
@@ -308,6 +328,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "hosts.upsertExternalCredential": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "aiSessions.upsertProjectHostSession": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
@@ -557,6 +581,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "site-license commercial terms and domain entitlement mutation",
   },
+  "purchases.addSiteLicenseExternalClaimKey": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token verification authority mutation",
+  },
   "purchases.archiveSiteLicensePool": {
     decision: "fresh-auth-required",
     reason: "site-license commercial terms and domain entitlement mutation",
@@ -578,7 +606,23 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin abuse-review annotation can mark accounts/projects as abusive or urgent",
   },
+  "purchases.createSiteLicenseExternalClaimPool": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token claim authority mutation",
+  },
+  "purchases.disableSiteLicenseExternalClaimPool": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token claim authority mutation",
+  },
   "purchases.purchaseMembershipPackage": {
+    decision: "fresh-auth-required",
+    reason: "browser purchase action",
+  },
+  "purchases.purchaseMembershipPackages": {
+    decision: "fresh-auth-required",
+    reason: "browser purchase action",
+  },
+  "purchases.purchaseTeamLicenseChange": {
     decision: "fresh-auth-required",
     reason: "browser purchase action",
   },
@@ -603,6 +647,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-required",
     reason: "paid membership seat revocation",
+  },
+  "purchases.revokeSiteLicenseExternalClaimKey": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token verification authority mutation",
   },
   "purchases.setSiteLicenseManager": {
     decision: "fresh-auth-required",

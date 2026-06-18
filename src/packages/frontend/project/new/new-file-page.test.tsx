@@ -80,7 +80,7 @@ jest.mock("antd", () => {
 });
 
 jest.mock("@cocalc/frontend/account", () => ({
-  default_filename: () => "default.txt",
+  default_filename: (ext?: string) => (ext ? `default.${ext}` : "default.txt"),
 }));
 
 jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
@@ -176,6 +176,14 @@ jest.mock("../explorer/path-navigator", () => ({
   PathNavigator: () => <span>Home</span>,
 }));
 
+jest.mock("../find/find-scope-bar", () => ({
+  FindScopeBar: () => <span>Create in Home</span>,
+}));
+
+jest.mock("../home-directory", () => ({
+  getProjectHomeDirectory: () => "/home/user",
+}));
+
 jest.mock("../use-available-features", () => ({
   useAvailableFeatures: () => ({
     jupyter_notebook: true,
@@ -196,19 +204,34 @@ jest.mock("./new-file-button", () => ({
 
 jest.mock("./launcher-catalog", () => ({
   QUICK_CREATE_MAP: {},
+  getQuickCreateSpec: (id: string) => ({
+    id,
+    ext: id,
+    label: id,
+    icon: "file",
+  }),
+  isQuickCreateAvailable: () => true,
 }));
 
 jest.mock("./launcher-preferences", () => ({
   LAUNCHER_SETTINGS_KEY: "launcher-settings",
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY: "launcher-defaults",
   getAccountLauncherPrefs: () => ({}),
-  getEffectiveLauncher: () => ({ quickCreate: [] }),
+  getEffectiveLauncher: () => ({ quickCreate: ["md"] }),
   getSiteLauncherDefaults: () => ({}),
   updateAccountLauncherPrefs: () => ({}),
 }));
 
 jest.mock("./launcher-customize-modal", () => ({
   LauncherCustomizeModal: () => null,
+}));
+
+jest.mock("./quick-create-dropdown", () => ({
+  QuickCreateDropdown: ({ onCreateFile }: any) => (
+    <button type="button" onClick={() => onCreateFile("md")}>
+      New
+    </button>
+  ),
 }));
 
 jest.mock("@cocalc/frontend/editor-tmp", () => ({
@@ -329,5 +352,23 @@ describe("NewFilePage folder creation", () => {
     rerender(<NewFilePage project_id="project-1" isVisible={true} />);
 
     expect(screen.getByDisplayValue("fresh.md")).toBeInTheDocument();
+  });
+
+  it("does not keep appending extensions after quick create", async () => {
+    render(<NewFilePage project_id="project-1" isVisible={true} />);
+    const input = screen.getByDisplayValue("draft.md");
+
+    fireEvent.change(input, { target: { value: "my-notes.md" } });
+    fireEvent.click(screen.getByRole("button", { name: "md" }));
+
+    await waitFor(() =>
+      expect(mockCreateFile).toHaveBeenCalledWith({
+        name: "my-notes",
+        ext: "md",
+        current_path: "/work",
+      }),
+    );
+    expect(screen.getByDisplayValue("default.txt")).toBeInTheDocument();
+    expect(mockSetNextDefaultFilename).toHaveBeenLastCalledWith("default.txt");
   });
 });

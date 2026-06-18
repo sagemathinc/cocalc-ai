@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 
 import * as CookieConsent from "vanilla-cookieconsent";
 
+import { COLORS } from "@cocalc/util/theme";
+
 import { COOKIE_CATEGORIES, type CookieCategoryKey } from "./categories";
 import { BANNER_STATE_EVENT, isBannerActive, isBannerDecided } from "./state";
 
@@ -53,19 +55,59 @@ export function showConsentModal(): void {
   }
 }
 
+const FORCE_CONSENT_OVERLAY_ID = "cocalc-cookie-consent-force-overlay";
+let forceConsentCount = 0;
+
+function hexToRgba(hex: string, alpha: number): string {
+  const normalized = hex.replace("#", "");
+  const value = Number.parseInt(normalized, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function ensureForceConsentOverlay(): void {
+  if (typeof document === "undefined") return;
+  if (document.getElementById(FORCE_CONSENT_OVERLAY_ID) != null) return;
+  const overlay = document.createElement("div");
+  overlay.id = FORCE_CONSENT_OVERLAY_ID;
+  overlay.setAttribute("aria-hidden", "true");
+  Object.assign(overlay.style, {
+    position: "fixed",
+    inset: "0",
+    zIndex: "2147483000",
+    background: hexToRgba(COLORS.GRAY_DD, 0.58),
+    pointerEvents: "auto",
+    cursor: "not-allowed",
+  });
+  document.body.appendChild(overlay);
+}
+
+function removeForceConsentOverlay(): void {
+  if (typeof document === "undefined") return;
+  document.getElementById(FORCE_CONSENT_OVERLAY_ID)?.remove();
+}
+
 export function enableForceConsent(): () => void {
   if (typeof window === "undefined") return () => {};
   if (isBannerDecided() && !isBannerActive()) return () => {};
   if (hasEssentialConsent()) return () => {};
   const html = document.documentElement;
+  forceConsentCount += 1;
   html.classList.add("disable--interaction");
+  ensureForceConsentOverlay();
   showConsentModal();
 
   let removed = false;
   const remove = () => {
     if (removed) return;
     removed = true;
-    html.classList.remove("disable--interaction");
+    forceConsentCount = Math.max(0, forceConsentCount - 1);
+    if (forceConsentCount === 0) {
+      html.classList.remove("disable--interaction");
+      removeForceConsentOverlay();
+    }
     window.removeEventListener("cc:onConsent", remove);
     window.removeEventListener("cc:onChange", remove);
   };

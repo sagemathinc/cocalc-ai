@@ -153,6 +153,126 @@ review state, must follow the account home bay. After rehome, verify the account
 location and smoke-test a feature that reads account-private state.
 `;
 
+export const ADMIN_SOFTWARE_COMMAND_BODY = `
+## What cocalc software is for
+
+The \`cocalc software\` command is the high-level operator interface for taking
+changes in the \`cocalc-ai\` source tree and turning them into immutable
+artifacts, public release-channel promotions, site-profile deploys, smoke
+checks, deployment history, and rollback targets. Use it from inside the
+\`cocalc-ai\` git repository when you want to build a component, push it to the
+software store, deploy or promote it, and then verify exactly what happened.
+
+This page is only an orientation. The source-of-truth command reference is the
+CLI itself:
+
+~~~sh
+cocalc software info
+cocalc software info hub
+cocalc software info plus --json
+~~~
+
+Use human mode when operating manually. Use \`--json\` when an agent needs a
+structured component map with lifecycle notes, common failure modes, and
+recommended commands.
+
+## Lifecycle
+
+~~~text
+cocalc-ai source
+      |
+      v
+software build <component>[:<tag>]
+      |
+      v
+local immutable artifact store
+      |
+      v
+software push <component>[:<tag-or-id>]
+      |
+      v
+R2 software artifacts + indexes
+      |
+      v
+software deploy <component>[:<tag-or-id>] <profile-or-channel>
+      |
+      v
+target: Rocket bay, project-host fleet, release channel, or GitHub Star channel
+      |
+      v
+software smoke/history/rollback
+~~~
+
+Deployment history is written to the durable software store, not only to the
+target bay or host. A deploy writes a started record before mutating the target
+and seals it as succeeded or failed afterwards; an unsealed record should be
+treated as unknown.
+
+## Target map
+
+~~~text
+Bay profile target
+  static, hub, bay, bay-conat-router, bay-conat-persist,
+  bay-frontdoor, bay-cloudflared, bay-scaffold
+
+Project-host fleet target
+  project-host, project, tools, host-conat-router, host-conat-persist
+
+Release channel target
+  cli, launchpad, plus
+
+GitHub Star channel target
+  star
+~~~
+
+Site-profile targets use a profile from \`cocalc auth list\`. Release-channel
+targets use \`dev\`, \`candidate\`, or \`stable\`. Deploying a project-host
+fleet component updates the fleet default; add \`--rollout\` only when you also
+want to immediately upgrade or reconcile all online hosts.
+
+## Components
+
+| Component | What it is |
+| --- | --- |
+| \`static\` | Browser frontend, public assets, webapp assets, and setup scripts served by a bay. |
+| \`hub\` | Bay hub worker/control-plane runtime for APIs, routing, and backend logic. |
+| \`bay\` | Full Rocket bay runtime artifact and broad bay-side operational escape hatch. |
+| \`bay-conat-router\` | Bay-side Conat router service, deployed from a \`bay\` artifact with a scoped service restart. |
+| \`bay-conat-persist\` | Bay-side Conat persist service, deployed from a \`bay\` artifact with a scoped service restart. |
+| \`bay-frontdoor\` | Bay frontdoor/sticky-session service in front of hub workers. |
+| \`bay-cloudflared\` | Bay Cloudflare tunnel helper and related service wiring. |
+| \`bay-scaffold\` | Bay systemd units, scripts, and environment templates without a full app rollout. |
+| \`project-host\` | Project-host agent/runtime that supervises projects and host-side services. |
+| \`project\` | Runtime bundle used inside user projects for project daemons and project-level services. |
+| \`tools\` | Full project tools payload for Linux amd64 and arm64 project hosts. |
+| \`tools-minimal\` | Small tools payload coordinated with CoCalc Plus; build/push only as a standalone component. |
+| \`host-conat-router\` | Project-host-local Conat router managed component. |
+| \`host-conat-persist\` | Project-host-local Conat persist managed component. |
+| \`cli\` | Standalone \`cocalc\` command-line binary promoted through release channels. |
+| \`launchpad\` | Standalone local hub/runtime launcher promoted through release channels. |
+| \`plus\` | CoCalc Plus release-channel product, coordinated with \`tools-minimal\`. |
+| \`star\` | Self-hosted CoCalc distribution promoted through GitHub Star channel releases. |
+
+## Minimal operator pattern
+
+~~~sh
+cocalc software build hub:fix-name
+cocalc software deploy hub:fix-name staging
+cocalc software smoke hub staging
+cocalc software history hub staging
+~~~
+
+For release-channel products, replace the site profile with a channel:
+
+~~~sh
+cocalc software deploy cli:fix-name candidate
+cocalc software smoke cli candidate
+~~~
+
+For the exact component behavior, run \`cocalc software info <component>\` before
+deploying.
+`;
+
 export const ADMIN_BAY_OPS_BODY = String.raw`
 ## What Bay Operations is for
 

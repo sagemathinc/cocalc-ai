@@ -31,9 +31,8 @@ export default async function handle(req, res) {
       product,
       source,
       user_account_id,
-      voucher_amount,
-      voucher_count,
-      voucher_title,
+      balance_user_note,
+      balance_admin_note,
     } = getParams(req);
     res.json(
       await adminPurchase({
@@ -46,9 +45,8 @@ export default async function handle(req, res) {
         product,
         source,
         user_account_id,
-        voucher_amount: Number(voucher_amount ?? 0),
-        voucher_count: Number(voucher_count ?? 0),
-        voucher_title,
+        balance_user_note,
+        balance_admin_note,
       }),
     );
   } catch (err) {

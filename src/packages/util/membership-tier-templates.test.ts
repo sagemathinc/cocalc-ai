@@ -35,14 +35,16 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       }),
     );
     expect(tier.course_store_visible).toBe(false);
-    expect(aiLimits.units_5h).toBeGreaterThan(0);
+    expect(tier.team_visible).toBeUndefined();
+    expect(aiLimits.units_5h).toBe(0);
+    expect(aiLimits.units_7d).toBe(0);
     expect(
       (tier.usage_limits as Record<string, unknown>)?.shared_compute_priority,
     ).toBeGreaterThan(0);
     expect(
       (tier.usage_limits as Record<string, unknown>)
         ?.max_sponsored_running_projects,
-    ).toBe(1000);
+    ).toBe(32);
     expect((tier.usage_limits as Record<string, unknown>)?.rootfs_count).toBe(
       250,
     );
@@ -80,7 +82,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.course_grace_days).toBe(3);
     expect(tier.project_defaults).toEqual(
       expect.objectContaining({
-        disk_quota: 10000,
+        disk_quota: 32000,
         memory: 1234,
       }),
     );
@@ -99,7 +101,10 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.usage_limits).toEqual(
       expect.objectContaining({
         shared_compute_priority: 99,
-        max_sponsored_running_projects: 3,
+        max_sponsored_running_projects: 4,
+        max_projects: 25,
+        total_storage_soft_bytes: 64_000_000_000,
+        total_storage_hard_bytes: 64_000_000_000,
         notification_email_send_limit_5h: 200,
         notification_email_send_limit_7d: 1000,
         prepaid_host_usage_limit_5h_usd: 300,
@@ -146,16 +151,23 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(basic.store_highlights).toContain("More shared resources");
     expect(basic.site_license_pool_description).toMatch(/Light CoCalc access/);
     expect(basic.store_visible).toBe(false);
+    expect(basic.team_visible).toBeUndefined();
     expect(basic.course_store_visible).toBe(false);
     expect(basic.price_monthly).toBe(8);
     expect(basic.price_yearly).toBe(72);
     expect((basic.project_defaults as Record<string, unknown>).disk_quota).toBe(
-      1000,
+      16000,
     );
     expect(
       (basic.usage_limits as Record<string, unknown>)
         .max_sponsored_running_projects,
-    ).toBe(3);
+    ).toBe(2);
+    expect((basic.usage_limits as Record<string, unknown>).max_projects).toBe(
+      5,
+    );
+    expect(
+      (basic.usage_limits as Record<string, unknown>).total_storage_hard_bytes,
+    ).toBe(16_000_000_000);
 
     expect(standard.label).toBe("Standard");
     expect(standard.store_description).toMatch(/everyday work/);
@@ -164,9 +176,14 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     );
     expect(standard.site_license_pool_description).toMatch(/Everyday CoCalc/);
     expect(standard.store_visible).toBe(false);
+    expect(standard.team_visible).toBeUndefined();
     expect(standard.course_store_visible).toBe(false);
     expect(standard.price_monthly).toBe(24);
     expect(standard.price_yearly).toBe(216);
+    expect(standard.trial_days).toBe(7);
+    expect(
+      (standard.project_defaults as Record<string, unknown>).disk_quota,
+    ).toBe(32000);
     expect((standard.features as Record<string, unknown>).create_hosts).toBe(
       true,
     );
@@ -263,5 +280,11 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       (tier.usage_limits as Record<string, unknown>)
         .course_max_students_and_pending_invites,
     ).toBe(500);
+  });
+
+  it("keeps the pro template hidden until public pricing is explicitly enabled", () => {
+    const tier = applyMembershipTierTemplateFallbacks({ id: "pro" });
+
+    expect(tier.store_visible).toBe(false);
   });
 });

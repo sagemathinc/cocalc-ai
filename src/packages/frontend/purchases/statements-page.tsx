@@ -6,7 +6,6 @@ import { labels } from "@cocalc/frontend/i18n";
 import Statements from "./statements";
 import Statement from "./statement";
 import { Icon } from "@cocalc/frontend/components/icon";
-import ClosingDate from "./closing-date";
 
 type Key = string[] | string | number[] | number;
 
@@ -51,7 +50,6 @@ export default function StatementsPage() {
 
   return (
     <div>
-      <ClosingDate />
       <h3>
         <Icon name="calendar" style={{ marginRight: "8px" }} /> Monthly and
         Daily Statements

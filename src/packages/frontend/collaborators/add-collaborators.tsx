@@ -10,6 +10,10 @@ Add collaborators to a project
 import { Alert, Button, Input, Select } from "antd";
 import { useIntl } from "react-intl";
 import type { ProjectCollaboratorInviteUsage } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectEmailInviteDeliveryResult,
+  ProjectInviteDeliveryResult,
+} from "@cocalc/frontend/client/project-collaborators";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   React,
@@ -133,6 +137,73 @@ interface ManualInviteLink {
   email_address: string;
   reason?: string;
   invite_urls: string[];
+}
+
+interface InviteDeliverySummary {
+  email_sent: number;
+  in_app_notification_sent: number;
+  manual_delivery_required: number;
+}
+
+function emptyInviteDeliverySummary(): InviteDeliverySummary {
+  return {
+    email_sent: 0,
+    in_app_notification_sent: 0,
+    manual_delivery_required: 0,
+  };
+}
+
+function addInviteDeliveryResult(
+  summary: InviteDeliverySummary,
+  result?: ProjectInviteDeliveryResult | null,
+): void {
+  if (result?.email_sent) {
+    summary.email_sent += 1;
+  }
+  if (result?.in_app_notification_sent) {
+    summary.in_app_notification_sent += 1;
+  }
+  if (result?.manual_delivery_required) {
+    summary.manual_delivery_required += 1;
+  }
+}
+
+function inviteDeliveryResultMessage({
+  count,
+  summary,
+}: {
+  count: number;
+  summary: InviteDeliverySummary;
+}): string {
+  const created = `${count} ${plural(count, "invitation")} created.`;
+  if (summary.email_sent > 0 && summary.in_app_notification_sent > 0) {
+    return `${created} Email was sent where possible; existing CoCalc users also received in-app notifications.`;
+  }
+  if (summary.email_sent > 0) {
+    return `${created} Email delivery was confirmed.`;
+  }
+  if (summary.in_app_notification_sent > 0) {
+    return `${created} Existing CoCalc users received in-app notifications. Email was not sent.`;
+  }
+  if (summary.manual_delivery_required > 0) {
+    return `${created} Email was not sent; copy pending invite links and send them manually.`;
+  }
+  return `${created} No email delivery was confirmed; copy pending invite links if recipients do not see the invitation.`;
+}
+
+function inviteBlockedReasonText(reason?: string): string {
+  switch (reason) {
+    case "email_not_configured":
+      return "email is not configured for this site";
+    case "tier_disallows_email":
+      return "email sending is not enabled for this account or site";
+    case "cooldown":
+      return "a recent email invitation was already sent";
+    case "send_disabled_by_request":
+      return "email sending was disabled for this request";
+    default:
+      return "email delivery was not confirmed";
+  }
 }
 
 export const AddCollaborators: React.FC<Props> = ({
@@ -416,11 +487,13 @@ export const AddCollaborators: React.FC<Props> = ({
     return options;
   }
 
-  async function invite_collaborator(account_id: string): Promise<void> {
+  async function invite_collaborator(
+    account_id: string,
+  ): Promise<ProjectInviteDeliveryResult | undefined> {
     if (project == null) return;
     const { subject, replyto, replyto_name } = sender_info();
 
-    await project_actions.invite_collaborator(
+    const result = await project_actions.invite_collaborator(
       project_id,
       account_id,
       email_body,
@@ -431,28 +504,32 @@ export const AddCollaborators: React.FC<Props> = ({
       invite_role,
       invite_role === "viewer" ? invite_read_policy : undefined,
     );
+    return result ?? undefined;
   }
 
   async function add_selected(): Promise<void> {
     const errors: string[] = [];
     const manualDeliveryLinks: ManualInviteLink[] = [];
+    const deliverySummary = emptyInviteDeliverySummary();
     const number_selected = selected_entries.length;
     for (const x of selected_entries) {
       try {
         if (is_valid_email_address(x)) {
           const result = await invite_noncloud_collaborator(x, true);
+          addInviteDeliveryResult(deliverySummary, result);
           const inviteLinks = (result?.invites ?? [])
             .map((invite) => invite.invite_url)
-            .filter((url) => !!url);
+            .filter((url): url is string => !!url);
           if (result?.manual_delivery_required && inviteLinks.length > 0) {
             manualDeliveryLinks.push({
               email_address: x,
               invite_urls: inviteLinks,
-              reason: result.email_blocked_reason,
+              reason: result.email_blocked_reason ?? undefined,
             });
           }
         } else if (is_valid_uuid_string(x)) {
-          await invite_collaborator(x);
+          const result = await invite_collaborator(x);
+          addInviteDeliveryResult(deliverySummary, result);
         } else {
           // skip
           throw Error(
@@ -474,7 +551,10 @@ export const AddCollaborators: React.FC<Props> = ({
       set_state("invited_manual");
     } else {
       set_invite_result(
-        `${number_selected} ${plural(number_selected, "invitation")} created.`,
+        inviteDeliveryResultMessage({
+          count: number_selected,
+          summary: deliverySummary,
+        }),
       );
       set_state("invited");
     }
@@ -517,7 +597,7 @@ export const AddCollaborators: React.FC<Props> = ({
   async function invite_noncloud_collaborator(
     email_address,
     silent = false,
-  ): Promise<any> {
+  ): Promise<ProjectEmailInviteDeliveryResult | undefined> {
     if (project == null) return;
     const { subject, replyto, replyto_name } = sender_info();
     const result = await project_actions.invite_collaborators_by_email(
@@ -544,17 +624,19 @@ export const AddCollaborators: React.FC<Props> = ({
       .filter((x) => x.length > 0);
     const errors: string[] = [];
     const manualDeliveryLinks: ManualInviteLink[] = [];
+    const deliverySummary = emptyInviteDeliverySummary();
     for (const email of emails) {
       try {
         const result = await invite_noncloud_collaborator(email, true);
+        addInviteDeliveryResult(deliverySummary, result);
         const inviteLinks = (result?.invites ?? [])
           .map((invite) => invite.invite_url)
-          .filter((url) => !!url);
+          .filter((url): url is string => !!url);
         if (result?.manual_delivery_required && inviteLinks.length > 0) {
           manualDeliveryLinks.push({
             email_address: email,
             invite_urls: inviteLinks,
-            reason: result.email_blocked_reason,
+            reason: result.email_blocked_reason ?? undefined,
           });
         }
       } catch (err) {
@@ -571,7 +653,10 @@ export const AddCollaborators: React.FC<Props> = ({
       set_state("invited_manual");
     } else {
       set_invite_result(
-        `${emails.length} ${plural(emails.length, "invitation")} created.`,
+        inviteDeliveryResultMessage({
+          count: emails.length,
+          summary: deliverySummary,
+        }),
       );
       set_state("invited");
     }
@@ -1104,6 +1189,17 @@ export const AddCollaborators: React.FC<Props> = ({
                       </Button>
                     </div>
                   ))}
+                  {entry.reason ? (
+                    <div
+                      style={{
+                        color: COLORS.GRAY_D,
+                        fontSize: 12,
+                        marginTop: 6,
+                      }}
+                    >
+                      {inviteBlockedReasonText(entry.reason)}.
+                    </div>
+                  ) : undefined}
                 </div>
               ))}
             </div>

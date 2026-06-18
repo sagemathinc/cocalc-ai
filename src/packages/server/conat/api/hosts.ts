@@ -231,6 +231,7 @@ import {
   computeHostRuntimeDeploymentReconcilePlan,
   normalizeRuntimeArtifactTarget,
   normalizeRuntimeDeploymentUpserts,
+  runtimeDeploymentsForAlignedProjectHostVersion,
   runtimeDeploymentsForComponentRollout,
   runtimeDeploymentsForUpgradeResults,
 } from "./hosts-runtime-deployment-planning";
@@ -6913,7 +6914,24 @@ export async function setHostRuntimeDeployments({
   deployments: HostRuntimeDeploymentUpsert[];
   replace?: boolean;
 }): Promise<HostRuntimeDeploymentRecord[]> {
-  const normalized = normalizeRuntimeDeploymentUpserts(deployments);
+  const expandedDeployments = (deployments ?? []).flatMap((deployment) => {
+    if (
+      deployment?.target_type === "artifact" &&
+      normalizeRuntimeArtifactTarget(
+        deployment.target as HostRuntimeArtifact,
+      ) === "project-host"
+    ) {
+      return [
+        ...runtimeDeploymentsForAlignedProjectHostVersion({
+          version: deployment.desired_version,
+          rolloutReason: deployment.rollout_reason,
+        }),
+        deployment,
+      ];
+    }
+    return [deployment];
+  });
+  const normalized = normalizeRuntimeDeploymentUpserts(expandedDeployments);
   if (scope_type === "global") {
     const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
     const result = await setProjectHostRuntimeDeployments({
@@ -7244,11 +7262,13 @@ export async function rolloutHostManagedComponents({
   account_id,
   id,
   components,
+  base_url,
   reason,
 }: {
   account_id?: string;
   id: string;
   components: ManagedComponentKind[];
+  base_url?: string;
   reason?: string;
 }): Promise<HostLroResponse> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
@@ -7259,6 +7279,7 @@ export async function rolloutHostManagedComponents({
         account_id,
         id,
         components,
+        base_url,
         reason,
       });
   }
@@ -7268,10 +7289,11 @@ export async function rolloutHostManagedComponents({
     kind: HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
     row,
     account_id,
-    input: { id: row.id, account_id, components, reason },
+    input: { id: row.id, account_id, components, base_url, reason },
     dedupe_key: hostManagedComponentRolloutDedupeKey({
       hostId: row.id,
       components,
+      baseUrl: base_url,
       reason,
     }),
   });
@@ -7345,6 +7367,7 @@ export async function reconcileHostSoftwareInternal({
           account_id,
           id,
           targets,
+          record_runtime_deployments: false,
         });
       }
       if (shouldRollManagedComponents) {
@@ -7358,6 +7381,7 @@ export async function reconcileHostSoftwareInternal({
             "acp-worker",
           ],
           reason: "host_software_reconcile",
+          record_runtime_deployments: false,
         });
       }
       let refreshedRow = row;
@@ -7587,6 +7611,7 @@ export async function upgradeHostSoftwareInternal({
   targets,
   base_url,
   align_runtime_stack,
+  record_runtime_deployments,
   onProgress,
 }: {
   account_id?: string;
@@ -7594,6 +7619,7 @@ export async function upgradeHostSoftwareInternal({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  record_runtime_deployments?: boolean;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
@@ -7604,6 +7630,7 @@ export async function upgradeHostSoftwareInternal({
     targets,
     base_url,
     align_runtime_stack,
+    record_runtime_deployments,
     loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     computeHostOperationalAvailability,
@@ -7642,13 +7669,17 @@ export async function rolloutHostManagedComponentsInternal({
   account_id,
   id,
   components,
+  base_url,
   reason,
+  record_runtime_deployments,
   onProgress,
 }: {
   account_id?: string;
   id: string;
   components: HostManagedComponentRolloutRequest["components"];
+  base_url?: string;
   reason?: string;
+  record_runtime_deployments?: boolean;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
@@ -7658,19 +7689,42 @@ export async function rolloutHostManagedComponentsInternal({
     id,
     components,
     reason,
+    record_runtime_deployments,
     loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     hostControlClient,
     waitForHostHeartbeatAfter,
     installedProjectHostArtifactVersion,
+    resolveHostSoftwareBaseUrl,
+    resolveReachableUpgradeBaseUrl,
     recordProjectHostLocalRollbackInternal,
     project_host_local_rollback_error_code:
       PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE,
+    updateProjectHostSoftwareRecord: async ({ row, results }) => {
+      const metadata = row.metadata ?? {};
+      const software = { ...(metadata.software ?? {}) } as Record<
+        string,
+        string
+      >;
+      for (const result of results) {
+        const key = mapUpgradeArtifact(result.artifact);
+        if (key) {
+          software[key] = result.version;
+        }
+      }
+      const nextMetadata = { ...metadata, software };
+      const nextVersion = software.project_host ?? row.version ?? null;
+      await pool().query(
+        `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [row.id, nextMetadata, nextVersion],
+      );
+    },
     setLastKnownGoodArtifactVersionInternal,
     runtimeDeploymentsForComponentRollout,
     requestedByForRuntimeDeployments,
     setProjectHostRuntimeDeployments,
     loadEffectiveRuntimeDeployments: loadEffectiveProjectHostRuntimeDeployments,
+    base_url,
     onProgress,
   });
 }

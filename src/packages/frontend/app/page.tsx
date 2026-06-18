@@ -57,6 +57,7 @@ import { CookieWarning, LocalStorageWarning } from "./warnings";
 import { ImportPublicUrlModal } from "./import-public-url-modal";
 import { lite } from "@cocalc/frontend/lite";
 import { ImpersonationBanner } from "./impersonation-banner";
+import { TeamLicenseWarningBanner } from "./team-license-warning-banner";
 
 // ipad and ios have a weird trick where they make the screen
 // actually smaller than 100vh and have it be scrollable, even
@@ -200,7 +201,8 @@ export const Page: React.FC = () => {
         label_class={NAV_CLASS}
         icon={"book"}
         active_top_tab={active_top_tab}
-        hide_label={!show_label}
+        hide_label={true}
+        ariaLabel="Docs"
         tooltip="Search CoCalc documentation"
       />
     );
@@ -365,6 +367,7 @@ export const Page: React.FC = () => {
       {local_storage_warning && <LocalStorageWarning />}
       {show_i18n && <I18NBanner />}
       <ImpersonationBanner />
+      <TeamLicenseWarningBanner />
       <VerifyEmail />
       {!lite && !fullscreen && !isAuthView && (
         <nav className="smc-top-bar" style={topBarStyle}>

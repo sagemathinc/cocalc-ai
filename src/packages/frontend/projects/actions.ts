@@ -10,6 +10,7 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { Actions, redux } from "@cocalc/frontend/app-framework";
 import { set_window_title } from "@cocalc/frontend/browser";
 import api from "@cocalc/frontend/client/api";
+import type { ProjectInviteDeliveryResult } from "@cocalc/frontend/client/project-collaborators";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import { COCALC_MINIMAL } from "@cocalc/frontend/fullscreen";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
@@ -40,6 +41,7 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
 import { getProjectUrlPath } from "@cocalc/frontend/project-routing";
+import { markProjectRecentlyCreated } from "@cocalc/frontend/project/recently-created-project";
 import {
   invalidateProjectFields,
   publishProjectDetailInvalidation,
@@ -50,9 +52,16 @@ import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
 } from "./offline-move-confirmation";
+import { recommendProjectHosts } from "@cocalc/frontend/hosts/project-host-recommendations";
+import { selectHostForProjectStart } from "@cocalc/frontend/hosts/select-host-for-project-start";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isTerminal } from "@cocalc/frontend/lro/utils";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
+import {
+  DEFAULT_R2_REGION,
+  mapCountryRegionToR2Region,
+  type R2Region,
+} from "@cocalc/util/consts";
 import {
   DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
   type ProjectViewerReadPolicy,
@@ -81,10 +90,26 @@ export type { Datastore, EnvVars, EnvVarsRecord };
 
 const PROJECTION_ONLY_FIELD = "__projection_only";
 const PROJECTED_PROJECT_BOOTSTRAP_LIMIT = 2000;
+const PROJECT_RESTART_REQUEST_VISIBLE_MS = 8_000;
 type ProjectListWindowDirtyReason =
   | "feed-upsert"
   | "feed-remove"
   | "history-gap";
+
+function preferredProjectRegionFromCustomize(): R2Region {
+  const customize = redux.getStore("customize");
+  return (
+    mapCountryRegionToR2Region(
+      customize?.get?.("country"),
+      customize?.get?.("cloudflare_region_code"),
+    ) ?? DEFAULT_R2_REGION
+  );
+}
+
+function isProjectionConvergenceError(err: unknown, name: string): boolean {
+  const message = err instanceof Error ? err.message : `${err}`;
+  return message === `${name} projection did not converge`;
+}
 
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
@@ -133,6 +158,7 @@ export function buildProjectRecordFromFeedRow(
     description: row.description,
     theme: row.theme ?? null,
     host_id: row.host_id,
+    rootfs_image_id: row.rootfs_image_id ?? null,
     owning_bay_id: row.owning_bay_id,
     manage_users_owner_only: row.manage_users_owner_only ?? null,
     users: row.users ?? {},
@@ -171,6 +197,7 @@ function buildProjectRecordFromProjectIndexRow({
     description: row.description ?? "",
     theme: row.theme ?? null,
     host_id: row.host_id ?? null,
+    rootfs_image_id: row.rootfs_image_id ?? null,
     owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
     users: row.users_summary ?? {},
     state: row.state_summary ?? {},
@@ -292,6 +319,7 @@ type DirectProjectBootstrapRow = {
   description?: string | null;
   theme?: Record<string, any> | null;
   host_id?: string | null;
+  rootfs_image_id?: string | null;
   owning_bay_id?: string | null;
   users?: Record<string, any> | null;
   state?: Record<string, any> | null;
@@ -347,6 +375,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private recentHostInfoLookupFailureAt: Record<string, number> =
     Object.create(null);
   private projectLifecycleReconcileTokens: Record<string, number> =
+    Object.create(null);
+  private projectMetadataReconcileTokens: Record<string, number> =
     Object.create(null);
   private visibleProjectWindowIds: string[] = [];
 
@@ -647,6 +677,96 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_ids: [project_id],
           reason,
         });
+      }, delay);
+      (timer as any).unref?.();
+    }
+  }
+
+  private projectMetadataReconcileKey(
+    project_id: string,
+    field: "title" | "description",
+  ): string {
+    return `${project_id}:${field}`;
+  }
+
+  private nextProjectMetadataReconcileToken(
+    project_id: string,
+    field: "title" | "description",
+  ): number {
+    const key = this.projectMetadataReconcileKey(project_id, field);
+    const token = (this.projectMetadataReconcileTokens[key] ?? 0) + 1;
+    this.projectMetadataReconcileTokens[key] = token;
+    return token;
+  }
+
+  private projectMetadataReconcileTokenIsCurrent({
+    project_id,
+    field,
+    token,
+  }: {
+    project_id: string;
+    field: "title" | "description";
+    token: number;
+  }): boolean {
+    return (
+      this.projectMetadataReconcileTokens[
+        this.projectMetadataReconcileKey(project_id, field)
+      ] === token
+    );
+  }
+
+  private scheduleProjectedProjectMetadataReconcile({
+    project_id,
+    field,
+    value,
+    reason,
+    token,
+  }: {
+    project_id: string;
+    field: "title" | "description";
+    value: string;
+    reason: ProjectProjectionRepairReason;
+    token: number;
+  }): void {
+    for (const delay of ProjectsActions.PROJECT_ROW_RECONCILE_DELAYS_MS) {
+      const timer = setTimeout(() => {
+        void (async () => {
+          if (
+            !this.projectMetadataReconcileTokenIsCurrent({
+              project_id,
+              field,
+              token,
+            })
+          ) {
+            return;
+          }
+          try {
+            await this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason,
+            });
+          } catch (err) {
+            console.warn("project metadata projection repair failed", {
+              project_id,
+              field,
+              err,
+            });
+            return;
+          }
+          if (
+            !this.projectMetadataReconcileTokenIsCurrent({
+              project_id,
+              field,
+              token,
+            })
+          ) {
+            return;
+          }
+          if (store.getIn(["project_map", project_id, field]) !== value) {
+            this.setProjectLocalScalarField(project_id, field, value);
+          }
+        })();
       }, delay);
       (timer as any).unref?.();
     }
@@ -973,6 +1093,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 project_id: null,
                 owning_bay_id: null,
                 host_id: null,
+                rootfs_image_id: null,
                 title: null,
                 description: null,
                 theme: null,
@@ -1102,6 +1223,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 project_id,
                 owning_bay_id: null,
                 host_id: null,
+                rootfs_image_id: null,
                 title: null,
                 description: null,
                 theme: null,
@@ -2112,6 +2234,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
               description: null,
               theme: null,
               host_id: null,
+              rootfs_image_id: null,
               owning_bay_id: null,
               users: null,
               state: null,
@@ -2141,6 +2264,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       description: row.description ?? "",
       theme: row.theme ?? null,
       host_id: row.host_id ?? null,
+      rootfs_image_id: row.rootfs_image_id ?? null,
       owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
       users: row.users ?? {},
       state: row.state ?? {},
@@ -2480,12 +2604,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
     value: string,
     before: string | undefined,
   ): Promise<void> => {
+    const projectionName = `project.${field}`;
+    const reconcileToken = this.nextProjectMetadataReconcileToken(
+      project_id,
+      field,
+    );
     this.setProjectLocalScalarField(project_id, field, value);
     try {
       await writeAndWaitForProjection({
         consumer: "projects",
         id: `project:${project_id}:${field}`,
-        name: `project.${field}`,
+        name: projectionName,
         write: () => this.projects_query_set({ project_id, [field]: value }),
         matchesProjection: () =>
           this.projectedProjectMetadataMatches({
@@ -2501,8 +2630,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
           }),
       });
     } catch (err) {
-      this.setProjectLocalScalarField(project_id, field, before);
-      throw err;
+      if (isProjectionConvergenceError(err, projectionName)) {
+        const current = store.getIn(["project_map", project_id, field]);
+        if (current === before) {
+          this.setProjectLocalScalarField(project_id, field, value);
+        }
+        this.scheduleProjectedProjectMetadataReconcile({
+          project_id,
+          field,
+          value,
+          reason: "write-ack",
+          token: reconcileToken,
+        });
+        console.warn("project metadata projection did not converge", {
+          project_id,
+          field,
+          value,
+          err,
+        });
+      } else {
+        this.setProjectLocalScalarField(project_id, field, before);
+        throw err;
+      }
     }
     this.logProjectMetadataUpdate(project_id, {
       event: "set",
@@ -2998,6 +3147,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
 
     const project_id = await webapp_client.project_client.create(opts2);
+    markProjectRecentlyCreated(project_id);
 
     // At this point we know the project_id and that the project exists.
     // However, various code (e.g., setting the title) depends on the
@@ -3348,7 +3498,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     replyto_name?: string,
     invite_role: "collaborator" | "viewer" = "collaborator",
     read_policy?: ProjectViewerReadPolicy | null,
-  ): Promise<void> {
+  ): Promise<ProjectInviteDeliveryResult | void> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_user",
       invitee_account_id: account_id,
@@ -3360,7 +3510,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const email = body != null ? markdown_to_html(body) : undefined;
 
     try {
-      await webapp_client.project_collaborators.invite({
+      const result = await webapp_client.project_collaborators.invite({
         project_id,
         account_id,
         title,
@@ -3374,6 +3524,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         read_policy,
       });
       notifyCollabInvitesChanged(project_id);
+      return result;
     } catch (err) {
       if (!silent) {
         const message = `Error inviting collaborator ${account_id} from ${project_id} -- ${err}`;
@@ -3605,6 +3756,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
           alert_message({ type: "error", message, timeout: 20 });
           return false;
         }
+      } else {
+        const hostAssigned = await this.assignStartHostIfNeeded({
+          project_id,
+          autostart: opts.autostart === true,
+        });
+        if (!hostAssigned) {
+          return false;
+        }
       }
 
       if (lifecycleState === "archived") {
@@ -3705,6 +3864,58 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return true;
     },
   );
+
+  private async assignStartHostIfNeeded({
+    project_id,
+    autostart,
+  }: {
+    project_id: string;
+    autostart: boolean;
+  }): Promise<boolean> {
+    if (store.getIn(["project_map", project_id, "host_id"])) {
+      return true;
+    }
+    const projectRegion = preferredProjectRegionFromCustomize();
+    let hosts;
+    try {
+      hosts = await webapp_client.conat_client.hub.hosts.listHosts({
+        catalog: true,
+      });
+    } catch (err) {
+      const message = `Unable to load project hosts -- ${err}`;
+      redux.getProjectActions(project_id)?.setState({ control_error: message });
+      alert_message({ type: "error", message, timeout: 20 });
+      return false;
+    }
+    const recommendations = recommendProjectHosts({
+      hosts,
+      projectRegion,
+    });
+    const sameRegion = recommendations.projectRegionCandidates[0];
+    if (sameRegion) {
+      await this.assign_project_to_host(project_id, sameRegion.host.id);
+      return true;
+    }
+    if (recommendations.remoteCandidates.length === 0) {
+      const message =
+        "No available project hosts can run this project. Start or provision a project host, then try again.";
+      redux.getProjectActions(project_id)?.setState({ control_error: message });
+      alert_message({ type: "warning", message, timeout: 20 });
+      return false;
+    }
+    if (autostart) {
+      const message =
+        "This project is not assigned to a host, and no available host exists in your nearest region. Click Start to choose a host in another region.";
+      redux.getProjectActions(project_id)?.setState({ control_error: message });
+      return false;
+    }
+    const selected = await selectHostForProjectStart({ projectRegion });
+    if (!selected?.host_id) {
+      return false;
+    }
+    await this.assign_project_to_host(project_id, selected.host_id);
+    return true;
+  }
 
   private waitForProjectStartOp = async ({
     op,
@@ -4536,7 +4747,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
         event: "project_restart_requested",
       });
       const actions = redux.getProjectActions(project_id);
+      const previousLifecycleState = store.getIn([
+        "project_map",
+        project_id,
+        "state",
+        "state",
+      ]) as string | undefined;
+      actions?.setState({
+        restart_request: Map({
+          token: uuid(),
+          requested_at: new Date().toISOString(),
+        }),
+      });
+      const clearRestartRequest = () =>
+        actions?.setState({ restart_request: undefined });
       try {
+        this.optimisticProjectStateUpdate(project_id, "starting");
         const resp = await writeAndWaitForProjection({
           consumer: "projects",
           id: `project:${project_id}:restart`,
@@ -4559,7 +4785,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
             }),
         });
         actions.trackStartOp(resp);
+        setTimeout(clearRestartRequest, PROJECT_RESTART_REQUEST_VISIBLE_MS);
+        this.scheduleProjectLifecycleReconcile({
+          project_id,
+          optimisticState: "starting",
+          reason: "restart_project",
+        });
       } catch (err) {
+        clearRestartRequest();
+        this.optimisticProjectStateUpdate(
+          project_id,
+          previousLifecycleState ?? "running",
+        );
         actions.setState({
           control_error: `Error restarting project -- ${err}`,
         });

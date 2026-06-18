@@ -72,6 +72,11 @@ import {
   VIEWABLE_FILE_EXT,
   sortedTypeFilterOptions,
 } from "./utils";
+import {
+  hasRealListingRows,
+  parentDirectoryPath,
+  withParentDirectoryRow,
+} from "./parent-directory-row";
 
 const COL_W = {
   CHECKBOX: 40,
@@ -121,6 +126,7 @@ interface Props {
   allowReadOnlyCopy?: boolean;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
+  openUploadFiles?: () => void;
 }
 
 interface FileEntry extends DirectoryListingEntry {
@@ -450,6 +456,7 @@ export function FileListing({
   allowReadOnlyCopy = false,
   sort_by,
   onNavigateDirectory,
+  openUploadFiles,
 }: Props) {
   const intl = useIntl();
   const selected_file_index = useTypedRedux(
@@ -529,29 +536,34 @@ export function FileListing({
     );
   }, []);
 
-  const baseDataSource = useMemo<FileEntry[]>(() => {
+  const filteredListing = useMemo(() => {
     return listing
       .filter((entry) => (hide_masked_files ? !entry.mask : true))
       .filter((entry) =>
         type_filter == null ? true : typeFilterValue(entry) === type_filter,
-      )
-      .map((entry) => {
-        const fullPath = misc.path_to_file(current_path, entry.name);
-        return {
-          ...entry,
-          fullPath,
-          isOpen: openFiles.has(fullPath),
-          isStarred: starredSet.has(entry.isDir ? `${fullPath}/` : fullPath),
-        };
-      });
-  }, [
-    listing,
-    hide_masked_files,
-    type_filter,
-    current_path,
-    openFiles,
-    starredSet,
-  ]);
+      );
+  }, [listing, hide_masked_files, type_filter]);
+
+  const baseDataSource = useMemo<FileEntry[]>(() => {
+    return withParentDirectoryRow({
+      listing: filteredListing,
+      currentPath: current_path,
+      fileSearch: file_search,
+    }).map((entry) => {
+      const isParentDirectory = entry.name === "..";
+      const fullPath = isParentDirectory
+        ? parentDirectoryPath(current_path)
+        : misc.path_to_file(current_path, entry.name);
+      return {
+        ...entry,
+        fullPath,
+        isOpen: openFiles.has(fullPath),
+        isStarred:
+          !isParentDirectory &&
+          starredSet.has(entry.isDir ? `${fullPath}/` : fullPath),
+      };
+    });
+  }, [filteredListing, current_path, file_search, openFiles, starredSet]);
 
   const virtualData = useMemo<VirtualEntry[]>(() => {
     const result: VirtualEntry[] = [];
@@ -601,6 +613,7 @@ export function FileListing({
   const selectedRowKeys = useMemo(() => {
     const keys: string[] = [];
     for (const record of baseDataSource) {
+      if (record.name === "..") continue;
       if (checked_files.has(record.fullPath)) {
         keys.push(record.fullPath);
       }
@@ -757,6 +770,16 @@ export function FileListing({
   const handleRowClick = useCallback(
     (record: FileEntry, e: React.MouseEvent) => {
       if ((window.getSelection()?.toString() ?? "") !== selectionRef.current) {
+        return;
+      }
+
+      if (record.name === "..") {
+        if (onNavigateDirectory) {
+          onNavigateDirectory(record.fullPath);
+        } else {
+          actions.open_directory(record.fullPath);
+        }
+        actions.set_file_search("");
         return;
       }
 
@@ -1187,20 +1210,22 @@ export function FileListing({
             </span>
           </td>
           <td style={{ ...cellStyle, width: COL_W.STAR, textAlign: "center" }}>
-            <Icon
-              name={record.isStarred ? "star-filled" : "star"}
-              onClick={(e) => {
-                if (!e) return;
-                e.preventDefault();
-                e.stopPropagation();
-                handleToggleStar(record, !record.isStarred);
-              }}
-              style={{
-                cursor: "pointer",
-                fontSize: "14pt",
-                color: record.isStarred ? COLORS.STAR : COLORS.GRAY_L,
-              }}
-            />
+            {record.name !== ".." && (
+              <Icon
+                name={record.isStarred ? "star-filled" : "star"}
+                onClick={(e) => {
+                  if (!e) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleToggleStar(record, !record.isStarred);
+                }}
+                style={{
+                  cursor: "pointer",
+                  fontSize: "14pt",
+                  color: record.isStarred ? COLORS.STAR : COLORS.GRAY_L,
+                }}
+              />
+            )}
           </td>
           <td style={cellStyle}>{renderFileName(record)}</td>
           <td style={{ ...cellStyle, width: COL_W.DATE }}>
@@ -1314,8 +1339,10 @@ export function FileListing({
   const isBackupsVirtualPath = isBackupsPath(current_path);
   const isSecretsPath = isProjectSecretsPath(current_path);
   const isReadonlyVirtualPath = isSnapshotsVirtualPath || isBackupsVirtualPath;
+  const showEmptyNotice =
+    !hasRealListingRows(baseDataSource) && file_search[0] !== TERM_MODE_CHAR;
 
-  if (baseDataSource.length === 0 && file_search[0] !== TERM_MODE_CHAR) {
+  if (baseDataSource.length === 0 && showEmptyNotice) {
     return (
       <>
         {isSnapshotsVirtualPath ? (
@@ -1400,6 +1427,7 @@ export function FileListing({
             current_path={current_path}
             file_search={file_search}
             project_id={project_id}
+            openUploadFiles={openUploadFiles}
           />
         )}
         {modal}
@@ -1457,6 +1485,27 @@ export function FileListing({
             </Button>
           }
         />
+      ) : null}
+      {showEmptyNotice ? (
+        isReadonlyVirtualPath ? (
+          <Alert
+            type="info"
+            showIcon
+            style={{ margin: "8px 16px 0 16px" }}
+            title={
+              file_search.trim()
+                ? "No files or folders match the current filter."
+                : "No files or folders to display."
+            }
+          />
+        ) : (
+          <NoFiles
+            current_path={current_path}
+            file_search={file_search}
+            project_id={project_id}
+            openUploadFiles={openUploadFiles}
+          />
+        )
       ) : null}
       <DndRowContext.Provider value={dndRowCtx}>
         <div

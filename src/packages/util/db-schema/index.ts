@@ -101,9 +101,9 @@ import "./stats";
 import "./subscriptions";
 import "./support-ticket-attempts";
 import "./syncstring-schema";
+import "./team-licenses";
 import "./tracking";
 import "./usage-info";
-import "./vouchers";
 import "./webapp-errors";
 
 export {

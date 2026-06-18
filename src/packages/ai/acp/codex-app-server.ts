@@ -47,6 +47,10 @@ const REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_APP_SERVER_TIMEOUT_MS ?? 90_000),
 );
+const ACCOUNT_STATUS_REQUEST_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_CODEX_ACCOUNT_STATUS_TIMEOUT_MS ?? 20_000),
+);
 const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
   REQUEST_TIMEOUT_MS,
   Number(
@@ -323,6 +327,17 @@ type SpawnedCodexAppServer = {
   runtimeEnv?: Record<string, string>;
 };
 
+export type CodexAppServerAccountStatus = {
+  account?: any;
+  rateLimits?: any;
+  tokenUsage?: any;
+  errors?: {
+    account?: string;
+    rateLimits?: string;
+    tokenUsage?: string;
+  };
+};
+
 type RpcResponse = {
   id?: number;
   result?: any;
@@ -453,17 +468,21 @@ class AppServerClient {
     });
   }
 
-  async initialize(): Promise<any> {
-    const result = await this.request("initialize", {
-      clientInfo: {
-        name: "cocalc_app_server",
-        title: "CoCalc App Server Bridge",
-        version: "0.0.1",
+  async initialize(timeoutMs = REQUEST_TIMEOUT_MS): Promise<any> {
+    const result = await this.request(
+      "initialize",
+      {
+        clientInfo: {
+          name: "cocalc_app_server",
+          title: "CoCalc App Server Bridge",
+          version: "0.0.1",
+        },
+        capabilities: {
+          experimentalApi: true,
+        },
       },
-      capabilities: {
-        experimentalApi: true,
-      },
-    });
+      timeoutMs,
+    );
     this.notify("initialized", {});
     return result;
   }
@@ -650,7 +669,9 @@ function classifyCodexAuthError(
   if (
     normalized.includes("token_expired") ||
     normalized.includes("provided authentication token is expired") ||
-    normalized.includes("please try signing in again")
+    normalized.includes("please try signing in again") ||
+    normalized.includes("invalidated oauth token") ||
+    normalized.includes("identity_edge_internal_error")
   ) {
     return "expired-auth";
   }
@@ -1404,22 +1425,31 @@ async function spawnStandaloneAppServer(
 async function loginAppServerIfNeeded(
   client: AppServerClient,
   login?: CodexAppServerLoginHint,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<void> {
   if (!login) return;
   switch (login.type) {
     case "apiKey":
-      await client.request("account/login/start", {
-        type: "apiKey",
-        apiKey: login.apiKey,
-      });
+      await client.request(
+        "account/login/start",
+        {
+          type: "apiKey",
+          apiKey: login.apiKey,
+        },
+        timeoutMs,
+      );
       return;
     case "chatgptAuthTokens":
-      await client.request("account/login/start", {
-        type: "chatgptAuthTokens",
-        accessToken: login.accessToken,
-        chatgptAccountId: login.chatgptAccountId,
-        chatgptPlanType: login.chatgptPlanType ?? null,
-      });
+      await client.request(
+        "account/login/start",
+        {
+          type: "chatgptAuthTokens",
+          accessToken: login.accessToken,
+          chatgptAccountId: login.chatgptAccountId,
+          chatgptPlanType: login.chatgptPlanType ?? null,
+        },
+        timeoutMs,
+      );
       return;
   }
 }
@@ -1463,6 +1493,107 @@ export async function forkCodexAppServerSession(opts: {
       throw new Error("thread/fork did not return a thread id");
     }
     return { sessionId };
+  } finally {
+    if (spawned.proc.exitCode == null && !spawned.proc.killed) {
+      spawned.proc.kill("SIGKILL");
+    }
+  }
+}
+
+function settledValue<T>(result: PromiseSettledResult<T>): {
+  value?: T;
+  error?: string;
+} {
+  if (result.status === "fulfilled") {
+    return { value: result.value };
+  }
+  return { error: `${result.reason}` };
+}
+
+function isRateLimitsAuthError(error: string | undefined): boolean {
+  const normalized = `${error ?? ""}`.toLowerCase();
+  return (
+    normalized.includes("account/ratelimits/read") &&
+    normalized.includes("auth")
+  );
+}
+
+export async function getCodexAppServerAccountStatus(opts: {
+  projectId?: string;
+  accountId?: string;
+  binaryPath?: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  appServerLogin?: CodexAppServerLoginHint;
+  includeTokenUsage?: boolean;
+  timeoutMs?: number;
+}): Promise<CodexAppServerAccountStatus> {
+  const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
+  const projectSpawner = getCodexProjectSpawner();
+  const spawned =
+    projectSpawner && opts.projectId && projectSpawner.spawnCodexAppServer
+      ? await projectSpawner.spawnCodexAppServer({
+          projectId: opts.projectId,
+          accountId: opts.accountId,
+          cwd: opts.cwd,
+          env: opts.env,
+          touchReason: false,
+        })
+      : await spawnStandaloneAppServer(
+          {
+            binaryPath: opts.binaryPath,
+            cwd: opts.cwd,
+          },
+          opts.env,
+        );
+  const client = new AppServerClient(
+    spawned.proc,
+    spawned.handleAppServerRequest,
+  );
+  try {
+    await client.initialize(timeoutMs);
+    const appServerLogin = spawned.appServerLogin ?? opts.appServerLogin;
+    await loginAppServerIfNeeded(client, appServerLogin, timeoutMs);
+    const [accountResult, rateLimitsResult] = await Promise.allSettled([
+      client.request("account/read", { refreshToken: true }, timeoutMs),
+      client.request("account/rateLimits/read", {}, timeoutMs),
+    ]);
+    let rateLimits = settledValue(rateLimitsResult);
+    if (isRateLimitsAuthError(rateLimits.error) && appServerLogin) {
+      try {
+        await loginAppServerIfNeeded(client, appServerLogin, timeoutMs);
+        rateLimits = {
+          value: await client.request("account/rateLimits/read", {}, timeoutMs),
+        };
+      } catch (reason) {
+        rateLimits = { error: `${reason}` };
+      }
+    }
+    let tokenUsageResult: PromiseSettledResult<any> | undefined;
+    if (opts.includeTokenUsage) {
+      try {
+        tokenUsageResult = {
+          status: "fulfilled",
+          value: await client.request("account/usage/read", {}, timeoutMs),
+        };
+      } catch (reason) {
+        tokenUsageResult = { status: "rejected", reason };
+      }
+    }
+    const account = settledValue(accountResult);
+    const tokenUsage = tokenUsageResult
+      ? settledValue(tokenUsageResult)
+      : { value: undefined };
+    const errors: CodexAppServerAccountStatus["errors"] = {};
+    if (account.error) errors.account = account.error;
+    if (rateLimits.error) errors.rateLimits = rateLimits.error;
+    if (tokenUsage.error) errors.tokenUsage = tokenUsage.error;
+    return {
+      account: account.value,
+      rateLimits: rateLimits.value,
+      tokenUsage: tokenUsage.value,
+      errors: Object.keys(errors).length ? errors : undefined,
+    };
   } finally {
     if (spawned.proc.exitCode == null && !spawned.proc.killed) {
       spawned.proc.kill("SIGKILL");

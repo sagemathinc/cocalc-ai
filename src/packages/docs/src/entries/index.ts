@@ -46,6 +46,7 @@ const DOCS_ENTRY_IDS = [
   "admin.site-settings",
   "admin.users",
   "admin.cocalc-cli",
+  "admin.cocalc-software",
   "admin.bay-ops",
   "admin.rootfs",
   "admin.project-backup-shards",
@@ -76,8 +77,10 @@ const DOCS_ENTRY_IDS = [
   "latex.build-papers",
   "editors.r-markdown",
   "projects.runtime-image",
+  "projects.publish-rootfs",
   "self-hosting.cocalc-star",
   "self-hosting.cocalc-star-local-vm",
+  "self-hosting.install-chromium",
   "self-hosting.reverse-ssh-access",
   "troubleshooting.memory",
   "troubleshooting.connectivity",
@@ -106,12 +109,40 @@ const DOCS_ENTRY_IDS = [
   "docs.browser-automation",
 ] as const;
 
+// CoCalc Plus runs exactly one local project, directly on the user's machine,
+// without accounts, admins, collaborators, project hosts, or sandbox images.
+// Keep its in-project docs flyout focused on workflows that make sense there.
+const DOCS_PLUS_ENTRY_IDS = new Set<string>([
+  "projects.open-terminal",
+  "terminal.use-terminal",
+  "files.project-files",
+  "files.explorer",
+  "files.markdown",
+  "files.slides",
+  "files.whiteboard",
+  "projects.tasks",
+  "jupyter.create-notebook",
+  "jupyter.use-jupyter",
+  "troubleshooting.jupyter-kernel-terminated",
+  "jupyter.custom-kernels",
+  "python.use-python",
+  "latex.build-papers",
+  "editors.r-markdown",
+  "troubleshooting.memory",
+  "files.timetravel",
+  "files.git",
+]);
+
 function orderedEntry(id: string): DocsEntry {
   const entry = ENTRY_BY_ID.get(id);
   if (entry == null) {
     throw Error(`Unknown docs entry id: ${id}`);
   }
   return entry;
+}
+
+export function isPlusDocsEntryId(id: string): boolean {
+  return DOCS_PLUS_ENTRY_IDS.has(id);
 }
 
 export const DOCS_ENTRIES: DocsEntry[] = DOCS_ENTRY_IDS.map(orderedEntry);

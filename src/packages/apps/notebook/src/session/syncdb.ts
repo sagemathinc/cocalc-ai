@@ -108,6 +108,24 @@ export class SyncDBNotebookSession {
     await this.syncdb.save_to_disk?.();
   }
 
+  async setNotebookMetadata(metadata: unknown): Promise<void> {
+    this.assertWritable();
+    const settings = (await this.getSettings()) ?? { type: "settings" };
+    this.syncdb.set({ ...settings, type: "settings", metadata });
+    this.syncdb.commit();
+    await this.syncdb.save();
+    await this.syncdb.save_to_disk?.();
+  }
+
+  async setTrust(trust: boolean): Promise<void> {
+    this.assertWritable();
+    const settings = (await this.getSettings()) ?? { type: "settings" };
+    this.syncdb.set({ ...settings, type: "settings", trust });
+    this.syncdb.commit();
+    await this.syncdb.save();
+    await this.syncdb.save_to_disk?.();
+  }
+
   async setCellInput(
     cellId: string,
     input: string,
@@ -126,6 +144,42 @@ export class SyncDBNotebookSession {
     const result = setNotebookCellType(this.readSnapshot(), cellId, cellType);
     await this.persistResult(result.snapshot, result.changedCellIds);
     return this.requireCell(result.snapshot, cellId);
+  }
+
+  async setCellMetadata(
+    cellId: string,
+    metadata: unknown,
+  ): Promise<NotebookCellRecord> {
+    this.assertWritable();
+    const cell = await this.requireLiveCell(cellId);
+    const next = { ...cell, metadata };
+    this.syncdb.set(next);
+    this.syncdb.commit();
+    await this.syncdb.save();
+    await this.syncdb.save_to_disk?.();
+    return next;
+  }
+
+  async clearCellOutputs(
+    cellIds: readonly string[],
+  ): Promise<NotebookCellRecord[]> {
+    this.assertWritable();
+    const changed: NotebookCellRecord[] = [];
+    for (const cellId of cellIds) {
+      const cell = await this.requireLiveCell(cellId);
+      const next = { ...cell };
+      delete next.output;
+      delete next.exec_count;
+      delete next.state;
+      delete next.start;
+      delete next.end;
+      changed.push(next);
+      this.syncdb.set(next);
+    }
+    this.syncdb.commit();
+    await this.syncdb.save();
+    await this.syncdb.save_to_disk?.();
+    return changed;
   }
 
   async insertCellAt(
@@ -189,6 +243,14 @@ export class SyncDBNotebookSession {
     cellId: string,
   ): NotebookCellRecord {
     const cell = getNotebookCell(snapshot, cellId);
+    if (!cell) {
+      throw new Error(`Notebook cell \"${cellId}\" not found`);
+    }
+    return cell;
+  }
+
+  private async requireLiveCell(cellId: string): Promise<NotebookCellRecord> {
+    const cell = await this.getCell(cellId);
     if (!cell) {
       throw new Error(`Notebook cell \"${cellId}\" not found`);
     }

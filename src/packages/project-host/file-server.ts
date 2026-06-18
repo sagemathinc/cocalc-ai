@@ -71,7 +71,9 @@ import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import {
   managedRootfsImageName,
   isManagedRootfsImageName,
+  ROOTFS_CONTENT_MAX_JSON_BYTES,
   type RootfsImageArch,
+  type RootfsContentValidationWarning,
   type RootfsPhaseTimings,
   type PublishProjectRootfsArtifact,
   type RootfsArtifactTransferTarget,
@@ -820,6 +822,21 @@ export async function getVolume(project_id: string) {
   return vol;
 }
 
+async function getOrEnsureVolume(project_id: string) {
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const vol = await fs.subvolumes.get(volName(project_id));
+  if (!(await exists(vol.path))) {
+    return await ensureVolume(project_id);
+  }
+  const isSubvolume = await isBtrfsSubvolume(vol.path);
+  if (!isSubvolume) {
+    throw new Error(`project volume is not a btrfs subvolume: ${vol.path}`);
+  }
+  return vol;
+}
+
 export async function ensureVolume(project_id: string, scratch?: boolean) {
   if (fs == null) {
     throw Error("file server not initialized");
@@ -830,6 +847,21 @@ export async function ensureVolume(project_id: string, scratch?: boolean) {
     queueProjectProvisioned(project_id, true);
   }
   return vol;
+}
+
+export async function resetScratchVolume(project_id: string) {
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const name = scratchVolName(project_id);
+  const vol = await fs.subvolumes.get(name);
+  if (await exists(vol.path)) {
+    await fs.subvolumes.delete(name);
+  }
+  const next = await fs.subvolumes.ensure(name);
+  invalidateProjectFsServer(project_id);
+  invalidateQuotaCache(project_id, true);
+  return next;
 }
 
 export async function deleteVolume(
@@ -1071,7 +1103,13 @@ function looksLikeMissingBackupBucketError(err: unknown): boolean {
   );
 }
 
-async function invalidateBackupConfig(project_id: string): Promise<void> {
+export async function invalidateBackupConfig(
+  project_id?: string,
+): Promise<void> {
+  if (!project_id) {
+    backupConfigCache.clear();
+    return;
+  }
   backupConfigCache.delete(project_id);
   const profilePath = join(secrets, "rustic", `project-${project_id}.toml`);
   try {
@@ -1126,9 +1164,8 @@ async function startBackupConfigInvalidation(client: ConatClient) {
   }
   (async () => {
     for await (const _msg of backupConfigInvalidationSub) {
-      backupConfigCache.clear();
       try {
-        // Refresh on demand; we only clear cache here.
+        await invalidateBackupConfig();
       } catch (err) {
         logger.warn("backup config refresh failed", err);
       }
@@ -1494,11 +1531,14 @@ async function mount({
   scratch?: boolean;
 }): Promise<{ path: string }> {
   logger.debug("mount", { project_id, scratch });
-  return {
-    path: scratch
-      ? getScratchMountpoint(project_id)
-      : projectMountpoint(project_id),
-  };
+  const path = scratch
+    ? getScratchMountpoint(project_id)
+    : projectMountpoint(project_id);
+  if (await exists(path)) {
+    return { path };
+  }
+  const vol = await ensureVolume(project_id, scratch);
+  return { path: vol.path };
 }
 
 async function clone({
@@ -1614,7 +1654,7 @@ async function cp({
     throw Error("file server not initialized");
   }
   const srcVolume = await getVolume(src.project_id);
-  const destVolume = await getVolume(dest.project_id);
+  const destVolume = await getOrEnsureVolume(dest.project_id);
   // Paths may be project-relative or absolute (/..., /root/..., /tmp/...).
   // Resolve using the same home/rootfs/temp-volume policy as the fs server API.
   const srcFs = createProjectSandboxFilesystem({
@@ -1934,6 +1974,82 @@ function createPhaseTimingRecorder() {
   };
 }
 
+async function readRootfsContentManifestFromMergedRootfs(
+  root: string,
+): Promise<{
+  content?: unknown;
+  warnings?: RootfsContentValidationWarning[];
+}> {
+  const manifestPath = join(root, ".cocalc", "rootfs-content.json");
+  let manifestStat;
+  try {
+    manifestStat = await stat(manifestPath);
+  } catch (err) {
+    const code = (err as any)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return {};
+    }
+    return {
+      warnings: [
+        {
+          code: "manifest-read-failed",
+          message: `Unable to inspect RootFS content manifest: ${err}`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  if (!manifestStat.isFile()) {
+    return {
+      warnings: [
+        {
+          code: "manifest-not-file",
+          message: "RootFS content manifest path is not a regular file",
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  if (manifestStat.size > ROOTFS_CONTENT_MAX_JSON_BYTES) {
+    return {
+      warnings: [
+        {
+          code: "content-too-large",
+          message: `Content manifest must be at most ${ROOTFS_CONTENT_MAX_JSON_BYTES} bytes`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  let raw: string;
+  try {
+    raw = await readFile(manifestPath, "utf8");
+  } catch (err) {
+    return {
+      warnings: [
+        {
+          code: "manifest-read-failed",
+          message: `Unable to read RootFS content manifest: ${err}`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  try {
+    return { content: JSON.parse(raw) };
+  } catch (err) {
+    return {
+      warnings: [
+        {
+          code: "invalid-json",
+          message: `RootFS content manifest is invalid JSON: ${err}`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+}
+
 async function publishRootfsImage({
   project_id,
   snapshot,
@@ -2012,6 +2128,10 @@ async function publishRootfsImage({
       workdir: workdirPath!,
       merged,
     });
+    const rootfsContent = await timings.measure(
+      "read_rootfs_content_manifest",
+      async () => await readRootfsContentManifestFromMergedRootfs(merged),
+    );
 
     publishRootfsProgress({
       lro,
@@ -2204,6 +2324,8 @@ async function publishRootfsImage({
       source_image: sourceImage,
       artifact_kind: "full",
       inspect_data: publishedInspectData,
+      rootfs_content: rootfsContent.content,
+      rootfs_content_warnings: rootfsContent.warnings,
       upload_result: uploadResult,
       phase_timings_ms: timings.phase_timings_ms,
     };
@@ -3839,7 +3961,7 @@ export async function initFsServer({
         throw Error("fsServer requires subject");
       }
       const project_id = projectIdFromSubject(subject);
-      const { path } = await getVolume(project_id);
+      const { path } = await getOrEnsureVolume(project_id);
       return createProjectSandboxFilesystem({
         project_id,
         home: path,
@@ -3873,7 +3995,7 @@ export async function ensureFileDownloadReadServer({
       project_id,
       name: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
       createReadStream: async (containerPath: string, opts?: any) => {
-        const { path: home } = await getVolume(project_id);
+        const { path: home } = await getOrEnsureVolume(project_id);
         const fs = createProjectSandboxFilesystem({
           project_id,
           home,
@@ -3915,7 +4037,7 @@ export async function ensureFileUploadWriteServer({
       project_id,
       name: PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
       createWriteStream: async (containerPath: string) => {
-        const { path: home } = await getVolume(project_id);
+        const { path: home } = await getOrEnsureVolume(project_id);
         const fs = createProjectSandboxFilesystem({
           project_id,
           home,
@@ -3956,7 +4078,7 @@ export async function initViewerFsServer({
         throw Error("fsReadOnlyServer requires subject");
       }
       const { project_id, account_id } = viewerSubjectFromSubject(subject);
-      const { path } = await getVolume(project_id);
+      const { path } = await getOrEnsureVolume(project_id);
       const projectFs = createProjectSandboxFilesystem({
         project_id,
         home: path,
@@ -4042,6 +4164,9 @@ export async function initFileServer({
     mount: reuseInFlight(mount),
     ensureVolume: reuseInFlight(async ({ project_id, scratch }) => {
       await ensureVolume(project_id, scratch);
+    }),
+    resetScratchVolume: reuseInFlight(async ({ project_id }) => {
+      await resetScratchVolume(project_id);
     }),
     clone,
     getUsage: reuseInFlight(getUsage),

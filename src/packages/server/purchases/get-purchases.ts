@@ -13,13 +13,13 @@ Also important: balance at a point in time is NOT constant when there are
 import { getTransactionClient } from "@cocalc/database/pool";
 import { Service, MAX_API_LIMIT } from "@cocalc/util/db-schema/purchases";
 import type { Purchase } from "@cocalc/util/db-schema/purchases";
-import { getLastClosingDate } from "./closing-date";
+import { calendarMonthStart } from "./billing-period";
 import { COST_OR_METERED_COST } from "./get-balance";
 import getBalance from "./get-balance";
 import type { MoneyValue } from "@cocalc/util/money";
 
 interface Options {
-  account_id: string;
+  account_id?: string;
   // returns purchases back to this date (limit/offset NOT ignored); never excludes unfinished purchases (i.e., with cost not set)
   cutoff?: Date;
   thisMonth?: boolean;
@@ -34,6 +34,7 @@ interface Options {
   day_statement_id?: number;
   month_statement_id?: number;
   no_statement?: boolean; // only purchases not on any statement
+  tag?: string;
   // For admins - if true, include email_address, first_name, and last_name
   // fields from the accounts table, for each user. Ignored if group is true.
   includeName?: boolean;
@@ -57,6 +58,7 @@ export default async function getPurchases({
   day_statement_id,
   month_statement_id,
   no_statement,
+  tag,
   includeName,
 }: Options): Promise<{ balance: MoneyValue; purchases: PurchaseData[] }> {
   if (limit > MAX_API_LIMIT || !limit) {
@@ -103,7 +105,10 @@ export default async function getPurchases({
     conditions.push(`p.month_statement_id=$${params.length}`);
   }
   if (thisMonth) {
-    const date = await getLastClosingDate(account_id);
+    if (account_id == null) {
+      throw Error("account_id is required when thisMonth is true");
+    }
+    const date = calendarMonthStart();
     params.push(date);
     conditions.push(`p.time >= $${params.length}`);
   }
@@ -114,6 +119,10 @@ export default async function getPurchases({
   if (no_statement) {
     conditions.push("p.day_statement_id IS NULL");
     conditions.push("p.month_statement_id IS NULL");
+  }
+  if (tag != null) {
+    params.push(tag);
+    conditions.push(`p.tag=$${params.length}`);
   }
 
   if (conditions.length > 0) {
@@ -143,7 +152,10 @@ export default async function getPurchases({
   });
   try {
     const { rows: purchases } = await client.query(query, params);
-    const balance = await getBalance({ account_id, client, noSave: true });
+    const balance =
+      account_id != null
+        ? await getBalance({ account_id, client, noSave: true })
+        : 0;
     return { purchases: purchases as unknown as PurchaseData[], balance };
   } finally {
     try {

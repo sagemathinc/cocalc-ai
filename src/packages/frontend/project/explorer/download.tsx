@@ -1,4 +1,4 @@
-import { Button, Input, Space, Spin } from "antd";
+import { Button, Input, Progress, Space, Spin } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { default_filename } from "@cocalc/frontend/account";
@@ -7,11 +7,36 @@ import ShowError from "@cocalc/frontend/components/error";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { path_split, plural } from "@cocalc/util/misc";
+import { human_readable_size, path_split, plural } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import { PRE_STYLE } from "./action-box";
 import CheckedFiles from "./checked-files";
-import { SelectFormat, createArchive } from "./create-archive";
-import { join } from "path";
+import {
+  SelectFormat,
+  createDownloadArchive,
+  type DownloadArchiveProgressStage,
+  removeDownloadArchive,
+} from "./create-archive";
+
+const ARCHIVE_ESTIMATE_BYTES_PER_SECOND = 25 * 1024 * 1024;
+const MIN_ARCHIVE_ESTIMATE_SECONDS = 4;
+const DIRECTORY_ARCHIVE_ESTIMATE_SECONDS = 5;
+const UNKNOWN_FILE_ARCHIVE_ESTIMATE_SECONDS = 2;
+
+type DownloadProgress = {
+  phase: string;
+  detail?: string;
+  percent: number;
+  startedAt: number;
+  estimateSeconds: number;
+  startPercent: number;
+  maxPercent: number;
+};
+
+type ArchiveEstimate = {
+  seconds: number;
+  detail: string;
+};
 
 export default function Download({
   clear,
@@ -40,6 +65,39 @@ export default function Download({
   const [archiveMode, setArchiveMode] = useState<boolean>(
     (checked_files?.size ?? 0) > 1,
   );
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
+
+  useEffect(() => {
+    if (progress == null || progress.percent >= progress.maxPercent) {
+      return;
+    }
+    const interval = setInterval(() => {
+      setProgress((prev) => {
+        if (prev == null) {
+          return prev;
+        }
+        const elapsedSeconds = Math.max(
+          0,
+          (Date.now() - prev.startedAt) / 1000,
+        );
+        const ratio = Math.min(
+          0.98,
+          elapsedSeconds / Math.max(1, prev.estimateSeconds),
+        );
+        const percent = Math.min(
+          prev.maxPercent,
+          Math.max(
+            prev.percent,
+            Math.round(
+              prev.startPercent + (prev.maxPercent - prev.startPercent) * ratio,
+            ),
+          ),
+        );
+        return percent === prev.percent ? prev : { ...prev, percent };
+      });
+    }, 500);
+    return () => clearInterval(interval);
+  }, [progress?.phase, progress?.startedAt, progress?.maxPercent]);
 
   useEffect(() => {
     if (actions == null) {
@@ -80,28 +138,90 @@ export default function Download({
     if (actions == null || loading) {
       return;
     }
-    const store = actions.get_store();
-    if (store == null) {
-      return;
-    }
     let success = false;
+    let temporaryArchivePath: string | undefined;
     try {
       setLoading(true);
+      setProgress(null);
       const files = checked_files.toArray();
+      const archiveEstimate = archiveMode
+        ? estimateArchiveProgress({
+            actions,
+            files,
+            currentPath: effective_current_path,
+          })
+        : undefined;
       let dest;
+      let downloadFilename: string | undefined;
+      let deleteAfterDownload = false;
       if (archiveMode) {
-        const path = store.get("current_path_abs") ?? "/";
-        dest = join(path, target + "." + format);
-        await createArchive({ path, files, target, format, actions });
+        const setArchiveProgress = (stage: DownloadArchiveProgressStage) => {
+          const next = progressForArchiveStage(stage, archiveEstimate);
+          setProgress((prev) => ({
+            ...next,
+            startedAt: Date.now(),
+            startPercent: Math.max(prev?.percent ?? 0, next.startPercent),
+            percent: Math.max(prev?.percent ?? 0, next.startPercent),
+          }));
+        };
+        const archive = await createDownloadArchive({
+          files,
+          target,
+          format,
+          actions,
+          onProgress: setArchiveProgress,
+        });
+        dest = archive.path;
+        downloadFilename = archive.filename;
+        deleteAfterDownload = true;
+        temporaryArchivePath = archive.path;
       } else {
         dest = files[0];
       }
-      await actions.download_file({ path: dest, log: files, showError: false });
+      setProgress((prev) => ({
+        phase: "Starting browser download",
+        detail:
+          archiveMode && downloadFilename != null
+            ? `Created ${downloadFilename}.`
+            : undefined,
+        percent: Math.max(prev?.percent ?? 0, 92),
+        startedAt: Date.now(),
+        estimateSeconds: 3,
+        startPercent: Math.max(prev?.percent ?? 0, 92),
+        maxPercent: 98,
+      }));
+      await actions.download_file({
+        path: dest,
+        log: files,
+        showError: false,
+        deleteAfterDownload,
+        downloadFilename,
+      });
+      setProgress((prev) =>
+        prev == null
+          ? prev
+          : { ...prev, phase: "Download started", percent: 100 },
+      );
       success = true;
     } catch (err) {
       setError(`${err}`);
     } finally {
+      if (temporaryArchivePath != null && !success) {
+        try {
+          await removeDownloadArchive({
+            path: temporaryArchivePath,
+            actions,
+          });
+        } catch (err) {
+          setError((prev) =>
+            prev ? `${prev}\nCleanup failed: ${err}` : `Cleanup failed: ${err}`,
+          );
+        }
+      }
       setLoading(false);
+      if (!success) {
+        setProgress(null);
+      }
     }
 
     if (success) {
@@ -166,6 +286,40 @@ export default function Download({
         </div>
       )}
       <ShowError setError={setError} error={error} />
+      {loading && (
+        <div
+          style={{
+            marginTop: "14px",
+            padding: "12px",
+            border: `1px solid ${COLORS.GRAY_DDD}`,
+            borderRadius: "6px",
+            background: COLORS.GRAY_LLL,
+          }}
+        >
+          <Progress
+            percent={progress?.percent ?? 1}
+            status="active"
+            showInfo={false}
+            size="small"
+          />
+          <div style={{ marginTop: "8px", fontWeight: 500 }}>
+            {progress?.phase ?? "Preparing download"}
+          </div>
+          {progress?.detail && (
+            <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
+              {progress.detail}
+            </div>
+          )}
+          {archiveMode && (
+            <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
+              You can close this dialog; the archive and download request will
+              continue in the background. CoCalc stores the temporary archive as
+              a hidden file in <code>/tmp</code> and automatically cleans up
+              stale hidden download archives after about 6 hours.
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ marginTop: "18px", textAlign: "right" }}>
         <Space wrap>
           <Button
@@ -203,4 +357,99 @@ export default function Download({
       {content}
     </div>
   );
+}
+
+function progressForArchiveStage(
+  stage: DownloadArchiveProgressStage,
+  archiveEstimate: ArchiveEstimate | undefined,
+): Omit<DownloadProgress, "startedAt"> {
+  switch (stage) {
+    case "scratch":
+      return {
+        phase: "Preparing temporary archive storage",
+        percent: 2,
+        estimateSeconds: 2,
+        startPercent: 2,
+        maxPercent: 12,
+      };
+    case "cleanup":
+      return {
+        phase: "Cleaning old temporary download archives",
+        percent: 12,
+        estimateSeconds: 2,
+        startPercent: 12,
+        maxPercent: 20,
+      };
+    case "compress":
+      return {
+        phase: "Compressing selected items",
+        detail: archiveEstimate?.detail,
+        percent: 20,
+        estimateSeconds: archiveEstimate?.seconds ?? 10,
+        startPercent: 20,
+        maxPercent: 90,
+      };
+  }
+}
+
+function estimateArchiveProgress({
+  actions,
+  files,
+  currentPath,
+}: {
+  actions: any;
+  files: string[];
+  currentPath: string;
+}): ArchiveEstimate {
+  const cachedFiles = actions.get_filenames_in_current_dir?.();
+  let knownBytes = 0;
+  let directories = 0;
+  let unknown = 0;
+
+  for (const file of files) {
+    const { head, tail } = path_split(file);
+    const data = head === currentPath ? cachedFiles?.[tail] : undefined;
+    if (data?.isDir) {
+      directories += 1;
+    } else if (Number.isFinite(data?.size) && data.size > 0) {
+      knownBytes += data.size;
+    } else {
+      unknown += 1;
+    }
+  }
+
+  const seconds = Math.max(
+    MIN_ARCHIVE_ESTIMATE_SECONDS,
+    Math.ceil(
+      knownBytes / ARCHIVE_ESTIMATE_BYTES_PER_SECOND +
+        directories * DIRECTORY_ARCHIVE_ESTIMATE_SECONDS +
+        unknown * UNKNOWN_FILE_ARCHIVE_ESTIMATE_SECONDS,
+    ),
+  );
+
+  const details: string[] = [];
+  if (knownBytes > 0) {
+    details.push(
+      `estimate based on ${human_readable_size(knownBytes)} of known file data`,
+    );
+  }
+  if (directories > 0) {
+    details.push(
+      `${directories} ${plural(
+        directories,
+        "directory",
+      )} may take longer because recursive sizes are not precomputed`,
+    );
+  }
+  if (unknown > 0) {
+    details.push(`${unknown} ${plural(unknown, "item")} with unknown size`);
+  }
+
+  return {
+    seconds,
+    detail:
+      details.length > 0
+        ? `${details.join("; ")}.`
+        : "Best-effort estimate; exact compression progress is not available.",
+  };
 }

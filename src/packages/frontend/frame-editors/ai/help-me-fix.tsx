@@ -14,6 +14,11 @@ import {
   submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
 import type { ProjectsStore } from "@cocalc/frontend/projects/store";
+import {
+  AgentSessionError,
+  AgentSessionSelect,
+  usePersistentAgentSessionSelection,
+} from "./agent-session-selector";
 import HelpMeFixButton from "./help-me-fix-button";
 import {
   createMessage,
@@ -106,6 +111,12 @@ export default function HelpMeFix({
     (canGetSolutionLegacy || codexAvailable);
 
   const shouldRender = redux != null && (canGetHint || canGetSolution);
+  const agentSessionSelection = usePersistentAgentSessionSelection({
+    project_id,
+    path,
+    cacheContext: `help-me-fix:${tag ?? ""}`,
+    enabled: shouldRender,
+  });
 
   function createMessageMode(
     mode: "solution" | "hint",
@@ -153,8 +164,10 @@ export default function HelpMeFix({
         forceCodex: true,
         openFloating: true,
         waitForAgent: false,
+        agentSession: agentSessionSelection.selectedAgentSession,
         codexConfig: { model: DEFAULT_HELP_ME_FIX_AGENT_MODEL },
       });
+      agentSessionSelection.saveSelectedAgentSession();
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt,
@@ -183,6 +196,15 @@ export default function HelpMeFix({
             size={size}
             style={style}
             gettingHelp={gettingHelp}
+            agentSessionSelector={
+              <>
+                <AgentSessionSelect
+                  selection={agentSessionSelection}
+                  disabled={gettingHelp}
+                />
+                <AgentSessionError selection={agentSessionSelection} />
+              </>
+            }
             onConfirm={() => onConfirm("solution")}
           />
         )}
@@ -193,6 +215,15 @@ export default function HelpMeFix({
             size={size}
             style={style}
             gettingHelp={gettingHelp}
+            agentSessionSelector={
+              <>
+                <AgentSessionSelect
+                  selection={agentSessionSelection}
+                  disabled={gettingHelp}
+                />
+                <AgentSessionError selection={agentSessionSelection} />
+              </>
+            }
             onConfirm={() => onConfirm("hint")}
           />
         )}

@@ -132,6 +132,7 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.codexDeviceAuthStatus",
   "projects.codexDeviceAuthCancel",
   "projects.codexUploadAuthFile",
+  "projects.getCodexUsageStatus",
   "projects.chatStoreStats",
   "projects.chatStoreRotate",
   "projects.chatStoreListSegments",
@@ -1620,6 +1621,7 @@ export class ConatClient extends EventEmitter {
     for (const host_id of [source_host_id, dest_host_id]) {
       if (!host_id) continue;
       this.invalidateProjectHostToken(host_id, { resetFailureState: true });
+      this.invalidateProjectHostBrowserSession(host_id);
       this.removeRoutedHubClient(host_id, {
         reason: "refresh_project_host_routing",
         details: { source_host_id, dest_host_id },
@@ -2252,6 +2254,11 @@ export class ConatClient extends EventEmitter {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
+      this.reconnectCoordinator.requestResourceReconnects({
+        includeBackground: true,
+        reason: "routed_host_connected",
+        resetBackoff: true,
+      });
     });
     state.client.on("info", (info) => {
       const error = `${info?.user?.error ?? ""}`.trim();
@@ -3018,7 +3025,7 @@ export class ConatClient extends EventEmitter {
   };
 
   interruptAcp = async (request) => {
-    await acp.interruptAcp(
+    return await acp.interruptAcp(
       { account_id: this.client.account_id, ...request },
       this.conat(),
     );
@@ -3172,10 +3179,17 @@ export class ConatClient extends EventEmitter {
     scope_type: LroScopeType;
     scope_id?: string;
     timeout_ms?: number;
+    poll_ms?: number;
     onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
     onSummary?: (summary: LroSummary) => void;
   }) => {
-    return waitForLroCompletion({ client: this.conat(), ...opts });
+    return waitForLroCompletion({
+      client: this.conat(),
+      getSummary: opts.op_id
+        ? async () => await this.hub.lro.get({ op_id: opts.op_id! })
+        : undefined,
+      ...opts,
+    });
   };
 
   terminalClient = (opts: {

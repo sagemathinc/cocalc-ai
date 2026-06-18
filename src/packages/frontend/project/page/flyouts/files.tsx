@@ -48,10 +48,11 @@ import {
 } from "./consts";
 import { FileListItem } from "./file-list-item";
 import { FilesBottom } from "./files-bottom";
+import { FilesSelectedControls } from "./files-controls";
 import { FilesHeader } from "./files-header";
 import { fileItemStyle } from "./utils";
-import { useFsWithRefresh } from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
+import useProjectActionsFilesystem from "@cocalc/frontend/project/listing/use-project-actions-fs";
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
@@ -101,9 +102,13 @@ type PartialClickEvent = Pick<
 
 const EMPTY_DIRECTORY_FILES: DirectoryListing = [];
 
-function isMissingProjectVolumeError(error: unknown): boolean {
+function isStartRequiredFilesystemError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
-  return text.includes("project volume does not exist");
+  return (
+    text.includes("project host id unavailable") ||
+    text.includes("host routing info unavailable") ||
+    text.includes("has no host assigned")
+  );
 }
 
 export interface ActiveFileSort {
@@ -220,7 +225,7 @@ export function FilesFlyout({
     path: effective_current_path,
     homePath,
   });
-  const { fs, refreshFs } = useFsWithRefresh({ project_id });
+  const fs = useProjectActionsFilesystem({ actions, project_id });
   const {
     listing: directoryListing,
     error: listingError,
@@ -228,7 +233,6 @@ export function FilesFlyout({
   } = useListing({
     fs: inBackupsPath ? null : fs,
     path: listingPath,
-    refreshFs,
   });
   const {
     listing: backupsListing,
@@ -237,6 +241,7 @@ export function FilesFlyout({
   } = useBackupsListing({
     project_id,
     path: effective_current_path,
+    cacheContext: host_id,
   });
   const backupOps = useTypedRedux({ project_id }, "backup_ops");
   const prevBackupStatuses = useRef<Map<string, string>>(new Map());
@@ -299,7 +304,7 @@ export function FilesFlyout({
     !projectIsRunning &&
     !projectIsArchived &&
     !projectIsNew &&
-    isMissingProjectVolumeError(effectiveError);
+    isStartRequiredFilesystemError(effectiveError);
   const suppressRoutingError =
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
     shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
@@ -1082,12 +1087,32 @@ export function FilesFlyout({
         onTerminalCommand={() => allowListingUpdatesFor()}
       />
       {!lite && (
-        <DiskUsage
-          compact
-          current_path={effective_current_path}
-          project_id={project_id}
-          style={{ margin: "5px" }}
-        />
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            gap: 8,
+            padding: "0 5px 5px",
+          }}
+        >
+          <DiskUsage
+            compact
+            current_path={effective_current_path}
+            project_id={project_id}
+            style={{ margin: 0 }}
+          />
+          <FilesSelectedControls
+            project_id={project_id}
+            checked_files={checked_files}
+            directoryFiles={directoryFiles}
+            open={open}
+            getFile={getFile}
+            mode="top"
+            activeFile={activeFile}
+            refreshBackups={refreshBackups}
+            showInfo={false}
+          />
+        </div>
       )}
       {disableUploads ? (
         renderListing()

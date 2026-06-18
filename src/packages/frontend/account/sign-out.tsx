@@ -102,6 +102,9 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
           </Checkbox>
         )}
         <Flex justify="space-between" gap="small">
+          <Button disabled={signingOut} onClick={() => handleOpenChange(false)}>
+            {intl.formatMessage(labels.cancel)}
+          </Button>
           <Button
             danger={effectiveEverywhere}
             loading={signingOut}
@@ -115,9 +118,6 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
               },
               { everywhere: effectiveEverywhere },
             )}
-          </Button>
-          <Button disabled={signingOut} onClick={() => handleOpenChange(false)}>
-            {intl.formatMessage(labels.cancel)}
           </Button>
         </Flex>
       </Space>

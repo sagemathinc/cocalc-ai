@@ -1,6 +1,9 @@
 /** @jest-environment jsdom */
 
-import { computeAcpStateToRender } from "../message-state";
+import {
+  computeAcpStateToRender,
+  shouldShowAcpResubmitToAgentButton,
+} from "../message-state";
 
 describe("computeAcpStateToRender", () => {
   it("hides queue state for non-viewer messages", () => {
@@ -102,5 +105,63 @@ describe("computeAcpStateToRender", () => {
       generating: true,
     });
     expect(state).toBe("");
+  });
+});
+
+describe("shouldShowAcpResubmitToAgentButton", () => {
+  const base = {
+    hasActions: true,
+    hasParentMessage: true,
+    isViewersMessage: false,
+    parentAcpState: "not-sent",
+    readOnly: false,
+    renderedValue: "Codex authentication expired.",
+  };
+
+  it("shows on assistant replies to failed frontend ACP submissions", () => {
+    expect(shouldShowAcpResubmitToAgentButton(base)).toBe(true);
+  });
+
+  it("hides while the assistant turn is actively running", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        isTurnRunning: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("shows on active terminal thread errors without parent not-sent state", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        parentAcpState: undefined,
+        terminalThreadErrorActive: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides without parent not-sent state or an active terminal thread error", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        parentAcpState: "queue",
+      }),
+    ).toBe(false);
+  });
+
+  it("hides for viewer messages and read-only chats", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        isViewersMessage: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        readOnly: true,
+      }),
+    ).toBe(false);
   });
 });

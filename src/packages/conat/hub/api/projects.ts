@@ -18,6 +18,7 @@ import {
   type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import type { CodexUsageStatusInfo } from "./system";
 import type {
   ProjectUserRole,
   ProjectViewerReadPolicy,
@@ -598,6 +599,7 @@ export interface AccountProjectListWindowRow {
   description: string;
   theme: Record<string, any> | null;
   host_id: string | null;
+  rootfs_image_id: string | null;
   owning_bay_id: string;
   is_hidden: boolean;
   deletion_protection: boolean;
@@ -731,6 +733,7 @@ export const projects = {
   archiveProject: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
   getProjectAddress: authFirstRequireAccount,
+  ensureProjectScratchVolume: authFirstRequireAccount,
   getProjectActiveOperation: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
   hardDeleteProject: authFirstRequireAccount,
@@ -752,6 +755,7 @@ export const projects = {
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
+  getCodexUsageStatus: authFirstRequireAccount,
   chatStoreStats: authFirstRequireAccount,
   chatStoreRotate: authFirstRequireAccount,
   chatStoreListSegments: authFirstRequireAccount,
@@ -1087,7 +1091,13 @@ export interface Projects {
       invite_role?: Exclude<ProjectUserRole, "owner">;
       read_policy?: ProjectViewerReadPolicy | null;
     };
-  }) => Promise<void>;
+  }) => Promise<{
+    email_sent: boolean;
+    email_available: boolean;
+    manual_delivery_required: boolean;
+    email_blocked_reason?: ProjectInviteEmailBlockedReason | null;
+    in_app_notification_sent: boolean;
+  }>;
 
   inviteCollaboratorWithoutAccount: ({
     account_id,
@@ -1428,6 +1438,10 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectAddress>;
+  ensureProjectScratchVolume: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<void>;
   getProjectActiveOperation: (opts: {
     account_id?: string;
     project_id: string;
@@ -1631,6 +1645,12 @@ export interface Projects {
     filename?: string;
     content: string;
   }) => Promise<{ ok: true; codexHome: string; bytes: number }>;
+
+  getCodexUsageStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+    timeout?: number;
+  }) => Promise<CodexUsageStatusInfo>;
 
   chatStoreStats: (opts: {
     account_id?: string;

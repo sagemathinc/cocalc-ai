@@ -920,12 +920,7 @@ export function AccountEntitlementOverridePanel({
   const [error, setError] = useState<string>("");
   const [actionError, setActionError] = useState<string>("");
   const [actionSuccess, setActionSuccess] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      setActionSuccess("");
-      setActionError(errorMessage(err));
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function refresh() {
     setLoading(true);

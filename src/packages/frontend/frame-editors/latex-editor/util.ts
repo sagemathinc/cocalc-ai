@@ -119,7 +119,6 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
     let current_job_info: ExecuteCodeOutputAsync | null = null;
     let pending_stdout = "";
     let pending_stderr = "";
-
     stream.on("job", (job_info: ExecuteCodeOutputAsync) => {
       current_job_info = {
         ...job_info,

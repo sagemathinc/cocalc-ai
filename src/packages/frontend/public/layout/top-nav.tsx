@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { MenuOutlined } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 
-import { Button, Drawer, Flex, Menu, Space, theme } from "antd";
+import { Button, Drawer, Flex, Menu, Space, Typography, theme } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   arePublicPoliciesVisible,
@@ -39,6 +39,7 @@ type PublicTopNavItemKey = PublicInfoPageKey;
 
 const COMPACT_NAV_MEDIA_QUERY = "(max-width: 875px)";
 const DESKTOP_LOGO_MENU_GAP_PX = 32;
+const { Text } = Typography;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -131,6 +132,7 @@ export default function PublicTopNav({
   const config = usePublicConfig();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isAuthenticated = !!config?.is_authenticated;
+  const accountDisplayName = config?.account_display_name?.trim();
   const isCompact = useCompactNav();
   const logoSquare = getLogoSquare(config);
   const showPolicies = arePublicPoliciesVisible(config);
@@ -191,6 +193,27 @@ export default function PublicTopNav({
   );
   const appActions = isAuthenticated ? (
     <>
+      {accountDisplayName ? (
+        <span
+          style={{
+            alignItems: "center",
+            display: "inline-flex",
+            maxWidth: isCompact ? 110 : 180,
+          }}
+        >
+          <Text
+            title={accountDisplayName}
+            style={{
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {accountDisplayName}
+          </Text>
+        </span>
+      ) : null}
       <Button
         href={appPath("projects")}
         size={isCompact ? "small" : "middle"}

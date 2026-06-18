@@ -506,6 +506,8 @@ export default function MoveInProgress({
                     await reopenProjectAfterMove({
                       project_id,
                       op_id: moveLro.op_id,
+                      source_host_id: sourceHostId,
+                      dest_host_id: destHostId,
                     });
                   } catch (err) {
                     setOpError(`${err}`);

@@ -85,6 +85,7 @@ import type {
   ChatArchiveImportResult,
   ChatExportOpenRequest,
 } from "./export-types";
+import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
@@ -440,6 +441,9 @@ export class ChatActions extends Actions<ChatState> {
   public frameTreeActions?: CodeEditorActions;
   public openExportModal?: (opts?: ChatExportOpenRequest) => void;
   public openImportModal?: () => void;
+  public appendToComposerDraft?: (
+    request: ChatComposerDraftAppendRequest,
+  ) => void;
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
   private chatStoreRegistrationAttempted: Set<string> = new Set();
@@ -1256,6 +1260,35 @@ export class ChatActions extends Actions<ChatState> {
       generating,
     });
     return { date, prevHistory };
+  };
+
+  saveAcpPrompt = (
+    message: {
+      date: string | Date;
+      history?: MessageHistory[];
+      sender_id?: string;
+      message_id?: string;
+      thread_id?: string;
+      parent_message_id?: string;
+    },
+    acp_prompt: string,
+  ): boolean => {
+    const date = toISOString(message.date);
+    if (!date || this.syncdb == null) {
+      return false;
+    }
+    this.setSyncdb({
+      event: "chat",
+      sender_id: message.sender_id,
+      message_id: message.message_id,
+      thread_id: message.thread_id,
+      parent_message_id: message.parent_message_id,
+      history: message.history ?? [],
+      acp_prompt: `${acp_prompt ?? ""}`.trim() || undefined,
+      date,
+    });
+    this.syncdb.commit();
+    return true;
   };
 
   sendReply = ({
@@ -2406,19 +2439,28 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
   };
 
-  setCodexConfig = (threadKey: string, config: CodexThreadConfig): void => {
+  setCodexConfig = (
+    threadKey: string,
+    config: Partial<CodexThreadConfig>,
+  ): void => {
     if (this.syncdb == null) return;
     const threadId = this.normalizeThreadId(threadKey);
     if (!threadId) {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
-    const model = config.model ?? DEFAULT_CODEX_MODEL_NAME;
-    const sessionId = normalizeCodexSessionId(config.sessionId);
-    const nextConfig: CodexThreadConfig = {
+    const currentConfig = this.getCodexConfig(threadId) ?? {};
+    const mergedConfig: Partial<CodexThreadConfig> = {
+      ...currentConfig,
       ...config,
-      serviceTier: resolveCodexServiceTier(config),
-      ...(sessionId ? { sessionId } : {}),
     };
+    const model = mergedConfig.model ?? DEFAULT_CODEX_MODEL_NAME;
+    const sessionId = normalizeCodexSessionId(mergedConfig.sessionId);
+    const nextConfig: CodexThreadConfig = {
+      ...mergedConfig,
+      model,
+      serviceTier: resolveCodexServiceTier(mergedConfig),
+      ...(sessionId ? { sessionId } : {}),
+    } as CodexThreadConfig;
     if (!sessionId) {
       delete (nextConfig as any).sessionId;
     }
@@ -2690,16 +2732,85 @@ export class ChatActions extends Actions<ChatState> {
       thread_id: threadId,
     };
     try {
-      await webapp_client.conat_client.interruptAcp({
+      const result = await webapp_client.conat_client.interruptAcp({
         project_id,
         threadId,
         chat,
       });
-      return true;
+      if (
+        result?.state === "interrupted" ||
+        result?.state === "repaired" ||
+        result?.state === "missing"
+      ) {
+        this.markAcpTurnInterrupted({
+          message: targetMessage,
+          messageDate,
+          threadId,
+          note:
+            result.state === "missing"
+              ? "Conversation interrupted locally after the backend confirmed that no running session exists."
+              : "Conversation interrupted.",
+        });
+        return true;
+      }
+      return result?.ok === true;
     } catch (err) {
       console.warn("failed to interrupt codex turn", err);
       return false;
     }
+  }
+
+  private markAcpTurnInterrupted({
+    message,
+    messageDate,
+    threadId,
+    note,
+  }: {
+    message?: ChatMessage;
+    messageDate: Date;
+    threadId: string;
+    note: string;
+  }): boolean {
+    if (!this.syncdb || !this.store) return false;
+    const targetSenderId = senderId(message);
+    const targetMessageId = field<string>(message, "message_id");
+    const targetThreadId = field<string>(message, "thread_id") ?? threadId;
+    const where = chatRowWhere({
+      date: messageDate,
+      sender_id: targetSenderId,
+      message_id: targetMessageId,
+      thread_id: targetThreadId,
+    });
+    if (!where || !targetThreadId) return false;
+
+    this.setSyncdb({
+      ...where,
+      acp_state: null,
+      acp_interrupted: true,
+      acp_interrupted_text: note,
+    });
+    this.syncdb.delete({
+      event: "chat-thread-state",
+      thread_id: targetThreadId,
+    });
+    this.setSyncdb({
+      event: "chat-thread-state",
+      sender_id: `__thread_state__:${targetThreadId}`,
+      date: CHAT_THREAD_META_ROW_DATE,
+      thread_id: targetThreadId,
+      active_message_id: targetMessageId ?? null,
+      state: "interrupted",
+    });
+    this.syncdb.commit();
+    void this.saveSyncdb();
+
+    let next = this.store.get("acpState") ?? new Map();
+    if (targetMessageId) {
+      next = next.delete(`message:${targetMessageId}`);
+    }
+    next = next.delete(`thread:${targetThreadId}`);
+    this.store.setState({ acpState: next });
+    return true;
   }
 
   summarizeThread = async ({

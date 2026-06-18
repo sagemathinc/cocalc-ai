@@ -503,6 +503,67 @@ describe("project collaborators local bay access", () => {
     );
   });
 
+  it("reports in-app delivery for existing account invites", async () => {
+    const inviteId = "88888888-8888-4888-8888-888888888888";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
+      if (sql.includes("AS existing_group")) {
+        return { rows: [{ existing_group: null }] };
+      }
+      if (sql.includes("FROM project_collab_invite_blocks")) {
+        return { rows: [{ blocked: false }] };
+      }
+      if (
+        sql.includes("SELECT invite_id") &&
+        sql.includes("status='pending'")
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO project_collab_invites")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: ACCOUNT_ID,
+              invitee_account_id: TARGET_ACCOUNT_ID,
+              invite_role: "collaborator",
+              read_policy: null,
+              status: "pending",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { inviteCollaborator } = await import("./collaborators");
+    await expect(
+      inviteCollaborator({
+        account_id: ACCOUNT_ID,
+        opts: {
+          account_id: TARGET_ACCOUNT_ID,
+          project_id: PROJECT_ID,
+        },
+      }),
+    ).resolves.toEqual({
+      email_available: true,
+      email_blocked_reason: null,
+      email_sent: false,
+      in_app_notification_sent: true,
+      manual_delivery_required: false,
+    });
+  });
+
   it("rejects email invites from collaborators when owner-only management is enabled", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("AS actor_group")) {

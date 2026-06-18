@@ -1898,6 +1898,7 @@ describe("ProjectsActions realtime feed", () => {
             project_id: "project-remote",
             owning_bay_id: "bay-0",
             host_id: "host-1",
+            rootfs_image_id: "official-minimal",
             title: "Shared Remote Project",
             description: "visible from projection",
             theme: { color: "#112233" },
@@ -1950,6 +1951,9 @@ describe("ProjectsActions realtime feed", () => {
       "Shared Remote Project",
     );
     expect(projectMap.getIn(["project-remote", "owning_bay_id"])).toBe("bay-0");
+    expect(projectMap.getIn(["project-remote", "rootfs_image_id"])).toBe(
+      "official-minimal",
+    );
     expect(projectMap.getIn(["project-remote", "state", "state"])).toBe(
       "running",
     );

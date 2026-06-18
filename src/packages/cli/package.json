@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/cli",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "CoCalc command line interface",
   "bin": {
     "cocalc": "./dist/bin/cocalc.js",
@@ -63,6 +63,7 @@
   "dependencies": {
     "@cocalc/app-notebook": "workspace:*",
     "@cocalc/app-tasks": "workspace:*",
+    "@cocalc/backend": "workspace:*",
     "@cocalc/chat": "workspace:*",
     "@cocalc/comm": "workspace:*",
     "@cocalc/conat": "workspace:*",

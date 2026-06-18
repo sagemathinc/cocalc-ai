@@ -82,9 +82,16 @@ echo "Downloading CoCalc Launchpad manifest..."
 download "$MANIFEST_URL" "$tmpdir/launchpad.json"
 ASSET_URL="$(get_json_field "$tmpdir/launchpad.json" "url")"
 ASSET_SHA="$(get_json_field "$tmpdir/launchpad.json" "sha256")"
+ARTIFACT_ID="$(get_json_field "$tmpdir/launchpad.json" "artifact_id")"
 VERSION="$(get_json_field "$tmpdir/launchpad.json" "version")"
+PUBLISHED_AT="$(get_json_field "$tmpdir/launchpad.json" "published_at")"
+GIT_COMMIT="$(get_json_field "$tmpdir/launchpad.json" "commit")"
+GIT_SHORT="$(get_json_field "$tmpdir/launchpad.json" "short")"
+if [[ -z "$VERSION" && -n "$ARTIFACT_ID" ]]; then
+  VERSION="$ARTIFACT_ID"
+fi
 if [[ -z "$VERSION" && -n "$ASSET_URL" ]]; then
-  VERSION="$(echo "$ASSET_URL" | sed -n 's#.*/cocalc-launchpad/\([0-9][^/]*\)/.*#\1#p')"
+  VERSION="$(echo "$ASSET_URL" | sed -n 's#.*/software/artifacts/launchpad/\([^/]*\)/.*#\1#p; s#.*/cocalc-launchpad/\([^/]*\)/.*#\1#p')"
 fi
 
 if [[ -z "$ASSET_URL" || -z "$ASSET_SHA" ]]; then
@@ -129,6 +136,10 @@ cat > "$WRAPPER" <<EOF
 #!/usr/bin/env bash
 export COCALC_LAUNCHPAD_HOME="$INSTALL_ROOT"
 ${VERSION:+export COCALC_LAUNCHPAD_VERSION="$VERSION"}
+${ARTIFACT_ID:+export COCALC_LAUNCHPAD_ARTIFACT_ID="$ARTIFACT_ID"}
+${PUBLISHED_AT:+export COCALC_LAUNCHPAD_PUBLISHED_AT="$PUBLISHED_AT"}
+${GIT_COMMIT:+export COCALC_LAUNCHPAD_GIT_COMMIT="$GIT_COMMIT"}
+${GIT_SHORT:+export COCALC_LAUNCHPAD_GIT_SHORT="$GIT_SHORT"}
 exec "$INSTALL_ROOT/bin/cocalc-launchpad" "\$@"
 EOF
 chmod +x "$WRAPPER"
@@ -136,6 +147,10 @@ chmod +x "$WRAPPER"
 cat > "$INSTALL_ROOT/version.json" <<EOF
 {
   "version": "$VERSION",
+  "artifact_id": "$ARTIFACT_ID",
+  "published_at": "$PUBLISHED_AT",
+  "git_commit": "$GIT_COMMIT",
+  "git_short": "$GIT_SHORT",
   "os": "$OS",
   "arch": "$ARCH",
   "updatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"

@@ -73,6 +73,7 @@ const Avatar0: React.FC<Props> = (props) => {
   // we use the user_map to display the username and face:
   const user_map = useTypedRedux("users", "user_map");
   const current_account_id = useTypedRedux("account", "account_id");
+  const current_display_name = useTypedRedux("account", "display_name");
   const current_first_name = useTypedRedux("account", "first_name");
   const current_last_name = useTypedRedux("account", "last_name");
   const current_profile = useTypedRedux("account", "profile");
@@ -167,10 +168,17 @@ const Avatar0: React.FC<Props> = (props) => {
     if (props.first_name) {
       return props.first_name.toUpperCase()[0];
     }
+    if (isCurrentAccount && current_display_name) {
+      return current_display_name.toUpperCase()[0];
+    }
     if (isCurrentAccount && current_first_name) {
       return current_first_name.toUpperCase()[0];
     }
     if (!props.account_id) return "?";
+    const display_name = user_map.getIn([props.account_id, "display_name"]);
+    if (display_name) {
+      return display_name.toUpperCase()[0];
+    }
     const first_name = user_map.getIn([props.account_id, "first_name"]);
     if (first_name) {
       return first_name.toUpperCase()[0];
@@ -188,6 +196,7 @@ const Avatar0: React.FC<Props> = (props) => {
     }
     if (isCurrentAccount) {
       const name =
+        current_display_name ||
         `${current_first_name ?? ""} ${current_last_name ?? ""}`.trim();
       if (name) {
         return trunc_middle(name, 30);

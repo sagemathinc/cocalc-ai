@@ -1,5 +1,13 @@
 import { Alert, Button, Checkbox, Input, Space } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import type { InputRef } from "antd";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
@@ -17,8 +25,9 @@ import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
-import { appUrl } from "./util";
+import { signedInRedirectUrl } from "./util";
 import { COLORS } from "@cocalc/util/theme";
+import { legacyNamePartsFromDisplayName } from "@cocalc/util/accounts/display-name";
 
 const PolicyPrivacyPageUrl = joinUrlPath(appBasePath, "policies/privacy");
 const PolicyTOSPageUrl = joinUrlPath(appBasePath, "policies/terms");
@@ -30,10 +39,6 @@ interface SignUpFormBaseProps {
 
 function getQueryParam(name: string): string | null {
   return new URL(window.location.href).searchParams.get(name);
-}
-
-function signedInRedirectUrl(): string {
-  return appUrl("projects");
 }
 
 export default function SignUpFormBase({
@@ -48,13 +53,16 @@ export default function SignUpFormBase({
   );
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
-  const [firstName, setFirstName] = useState<string>("");
-  const [lastName, setLastName] = useState<string>("");
+  const [displayName, setDisplayName] = useState<string>("");
   const [acceptedTerms, setAcceptedTerms] = useState<boolean>(false);
   const [marketingConsent, setMarketingConsent] = useState<boolean>(false);
   const [signingUp, setSigningUp] = useState<boolean>(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>("");
+  const registrationTokenInputRef = useRef<InputRef | null>(null);
+  const emailInputRef = useRef<InputRef | null>(null);
+  const passwordInputRef = useRef<InputRef | null>(null);
+  const displayNameInputRef = useRef<InputRef | null>(null);
   const signupEmailDomainPolicy = useTypedRedux(
     "customize",
     "signup_email_domain_public_policy",
@@ -86,6 +94,29 @@ export default function SignUpFormBase({
     })();
   }, [requiresToken]);
 
+  const syncBrowserFilledInputs = useCallback(() => {
+    const sync = (
+      ref: RefObject<InputRef | null>,
+      setter: (value: string) => void,
+    ) => {
+      const value = ref.current?.input?.value;
+      if (value) {
+        setter(value);
+      }
+    };
+    sync(registrationTokenInputRef, setRegistrationToken);
+    sync(emailInputRef, setEmail);
+    sync(passwordInputRef, setPassword);
+    sync(displayNameInputRef, setDisplayName);
+  }, []);
+
+  useEffect(() => {
+    const timers = [100, 500, 1000, 2000].map((delay) =>
+      setTimeout(syncBrowserFilledInputs, delay),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [syncBrowserFilledInputs]);
+
   const canSubmit = useMemo(() => {
     if (!isValidEmailAddress(email)) {
       return false;
@@ -96,7 +127,7 @@ export default function SignUpFormBase({
     if (password.length < MIN_PASSWORD_LENGTH) {
       return false;
     }
-    if (!firstName.trim() || !lastName.trim()) {
+    if (!displayName.trim()) {
       return false;
     }
     if (requiresToken && !registrationToken.trim()) {
@@ -111,8 +142,7 @@ export default function SignUpFormBase({
     email,
     emailAllowedByDomainPolicy,
     password,
-    firstName,
-    lastName,
+    displayName,
     requiresToken,
     registrationToken,
     signingUp,
@@ -126,6 +156,7 @@ export default function SignUpFormBase({
     setError("");
     setSigningUp(true);
     try {
+      const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
@@ -133,8 +164,9 @@ export default function SignUpFormBase({
           marketing_consent: marketingConsent,
           email,
           password,
-          firstName,
-          lastName,
+          displayName,
+          firstName: legacyNameParts.first_name,
+          lastName: legacyNameParts.last_name,
           registrationToken: registrationToken.trim(),
         },
       });
@@ -174,7 +206,13 @@ export default function SignUpFormBase({
   const issueList = Object.values(issues).filter(Boolean);
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+    <Space
+      orientation="vertical"
+      size="middle"
+      style={{ width: "100%" }}
+      onFocusCapture={syncBrowserFilledInputs}
+      onInputCapture={syncBrowserFilledInputs}
+    >
       {bootstrap && (
         <Alert
           type="info"
@@ -201,6 +239,7 @@ export default function SignUpFormBase({
         <div>
           <div>Registration token</div>
           <Input
+            ref={registrationTokenInputRef}
             autoFocus={!!requiresToken}
             value={registrationToken}
             placeholder="Enter your registration token"
@@ -211,6 +250,7 @@ export default function SignUpFormBase({
       <div>
         <div>Email address</div>
         <Input
+          ref={emailInputRef}
           value={email}
           autoComplete="username"
           autoFocus={!requiresToken}
@@ -234,6 +274,7 @@ export default function SignUpFormBase({
       <div>
         <div>Password</div>
         <Input.Password
+          ref={passwordInputRef}
           value={password}
           autoComplete="new-password"
           placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
@@ -243,20 +284,13 @@ export default function SignUpFormBase({
         />
       </div>
       <div>
-        <div>First name</div>
+        <div>Name</div>
         <Input
-          value={firstName}
-          placeholder="First name"
-          onChange={(e) => setFirstName(e.target.value)}
-          onPressEnter={signUp}
-        />
-      </div>
-      <div>
-        <div>Last name</div>
-        <Input
-          value={lastName}
-          placeholder="Last name"
-          onChange={(e) => setLastName(e.target.value)}
+          ref={displayNameInputRef}
+          autoComplete="name"
+          value={displayName}
+          placeholder="Your name"
+          onChange={(e) => setDisplayName(e.target.value)}
           onPressEnter={signUp}
         />
       </div>

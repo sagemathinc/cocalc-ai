@@ -26,6 +26,7 @@ async function get(req) {
   const { user_account_id, lineItems, purpose, description, metadata } =
     getParams(req);
   await assertPaymentCheckoutAllowed();
+  let result;
   if (user_account_id) {
     // admin version
     const admin_account_id = await getAccountId(req);
@@ -49,7 +50,7 @@ async function get(req) {
       require_second_factor: true,
       allow_actor_impersonation: false,
     });
-    await createPaymentIntent({
+    result = await createPaymentIntent({
       account_id: user_account_id,
       lineItems,
       description,
@@ -70,13 +71,14 @@ async function get(req) {
       account_id,
       allow_actor_impersonation: true,
     });
-    await createPaymentIntent({
+    result = await createPaymentIntent({
       account_id,
       description,
       lineItems,
       purpose,
       metadata,
+      requireAddress: true,
     });
   }
-  return { success: true };
+  return { success: true, ...(result ?? {}) };
 }

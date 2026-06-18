@@ -107,9 +107,7 @@ export function Student({
 }: StudentProps) {
   const intl = useIntl();
   const actions: CourseActions = redux.getActions(name);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setSeatError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const store = actions.get_store();
   if (store == null) throw Error("store must be defined");
 
@@ -577,8 +575,15 @@ export function Student({
               {" "}
               · emailed <TimeAgo date={courseInvite.last_sent} />
             </>
-          ) : undefined}
+          ) : (
+            <> · email not sent</>
+          )}
         </Text>
+        {courseInvite.status === "pending" && !courseInvite.last_sent ? (
+          <Text type="warning" style={{ fontSize: "12px" }}>
+            Copy the invite link and send it to the student manually.
+          </Text>
+        ) : undefined}
         {courseInvite.status === "pending" && courseInvite.expires ? (
           <Text type="secondary" style={{ fontSize: "12px" }}>
             Expires <TimeAgo date={courseInvite.expires} />
@@ -616,7 +621,7 @@ export function Student({
       : "Send invitation";
     const when =
       last_email_invite != null
-        ? `Last invitation sent on ${new Date(
+        ? `Last invite attempt on ${new Date(
             last_email_invite,
           ).toLocaleString()}`
         : "never";
@@ -663,13 +668,26 @@ export function Student({
               if (email) {
                 setSendInviteLoading(true);
                 try {
-                  await actions.student_projects.invite_student_to_project({
-                    student: email, // we use email address to trigger sending an actual email!
-                    student_project_id: student.get("project_id"),
-                    student_id: student.get("student_id"),
-                  });
+                  const result =
+                    await actions.student_projects.invite_student_to_project({
+                      student: email, // we use email address to trigger sending an actual email!
+                      student_project_id: student.get("project_id"),
+                      student_id: student.get("student_id"),
+                    });
                   await refreshCourseInviteStatus();
-                  void antdMessage.success("Invitation created.");
+                  if (result?.email_sent) {
+                    void antdMessage.success("Invitation created and emailed.");
+                  } else if (result?.manual_delivery_required) {
+                    void antdMessage.warning(
+                      "Invitation link created, but email was not sent. Copy the invite link and send it manually.",
+                      8,
+                    );
+                  } else {
+                    void antdMessage.info(
+                      "Invitation created. Email delivery was not confirmed; copy the invite link if needed.",
+                      8,
+                    );
+                  }
                 } catch (err) {
                   void antdMessage.error(`${err}`);
                 } finally {

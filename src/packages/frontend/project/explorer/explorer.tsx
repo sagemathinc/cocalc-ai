@@ -23,7 +23,10 @@ import {
   Loading,
 } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { FileUploadWrapper } from "@cocalc/frontend/file-upload";
+import {
+  FileUploadWrapper,
+  type DropzoneRef,
+} from "@cocalc/frontend/file-upload";
 import { ProjectStatus } from "@cocalc/frontend/todo-types";
 import { labels } from "@cocalc/frontend/i18n";
 import AskNewFilename from "../ask-filename";
@@ -46,10 +49,11 @@ import {
   useProjectMapField,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { useFsWithRefresh } from "@cocalc/frontend/project/listing/use-fs";
 import useListing, {
+  sortListingEntries,
   type SortField,
 } from "@cocalc/frontend/project/listing/use-listing";
+import useProjectActionsFilesystem from "@cocalc/frontend/project/listing/use-project-actions-fs";
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
@@ -100,6 +104,8 @@ import {
   shouldShowWrongAccountListingError,
 } from "./listing-error";
 
+type ActiveFileSort = ReturnType<typeof normalizeActiveFileSort>;
+
 const FLEX_ROW_STYLE = {
   display: "flex",
   flexFlow: "row wrap",
@@ -116,12 +122,18 @@ const ERROR_STYLE: CSSProperties = {
   boxShadow: "5px 5px 5px grey",
 } as const;
 
-function isMissingProjectVolumeError(error: unknown): boolean {
+const LIFECYCLE_LISTING_REFRESH_DELAYS_MS = [0, 1000, 2000, 5000] as const;
+
+function isStartRequiredFilesystemError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
-  return text.includes("project volume does not exist");
+  return (
+    text.includes("project host id unavailable") ||
+    text.includes("host routing info unavailable") ||
+    text.includes("has no host assigned")
+  );
 }
 
-function sortDesc(active_file_sort?): {
+function sortDesc(active_file_sort?: ActiveFileSort): {
   sortField: SortField;
   sortDirection: "desc" | "asc";
 } {
@@ -137,6 +149,22 @@ function sortDesc(active_file_sort?): {
     sortField: column_name as SortField,
     sortDirection: is_descending ? "desc" : "asc",
   };
+}
+
+function sortAndMaskListing({
+  listing,
+  active_file_sort,
+  mask,
+}: {
+  listing: DirectoryListingEntry[] | null;
+  active_file_sort?: ActiveFileSort;
+  mask?: boolean;
+}): DirectoryListingEntry[] | null {
+  if (listing == null) {
+    return null;
+  }
+  const { sortField, sortDirection } = sortDesc(active_file_sort);
+  return sortListingEntries({ listing, sortField, sortDirection, mask });
 }
 
 export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
@@ -200,6 +228,9 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   );
   const host_id = useProjectMapField<string>(project_id, "host_id");
   const projectStateValue = useProjectMapField(project_id, "state");
+  const projectStateName = `${projectStateValue?.get?.("state") ?? ""}`
+    .trim()
+    .toLowerCase();
   const lastBackup = useProjectMapField(project_id, "last_backup");
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
@@ -217,10 +248,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       DEFAULT_ACTIVE_FILE_SORT,
   );
 
-  const { fs, refreshFs } = useFsWithRefresh({
-    project_id,
-    viewer: readOnlyViewer,
-  });
+  const fs = useProjectActionsFilesystem({ actions, project_id });
   const inBackupsPath = isBackupsPath(effective_current_path);
   const inSnapshotsPath = isSnapshotsPath(effective_current_path);
   const homePath =
@@ -233,16 +261,12 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   });
   let {
     refresh,
-    listing,
+    listing: rawListing,
     error: listingError,
   } = useListing({
     fs: inBackupsPath ? null : fs,
     path: listingPath,
-    ...sortDesc(active_file_sort),
-    cacheId: actions?.getCacheId(),
-    mask,
     watch: !readOnlyViewer,
-    refreshFs,
   });
   const {
     listing: backupsListing,
@@ -251,7 +275,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   } = useBackupsListing({
     project_id,
     path: effective_current_path,
-    ...sortDesc(active_file_sort),
+    cacheContext: host_id,
   });
   const backupOps = useTypedRedux({ project_id }, "backup_ops");
   const prevBackupStatuses = useRef<Map<string, string>>(new Map());
@@ -285,15 +309,16 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     }
   }, [backupOps, refreshBackups]);
   if (inBackupsPath && !readOnlyViewer) {
-    listing = backupsListing;
+    rawListing = backupsListing;
     listingError = backupsError;
     refresh = refreshBackups;
   } else if (inBackupsPath && readOnlyViewer) {
-    listing = null;
+    rawListing = null;
     listingError = new Error("Viewers cannot browse project backups.");
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
+  const displayListingError = listingError;
   const applyNavigationWorkspaceSelection = useCallback(
     (path: string) => {
       const nextSelection = selectionForPathFollowThrough(
@@ -328,10 +353,19 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     [applyNavigationWorkspaceSelection, navigateExplorerRaw, navHistory],
   );
 
-  listing = listingError
+  const sortedListing = useMemo(
+    () =>
+      sortAndMaskListing({
+        listing: rawListing,
+        active_file_sort,
+        mask,
+      }),
+    [rawListing, active_file_sort, mask],
+  );
+  const listing = displayListingError
     ? null
     : filterListing({
-        listing,
+        listing: sortedListing,
         search: file_search,
         showHidden,
       });
@@ -349,6 +383,22 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     fingerprint: fileListingFingerprint,
   });
   const visibleListing = displayListing ?? listing;
+  const [activeUploadCount, setActiveUploadCount] = useState(0);
+  const uploadInProgress = activeUploadCount > 0;
+  const refreshAfterUploadActivity = useCallback(() => {
+    refreshListingAfterUserAction({
+      allowUpdatesFor: allowListingUpdatesFor,
+      refresh,
+    });
+  }, [allowListingUpdatesFor, refresh]);
+  const handleUploadStarted = useCallback(() => {
+    setActiveUploadCount((count) => count + 1);
+    refreshAfterUploadActivity();
+  }, [refreshAfterUploadActivity]);
+  const handleUploadFinished = useCallback(() => {
+    setActiveUploadCount((count) => Math.max(0, count - 1));
+    refreshAfterUploadActivity();
+  }, [refreshAfterUploadActivity]);
   useEffect(() => {
     return registerUserFilesystemChangeHandler(() =>
       refreshListingAfterUserAction({
@@ -539,6 +589,48 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     return () => clearTimeout(timer);
   }, [listingError, moveLro, effective_current_path, refresh]);
 
+  useEffect(() => {
+    if (!isVisible) return;
+    if (listing != null) return;
+    if (listingError != null) return;
+    if (projectStateName !== "running" && projectStateName !== "opened") {
+      return;
+    }
+
+    let canceled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const refreshAfterDelay = (attempt: number): void => {
+      const delay =
+        LIFECYCLE_LISTING_REFRESH_DELAYS_MS[
+          Math.min(attempt, LIFECYCLE_LISTING_REFRESH_DELAYS_MS.length - 1)
+        ];
+      timer = setTimeout(() => {
+        if (canceled) return;
+        refresh();
+        if (attempt + 1 < LIFECYCLE_LISTING_REFRESH_DELAYS_MS.length) {
+          refreshAfterDelay(attempt + 1);
+        }
+      }, delay);
+    };
+
+    refreshAfterDelay(0);
+
+    return () => {
+      canceled = true;
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    isVisible,
+    listing,
+    listingError,
+    projectStateName,
+    effective_current_path,
+    refresh,
+  ]);
+
   const clearedTransientProjectErrorRef = useRef<string>("");
   useEffect(() => {
     if (!error) return;
@@ -639,7 +731,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     project_is_running = false;
   }
 
-  if (shouldShowWrongAccountListingError(listingError)) {
+  if (shouldShowWrongAccountListingError(displayListingError)) {
     return (
       <div style={{ margin: "30px auto", textAlign: "center" }}>
         <ShowError
@@ -665,19 +757,23 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   }
 
   const suppressRoutingError =
-    (hostUnavailable && isHostRoutingUnavailableError(listingError)) ||
-    shouldSuppressTransientRoutingError({ error: listingError, moveLro });
+    (hostUnavailable && isHostRoutingUnavailableError(displayListingError)) ||
+    shouldSuppressTransientRoutingError({
+      error: displayListingError,
+      moveLro,
+    });
   const suppressProjectError =
     (hostUnavailable && isHostRoutingUnavailableError(error)) ||
     shouldSuppressTransientRoutingError({ error, moveLro });
   const shouldShowArchivedProjectWarning =
-    project_is_archived && listingError != null;
-  const shouldShowNewProjectWarning = project_is_new && listingError != null;
+    project_is_archived && displayListingError != null;
+  const shouldShowNewProjectWarning =
+    project_is_new && displayListingError != null;
   const shouldShowStartProjectWarning =
     !project_is_running &&
     !project_is_archived &&
     !project_is_new &&
-    isMissingProjectVolumeError(listingError);
+    isStartRequiredFilesystemError(displayListingError);
 
   if (hostUnavailable && !project_is_running) {
     return (
@@ -986,6 +1082,7 @@ You can either wait for this host to become available again, or move this ${proj
                       }
                       autoUpdateListing={autoUpdateListing}
                       onToggleAutoUpdate={handleAutoUpdateListingChange}
+                      suppressPendingRefresh={uploadInProgress}
                       readOnly={readOnlyViewer}
                       allowCopyOut={readOnlyViewer}
                     />
@@ -1100,14 +1197,14 @@ You can either wait for this host to become available again, or move this ${proj
               />
             )}
 
-            {listingError &&
+            {displayListingError &&
               !suppressRoutingError &&
               !shouldShowArchivedProjectWarning &&
               !shouldShowNewProjectWarning &&
               !shouldShowStartProjectWarning && (
                 <div style={{ margin: "30px auto", textAlign: "center" }}>
                   <ShowError
-                    error={getUserFacingListingError(listingError)}
+                    error={getUserFacingListingError(displayListingError)}
                     style={{ textAlign: "left" }}
                   />
                   <br />
@@ -1119,30 +1216,31 @@ You can either wait for this host to become available again, or move this ${proj
                     >
                       <Icon name="refresh" /> Refresh
                     </Button>
-                    {listingError.code == "ENOENT" && canWriteProjectFiles && (
-                      <Button
-                        size="large"
-                        style={{ margin: "auto" }}
-                        onClick={async () => {
-                          const fs = actions?.fs();
-                          try {
-                            await fs.mkdir(effective_current_path, {
-                              recursive: true,
-                            });
-                            refresh();
-                          } catch (err) {
-                            actions?.setState({ error: err });
-                          }
-                        }}
-                      >
-                        <Icon name="folder-open" /> Create Directory
-                      </Button>
-                    )}
+                    {displayListingError.code == "ENOENT" &&
+                      canWriteProjectFiles && (
+                        <Button
+                          size="large"
+                          style={{ margin: "auto" }}
+                          onClick={async () => {
+                            const fs = actions?.fs();
+                            try {
+                              await fs.mkdir(effective_current_path, {
+                                recursive: true,
+                              });
+                              refresh();
+                            } catch (err) {
+                              actions?.setState({ error: err });
+                            }
+                          }}
+                        >
+                          <Icon name="folder-open" /> Create Directory
+                        </Button>
+                      )}
                   </Space.Compact>
                 </div>
               )}
 
-            {!listingError && (
+            {!displayListingError && (
               <>
                 <MaybeFileUploadWrapper
                   enabled={canWriteProjectFiles}
@@ -1154,28 +1252,33 @@ You can either wait for this host to become available again, or move this ${proj
                       refresh,
                     })
                   }
+                  onUploadStarted={handleUploadStarted}
+                  onUploadFinished={handleUploadFinished}
                 >
-                  <FileListingBody
-                    visibleListing={visibleListing}
-                    active_file_sort={active_file_sort}
-                    sort_by={(column_name: string) => {
-                      allowNextListingUpdate();
-                      void setSort({
-                        project_id,
-                        path: effective_current_path,
-                        column_name,
-                      });
-                    }}
-                    file_search={file_search}
-                    checked_files={checked_files}
-                    current_path={effective_current_path}
-                    actions={actions}
-                    project_id={project_id}
-                    shiftIsDown={shiftIsDown}
-                    onNavigateDirectory={navigateExplorer}
-                    readOnly={readOnlyViewer}
-                    allowReadOnlyCopy={readOnlyViewer}
-                  />
+                  {(openUploadFiles) => (
+                    <FileListingBody
+                      visibleListing={visibleListing}
+                      active_file_sort={active_file_sort}
+                      sort_by={(column_name: string) => {
+                        allowNextListingUpdate();
+                        void setSort({
+                          project_id,
+                          path: effective_current_path,
+                          column_name,
+                        });
+                      }}
+                      file_search={file_search}
+                      checked_files={checked_files}
+                      current_path={effective_current_path}
+                      actions={actions}
+                      project_id={project_id}
+                      shiftIsDown={shiftIsDown}
+                      onNavigateDirectory={navigateExplorer}
+                      readOnly={readOnlyViewer}
+                      allowReadOnlyCopy={readOnlyViewer}
+                      openUploadFiles={openUploadFiles}
+                    />
+                  )}
                 </MaybeFileUploadWrapper>
               </>
             )}
@@ -1199,14 +1302,25 @@ function MaybeFileUploadWrapper({
   dest_path,
   enabled,
   onUploadActivity,
+  onUploadFinished,
+  onUploadStarted,
   project_id,
 }: {
-  children: ReactNode;
+  children: (openUploadFiles?: () => void) => ReactNode;
   dest_path: string;
   enabled: boolean;
   onUploadActivity: () => void;
+  onUploadFinished: () => void;
+  onUploadStarted: () => void;
   project_id: string;
 }) {
+  const dropzoneRef = useRef<DropzoneRef["current"]>(null);
+  const openUploadFiles = useCallback(() => {
+    // This is the same pragmatic approach used elsewhere in file upload UI:
+    // Dropzone's CSS-selector clickable wiring is timing-sensitive, while
+    // clicking its hidden file input is direct and reliable.
+    dropzoneRef.current?.hiddenFileInput?.click();
+  }, []);
   const style = {
     flex: "1 1 auto",
     minWidth: 0,
@@ -1216,7 +1330,7 @@ function MaybeFileUploadWrapper({
   if (!enabled) {
     return (
       <div className="smc-vfill" style={style}>
-        {children}
+        {children()}
       </div>
     );
   }
@@ -1226,13 +1340,15 @@ function MaybeFileUploadWrapper({
       dest_path={dest_path}
       config={{ clickable: ".upload-button" }}
       event_handlers={{
+        addedfile: onUploadStarted,
         sending: onUploadActivity,
-        complete: onUploadActivity,
+        complete: onUploadFinished,
       }}
       style={style}
       className="smc-vfill"
+      dropzone_ref={dropzoneRef}
     >
-      {children}
+      {children(openUploadFiles)}
     </FileUploadWrapper>
   );
 }
@@ -1250,6 +1366,7 @@ function FileListingBody({
   onNavigateDirectory,
   readOnly,
   allowReadOnlyCopy,
+  openUploadFiles,
 }: {
   visibleListing: DirectoryListingEntry[] | null | undefined;
   active_file_sort: { column_name: string; is_descending: boolean };
@@ -1263,6 +1380,7 @@ function FileListingBody({
   onNavigateDirectory: (path: string) => void;
   readOnly: boolean;
   allowReadOnlyCopy: boolean;
+  openUploadFiles?: () => void;
 }) {
   if (visibleListing == null) {
     return (
@@ -1285,6 +1403,7 @@ function FileListingBody({
       onNavigateDirectory={onNavigateDirectory}
       readOnly={readOnly}
       allowReadOnlyCopy={allowReadOnlyCopy}
+      openUploadFiles={openUploadFiles}
     />
   );
 }

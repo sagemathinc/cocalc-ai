@@ -3,7 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { CSSProperties } from "react";
 
 import {
@@ -38,7 +45,6 @@ import {
   type DocsAction,
   type DocsEntry,
 } from "@cocalc/docs";
-import Markdown from "@cocalc/frontend/markdown/component";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
@@ -46,8 +52,12 @@ import type {
   DocsPrivateEntrySummary,
   DocsPrivateFilter,
 } from "./private-state/types";
+import "./browser.css";
 
 const { Paragraph, Text, Title } = Typography;
+const StaticMarkdown = lazy(
+  () => import("@cocalc/frontend/editors/slate/static-markdown"),
+);
 
 type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
@@ -264,8 +274,10 @@ export function DocsFontSizeFrame({
 
 export function DocsMarkdown({ value }: { value: string }) {
   return (
-    <div data-testid="docs-markdown">
-      <Markdown value={value} />
+    <div className="cocalc-docs-markdown" data-testid="docs-markdown">
+      <Suspense fallback={<Text type="secondary">Loading markdown...</Text>}>
+        <StaticMarkdown value={value} />
+      </Suspense>
     </div>
   );
 }

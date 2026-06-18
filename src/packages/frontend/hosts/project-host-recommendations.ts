@@ -4,7 +4,11 @@
  */
 
 import type { Host, HostPressureZone } from "@cocalc/conat/hub/api/hosts";
-import { mapCloudRegionToR2Region, type R2Region } from "@cocalc/util/consts";
+import {
+  mapCloudRegionToR2Region,
+  rankR2RegionDistance,
+  type R2Region,
+} from "@cocalc/util/consts";
 import { getGcpMachineBenchmark } from "@cocalc/util/project-host-benchmarks";
 
 export type ProjectHostLoadLabel =
@@ -132,7 +136,8 @@ function scoreHost({
     score += 1_000;
     reasons.push("same_region");
   } else {
-    score += 400;
+    const distanceRank = rankR2RegionDistance(projectRegion, backupRegion);
+    score += 400 - Math.min(distanceRank, 20) * 50;
     reasons.push("remote_region");
   }
 

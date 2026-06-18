@@ -142,7 +142,9 @@ function isProjectCollaboratorLocal({
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
   const allowed = isProjectCollaboratorGroup(group);
-  collaboratorCache.set(key, allowed);
+  if (allowed) {
+    collaboratorCache.set(key, allowed);
+  }
   return allowed;
 }
 
@@ -161,7 +163,9 @@ function isProjectViewerLocal({
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
   const allowed = isProjectViewerRole(group);
-  collaboratorCache.set(key, allowed);
+  if (allowed) {
+    collaboratorCache.set(key, allowed);
+  }
   return allowed;
 }
 
@@ -361,7 +365,9 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       }
     }
 
-    authDecisionCache.set(cacheKey, allowed);
+    if (allowed) {
+      authDecisionCache.set(cacheKey, allowed);
+    }
     return allowed;
   };
 

@@ -19,10 +19,13 @@ import {
   Input,
   message,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Spin,
+  Tabs,
   Tag,
+  Typography,
 } from "antd";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -31,10 +34,18 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
-import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
+import {
+  Icon,
+  isIconName,
+  Paragraph,
+  ThemeEditorModal,
+  type IconName,
+} from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import {
   dispatchNavigatorPromptIntent,
@@ -53,10 +64,13 @@ import {
 } from "@cocalc/frontend/rootfs/manifest";
 import {
   latestRootfsVersionEntries,
+  latestRootfsUpgradeEntry,
   rootfsThemeImageUrl,
   sectionLabel,
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
+import { rootfsPath } from "@cocalc/frontend/public/rootfs/routes";
+import { openProjectAppStatus } from "@cocalc/frontend/project/app-server-open";
 import {
   RootfsScanDetailsButton,
   RootfsScanStatus,
@@ -71,13 +85,26 @@ import {
   themeFromDraft,
   type ThemeEditorDraft,
 } from "@cocalc/frontend/theme/types";
+import { docsPath } from "@cocalc/docs";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
+import {
+  ROOTFS_CONFIG_EXPORT_KIND,
+  ROOTFS_CONFIG_EXPORT_VERSION,
+  isManagedRootfsImageName,
+  normalizeRootfsContentManifest,
+  parseRootfsConfigExport,
+  validateRootfsSlug,
+} from "@cocalc/util/rootfs-images";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import type {
+  RootfsConfigExport,
+  RootfsConfigExportMetadata,
   ProjectRootfsStateEntry,
+  RootfsContentAction,
+  RootfsContentManifest,
   RootfsImageEntry,
   RootfsImageTheme,
   RootfsImageVisibility,
@@ -87,6 +114,7 @@ import type { RootfsProjectPreflightScanResult } from "@cocalc/util/rootfs-scan"
 type PublishDraft = {
   image: string;
   label: string;
+  slug: string;
   description: string;
   family: string;
   version: string;
@@ -100,7 +128,35 @@ type PublishDraft = {
   hidden: boolean;
 };
 
-type RootFilesystemImageMode = "inline" | "modal";
+type RootfsContentActionDraft = RootfsContentAction & {
+  draft_id: string;
+};
+
+type RootfsContentDraft = {
+  title: string;
+  subtitle: string;
+  description: string;
+  publisher_name: string;
+  publisher_url: string;
+  license_name: string;
+  license_url: string;
+  highlights: string[];
+  actions: RootfsContentActionDraft[];
+};
+
+type RootfsContentDirectoryPicker = {
+  actionIndex: number;
+  field: "path" | "source_path";
+  pendingPath: string;
+} | null;
+
+type RootfsConfigImportOptions = {
+  metadata: boolean;
+  theme: boolean;
+  content: boolean;
+};
+
+type RootFilesystemImageMode = "inline" | "modal" | "page";
 
 interface RootFilesystemImageProps {
   mode?: RootFilesystemImageMode;
@@ -115,6 +171,7 @@ export default function RootFilesystemImage({
   mode = "inline",
 }: RootFilesystemImageProps = {}) {
   const isModal = mode === "modal";
+  const isPage = mode === "page";
   const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
   const [upgradeOpen, setUpgradeOpen] = useState<boolean>(false);
@@ -144,13 +201,29 @@ export default function RootFilesystemImage({
   const [publishCopyMode, setPublishCopyMode] = useState<"project" | "base">(
     "project",
   );
-  const [publishAdvanced, setPublishAdvanced] = useState<boolean>(false);
+  const [switchPublishedProject, setSwitchPublishedProject] =
+    useState<boolean>(true);
   const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
+  const [publishTab, setPublishTab] = useState<string>("metadata");
+  const [publishContentDraft, setPublishContentDraft] =
+    useState<RootfsContentDraft>(() => emptyRootfsContentDraft());
+  const [publishContentPicker, setPublishContentPicker] =
+    useState<RootfsContentDirectoryPicker>(null);
+  const rootfsConfigImportInputRef = useRef<HTMLInputElement | null>(null);
+  const [rootfsConfigImportCandidate, setRootfsConfigImportCandidate] =
+    useState<RootfsConfigExport | null>(null);
+  const [rootfsConfigImportOptions, setRootfsConfigImportOptions] =
+    useState<RootfsConfigImportOptions>(() => ({
+      metadata: true,
+      theme: true,
+      content: true,
+    }));
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
+    slug: "",
     description: "",
     family: "",
     version: "",
@@ -163,9 +236,7 @@ export default function RootFilesystemImage({
     prepull: false,
     hidden: false,
   });
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const siteDefaultRootfs = useTypedRedux(
     "customize",
@@ -349,18 +420,10 @@ export default function RootFilesystemImage({
       .sort((a, b) => compareRootfsVersionEntries(a, b));
   }, [currentDisplayEntry, selectableRootfsImages]);
   const suggestedUpgradeEntry = useMemo(() => {
-    if (!currentDisplayEntry) return undefined;
-    const explicitUpgrade = relatedVersionEntries.find(
-      (entry) => entry.supersedes_image_id === currentDisplayEntry.id,
-    );
-    if (explicitUpgrade) return explicitUpgrade;
-    if (!currentDisplayEntry.version) return undefined;
-    const newerVersions = relatedVersionEntries.filter(
-      (entry) =>
-        !!entry.version &&
-        compareRootfsVersions(entry.version, currentDisplayEntry.version!) > 0,
-    );
-    return newerVersions[0];
+    return latestRootfsUpgradeEntry({
+      current: currentDisplayEntry,
+      images: relatedVersionEntries,
+    });
   }, [currentDisplayEntry, relatedVersionEntries]);
   const filteredPickerRootfsImages = useMemo(() => {
     const query = rootfsSearch.trim().toLowerCase();
@@ -385,6 +448,7 @@ export default function RootFilesystemImage({
         publishCopyMode,
         publishDraft,
         publishSourceEntry,
+        switchPublishedProject,
       }),
     [
       project_id,
@@ -392,7 +456,21 @@ export default function RootFilesystemImage({
       publishCopyMode,
       publishDraft,
       publishSourceEntry,
+      switchPublishedProject,
     ],
+  );
+  const rootfsLandingPath = rootfsPublicLandingPath({
+    publishDraft,
+    publishSourceEntry,
+  });
+  const rootfsLandingUrl = absoluteRootfsPublicUrl(rootfsLandingPath);
+  const publishSlugError = useMemo(
+    () => rootfsSlugValidationError(publishDraft.slug),
+    [publishDraft.slug],
+  );
+  const normalizedPublishSlug = useMemo(
+    () => rootfsNormalizedSlug(publishDraft.slug),
+    [publishDraft.slug],
   );
   const publishTagOptions = useMemo(
     () =>
@@ -443,6 +521,35 @@ export default function RootFilesystemImage({
           label: `${entry.label || entry.image}${entry.version ? ` (${entry.version})` : ""}`,
         })),
     [publishSourceEntry?.id, rootfsImages],
+  );
+  const publishContentInput = useMemo(
+    () => rootfsContentDraftToInput(publishContentDraft),
+    [publishContentDraft],
+  );
+  const publishContentValidation = useMemo(
+    () => normalizeRootfsContentManifest(publishContentInput),
+    [publishContentInput],
+  );
+  const publishContentPreviewEntry = useMemo<RootfsImageEntry>(
+    () =>
+      ({
+        id: "rootfs-content-preview",
+        image: publishDraft.image || DEFAULT_PROJECT_IMAGE,
+        label: publishDraft.label || "RootFS image",
+        description: publishDraft.description || undefined,
+        theme:
+          rootfsThemeFromPublishDraft(publishDraft) ??
+          publishSourceEntry?.theme,
+        content: publishContentValidation.content,
+      }) as RootfsImageEntry,
+    [
+      publishContentValidation.content,
+      publishDraft.description,
+      publishDraft.image,
+      publishDraft.label,
+      publishDraft.theme,
+      publishSourceEntry?.theme,
+    ],
   );
 
   useEffect(() => {
@@ -517,13 +624,19 @@ export default function RootFilesystemImage({
       "Custom RootFS";
     const nextDescription = currentEntry?.description ?? "";
     const defaultMode = opts?.publishMode ?? "copy";
+    const defaultCopyMode = opts?.copyMode ?? "project";
     setPublishSourceEntry(currentEntry);
     setPublishMode(defaultMode);
-    setPublishCopyMode(opts?.copyMode ?? "project");
-    setPublishAdvanced(false);
+    setPublishCopyMode(defaultCopyMode);
+    setPublishTab(
+      defaultMode === "copy" && defaultCopyMode === "project"
+        ? "publish"
+        : "metadata",
+    );
     setPublishDraft({
       image: currentImage,
       label: nextLabel,
+      slug: currentEntry?.slug ?? "",
       description: nextDescription,
       family: currentEntry?.family ?? "",
       version: currentEntry?.version ?? "",
@@ -543,6 +656,7 @@ export default function RootFilesystemImage({
       prepull: currentEntry?.prepull ?? false,
       hidden: currentEntry?.hidden ?? false,
     });
+    setPublishContentDraft(rootfsContentManifestToDraft(currentEntry?.content));
     setPublishOpen(true);
   }
 
@@ -639,16 +753,24 @@ export default function RootFilesystemImage({
           if (!project) {
             throw new Error("project is not available");
           }
+          const slug = validateRootfsSlug(publishDraft.slug);
+          if (slug !== publishDraft.slug.trim()) {
+            setPublishDraft((cur) => ({ ...cur, slug: slug ?? "" }));
+          }
           const tags = publishDraft.tags
             .split(",")
             .map((tag) => tag.trim())
             .filter(Boolean);
+          const contentResult =
+            normalizeRootfsContentManifest(publishContentInput);
+          const contentPayload = rootfsContentCatalogPayload(contentResult);
           if (publishMode === "copy" && publishCopyMode === "project") {
             setOpen(false);
             setPublishOpen(false);
             const op = await publishProjectRootfsImage({
               project_id: project.get("project_id"),
               label: publishDraft.label,
+              slug,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -658,9 +780,11 @@ export default function RootFilesystemImage({
               visibility: publishDraft.visibility,
               tags,
               theme: rootfsThemeFromPublishDraft(publishDraft),
+              ...contentPayload,
               official: isAdmin ? publishDraft.official : undefined,
               prepull: isAdmin ? publishDraft.prepull : undefined,
               hidden: isAdmin ? publishDraft.hidden : undefined,
+              switch_project: switchPublishedProject,
             });
             actions?.trackRootfsPublishOp?.(op);
           } else {
@@ -671,6 +795,7 @@ export default function RootFilesystemImage({
                   : undefined,
               image: publishDraft.image,
               label: publishDraft.label,
+              slug,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -680,11 +805,16 @@ export default function RootFilesystemImage({
               visibility: publishDraft.visibility,
               tags,
               theme: rootfsThemeFromPublishDraft(publishDraft),
+              ...contentPayload,
               official: isAdmin ? publishDraft.official : undefined,
               prepull: isAdmin ? publishDraft.prepull : undefined,
               hidden: isAdmin ? publishDraft.hidden : undefined,
             });
             setPublishOpen(false);
+            setPublishDraft((cur) => ({
+              ...cur,
+              slug: entry.slug ?? cur.slug,
+            }));
             setCatalogRefresh(Date.now());
             if (entry.image === value) {
               setImageId(entry.id);
@@ -699,6 +829,154 @@ export default function RootFilesystemImage({
       });
     } catch (err) {
       setError(`${err}`);
+    }
+  }
+
+  async function saveRootfsDiscoveryConfig(): Promise<void> {
+    if (publishMode === "copy" && publishCopyMode === "project") {
+      message.info(
+        "Discovery config is saved into catalog metadata when you publish the live project RootFS.",
+      );
+      return;
+    }
+    try {
+      await runFreshAuthAction(async () => {
+        setPublishing(true);
+        try {
+          const slug = validateRootfsSlug(publishDraft.slug);
+          if (slug !== publishDraft.slug.trim()) {
+            setPublishDraft((cur) => ({ ...cur, slug: slug ?? "" }));
+          }
+          const tags = publishDraft.tags
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean);
+          const contentPayload = rootfsContentCatalogPayload(
+            normalizeRootfsContentManifest(publishContentInput),
+          );
+          const entry = await saveRootfsCatalogEntry({
+            image_id:
+              publishMode === "manage" && publishSourceEntry?.can_manage
+                ? publishSourceEntry.id
+                : undefined,
+            image: publishDraft.image,
+            label: publishDraft.label,
+            slug,
+            family: publishDraft.family.trim() || undefined,
+            version: publishDraft.version.trim() || undefined,
+            channel: publishDraft.channel.trim() || undefined,
+            supersedes_image_id:
+              publishDraft.supersedes_image_id.trim() || undefined,
+            description: publishDraft.description,
+            visibility: publishDraft.visibility,
+            tags,
+            theme: rootfsThemeFromPublishDraft(publishDraft),
+            ...contentPayload,
+            official: isAdmin ? publishDraft.official : undefined,
+            prepull: isAdmin ? publishDraft.prepull : undefined,
+            hidden: isAdmin ? publishDraft.hidden : undefined,
+          });
+          setPublishSourceEntry(entry);
+          setPublishDraft((cur) => ({
+            ...cur,
+            slug: entry.slug ?? cur.slug,
+          }));
+          setCatalogRefresh(Date.now());
+          if (entry.image === value) {
+            setImageId(entry.id);
+          }
+          if (entry.image === rootfsDraft) {
+            setRootfsDraftId(entry.id);
+          }
+          if (contentPayload.content_warnings.length > 0) {
+            message.warning("Saved discovery config with warnings.");
+          } else {
+            message.success("Saved discovery config.");
+          }
+        } finally {
+          setPublishing(false);
+        }
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
+  }
+
+  function exportRootfsConfig(): void {
+    downloadJsonFile(
+      `${safeJsonFilenamePart(publishDraft.label || "rootfs-config")}.rootfs-config.json`,
+      {
+        kind: ROOTFS_CONFIG_EXPORT_KIND,
+        version: ROOTFS_CONFIG_EXPORT_VERSION,
+        exported_at: new Date().toISOString(),
+        metadata: rootfsConfigMetadataFromPublishDraft(publishDraft),
+        theme: rootfsThemeFromPublishDraft(publishDraft),
+        content: publishContentValidation.content,
+      } satisfies RootfsConfigExport,
+    );
+  }
+
+  async function importRootfsConfigFile(file: File): Promise<void> {
+    try {
+      const candidate = parseRootfsConfigExport(JSON.parse(await file.text()));
+      setRootfsConfigImportCandidate(candidate);
+      setRootfsConfigImportOptions(rootfsConfigImportOptionsFor(candidate));
+    } catch (err) {
+      message.error(`Could not import RootFS config: ${err}`);
+    } finally {
+      if (rootfsConfigImportInputRef.current) {
+        rootfsConfigImportInputRef.current.value = "";
+      }
+    }
+  }
+
+  function applyRootfsConfigImport(): void {
+    const candidate = rootfsConfigImportCandidate;
+    if (!candidate) return;
+    const imported: string[] = [];
+    if (rootfsConfigImportOptions.metadata && candidate.metadata) {
+      setPublishDraft((cur) => ({
+        ...cur,
+        label: candidate.metadata?.label ?? cur.label,
+        slug: candidate.metadata?.slug ?? cur.slug,
+        description: candidate.metadata?.description ?? cur.description,
+        family: candidate.metadata?.family ?? cur.family,
+        version: candidate.metadata?.version ?? cur.version,
+        channel: candidate.metadata?.channel ?? cur.channel,
+        supersedes_image_id:
+          candidate.metadata?.supersedes_image_id ?? cur.supersedes_image_id,
+        visibility: candidate.metadata?.visibility ?? cur.visibility,
+        tags: candidate.metadata?.tags
+          ? normalizeRootfsTags(candidate.metadata.tags).join(", ")
+          : cur.tags,
+      }));
+      imported.push("metadata");
+    }
+    if (rootfsConfigImportOptions.theme && candidate.theme) {
+      setPublishDraft((cur) => ({
+        ...cur,
+        theme: themeDraftFromTheme(
+          candidate.theme,
+          candidate.metadata?.label ?? cur.label,
+        ),
+      }));
+      imported.push("theme");
+    }
+    if (rootfsConfigImportOptions.content && candidate.content) {
+      const result = normalizeRootfsContentManifest(candidate.content);
+      setPublishContentDraft(rootfsContentManifestToDraft(result.content));
+      imported.push("discovery config");
+      if (result.warnings.length > 0) {
+        message.warning(
+          `Imported discovery config with ${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}.`,
+        );
+      }
+    }
+    setRootfsConfigImportCandidate(null);
+    if (imported.length > 0) {
+      message.success(
+        `Imported ${imported.join(", ")}. Save or publish to update the catalog entry.`,
+      );
     }
   }
 
@@ -787,6 +1065,7 @@ export default function RootFilesystemImage({
       publishCopyMode,
       publishDraft,
       publishSourceEntry,
+      switchPublishedProject,
     });
     try {
       const sent = await submitNavigatorPromptToCurrentThread({
@@ -831,6 +1110,25 @@ export default function RootFilesystemImage({
     }
   }
 
+  function generatePublishSlug(): void {
+    setPublishDraft((cur) => ({
+      ...cur,
+      slug: generateRootfsSlugSuggestion(
+        cur.label,
+        publishContentDraft.title,
+        publishSourceEntry?.label,
+        cur.image,
+      ),
+    }));
+  }
+
+  function normalizePublishSlug(): void {
+    setPublishDraft((cur) => ({
+      ...cur,
+      slug: rootfsNormalizedSlug(cur.slug),
+    }));
+  }
+
   const activeImage = value || effectiveDefaultRootfs;
   const isCustomRootfs = !rootfsLoading && !activeDisplayEntry;
   const activeLabel = activeDisplayEntry
@@ -851,30 +1149,35 @@ export default function RootFilesystemImage({
 
   return (
     <div
-      style={isModal ? undefined : { marginTop: "-4px", marginLeft: "-10px" }}
+      style={
+        isModal || isPage
+          ? undefined
+          : { marginTop: "-4px", marginLeft: "-10px" }
+      }
     >
       <FreshAuthModal {...freshAuthModalProps} />
-      <div style={isModal ? undefined : { marginLeft: "15px" }}>
+      <div style={isModal || isPage ? undefined : { marginLeft: "15px" }}>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <div
             style={{
               ...rootfsHeroCardStyle(activeDisplayEntry),
-              maxWidth: isModal ? undefined : 760,
+              maxWidth: isModal || isPage ? undefined : 760,
+              padding: isPage ? 24 : undefined,
             }}
           >
             <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-              {renderRootfsThemePreview(activeDisplayEntry)}
+              {renderRootfsThemePreview(activeDisplayEntry, isPage ? 112 : 56)}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <Space
                   wrap
                   size={[8, 6]}
-                  style={{ marginBottom: 6, width: "100%" }}
+                  style={{ marginBottom: isPage ? 10 : 6, width: "100%" }}
                 >
                   <span
                     style={{
-                      fontSize: 18,
+                      fontSize: isPage ? 34 : 18,
                       fontWeight: 700,
-                      lineHeight: "24px",
+                      lineHeight: isPage ? "40px" : "24px",
                     }}
                   >
                     {activeLabel}
@@ -892,12 +1195,55 @@ export default function RootFilesystemImage({
                     <Tag color="blue">Upgrade available</Tag>
                   ) : null}
                 </Space>
-                <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                <Paragraph
+                  type="secondary"
+                  style={{
+                    fontSize: isPage ? 16 : undefined,
+                    lineHeight: isPage ? "24px" : undefined,
+                    marginBottom: 8,
+                  }}
+                >
                   {activeDescription}
                 </Paragraph>
               </div>
             </div>
           </div>
+
+          {activeDisplayEntry?.content
+            ? renderRootfsContentPanel({
+                entry: activeDisplayEntry,
+                onCopyToHome: async (action, targetPath) => {
+                  if (!actions) return;
+                  const source =
+                    action.source_path?.trim() || action.path?.trim();
+                  const dest = rootfsCopyTargetPath(
+                    action,
+                    getProjectHomeDirectory(project_id),
+                    targetPath,
+                  );
+                  if (!source || !dest) {
+                    message.error("Copy action is missing a source or target.");
+                    return;
+                  }
+                  await actions.copyPaths({
+                    src: source,
+                    dest,
+                    options: { force: false, errorOnExist: true },
+                  });
+                  return dest;
+                },
+                onLaunchProjectApp: async (action) => {
+                  await launchRootfsProjectAppAction({
+                    action,
+                    project_id,
+                  });
+                },
+                onOpenPath: (path) => {
+                  void actions?.open_file({ path, foreground: true });
+                },
+                project_id,
+              })
+            : null}
 
           {suggestedUpgradeEntry ? (
             <Alert
@@ -1485,6 +1831,7 @@ export default function RootFilesystemImage({
                         {draftRootfsEntry.image}
                       </div>
                       {renderRootfsEntryFacts(draftRootfsEntry)}
+                      {renderRootfsContentPreview(draftRootfsEntry)}
                       {renderRootfsWarning(draftRootfsEntry)}
                       {renderRootfsScan(draftRootfsEntry)}
                     </Space>
@@ -1559,7 +1906,10 @@ export default function RootFilesystemImage({
                 : "Save Metadata"
           }
           cancelText="Cancel"
-          okButtonProps={{ loading: publishing }}
+          okButtonProps={{ disabled: !!publishSlugError, loading: publishing }}
+          styles={{
+            body: { maxHeight: "calc(100vh - 230px)", overflowY: "auto" },
+          }}
           title={
             publishMode === "manage"
               ? "Manage RootFS Catalog Entry"
@@ -1627,473 +1977,704 @@ export default function RootFilesystemImage({
                   >
                     {publishDraft.image}
                   </div>
+                  <Button
+                    href={docsPath("projects/publish-rootfs")}
+                    icon={<Icon name="external-link" />}
+                    size="small"
+                    style={{ marginTop: 10 }}
+                    target="_blank"
+                  >
+                    RootFS publishing docs
+                  </Button>
                 </div>
               </div>
             </div>
 
-            <RuntimePanel
-              icon="copy"
-              title="Publish mode"
-              subtitle="Choose exactly what this action creates or updates."
-            >
-              <div
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  gridTemplateColumns:
-                    "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
-                }}
-              >
-                <PublishOptionCard
-                  active={
-                    publishMode === "copy" && publishCopyMode === "project"
-                  }
-                  description={
-                    <>
-                      Snapshot the visible <code>/</code> software environment
-                      for reuse. <code>/root</code> and <code>/tmp</code> are
-                      not included.
-                    </>
-                  }
-                  onClick={() => {
-                    setPublishMode("copy");
-                    setPublishCopyMode("project");
-                  }}
-                  title="Publish live project RootFS"
-                />
-                <PublishOptionCard
-                  active={publishMode === "copy" && publishCopyMode === "base"}
-                  description="Save metadata for the current base image string without publishing live project state."
-                  onClick={() => {
-                    setPublishMode("copy");
-                    setPublishCopyMode("base");
-                  }}
-                  title="Save base image metadata"
-                />
-                {publishSourceEntry?.can_manage ? (
-                  <PublishOptionCard
-                    active={publishMode === "manage"}
-                    description={
-                      publishSourceEntry.section === "mine"
-                        ? "Update the selected catalog entry instead of creating another copy."
-                        : "Edit the selected shared or official entry instead of saving my own copy."
-                    }
-                    onClick={() => setPublishMode("manage")}
-                    title="Update catalog entry"
-                  />
-                ) : null}
-              </div>
-            </RuntimePanel>
-
-            {publishMode === "copy" && publishCopyMode === "project" && (
-              <Alert
-                type={
-                  liveRootfsScan
-                    ? Number(
-                        liveRootfsScan.summary.severity_counts?.critical ?? 0,
-                      ) > 0
-                      ? "warning"
-                      : "success"
-                    : "info"
-                }
-                showIcon
-                title="Preflight scan the live project RootFS before publishing"
-                description={
-                  <Space
-                    direction="vertical"
-                    size="small"
-                    style={{ width: "100%" }}
-                  >
-                    <div>
-                      This scans the currently mounted project RootFS. Published
-                      images are scanned again after publication, but this check
-                      catches obvious vulnerabilities before creating the image.
-                    </div>
-                    {liveRootfsScan ? (
-                      <>
-                        {renderLiveRootfsScanSummary(liveRootfsScan)}
-                        {renderLiveRootfsScanActions(liveRootfsScan)}
-                      </>
-                    ) : null}
-                    <Button
-                      size="small"
-                      loading={scanningLiveRootfs}
-                      onClick={scanCurrentProjectRootfs}
-                    >
-                      Scan current RootFS now
-                    </Button>
-                  </Space>
-                }
-              />
-            )}
-
-            {publishMode === "copy" && publishCopyMode === "project" ? (
-              <Alert
-                type="info"
-                showIcon
-                title="Publishing continues in the background"
-                description="After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. You can close and reopen project settings later to see current and past publish operations."
-              />
-            ) : null}
-
-            <RuntimePanel
-              icon="pencil"
-              title="Metadata"
-              subtitle="Name, describe, tag, and control who can see this image."
-            >
-              <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                <div
-                  style={{
-                    display: "grid",
-                    gap: 12,
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
-                  }}
-                >
-                  <div>
-                    <Paragraph strong style={{ marginBottom: 6 }}>
-                      Label
-                    </Paragraph>
-                    <Input
-                      value={publishDraft.label}
-                      onChange={(e) =>
-                        setPublishDraft((cur) => ({
-                          ...cur,
-                          label: e.target.value,
-                          theme: {
-                            ...cur.theme,
-                            title: e.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="e.g. Jupyter + LaTeX"
-                    />
-                  </div>
-                  <div>
-                    <Paragraph strong style={{ marginBottom: 6 }}>
-                      Tags
-                    </Paragraph>
-                    <Select
-                      mode="tags"
-                      style={{ width: "100%" }}
-                      options={publishTagOptions}
-                      value={parseRootfsTagString(publishDraft.tags)}
-                      onChange={(values) =>
-                        setPublishDraft((cur) => ({
-                          ...cur,
-                          tags: normalizeRootfsTags(values).join(", "),
-                        }))
-                      }
-                      tokenSeparators={[","]}
-                      placeholder="course, python, jupyter, gpu"
-                    />
-                    <ProjectPresetTagHints
-                      selectedTags={parseRootfsTagString(publishDraft.tags)}
-                      onAdd={(tag) =>
-                        setPublishDraft((cur) => ({
-                          ...cur,
-                          tags: normalizeRootfsTags([
-                            ...parseRootfsTagString(cur.tags),
-                            tag,
-                          ]).join(", "),
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Paragraph strong style={{ marginBottom: 6 }}>
-                    Description
-                  </Paragraph>
-                  <Input.TextArea
-                    value={publishDraft.description}
-                    onChange={(e) =>
-                      setPublishDraft((cur) => ({
-                        ...cur,
-                        description: e.target.value,
-                        theme: {
-                          ...cur.theme,
-                          description: e.target.value,
-                        },
-                      }))
-                    }
-                    rows={3}
-                    placeholder="Describe when this image should be used."
-                  />
-                  <Paragraph
-                    type="secondary"
-                    style={{ marginTop: 6, marginBottom: 0 }}
-                  >
-                    Plain text only. Markdown is not rendered here.
-                  </Paragraph>
-                </div>
-                <div>
-                  <Paragraph strong style={{ marginBottom: 8 }}>
-                    Visibility
-                  </Paragraph>
-                  <div
-                    style={{
-                      display: "grid",
-                      gap: 10,
-                      gridTemplateColumns:
-                        "repeat(auto-fit, minmax(min(180px, 100%), 1fr))",
-                    }}
-                  >
-                    <PublishOptionCard
-                      active={publishDraft.visibility === "private"}
-                      description="Only your account can see and reuse this image."
-                      onClick={() =>
-                        setPublishDraft((cur) => ({
-                          ...cur,
-                          visibility: "private",
-                        }))
-                      }
-                      title="Only me"
-                    />
-                    <PublishOptionCard
-                      active={publishDraft.visibility === "collaborators"}
-                      description="Visible to collaborators who already share a project with you."
-                      onClick={() =>
-                        setPublishDraft((cur) => ({
-                          ...cur,
-                          visibility: "collaborators",
-                        }))
-                      }
-                      title="Collaborators"
-                    />
-                    <PublishOptionCard
-                      active={publishDraft.visibility === "public"}
-                      description="Visible to all site users. Use only for images you intend to share broadly."
-                      onClick={() =>
-                        setPublishDraft((cur) => ({
-                          ...cur,
-                          visibility: "public",
-                        }))
-                      }
-                      title="Public"
-                    />
-                  </div>
-                </div>
-              </Space>
-            </RuntimePanel>
-
-            <Collapse
-              size="small"
-              activeKey={publishAdvanced ? ["advanced"] : []}
-              onChange={(keys) =>
-                setPublishAdvanced(
-                  Array.isArray(keys)
-                    ? keys.includes("advanced")
-                    : keys === "advanced",
-                )
-              }
+            <Tabs
+              activeKey={publishTab}
+              onChange={setPublishTab}
               items={[
                 {
-                  key: "advanced",
-                  label: "Advanced publish options",
+                  key: "publish",
+                  label: "Publish",
                   children: (
                     <Space
                       direction="vertical"
-                      size="middle"
+                      size={16}
                       style={{ width: "100%" }}
                     >
-                      <div>
-                        <Paragraph strong style={{ marginBottom: "6px" }}>
-                          Version metadata
-                        </Paragraph>
+                      <RuntimePanel
+                        icon="copy"
+                        title="Publish mode"
+                        subtitle="Choose exactly what this action creates or updates."
+                      >
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 10,
+                            gridTemplateColumns:
+                              "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+                          }}
+                        >
+                          <PublishOptionCard
+                            active={
+                              publishMode === "copy" &&
+                              publishCopyMode === "project"
+                            }
+                            description={
+                              <>
+                                Snapshot the visible <code>/</code> software
+                                environment for reuse. <code>/root</code> and{" "}
+                                <code>/tmp</code> are not included.
+                              </>
+                            }
+                            onClick={() => {
+                              setPublishMode("copy");
+                              setPublishCopyMode("project");
+                            }}
+                            title="Publish live project RootFS"
+                          />
+                          <PublishOptionCard
+                            active={
+                              publishMode === "copy" &&
+                              publishCopyMode === "base"
+                            }
+                            description="Save metadata for the current base image string without publishing live project state."
+                            onClick={() => {
+                              setPublishMode("copy");
+                              setPublishCopyMode("base");
+                            }}
+                            title="Save base image metadata"
+                          />
+                          {publishSourceEntry?.can_manage ? (
+                            <PublishOptionCard
+                              active={publishMode === "manage"}
+                              description={
+                                publishSourceEntry.section === "mine"
+                                  ? "Update the selected catalog entry instead of creating another copy."
+                                  : "Edit the selected shared or official entry instead of saving my own copy."
+                              }
+                              onClick={() => setPublishMode("manage")}
+                              title="Update catalog entry"
+                            />
+                          ) : null}
+                        </div>
+                      </RuntimePanel>
+
+                      {publishMode === "copy" &&
+                      publishCopyMode === "project" ? (
                         <Space
                           direction="vertical"
-                          size="small"
+                          size={12}
                           style={{ width: "100%" }}
                         >
-                          <Input
-                            value={publishDraft.family}
+                          <Checkbox
+                            checked={switchPublishedProject}
+                            onChange={(e) =>
+                              setSwitchPublishedProject(e.target.checked)
+                            }
+                          >
+                            Switch this project to the newly published image
+                            when publishing finishes
+                          </Checkbox>
+                          <Alert
+                            type="info"
+                            showIcon
+                            title="Publishing continues in the background"
+                            description={
+                              switchPublishedProject
+                                ? "After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. When the publish operation succeeds, the project is switched to the new image as part of the same background operation."
+                                : "After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. The project keeps its current runtime image when publishing finishes."
+                            }
+                          />
+                        </Space>
+                      ) : null}
+                    </Space>
+                  ),
+                },
+                {
+                  key: "scan",
+                  label: "Scan",
+                  children:
+                    publishMode === "copy" && publishCopyMode === "project" ? (
+                      <Alert
+                        type={
+                          liveRootfsScan
+                            ? Number(
+                                liveRootfsScan.summary.severity_counts
+                                  ?.critical ?? 0,
+                              ) > 0
+                              ? "warning"
+                              : "success"
+                            : "info"
+                        }
+                        showIcon
+                        title="Preflight scan the live project RootFS before publishing"
+                        description={
+                          <Space
+                            direction="vertical"
+                            size="small"
+                            style={{ width: "100%" }}
+                          >
+                            <div>
+                              This scans the currently mounted project RootFS.
+                              Published images are scanned again after
+                              publication, but this check catches obvious
+                              vulnerabilities before creating the image.
+                            </div>
+                            {liveRootfsScan ? (
+                              <>
+                                {renderLiveRootfsScanSummary(liveRootfsScan)}
+                                {renderLiveRootfsScanActions(liveRootfsScan)}
+                              </>
+                            ) : null}
+                            <Button
+                              size="small"
+                              loading={scanningLiveRootfs}
+                              onClick={scanCurrentProjectRootfs}
+                            >
+                              Scan current RootFS now
+                            </Button>
+                          </Space>
+                        }
+                      />
+                    ) : (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="Preflight scan is only for publishing a live project RootFS."
+                        description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live RootFS to scan in this dialog."
+                      />
+                    ),
+                },
+                {
+                  key: "metadata",
+                  label: "Metadata",
+                  children: (
+                    <RuntimePanel
+                      icon="pencil"
+                      title="Metadata"
+                      subtitle="Name, describe, tag, and control who can see this image."
+                    >
+                      <Space
+                        direction="vertical"
+                        size={12}
+                        style={{ width: "100%" }}
+                      >
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 12,
+                            gridTemplateColumns:
+                              "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+                          }}
+                        >
+                          <div>
+                            <Paragraph strong style={{ marginBottom: 6 }}>
+                              Label
+                            </Paragraph>
+                            <Input
+                              value={publishDraft.label}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  label: e.target.value,
+                                  theme: {
+                                    ...cur.theme,
+                                    title: e.target.value,
+                                  },
+                                }))
+                              }
+                              placeholder="e.g. Jupyter + LaTeX"
+                            />
+                          </div>
+                          <div>
+                            <Paragraph strong style={{ marginBottom: 6 }}>
+                              Tags
+                            </Paragraph>
+                            <Select
+                              mode="tags"
+                              style={{ width: "100%" }}
+                              options={publishTagOptions}
+                              value={parseRootfsTagString(publishDraft.tags)}
+                              onChange={(values) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  tags: normalizeRootfsTags(values).join(", "),
+                                }))
+                              }
+                              tokenSeparators={[","]}
+                              placeholder="course, python, jupyter, gpu"
+                            />
+                            <ProjectPresetTagHints
+                              selectedTags={parseRootfsTagString(
+                                publishDraft.tags,
+                              )}
+                              onAdd={(tag) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  tags: normalizeRootfsTags([
+                                    ...parseRootfsTagString(cur.tags),
+                                    tag,
+                                  ]).join(", "),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Paragraph strong style={{ marginBottom: 6 }}>
+                            Description
+                          </Paragraph>
+                          <Input.TextArea
+                            value={publishDraft.description}
                             onChange={(e) =>
                               setPublishDraft((cur) => ({
                                 ...cur,
-                                family: e.target.value,
+                                description: e.target.value,
+                                theme: {
+                                  ...cur.theme,
+                                  description: e.target.value,
+                                },
                               }))
                             }
-                            placeholder="Family or series, e.g. tensorflow or ubuntu"
+                            rows={3}
+                            placeholder="Describe when this image should be used."
                           />
-                          {publishFamilyOptions.length > 0 ? (
-                            <Space wrap size={[6, 6]}>
-                              {publishFamilyOptions
-                                .slice(0, 8)
-                                .map((option) => (
-                                  <Tag
-                                    key={`${option.value}`}
-                                    style={{ cursor: "pointer" }}
-                                    onClick={() =>
-                                      setPublishDraft((cur) => ({
-                                        ...cur,
-                                        family: `${option.value}`,
-                                      }))
-                                    }
-                                  >
-                                    {option.value}
-                                  </Tag>
-                                ))}
+                          <Paragraph
+                            type="secondary"
+                            style={{ marginTop: 6, marginBottom: 0 }}
+                          >
+                            Plain text only. Markdown is not rendered here.
+                          </Paragraph>
+                        </div>
+                        <div>
+                          <Paragraph strong style={{ marginBottom: 6 }}>
+                            Public slug
+                          </Paragraph>
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              addonBefore="/rootfs/"
+                              status={publishSlugError ? "error" : undefined}
+                              value={publishDraft.slug}
+                              onBlur={normalizePublishSlug}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  slug: e.target.value,
+                                }))
+                              }
+                              placeholder="auto-generated on save"
+                            />
+                            <Button onClick={generatePublishSlug}>
+                              Generate
+                            </Button>
+                          </Space.Compact>
+                          {publishSlugError ? (
+                            <Alert
+                              showIcon
+                              type="error"
+                              message={`Invalid slug: ${publishSlugError}`}
+                              style={{ marginTop: 8 }}
+                            />
+                          ) : normalizedPublishSlug &&
+                            normalizedPublishSlug !==
+                              publishDraft.slug.trim() ? (
+                            <Paragraph
+                              type="secondary"
+                              style={{ marginTop: 6, marginBottom: 0 }}
+                            >
+                              Will save as <code>{normalizedPublishSlug}</code>.
+                            </Paragraph>
+                          ) : (
+                            <Paragraph
+                              type="secondary"
+                              style={{ marginTop: 6, marginBottom: 0 }}
+                            >
+                              Leave blank to generate one when saving or
+                              publishing. Use lowercase letters, numbers, and
+                              hyphens. Duplicate slugs are rejected on save.
+                            </Paragraph>
+                          )}
+                        </div>
+                        <div>
+                          <Paragraph strong style={{ marginBottom: 8 }}>
+                            Visibility
+                          </Paragraph>
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 10,
+                              gridTemplateColumns:
+                                "repeat(auto-fit, minmax(min(180px, 100%), 1fr))",
+                            }}
+                          >
+                            <PublishOptionCard
+                              active={publishDraft.visibility === "private"}
+                              description="Only your account can see and reuse this image."
+                              onClick={() =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  visibility: "private",
+                                }))
+                              }
+                              title="Only me"
+                            />
+                            <PublishOptionCard
+                              active={
+                                publishDraft.visibility === "collaborators"
+                              }
+                              description="Visible to collaborators who already share a project with you."
+                              onClick={() =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  visibility: "collaborators",
+                                }))
+                              }
+                              title="Collaborators"
+                            />
+                            <PublishOptionCard
+                              active={publishDraft.visibility === "public"}
+                              description="Visible to all site users. Use only for images you intend to share broadly."
+                              onClick={() =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  visibility: "public",
+                                }))
+                              }
+                              title="Public"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Paragraph strong style={{ marginBottom: 8 }}>
+                            Public landing page
+                          </Paragraph>
+                          {rootfsLandingUrl ? (
+                            <Space
+                              direction="vertical"
+                              size={8}
+                              style={{ width: "100%" }}
+                            >
+                              <Typography.Text
+                                copyable={{ text: rootfsLandingUrl }}
+                              >
+                                <Typography.Link
+                                  href={rootfsLandingPath}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {rootfsLandingUrl}
+                                </Typography.Link>
+                              </Typography.Text>
+                              <Space wrap>
+                                <Button
+                                  href={rootfsLandingPath}
+                                  icon={<Icon name="external-link" />}
+                                  target="_blank"
+                                >
+                                  Open landing page
+                                </Button>
+                                <Button
+                                  icon={<Icon name="copy" />}
+                                  onClick={() =>
+                                    void copyRootfsPublicUrl(rootfsLandingUrl)
+                                  }
+                                >
+                                  Copy link
+                                </Button>
+                              </Space>
                             </Space>
-                          ) : null}
-                          <Input
-                            value={publishDraft.version}
-                            onChange={(e) =>
-                              setPublishDraft((cur) => ({
-                                ...cur,
-                                version: e.target.value,
-                              }))
+                          ) : (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="Save or publish this catalog entry to create a public landing URL."
+                            />
+                          )}
+                        </div>
+                      </Space>
+                    </RuntimePanel>
+                  ),
+                },
+                {
+                  key: "manifest",
+                  label: "Manifest",
+                  children: (
+                    <Space
+                      direction="vertical"
+                      size={14}
+                      style={{ width: "100%" }}
+                    >
+                      <RuntimePanel
+                        icon="file-export"
+                        title="Import / export config"
+                        subtitle="Move portable RootFS catalog metadata, theme, and discovery actions between images or projects."
+                      >
+                        <Space wrap>
+                          <Button onClick={exportRootfsConfig}>
+                            Export JSON
+                          </Button>
+                          <Button
+                            onClick={() =>
+                              rootfsConfigImportInputRef.current?.click()
                             }
-                            placeholder="Version, e.g. 2.4 or 24.04"
-                          />
-                          <Input
-                            value={publishDraft.channel}
-                            onChange={(e) =>
-                              setPublishDraft((cur) => ({
-                                ...cur,
-                                channel: e.target.value,
-                              }))
-                            }
-                            placeholder="Channel, e.g. stable, beta, or nightly"
-                          />
-                          {publishChannelOptions.length > 0 ? (
-                            <Space wrap size={[6, 6]}>
-                              {publishChannelOptions
-                                .slice(0, 8)
-                                .map((option) => (
-                                  <Tag
-                                    key={`${option.value}`}
-                                    style={{ cursor: "pointer" }}
-                                    onClick={() =>
-                                      setPublishDraft((cur) => ({
-                                        ...cur,
-                                        channel: `${option.value}`,
-                                      }))
-                                    }
-                                  >
-                                    {option.value}
-                                  </Tag>
-                                ))}
-                            </Space>
-                          ) : null}
-                          <Select
-                            allowClear
-                            showSearch
-                            optionFilterProp="label"
-                            options={publishSupersedesOptions}
-                            value={
-                              publishDraft.supersedes_image_id || undefined
-                            }
-                            onChange={(value) =>
-                              setPublishDraft((cur) => ({
-                                ...cur,
-                                supersedes_image_id: value ?? "",
-                              }))
-                            }
-                            placeholder="Optional image this replaces for upgrade guidance"
-                          />
+                          >
+                            Import JSON
+                          </Button>
                         </Space>
                         <Paragraph
                           type="secondary"
-                          style={{ marginTop: "6px", marginBottom: 0 }}
+                          style={{ marginTop: 10, marginBottom: 0 }}
                         >
-                          Optional. Use these fields for curated versioned
-                          images so CoCalc can show upgrade recommendations.
+                          Import updates this draft only. Save or publish to
+                          update the RootFS catalog entry.
                         </Paragraph>
-                      </div>
-                      <div>
-                        <Space
-                          align="start"
-                          size="middle"
-                          style={{
-                            width: "100%",
-                            justifyContent: "space-between",
-                          }}
-                        >
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <Paragraph
-                              type="secondary"
-                              style={{ marginBottom: 0 }}
-                            >
-                              Theme this image with a color, accent color, icon,
-                              and optional artwork so it stands out in RootFS
-                              pickers.
-                            </Paragraph>
-                            <Space wrap style={{ marginTop: "8px" }}>
-                              {publishDraft.theme.color ? (
-                                <Tag color={publishDraft.theme.color}>
-                                  Color
-                                </Tag>
-                              ) : null}
-                              {publishDraft.theme.accent_color ? (
-                                <Tag color={publishDraft.theme.accent_color}>
-                                  Accent
-                                </Tag>
-                              ) : null}
-                              {publishDraft.theme.image_blob?.trim() ? (
-                                <Tag>Image</Tag>
-                              ) : null}
-                              {publishDraft.theme.icon?.trim() ? (
-                                <Tag>{publishDraft.theme.icon.trim()}</Tag>
-                              ) : null}
-                            </Space>
-                          </div>
-                          <Button onClick={() => setPublishThemeOpen(true)}>
-                            Edit theme...
-                          </Button>
-                        </Space>
-                      </div>
-                      {isAdmin && (
-                        <Space direction="vertical" size="small">
-                          <Checkbox
-                            checked={publishDraft.official}
-                            onChange={(e) =>
-                              setPublishDraft((cur) => ({
-                                ...cur,
-                                official: e.target.checked,
-                              }))
-                            }
-                          >
-                            Official image
-                          </Checkbox>
-                          <Checkbox
-                            checked={publishDraft.prepull}
-                            onChange={(e) =>
-                              setPublishDraft((cur) => ({
-                                ...cur,
-                                prepull: e.target.checked,
-                              }))
-                            }
-                          >
-                            Pre-pull on new hosts
-                          </Checkbox>
-                          <Checkbox
-                            checked={publishDraft.hidden}
-                            onChange={(e) =>
-                              setPublishDraft((cur) => ({
-                                ...cur,
-                                hidden: e.target.checked,
-                              }))
-                            }
-                          >
-                            Hide from user-facing catalog views
-                          </Checkbox>
-                        </Space>
-                      )}
-                      <ActionAssist
-                        title="Use CLI or Agent"
-                        description={
+                      </RuntimePanel>
+                      <RootfsContentManifestBuilder
+                        draft={publishContentDraft}
+                        onChange={setPublishContentDraft}
+                        onPickDirectory={(actionIndex, field, currentPath) =>
+                          setPublishContentPicker({
+                            actionIndex,
+                            field,
+                            pendingPath: currentPath || "/",
+                          })
+                        }
+                        onSave={
                           publishMode === "copy" &&
                           publishCopyMode === "project"
-                            ? "Preview the equivalent CLI command, or send the same publish request to the current workspace agent thread."
-                            : "Preview the equivalent CLI command, or send the same catalog-save request to the current workspace agent thread."
+                            ? undefined
+                            : saveRootfsDiscoveryConfig
                         }
-                        cliTitle="RootFS CLI"
-                        cliCommands={[publishAssistCommand]}
-                        onSendAgent={sendPublishAssistToAgent}
-                        agentDescription="Agent support depends on the current workspace Codex session. Restart-sensitive actions such as changing the project image still need more care than publishing."
+                        previewEntry={publishContentPreviewEntry}
+                        project_id={project_id}
+                        validation={publishContentValidation}
                       />
                     </Space>
+                  ),
+                },
+                {
+                  key: "advanced",
+                  label: "Advanced",
+                  children: (
+                    <RuntimePanel
+                      icon="settings"
+                      title="Advanced publish options"
+                      subtitle="Version metadata, theme, admin flags, and CLI or agent helpers."
+                    >
+                      <Space
+                        direction="vertical"
+                        size="middle"
+                        style={{ width: "100%" }}
+                      >
+                        <div>
+                          <Paragraph strong style={{ marginBottom: "6px" }}>
+                            Version metadata
+                          </Paragraph>
+                          <Space
+                            direction="vertical"
+                            size="small"
+                            style={{ width: "100%" }}
+                          >
+                            <Input
+                              value={publishDraft.family}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  family: e.target.value,
+                                }))
+                              }
+                              placeholder="Family or series, e.g. tensorflow or ubuntu"
+                            />
+                            {publishFamilyOptions.length > 0 ? (
+                              <Space wrap size={[6, 6]}>
+                                {publishFamilyOptions
+                                  .slice(0, 8)
+                                  .map((option) => (
+                                    <Tag
+                                      key={`${option.value}`}
+                                      style={{ cursor: "pointer" }}
+                                      onClick={() =>
+                                        setPublishDraft((cur) => ({
+                                          ...cur,
+                                          family: `${option.value}`,
+                                        }))
+                                      }
+                                    >
+                                      {option.value}
+                                    </Tag>
+                                  ))}
+                              </Space>
+                            ) : null}
+                            <Input
+                              value={publishDraft.version}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  version: e.target.value,
+                                }))
+                              }
+                              placeholder="Version, e.g. 2.4 or 24.04"
+                            />
+                            <Input
+                              value={publishDraft.channel}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  channel: e.target.value,
+                                }))
+                              }
+                              placeholder="Channel, e.g. stable, beta, or nightly"
+                            />
+                            {publishChannelOptions.length > 0 ? (
+                              <Space wrap size={[6, 6]}>
+                                {publishChannelOptions
+                                  .slice(0, 8)
+                                  .map((option) => (
+                                    <Tag
+                                      key={`${option.value}`}
+                                      style={{ cursor: "pointer" }}
+                                      onClick={() =>
+                                        setPublishDraft((cur) => ({
+                                          ...cur,
+                                          channel: `${option.value}`,
+                                        }))
+                                      }
+                                    >
+                                      {option.value}
+                                    </Tag>
+                                  ))}
+                              </Space>
+                            ) : null}
+                            <Select
+                              allowClear
+                              showSearch
+                              optionFilterProp="label"
+                              options={publishSupersedesOptions}
+                              value={
+                                publishDraft.supersedes_image_id || undefined
+                              }
+                              onChange={(value) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  supersedes_image_id: value ?? "",
+                                }))
+                              }
+                              placeholder="Optional image this replaces for upgrade guidance"
+                            />
+                          </Space>
+                          <Paragraph
+                            type="secondary"
+                            style={{
+                              marginTop: "6px",
+                              marginBottom: 0,
+                            }}
+                          >
+                            Optional. Use these fields for curated versioned
+                            images so CoCalc can show upgrade recommendations.
+                          </Paragraph>
+                        </div>
+                        <div>
+                          <Space
+                            align="start"
+                            size="middle"
+                            style={{
+                              width: "100%",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <Paragraph
+                                type="secondary"
+                                style={{ marginBottom: 0 }}
+                              >
+                                Theme this image with a color, accent color,
+                                icon, and optional artwork so it stands out in
+                                RootFS pickers.
+                              </Paragraph>
+                              <Space wrap style={{ marginTop: "8px" }}>
+                                {publishDraft.theme.color ? (
+                                  <Tag color={publishDraft.theme.color}>
+                                    Color
+                                  </Tag>
+                                ) : null}
+                                {publishDraft.theme.accent_color ? (
+                                  <Tag color={publishDraft.theme.accent_color}>
+                                    Accent
+                                  </Tag>
+                                ) : null}
+                                {publishDraft.theme.image_blob?.trim() ? (
+                                  <Tag>Image</Tag>
+                                ) : null}
+                                {publishDraft.theme.icon?.trim() ? (
+                                  <Tag>{publishDraft.theme.icon.trim()}</Tag>
+                                ) : null}
+                              </Space>
+                            </div>
+                            <Button onClick={() => setPublishThemeOpen(true)}>
+                              Edit theme...
+                            </Button>
+                          </Space>
+                        </div>
+                        {isAdmin && (
+                          <Space direction="vertical" size="small">
+                            <Checkbox
+                              checked={publishDraft.official}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  official: e.target.checked,
+                                }))
+                              }
+                            >
+                              Official image
+                            </Checkbox>
+                            <Checkbox
+                              checked={publishDraft.prepull}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  prepull: e.target.checked,
+                                }))
+                              }
+                            >
+                              Pre-pull on all hosts
+                            </Checkbox>
+                            <Checkbox
+                              checked={publishDraft.hidden}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  hidden: e.target.checked,
+                                }))
+                              }
+                            >
+                              Hide from user-facing catalog views
+                            </Checkbox>
+                          </Space>
+                        )}
+                        <ActionAssist
+                          title="Use CLI or Agent"
+                          description={
+                            publishMode === "copy" &&
+                            publishCopyMode === "project"
+                              ? "Preview the equivalent CLI command, or send the same publish request to the current workspace agent thread."
+                              : "Preview the equivalent CLI command, or send the same catalog-save request to the current workspace agent thread."
+                          }
+                          cliTitle="RootFS CLI"
+                          cliCommands={[publishAssistCommand]}
+                          onSendAgent={sendPublishAssistToAgent}
+                          agentDescription={
+                            switchPublishedProject &&
+                            publishMode === "copy" &&
+                            publishCopyMode === "project"
+                              ? "Agent support depends on the current workspace Codex session. This publish request also switches the project to the new image when the background operation succeeds."
+                              : "Agent support depends on the current workspace Codex session."
+                          }
+                        />
+                      </Space>
+                    </RuntimePanel>
                   ),
                 },
               ]}
@@ -2103,10 +2684,129 @@ export default function RootFilesystemImage({
               {publishMode === "manage"
                 ? "This updates the selected catalog entry in place."
                 : publishCopyMode === "project"
-                  ? "Publishing creates a new immutable managed RootFS reference. The current project keeps its existing live upperdir and is not automatically switched to that new image."
+                  ? switchPublishedProject
+                    ? "Publishing creates a new immutable managed RootFS reference and switches this project to that image after the publish operation succeeds."
+                    : "Publishing creates a new immutable managed RootFS reference. This project keeps its current runtime image."
                   : "This saves catalog metadata for the current image string without creating a new managed RootFS artifact."}
             </Paragraph>
           </Space>
+        </Modal>
+      )}
+      <input
+        ref={rootfsConfigImportInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            void importRootfsConfigFile(file);
+          }
+        }}
+      />
+      {rootfsConfigImportCandidate ? (
+        <Modal
+          open
+          destroyOnHidden
+          title="Import RootFS Config"
+          okText="Import selected"
+          okButtonProps={{
+            disabled: !rootfsConfigImportOptionsHasSelection(
+              rootfsConfigImportOptions,
+            ),
+          }}
+          onCancel={() => setRootfsConfigImportCandidate(null)}
+          onOk={applyRootfsConfigImport}
+        >
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Alert
+              type="info"
+              showIcon
+              message="Choose which parts of this JSON config to import."
+              description="Import changes this draft only. Save or publish to update the RootFS catalog metadata."
+            />
+            <Checkbox
+              disabled={!rootfsConfigImportCandidate.metadata}
+              checked={rootfsConfigImportOptions.metadata}
+              onChange={(e) =>
+                setRootfsConfigImportOptions((cur) => ({
+                  ...cur,
+                  metadata: e.target.checked,
+                }))
+              }
+            >
+              Metadata
+              {rootfsConfigImportCandidate.metadata?.label
+                ? `: ${rootfsConfigImportCandidate.metadata.label}`
+                : ""}
+            </Checkbox>
+            <Checkbox
+              disabled={!rootfsConfigImportCandidate.theme}
+              checked={rootfsConfigImportOptions.theme}
+              onChange={(e) =>
+                setRootfsConfigImportOptions((cur) => ({
+                  ...cur,
+                  theme: e.target.checked,
+                }))
+              }
+            >
+              Theme
+              {rootfsConfigImportCandidate.theme?.icon
+                ? `: ${rootfsConfigImportCandidate.theme.icon}`
+                : ""}
+            </Checkbox>
+            <Checkbox
+              disabled={!rootfsConfigImportCandidate.content}
+              checked={rootfsConfigImportOptions.content}
+              onChange={(e) =>
+                setRootfsConfigImportOptions((cur) => ({
+                  ...cur,
+                  content: e.target.checked,
+                }))
+              }
+            >
+              Discovery config
+              {rootfsConfigImportCandidate.content
+                ? `: ${(rootfsConfigImportCandidate.content.actions ?? []).length} action${(rootfsConfigImportCandidate.content.actions ?? []).length === 1 ? "" : "s"}`
+                : ""}
+            </Checkbox>
+          </Space>
+        </Modal>
+      ) : null}
+      {publishContentPicker && (
+        <Modal
+          open
+          destroyOnHidden
+          width={860}
+          title="Choose RootFS path"
+          okText="Use this path"
+          onCancel={() => setPublishContentPicker(null)}
+          onOk={() => {
+            const { actionIndex, field, pendingPath } = publishContentPicker;
+            setPublishContentDraft((cur) => ({
+              ...cur,
+              actions: cur.actions.map((action, index) =>
+                index === actionIndex
+                  ? { ...action, [field]: pendingPath }
+                  : action,
+              ),
+            }));
+            setPublishContentPicker(null);
+          }}
+        >
+          <DirectorySelector
+            project_id={project_id}
+            startingPath={publishContentPicker.pendingPath || "/"}
+            onSelect={(path) =>
+              setPublishContentPicker((cur) =>
+                cur == null ? cur : { ...cur, pendingPath: path },
+              )
+            }
+            style={{ width: "100%" }}
+            bodyStyle={{ maxHeight: 360 }}
+            closable={false}
+            allowAbsolutePaths
+          />
         </Modal>
       )}
       <ThemeEditorModal
@@ -2137,9 +2837,12 @@ export function RootFilesystemImageModal({
   return (
     <Modal
       destroyOnHidden
-      footer={null}
+      footer={<Button onClick={onClose}>Close</Button>}
       onCancel={onClose}
       open={open}
+      styles={{
+        body: { maxHeight: "calc(100vh - 210px)", overflowY: "auto" },
+      }}
       title={
         <>
           <Icon name="docker" style={{ marginRight: 10 }} />
@@ -2329,6 +3032,134 @@ function parseRootfsTagString(tags: string): string[] {
   return normalizeRootfsTags(tags.split(","));
 }
 
+function rootfsSlugValidationError(slug: string): string | undefined {
+  try {
+    validateRootfsSlug(slug);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : `${err}`;
+  }
+}
+
+function rootfsNormalizedSlug(slug: string): string {
+  try {
+    return validateRootfsSlug(slug) ?? "";
+  } catch {
+    return slug;
+  }
+}
+
+function rootfsValidSlug(slug: string): string | undefined {
+  try {
+    return validateRootfsSlug(slug);
+  } catch {
+    return undefined;
+  }
+}
+
+function generateRootfsSlugSuggestion(
+  ...parts: (string | undefined)[]
+): string {
+  const source = parts.find((part) => part?.trim())?.trim() ?? "rootfs";
+  const base =
+    source
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/--+/g, "-")
+      .slice(0, 28)
+      .replace(/-+$/g, "") || "rootfs";
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return rootfsNormalizedSlug(`${base}-${suffix}`);
+}
+
+function rootfsConfigMetadataFromPublishDraft(
+  draft: PublishDraft,
+): RootfsConfigExportMetadata {
+  return {
+    label: draft.label,
+    slug: draft.slug.trim() || undefined,
+    description: draft.description,
+    family: draft.family.trim() || undefined,
+    version: draft.version.trim() || undefined,
+    channel: draft.channel.trim() || undefined,
+    supersedes_image_id: draft.supersedes_image_id.trim() || undefined,
+    visibility: draft.visibility,
+    tags: parseRootfsTagString(draft.tags),
+  };
+}
+
+function rootfsPublicLandingPath({
+  publishDraft,
+  publishSourceEntry,
+}: {
+  publishDraft: PublishDraft;
+  publishSourceEntry?: RootfsImageEntry;
+}): string | undefined {
+  const slug =
+    rootfsValidSlug(publishDraft.slug) || publishSourceEntry?.slug?.trim();
+  if (slug) {
+    return rootfsPath({ id: publishSourceEntry?.id ?? "", slug });
+  }
+  if (publishSourceEntry?.id) {
+    return rootfsPath({ id: publishSourceEntry.id });
+  }
+  return undefined;
+}
+
+function absoluteRootfsPublicUrl(path?: string): string | undefined {
+  if (!path) return undefined;
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).toString();
+}
+
+async function copyRootfsPublicUrl(url?: string): Promise<void> {
+  if (!url) return;
+  await navigator.clipboard.writeText(url);
+  message.success("Copied RootFS landing page link.");
+}
+
+function rootfsConfigImportOptionsFor(
+  config: RootfsConfigExport,
+): RootfsConfigImportOptions {
+  return {
+    metadata: config.metadata != null,
+    theme: config.theme != null,
+    content: config.content != null,
+  };
+}
+
+function rootfsConfigImportOptionsHasSelection(
+  options: RootfsConfigImportOptions,
+): boolean {
+  return options.metadata || options.theme || options.content;
+}
+
+function safeJsonFilenamePart(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "rootfs-config"
+  );
+}
+
+function downloadJsonFile(filename: string, value: unknown): void {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function rootfsThemeHasVisuals(theme: ThemeEditorDraft): boolean {
   return [theme.color, theme.accent_color, theme.icon, theme.image_blob].some(
     (value) => `${value ?? ""}`.trim().length > 0,
@@ -2358,22 +3189,28 @@ function rootfsSummaryCardStyle(entry?: {
   };
 }
 
-function renderRootfsThemePreview(entry?: {
-  theme?: RootfsImageTheme;
-  label?: string;
-  image?: string;
-}): React.JSX.Element {
+function renderRootfsThemePreview(
+  entry?: {
+    theme?: RootfsImageTheme;
+    label?: string;
+    image?: string;
+  },
+  size = 56,
+): React.JSX.Element {
   const imageUrl = rootfsThemeImageUrl(entry?.theme);
   const accentColor = entry?.theme?.accent_color?.trim();
   const color = entry?.theme?.color?.trim();
-  const iconName = entry?.theme?.icon?.trim() || "cube";
+  const requestedIconName = entry?.theme?.icon?.trim();
+  const iconName: IconName = isIconName(requestedIconName)
+    ? requestedIconName
+    : "docker";
   return imageUrl ? (
     <img
       src={imageUrl}
       alt={`${entry?.label || entry?.image || "RootFS"} theme`}
       style={{
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         borderRadius: 12,
         objectFit: "cover",
         flex: "0 0 auto",
@@ -2382,8 +3219,8 @@ function renderRootfsThemePreview(entry?: {
   ) : (
     <div
       style={{
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         borderRadius: 12,
         display: "flex",
         alignItems: "center",
@@ -2393,7 +3230,7 @@ function renderRootfsThemePreview(entry?: {
         flex: "0 0 auto",
       }}
     >
-      <Icon name={iconName as any} style={{ fontSize: "24px" }} />
+      <Icon name={iconName as any} style={{ fontSize: size <= 56 ? 24 : 56 }} />
     </div>
   );
 }
@@ -2431,13 +3268,28 @@ function renderRootfsTags(
 function rootfsCatalogSearchText(entry: RootfsImageEntry): string {
   return [
     entry.label,
+    entry.slug,
     entry.image,
     entry.description,
+    entry.content?.title,
+    entry.content?.subtitle,
+    entry.content?.description,
+    entry.content?.publisher?.name,
+    entry.content?.license?.name,
     entry.owner_name,
     entry.family,
     entry.version,
     entry.channel,
     entry.section,
+    ...(entry.content?.highlights ?? []),
+    ...(entry.content?.actions ?? []).flatMap((action) => [
+      action.label,
+      action.description,
+      action.path,
+      action.source_path,
+      action.target_path,
+      action.url,
+    ]),
     ...(entry.tags ?? []),
   ]
     .filter(Boolean)
@@ -2467,6 +3319,11 @@ function RootfsCatalogCard({
   ]
     .filter(Boolean)
     .join(" • ");
+  const description =
+    entry.description?.trim() ||
+    entry.content?.subtitle?.trim() ||
+    entry.content?.description?.trim();
+  const contentTitle = entry.content?.title?.trim();
 
   return (
     <button
@@ -2533,7 +3390,23 @@ function RootfsCatalogCard({
         >
           {label}
         </div>
-        {entry.description ? (
+        {contentTitle && contentTitle !== label ? (
+          <div
+            title={contentTitle}
+            style={{
+              color: COLORS.GRAY_D,
+              fontSize: 12,
+              fontWeight: 600,
+              marginBottom: 3,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {contentTitle}
+          </div>
+        ) : null}
+        {description ? (
           <div
             style={{
               color: COLORS.GRAY_D,
@@ -2546,8 +3419,17 @@ function RootfsCatalogCard({
               WebkitLineClamp: 2,
             }}
           >
-            {entry.description}
+            {description}
           </div>
+        ) : null}
+        {entry.content?.highlights?.length ? (
+          <Space wrap size={[4, 4]} style={{ marginTop: 6 }}>
+            {entry.content.highlights.slice(0, 3).map((highlight) => (
+              <Tag key={highlight} style={{ marginInlineEnd: 0 }}>
+                {highlight}
+              </Tag>
+            ))}
+          </Space>
         ) : null}
         {facts ? (
           <div
@@ -2576,6 +3458,813 @@ function RootfsCatalogCard({
       </div>
     </button>
   );
+}
+
+function RootfsContentManifestBuilder({
+  draft,
+  onChange,
+  onPickDirectory,
+  onSave,
+  previewEntry,
+  project_id,
+  validation,
+}: {
+  draft: RootfsContentDraft;
+  onChange: (
+    value:
+      | RootfsContentDraft
+      | ((current: RootfsContentDraft) => RootfsContentDraft),
+  ) => void;
+  onPickDirectory: (
+    actionIndex: number,
+    field: "path" | "source_path",
+    currentPath: string,
+  ) => void;
+  onSave?: () => Promise<void>;
+  previewEntry: RootfsImageEntry;
+  project_id: string;
+  validation: ReturnType<typeof normalizeRootfsContentManifest>;
+}): React.JSX.Element {
+  const [saving, setSaving] = useState<boolean>(false);
+  const [configuredAppSpecs, setConfiguredAppSpecs] = useState<AppSpec[]>([]);
+  const [configuredAppsLoading, setConfiguredAppsLoading] =
+    useState<boolean>(false);
+  const [configuredAppsError, setConfiguredAppsError] = useState<string>("");
+  const projectHome = getProjectHomeDirectory(project_id);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadConfiguredApps(): Promise<void> {
+      try {
+        setConfiguredAppsLoading(true);
+        setConfiguredAppsError("");
+        const api = webapp_client.conat_client.projectApi({ project_id });
+        const records = await api.apps.listAppSpecs();
+        if (cancelled) return;
+        setConfiguredAppSpecs(
+          records
+            .map((record) => record.spec)
+            .filter((spec): spec is AppSpec => spec != null)
+            .sort((a, b) =>
+              rootfsProjectAppSpecTitle(a).localeCompare(
+                rootfsProjectAppSpecTitle(b),
+              ),
+            ),
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setConfiguredAppsError(`${err}`);
+        }
+      } finally {
+        if (!cancelled) {
+          setConfiguredAppsLoading(false);
+        }
+      }
+    }
+    void loadConfiguredApps();
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id]);
+
+  function setField<K extends keyof RootfsContentDraft>(
+    field: K,
+    value: RootfsContentDraft[K],
+  ): void {
+    onChange((cur) => ({ ...cur, [field]: value }));
+  }
+
+  function updateAction(
+    index: number,
+    patch: Partial<RootfsContentActionDraft>,
+  ): void {
+    onChange((cur) => ({
+      ...cur,
+      actions: cur.actions.map((action, i) =>
+        i === index
+          ? normalizeRootfsContentActionDraft({ ...action, ...patch })
+          : action,
+      ),
+    }));
+  }
+
+  function addAction(kind: RootfsContentAction["kind"]): void {
+    const appSpec = kind === "project-app" ? configuredAppSpecs[0] : undefined;
+    onChange((cur) => ({
+      ...cur,
+      actions: [
+        ...cur.actions,
+        defaultRootfsContentActionDraft(kind, undefined, appSpec),
+      ],
+    }));
+  }
+
+  async function save(): Promise<void> {
+    if (!onSave) return;
+    setSaving(true);
+    try {
+      await onSave();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Space direction="vertical" size={14} style={{ width: "100%" }}>
+      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        The discovery config adds browse, copy-to-HOME, open, external link, and
+        one-click project app launch actions to the RootFS component so users
+        can quickly find and use the files and services bundled with this image.
+      </Paragraph>
+
+      <div style={{ position: "relative" }}>
+        <Tag
+          color="blue"
+          style={{
+            marginInlineEnd: 0,
+            position: "absolute",
+            right: 12,
+            top: 12,
+            zIndex: 1,
+          }}
+        >
+          Preview
+        </Tag>
+        {validation.content ? (
+          renderRootfsContentPanel({
+            entry: previewEntry,
+            onCopyToHome: async () => undefined,
+            onLaunchProjectApp: async () => undefined,
+            onOpenPath: () => undefined,
+          })
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message="No preview yet."
+            description="Add a title, description, highlight, or action to create the discovery panel."
+          />
+        )}
+      </div>
+
+      <RuntimePanel
+        icon="book"
+        title="Edit discovery config"
+        subtitle="This saves to the RootFS catalog entry metadata. It is not written into the immutable image filesystem."
+      >
+        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+            }}
+          >
+            <RootfsContentField label="Title">
+              <Input
+                value={draft.title}
+                onChange={(e) => setField("title", e.target.value)}
+                placeholder="e.g. Computational Biology Workshop"
+              />
+            </RootfsContentField>
+            <RootfsContentField label="Subtitle">
+              <Input
+                value={draft.subtitle}
+                onChange={(e) => setField("subtitle", e.target.value)}
+                placeholder="A short one-line summary"
+              />
+            </RootfsContentField>
+          </div>
+          <RootfsContentField label="Description">
+            <Input.TextArea
+              rows={3}
+              value={draft.description}
+              onChange={(e) => setField("description", e.target.value)}
+              placeholder="Explain what is included and how the image should be used."
+            />
+          </RootfsContentField>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+            }}
+          >
+            <RootfsContentField label="Publisher">
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Input
+                  value={draft.publisher_name}
+                  onChange={(e) => setField("publisher_name", e.target.value)}
+                  placeholder="Publisher name"
+                />
+                <Input
+                  value={draft.publisher_url}
+                  onChange={(e) => setField("publisher_url", e.target.value)}
+                  placeholder="https://..."
+                />
+              </Space>
+            </RootfsContentField>
+            <RootfsContentField label="License">
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Input
+                  value={draft.license_name}
+                  onChange={(e) => setField("license_name", e.target.value)}
+                  placeholder="License name"
+                />
+                <Input
+                  value={draft.license_url}
+                  onChange={(e) => setField("license_url", e.target.value)}
+                  placeholder="https://..."
+                />
+              </Space>
+            </RootfsContentField>
+          </div>
+          <RootfsContentField label="Highlights">
+            <Select
+              mode="tags"
+              value={draft.highlights}
+              onChange={(values) =>
+                setField(
+                  "highlights",
+                  values.map((value) => `${value}`.trim()).filter(Boolean),
+                )
+              }
+              tokenSeparators={[","]}
+              placeholder="Add short highlights users should notice"
+              style={{ width: "100%" }}
+            />
+          </RootfsContentField>
+
+          <RootfsContentField
+            label={
+              <Space size={8}>
+                <span>Actions</span>
+                <Button size="small" onClick={() => addAction("browse")}>
+                  Add browse
+                </Button>
+                <Button size="small" onClick={() => addAction("copy-to-home")}>
+                  Add copy
+                </Button>
+                <Button size="small" onClick={() => addAction("open")}>
+                  Add open
+                </Button>
+                <Button size="small" onClick={() => addAction("external-link")}>
+                  Add link
+                </Button>
+                <Button
+                  disabled={configuredAppSpecs.length === 0}
+                  loading={configuredAppsLoading}
+                  size="small"
+                  onClick={() => addAction("project-app")}
+                >
+                  Add app
+                </Button>
+              </Space>
+            }
+          >
+            <Space direction="vertical" size={10} style={{ width: "100%" }}>
+              {configuredAppsError ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Unable to load configured project apps."
+                  description={configuredAppsError}
+                />
+              ) : null}
+              {!configuredAppsLoading &&
+              configuredAppSpecs.length === 0 &&
+              draft.actions.some((action) => action.kind === "project-app") ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="No configured project apps found."
+                  description="Configure and test an app in this project first, then add it to the manifest."
+                />
+              ) : null}
+              {draft.actions.length === 0 ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="No actions yet."
+                  description="Add a browse, copy, open, external link, or app action to help users find the bundled content."
+                />
+              ) : null}
+              {draft.actions.map((action, index) => (
+                <RootfsContentActionEditor
+                  action={action}
+                  configuredAppSpecs={configuredAppSpecs}
+                  index={index}
+                  key={action.draft_id}
+                  onPickDirectory={onPickDirectory}
+                  onRemove={() =>
+                    onChange((cur) => ({
+                      ...cur,
+                      actions: cur.actions.filter((_, i) => i !== index),
+                    }))
+                  }
+                  onUpdate={(patch) => updateAction(index, patch)}
+                  projectHome={projectHome}
+                />
+              ))}
+            </Space>
+          </RootfsContentField>
+
+          {validation.warnings.length > 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="Discovery config warnings"
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {validation.warnings.map((warning, index) => (
+                    <li key={`${warning.code}-${index}`}>
+                      {warning.path ? <code>{warning.path}: </code> : null}
+                      {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          ) : null}
+
+          <Space wrap>
+            {onSave ? (
+              <Button
+                icon={<Icon name="save" />}
+                loading={saving}
+                onClick={save}
+              >
+                Save discovery config
+              </Button>
+            ) : null}
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              {onSave
+                ? "This updates the catalog entry metadata used by the RootFS page and project RootFS panel."
+                : "This config is saved into catalog metadata when you publish the live project RootFS."}
+            </Paragraph>
+          </Space>
+        </Space>
+      </RuntimePanel>
+    </Space>
+  );
+}
+
+function RootfsContentField({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div>
+      <Paragraph strong style={{ marginBottom: 6 }}>
+        {label}
+      </Paragraph>
+      {children}
+    </div>
+  );
+}
+
+function RootfsContentActionEditor({
+  action,
+  configuredAppSpecs,
+  index,
+  onPickDirectory,
+  onRemove,
+  onUpdate,
+  projectHome,
+}: {
+  action: RootfsContentActionDraft;
+  configuredAppSpecs: AppSpec[];
+  index: number;
+  onPickDirectory: (
+    actionIndex: number,
+    field: "path" | "source_path",
+    currentPath: string,
+  ) => void;
+  onRemove: () => void;
+  onUpdate: (patch: Partial<RootfsContentActionDraft>) => void;
+  projectHome: string;
+}): React.JSX.Element {
+  const pathField =
+    action.kind === "copy-to-home" ? (
+      <>
+        <RootfsContentPathInput
+          buttonLabel="Choose source..."
+          label="Source path"
+          onPick={() =>
+            onPickDirectory(index, "source_path", action.source_path ?? "/")
+          }
+          onUpdate={(source_path) => onUpdate({ source_path })}
+          placeholder="/usr/local/share/examples"
+          value={action.source_path ?? ""}
+        />
+        <RootfsContentField label="Target path in HOME">
+          <Input
+            value={action.target_path ?? ""}
+            onChange={(e) => onUpdate({ target_path: e.target.value })}
+            placeholder="examples"
+          />
+        </RootfsContentField>
+      </>
+    ) : action.kind === "external-link" ? (
+      <RootfsContentField label="URL">
+        <Input
+          value={action.url ?? ""}
+          onChange={(e) => onUpdate({ url: e.target.value })}
+          placeholder="https://..."
+        />
+      </RootfsContentField>
+    ) : action.kind === "project-app" ? (
+      <>
+        <RootfsContentField label="Configured app">
+          <Select
+            showSearch
+            optionFilterProp="label"
+            style={{ width: "100%" }}
+            value={rootfsProjectAppSpecId(action.app_spec) || undefined}
+            placeholder="Choose a configured app"
+            options={configuredAppSpecs.map((spec) => ({
+              value: rootfsProjectAppSpecId(spec),
+              label: rootfsProjectAppOptionLabel(spec),
+            }))}
+            onChange={(appId) => {
+              const spec = configuredAppSpecs.find(
+                (item) => rootfsProjectAppSpecId(item) === appId,
+              );
+              if (!spec) return;
+              onUpdate(rootfsProjectAppActionPatch(spec));
+            }}
+          />
+        </RootfsContentField>
+        {rootfsProjectAppSpecHomeWarning(action.app_spec, projectHome) ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="This app spec references HOME."
+            description={rootfsProjectAppSpecHomeWarning(
+              action.app_spec,
+              projectHome,
+            )}
+          />
+        ) : null}
+      </>
+    ) : (
+      <RootfsContentPathInput
+        buttonLabel="Choose directory..."
+        label={action.kind === "browse" ? "Directory path" : "Path"}
+        onPick={() => onPickDirectory(index, "path", action.path ?? "/")}
+        onUpdate={(path) => onUpdate({ path })}
+        placeholder={
+          action.kind === "browse"
+            ? "/usr/local/share/examples"
+            : "/usr/local/share/examples/README.md"
+        }
+        value={action.path ?? ""}
+      />
+    );
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 10,
+        padding: 12,
+      }}
+    >
+      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space
+          wrap
+          align="center"
+          style={{ justifyContent: "space-between", width: "100%" }}
+        >
+          <Select
+            value={action.kind}
+            style={{ minWidth: 150 }}
+            options={[
+              { label: "Browse", value: "browse" },
+              { label: "Copy to HOME", value: "copy-to-home" },
+              { label: "Open", value: "open" },
+              { label: "External link", value: "external-link" },
+              {
+                disabled: configuredAppSpecs.length === 0,
+                label: "Project app",
+                value: "project-app",
+              },
+            ]}
+            onChange={(kind: RootfsContentAction["kind"]) =>
+              onUpdate(
+                defaultRootfsContentActionDraft(
+                  kind,
+                  action.draft_id,
+                  kind === "project-app" ? configuredAppSpecs[0] : undefined,
+                ),
+              )
+            }
+          />
+          <Popconfirm
+            title="Remove this action?"
+            description="This removes the action from the discovery config."
+            okText="Remove"
+            okButtonProps={{ danger: true }}
+            onConfirm={onRemove}
+          >
+            <Button danger size="small">
+              Remove
+            </Button>
+          </Popconfirm>
+        </Space>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+          }}
+        >
+          <RootfsContentField label="Label">
+            <Input
+              value={action.label}
+              onChange={(e) => onUpdate({ label: e.target.value })}
+              placeholder="Button label"
+            />
+          </RootfsContentField>
+          <RootfsContentField label="Description">
+            <Input
+              value={action.description ?? ""}
+              onChange={(e) => onUpdate({ description: e.target.value })}
+              placeholder="Optional short helper text"
+            />
+          </RootfsContentField>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+          }}
+        >
+          {pathField}
+        </div>
+      </Space>
+    </div>
+  );
+}
+
+function RootfsContentPathInput({
+  buttonLabel,
+  label,
+  onPick,
+  onUpdate,
+  placeholder,
+  value,
+}: {
+  buttonLabel: string;
+  label: ReactNode;
+  onPick: () => void;
+  onUpdate: (value: string) => void;
+  placeholder: string;
+  value: string;
+}): React.JSX.Element {
+  return (
+    <RootfsContentField label={label}>
+      <Space.Compact style={{ width: "100%" }}>
+        <Input
+          value={value}
+          onChange={(e) => onUpdate(e.target.value)}
+          placeholder={placeholder}
+        />
+        <Button onClick={onPick}>{buttonLabel}</Button>
+      </Space.Compact>
+    </RootfsContentField>
+  );
+}
+
+function emptyRootfsContentDraft(): RootfsContentDraft {
+  return {
+    title: "",
+    subtitle: "",
+    description: "",
+    publisher_name: "",
+    publisher_url: "",
+    license_name: "",
+    license_url: "",
+    highlights: [],
+    actions: [],
+  };
+}
+
+function rootfsContentManifestToDraft(
+  content?: RootfsContentManifest,
+): RootfsContentDraft {
+  if (!content) return emptyRootfsContentDraft();
+  return {
+    title: content.title ?? "",
+    subtitle: content.subtitle ?? "",
+    description: content.description ?? "",
+    publisher_name: content.publisher?.name ?? "",
+    publisher_url: content.publisher?.url ?? "",
+    license_name: content.license?.name ?? "",
+    license_url: content.license?.url ?? "",
+    highlights: [...(content.highlights ?? [])],
+    actions: (content.actions ?? []).map((action) =>
+      normalizeRootfsContentActionDraft({
+        ...action,
+        draft_id: nextRootfsContentActionDraftId(),
+      }),
+    ),
+  };
+}
+
+function rootfsContentDraftToInput(draft: RootfsContentDraft): unknown {
+  return {
+    version: 1,
+    title: draft.title,
+    subtitle: draft.subtitle,
+    description: draft.description,
+    publisher:
+      draft.publisher_name || draft.publisher_url
+        ? {
+            name: draft.publisher_name,
+            url: draft.publisher_url,
+          }
+        : undefined,
+    license:
+      draft.license_name || draft.license_url
+        ? {
+            name: draft.license_name,
+            url: draft.license_url,
+          }
+        : undefined,
+    highlights: draft.highlights,
+    actions: draft.actions.map(rootfsContentActionDraftToInput),
+  };
+}
+
+function rootfsContentCatalogPayload(
+  result: ReturnType<typeof normalizeRootfsContentManifest>,
+): {
+  content: RootfsContentManifest | null;
+  content_warnings: ReturnType<
+    typeof normalizeRootfsContentManifest
+  >["warnings"];
+} {
+  return {
+    content: result.content ?? null,
+    content_warnings: result.warnings,
+  };
+}
+
+function rootfsContentActionDraftToInput(
+  action: RootfsContentActionDraft,
+): RootfsContentAction {
+  const base = {
+    kind: action.kind,
+    label: action.label,
+    description: action.description,
+  };
+  switch (action.kind) {
+    case "external-link":
+      return { ...base, url: action.url ?? "" };
+    case "project-app":
+      return { ...base, app_spec: action.app_spec ?? {} };
+    case "copy-to-home":
+      return {
+        ...base,
+        source_path: action.source_path ?? action.path ?? "",
+        target_path: action.target_path ?? "",
+      };
+    default:
+      return { ...base, path: action.path ?? "" };
+  }
+}
+
+function defaultRootfsContentActionDraft(
+  kind: RootfsContentAction["kind"],
+  draft_id: string = nextRootfsContentActionDraftId(),
+  appSpec?: AppSpec,
+): RootfsContentActionDraft {
+  switch (kind) {
+    case "browse":
+      return {
+        draft_id,
+        kind,
+        label: "Browse content",
+        path: "/",
+      };
+    case "copy-to-home":
+      return {
+        draft_id,
+        kind,
+        label: "Copy to HOME",
+        source_path: "/",
+        target_path: "rootfs-content",
+      };
+    case "external-link":
+      return {
+        draft_id,
+        kind,
+        label: "Open link",
+        url: "",
+      };
+    case "project-app":
+      return {
+        draft_id,
+        kind,
+        label: appSpec
+          ? `Launch ${rootfsProjectAppSpecTitle(appSpec)}`
+          : "Launch app",
+        app_spec: appSpec as unknown as Record<string, unknown>,
+      };
+    case "open":
+    default:
+      return {
+        draft_id,
+        kind: "open",
+        label: "Open file",
+        path: "/",
+      };
+  }
+}
+
+function normalizeRootfsContentActionDraft(
+  action: RootfsContentActionDraft,
+): RootfsContentActionDraft {
+  const base = defaultRootfsContentActionDraft(
+    action.kind,
+    action.draft_id,
+    action.app_spec as unknown as AppSpec | undefined,
+  );
+  return { ...base, ...action };
+}
+
+function rootfsProjectAppSpecId(spec: unknown): string {
+  if (spec == null || typeof spec !== "object" || Array.isArray(spec)) {
+    return "";
+  }
+  return `${(spec as any).id ?? ""}`.trim();
+}
+
+function rootfsProjectAppSpecTitle(spec: unknown): string {
+  if (spec == null || typeof spec !== "object" || Array.isArray(spec)) {
+    return "app";
+  }
+  return (
+    `${(spec as any).title ?? ""}`.trim() ||
+    rootfsProjectAppSpecId(spec) ||
+    "app"
+  );
+}
+
+function rootfsProjectAppOptionLabel(spec: AppSpec): string {
+  const title = rootfsProjectAppSpecTitle(spec);
+  const id = rootfsProjectAppSpecId(spec);
+  return id && id !== title ? `${title} (${id})` : title;
+}
+
+function rootfsProjectAppActionPatch(
+  spec: AppSpec,
+): Partial<RootfsContentActionDraft> {
+  return {
+    app_spec: spec as unknown as Record<string, unknown>,
+    label: `Launch ${rootfsProjectAppSpecTitle(spec)}`,
+  };
+}
+
+function rootfsProjectAppSpecHomeWarning(
+  spec: unknown,
+  projectHome: string,
+): string | undefined {
+  if (spec == null || typeof spec !== "object" || Array.isArray(spec)) return;
+  const home = `${projectHome ?? ""}`.replace(/\/+$/, "");
+  if (!home) return;
+  const value = spec as any;
+  const referencedPaths: string[] = [];
+  if (
+    value.kind === "static" &&
+    `${value.static?.root ?? ""}`.startsWith(home)
+  ) {
+    referencedPaths.push(`${value.static.root}`);
+  }
+  if (`${value.command?.cwd ?? ""}`.startsWith(home)) {
+    referencedPaths.push(`${value.command.cwd}`);
+  }
+  const serialized = JSON.stringify(value);
+  if (!referencedPaths.length && serialized.includes(`${home}/`)) {
+    referencedPaths.push(home);
+  }
+  if (!referencedPaths.length) return;
+  return `This app references ${referencedPaths.slice(0, 3).join(", ")}. It may not work in other projects unless those files are also copied into HOME or included somewhere stable in the RootFS.`;
+}
+
+function nextRootfsContentActionDraftId(): string {
+  return `action-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
 }
 
 function RuntimePanel({
@@ -2638,17 +4327,21 @@ function RuntimeAction({
         alignItems: "center",
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 10,
-        display: "grid",
+        display: "flex",
+        flexWrap: "wrap",
         gap: 10,
-        gridTemplateColumns: "minmax(0, 1fr) auto",
         padding: "10px 12px",
       }}
     >
-      <div style={{ minWidth: 0 }}>
+      <div style={{ flex: "1 1 220px", minWidth: 0 }}>
         <div style={{ fontWeight: 600 }}>{title}</div>
         <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{description}</div>
       </div>
-      {action}
+      {action ? (
+        <div style={{ flex: "0 0 auto", marginLeft: "auto", maxWidth: "100%" }}>
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3054,6 +4747,498 @@ function renderRootfsEntryFacts(
   );
 }
 
+function renderRootfsContentPreview(
+  entry: RootfsImageEntry | undefined,
+): React.JSX.Element | null {
+  const content = entry?.content;
+  if (!content) return null;
+  if (!rootfsContentHasDisplay(content)) {
+    return null;
+  }
+  const title = content.title?.trim();
+  const subtitle = content.subtitle?.trim();
+  const description = content.description?.trim();
+  return (
+    <div style={{ marginTop: 8 }}>
+      {title ? (
+        <div style={{ fontWeight: 600, marginBottom: 3 }}>{title}</div>
+      ) : null}
+      {subtitle || description ? (
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          {subtitle || description}
+        </Paragraph>
+      ) : null}
+      {content.highlights?.length ? (
+        <Space wrap size={[4, 4]} style={{ marginTop: 6 }}>
+          {content.highlights.slice(0, 4).map((highlight) => (
+            <Tag key={highlight} style={{ marginInlineEnd: 0 }}>
+              {highlight}
+            </Tag>
+          ))}
+        </Space>
+      ) : null}
+    </div>
+  );
+}
+
+function renderRootfsContentPanel({
+  entry,
+  onCopyToHome,
+  onLaunchProjectApp,
+  onOpenPath,
+  project_id,
+}: {
+  entry: RootfsImageEntry;
+  onCopyToHome: (
+    action: RootfsContentAction,
+    targetPath?: string,
+  ) => Promise<string | undefined>;
+  onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
+  onOpenPath: (path: string) => void;
+  project_id?: string;
+}): React.JSX.Element | null {
+  const content = entry.content;
+  if (!content) return null;
+  if (!rootfsContentHasDisplay(content)) return null;
+  const title = content.title?.trim() || "Included content";
+  const subtitle =
+    content.subtitle?.trim() ||
+    content.publisher?.name?.trim() ||
+    "Files, examples, or links bundled with this runtime image.";
+  const description = content.description?.trim();
+  const publisher = renderRootfsContentLink(content.publisher);
+  const license = renderRootfsContentLink(content.license);
+  const actions = content.actions ?? [];
+
+  return (
+    <RuntimePanel icon="folder-open" title={title} subtitle={subtitle}>
+      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        {description ? (
+          <Paragraph style={{ marginBottom: 0 }}>{description}</Paragraph>
+        ) : null}
+        {content.highlights?.length ? (
+          <Space wrap size={[6, 6]}>
+            {content.highlights.map((highlight) => (
+              <Tag key={highlight}>{highlight}</Tag>
+            ))}
+          </Space>
+        ) : null}
+        {publisher || license ? (
+          <Space wrap size={[10, 4]} style={{ color: COLORS.GRAY_M }}>
+            {publisher ? <span>Publisher: {publisher}</span> : null}
+            {license ? <span>License: {license}</span> : null}
+          </Space>
+        ) : null}
+        {actions.length ? (
+          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+            {actions.map((action, index) => (
+              <RootfsContentActionRow
+                key={`${action.kind}:${action.label}:${index}`}
+                action={action}
+                onCopyToHome={onCopyToHome}
+                onLaunchProjectApp={onLaunchProjectApp}
+                onOpenPath={onOpenPath}
+                project_id={project_id}
+              />
+            ))}
+          </Space>
+        ) : null}
+      </Space>
+    </RuntimePanel>
+  );
+}
+
+function rootfsContentHasDisplay(
+  content: RootfsImageEntry["content"],
+): boolean {
+  if (!content) return false;
+  return !!(
+    content.title?.trim() ||
+    content.subtitle?.trim() ||
+    content.description?.trim() ||
+    content.publisher?.name?.trim() ||
+    content.publisher?.url?.trim() ||
+    content.license?.name?.trim() ||
+    content.license?.url?.trim() ||
+    content.highlights?.length ||
+    content.actions?.length
+  );
+}
+
+function renderRootfsContentLink(
+  ref: { name?: string; url?: string } | undefined,
+): ReactNode {
+  const name = ref?.name?.trim();
+  const url = ref?.url?.trim();
+  if (!name && !url) return null;
+  if (!url) return name;
+  return (
+    <a href={url} rel="noreferrer" target="_blank">
+      {name || url}
+    </a>
+  );
+}
+
+function RootfsContentActionRow({
+  action,
+  onCopyToHome,
+  onLaunchProjectApp,
+  onOpenPath,
+  project_id,
+}: {
+  action: RootfsContentAction;
+  onCopyToHome: (
+    action: RootfsContentAction,
+    targetPath?: string,
+  ) => Promise<string | undefined>;
+  onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
+  onOpenPath: (path: string) => void;
+  project_id?: string;
+}): React.JSX.Element {
+  const [copying, setCopying] = useState<boolean>(false);
+  const [copyChooserOpen, setCopyChooserOpen] = useState<boolean>(false);
+  const [copyTargetPath, setCopyTargetPath] = useState<string>("");
+  const [launching, setLaunching] = useState<boolean>(false);
+  const [actionError, setActionError] = useState<string>("");
+  const label = action.label.trim();
+  const description = action.description?.trim();
+  const openPath = rootfsContentActionOpenPath(action);
+  const configuredTarget = rootfsCopyTargetRelativePath(action);
+  const defaultTarget = rootfsCopyDefaultTargetPath(action);
+  const normalizedCopyTarget = rootfsNormalizeHomeTargetPath(copyTargetPath);
+  const canCopyToHome =
+    action.kind === "copy-to-home" &&
+    !!(action.source_path?.trim() || action.path?.trim());
+
+  function openCopyChooser(): void {
+    setCopyTargetPath(configuredTarget ?? defaultTarget ?? "");
+    setCopyChooserOpen(true);
+  }
+
+  async function copyToHome(targetPath?: string): Promise<boolean> {
+    setCopying(true);
+    setActionError("");
+    try {
+      const copiedPath = await onCopyToHome(action, targetPath);
+      if (copiedPath) {
+        onOpenPath(copiedPath);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      const error = `Could not copy RootFS content: ${rootfsActionErrorMessage(err)}`;
+      setActionError(error);
+      message.error(error);
+      return false;
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  async function copyToChosenTarget(): Promise<void> {
+    if (!normalizedCopyTarget) {
+      setActionError("Choose a HOME-relative destination path.");
+      return;
+    }
+    if (await copyToHome(normalizedCopyTarget)) {
+      setCopyChooserOpen(false);
+    }
+  }
+
+  async function launchProjectApp(): Promise<void> {
+    setLaunching(true);
+    setActionError("");
+    try {
+      await onLaunchProjectApp(action);
+    } catch (err) {
+      const error = `Could not launch app: ${rootfsActionErrorMessage(err)}`;
+      setActionError(error);
+      message.error(error);
+    } finally {
+      setLaunching(false);
+    }
+  }
+
+  return (
+    <>
+      <RuntimeAction
+        title={
+          <Space wrap size={[6, 4]}>
+            <span>{label}</span>
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {rootfsContentActionKindLabel(action.kind)}
+            </Tag>
+          </Space>
+        }
+        description={
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {description ? <span>{description}</span> : null}
+            {rootfsContentActionPathLabel(action) ? (
+              <code style={{ overflowWrap: "anywhere" }}>
+                {rootfsContentActionPathLabel(action)}
+              </code>
+            ) : null}
+            {actionError ? (
+              <Alert
+                message={actionError}
+                showIcon
+                style={{ marginTop: 4 }}
+                type="error"
+              />
+            ) : null}
+          </Space>
+        }
+        action={
+          action.kind === "external-link" && action.url ? (
+            <Button
+              href={action.url}
+              icon={<Icon name="external-link" />}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Open
+            </Button>
+          ) : openPath && action.kind !== "copy-to-home" ? (
+            <Button
+              icon={
+                <Icon
+                  name={action.kind === "browse" ? "folder-open" : "file"}
+                />
+              }
+              onClick={() => onOpenPath(openPath)}
+            >
+              {action.kind === "browse" ? "Browse" : "Open"}
+            </Button>
+          ) : action.kind === "copy-to-home" ? (
+            <Space wrap>
+              <Button
+                disabled={!canCopyToHome}
+                icon={<Icon name="copy" />}
+                loading={copying}
+                onClick={() => void copyToHome()}
+              >
+                Copy to HOME
+              </Button>
+              {project_id ? (
+                <Button
+                  disabled={!canCopyToHome}
+                  icon={<Icon name="folder-open" />}
+                  onClick={openCopyChooser}
+                >
+                  Copy...
+                </Button>
+              ) : null}
+            </Space>
+          ) : action.kind === "project-app" ? (
+            <Button
+              disabled={!action.app_spec}
+              icon={<Icon name="rocket" />}
+              loading={launching}
+              onClick={launchProjectApp}
+            >
+              Launch
+            </Button>
+          ) : null
+        }
+      />
+      {copyChooserOpen && project_id ? (
+        <Modal
+          open
+          destroyOnHidden
+          title="Copy RootFS content"
+          okText="Copy"
+          onCancel={() => setCopyChooserOpen(false)}
+          onOk={() => void copyToChosenTarget()}
+          okButtonProps={{
+            disabled: !normalizedCopyTarget,
+            loading: copying,
+          }}
+        >
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Choose or type the destination path under HOME. The copy will not
+              overwrite existing content.
+            </Paragraph>
+            <Input
+              addonBefore="HOME /"
+              value={copyTargetPath}
+              onChange={(e) => setCopyTargetPath(e.target.value)}
+              placeholder={defaultTarget ?? "rootfs-content"}
+            />
+            <Space wrap>
+              <Button
+                size="small"
+                onClick={() => setCopyTargetPath(defaultTarget ?? "")}
+              >
+                Home
+              </Button>
+              <Button
+                disabled={!configuredTarget}
+                size="small"
+                onClick={() => setCopyTargetPath(configuredTarget ?? "")}
+              >
+                Configured
+              </Button>
+              <Button
+                disabled={!copyTargetPath.trim()}
+                size="small"
+                onClick={() =>
+                  setCopyTargetPath(rootfsParentTargetPath(copyTargetPath))
+                }
+              >
+                Parent
+              </Button>
+            </Space>
+            <DirectorySelector
+              project_id={project_id}
+              startingPath={copyTargetPath}
+              onSelect={(path) => setCopyTargetPath(path)}
+              style={{ width: "100%" }}
+              bodyStyle={{ maxHeight: 280 }}
+              closable={false}
+            />
+          </Space>
+        </Modal>
+      ) : null}
+    </>
+  );
+}
+
+function rootfsCopyTargetPath(
+  action: RootfsContentAction,
+  projectHome: string,
+  targetOverride?: string,
+): string | undefined {
+  const relativeTarget = rootfsCopyTargetRelativePath(action, targetOverride);
+  if (!relativeTarget) return;
+  return `${projectHome.replace(/\/+$/, "")}/${relativeTarget}`;
+}
+
+function rootfsCopyTargetRelativePath(
+  action: RootfsContentAction,
+  targetOverride?: string,
+): string | undefined {
+  const target = targetOverride?.trim() || action.target_path?.trim();
+  if (target) {
+    return rootfsNormalizeHomeTargetPath(target);
+  }
+  return rootfsCopyDefaultTargetPath(action);
+}
+
+function rootfsCopyDefaultTargetPath(
+  action: RootfsContentAction,
+): string | undefined {
+  const source = action.source_path?.trim() || action.path?.trim();
+  const fallbackName = source
+    ?.replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean)
+    .at(-1);
+  return rootfsNormalizeHomeTargetPath(fallbackName);
+}
+
+function rootfsNormalizeHomeTargetPath(path?: string): string | undefined {
+  const relativePath = path?.trim().replace(/^\/+/, "");
+  if (!relativePath) return;
+  if (relativePath.includes("\0")) return;
+  if (relativePath.split("/").includes("..")) return;
+  return relativePath.replace(/\/+$/, "") || undefined;
+}
+
+function rootfsParentTargetPath(path: string): string {
+  const parts = rootfsNormalizeHomeTargetPath(path)?.split("/") ?? [];
+  parts.pop();
+  return parts.join("/");
+}
+
+function rootfsContentActionOpenPath(
+  action: RootfsContentAction,
+): string | undefined {
+  const path =
+    action.path?.trim() ||
+    action.source_path?.trim() ||
+    action.target_path?.trim();
+  if (!path) return;
+  if (action.kind === "browse" && !path.endsWith("/")) {
+    return `${path}/`;
+  }
+  return path;
+}
+
+function rootfsContentActionPathLabel(
+  action: RootfsContentAction,
+): string | undefined {
+  if (action.kind === "copy-to-home") {
+    const source = action.source_path?.trim() || action.path?.trim();
+    const target = action.target_path?.trim();
+    if (source && target) return `${source} -> ${target}`;
+    return source || target;
+  }
+  return (
+    action.path?.trim() ||
+    action.source_path?.trim() ||
+    action.url?.trim() ||
+    rootfsProjectAppSpecId(action.app_spec)
+  );
+}
+
+function rootfsContentActionKindLabel(
+  kind: RootfsContentAction["kind"],
+): string {
+  switch (kind) {
+    case "browse":
+      return "Browse";
+    case "copy-to-home":
+      return "Copy";
+    case "external-link":
+      return "Link";
+    case "project-app":
+      return "App";
+    case "open":
+    default:
+      return "Open";
+  }
+}
+
+async function launchRootfsProjectAppAction({
+  action,
+  project_id,
+}: {
+  action: RootfsContentAction;
+  project_id: string;
+}): Promise<void> {
+  const embeddedSpec = action.app_spec as unknown as AppSpec | undefined;
+  const appId = rootfsProjectAppSpecId(embeddedSpec);
+  if (!embeddedSpec || !appId) {
+    message.error("App action is missing an app spec.");
+    return;
+  }
+  const running = await ensure_project_running(project_id, "launch this app");
+  if (!running) {
+    throw new Error("project must be running to launch this app");
+  }
+  const api = webapp_client.conat_client.projectApi({ project_id });
+  const saved = await api.apps.upsertAppSpec(embeddedSpec);
+  const spec = saved.spec;
+  const status =
+    spec.kind === "service"
+      ? await api.apps.ensureRunning(appId, {
+          timeout: 90_000,
+          interval: 1000,
+        })
+      : await api.apps.statusApp(appId);
+  await openProjectAppStatus({
+    getSpec: async (id) => api.apps.getAppSpec(id),
+    project_id,
+    spec,
+    status,
+  });
+}
+
+function rootfsActionErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : `${err}`;
+}
+
 function renderRootfsScan(
   entry: RootfsImageEntry,
 ): React.JSX.Element | undefined {
@@ -3246,6 +5431,7 @@ function buildRootfsPublishAssistCommand(opts: {
   publishCopyMode: "project" | "base";
   publishDraft: PublishDraft;
   publishSourceEntry?: RootfsImageEntry;
+  switchPublishedProject: boolean;
 }): string {
   const {
     projectId,
@@ -3253,6 +5439,7 @@ function buildRootfsPublishAssistCommand(opts: {
     publishCopyMode,
     publishDraft,
     publishSourceEntry,
+    switchPublishedProject,
   } = opts;
   const parts: string[] =
     publishMode === "copy" && publishCopyMode === "project"
@@ -3279,6 +5466,7 @@ function buildRootfsPublishAssistCommand(opts: {
     pushCliOption(parts, "--image-id", publishSourceEntry.id);
   }
   pushCliOption(parts, "--description", publishDraft.description);
+  pushCliOption(parts, "--slug", publishDraft.slug);
   pushCliOption(parts, "--family", publishDraft.family);
   pushCliOption(parts, "--image-version", publishDraft.version);
   pushCliOption(parts, "--channel", publishDraft.channel);
@@ -3298,6 +5486,13 @@ function buildRootfsPublishAssistCommand(opts: {
   if (publishDraft.official) parts.push("--official");
   if (publishDraft.prepull) parts.push("--prepull");
   if (publishDraft.hidden) parts.push("--hidden");
+  if (
+    publishMode === "copy" &&
+    publishCopyMode === "project" &&
+    switchPublishedProject
+  ) {
+    parts.push("--switch-project");
+  }
   return parts.join(" ");
 }
 
@@ -3308,6 +5503,7 @@ function buildRootfsPublishAgentPrompt(opts: {
   publishCopyMode: "project" | "base";
   publishDraft: PublishDraft;
   publishSourceEntry?: RootfsImageEntry;
+  switchPublishedProject: boolean;
 }): string {
   const {
     projectId,
@@ -3316,6 +5512,7 @@ function buildRootfsPublishAgentPrompt(opts: {
     publishCopyMode,
     publishDraft,
     publishSourceEntry,
+    switchPublishedProject,
   } = opts;
   const lines = [
     publishMode === "copy" && publishCopyMode === "project"
@@ -3330,7 +5527,9 @@ function buildRootfsPublishAgentPrompt(opts: {
     "```",
     "",
     publishMode === "copy" && publishCopyMode === "project"
-      ? "Important: this publishes the current visible / software environment. It does not publish /root or /tmp, and it does not automatically switch the project to the new image."
+      ? switchPublishedProject
+        ? "Important: this publishes the current visible / software environment, then switches the project to the new image when publishing succeeds. It does not publish /root or /tmp."
+        : "Important: this publishes the current visible / software environment. It does not publish /root or /tmp, and it does not switch the project to the new image."
       : publishMode === "manage"
         ? `Important: update the existing catalog entry${publishSourceEntry?.label ? ` (${publishSourceEntry.label})` : ""} instead of creating another copy.`
         : "Important: this only saves catalog metadata for the current base image. It does not create a new managed RootFS artifact from the live project state.",
@@ -3338,6 +5537,7 @@ function buildRootfsPublishAgentPrompt(opts: {
     "Desired metadata:",
     `- label: ${publishDraft.label}`,
     `- description: ${publishDraft.description || "(empty)"}`,
+    `- slug: ${publishDraft.slug || "(auto)"}`,
     `- family: ${publishDraft.family || "(none)"}`,
     `- version: ${publishDraft.version || "(none)"}`,
     `- channel: ${publishDraft.channel || "(none)"}`,
@@ -3348,6 +5548,13 @@ function buildRootfsPublishAgentPrompt(opts: {
     `- official: ${publishDraft.official ? "yes" : "no"}`,
     `- prepull: ${publishDraft.prepull ? "yes" : "no"}`,
     `- hidden: ${publishDraft.hidden ? "yes" : "no"}`,
+    ...(publishMode === "copy" && publishCopyMode === "project"
+      ? [
+          `- switch_project_after_publish: ${
+            switchPublishedProject ? "yes" : "no"
+          }`,
+        ]
+      : []),
     "",
     "After the action completes, report the resulting image name, image_id/release_id if available, and whether the action succeeded cleanly.",
   ];

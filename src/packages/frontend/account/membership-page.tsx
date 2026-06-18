@@ -7,30 +7,29 @@ import {
   Alert,
   Button,
   Card,
-  Popconfirm,
+  Modal,
   Space,
   Tag,
   Table,
   Typography,
 } from "antd";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { labels } from "@cocalc/frontend/i18n";
 import {
-  cancelSubscription,
-  resumeSubscription,
+  getSiteLicenseAffiliationReverificationStatus,
+  refreshSiteLicenseAffiliationVerification,
 } from "@cocalc/frontend/purchases/api";
+import type { BillingInterval } from "./membership-pricing-chooser";
 import type {
   MembershipCandidate,
   MembershipResolution,
+  SiteLicenseAffiliationReverificationUserSeat,
+  SiteLicenseAffiliationReverificationUserStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import { capitalize, currency } from "@cocalc/util/misc";
 import { buildMembershipTierPresentation } from "@cocalc/util/membership-tier-presentation";
@@ -49,11 +48,6 @@ const { Paragraph, Text } = Typography;
 const ClaimableMembershipPackagesPanel = lazy(async () => ({
   default: (await import("./membership-package-manager"))
     .ClaimableMembershipPackagesPanel,
-}));
-
-const SiteLicenseReverificationPanel = lazy(async () => ({
-  default: (await import("./membership-package-manager"))
-    .SiteLicenseReverificationPanel,
 }));
 
 export const MEMBERSHIP_SETTINGS_PAGE = {
@@ -103,6 +97,56 @@ function MembershipSettingsContent() {
   const [purchaseCurrentClass, setPurchaseCurrentClass] = useState<
     string | undefined
   >(undefined);
+  const [purchaseCurrentInterval, setPurchaseCurrentInterval] = useState<
+    BillingInterval | undefined
+  >(undefined);
+  const [siteLicenseManageOpen, setSiteLicenseManageOpen] =
+    useState<boolean>(false);
+  const [siteLicenseManageSource, setSiteLicenseManageSource] =
+    useState<string>("site-license");
+  const [siteLicenseRefreshToken, setSiteLicenseRefreshToken] =
+    useState<number>(0);
+  const [reverificationStatus, setReverificationStatus] =
+    useState<SiteLicenseAffiliationReverificationUserStatus | null>(null);
+  const [reverificationError, setReverificationError] = useState<string>("");
+  const [reverifyingSiteLicenseId, setReverifyingSiteLicenseId] =
+    useState<string>("");
+  const siteLicenseReverificationKey = candidateRows
+    .filter(
+      (row) =>
+        row.action === "site-license" &&
+        row.sourceKind === "grant" &&
+        row.grantPackageId,
+    )
+    .map((row) => `${row.siteLicenseId ?? ""}:${row.grantPackageId}`)
+    .sort()
+    .join("|");
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadReverificationStatus() {
+      if (!account_id || !siteLicenseReverificationKey) {
+        setReverificationStatus(null);
+        setReverificationError("");
+        return;
+      }
+      setReverificationError("");
+      try {
+        const next = await getSiteLicenseAffiliationReverificationStatus();
+        if (!canceled) {
+          setReverificationStatus(next);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setReverificationError(`${err}`);
+        }
+      }
+    }
+    void loadReverificationStatus();
+    return () => {
+      canceled = true;
+    };
+  }, [account_id, siteLicenseReverificationKey, siteLicenseRefreshToken]);
 
   if (!account_id) return null;
   if (loading && !membership) return <Loading />;
@@ -111,35 +155,93 @@ function MembershipSettingsContent() {
 
   const tier = tierById[membership.class];
   const selectedSourceRow = candidateRows.find((row) => row.selected);
+  const effectiveSummary = effectiveMembershipSummary({
+    membership,
+    selectedSourceRow,
+    tier,
+  });
+  const hasSiteLicenseRow = candidateRows.some(
+    (row) => row.action === "site-license",
+  );
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
-  const hasSiteLicenseMembership =
-    membership.grant_source === "site-license" ||
-    details?.candidates.some(
-      (candidate) => candidate.grant_source === "site-license",
-    ) === true;
   const refreshMembership = () => {
     window.dispatchEvent(new Event("cocalc:membership-changed"));
     refresh();
+    setSiteLicenseRefreshToken((value) => value + 1);
   };
-  const openPurchase = (currentClassOverride?: string) => {
+  const openPurchase = (
+    currentClassOverride?: string,
+    currentIntervalOverride?: BillingInterval,
+  ) => {
     setPurchaseCurrentClass(currentClassOverride);
+    setPurchaseCurrentInterval(currentIntervalOverride);
     setPurchaseOpen(true);
+  };
+  const closePurchase = () => {
+    setPurchaseOpen(false);
+    setPurchaseCurrentClass(undefined);
+    setPurchaseCurrentInterval(undefined);
+    refreshMembership();
+  };
+  const openSiteLicenseManage = (source = "site license") => {
+    setSiteLicenseManageSource(source);
+    setSiteLicenseManageOpen(true);
+  };
+  const openPersonalMembershipManage = () => {
+    const currentPersonalRow = candidateRows.find(
+      (row) =>
+        row.sourceKind === "subscription" &&
+        row.subscriptionStatus !== "canceled",
+    );
+    openPurchase(
+      currentPersonalRow?.class ?? "free",
+      currentPersonalRow?.subscriptionInterval,
+    );
+  };
+  const reverifySiteLicense = async (siteLicenseId: string) => {
+    setReverifyingSiteLicenseId(siteLicenseId);
+    setReverificationError("");
+    try {
+      const refreshed = await refreshSiteLicenseAffiliationVerification({
+        site_license_id: siteLicenseId,
+      });
+      const nextDueDate = refreshed
+        .map((seat) => seat.reverification_due_at)
+        .filter((date) => date != null)
+        .map((date) => new Date(date as Date | string))
+        .filter((date) => Number.isFinite(date.valueOf()))
+        .sort((left, right) => left.getTime() - right.getTime())[0];
+      Modal.success({
+        title: "Affiliation reverified",
+        content:
+          nextDueDate == null
+            ? "Your site-license membership affiliation was reverified."
+            : `Your site-license membership affiliation was reverified. Reverify by ${formatLongDate(nextDueDate)}.`,
+      });
+      refreshMembership();
+    } catch (err) {
+      const message = `${err}`;
+      setReverificationError(message);
+      Modal.error({
+        title: "Reverification failed",
+        content: message,
+      });
+    } finally {
+      setReverifyingSiteLicenseId("");
+    }
   };
 
   return (
     <Space vertical size="middle" style={{ width: "100%" }}>
-      <Card size="small" title="Effective membership">
+      <Card size="small" title={`Effective: ${effectiveSummary}`}>
         <Space vertical style={{ width: "100%" }}>
-          <Text strong>
-            {effectiveMembershipSummary({
-              membership,
-              selectedSourceRow,
-              tier,
-            })}
-          </Text>
-          {tier != null ? <EffectiveTierDescription tier={tier} /> : null}
+          <EffectiveMembershipDescription
+            membership={membership}
+            selectedSourceRow={selectedSourceRow}
+            tier={tier}
+          />
           {details?.admin_override ? (
             <Alert
               type="info"
@@ -170,10 +272,24 @@ function MembershipSettingsContent() {
         </Space>
       </Card>
 
-      <Card size="small" title="Membership sources">
+      {isPaidPersonalMembership(personalMembership) ? (
+        <Card size="small" title="Personal membership billing">
+          <PersonalMembershipDetails
+            effective={selectedSourceRow?.sourceKind === "subscription"}
+            membership={personalMembership}
+            showBalanceControl={
+              stripeEnabled &&
+              personalMembership.subscription_status !== "canceled"
+            }
+            tier={tierById[personalMembership.class]}
+          />
+        </Card>
+      ) : null}
+
+      <Card size="small" title="Memberships">
         <Space vertical style={{ width: "100%" }}>
           {candidateRows.length === 0 ? (
-            <Text type="secondary">No active membership sources.</Text>
+            <Text type="secondary">No active memberships.</Text>
           ) : (
             <Table
               size="small"
@@ -181,80 +297,113 @@ function MembershipSettingsContent() {
               dataSource={candidateRows}
               columns={[
                 {
-                  title: "Membership",
-                  dataIndex: "tier",
-                  render: (value, row) => (
-                    <Space>
-                      <Tag color={row.selected ? "blue" : undefined}>
-                        {value}
-                      </Tag>
-                    </Space>
-                  ),
-                },
-                {
                   title: "Source",
                   dataIndex: "source",
-                  render: (value, row) => (
-                    <Space vertical size={0}>
-                      <Text>{value}</Text>
-                      <Text type="secondary">{row.sourceDetail}</Text>
-                    </Space>
+                },
+                {
+                  title: "Membership",
+                  dataIndex: "membership",
+                },
+                {
+                  title: "State",
+                  dataIndex: "state",
+                  render: (value) => (
+                    <Tag color={membershipStateColor(value)}>{value}</Tag>
                   ),
                 },
                 {
-                  title: "Status",
-                  dataIndex: "status",
-                  render: (value, row) => (
-                    <Tag color={membershipStatusColor(row)}>{value}</Tag>
-                  ),
+                  title: "Note",
+                  dataIndex: "note",
+                  render: (value, row) =>
+                    siteLicenseReverificationNote(
+                      reverificationSeatForRow(reverificationStatus, row),
+                    ) ?? value,
                 },
                 {
-                  title: "Expires",
-                  dataIndex: "expires",
-                  render: (value) =>
-                    value ? <TimeAgo date={value} /> : <Text>Never</Text>,
+                  title: "Action",
+                  key: "action",
+                  render: (_, row) => {
+                    if (row.action === "personal") {
+                      return (
+                        <Button onClick={openPersonalMembershipManage}>
+                          Manage
+                        </Button>
+                      );
+                    }
+                    if (row.action === "site-license") {
+                      const seat = reverificationSeatForRow(
+                        reverificationStatus,
+                        row,
+                      );
+                      return (
+                        <Space wrap size="small">
+                          <Button
+                            onClick={() => openSiteLicenseManage(row.source)}
+                          >
+                            Manage
+                          </Button>
+                          {seat != null ? (
+                            <Button
+                              disabled={!seat.can_refresh_with_verified_email}
+                              loading={
+                                reverifyingSiteLicenseId ===
+                                seat.site_license_id
+                              }
+                              onClick={() =>
+                                void reverifySiteLicense(seat.site_license_id)
+                              }
+                            >
+                              Reverify
+                            </Button>
+                          ) : null}
+                        </Space>
+                      );
+                    }
+                    return <Text type="secondary">-</Text>;
+                  },
                 },
               ]}
             />
           )}
-          <Space wrap>
-            <Button
-              onClick={() => {
-                openPurchase(personalMembership?.class ?? "free");
-              }}
-            >
-              Configure personal membership
-            </Button>
-            {personalMembership ? (
-              <PersonalSubscriptionActions
-                membership={personalMembership}
-                refresh={refreshMembership}
-              />
-            ) : null}
-            <Suspense fallback={null}>
-              <ClaimableMembershipPackagesPanel
-                compact
-                hasSiteLicenseMembership={hasSiteLicenseMembership}
-                onChanged={refreshMembership}
-                tiers={Object.values(tierById)}
-              />
-            </Suspense>
-          </Space>
-          {stripeEnabled ? <UseBalance /> : null}
-          <Suspense fallback={null}>
-            <SiteLicenseReverificationPanel onChanged={refreshMembership} />
-          </Suspense>
+          {!hasSiteLicenseRow ? (
+            <Space wrap>
+              <Button onClick={() => openSiteLicenseManage()}>
+                Manage site license membership
+              </Button>
+            </Space>
+          ) : null}
+          {reverificationError ? (
+            <Alert type="error" title={reverificationError} />
+          ) : null}
         </Space>
       </Card>
 
+      <Modal
+        open={siteLicenseManageOpen}
+        title={`Manage ${siteLicenseManageSource} membership`}
+        footer={null}
+        onCancel={() => setSiteLicenseManageOpen(false)}
+        destroyOnHidden
+      >
+        <Suspense fallback={<Loading />}>
+          <ClaimableMembershipPackagesPanel
+            onChanged={refreshMembership}
+            onSiteLicenseTitleChange={(source) => {
+              if (source) {
+                setSiteLicenseManageSource(source);
+              }
+            }}
+            refreshToken={siteLicenseRefreshToken}
+          />
+        </Suspense>
+      </Modal>
+
       <MembershipPurchaseModal
         currentClassOverride={purchaseCurrentClass}
+        currentIntervalOverride={purchaseCurrentInterval}
         open={purchaseOpen}
-        onClose={() => {
-          setPurchaseOpen(false);
-          setPurchaseCurrentClass(undefined);
-        }}
-        onChanged={refresh}
+        onClose={closePurchase}
+        onChanged={refreshMembership}
       />
     </Space>
   );
@@ -279,6 +428,28 @@ function EffectiveTierDescription({ tier }: { tier: MembershipTier }) {
   );
 }
 
+function EffectiveMembershipDescription({
+  membership,
+  selectedSourceRow,
+  tier,
+}: {
+  membership: MembershipResolution;
+  selectedSourceRow?: MembershipCandidateRow;
+  tier?: MembershipTier;
+}) {
+  const poolDescription = `${
+    membership.grant_source === "site-license"
+      ? (membership.pool_description ??
+        selectedSourceRow?.poolDescription ??
+        "")
+      : ""
+  }`.trim();
+  if (poolDescription) {
+    return <Paragraph>{poolDescription}</Paragraph>;
+  }
+  return tier != null ? <EffectiveTierDescription tier={tier} /> : null;
+}
+
 function effectiveTierHighlights(
   tier: MembershipTier,
   presentation: ReturnType<typeof buildMembershipTierPresentation>,
@@ -300,24 +471,117 @@ function effectiveMembershipSummary({
   selectedSourceRow?: MembershipCandidateRow;
   tier?: MembershipTier;
 }): string {
-  const tierLabel = tier?.label ?? capitalize(membership.class);
-  const price = personalMembershipPriceLabel(membership);
+  const tierLabel =
+    selectedSourceRow?.membership ??
+    tier?.label ??
+    capitalize(membership.class);
   const source = effectiveMembershipSourceLabel(membership, selectedSourceRow);
-  return `${tierLabel}${price ? ` (${price})` : ""} - ${source}`;
+  return `${source} - ${tierLabel}`;
+}
+
+function PersonalMembershipDetails({
+  effective,
+  membership,
+  showBalanceControl,
+  tier,
+}: {
+  effective: boolean;
+  membership: MembershipCandidate;
+  showBalanceControl: boolean;
+  tier?: MembershipTier;
+}) {
+  const name = tier?.label ?? capitalize(membership.class);
+  const price = personalMembershipPriceLabel(membership);
+  const charge = personalMembershipChargeLabel(membership);
+  const canceled = membership.subscription_status === "canceled";
+  const endDate = formatOptionalLongDate(membership.expires);
+
+  return (
+    <Space vertical style={{ width: "100%" }}>
+      <Text>{price ? `${name}: ${price}.` : name}</Text>
+      {canceled ? (
+        <Text>
+          {endDate
+            ? `Ends ${endDate}. Renewal is canceled.`
+            : "Renewal is canceled."}
+        </Text>
+      ) : (
+        <Text>
+          {charge
+            ? `Next charge: ${charge}.`
+            : "Next charge date is not available."}
+        </Text>
+      )}
+      {!effective ? (
+        <Text>
+          This personal membership is not currently used because another
+          membership has higher priority.
+        </Text>
+      ) : null}
+      {showBalanceControl ? <UseBalance /> : null}
+    </Space>
+  );
+}
+
+function isPaidPersonalMembership(
+  membership: MembershipCandidate | undefined,
+): membership is MembershipCandidate {
+  return (
+    membership?.source === "subscription" &&
+    (numberValue(membership.subscription_cost) ?? 0) > 0
+  );
+}
+
+function reverificationSeatForRow(
+  status: SiteLicenseAffiliationReverificationUserStatus | null,
+  row: MembershipCandidateRow,
+): SiteLicenseAffiliationReverificationUserSeat | undefined {
+  if (
+    status == null ||
+    row.action !== "site-license" ||
+    row.sourceKind !== "grant" ||
+    !row.grantPackageId
+  ) {
+    return;
+  }
+  return status.seats.find((seat) => {
+    if (seat.package_id !== row.grantPackageId) return false;
+    return !row.siteLicenseId || seat.site_license_id === row.siteLicenseId;
+  });
+}
+
+function siteLicenseReverificationNote(
+  seat: SiteLicenseAffiliationReverificationUserSeat | undefined,
+): string | undefined {
+  if (seat?.reverification_due_at == null) return;
+  const due = new Date(seat.reverification_due_at);
+  if (!Number.isFinite(due.valueOf())) return;
+  if (due.getTime() <= Date.now()) {
+    return "Reverify now";
+  }
+  return `Reverify by ${formatLongDate(due)}`;
+}
+
+function formatLongDate(value: Date): string {
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(value);
 }
 
 function effectiveMembershipSourceLabel(
   membership: MembershipResolution,
   selectedSourceRow?: MembershipCandidateRow,
 ): string {
-  if (membership.source === "free") {
-    return "CoCalc";
-  }
   if (selectedSourceRow?.source) {
     return selectedSourceRow.source;
   }
+  if (membership.source === "free") {
+    return "Personal";
+  }
   if (membership.source === "subscription") {
-    return "Personal membership";
+    return "Personal";
   }
   if (membership.source === "admin") {
     return "Admin assigned";
@@ -326,7 +590,12 @@ function effectiveMembershipSourceLabel(
     return "Team license";
   }
   if (membership.grant_source === "site-license") {
-    return "Site license";
+    return (
+      siteLicenseDisplayName(
+        membership.site_license_name,
+        membership.organization_name,
+      ) ?? "Site license"
+    );
   }
   if (membership.grant_source?.includes("course")) {
     return "Course membership";
@@ -334,8 +603,20 @@ function effectiveMembershipSourceLabel(
   return "Granted";
 }
 
+function siteLicenseDisplayName(
+  siteLicenseName?: string | null,
+  organizationName?: string | null,
+): string | undefined {
+  const title = `${siteLicenseName ?? ""}`.trim();
+  const organization = `${organizationName ?? ""}`.trim();
+  return title || organization || undefined;
+}
+
 function personalMembershipPriceLabel(
-  membership: MembershipResolution,
+  membership: Pick<
+    MembershipCandidate | MembershipResolution,
+    "source" | "subscription_cost" | "subscription_interval"
+  >,
 ): string | undefined {
   if (membership.source !== "subscription") {
     return;
@@ -350,6 +631,29 @@ function personalMembershipPriceLabel(
   if (membership.subscription_interval === "year") {
     return `${formatMonthlyPrice(cost / 12)}/month, billed annually`;
   }
+}
+
+function personalMembershipChargeLabel(
+  membership: MembershipCandidate,
+): string | undefined {
+  const cost = numberValue(membership.subscription_cost);
+  if (cost == null || cost <= 0) return;
+  const date = formatOptionalLongDate(membership.expires);
+  const amount = formatCurrencyAmount(cost);
+  return date ? `${amount} on ${date}` : amount;
+}
+
+function formatOptionalLongDate(
+  value?: Date | string | null,
+): string | undefined {
+  if (value == null) return;
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return;
+  return formatLongDate(date);
+}
+
+function formatCurrencyAmount(value: number): string {
+  return Number.isInteger(value) ? currency(value, 0) : currency(value);
 }
 
 function formatMonthlyPrice(value: number): string {
@@ -371,93 +675,14 @@ function numberValue(value: unknown): number | undefined {
   return undefined;
 }
 
-function membershipStatusColor({
-  selected,
-  subscriptionStatus,
-}: {
-  selected: boolean;
-  subscriptionStatus?: "active" | "canceled" | "unpaid" | "past_due";
-}) {
-  if (selected) return "blue";
-  if (subscriptionStatus === "canceled") return "orange";
-  if (subscriptionStatus === "past_due" || subscriptionStatus === "unpaid") {
-    return "red";
+function membershipStateColor(state: string) {
+  switch (state) {
+    case "Active":
+      return "green";
+    case "Pending":
+    case "Pending approval":
+      return "gold";
+    case "Renewal canceled":
+      return "orange";
   }
-  return undefined;
-}
-
-function PersonalSubscriptionActions({
-  membership,
-  refresh,
-}: {
-  membership: MembershipCandidate;
-  refresh: () => void;
-}) {
-  const subscriptionId = membership.subscription_id;
-  const [error, setError] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
-
-  if (subscriptionId == null) {
-    return null;
-  }
-
-  const canceled = membership.subscription_status === "canceled";
-  const cancel = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      await runFreshAuthAction(async () => {
-        await cancelSubscription({
-          subscription_id: subscriptionId,
-          reason: "Canceled from Membership settings.",
-        });
-        refresh();
-      });
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-  const resume = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      await runFreshAuthAction(async () => {
-        await resumeSubscription(subscriptionId);
-        refresh();
-      });
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <>
-      {error && <Alert type="error" message={error} closable />}
-      {canceled ? (
-        <Button loading={loading} onClick={resume}>
-          Resume renewal
-        </Button>
-      ) : (
-        <Popconfirm
-          title="Cancel membership renewal?"
-          description="Your current paid membership remains active until its listed expiration date."
-          okButtonProps={{ danger: true, loading }}
-          okText="Cancel renewal"
-          onConfirm={cancel}
-        >
-          <Button danger loading={loading}>
-            Cancel...
-          </Button>
-        </Popconfirm>
-      )}
-      <FreshAuthModal {...freshAuthModalProps} />
-    </>
-  );
 }

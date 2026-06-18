@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 
 import {
   docsPath,
@@ -286,6 +286,25 @@ describe("public/docs", () => {
     expect(
       screen.getByText(/github.com\/sagemathinc\/cocalc-ai/),
     ).not.toBeNull();
+  });
+
+  it("renders docs markdown code blocks with the Slate code renderer", async () => {
+    render(
+      <PublicDocsApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{
+          slug: "terminal/use-terminal",
+          view: "docs-detail",
+        }}
+      />,
+    );
+
+    const markdown = screen.getByTestId("docs-markdown");
+    expect(markdown).toHaveClass("cocalc-docs-markdown");
+    await waitFor(() =>
+      expect(markdown.querySelector(".cocalc-slate-code-block")).not.toBeNull(),
+    );
+    expect(markdown.querySelector("button")).not.toBeNull();
   });
 
   it("renders a docs detail page with action metadata", () => {

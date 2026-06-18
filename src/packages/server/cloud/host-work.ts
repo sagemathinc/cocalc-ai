@@ -44,6 +44,10 @@ import {
   restoreProjectHostTokensForRestart,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
+import { computeHostOperationalAvailability } from "@cocalc/server/conat/api/hosts-normalization";
+import { enqueueRootfsPrepullForHost } from "./rootfs-prepull";
 
 const logger = getLogger("server:cloud:host-work");
 const pool = () => getPool();
@@ -51,6 +55,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const HOST_READY_VERIFY_DELAY_MS = 10_000;
 const HOST_READY_VERIFY_DEADLINE_MS = 10 * 60 * 1000;
 const SPOT_PROBE_STABLE_MS = 5 * 60 * 1000;
+const HOST_ROOTFS_PREPULL_RPC_TIMEOUT_MS = 30 * 60 * 1000;
 
 type ProviderReadyObservation = {
   mapped_status?: "running" | "starting" | "off" | "stopped" | "error";
@@ -60,6 +65,103 @@ type ProviderReadyObservation = {
   private_ip?: string;
   internal_hostname?: string;
 };
+
+function splitCsv(value: unknown): string[] {
+  return `${value ?? ""}`
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeRootfsArch(value: unknown): "amd64" | "arm64" | undefined {
+  const raw = `${value ?? ""}`.trim().toLowerCase();
+  if (raw === "amd64" || raw === "x86_64" || raw === "x64") return "amd64";
+  if (raw === "arm64" || raw === "aarch64") return "arm64";
+  return undefined;
+}
+
+function hostRootfsArch(row: any): "amd64" | "arm64" {
+  return (
+    normalizeRootfsArch(row?.metadata?.runtime?.metadata?.arch) ??
+    normalizeRootfsArch(row?.metadata?.runtime?.metadata?.architecture) ??
+    normalizeRootfsArch(row?.metadata?.machine?.metadata?.arch) ??
+    normalizeRootfsArch(row?.metadata?.machine?.metadata?.architecture) ??
+    normalizeRootfsArch(row?.metadata?.machine?.metadata?.cpu_arch) ??
+    "amd64"
+  );
+}
+
+async function listPrepullRootfsImages(row: any): Promise<string[]> {
+  const settings = await getServerSettings();
+  const images = new Set<string>();
+
+  for (const image of [
+    `${(settings as any).project_rootfs_default_image ?? ""}`.trim(),
+    `${(settings as any).project_rootfs_default_image_gpu ?? ""}`.trim(),
+    ...splitCsv((settings as any).project_rootfs_prepull_images),
+  ]) {
+    if (image) images.add(image);
+  }
+
+  const arch = hostRootfsArch(row);
+  const { rows } = await pool().query<{ runtime_image: string }>(
+    `
+      WITH candidates AS (
+        SELECT
+          image_id,
+          runtime_image,
+          supersedes_image_id,
+          COALESCE(NULLIF(family, ''), image_id) AS release_group,
+          COALESCE(NULLIF(channel, ''), 'stable') AS release_channel,
+          COALESCE(NULLIF(arch, ''), 'any') AS release_arch,
+          COALESCE(gpu, false) AS release_gpu,
+          COALESCE(created, updated) AS release_created,
+          COALESCE(updated, created) AS release_updated
+        FROM rootfs_images
+       WHERE COALESCE(prepull, false) = true
+         AND COALESCE(deleted, false) = false
+         AND COALESCE(hidden, false) = false
+         AND COALESCE(blocked, false) = false
+         AND COALESCE(runtime_image, '') <> ''
+         AND (
+           arch IS NULL OR arch = '' OR arch = 'any' OR arch = $1
+         )
+      ),
+      active AS (
+        SELECT *
+        FROM candidates AS candidate
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM candidates AS newer
+          WHERE newer.supersedes_image_id = candidate.image_id
+        )
+      ),
+      ranked AS (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY release_group, release_channel, release_arch, release_gpu
+            ORDER BY release_created DESC NULLS LAST,
+                     release_updated DESC NULLS LAST,
+                     image_id DESC
+          ) AS row_rank
+        FROM active
+      )
+      SELECT runtime_image
+        FROM ranked
+       WHERE row_rank = 1
+       ORDER BY release_created DESC NULLS LAST,
+                release_updated DESC NULLS LAST,
+                image_id ASC
+    `,
+    [arch],
+  );
+  for (const catalogRow of rows) {
+    const image = `${catalogRow.runtime_image ?? ""}`.trim();
+    if (image) images.add(image);
+  }
+
+  return Array.from(images);
+}
 
 async function waitForProviderStatus(opts: {
   entry: Awaited<ReturnType<typeof getProviderContext>>["entry"];
@@ -2226,6 +2328,17 @@ async function handleVerifyHostReady(row: any) {
         }
       }
     }
+    try {
+      await enqueueRootfsPrepullForHost({
+        row: host,
+        source: "verify_host_ready",
+      });
+    } catch (err) {
+      logger.warn("failed to queue RootFS pre-pull for ready host", {
+        host_id: host.id,
+        err,
+      });
+    }
     return;
   }
 
@@ -2370,6 +2483,87 @@ async function handleVerifyHostReady(row: any) {
       provider: providerId ?? host.metadata?.machine?.cloud,
     },
   });
+}
+
+async function handlePrepullRootfs(row: any) {
+  const host = await loadHostRow(row.vm_id);
+  if (!host) return;
+
+  const availability = computeHostOperationalAvailability(host);
+  if (!availability.operational) {
+    await logCloudVmEvent({
+      vm_id: host.id,
+      action: "prepull_rootfs",
+      status: "skipped",
+      provider: normalizeProviderId(host.metadata?.machine?.cloud),
+      error:
+        availability.reason_unavailable ??
+        "host is not operational for RootFS pre-pull",
+    });
+    return;
+  }
+
+  const images = await listPrepullRootfsImages(host);
+  if (!images.length) {
+    await logCloudVmEvent({
+      vm_id: host.id,
+      action: "prepull_rootfs",
+      status: "success",
+      provider: normalizeProviderId(host.metadata?.machine?.cloud),
+      spec: { images: [], count: 0 },
+    });
+    return;
+  }
+
+  const client = await getRoutedHostControlClient({
+    host_id: host.id,
+    timeout: HOST_ROOTFS_PREPULL_RPC_TIMEOUT_MS,
+  });
+  const results: Array<{ image: string; status: string; error?: string }> = [];
+  for (const image of images) {
+    try {
+      try {
+        await client.pullRootfsImage({ image });
+      } catch (err) {
+        const autoGrow = await maybeAutoGrowHostDiskForReservationFailure({
+          host_id: host.id,
+          err,
+        });
+        if (!autoGrow.grown) {
+          throw err;
+        }
+        await client.pullRootfsImage({ image });
+      }
+      results.push({ image, status: "success" });
+      await logCloudVmEvent({
+        vm_id: host.id,
+        action: "prepull_rootfs",
+        status: "success",
+        provider: normalizeProviderId(host.metadata?.machine?.cloud),
+        spec: { image },
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : `${err}`;
+      results.push({ image, status: "failure", error });
+      await logCloudVmEvent({
+        vm_id: host.id,
+        action: "prepull_rootfs",
+        status: "failure",
+        provider: normalizeProviderId(host.metadata?.machine?.cloud),
+        spec: { image },
+        error,
+      });
+    }
+  }
+
+  const failures = results.filter((result) => result.status !== "success");
+  if (failures.length) {
+    throw new Error(
+      `failed to pre-pull ${failures.length}/${images.length} RootFS image(s): ${failures
+        .map((failure) => `${failure.image}: ${failure.error ?? "failed"}`)
+        .join("; ")}`,
+    );
+  }
 }
 
 async function handleProbeSpot(row: any) {
@@ -2603,6 +2797,23 @@ export const cloudHostHandlers: CloudVmWorkHandlers = {
       const host = await loadHostRow(row.vm_id);
       if (host) {
         await markHostError(host, err);
+      }
+      throw err;
+    }
+  },
+  prepull_rootfs: async (row) => {
+    try {
+      await handlePrepullRootfs(row);
+    } catch (err) {
+      const host = await loadHostRow(row.vm_id);
+      if (host) {
+        await logCloudVmEvent({
+          vm_id: host.id,
+          action: "prepull_rootfs",
+          status: "failure",
+          provider: normalizeProviderId(host.metadata?.machine?.cloud),
+          error: err instanceof Error ? err.message : `${err}`,
+        });
       }
       throw err;
     }

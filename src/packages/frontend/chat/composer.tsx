@@ -30,6 +30,7 @@ import {
   findChatComposerFocusTarget,
   refocusChatComposerInput,
 } from "./composer-focus";
+import { AcpPromptModal } from "./acp-prompt-modal";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -40,8 +41,12 @@ export interface ChatRoomComposerProps {
   composerSession: number;
   input: string;
   setInput: (value: string, sessionToken?: number) => void;
+  acpPrompt?: string;
+  setAcpPrompt?: (value: string) => void;
   on_send: (value?: string) => void;
   on_send_immediately?: (value?: string) => void;
+  onIncreaseFontSize?: () => void;
+  onDecreaseFontSize?: () => void;
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
@@ -68,8 +73,12 @@ export function ChatRoomComposer({
   composerSession,
   input,
   setInput,
+  acpPrompt = "",
+  setAcpPrompt,
   on_send,
   on_send_immediately,
+  onIncreaseFontSize,
+  onDecreaseFontSize,
   submitMentionsRef,
   hasInput,
   isSelectedThreadAI,
@@ -128,6 +137,7 @@ export function ChatRoomComposer({
     () => selectedThread?.key ?? null,
     [selectedThread?.key],
   );
+  const hasAcpPrompt = acpPrompt.trim().length > 0;
 
   const [viewportHeight, setViewportHeight] = useState<number>(() => {
     if (typeof window === "undefined") return 900;
@@ -145,6 +155,7 @@ export function ChatRoomComposer({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
+  const [acpPromptModalOpen, setAcpPromptModalOpen] = useState<boolean>(false);
   const zenContainerRef = useRef<HTMLDivElement | null>(null);
   const inputContainerRef = useRef<HTMLDivElement | null>(null);
   const chatInputControlRef = useRef<ChatInputControl | null>(null);
@@ -349,6 +360,18 @@ export function ChatRoomComposer({
       toggleZenMode,
     ],
   );
+  const handleFontSizeChange = useMemo(() => {
+    if (onDecreaseFontSize == null && onIncreaseFontSize == null) {
+      return undefined;
+    }
+    return (delta: -1 | 1) => {
+      if (delta < 0) {
+        onDecreaseFontSize?.();
+      } else {
+        onIncreaseFontSize?.();
+      }
+    };
+  }, [onDecreaseFontSize, onIncreaseFontSize]);
 
   const composerStyle: CSSProperties = {
     display: "flex",
@@ -448,6 +471,12 @@ export function ChatRoomComposer({
             input={input}
             presenceThreadKey={presenceThreadKey}
             on_send={handleSend}
+            on_ctrl_enter={
+              hasActiveAcpTurn && isSelectedThreadAI
+                ? handleSendImmediately
+                : undefined
+            }
+            on_font_size_change={handleFontSizeChange}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {
@@ -498,32 +527,45 @@ export function ChatRoomComposer({
                 {isZenMode ? "Exit Zen" : "Zen"}
               </Button>
             </Tooltip>
+            {hasAcpPrompt ? (
+              <Tooltip title="View or edit the full prompt that will be sent to the agent">
+                <Button
+                  size="small"
+                  onClick={() => setAcpPromptModalOpen(true)}
+                  style={{ marginBottom: "5px" }}
+                >
+                  Agent Prompt
+                </Button>
+              </Tooltip>
+            ) : null}
             {hasActiveAcpTurn && isSelectedThreadAI ? (
-              <Button
-                onClick={handleSend}
-                disabled={!hasInput}
-                type="primary"
-                data-testid="chat-composer-send"
-                icon={<Icon name="paper-plane" />}
+              <Tooltip
+                title={
+                  <FormattedMessage
+                    id="chatroom.chat_input.queue_button.tooltip"
+                    defaultMessage={"Queue message (Shift+Enter)"}
+                  />
+                }
               >
-                {hasActiveAcpTurn && isSelectedThreadAI ? (
+                <Button
+                  onClick={handleSend}
+                  disabled={!hasInput}
+                  type="primary"
+                  data-testid="chat-composer-send"
+                  icon={<Icon name="paper-plane" />}
+                >
                   <FormattedMessage
                     id="chatroom.chat_input.queue_button.label"
                     defaultMessage={"Queue"}
                   />
-                ) : (
-                  <FormattedMessage
-                    id="chatroom.chat_input.send_button.label"
-                    defaultMessage={"Send"}
-                  />
-                )}
-              </Button>
+                </Button>
+              </Tooltip>
             ) : (
               <Tooltip
                 title={
                   <FormattedMessage
                     id="chatroom.chat_input.send_button.tooltip"
-                    defaultMessage={"Send message (shift+enter)"}
+                    defaultMessage={"Send message (Shift+Enter)"}
                   />
                 }
               >
@@ -544,19 +586,35 @@ export function ChatRoomComposer({
             {hasActiveAcpTurn && isSelectedThreadAI ? (
               <>
                 <div style={{ height: "5px" }} />
-                <Button
-                  onClick={handleSendImmediately}
-                  disabled={!hasInput}
-                  type="default"
-                  icon={<Icon name="bolt" />}
+                <Tooltip
+                  title={
+                    <FormattedMessage
+                      id="chatroom.chat_input.steer_button.tooltip"
+                      defaultMessage={"Steer running turn (Ctrl+Enter)"}
+                    />
+                  }
                 >
-                  Steer
-                </Button>
+                  <Button
+                    onClick={handleSendImmediately}
+                    disabled={!hasInput}
+                    type="default"
+                    icon={<Icon name="bolt" />}
+                  >
+                    Steer
+                  </Button>
+                </Tooltip>
               </>
             ) : null}
           </>
         )}
       </div>
+      <AcpPromptModal
+        open={acpPromptModalOpen}
+        value={acpPrompt}
+        fontSize={fontSize}
+        onChange={(value) => setAcpPrompt?.(value)}
+        onClose={() => setAcpPromptModalOpen(false)}
+      />
     </div>
   );
 }

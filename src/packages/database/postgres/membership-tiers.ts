@@ -12,7 +12,9 @@ interface Query {
   store_description?: string | null;
   store_highlights?: string[] | null;
   site_license_pool_description?: string | null;
+  team_visible?: boolean;
   course_store_visible?: boolean;
+  course_allowed_domains?: string[] | null;
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
@@ -167,7 +169,9 @@ export default async function membershipTiersQuery(
       store_description,
       store_highlights,
       site_license_pool_description,
+      team_visible,
       course_store_visible,
+      course_allowed_domains,
       priority,
       price_monthly,
       price_yearly,
@@ -201,7 +205,9 @@ export default async function membershipTiersQuery(
                 "store_description",
                 "store_highlights",
                 "site_license_pool_description",
+                "team_visible",
                 "course_store_visible",
+                "course_allowed_domains",
                 "priority",
                 "price_monthly",
                 "price_yearly",
@@ -220,7 +226,7 @@ export default async function membershipTiersQuery(
                 "created",
                 "updated"
               )
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::JSONB,$16::JSONB,$17::JSONB,$18::JSONB,$19::JSONB,$20,$21,$22::JSONB,NOW(),NOW())
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::JSONB,$18::JSONB,$19::JSONB,$20::JSONB,$21::JSONB,$22,$23,$24::JSONB,NOW(),NOW())
               ON CONFLICT (id)
               DO UPDATE SET
                 "label" = EXCLUDED.label,
@@ -228,7 +234,9 @@ export default async function membershipTiersQuery(
                 "store_description" = EXCLUDED.store_description,
                 "store_highlights" = EXCLUDED.store_highlights,
                 "site_license_pool_description" = EXCLUDED.site_license_pool_description,
+                "team_visible" = EXCLUDED.team_visible,
                 "course_store_visible" = EXCLUDED.course_store_visible,
+                "course_allowed_domains" = EXCLUDED.course_allowed_domains,
                 "priority" = EXCLUDED.priority,
                 "price_monthly" = EXCLUDED.price_monthly,
                 "price_yearly" = EXCLUDED.price_yearly,
@@ -252,7 +260,9 @@ export default async function membershipTiersQuery(
         store_description ?? null,
         store_highlights ?? null,
         site_license_pool_description ?? null,
+        team_visible ?? false,
         course_store_visible ?? false,
+        course_allowed_domains ?? null,
         priority ?? 0,
         price_monthly ?? null,
         price_yearly ?? null,

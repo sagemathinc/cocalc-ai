@@ -26,6 +26,10 @@ import {
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { ProjectAvatarImage } from "@cocalc/frontend/projects/project-avatar";
+import {
+  ProjectStatusAlertDetails,
+  visibleProjectStatusAlerts,
+} from "@cocalc/frontend/project/project-status-alerts";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "../project/page/project-state-hook";
@@ -65,13 +69,11 @@ interface ProjectTabProps {
 }
 
 function useProjectStatusAlerts(project_id: string) {
-  const [any_alerts, set_any_alerts] = useState<boolean>(false);
   const project_status = useTypedRedux({ project_id }, "status");
-  const any = project_status?.get("alerts").size > 0;
-  useMemo(() => {
-    set_any_alerts(any);
-  }, [any]);
-  return any_alerts;
+  return useMemo(
+    () => visibleProjectStatusAlerts(project_status),
+    [project_status],
+  );
 }
 
 function ProjectTab({ project_id }: ProjectTabProps) {
@@ -97,7 +99,8 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     "projects",
     "public_project_titles",
   );
-  const any_alerts = useProjectStatusAlerts(project_id);
+  const statusAlerts = useProjectStatusAlerts(project_id);
+  const any_alerts = statusAlerts.length > 0;
 
   const title = project?.get("title") ?? public_project_titles?.get(project_id);
   if (title == null) {
@@ -153,10 +156,26 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     );
   }
 
+  function openProjectInfo(event?: React.MouseEvent<HTMLElement>) {
+    event?.stopPropagation();
+    event?.preventDefault();
+    void pageActions.set_active_tab(project_id);
+    redux.getProjectActions(project_id)?.set_active_tab("info");
+  }
+
   function renderContent() {
     return (
       <div style={{ maxWidth: "400px", maxHeight: "50vh", overflow: "auto" }}>
         {noInternetInfo("popover")}
+        {statusAlerts.length > 0 ? (
+          <>
+            <ProjectStatusAlertDetails
+              alerts={statusAlerts}
+              onOpenInfo={openProjectInfo}
+            />
+            <hr />
+          </>
+        ) : null}
         <ProjectAvatarImage
           project_id={project_id}
           size={120}

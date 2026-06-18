@@ -83,6 +83,7 @@ describe("getNames input validation", () => {
 
     expect(getClusterAccountsByIdsMock).toHaveBeenCalledWith([ACCOUNT_ID]);
     expect(names[ACCOUNT_ID]).toEqual({
+      display_name: "Ada Lovelace",
       first_name: "Ada",
       last_name: "Lovelace",
       profile: undefined,

@@ -10,7 +10,9 @@ import { VirtuosoHandle } from "react-virtuoso";
 import {
   CSS,
   React,
+  redux,
   useAsyncEffect,
+  useAccountOtherSetting,
   useEffect,
   useIsMountedRef,
   usePrevious,
@@ -42,6 +44,17 @@ import {
   TypeFilterLabel,
 } from "@cocalc/frontend/project/explorer/file-listing/utils";
 import { TerminalModeDisplay } from "@cocalc/frontend/project/explorer/file-listing/terminal-mode-display";
+import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
+import {
+  LAUNCHER_SETTINGS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  getAccountLauncherPrefs,
+  getEffectiveLauncher,
+  getSiteLauncherDefaults,
+  updateAccountLauncherPrefs,
+} from "@cocalc/frontend/project/new/launcher-preferences";
+import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
+import { QuickCreateDropdown } from "@cocalc/frontend/project/new/quick-create-dropdown";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { PLATFORM_MODE_CLOUD } from "@cocalc/util/db-schema/site-defaults";
@@ -164,6 +177,11 @@ export function FilesHeader({
 
   const uploadClassName = `upload-button-flyout-${project_id}`;
   const platformMode = useTypedRedux("customize", "platform_mode");
+  const launcherSettings = useAccountOtherSetting(LAUNCHER_SETTINGS_KEY);
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
   const hidden = useTypedRedux({ project_id }, "show_hidden");
   const file_creation_error = useTypedRedux(
@@ -191,6 +209,14 @@ export function FilesHeader({
   const termIdRef = React.useRef(0);
   const isMountedRef = useIsMountedRef();
   const file_search_prev = usePrevious(file_search);
+  const availableFeatures = useAvailableFeatures(project_id);
+  const [showCustomizeModal, setShowCustomizeModal] = React.useState(false);
+  const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
+  const accountLauncherPrefs = getAccountLauncherPrefs(launcherSettings);
+  const mergedLauncher = getEffectiveLauncher({
+    accountPrefs: accountLauncherPrefs,
+    siteDefaults: siteLauncherDefaults,
+  });
 
   useEffect(() => {
     if (!highlighNothingFound) return;
@@ -236,6 +262,37 @@ export function FilesHeader({
       name: fn,
       current_path: effective_current_path,
     });
+  }
+
+  function createQuickFile(ext: string): void {
+    if (file_search.length === 0) {
+      actions?.ask_filename(ext);
+      return;
+    }
+    actions?.createFile({
+      name: file_search,
+      ext,
+      current_path: effective_current_path,
+    });
+    setSearchState("");
+  }
+
+  function createQuickFolder(): void {
+    if (file_search.length === 0) {
+      actions?.ask_filename("/");
+      return;
+    }
+    actions?.createFolder({
+      name: file_search,
+      current_path: effective_current_path,
+      switch_over: true,
+    });
+    setSearchState("");
+  }
+
+  function saveUserLauncherPrefs(prefs: any | null) {
+    const next = updateAccountLauncherPrefs(launcherSettings, prefs);
+    redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 
   function applyHistorySelection(idx?: number): void {
@@ -879,15 +936,42 @@ export function FilesHeader({
           width: "100%",
         }}
       >
-        <FilesSelectedControls
-          project_id={project_id}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+          }}
+        >
+          <FilesSelectedControls
+            project_id={project_id}
+            checked_files={checked_files}
+            directoryFiles={directoryFiles}
+            open={open}
+            getFile={getFile}
+            mode="top"
+            activeFile={activeFile}
+            refreshBackups={refreshBackups}
+            showActions={false}
+          />
+          <div
+            aria-hidden={!hasPendingUpdate}
+            style={{
+              display: "inline-flex",
+              visibility: hasPendingUpdate ? "visible" : "hidden",
+              pointerEvents: hasPendingUpdate ? undefined : "none",
+            }}
+          >
+            <RefreshButton onClick={onRefreshListing} />
+          </div>
+        </div>
+        <FilesSelectButtons
+          setMode={setMode}
           checked_files={checked_files}
-          directoryFiles={directoryFiles}
-          open={open}
-          getFile={getFile}
-          mode="top"
-          activeFile={activeFile}
-          refreshBackups={refreshBackups}
+          mode={mode}
+          selectAllFiles={selectAllFiles}
+          clearAllSelections={clearAllSelections}
         />
       </div>
     );
@@ -960,13 +1044,16 @@ export function FilesHeader({
                   title={intl.formatMessage(labels.new_tooltip)}
                   placement="bottom"
                 >
-                  <Button
-                    size="small"
-                    type="primary"
-                    onClick={() => actions?.toggleFlyout("new")}
-                  >
-                    <Icon name={"plus-circle"} /> New
-                  </Button>
+                  <span>
+                    <QuickCreateDropdown
+                      size="small"
+                      quickCreateIds={mergedLauncher.quickCreate}
+                      availableFeatures={availableFeatures}
+                      onCreateFile={createQuickFile}
+                      onCreateFolder={createQuickFolder}
+                      onCustomize={() => setShowCustomizeModal(true)}
+                    />
+                  </span>
                 </Tooltip>
                 <Tooltip
                   title={intl.formatMessage(labels.upload_tooltip)}
@@ -1040,6 +1127,12 @@ export function FilesHeader({
         {createFileIfNotExists()}
         {renderFileCreationError()}
       </Space>
+      <LauncherCustomizeModal
+        open={showCustomizeModal}
+        onClose={() => setShowCustomizeModal(false)}
+        initialQuickCreate={mergedLauncher.quickCreate}
+        onSave={saveUserLauncherPrefs}
+      />
     </>
   );
 }

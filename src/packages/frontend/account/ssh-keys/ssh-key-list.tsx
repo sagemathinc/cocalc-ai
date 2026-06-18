@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Flex, message, Popconfirm, Typography } from "antd";
+import { Button, Flex, Popconfirm, Typography } from "antd";
 import { Map } from "immutable";
 import { useIntl } from "react-intl";
 
@@ -24,6 +24,7 @@ import { CancelText } from "@cocalc/frontend/i18n/components";
 import { cmp } from "@cocalc/util/misc";
 import SSHKeyAdder from "./ssh-key-adder";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
+import { ugly_error } from "../util";
 
 interface SSHKeyListProps {
   ssh_keys?: Map<string, any>;
@@ -51,9 +52,7 @@ export default function SSHKeyList({
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const isFlyout = mode === "flyout";
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => message.error(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   function renderAdder(size?) {
     if (project_id) {
@@ -211,12 +210,16 @@ function OneSSHKey({
   async function delete_key(): Promise<void> {
     const fingerprint = ssh_key.get("fingerprint");
     if (project_id) {
-      await runFreshAuthAction(async () => {
-        await redux.getActions("projects").delete_ssh_key_from_project({
-          fingerprint,
-          project_id: project_id,
+      try {
+        await runFreshAuthAction(async () => {
+          await redux.getActions("projects").delete_ssh_key_from_project({
+            fingerprint,
+            project_id: project_id,
+          });
         });
-      });
+      } catch (err) {
+        ugly_error(err);
+      }
     } else {
       redux.getActions("account").delete_ssh_key(fingerprint);
     }

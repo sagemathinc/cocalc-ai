@@ -12,6 +12,10 @@ import type { DStream } from "@cocalc/conat/sync/dstream";
 import { updateLro } from "@cocalc/server/lro/lro-db";
 
 const log = getLogger("server:projects:start-lro-progress");
+const OPEN_START_LRO_PROGRESS_STREAM_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_START_LRO_PROGRESS_STREAM_TIMEOUT_MS) || 2000,
+);
 
 type CloseFn = () => Promise<void>;
 
@@ -37,12 +41,16 @@ export async function mirrorStartLroProgress({
 
   let stream: DStream<LroEvent> | undefined;
   try {
-    stream = await getLroStream({
-      op_id,
-      scope_type: "project",
-      scope_id: project_id,
-      client: conat(),
-    });
+    stream = await withTimeout(
+      getLroStream({
+        op_id,
+        scope_type: "project",
+        scope_id: project_id,
+        client: conat(),
+      }),
+      OPEN_START_LRO_PROGRESS_STREAM_TIMEOUT_MS,
+      "timeout opening project-start lro stream",
+    );
   } catch (err) {
     log.warn("unable to open project-start lro stream", {
       project_id,
@@ -144,4 +152,24 @@ export async function mirrorStartLroProgress({
       // already logged
     }
   };
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }

@@ -20,7 +20,6 @@ export type PublicAuthRoute =
       projectId?: string;
       token: string;
     }
-  | { code?: string; kind: "redeem" }
   | { kind: "sso-detail"; id: string }
   | { kind: "sso-index" };
 
@@ -30,7 +29,6 @@ function getRouteParts(pathname: string): string[] {
     parts.indexOf("auth"),
     parts.indexOf("invites"),
     parts.indexOf("sso"),
-    parts.indexOf("redeem"),
   );
   if (explicitIndex >= 0) {
     return parts.slice(explicitIndex);
@@ -92,12 +90,6 @@ export function pathForSSO(id?: string): string {
   return id ? `${base}/sso/${id}` : `${base}/sso`;
 }
 
-export function pathForRedeem(code?: string): string {
-  const base = basePathPrefix();
-  const normalized = `${code ?? ""}`.trim().replace(/^\/+/, "");
-  return normalized ? `${base}/redeem/${normalized}` : `${base}/redeem`;
-}
-
 export function getPublicAuthRedirectTargetFromSearch(
   search: string,
   depth = 0,
@@ -112,7 +104,10 @@ export function getPublicAuthRedirectTargetFromSearch(
       return undefined;
     }
     const relative = appRelativePath(url.pathname);
-    if (/^\/(auth|sso|redeem)(\/|$)/.test(relative)) {
+    if (relative === "/") {
+      return undefined;
+    }
+    if (/^\/(auth|sso)(\/|$)/.test(relative)) {
       return depth < 3
         ? getPublicAuthRedirectTargetFromSearch(url.search, depth + 1)
         : undefined;
@@ -195,13 +190,6 @@ export function getPublicAuthRouteFromPath(
       ),
       kind: "auth-verify-email",
       token: routeParts[2] ?? url.searchParams.get("token") ?? "",
-    };
-  }
-
-  if (routeParts[0] === "redeem") {
-    return {
-      code: routeParts[1] ?? undefined,
-      kind: "redeem",
     };
   }
 

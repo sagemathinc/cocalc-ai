@@ -77,12 +77,7 @@ export function SoftwareLicensesAdmin() {
 
   const [tierForm] = Form.useForm();
   const [licenseForm] = Form.useForm();
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) =>
-      message.error(
-        `Security confirmation succeeded, but action failed: ${err}`,
-      ),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const loadTiers = React.useCallback(async () => {
     setLoadingTiers(true);

@@ -5,7 +5,7 @@
 
 import { Tag } from "antd";
 
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, isIconName, type IconName } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
 import { RootfsScanStatusTag } from "@cocalc/frontend/rootfs/scan-status";
 import {
@@ -73,9 +73,15 @@ export function groupedRootfsOptions(images: RootfsImageEntry[]) {
         entry,
         searchText: [
           entry.label,
+          entry.slug,
           entry.image,
           entry.description,
+          entry.content?.title,
+          entry.content?.subtitle,
+          entry.content?.description,
+          entry.content?.publisher?.name,
           entry.owner_name,
+          ...(entry.content?.highlights ?? []),
           ...(entry.tags ?? []),
         ]
           .filter(Boolean)
@@ -148,6 +154,76 @@ export function latestRootfsVersionEntries(
     if (!key) return true;
     return latestBySeries.get(key)?.id === entry.id;
   });
+}
+
+function compareRootfsVersionEntries(
+  a: RootfsImageEntry,
+  b: RootfsImageEntry,
+): number {
+  const versionCmp = VERSION_COLLATOR.compare(a.version ?? "", b.version ?? "");
+  if (versionCmp !== 0) return versionCmp;
+  const aTime = Date.parse(a.created ?? "") || 0;
+  const bTime = Date.parse(b.created ?? "") || 0;
+  if (aTime !== bTime) return aTime - bTime;
+  return a.id.localeCompare(b.id);
+}
+
+export function latestRootfsUpgradeEntry({
+  current,
+  images,
+}: {
+  current?: RootfsImageEntry;
+  images: RootfsImageEntry[];
+}): RootfsImageEntry | undefined {
+  if (!current) return undefined;
+  const entries = images.filter(
+    (entry) => !entry.hidden && !entry.blocked && entry.id !== current.id,
+  );
+  const bySupersededId = new Map<string, RootfsImageEntry[]>();
+  for (const entry of entries) {
+    const supersededId = entry.supersedes_image_id?.trim();
+    if (!supersededId) continue;
+    const list = bySupersededId.get(supersededId) ?? [];
+    list.push(entry);
+    bySupersededId.set(supersededId, list);
+  }
+
+  const reachableExplicit: RootfsImageEntry[] = [];
+  let cursor: RootfsImageEntry = current;
+  const seen = new Set<string>([current.id]);
+  while (true) {
+    const candidates = (bySupersededId.get(cursor.id) ?? []).sort((a, b) =>
+      compareRootfsVersionEntries(b, a),
+    );
+    const next = candidates.find((entry) => !seen.has(entry.id));
+    if (!next) break;
+    reachableExplicit.push(next);
+    seen.add(next.id);
+    cursor = next;
+  }
+
+  const latestExplicit = reachableExplicit.sort((a, b) =>
+    compareRootfsVersionEntries(b, a),
+  )[0];
+  if (!current.family || !current.version) return latestExplicit;
+  const related = entries
+    .filter(
+      (entry) =>
+        entry.family === current.family &&
+        (!current.channel || entry.channel === current.channel) &&
+        !!entry.version &&
+        VERSION_COLLATOR.compare(entry.version, current.version!) > 0,
+    )
+    .sort((a, b) => compareRootfsVersionEntries(b, a));
+  const latestRelated = related[0];
+  if (!latestExplicit) return latestRelated;
+  if (
+    latestRelated &&
+    compareRootfsVersionEntries(latestRelated, latestExplicit) > 0
+  ) {
+    return latestRelated;
+  }
+  return latestExplicit;
 }
 
 export function rootfsOptionSearchText(option?: any): string {
@@ -238,7 +314,7 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
             }}
           >
             <Icon
-              name={(entry.theme?.icon?.trim() as any) || "cube"}
+              name={rootfsCatalogIconName(entry)}
               style={{ fontSize: "22px" }}
             />
           </div>
@@ -303,4 +379,9 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
       </div>
     </div>
   );
+}
+
+function rootfsCatalogIconName(entry: RootfsImageEntry): IconName {
+  const icon = entry.theme?.icon?.trim();
+  return isIconName(icon) ? icon : "docker";
 }

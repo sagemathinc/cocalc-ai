@@ -456,6 +456,108 @@ describe("host-registry automatic convergence retry", () => {
     );
   });
 
+  it("accepts registration from a cloud host after startup timeout marked it error", async () => {
+    currentMetadata = {
+      desired_state: "running",
+      bootstrap: { status: "done" },
+      host_session_id: "session-1",
+      host_boot_id: "boot-1",
+      machine: { cloud: "gcp" },
+    };
+    queryMock = jest.fn(async (sql: string) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "error" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata, bay_id: "bay-1" }] };
+      }
+      if (
+        sql.includes(
+          "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+
+    const { initHostRegistryService } = await import("./host-registry");
+    const service = await initHostRegistryService();
+
+    await service.register({
+      id: "host-1",
+      metadata: currentMetadata,
+    } as any);
+
+    expect(upsertProjectHostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "host-1",
+        bay_id: "bay-1",
+        status: "running",
+      }),
+    );
+  });
+
+  it("keeps ignoring registration from an error host that is not intended to run", async () => {
+    currentMetadata = {
+      desired_state: "stopped",
+      bootstrap: { status: "failed" },
+      host_session_id: "session-1",
+      host_boot_id: "boot-1",
+      machine: { cloud: "gcp" },
+    };
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "error" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { initHostRegistryService } = await import("./host-registry");
+    const service = await initHostRegistryService();
+
+    await service.register({
+      id: "host-1",
+      metadata: currentMetadata,
+    } as any);
+
+    expect(upsertProjectHostMock).not.toHaveBeenCalled();
+  });
+
   it("does not mark running projects opened when only the host process session changes", async () => {
     currentMetadata = {
       host_session_id: "session-old",

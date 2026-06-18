@@ -1,0 +1,1 @@
+cocalc-bay ALL=(root) NOPASSWD: /usr/local/sbin/cocalc-bay-cloudflared-ctl start, /usr/local/sbin/cocalc-bay-cloudflared-ctl restart, /usr/local/sbin/cocalc-bay-cloudflared-ctl status, /usr/local/sbin/cocalc-bay-cloudflared-ctl is-active

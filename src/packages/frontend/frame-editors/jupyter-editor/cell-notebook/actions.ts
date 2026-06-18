@@ -74,7 +74,7 @@ export class NotebookFrameActions {
     // TypeError: Cannot read properties of undefined (reading 'store')"
     // as a side effect of a problem loading TimeTravel history.
     // Better to at least not crash:
-    this.jupyter_actions?.store.on("cell-list-recompute", this.update_cur_id);
+    this.jupyter_actions?.store?.on("cell-list-recompute", this.update_cur_id);
 
     this.update_cur_id();
     this.init_syncdb_change_hook();
@@ -97,14 +97,9 @@ export class NotebookFrameActions {
   }
 
   private init_syncdb_change_hook(): void {
-    this.jupyter_actions.store.on(
-      "syncdb-before-change",
-      this.syncdb_before_change,
-    );
-    this.jupyter_actions.store.on(
-      "syncdb-after-change",
-      this.syncdb_after_change,
-    );
+    const store = this.jupyter_actions?.store;
+    store?.on("syncdb-before-change", this.syncdb_before_change);
+    store?.on("syncdb-after-change", this.syncdb_after_change);
   }
 
   private get_windowed_list(): any {
@@ -197,19 +192,13 @@ export class NotebookFrameActions {
   }
 
   public close(): void {
-    this.jupyter_actions.store.removeListener(
-      "syncdb-before-change",
-      this.syncdb_before_change,
-    );
-    this.jupyter_actions.store.removeListener(
-      "cell-list-recompute",
-      this.update_cur_id,
-    );
-    this.jupyter_actions.store.removeListener(
-      "syncdb-after-change",
-      this.syncdb_after_change,
-    );
-    this.store.close();
+    if (this._is_closed) return;
+
+    const store = this.jupyter_actions?.store;
+    store?.removeListener("syncdb-before-change", this.syncdb_before_change);
+    store?.removeListener("cell-list-recompute", this.update_cur_id);
+    store?.removeListener("syncdb-after-change", this.syncdb_after_change);
+    this.store?.close?.();
     close(this);
     this._is_closed = true;
   }
@@ -381,14 +370,18 @@ export class NotebookFrameActions {
    ***/
 
   set_mode(mode: "escape" | "edit"): void {
-    if (this.jupyter_actions.store.get("read_only") && mode == "edit") {
+    const jupyterStore = this.jupyter_actions?.store;
+    if (mode == "edit" && jupyterStore == null) {
+      return;
+    }
+    if (jupyterStore?.get("read_only") && mode == "edit") {
       return;
     }
     if (mode == "edit") {
       // If we're changing to edit mode and current cell is a markdown
       // cell, switch it to the codemirror editor view.
       const cur_id = this.store.get("cur_id");
-      if (this.jupyter_actions.store.get_cell_type(cur_id) === "markdown") {
+      if (jupyterStore?.get_cell_type(cur_id) === "markdown") {
         this.set_md_cell_editing(cur_id);
       }
       if (this.input_editors[cur_id] != null) {
@@ -554,11 +547,13 @@ export class NotebookFrameActions {
   // E.g., another user deleted the cell that is currently selected.
   // This does nothing if cur_id is set to an actual cell.
   private update_cur_id(): void {
-    const cells = this.jupyter_actions.store.get("cells");
+    const store = this.jupyter_actions?.store;
+    if (store == null) return;
+    const cells = store.get("cells");
     if (cells == null) return; // can't do anything yet.
     const cur_id = this.store.get("cur_id");
     if (cur_id == null || cells.get(cur_id) == null) {
-      const new_cur_id = this.jupyter_actions.store.get_cell_list().get(0);
+      const new_cur_id = store.get_cell_list().get(0);
       if (new_cur_id == null) return; // can't do anything -- no cells
       this.set_cur_id(new_cur_id);
     }

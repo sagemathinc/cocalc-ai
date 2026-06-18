@@ -125,16 +125,22 @@ Current release:
 
 Public install:
 
-  curl -fsSL https://github.com/${repo}/releases/download/${channel_tag}/install-cocalc-star.sh | sudo bash
+\`\`\`sh
+curl -fsSL https://github.com/${repo}/releases/download/${channel_tag}/install-cocalc-star.sh | sudo bash
+\`\`\`
 
 Local Lima install:
 
-  curl -fsSL https://github.com/${repo}/releases/download/${channel_tag}/install-cocalc-star-local-lima.sh \\
-    | COCALC_STAR_LIMA_SHARED_DIR="\$HOME/cocalc-star-scratch" bash
+\`\`\`sh
+curl -fsSL https://github.com/${repo}/releases/download/${channel_tag}/install-cocalc-star-local-lima.sh \\
+  | COCALC_STAR_LIMA_SHARED_DIR="\$HOME/cocalc-star-scratch" bash
+\`\`\`
 
 The channel manifest points at immutable release artifacts under:
 
-  ${immutable_base_url}
+\`\`\`text
+${immutable_base_url}
+\`\`\`
 EOF
 
 (

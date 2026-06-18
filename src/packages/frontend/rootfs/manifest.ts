@@ -27,6 +27,7 @@ type ManifestLoadState = {
 type RootfsImageLoadOptions = {
   query?: string;
   limit?: number;
+  imageIds?: string[];
 };
 
 const manifestCache = new Map<string, Promise<RootfsImageEntry[]>>();
@@ -111,6 +112,30 @@ async function loadManagedCatalogManifest(
         source: page.source,
         images: page.images,
       };
+      const requestedImageIds = Array.from(
+        new Set(
+          (opts.imageIds ?? [])
+            .map((id) => `${id ?? ""}`.trim())
+            .filter(Boolean),
+        ),
+      );
+      const loadedImageIds = new Set(manifest.images.map((entry) => entry.id));
+      const missingImageIds = requestedImageIds.filter(
+        (id) => !loadedImageIds.has(id),
+      );
+      if (missingImageIds.length > 0) {
+        try {
+          const exact =
+            await webapp_client.conat_client.hub.system.getRootfsCatalogEntries(
+              {
+                image_ids: missingImageIds,
+              },
+            );
+          manifest.images = mergeRootfsManifests([manifest, exact]);
+        } catch (err) {
+          console.warn("Failed to resolve RootFS catalog image ids:", err);
+        }
+      }
       if (!manifest.source) {
         manifest.source = url;
       }
@@ -141,7 +166,14 @@ export async function loadRootfsImages(
   if (urls.length === 0) {
     return [];
   }
-  const key = `${scopeKey}|${opts.query ?? ""}|${opts.limit ?? ""}|${urls.join("|")}`;
+  const imageIdsKey = Array.from(
+    new Set(
+      (opts.imageIds ?? []).map((id) => `${id ?? ""}`.trim()).filter(Boolean),
+    ),
+  )
+    .sort()
+    .join(",");
+  const key = `${scopeKey}|${opts.query ?? ""}|${opts.limit ?? ""}|${imageIdsKey}|${urls.join("|")}`;
   const cached = manifestCache.get(key);
   if (cached) {
     return cached;
@@ -173,6 +205,19 @@ export function useRootfsImages(
   const scopeKey = rootfsCatalogScopeKey();
   const query = opts.query?.trim() ?? "";
   const limit = opts.limit;
+  const imageIdsKey = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (opts.imageIds ?? [])
+            .map((id) => `${id ?? ""}`.trim())
+            .filter(Boolean),
+        ),
+      )
+        .sort()
+        .join(","),
+    [opts.imageIds?.join("|")],
+  );
 
   useEffect(
     () => subscribeManifestInvalidation(() => setRevision(manifestRevision)),
@@ -188,7 +233,8 @@ export function useRootfsImages(
       };
     }
     setState((prev) => ({ ...prev, loading: true, error: undefined }));
-    loadRootfsImages(urls, scopeKey, { query, limit })
+    const imageIds = imageIdsKey ? imageIdsKey.split(",") : [];
+    loadRootfsImages(urls, scopeKey, { query, limit, imageIds })
       .then((images) => {
         if (!active) return;
         setState({ images, loading: false });
@@ -204,7 +250,7 @@ export function useRootfsImages(
     return () => {
       active = false;
     };
-  }, [limit, query, revision, scopeKey, urls.join("|")]);
+  }, [imageIdsKey, limit, query, revision, scopeKey, urls.join("|")]);
 
   return state;
 }

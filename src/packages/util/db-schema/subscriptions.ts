@@ -19,8 +19,6 @@ export interface MembershipMetadata {
 }
 export type Metadata = MembershipMetadata;
 
-export const RENEW_DAYS_BEFORE_END = 5;
-
 export interface SubscriptionPayment {
   // id of the payment intent in stripe
   payment_intent_id: string;

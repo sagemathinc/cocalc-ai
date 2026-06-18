@@ -4,13 +4,15 @@ set -euo pipefail
 SOURCE_ROOT=""
 BUNDLE_PATH=""
 STATIC_BUNDLE_PATH=""
+HUB_BUNDLE_PATH=""
 BAY_ID="bay-0"
 BAY_USER="cocalc-bay"
 BAY_GROUP="cocalc-bay"
 BAY_ROOT_BASE="/mnt/cocalc/bays"
 INSTALL_BASE="/opt/cocalc/bay"
 RELEASE_ID=""
-WORKER_COUNT=2
+WORKER_COUNT=""
+WORKER_COUNT_EXPLICIT=0
 ENABLE_WORKERS=1
 START_BAY=0
 FORCE_ENV=0
@@ -29,7 +31,7 @@ RETAIN_RELEASES="${COCALC_BAY_RETAIN_RELEASES:-3}"
 
 usage() {
   cat <<'EOF'
-Usage: bay-bootstrap-release.sh (--source <built-src-root> | --bundle <tarball> | --static-bundle <tarball>) [options]
+Usage: bay-bootstrap-release.sh (--source <built-src-root> | --bundle <tarball> | --static-bundle <tarball> | --hub-bundle <tarball>) [options]
 
 Stage a built CoCalc src tree as a bay release, install the scaffold, and
 write bay env/secrets files.
@@ -38,13 +40,15 @@ Options:
   --source <dir>           built src root to stage (required)
   --bundle <tarball>       packaged Rocket bay runtime tarball to stage
   --static-bundle <tarball> packaged static/frontend-only update tarball
+  --hub-bundle <tarball>   packaged hub/control-plane-only update tarball
   --bay-id <id>            bay id (default: bay-0)
   --bay-user <user>        service user / db user (default: cocalc-bay)
   --bay-group <group>      service group (default: cocalc-bay)
   --bay-root-base <dir>    base dir for bay state (default: /mnt/cocalc/bays)
   --install-base <dir>     install base for releases/current (default: /opt/cocalc/bay)
   --release-id <id>        explicit release id (default: timestamp-gitshort)
-  --worker-count <n>       worker count to write into bay-workers.env (default: 2)
+  --worker-count <n>       worker count to write into bay-workers.env; default
+                           preserves existing value, or 2 on first install
   --router-port <n>        router port (default: 9102)
   --persist-port <n>       persist port (default: 9202)
   --hub-base-port <n>      base port for hub workers (default: 9300)
@@ -250,6 +254,8 @@ derive_release_id() {
     git_short="$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
   elif [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     git_short="static"
+  elif [[ -n "$HUB_BUNDLE_PATH" ]]; then
+    git_short="hub"
   else
     git_short="bundle"
   fi
@@ -333,6 +339,64 @@ stage_static_bundle_release() {
   trap - RETURN
 }
 
+stage_hub_bundle_release() {
+  if [[ ! -f "$HUB_BUNDLE_PATH" ]]; then
+    echo "hub bundle does not exist: $HUB_BUNDLE_PATH" >&2
+    exit 1
+  fi
+  if [[ ! -L "$CURRENT_LINK" ]]; then
+    echo "hub bundle deploy requires an existing current release at ${CURRENT_LINK}" >&2
+    exit 1
+  fi
+
+  local current_release
+  current_release="$(readlink -f "$CURRENT_LINK")"
+  if [[ -z "$current_release" || ! -d "$current_release" ]]; then
+    echo "current release does not resolve to a directory: ${CURRENT_LINK}" >&2
+    exit 1
+  fi
+
+  run rm -rf "$TARGET_RELEASE"
+  run mkdir -p "$TARGET_RELEASE"
+  make_target_release_accessible
+  run cp -al "${current_release}/." "$TARGET_RELEASE/"
+  make_target_release_accessible
+
+  local extract_dir
+  extract_dir="$(mktemp -d "${TARGET_RELEASE}.hub-bundle.XXXXXX")"
+  trap 'rm -rf "$extract_dir"' RETURN
+  run tar --no-same-owner -xf "$HUB_BUNDLE_PATH" -C "$extract_dir" --strip-components=1
+
+  for required_file in \
+    "${extract_dir}/bay-hub-manifest.json" \
+    "${extract_dir}/runtime/control-plane/bundle/index.js" \
+    "${extract_dir}/runtime/control-plane/api-v2-routes/index.js" \
+    "${extract_dir}/runtime/control-plane/http-api-dist/pages/api/v2/index.js" \
+    "${extract_dir}/runtime/migrate-schema/index.js"; do
+    if [[ ! -f "$required_file" ]]; then
+      echo "hub bundle is missing required file: $required_file" >&2
+      exit 1
+    fi
+  done
+
+  run rm -rf \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle" \
+    "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes" \
+    "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
+    "${TARGET_RELEASE}/runtime/migrate-schema" \
+    "${TARGET_RELEASE}/bay-hub-manifest.json"
+  run rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
+  make_target_release_accessible
+  run chown -R "${BAY_USER}:${BAY_GROUP}" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle" \
+    "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes" \
+    "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
+    "${TARGET_RELEASE}/runtime/migrate-schema" \
+    "${TARGET_RELEASE}/bay-hub-manifest.json"
+  rm -rf "$extract_dir"
+  trap - RETURN
+}
+
 preserve_previous_static_assets() {
   if [[ ! -L "$CURRENT_LINK" ]]; then
     return
@@ -371,7 +435,6 @@ validate_release() {
     for required_file in \
       "${TARGET_RELEASE}/runtime/project-host/index.js" \
       "${TARGET_RELEASE}/runtime/control-plane/bundle/index.js" \
-      "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes/index.js" \
       "${TARGET_RELEASE}/runtime/control-plane/http-api-dist/pages/api/v2/index.js" \
       "${TARGET_RELEASE}/runtime/migrate-schema/index.js"; do
       if [[ ! -f "$required_file" ]]; then
@@ -478,6 +541,10 @@ main() {
         STATIC_BUNDLE_PATH="$2"
         shift 2
         ;;
+      --hub-bundle)
+        HUB_BUNDLE_PATH="$2"
+        shift 2
+        ;;
       --bay-id)
         BAY_ID="$2"
         shift 2
@@ -504,6 +571,7 @@ main() {
         ;;
       --worker-count)
         WORKER_COUNT="$2"
+        WORKER_COUNT_EXPLICIT=1
         shift 2
         ;;
       --router-port)
@@ -580,13 +648,14 @@ main() {
   [[ -n "$SOURCE_ROOT" ]] && input_count=$((input_count + 1))
   [[ -n "$BUNDLE_PATH" ]] && input_count=$((input_count + 1))
   [[ -n "$STATIC_BUNDLE_PATH" ]] && input_count=$((input_count + 1))
+  [[ -n "$HUB_BUNDLE_PATH" ]] && input_count=$((input_count + 1))
   if [[ "$input_count" -ne 1 ]]; then
-    echo "exactly one of --source, --bundle, or --static-bundle is required" >&2
+    echo "exactly one of --source, --bundle, --static-bundle, or --hub-bundle is required" >&2
     usage >&2
     exit 2
   fi
   if [[ -z "$OVERLAY_MODE" ]]; then
-    if [[ -n "$BUNDLE_PATH" || -n "$STATIC_BUNDLE_PATH" ]]; then
+    if [[ -n "$BUNDLE_PATH" || -n "$STATIC_BUNDLE_PATH" || -n "$HUB_BUNDLE_PATH" ]]; then
       OVERLAY_MODE="rocket-bundle"
     else
       OVERLAY_MODE="current-cocalc"
@@ -607,6 +676,19 @@ main() {
   BAY_SECRETS_ENV_EXAMPLE="${ENV_DIR}/bay-secrets.env.example"
   BAY_TOPOLOGY_ENV_EXAMPLE="${ENV_DIR}/bay-topology.env.example"
   BAY_OVERLAY_ENV_EXAMPLE="${ENV_DIR}/bay-${OVERLAY_MODE}-overlay.env.example"
+  if [[ -z "$WORKER_COUNT" && -f "${ENV_DIR}/bay-workers.env" ]]; then
+    WORKER_COUNT="$(
+      sed -n 's/^COCALC_BAY_WORKER_COUNT=//p' "${ENV_DIR}/bay-workers.env" \
+        | tail -n1
+    )"
+  fi
+  if [[ -z "$WORKER_COUNT" ]]; then
+    WORKER_COUNT=1
+  fi
+  if [[ ! "$WORKER_COUNT" =~ ^[0-9]+$ || "$WORKER_COUNT" -lt 1 ]]; then
+    echo "--worker-count must be a positive integer; got '${WORKER_COUNT}'" >&2
+    exit 2
+  fi
   POSTGRES_BIN="$(find_postgres)"
   PG_CTL_BIN="$(find_pg_ctl)"
   PSQL_BIN="$(find_psql)"
@@ -622,6 +704,8 @@ main() {
 
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     stage_static_bundle_release
+  elif [[ -n "$HUB_BUNDLE_PATH" ]]; then
+    stage_hub_bundle_release
   elif [[ -n "$BUNDLE_PATH" ]]; then
     stage_bundle_release
   else
@@ -641,7 +725,24 @@ Target release:   ${TARGET_RELEASE}
 Current link:     ${CURRENT_LINK}
 Bay root:         ${BAY_ROOT}
 
-Restart hub workers to serve the updated frontend/static assets.
+Static assets are served through /opt/cocalc/bay/current; no service restart is required.
+Already-open browser sessions may keep using cached chunks until refresh.
+EOF
+    exit 0
+  fi
+
+  if [[ -n "$HUB_BUNDLE_PATH" ]]; then
+    prune_old_releases
+    cat <<EOF
+Hub release bootstrap complete.
+
+Hub bundle:       ${HUB_BUNDLE_PATH}
+Release id:       ${RELEASE_ID}
+Target release:   ${TARGET_RELEASE}
+Current link:     ${CURRENT_LINK}
+Bay root:         ${BAY_ROOT}
+
+Run migrations and roll hub workers to activate the updated hub/control-plane code.
 EOF
     exit 0
   fi
@@ -703,9 +804,15 @@ COCALC_BAY_HUB_BIND_HOST=127.0.0.1
 COCALC_BAY_HUB_BASE_PORT=${HUB_BASE_PORT}
 COCALC_BAY_HUB_HEALTH_PATH=/alive
 
+COCALC_BAY_FRONTDOOR_HOST=127.0.0.1
+COCALC_BAY_FRONTDOOR_PORT=9400
+COCALC_BAY_FRONTDOOR_HEALTH_PATH=/_cocalc/frontdoor/healthz
+COCALC_BAY_FRONTDOOR_DRAIN_FILE=${BAY_ROOT}/state/frontdoor-drain-workers
+
 COCALC_BAY_MIN_HEALTHY_WORKERS=1
 COCALC_BAY_HEALTH_TIMEOUT_S=15
 COCALC_BAY_MIN_FREE_MB=1024
+COCALC_BAY_CLOUDFLARED_SYSTEMD=1
 
 COCALC_PRODUCT=launchpad
 COCALC_CLUSTER_ROLE=standalone
@@ -730,18 +837,29 @@ EOF
   if [[ -n "$PUBLIC_URL" ]]; then
     set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_PUBLIC_URL" "$PUBLIC_URL"
   fi
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BUNDLE_DIR" "/opt/cocalc/bay/current/runtime/control-plane"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_API_V2_ROOT" "/opt/cocalc/bay/current/runtime/control-plane/http-api-dist/pages/api/v2"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_API_V2_ROUTES_BUNDLE" "/opt/cocalc/bay/current/runtime/control-plane/api-v2-routes/index.js"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_HOST" "127.0.0.1"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_PORT" "9400"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_HEALTH_PATH" "/_cocalc/frontdoor/healthz"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_DRAIN_FILE" "${BAY_ROOT}/state/frontdoor-drain-workers"
   if [[ -z "$PROJECT_HOST_SOFTWARE_BASE_URL" && -n "$PUBLIC_URL" ]]; then
     PROJECT_HOST_SOFTWARE_BASE_URL="${PUBLIC_URL%/}/software"
   fi
   if [[ -n "$PROJECT_HOST_SOFTWARE_BASE_URL" ]]; then
     set_env_var "${ENV_DIR}/bay.env" "COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE" "${PROJECT_HOST_SOFTWARE_BASE_URL%/}"
   fi
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_CLOUDFLARED_SYSTEMD" "1"
 
   render_if_missing_or_forced "${ENV_DIR}/bay-workers.env" "$BAY_WORKERS_ENV_EXAMPLE" <<EOF
 COCALC_BAY_WORKER_COUNT=${WORKER_COUNT}
 COCALC_BAY_WORKER_NODE_OPTIONS=
 COCALC_BAY_WORKER_EXTRA_ENV=
 EOF
+  if [[ "$WORKER_COUNT_EXPLICIT" -eq 1 ]]; then
+    set_env_var "${ENV_DIR}/bay-workers.env" "COCALC_BAY_WORKER_COUNT" "$WORKER_COUNT"
+  fi
 
   render_if_missing_or_forced "${ENV_DIR}/bay-topology.env" "$BAY_TOPOLOGY_ENV_EXAMPLE" <<EOF
 COCALC_CLUSTER_ID=standalone
@@ -780,6 +898,8 @@ EOF
   fi
 
   run systemctl enable cocalc-bay.target
+  run systemctl enable cocalc-bay-frontdoor.service
+  run systemctl enable cocalc-bay-cloudflared.service
   if [[ "$ENABLE_WORKERS" -eq 1 ]]; then
     for worker_id in $(seq 1 "$WORKER_COUNT"); do
       run systemctl enable "cocalc-bay-hub@${worker_id}.service"
@@ -789,6 +909,8 @@ EOF
   if [[ "$START_BAY" -eq 1 ]]; then
     validate_site_master_key
     run systemctl start cocalc-bay.target
+    run systemctl start cocalc-bay-frontdoor.service
+    run systemctl start cocalc-bay-cloudflared.service
   fi
   prune_old_releases
 

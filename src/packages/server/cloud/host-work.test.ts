@@ -13,6 +13,8 @@ const resolveLaunchpadBootstrapUrlMock = jest.fn();
 const createProjectHostBootstrapTokenMock = jest.fn();
 const restoreProjectHostTokensForRestartMock = jest.fn();
 const getServerSettingsMock = jest.fn();
+const getRoutedHostControlClientMock = jest.fn();
+const maybeAutoGrowHostDiskForReservationFailureMock = jest.fn();
 
 jest.mock("./host-util", () => ({
   provisionIfNeeded: (...args: any[]) => provisionIfNeededMock(...args),
@@ -45,6 +47,16 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
 }));
 
+jest.mock("@cocalc/server/project-host/client", () => ({
+  getRoutedHostControlClient: (...args: any[]) =>
+    getRoutedHostControlClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/project-host/auto-grow", () => ({
+  maybeAutoGrowHostDiskForReservationFailure: (...args: any[]) =>
+    maybeAutoGrowHostDiskForReservationFailureMock(...args),
+}));
+
 beforeAll(async () => {
   await before({ noConat: true });
 }, 15000);
@@ -55,6 +67,9 @@ beforeEach(async () => {
   jest.clearAllMocks();
   await getPool().query("DELETE FROM cloud_vm_log");
   await getPool().query("DELETE FROM cloud_vm_work");
+  await getPool().query(
+    "DELETE FROM rootfs_images WHERE image_id LIKE 'test-prepull-%'",
+  );
   await ensureProjectHostRuntimeDeploymentsSchema();
   await getPool().query("DELETE FROM project_host_runtime_deployments");
   await getPool().query("DELETE FROM project_hosts");
@@ -70,6 +85,13 @@ beforeEach(async () => {
   });
   getServerSettingsMock.mockResolvedValue({
     dns: "launchpad.example.test",
+  });
+  getRoutedHostControlClientMock.mockResolvedValue({
+    pullRootfsImage: jest.fn(async () => ({})),
+  });
+  maybeAutoGrowHostDiskForReservationFailureMock.mockResolvedValue({
+    grown: false,
+    reason: "not a reservation failure",
   });
   getProviderContextMock.mockResolvedValue({
     entry: {
@@ -459,6 +481,138 @@ describe("cloud host start failures", () => {
       "verify_host_ready",
       "verify_host_ready",
     ]);
+  });
+
+  it("queues RootFS pre-pull work when a host becomes operational", async () => {
+    const hostId = "a81b9181-39af-4a75-8c43-33f7f481a059";
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    await upsertProjectHost({
+      id: hostId,
+      name: "Prepull ready host",
+      region: "us-west3",
+      status: "running",
+      last_seen: new Date() as any,
+      metadata: {
+        owner: "acct-owner",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-4",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready({
+      id: "verify-prepull-1",
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload: {
+        provider: "gcp",
+        started_at: startedAt,
+      },
+    } as any);
+
+    const workRows = await getPool().query(
+      `
+        SELECT action, state, payload
+        FROM cloud_vm_work
+        WHERE vm_id=$1
+      `,
+      [hostId],
+    );
+    expect(workRows.rows).toHaveLength(1);
+    expect(workRows.rows[0]).toMatchObject({
+      action: "prepull_rootfs",
+      state: "queued",
+    });
+    expect(workRows.rows[0].payload).toMatchObject({
+      source: "verify_host_ready",
+      provider: "gcp",
+    });
+  });
+
+  it("pre-pulls configured and catalog RootFS images for the host architecture", async () => {
+    const hostId = "9c7f0920-7f87-446a-a6d7-e1ab8a79116d";
+    const pullRootfsImage = jest.fn(async () => ({}));
+    getRoutedHostControlClientMock.mockResolvedValue({ pullRootfsImage });
+    getServerSettingsMock.mockResolvedValue({
+      dns: "launchpad.example.test",
+      project_rootfs_default_image: "default/rootfs:latest",
+      project_rootfs_default_image_gpu: "",
+      project_rootfs_prepull_images: "extra/rootfs:one",
+    });
+    await upsertProjectHost({
+      id: hostId,
+      name: "Prepull worker host",
+      region: "us-west3",
+      status: "running",
+      last_seen: new Date() as any,
+      metadata: {
+        owner: "acct-owner",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-4",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+          metadata: {
+            arch: "amd64",
+          },
+        },
+      },
+    });
+    await getPool().query(
+      `
+        INSERT INTO rootfs_images
+          (image_id, runtime_image, label, family, version, visibility, prepull, arch,
+           deleted, hidden, blocked, created, updated)
+        VALUES
+          ('test-prepull-amd64-v1', 'cocalc.local/rootfs/catalog-amd64-v1', 'amd64 image v1',
+           'test-family', '1.0', 'public', true, 'amd64', false, false, false, NOW() - interval '1 day', NOW() - interval '1 day'),
+          ('test-prepull-amd64-v2', 'cocalc.local/rootfs/catalog-amd64-v2', 'amd64 image v2',
+           'test-family', '1.1', 'public', true, 'amd64', false, false, false, NOW(), NOW()),
+          ('test-prepull-arm64', 'cocalc.local/rootfs/catalog-arm64', 'arm64 image',
+           'test-family', '1.1', 'public', true, 'arm64', false, false, false, NOW(), NOW()),
+          ('test-prepull-hidden', 'cocalc.local/rootfs/hidden', 'hidden image',
+           'hidden-family', '1.0', 'public', true, 'amd64', false, true, false, NOW(), NOW())
+        ON CONFLICT (image_id) DO UPDATE SET
+          runtime_image = EXCLUDED.runtime_image,
+          family = EXCLUDED.family,
+          version = EXCLUDED.version,
+          prepull = EXCLUDED.prepull,
+          arch = EXCLUDED.arch,
+          deleted = EXCLUDED.deleted,
+          hidden = EXCLUDED.hidden,
+          blocked = EXCLUDED.blocked,
+          updated = NOW()
+      `,
+    );
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.prepull_rootfs({
+      id: "prepull-rootfs-1",
+      vm_id: hostId,
+      action: "prepull_rootfs",
+      payload: {},
+    } as any);
+
+    expect(pullRootfsImage.mock.calls.map(([arg]) => arg.image)).toEqual([
+      "default/rootfs:latest",
+      "extra/rootfs:one",
+      "cocalc.local/rootfs/catalog-amd64-v2",
+    ]);
+    expect(getRoutedHostControlClientMock).toHaveBeenCalledWith({
+      host_id: hostId,
+      timeout: 30 * 60 * 1000,
+    });
+    expect(
+      maybeAutoGrowHostDiskForReservationFailureMock,
+    ).not.toHaveBeenCalled();
   });
 
   it("schedules spot recovery when the cloud VM disappears during readiness verification", async () => {

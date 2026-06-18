@@ -32,6 +32,14 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - When a task depends on upgrading hosts or validating live project-host behavior, assume this step is required unless the current shell definitely just ran it.
 - For dangerous CLI operations that require fresh auth in local dev, use `cocalc auth elevate --dev` when the local hub password and database are available. This bootstraps a cookie-backed dev fresh-auth session; raw bearer, API-key, or hub-password auth alone will still fail fresh-auth checks.
 
+## Live Site CLI Auth
+
+- For live staging/prod control-plane work that needs browser-approved fresh auth, use the repo-built one-line bootstrap and wait for the user to approve the printed URLs:
+  - Staging: `cd src && node packages/cli/dist/bin/cocalc.js --profile staging --api https://staging.cocalc.ai auth bootstrap --email wstein@gmail.com`
+  - Prod: `cd src && node packages/cli/dist/bin/cocalc.js --profile prod --api https://cocalc.ai auth bootstrap --email wstein@gmail.com`
+- `auth bootstrap` performs browser login, browser-approved elevation, and `auth status --check` equivalent validation. Elevation lasts 8 hours by default; use `auth elevate --short` only when a short 15-minute window is intentional.
+- Do not try to satisfy fresh-auth requirements with API keys, bearer tokens, hub-password auth, or project-scoped credentials. Dangerous operator/admin mutations need a cookie-backed interactive CLI session.
+
 ## Live Lite / Browser Env
 
 - Before using `cocalc browser ...` or other live browser automation against the local Lite or Launchpad dev servers, always load the matching env in the current shell:
@@ -39,6 +47,12 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
   - Hub: `cd src && eval "$(pnpm -s dev:hub:env)"`
 - This is not optional for reliable targeting. The env sets the correct `COCALC_API_URL`, browser session, project id, auth token, and PATH.
 - If the wrong env is loaded, `cocalc browser` can fail with misleading errors, e.g. trying to use hub/project-host resolution against Lite, or targeting the wrong browser session entirely.
+- If `cocalc browser ...` fails with `no auth cookie set` in a local public dev site such as `lite1b.cocalc.ai`, remember that the site is backed by the local loopback hub and local PostgreSQL. Use the repo-built CLI against the loopback hub to bootstrap dev fresh auth, then retry browser commands through that same loopback API:
+  - `cd src && eval "$(pnpm -s dev:hub:env)"`
+  - `node packages/cli/dist/bin/cocalc.js --api http://localhost:9100 auth elevate --dev`
+  - `node packages/cli/dist/bin/cocalc.js --api http://localhost:9100 browser session list --json`
+  - `node packages/cli/dist/bin/cocalc.js --api http://localhost:9100 browser files --project-id <project-id> --browser <browser-id>`
+- The browser session URL may still be `https://lite1b.cocalc.ai/...` while the API origin is `http://localhost:9100`; this mismatch is expected for these public-fronted local dev sites. See `src/.agents/lite4b-setup-notes-2026-05-05.md` for the longer operational notes and caveats.
 
 ## Hard Rules (CoCalc-Specific)
 

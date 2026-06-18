@@ -20,6 +20,7 @@ import { getProjectHostDefaultParallelLimits } from "@cocalc/server/lro/project-
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
 import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
+import { setProjectRootfsImageWithRollback } from "@cocalc/server/projects/rootfs-state";
 import { withTimeout } from "@cocalc/util/async-utils";
 import {
   computeAvailableRootfsPublishHostSlots,
@@ -56,6 +57,7 @@ const progressSteps: Record<string, number> = {
   upload: 88,
   replicate: 92,
   catalog: 96,
+  switch: 98,
   done: 100,
 };
 
@@ -583,6 +585,8 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
           visibility: input.visibility,
           tags: Array.isArray(input.tags) ? input.tags : undefined,
           theme: input.theme,
+          content: input.content,
+          content_warnings: input.content_warnings,
           official: input.official,
           prepull: input.prepull,
           hidden: input.hidden,
@@ -592,6 +596,34 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
         release_id: release.release_id,
       });
     });
+    const switched_project = input.switch_project === true;
+    if (switched_project) {
+      const switchOp = await updateLro({
+        op_id,
+        progress_summary: {
+          phase: "switch",
+          image_id: entry.id,
+          image: artifact.image,
+        },
+      });
+      await publishSummarySafe(switchOp, {
+        op_id,
+        when: "set-switch-phase",
+      });
+      progress({
+        step: "switch",
+        message: "switching project to the published image",
+        detail: { project_id, image_id: entry.id, image: artifact.image },
+      });
+      await timings.measure("switch_project_rootfs", async () => {
+        await setProjectRootfsImageWithRollback({
+          project_id,
+          image: artifact.image,
+          image_id: entry.id,
+          set_by_account_id: created_by,
+        });
+      });
+    }
 
     const duration_ms = Date.now() - started;
     const result = {
@@ -603,6 +635,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       digest: artifact.digest,
       snapshot: artifact.snapshot,
       created_snapshot: artifact.created_snapshot,
+      switched_project,
       duration_ms,
       phase_timings_ms: {
         ...timings.phase_timings_ms,

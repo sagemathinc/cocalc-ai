@@ -137,6 +137,14 @@ import {
   registerRootfsCommand,
   type RootfsCommandDeps,
 } from "./commands/rootfs";
+import {
+  registerRocketCommand,
+  type RocketCommandDeps,
+} from "./commands/rocket";
+import {
+  registerSoftwareCommand,
+  type SoftwareCommandDeps,
+} from "./commands/software";
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
 import {
   registerProjectCommand,
@@ -1922,11 +1930,19 @@ const {
 const {
   projectJupyterCellsData,
   projectJupyterKernelData,
+  projectJupyterRestartData,
+  projectJupyterInterruptData,
+  projectJupyterStatusData,
+  projectJupyterSaveData,
   projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,
   projectJupyterMoveCellData,
+  projectJupyterOutputsData,
+  projectJupyterClearOutputsData,
+  projectJupyterMetadataData,
+  projectJupyterTrustData,
   projectJupyterRunSession,
   projectJupyterLiveRunSession,
 } = createProjectJupyterOps<CommandContext, ProjectRow>({
@@ -2318,10 +2334,27 @@ const emitProjectFileCatHumanContent = emitWorkspaceFileCatHumanContent;
 
 const program = new Command();
 
+function cliVersionDisplay(): string {
+  const artifactId = process.env.COCALC_CLI_ARTIFACT_ID?.trim();
+  const releaseVersion = process.env.COCALC_CLI_VERSION?.trim();
+  const publishedAt = process.env.COCALC_CLI_PUBLISHED_AT?.trim();
+  const git = (
+    process.env.COCALC_CLI_GIT_SHORT ||
+    process.env.COCALC_CLI_GIT_COMMIT ||
+    ""
+  ).trim();
+  const version = artifactId || releaseVersion || pkg.version;
+  const details = [
+    publishedAt ? `published ${publishedAt}` : "",
+    git ? `git ${git}` : "",
+  ].filter(Boolean);
+  return details.length ? `${version} (${details.join(", ")})` : version;
+}
+
 program
   .name("cocalc")
   .description("CoCalc CLI (Phase 0)")
-  .version(pkg.version)
+  .version(cliVersionDisplay())
   .option("--json", "output machine-readable JSON")
   .option("--output <format>", "output format (table|json|yaml)", "table")
   .option("-q, --quiet", "suppress human-formatted success output")
@@ -2466,11 +2499,19 @@ const projectCommandDeps = {
   projectChatActivityData,
   projectJupyterCellsData,
   projectJupyterKernelData,
+  projectJupyterRestartData,
+  projectJupyterInterruptData,
+  projectJupyterStatusData,
+  projectJupyterSaveData,
   projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,
   projectJupyterMoveCellData,
+  projectJupyterOutputsData,
+  projectJupyterClearOutputsData,
+  projectJupyterMetadataData,
+  projectJupyterTrustData,
   projectJupyterRunSession,
   projectJupyterLiveRunSession,
   normalizeUserSearchName,
@@ -2536,6 +2577,7 @@ const adminCommandDeps = {
   withContext,
   resolveAccountByIdentifier,
   isValidUUID,
+  waitForLro,
 } satisfies AdminCommandDeps;
 
 registerAdminCommand(program, adminCommandDeps);
@@ -2562,6 +2604,23 @@ const bayCommandDeps = {
 } satisfies BayCommandDeps;
 
 registerBayCommand(program, bayCommandDeps);
+
+const rocketCommandDeps = {
+  runCommand,
+  commandExists,
+  cwd: process.cwd(),
+  env: process.env,
+} satisfies RocketCommandDeps;
+
+registerRocketCommand(program, rocketCommandDeps);
+
+const softwareCommandDeps = {
+  cwd: process.cwd(),
+  env: process.env,
+  runCommand,
+} satisfies SoftwareCommandDeps;
+
+registerSoftwareCommand(program, softwareCommandDeps);
 
 const notificationsCommandDeps = {
   withContext,

@@ -176,19 +176,39 @@ export class ProjectStatusServer extends EventEmitter {
       this.mem_tot = quantize(cgStats.mem_tot, 1);
       this.mem_rss = quantize(cgStats.mem_rss, 1);
       do_alert("memory", cgStats.mem_pct > ALERT_HIGH_PCT);
-      do_alert("cpu-cgroup", cgStats.cpu_pct > ALERT_HIGH_PCT);
+      // Cgroup CPU remains available as a usage metric, but visible CPU alerts
+      // must be based on project processes. On shared hosts the cgroup value can
+      // be distorted by host/container pressure and mislead users of idle projects.
     }
   }
 
   private alert_cpu_processes(): string[] {
-    const pids: string[] = [];
+    const pids = new Set<string>();
     if (this.info == null) return [];
     const ts = this.info.timestamp;
     const ecp = this.elevated_cpu_procs;
+    const processEntries = Object.entries(this.info.processes ?? {});
+    const cpuCoresLimit = this.info.cgroup?.cpu_cores_limit;
+    const projectCpuLimit =
+      typeof cpuCoresLimit === "number" &&
+      Number.isFinite(cpuCoresLimit) &&
+      cpuCoresLimit > 0
+        ? cpuCoresLimit
+        : 1;
+    const projectCpuPct =
+      processEntries.reduce((total, [, proc]) => total + proc.cpu.pct, 0) /
+      projectCpuLimit;
+    if (processEntries.length > 0 && projectCpuPct > ALERT_HIGH_PCT) {
+      if (this.elevated.cpu == null) {
+        this.elevated.cpu = ts;
+      }
+    } else {
+      this.elevated.cpu = null;
+    }
     // we have to check if there aren't any processes left which no longer exist
     const leftovers = new Set(Object.keys(ecp));
     // bookkeeping of elevated process PIDS
-    for (const [pid, proc] of Object.entries(this.info.processes ?? {})) {
+    for (const [pid, proc] of processEntries) {
       leftovers.delete(pid);
       if (proc.cpu.pct > ALERT_HIGH_PCT) {
         if (ecp[pid] == null) {
@@ -204,19 +224,31 @@ export class ProjectStatusServer extends EventEmitter {
     // to actually fire alert when necessary
     for (const [pid, ts] of Object.entries(ecp)) {
       if (ts != null && how_long_ago_m(ts) > RAISE_ALERT_AFTER_MIN) {
-        pids.push(pid);
+        pids.add(pid);
       }
     }
-    pids.sort(); // to make this stable across iterations
+    if (
+      this.elevated.cpu != null &&
+      how_long_ago_m(this.elevated.cpu) > RAISE_ALERT_AFTER_MIN
+    ) {
+      // Include the top process contributors for aggregate project CPU alerts.
+      for (const [pid] of processEntries
+        .filter(([, proc]) => proc.cpu.pct > 0)
+        .sort(([, a], [, b]) => b.cpu.pct - a.cpu.pct)
+        .slice(0, 5)) {
+        pids.add(pid);
+      }
+    }
+    const sortedPids = [...pids].sort(); // to make this stable across iterations
     //this.dbg("alert_cpu_processes", pids, ecp);
-    return pids;
+    return sortedPids;
   }
 
   // update alert levels and set alert states if they persist to be active
   private alerts(): Alert[] {
     this.update_alerts();
     const alerts: Alert[] = [];
-    const alert_keys: AlertType[] = ["cpu-cgroup", "disk", "memory"];
+    const alert_keys: AlertType[] = ["disk", "memory"];
     for (const k of alert_keys) {
       const ts = this.elevated[k];
       if (ts != null && how_long_ago_m(ts) > RAISE_ALERT_AFTER_MIN) {

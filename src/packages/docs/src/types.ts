@@ -11,10 +11,12 @@ export type DocsAudience =
   | "teams";
 
 export type DocsEntryStatus = "draft" | "ready";
+export type DocsProduct = "cocalc" | "plus";
 export type DocsVisibility = "public" | "signed-in" | "admin";
 export type DocsAccess = {
   includeAdmin?: boolean;
   includeSignedIn?: boolean;
+  product?: DocsProduct;
 };
 export type DocsActionParameterType = "project" | "project-host";
 
@@ -59,6 +61,7 @@ export type DocsActionId =
   | "project.terminal.open"
   | "project.jupyter.create"
   | "settings.runtime.rootfs"
+  | "settings.runtime.rootfs.publish"
   | "settings.people.collaborators"
   | "file.timetravel.open"
   | "project.codex.open"

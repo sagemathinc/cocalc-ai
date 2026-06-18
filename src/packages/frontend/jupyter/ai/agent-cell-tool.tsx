@@ -2,7 +2,7 @@
 Use the Agent to work on a Jupyter cell.
 */
 
-import { Alert, Button, Dropdown, Input, Modal, Space } from "antd";
+import { Alert, Button, Checkbox, Dropdown, Input, Modal, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { defineMessage, useIntl } from "react-intl";
 import type { Entries } from "type-fest";
@@ -12,6 +12,12 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import {
+  AgentSessionError,
+  AgentSessionSelect,
+  usePersistentAgentSessionSelection,
+} from "@cocalc/frontend/frame-editors/ai/agent-session-selector";
+import { useAgentAutoSubmit } from "@cocalc/frontend/frame-editors/ai/agent-auto-submit";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { labels, type IntlMessage } from "@cocalc/frontend/i18n";
 import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
@@ -453,9 +459,16 @@ export function AgentCellTool({
   const [querying, setQuerying] = useState(false);
   const [error, setError] = useState("");
   const [extraPrompt, setExtraPrompt] = useState("");
+  const [autoSubmit, setAutoSubmit] = useAgentAutoSubmit();
   const [targetLanguage, setTargetLanguage] = useState<string>(
     defaultTargetLanguage(cellType === "markdown"),
   );
+  const agentSessionSelection = usePersistentAgentSessionSelection({
+    project_id,
+    path,
+    cacheContext: "jupyter-cell-tool",
+    enabled: mode != null,
+  });
 
   const isMarkdownCell = cellType === "markdown";
 
@@ -537,7 +550,10 @@ export function AgentCellTool({
         codexConfig: { model: DEFAULT_CELL_TOOL_CODEX_MODEL },
         openFloating: true,
         waitForAgent: false,
+        agentSession: agentSessionSelection.selectedAgentSession,
+        submitToAgent: autoSubmit,
       });
+      agentSessionSelection.saveSelectedAgentSession();
       if (!sent) {
         throw new Error("Unable to send this cell request to the Agent.");
       }
@@ -573,6 +589,11 @@ export function AgentCellTool({
         <div style={{ color: "rgba(0,0,0,0.65)" }}>
           {intl.formatMessage(actionDescription(mode, isMarkdownCell))}
         </div>
+        <AgentSessionSelect
+          selection={agentSessionSelection}
+          disabled={querying}
+        />
+        <AgentSessionError selection={agentSessionSelection} />
         {needsText ? (
           <div>
             <div style={{ marginBottom: 8, fontWeight: 500 }}>{label}</div>
@@ -633,30 +654,43 @@ export function AgentCellTool({
         {renderComposer()}
         <div
           style={{
+            alignItems: "center",
             display: "flex",
-            justifyContent: "flex-end",
+            justifyContent: "space-between",
             gap: 8,
             marginTop: 16,
           }}
         >
-          <Button
-            onClick={() => {
-              setMode(null);
-              setError("");
-              setQuerying(false);
-            }}
+          <Checkbox
+            checked={autoSubmit}
             disabled={querying}
+            onChange={(event) => setAutoSubmit(event.target.checked)}
           >
-            {intl.formatMessage(labels.cancel)}
-          </Button>
-          <Button
-            type="primary"
-            onClick={() => void submit()}
-            disabled={!canSubmit}
-          >
-            <Icon name={querying ? "spinner" : "paper-plane"} spin={querying} />{" "}
-            Send to Agent
-          </Button>
+            Automatically submit to Agent
+          </Checkbox>
+          <Space>
+            <Button
+              onClick={() => {
+                setMode(null);
+                setError("");
+                setQuerying(false);
+              }}
+              disabled={querying}
+            >
+              {intl.formatMessage(labels.cancel)}
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => void submit()}
+              disabled={!canSubmit}
+            >
+              <Icon
+                name={querying ? "spinner" : "paper-plane"}
+                spin={querying}
+              />{" "}
+              Send
+            </Button>
+          </Space>
         </div>
       </Modal>
 

@@ -113,10 +113,7 @@ import {
 } from "./run-batch-order";
 import { ensureProjectRunningForJupyter } from "./project-start";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
-import {
-  classifyProjectReadinessUxSegment,
-  ensure_project_running,
-} from "@cocalc/frontend/project/project-start-warning";
+import { classifyProjectReadinessUxSegment } from "@cocalc/frontend/project/project-start-warning";
 import {
   elapsedUxMs,
   recordUxLatencyEvent,
@@ -143,6 +140,14 @@ type LiveRunRenderContext = {
     reason: "cell_done" | "run_done" | "stream_end",
     alreadyDone?: boolean,
   ) => void;
+};
+
+type JupyterLiveRunStore = {
+  get: (key: string) => JupyterLiveRunSnapshot | undefined;
+  getAll: () => Record<string, JupyterLiveRunSnapshot>;
+  delete: (key: string) => void;
+  close?: () => void;
+  isClosed?: () => boolean;
 };
 
 interface DiskIpynbRead {
@@ -175,12 +180,7 @@ export class JupyterActions extends JupyterActions0 {
   private runDebugMode: "off" | "on" | "json" | undefined;
   private workspaceRecordsChange?: EventListener;
   private liveRunSub?: any;
-  private liveRunStore?: {
-    get: (key: string) => JupyterLiveRunSnapshot | undefined;
-    getAll: () => Record<string, JupyterLiveRunSnapshot>;
-    delete: (key: string) => void;
-    close?: () => void;
-  };
+  private liveRunStore?: JupyterLiveRunStore;
   private liveRunContexts = new globalThis.Map<string, LiveRunRenderContext>();
   private liveRunSeenSeq = new globalThis.Map<string, number>();
   private liveRunBatchOrder = new globalThis.Map<
@@ -298,6 +298,21 @@ export class JupyterActions extends JupyterActions0 {
         }
       });
     }, delayMs);
+  };
+
+  private markKernelBusyForLocalRun = (runId: string): void => {
+    if (this.isClosed()) {
+      return;
+    }
+    this.runDebug("kernel.status.local_busy", {
+      runId,
+      backend_state: this.get_runtime_setting("backend_state"),
+      kernel_state: this.get_runtime_setting("kernel_state"),
+    });
+    this.set_runtime_settings({
+      backend_state: "running",
+      kernel_state: "busy",
+    });
   };
 
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
@@ -485,10 +500,15 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   private rememberIgnoredLiveRunId = (runId: string) => {
+    if (this.isClosed()) {
+      return;
+    }
+    this.ignoredLiveRunIds ??= new globalThis.Map<string, number>();
     this.ignoredLiveRunIds.set(runId, Date.now() + 30_000);
   };
 
   private shouldIgnoreLiveRunId = (runId: string): boolean => {
+    this.ignoredLiveRunIds ??= new globalThis.Map<string, number>();
     const until = this.ignoredLiveRunIds.get(runId);
     if (until == null) {
       return false;
@@ -501,10 +521,12 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   private rememberCompletedLiveRunId = (runId: string) => {
+    this.completedLiveRunIds ??= new globalThis.Map<string, number>();
     this.completedLiveRunIds.set(runId, Date.now() + 30_000);
   };
 
   private hasCompletedLiveRunId = (runId: string): boolean => {
+    this.completedLiveRunIds ??= new globalThis.Map<string, number>();
     const until = this.completedLiveRunIds.get(runId);
     if (until == null) {
       return false;
@@ -512,6 +534,27 @@ export class JupyterActions extends JupyterActions0 {
     if (until < Date.now()) {
       this.completedLiveRunIds.delete(runId);
       return false;
+    }
+    return true;
+  };
+
+  private getLiveRunStore = async (): Promise<JupyterLiveRunStore> => {
+    if (this.liveRunStore == null || this.liveRunStore.isClosed?.()) {
+      this.liveRunStore = await openJupyterLiveRunStore({
+        client: webapp_client.conat_client,
+        project_id: this.project_id,
+        path: this.liveRunPath,
+      });
+    }
+    return this.liveRunStore;
+  };
+
+  private forgetClosedLiveRunStore = (err: unknown): boolean => {
+    if (`${err}` !== "Error: closed") {
+      return false;
+    }
+    if (this.liveRunStore?.isClosed?.() !== false) {
+      this.liveRunStore = undefined;
     }
     return true;
   };
@@ -580,18 +623,21 @@ export class JupyterActions extends JupyterActions0 {
       this.clearLiveRunGapRepair(runId);
       return;
     }
-    if (this.liveRunStore == null) {
-      this.liveRunStore = await openJupyterLiveRunStore({
-        client: webapp_client.conat_client,
-        project_id: this.project_id,
-      });
-    }
+    const liveRunStore = await this.getLiveRunStore();
     if (this.isClosed()) {
       return;
     }
-    const snapshot = this.liveRunStore.get(
-      jupyterLiveRunKey({ path: this.liveRunPath, run_id: runId }),
-    );
+    let snapshot: JupyterLiveRunSnapshot | undefined;
+    try {
+      snapshot = liveRunStore.get(
+        jupyterLiveRunKey({ path: this.liveRunPath, run_id: runId }),
+      );
+    } catch (err) {
+      if (this.forgetClosedLiveRunStore(err)) {
+        return;
+      }
+      throw err;
+    }
     if (
       snapshot?.path === this.liveRunPath &&
       Array.isArray(snapshot?.batches)
@@ -701,6 +747,10 @@ export class JupyterActions extends JupyterActions0 {
   private getLiveRunBatchOrder = (
     runId: string,
   ): RunBatchOrderState<JupyterLiveRunBatch> => {
+    this.liveRunBatchOrder ??= new globalThis.Map<
+      string,
+      RunBatchOrderState<JupyterLiveRunBatch>
+    >();
     let state = this.liveRunBatchOrder.get(runId);
     if (state == null) {
       state = createRunBatchOrderState<JupyterLiveRunBatch>();
@@ -904,32 +954,33 @@ export class JupyterActions extends JupyterActions0 {
     if (this.isClosed()) {
       return;
     }
-    if (this.liveRunStore == null) {
-      this.liveRunStore = await openJupyterLiveRunStore({
-        client: webapp_client.conat_client,
-        project_id: this.project_id,
-      });
-    }
+    const liveRunStore = await this.getLiveRunStore();
     if (this.isClosed()) {
       return;
     }
     const staleSnapshotKeys = new Set<string>();
-    const snapshots0 = Object.values(this.liveRunStore.getAll()).filter(
-      (snapshot) => {
-        const runId = `${snapshot?.run_id ?? ""}`.trim();
-        const needsCompletionReplay =
-          runId !== "" &&
-          (this.liveRunBatchOrder.has(runId) ||
-            this.liveRunContexts.has(runId));
-        return (
-          snapshot?.path === this.liveRunPath &&
-          !this.hasCompletedLiveRunId(runId) &&
-          typeof snapshot?.run_id === "string" &&
-          Array.isArray(snapshot?.batches) &&
-          (snapshot?.done !== true || needsCompletionReplay)
-        );
-      },
-    );
+    let liveRunSnapshots: Record<string, JupyterLiveRunSnapshot>;
+    try {
+      liveRunSnapshots = liveRunStore.getAll();
+    } catch (err) {
+      if (this.forgetClosedLiveRunStore(err)) {
+        return;
+      }
+      throw err;
+    }
+    const snapshots0 = Object.values(liveRunSnapshots).filter((snapshot) => {
+      const runId = `${snapshot?.run_id ?? ""}`.trim();
+      const needsCompletionReplay =
+        runId !== "" &&
+        (this.liveRunBatchOrder.has(runId) || this.liveRunContexts.has(runId));
+      return (
+        snapshot?.path === this.liveRunPath &&
+        !this.hasCompletedLiveRunId(runId) &&
+        typeof snapshot?.run_id === "string" &&
+        Array.isArray(snapshot?.batches) &&
+        (snapshot?.done !== true || needsCompletionReplay)
+      );
+    });
     const oldActiveSnapshots = snapshots0.filter(
       (snapshot) =>
         snapshot.done !== true &&
@@ -952,7 +1003,14 @@ export class JupyterActions extends JupyterActions0 {
       }
     }
     for (const key of staleSnapshotKeys) {
-      this.liveRunStore.delete(key);
+      try {
+        liveRunStore.delete(key);
+      } catch (err) {
+        if (this.forgetClosedLiveRunStore(err)) {
+          return;
+        }
+        throw err;
+      }
     }
     const snapshots = snapshots0
       .filter(
@@ -2163,11 +2221,14 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   waitUntilProjectIsRunning = reuseInFlight(async () => {
-    await ensureProjectRunningForJupyter({
+    const result = await ensureProjectRunningForJupyter({
       redux: this.redux,
       project_id: this.project_id,
       isClosed: () => this.isClosed(),
     });
+    if (!result.wasRunning) {
+      this.closeJupyterClient("project_runtime_restarted");
+    }
   });
 
   private getProjectRuntimeState(): string | undefined {
@@ -2713,12 +2774,28 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   private jupyterClient?: JupyterClient;
+  private closeJupyterClient = (reason: string): void => {
+    const c = this.jupyterClient;
+    if (c == null) {
+      return;
+    }
+    this.runDebug("client.close", {
+      reason,
+      socketState: c.socket?.state,
+    });
+    this.jupyterClient = undefined;
+    c.close();
+  };
+
   private getJupyterClient = async (): Promise<JupyterClient | null> => {
     if (this.isClosed()) return null;
     let c = this.jupyterClient;
-    if (c != null && c.socket.state != "closed") {
+    if (c != null && c.socket.state === "ready") {
       this.runDebug("client.reuse", { socketState: c.socket.state });
       return c;
+    }
+    if (c != null) {
+      this.closeJupyterClient("socket_not_ready");
     }
     await this.waitUntilProjectIsRunning();
     if (this.isClosed()) return null;
@@ -2750,7 +2827,11 @@ export class JupyterActions extends JupyterActions0 {
       }
       this.runDebug("client.socket.closed", {
         previousState: c?.socket?.state,
+        currentClient: this.jupyterClient === c,
       });
+      if (this.jupyterClient !== c) {
+        return;
+      }
       this.jupyterClient = undefined;
       // TODO: doing this is not ideal, but it's probably less confusing.
       this.clearRunQueue();
@@ -2823,6 +2904,9 @@ export class JupyterActions extends JupyterActions0 {
   ) => {
     const runId = `${Date.now().toString(36)}-${++this.runDebugCounter}`;
     this.rememberIgnoredLiveRunId(runId);
+    if (this.isClosed()) {
+      return;
+    }
     const runStartedAt = Date.now();
     let cellsPrepared = 0;
     let ackAt: number | null = null;
@@ -2857,9 +2941,8 @@ export class JupyterActions extends JupyterActions0 {
     try {
       this.runningNow = true;
       this.runDebug("runCells.start", { runId });
-      if (
-        !(await ensure_project_running(this.project_id, "run notebook cells"))
-      ) {
+      await this.waitUntilProjectIsRunning();
+      if (this.isClosed()) {
         return;
       }
       const cells: InputCell[] = [];
@@ -2940,6 +3023,7 @@ export class JupyterActions extends JupyterActions0 {
         });
         return;
       }
+      this.markKernelBusyForLocalRun(runId);
       const runner = await client.run(cells, {
         ...opts,
         limit,
@@ -3131,6 +3215,7 @@ export class JupyterActions extends JupyterActions0 {
       if (this.isClosed()) {
         return;
       }
+      this.scheduleKernelStatusRefresh();
       this.syncdb.save();
       setTimeout(() => {
         if (!this.isClosed()) {
@@ -3151,8 +3236,8 @@ export class JupyterActions extends JupyterActions0 {
         this.set_error(err);
       }
     } finally {
-      this.rememberIgnoredLiveRunId(runId);
       if (this.isClosed()) return;
+      this.rememberIgnoredLiveRunId(runId);
       this.runningNow = false;
       const runQueue = this.getMutableRunQueue();
       this.runDebug("runCells.finally", {

@@ -3,12 +3,13 @@ Render a document, where the rendering is determined by the file extension
 */
 
 import ChatViewer from "@cocalc/frontend/chat/viewer";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
 import { TasksHistoryViewer } from "@cocalc/frontend/editors/task-editor/history-viewer";
 import { getScale } from "@cocalc/frontend/frame-editors/frame-tree/hooks";
 import Whiteboard from "@cocalc/frontend/frame-editors/whiteboard-editor/time-travel";
 import { HistoryViewer as JupyterHistoryViewer } from "@cocalc/frontend/jupyter/history-viewer";
 import type { Document } from "@cocalc/sync/editor/generic/types";
+import { timeTravelDocumentSource } from "./document-source";
 import { TextDocument } from "./document";
 import { isObjectDoc } from "./view-document";
 
@@ -46,10 +47,12 @@ export function Viewer({
   const renderText = () => {
     return (
       <TextDocument
-        value={() => doc()?.to_str() ?? "unknown version"}
+        value={() => timeTravelDocumentSource(doc(), ext).text}
         id={id}
         path={path}
-        syntaxHighlightExtension={isObjectDoc(path) ? "js" : undefined}
+        syntaxHighlightExtension={
+          ext === "ipynb" || isObjectDoc(path) ? "js" : undefined
+        }
         project_id={project_id}
         font_size={font_size}
         editor_settings={editor_settings}
@@ -82,10 +85,35 @@ export function Viewer({
     case "md":
       const scale = getScale(font_size);
       return (
-        <div style={{ overflow: "auto", padding: "50px 70px" }}>
-          <StaticMarkdown
+        <div
+          data-testid="timetravel-markdown-content"
+          style={{
+            boxSizing: "border-box",
+            minHeight: "100%",
+            padding: "50px 70px",
+          }}
+        >
+          <EditableMarkdown
             value={doc()?.to_str() ?? "unknown version"}
-            style={{ fontSize: `${100 * scale}%` }}
+            read_only
+            font_size={font_size}
+            hidePath
+            disableWindowing
+            noVfill
+            showEditBar={false}
+            height="auto"
+            autoMinHeight={0}
+            style={{
+              fontSize: `${100 * scale}%`,
+              backgroundColor: "transparent",
+              minHeight: 0,
+            }}
+            pageStyle={{
+              padding: 0,
+              background: "transparent",
+              minWidth: "100%",
+              overflowX: "visible",
+            }}
           />
         </div>
       );

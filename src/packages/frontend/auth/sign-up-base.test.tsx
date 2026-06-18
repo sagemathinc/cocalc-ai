@@ -89,11 +89,8 @@ describe("SignUpFormBase", () => {
     fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
       target: { value: "correct horse battery staple 12345!" },
     });
-    fireEvent.change(screen.getByPlaceholderText("First name"), {
-      target: { value: "New" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Last name"), {
-      target: { value: "User" },
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
     });
     fireEvent.click(
       screen.getByRole("checkbox", {
@@ -124,11 +121,8 @@ describe("SignUpFormBase", () => {
     fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
       target: { value: "correct horse battery staple 12345!" },
     });
-    fireEvent.change(screen.getByPlaceholderText("First name"), {
-      target: { value: "New" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Last name"), {
-      target: { value: "User" },
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
     });
     fireEvent.click(
       screen.getByRole("checkbox", {
@@ -145,6 +139,9 @@ describe("SignUpFormBase", () => {
     expect(mockedPostAuthApi).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
+          displayName: "New User",
+          firstName: "New",
+          lastName: "User",
           terms: true,
           marketing_consent: true,
         }),

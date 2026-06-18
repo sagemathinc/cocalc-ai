@@ -7,6 +7,7 @@ import { Button } from "antd";
 
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
+import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 
 import { COLORS } from "@cocalc/util/theme";
 
@@ -27,8 +28,9 @@ export default function HomePageButton({ project_id, active, width }) {
         background: "#fafafa",
       }}
       onClick={() => {
-        // Home button should consistently open the project overview page.
-        actions?.set_active_tab("home");
+        void resolveProjectHomeDirectory(project_id).then((home) => {
+          actions?.open_directory(home);
+        });
         actions?.setFlyoutExpanded("files", false, false);
         actions?.set_file_search("");
       }}

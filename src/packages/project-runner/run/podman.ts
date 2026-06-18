@@ -1262,10 +1262,13 @@ export async function start({
     starting.add(project_id);
     report({ type: "start-project", progress: 0 });
     const name = projectContainerName(project_id);
-    if (
-      (await hasLiveConmonContainer(name)) &&
-      !(await podmanReportsRunningContainer(name))
-    ) {
+    const hasLiveProjectContainer = await hasLiveConmonContainer(name);
+    let podmanReportsLiveProjectRunning = false;
+    if (hasLiveProjectContainer) {
+      podmanReportsLiveProjectRunning =
+        await podmanReportsRunningContainer(name);
+    }
+    if (hasLiveProjectContainer && !podmanReportsLiveProjectRunning) {
       logger.warn(
         "start: found live project processes without podman metadata; cleaning up before relaunch",
         {
@@ -1278,6 +1281,7 @@ export async function start({
         name,
         reason: "start found live project container without podman metadata",
       });
+      podmanReportsLiveProjectRunning = false;
     }
 
     let { home, scratch, quota_applied } = await timings.measure(
@@ -1319,6 +1323,7 @@ export async function start({
           disk: config?.disk,
           scratch: config?.scratch,
           ensure: true,
+          resetScratch: !podmanReportsLiveProjectRunning,
         }),
     ));
 

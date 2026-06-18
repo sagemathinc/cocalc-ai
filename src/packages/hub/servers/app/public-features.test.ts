@@ -79,4 +79,15 @@ describe("public feature and docs routes", () => {
     expect(html).toContain('rel="canonical"');
     expect(html).toContain("/docs");
   });
+
+  it("redirects rootfs image pages into the public shell", async () => {
+    const response = await request("/rootfs/id/rootfs-image-1?x=1");
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location");
+    expect(location).toContain("/static/public.html?target=");
+    const redirected = new URL(`http://host${location}`);
+    expect(redirected.searchParams.get("target")).toBe(
+      "/rootfs/id/rootfs-image-1?x=1",
+    );
+  });
 });

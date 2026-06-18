@@ -664,7 +664,7 @@ describe("processAcpLLM", () => {
     jest.spyOn(console, "error").mockImplementation(() => undefined);
     mockStreamAcp.mockRejectedValue(
       new Error(
-        "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again. auth error code: token_expired",
+        "unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request, url: https://chatgpt.com/backend-api/codex/responses, auth error: identity_edge_internal_error",
       ),
     );
 
@@ -923,6 +923,7 @@ describe("queued ACP controls", () => {
       date: new Date(8300),
       message_id: "user-msg-missing",
       thread_id: "thread-missing",
+      acp_prompt: "hidden retry context",
       history: [
         {
           author_id: "user-1",
@@ -965,7 +966,7 @@ describe("queued ACP controls", () => {
     expect(mockStreamAcp).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "proj",
-        prompt: "retry this",
+        prompt: "hidden retry context",
         chat: expect.objectContaining({
           user_message_content: "@codex retry this",
           user_message_date: new Date(8300).toISOString(),

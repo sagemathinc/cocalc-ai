@@ -58,12 +58,14 @@ let search_cache: {
 let last_project_map: ProjectMap | null | undefined = null;
 let last_user_map: any = null;
 let last_host_info: any = null;
+let last_rootfs_label_by_id: Map<string, string> | undefined = undefined;
 
 function get_search_info(
   project_id: string,
   project,
   user_map,
   host_info,
+  rootfsLabelById?: Map<string, string>,
 ): string {
   let s: undefined | string = search_cache[project_id];
   if (s != null) {
@@ -78,6 +80,14 @@ function get_search_info(
   const hostName = host_info?.get?.(project.get("host_id"))?.get?.("name");
   if (hostName != null) {
     s += " " + hostName;
+  }
+  const rootfsImageId = `${project.get("rootfs_image_id") ?? ""}`.trim();
+  if (rootfsImageId) {
+    s += " " + rootfsImageId;
+    const rootfsLabel = rootfsLabelById?.get(rootfsImageId);
+    if (rootfsLabel) {
+      s += " " + rootfsLabel;
+    }
   }
   const compute_state: ComputeState =
     COMPUTE_STATES[project.getIn(["state", "state"], "")];
@@ -112,26 +122,35 @@ export function getVisibleProjects(
   search: string,
   hidden: boolean,
   sort_by: "user_last_active" | "last_edited" | "title" | "state",
+  rootfsLabelById?: Map<string, string>,
 ): string[] {
   const visible_projects: string[] = [];
   if (project_map == null) return visible_projects;
   if (
     project_map != last_project_map ||
     user_map != last_user_map ||
-    host_info != last_host_info
+    host_info != last_host_info ||
+    rootfsLabelById != last_rootfs_label_by_id
   ) {
     search_cache = {};
   }
   last_project_map = project_map;
   last_user_map = user_map;
   last_host_info = host_info;
+  last_rootfs_label_by_id = rootfsLabelById;
   const words = search_split(
     search + " " + hashtags_to_string(hashtags?.toJS()),
   );
   project_map.forEach((project, project_id) => {
     if (
       search_match(
-        get_search_info(project_id, project, user_map, host_info),
+        get_search_info(
+          project_id,
+          project,
+          user_map,
+          host_info,
+          rootfsLabelById,
+        ),
         words,
       ) &&
       project_is_in_filter(project, hidden)

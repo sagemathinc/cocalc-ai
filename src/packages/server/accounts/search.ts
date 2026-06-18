@@ -3,7 +3,7 @@ Search for users.
 
 - by exact account_id
 - by exact email_address
-- by partial match on first_name and last_name
+- by partial match on display_name, first_name and last_name
 */
 
 import getPool from "@cocalc/database/pool";
@@ -26,6 +26,7 @@ const logger = getLogger("accounts/search");
 
 interface DBUser {
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   last_active?: Date;
@@ -165,7 +166,7 @@ function process(
 }
 
 const FIELDS =
-  " account_id, first_name, last_name, email_address, last_active, created, banned, groups, email_address_verified ";
+  " account_id, display_name, first_name, last_name, email_address, last_active, created, banned, groups, email_address_verified ";
 
 async function getUserByEmailAddress(
   email_address: string,
@@ -230,8 +231,9 @@ async function getUsersByStringQueries(
     return [];
   }
 
-  /*  Substring search on first and last name, and for admin also email_address.
+  /*  Substring search on display name and legacy first/last name, and for admin also email_address.
       With the two indexes, the query below is very fast, even on millions of accounts:
+          CREATE INDEX accounts_display_name_idx ON accounts(display_name text_pattern_ops);
           CREATE INDEX accounts_first_name_idx ON accounts(first_name text_pattern_ops);
           CREATE INDEX accounts_last_name_idx  ON accounts(last_name text_pattern_ops);
   */
@@ -242,7 +244,7 @@ async function getUsersByStringQueries(
     const v: string[] = [];
     for (const s of terms) {
       v.push(
-        `(lower(first_name) LIKE $${i}::TEXT OR lower(last_name) LIKE $${i}::TEXT ${
+        `(lower(display_name) LIKE $${i}::TEXT OR lower(first_name) LIKE $${i}::TEXT OR lower(last_name) LIKE $${i}::TEXT ${
           admin ? `OR lower(email_address) LIKE $${i}::TEXT` : ""
         })`,
       );

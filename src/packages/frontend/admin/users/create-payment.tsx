@@ -41,9 +41,7 @@ export default function CreatePayment({ account_id, onClose }: Props) {
   const [error, setError] = useState<string>("");
   const [done, setDone] = useState<boolean>(false);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const doIt = async () => {
     if (typeof amount != "number") {

@@ -70,8 +70,12 @@ import { delay } from "awaiting";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import debug from "debug";
 import { moveCell } from "@cocalc/jupyter/util/cell-utils";
-import { migrateToNewPageNumbers } from "./migrate";
+import {
+  migrateToCurrentDocumentSchema,
+  migrateToNewPageNumbers,
+} from "./migrate";
 import { toMarkdown, elementToMarkdown } from "./export";
+import { CURRENT_DOCUMENT_SCHEMA_VERSION } from "./document-schema";
 
 const log = debug("whiteboard:actions");
 
@@ -131,6 +135,18 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
           }),
         );
         // and don't do the handling below, obviously.
+        return;
+      }
+
+      if (
+        elements0 == null &&
+        migrateToCurrentDocumentSchema(this._syncstring)
+      ) {
+        handleChange(
+          this._syncstring.get().map((x) => {
+            return fromJS({ id: x.get("id") });
+          }),
+        );
         return;
       }
 
@@ -1567,7 +1583,12 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
     }
     this.setElement({
       create: true,
-      obj: { type: "page", id, z: 0, data: { pos } },
+      obj: {
+        type: "page",
+        id,
+        z: 0,
+        data: { pos, schemaVersion: CURRENT_DOCUMENT_SCHEMA_VERSION },
+      },
       commit,
     });
     return id;

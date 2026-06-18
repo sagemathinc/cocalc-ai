@@ -514,12 +514,7 @@ export function RootfsAdmin() {
     return () => clearTimeout(timeout);
   }, [load, pageSize, search]);
 
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      message.error(`RootFS admin action failed: ${err}`);
-      void load();
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function requestDelete(entry: RootfsAdminCatalogEntry) {
     try {
@@ -689,13 +684,16 @@ export function RootfsAdmin() {
       await runFreshAuthAction(async () => {
         setActiveAction({ image_id: entry.id, action: "scan" });
         try {
-          const result = await hub.system.scanRootfsRelease({
+          await hub.system.scanRootfsRelease({
             release_id,
             host_id: hostId,
             browser_id: webapp_client.browser_id,
             timeout: ROOTFS_SCAN_ADMIN_TIMEOUT_MS,
+            wait: false,
           });
-          message.success(`RootFS scan ${result.status}: ${entry.label}`);
+          message.success(
+            `RootFS scan queued for ${entry.label}. Check back later for results.`,
+          );
           await load();
           setScanEntry(null);
         } finally {

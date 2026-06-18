@@ -40,6 +40,33 @@ function log(...args) {
   }
 }
 
+function releaseEnvPrefix() {
+  if (name === "cocalc-plus" || inferredName === "cocalc-plus") {
+    return "COCALC_PLUS";
+  }
+  if (name === "cocalc-project-host") {
+    return "COCALC_PROJECT_HOST";
+  }
+  return "COCALC_SEA";
+}
+
+function releaseVersionDisplay() {
+  const prefix = releaseEnvPrefix();
+  const artifactId = process.env[`${prefix}_ARTIFACT_ID`] || "";
+  const releaseVersion = process.env[`${prefix}_VERSION`] || "";
+  const publishedAt = process.env[`${prefix}_PUBLISHED_AT`] || "";
+  const git =
+    process.env[`${prefix}_GIT_SHORT`] ||
+    process.env[`${prefix}_GIT_COMMIT`] ||
+    "";
+  const base = artifactId || releaseVersion || version;
+  const details = [
+    publishedAt ? `published ${publishedAt}` : "",
+    git ? `git ${git}` : "",
+  ].filter(Boolean);
+  return details.length ? `${base} (${details.join(", ")})` : base;
+}
+
 function configureProcessMaxListeners() {
   const configured = Number.parseInt(
     `${process.env.COCALC_PROCESS_MAX_LISTENERS ?? ""}`,
@@ -247,11 +274,11 @@ if (path.basename(process.argv[1]) == "node") {
 
   process.argv = [process.execPath, ...process.argv.slice(2)];
 } else if (process.argv[2] == "-v" || process.argv[2] == "--version") {
-  console.log(version);
+  console.log(releaseVersionDisplay());
   process.exit(0);
 } else {
   const destDir = extractAssetsSync();
-  log(displayName + " (v" + version + ")");
+  log(displayName + " (v" + releaseVersionDisplay() + ")");
 
   const script = path.join(destDir, mainScript);
 

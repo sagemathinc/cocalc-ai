@@ -18,6 +18,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import { loadProjectMoveSizeBytes } from "./move-project-size";
 
 interface Props {
   project_id: string;
@@ -42,11 +43,12 @@ export default function MoveProject({
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const [detailsLoading, setDetailsLoading] = useState<boolean>(false);
   const [detailHost, setDetailHost] = useState<Host | undefined>();
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const actions = useActions("projects");
   const currentHostId = useProjectMapField<string>(project_id, "host_id");
+  const [projectSizeBytes, setProjectSizeBytes] = useState<
+    number | undefined
+  >();
   const hostInfo = useHostInfo(currentHostId);
   const url = hostInfo?.get?.("connect_url");
   const hostName =
@@ -103,6 +105,11 @@ export default function MoveProject({
     try {
       setMoving(true);
       await refreshProjectRegion();
+      setProjectSizeBytes(
+        await loadProjectMoveSizeBytes({
+          project_id,
+        }),
+      );
       setPickerOpen(true);
     } catch (err) {
       setError(`${err}`);
@@ -239,6 +246,7 @@ export default function MoveProject({
         currentHostId={currentHostId}
         regionFilter={projectRegion}
         sourceProjectRegion={projectRegion}
+        projectSizeBytes={projectSizeBytes}
         showOfflineMoveWarning={Boolean(currentHostId)}
         mode={currentHostId ? "move" : "assign"}
         onCancel={() => setPickerOpen(false)}

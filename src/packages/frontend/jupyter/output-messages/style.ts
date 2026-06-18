@@ -28,6 +28,8 @@ export const TRACEBACK_STYLE: CSSProperties = merge(
 
 export const OUTPUT_STYLE: CSSProperties = {
   flex: 1,
+  minWidth: 0,
+  maxWidth: "100%",
   overflowX: "auto",
   lineHeight: "normal",
   backgroundColor: "#fff",
@@ -38,6 +40,7 @@ export const OUTPUT_STYLE: CSSProperties = {
 
 export const OUTPUT_STYLE_SCROLLED: CSSProperties = {
   ...OUTPUT_STYLE,
+  overflowY: "auto",
   // see https://github.com/sagemathinc/cocalc/issues/7293 for something about this:
   maxHeight: "max(24em,60vh)",
 };

@@ -187,6 +187,7 @@ interface FileUploadWrapperProps {
   dest_path: string; // The path for files to be sent
   config?: object; // All supported dropzone.js config options
   event_handlers?: {
+    addedfile?: Function | Function[];
     complete?: Function | Function[];
     sending?: Function | Function[];
     removedfile?: Function | Function[];
@@ -226,7 +227,10 @@ export function FileUploadWrapper({
   const preview_ref = useRef<any>(null);
   const zone_ref = useRef<any>(null);
   const dropzone = useRef<Dropzone>(null);
+  const eventsSetUpRef = useRef(false);
   const mouseEvt = useRef<any>(null);
+  const destPathRef = useRef(dest_path);
+  destPathRef.current = dest_path;
   const configuredUrl = (config as { url?: unknown }).url;
   const hasConfiguredUrl =
     typeof configuredUrl === "string" || typeof configuredUrl === "function";
@@ -258,12 +262,21 @@ export function FileUploadWrapper({
             project_id,
           },
         );
+        const directProjectHostUrl = projectHostUploadUrl(
+          project_id,
+          dest_path,
+        );
         const routedUrl =
           await webapp_client.conat_client.routeProjectHostHttpUrl({
             project_id,
-            url: projectHostUploadUrl(project_id, dest_path),
+            url: directProjectHostUrl,
           });
         if (canceled) return;
+        if (routedUrl === directProjectHostUrl) {
+          setUploadUrl(postUrl(project_id, dest_path));
+          setUploadWithCredentials(false);
+          return;
+        }
         setUploadUrl(routedUrl);
         setUploadWithCredentials(true);
       } catch {
@@ -303,7 +316,6 @@ export function FileUploadWrapper({
   useEffect(() => {
     if (!disabled) {
       create_dropzone();
-      set_up_events();
     }
     return () => {
       if (dropzone.current == null) {
@@ -338,6 +350,7 @@ export function FileUploadWrapper({
       destroy();
     } else {
       create_dropzone();
+      set_up_events();
       if (dropzone.current != null) {
         if (uploadUrl == null && !hasConfiguredUrl) {
           return;
@@ -422,6 +435,7 @@ export function FileUploadWrapper({
         dropzone_ref.current = dropzone.current;
       }
       queueDestroy = false;
+      set_up_events();
     }
   }
 
@@ -432,29 +446,32 @@ export function FileUploadWrapper({
   }
 
   function set_up_events(): void {
-    if (dropzone.current == null || event_handlers == null) {
+    if (dropzone.current == null || eventsSetUpRef.current) {
       return;
     }
+    eventsSetUpRef.current = true;
 
-    for (const name in event_handlers) {
-      // Check if there's an array of event handlers
-      let handlers = event_handlers[name];
-      if (!is_array(handlers)) {
-        handlers = [handlers];
-      }
-      for (let handler of handlers) {
-        if (typeof handler !== "function") {
-          continue;
+    if (event_handlers != null) {
+      for (const name in event_handlers) {
+        // Check if there's an array of event handlers
+        let handlers = event_handlers[name];
+        if (!is_array(handlers)) {
+          handlers = [handlers];
         }
-        if (name === "init") {
-          // Init handler:
-          handler(dropzone.current);
-        } else {
-          // Event handler
-          if (trackMouse) {
-            dropzone.current.on(name, (e) => handler(e, mouseEvt.current));
+        for (let handler of handlers) {
+          if (typeof handler !== "function") {
+            continue;
+          }
+          if (name === "init") {
+            // Init handler:
+            handler(dropzone.current);
           } else {
-            dropzone.current.on(name, handler);
+            // Event handler
+            if (trackMouse) {
+              dropzone.current.on(name, (e) => handler(e, mouseEvt.current));
+            } else {
+              dropzone.current.on(name, handler);
+            }
           }
         }
       }
@@ -470,11 +487,11 @@ export function FileUploadWrapper({
 
     dropzone.current.on("addedfile", (file) => {
       if (!file) return;
-      set_files(files.concat([file]));
+      set_files((prev) => prev.concat([file]));
       log({
         event: "file_action",
         action: "uploaded",
-        file: join(dest_path, file.name),
+        file: join(destPathRef.current, file.name),
       });
     });
   }
@@ -488,6 +505,7 @@ export function FileUploadWrapper({
     dropzone.current.off();
     dropzone.current.destroy();
     dropzone.current = null;
+    eventsSetUpRef.current = false;
     if (dropzone_ref != null) {
       dropzone_ref.current = null;
     }

@@ -66,9 +66,7 @@ export function SSHPanel({
   const [setupError, setSetupError] = useState<string | undefined>();
   const [setupApiKey, setSetupApiKey] = useState<string | undefined>();
   const copyTimeoutRef = useRef<number | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setSetupError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const ssh_keys = project.getIn([
     "users",
@@ -267,10 +265,10 @@ export function SSHPanel({
                         image, for example{" "}
                         <Text code>
                           apt-get update; apt-get install -y openssh-sftp-server
+                          && mkdir -p /usr/libexec && ln -sf
+                          /usr/lib/openssh/sftp-server /usr/libexec/sftp-server
                         </Text>
-                        , then restart the {projectLabelLower}. The restart is
-                        required so the project startup symlink setup runs
-                        again.
+                        .
                       </>
                     }
                   />

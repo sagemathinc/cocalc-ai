@@ -7,11 +7,7 @@ import { Suspense, lazy, useEffect, useState } from "react";
 
 import { Button, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import {
-  getAuthBootstrap,
-  type AuthBootstrapResponse,
-} from "@cocalc/frontend/auth/api";
-import { getStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
+import { getControlPlaneAuthBootstrap } from "@cocalc/frontend/auth/api";
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
 import { PublicRouteHeadMetadata } from "./metadata";
 import type { PublicRoute } from "./routes";
@@ -29,6 +25,7 @@ const PublicNewsApp = lazy(() => import("./news/app"));
 const PublicPoliciesApp = lazy(() => import("./policies/app"));
 const PublicPricingApp = lazy(() => import("./pricing/app"));
 const PublicProductsApp = lazy(() => import("./products/app"));
+const PublicRootfsApp = lazy(() => import("./rootfs/app"));
 const PublicSupportApp = lazy(() => import("./support/app"));
 const { Paragraph } = Typography;
 
@@ -46,27 +43,6 @@ async function loadCustomize(): Promise<PublicConfig | undefined> {
   } catch {
     return undefined;
   }
-}
-
-function isCurrentOrigin(origin: string): boolean {
-  if (typeof window === "undefined") return false;
-  return origin === window.location.origin;
-}
-
-async function loadAuthBootstrap(): Promise<AuthBootstrapResponse | undefined> {
-  const controlPlaneOrigin = getStoredControlPlaneOrigin();
-
-  if (controlPlaneOrigin && !isCurrentOrigin(controlPlaneOrigin)) {
-    try {
-      const bootstrap = await getAuthBootstrap(controlPlaneOrigin);
-      if (bootstrap?.signed_in) return bootstrap;
-    } catch {
-      // The stored home bay may be stale or temporarily unreachable; the
-      // visible site origin is still the correct fallback.
-    }
-  }
-
-  return await getAuthBootstrap();
 }
 
 function PublicNotFoundPage({ config }: { config?: PublicConfig }) {
@@ -156,6 +132,12 @@ function PublicRouteBody({
     );
   }
 
+  if (initialRoute.section === "rootfs") {
+    return (
+      <PublicRootfsApp config={config} initialRoute={initialRoute.route} />
+    );
+  }
+
   if (initialRoute.section === "support") {
     return (
       <PublicSupportApp config={config} initialRoute={initialRoute.route} />
@@ -214,7 +196,7 @@ export default function PublicApp({
     let cancelled = false;
     void (async () => {
       try {
-        const bootstrap = await loadAuthBootstrap();
+        const bootstrap = await getControlPlaneAuthBootstrap();
         if (cancelled || typeof bootstrap?.signed_in !== "boolean") return;
         setResolvedConfig((current) => ({
           ...(current ?? config ?? {}),

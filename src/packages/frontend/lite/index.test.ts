@@ -80,7 +80,7 @@ describe("lite init", () => {
     });
     expect(open_project).toHaveBeenCalledWith({
       project_id: "00000000-1000-4000-8000-000000000000",
-      target: "project-home",
+      target: "files/",
       switch_to: true,
       restore_session: false,
     });
@@ -120,7 +120,7 @@ describe("lite init", () => {
   });
 
   it("keeps explicit settings routes in the foreground", async () => {
-    mockTarget = "settings/vouchers";
+    mockTarget = "settings/purchases";
 
     const open_project = jest.fn(async () => {});
     const redux = {
@@ -149,7 +149,7 @@ describe("lite init", () => {
 
     expect(open_project).toHaveBeenCalledWith({
       project_id: "00000000-1000-4000-8000-000000000000",
-      target: "project-home",
+      target: "files/",
       switch_to: false,
       restore_session: false,
     });

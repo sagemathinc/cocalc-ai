@@ -34,6 +34,8 @@ interface Props {
     control: ChatInputControl | null,
     root: ParentNode | null,
   ) => void;
+  onIncreaseFontSize?: () => void;
+  onDecreaseFontSize?: () => void;
 }
 
 export default function SideChat({
@@ -47,6 +49,8 @@ export default function SideChat({
   scrollCacheId,
   forceScrollToBottomToken,
   onComposerReady,
+  onIncreaseFontSize,
+  onDecreaseFontSize,
 }: Props) {
   const actionsViaContext = redux.getEditorActions(project_id, path);
   const propActions = isLiveChatActions(actions0) ? actions0 : undefined;
@@ -86,6 +90,8 @@ export default function SideChat({
           scrollCacheId={scrollCacheId}
           forceScrollToBottomToken={forceScrollToBottomToken}
           onComposerReady={onComposerReady}
+          onIncreaseFontSize={onIncreaseFontSize}
+          onDecreaseFontSize={onDecreaseFontSize}
         />
       </KeyboardBoundary>
     </ChatDocProvider>
@@ -109,6 +115,8 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       scrollCacheId={props.scrollCacheId}
       forceScrollToBottomToken={props.forceScrollToBottomToken}
       onComposerReady={props.onComposerReady}
+      onIncreaseFontSize={props.onIncreaseFontSize}
+      onDecreaseFontSize={props.onDecreaseFontSize}
     />
   );
 }

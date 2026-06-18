@@ -38,7 +38,10 @@ import {
 import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
+import {
+  ensurePlacement,
+  takeStartProjectPhaseTimings,
+} from "@cocalc/server/project-host/control";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -249,6 +252,23 @@ export default async function createProject(opts: CreateProjectOptions) {
     return !!rows[0];
   }
 
+  async function resolveRootfsImageFromCatalogId(
+    image_id: string,
+  ): Promise<string> {
+    const { rows } = await pool.query<{ runtime_image: string | null }>(
+      `SELECT runtime_image
+       FROM rootfs_images
+       WHERE image_id=$1 AND COALESCE(deleted, false)=false
+       LIMIT 1`,
+      [image_id],
+    );
+    const runtimeImage = `${rows[0]?.runtime_image ?? ""}`.trim();
+    if (!runtimeImage) {
+      throw Error(`RootFS image id '${image_id}' not found`);
+    }
+    return runtimeImage;
+  }
+
   if (opts.project_id) {
     if (await projectIdConflictsDeleted(project_id)) {
       throw Error(
@@ -412,7 +432,13 @@ export default async function createProject(opts: CreateProjectOptions) {
     preferredBackupRepoId = rows[0]?.backup_repo_id ?? null;
   }
 
-  if (!opts.rootfs_image && !rootfs_image && !src_project_id) {
+  if (
+    !opts.rootfs_image &&
+    !rootfs_image &&
+    !opts.rootfs_image_id &&
+    !rootfs_image_id &&
+    !src_project_id
+  ) {
     const starDefaultRootfs = await getStarDefaultRootfsImage();
     if (starDefaultRootfs != null) {
       opts.rootfs_image = starDefaultRootfs.image;
@@ -420,10 +446,17 @@ export default async function createProject(opts: CreateProjectOptions) {
     }
   }
 
+  const requestedRootfsImageId = opts.rootfs_image_id ?? rootfs_image_id;
+  if (!opts.rootfs_image && !rootfs_image && requestedRootfsImageId) {
+    opts.rootfs_image = await resolveRootfsImageFromCatalogId(
+      requestedRootfsImageId,
+    );
+  }
+
   const projectRootfsImage = assertValidRootfsImageName(
     opts.rootfs_image ?? rootfs_image,
   );
-  const projectRootfsImageId = opts.rootfs_image_id ?? rootfs_image_id ?? null;
+  const projectRootfsImageId = requestedRootfsImageId ?? null;
   if (account_id && projectRootfsImage) {
     await assertCanSelectProjectRootfsImage({
       account_id,
@@ -549,6 +582,32 @@ export default async function createProject(opts: CreateProjectOptions) {
       image_id: projectRootfsImageId,
       set_by_account_id: account_id,
     });
+  }
+
+  if (!host_id && account_id) {
+    try {
+      await ensurePlacement(project_id, account_id);
+    } catch (err) {
+      log.warn("createProject: failed to assign project to a host", {
+        project_id,
+        account_id,
+        err: `${err}`,
+      });
+      try {
+        await pool.query("DELETE FROM projects WHERE project_id=$1", [
+          project_id,
+        ]);
+      } catch (cleanupErr) {
+        log.warn(
+          "createProject: failed to cleanup project row after placement error",
+          {
+            project_id,
+            err: `${cleanupErr}`,
+          },
+        );
+      }
+      throw Error(`failed to assign workspace to a host: ${err}`);
+    }
   }
 
   // If this is a clone with a known host, register the project row on that host

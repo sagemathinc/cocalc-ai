@@ -70,6 +70,7 @@ describe("project viewer endpoint audit", () => {
       "codexDeviceAuthStatus",
       "codexDeviceAuthCancel",
       "codexUploadAuthFile",
+      "getCodexUsageStatus",
       "chatStoreStats",
       "chatStoreRotate",
       "chatStoreListSegments",

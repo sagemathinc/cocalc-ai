@@ -60,6 +60,8 @@ interface FilesSelectedControlsProps {
   ) => void;
   activeFile: DirectoryListingEntry | null;
   refreshBackups?: () => void;
+  showActions?: boolean;
+  showInfo?: boolean;
 }
 
 export function FilesSelectedControls({
@@ -71,6 +73,8 @@ export function FilesSelectedControls({
   project_id,
   activeFile,
   refreshBackups,
+  showActions = true,
+  showInfo = true,
 }: FilesSelectedControlsProps) {
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
@@ -95,9 +99,7 @@ export function FilesSelectedControls({
   );
   const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
   const [restoreError, setRestoreError] = useState<any>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => message.error(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const selectedOpenablePaths = useMemo(
     () => checked_files.toArray().filter((file) => !getFile(file)?.isDir),
     [checked_files, getFile],
@@ -505,20 +507,38 @@ export function FilesSelectedControls({
     );
   }
 
+  const actionButtons = showActions
+    ? singleFile
+      ? singleFile.isDir
+        ? renderButtons(ACTION_BUTTONS_DIR)
+        : renderButtons(ACTION_BUTTONS_FILE)
+      : checked_files.size > 1
+        ? renderButtons(ACTION_BUTTONS_MULTI)
+        : undefined
+    : undefined;
+  const fileInfo = showInfo ? renderFileInfo() : undefined;
+  if (actionButtons == null && fileInfo == null) {
+    return null;
+  }
+  const topStyle =
+    mode === "top" && !showInfo
+      ? {
+          ...PANEL_STYLE_TOP,
+          paddingBottom: 0,
+          paddingLeft: 0,
+          paddingRight: 0,
+          width: "auto",
+        }
+      : PANEL_STYLE_TOP;
+
   return (
     <Space
       orientation="vertical"
       size="small"
-      style={mode === "top" ? PANEL_STYLE_TOP : PANEL_STYLE_BOTTOM}
+      style={mode === "top" ? topStyle : PANEL_STYLE_BOTTOM}
     >
-      {singleFile
-        ? singleFile.isDir
-          ? renderButtons(ACTION_BUTTONS_DIR)
-          : renderButtons(ACTION_BUTTONS_FILE)
-        : checked_files.size > 1
-          ? renderButtons(ACTION_BUTTONS_MULTI)
-          : undefined}
-      {renderFileInfo()}
+      {actionButtons}
+      {fileInfo}
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );

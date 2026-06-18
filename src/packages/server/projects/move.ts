@@ -20,6 +20,7 @@ import {
   savePlacement,
   stopProjectOnHost,
 } from "../project-host/control";
+import { getRoutedHostControlClient } from "../project-host/client";
 import { getConfiguredBayId } from "../bay-config";
 import {
   PROJECT_DANGEROUS_INTERNAL_AUTH,
@@ -29,10 +30,7 @@ import { createBackup as createBackupLro } from "../conat/api/project-backups";
 import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
-import {
-  get as getLroStream,
-  waitForCompletion as waitForLroCompletion,
-} from "@cocalc/conat/lro/client";
+import { get as getLroStream } from "@cocalc/conat/lro/client";
 import {
   getProjectBackupAssignmentState,
   resolveProjectBackupRepoAssignment,
@@ -60,8 +58,28 @@ const MOVE_START_DEST_TIMEOUT_MS = Math.max(
   Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
 );
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
+const BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 5000),
+);
+const BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 500),
+);
+const RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 5000),
+);
+const RESTORE_BACKUP_NOT_FOUND_RETRIES = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRIES) || 3,
+);
 const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
-const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
+const LEGACY_MOVE_SENTINEL_DIR = ".move-sentinels";
+const MOVE_SENTINEL_PREFIX = ".move-sentinel-";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS) || 30 * 1000,
@@ -86,6 +104,10 @@ const CHILD_LRO_POLL_INTERVAL_MS = Math.max(
   250,
   Number(process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS) || 1000,
 );
+const CHILD_LRO_STREAM_OPEN_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_CHILD_LRO_STREAM_OPEN_TIMEOUT_MS) || 5000,
+);
 const TERMINAL_LRO_STATUSES = new Set([
   "succeeded",
   "failed",
@@ -103,6 +125,13 @@ class MoveCanceledError extends Error {
     super(`move canceled (${stage})`);
     this.name = "MoveCanceledError";
     this.stage = stage;
+  }
+}
+
+class MoveDestinationVerificationError extends Error {
+  constructor(err: unknown) {
+    super(`${err}`);
+    this.name = "MoveDestinationVerificationError";
   }
 }
 
@@ -175,7 +204,7 @@ type MoveSentinel = {
 };
 
 function moveSentinelPath(move_log_id: string): string {
-  return pathPosix.join(MOVE_SENTINEL_DIR, `${move_log_id}.json`);
+  return `${MOVE_SENTINEL_PREFIX}${move_log_id}.json`;
 }
 
 function summarizeMoveSentinelContent(content: string): Record<string, string> {
@@ -397,6 +426,18 @@ async function deleteMoveSentinelBestEffort({
     await fs.rm(path, { force: true });
     if (path !== LEGACY_MOVE_SENTINEL_PATH) {
       await fs.rm(LEGACY_MOVE_SENTINEL_PATH, { force: true }).catch(() => {});
+      await fs
+        .rm(LEGACY_MOVE_SENTINEL_DIR, {
+          force: true,
+          recursive: true,
+        })
+        .catch(() => {});
+      await fs
+        .rm(".cocalc/move-sentinels", {
+          force: true,
+          recursive: true,
+        })
+        .catch(() => {});
     }
   } catch (err) {
     log.warn("moveProjectToHost sentinel cleanup failed", {
@@ -724,7 +765,28 @@ function isRetryableTransientMoveError(err: unknown): boolean {
     text.includes("unexpected end of data") ||
     text.includes("missing raw payload") ||
     text.includes("disconnected") ||
+    isRestoreBackupNotFoundDuringDestinationStart(err) ||
     (err as any)?.code === 408
+  );
+}
+
+function isRestoreBackupNotFoundDuringDestinationStart(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    text.includes("destination start failed:") &&
+    text.includes("backup ") &&
+    text.includes(" not found for project ")
+  );
+}
+
+function lroFailureReason(summary: LroSummary): string {
+  const progressSummary = summary.progress_summary ?? {};
+  return (
+    `${summary.error ?? ""}`.trim() ||
+    `${progressSummary?.detail?.error ?? ""}`.trim() ||
+    `${progressSummary?.error ?? ""}`.trim() ||
+    `${progressSummary?.message ?? ""}`.trim() ||
+    summary.status
   );
 }
 
@@ -745,39 +807,98 @@ async function retryOnceOnTransientMoveError<T>({
   progress: (update: MoveProjectProgressUpdate) => void;
   run: () => Promise<T>;
 }): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (!isRetryableTransientMoveError(err)) {
-      throw err;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (err) {
+      if (!isRetryableTransientMoveError(err)) {
+        throw err;
+      }
+      const restoreBackupNotFound =
+        operation === "start-dest" &&
+        isRestoreBackupNotFoundDuringDestinationStart(err);
+      const maxRetries = restoreBackupNotFound
+        ? RESTORE_BACKUP_NOT_FOUND_RETRIES
+        : 1;
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+      const retryDelayMs = restoreBackupNotFound
+        ? RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS
+        : TRANSIENT_MOVE_RPC_RETRY_DELAY_MS;
+      const message = restoreBackupNotFound
+        ? "backup is not visible on destination yet; retrying start"
+        : "transient error; retrying once";
+      log.warn("moveProjectToHost transient operation failure; retrying", {
+        operation,
+        attempt: attempt + 1,
+        maxRetries,
+        retryDelayMs,
+        err,
+        detail,
+      });
+      progress({
+        step: progress_step ?? operation,
+        message,
+        detail: {
+          ...(detail ?? {}),
+          attempt: attempt + 1,
+          max_retries: maxRetries,
+          retry_delay_ms: retryDelayMs,
+          error: `${err}`,
+        },
+      });
+      await delay(retryDelayMs);
     }
-    log.warn("moveProjectToHost transient operation failure; retrying once", {
-      operation,
-      err,
-      detail,
-    });
-    progress({
-      step: progress_step ?? operation,
-      message: "transient error; retrying once",
-      detail: {
-        ...(detail ?? {}),
-        error: `${err}`,
-      },
-    });
-    await delay(TRANSIENT_MOVE_RPC_RETRY_DELAY_MS);
-    return await run();
   }
 }
 
 async function invalidateProjectBackupConfigOnHost(
   host_id: string | null | undefined,
+  project_id?: string,
 ): Promise<void> {
   const target = `${host_id ?? ""}`.trim();
   if (!target) return;
+  try {
+    const client = await getRoutedHostControlClient({
+      host_id: target,
+      timeout: BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS,
+    });
+    await client.invalidateBackupConfig({ project_id });
+    return;
+  } catch (err) {
+    log.warn(
+      "project-host backup config RPC invalidation failed; falling back to broadcast",
+      {
+        host_id: target,
+        project_id,
+        err,
+      },
+    );
+  }
   await conat().publish(`project-host.${target}.backup.invalidate`, null, {
     waitForInterest: true,
-    timeout: 10_000,
+    timeout: BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS,
   });
+}
+
+async function invalidateProjectBackupConfigOnHostWithRetry(
+  host_id: string | null | undefined,
+  project_id: string,
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await invalidateProjectBackupConfigOnHost(host_id, project_id);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) {
+        await delay(BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 function mergeMoveProgressDetail({
@@ -820,22 +941,11 @@ async function waitForChildLroCompletion({
   shouldCancel?: () => Promise<boolean>;
   cancelStage?: string;
 }): Promise<LroSummary> {
-  let stream: Awaited<ReturnType<typeof getLroStream>> | undefined;
-  try {
-    stream = await getLroStream({
-      op_id,
-      scope_type,
-      scope_id,
-      client: conat(),
-    });
-  } catch (err) {
-    log.warn("move child lro stream init failed; using db polling", {
-      op_id,
-      scope_type,
-      scope_id,
-      err,
-    });
-  }
+  const stream = await openChildLroStreamWithTimeout({
+    op_id,
+    scope_type,
+    scope_id,
+  });
 
   let done = false;
   let lastIndex = 0;
@@ -956,6 +1066,72 @@ async function waitForChildLroCompletion({
   });
 }
 
+async function openChildLroStreamWithTimeout({
+  op_id,
+  scope_type,
+  scope_id,
+}: {
+  op_id: string;
+  scope_type: "project" | "account" | "host" | "hub";
+  scope_id?: string;
+}): Promise<Awaited<ReturnType<typeof getLroStream>> | undefined> {
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const streamPromise = getLroStream({
+    op_id,
+    scope_type,
+    scope_id,
+    client: conat(),
+  })
+    .then((stream) => {
+      if (timedOut) {
+        stream.close();
+        return undefined;
+      }
+      return stream;
+    })
+    .catch((err) => {
+      if (timedOut) {
+        log.warn("move child lro stream late init failed after fallback", {
+          op_id,
+          scope_type,
+          scope_id,
+          err,
+        });
+        return undefined;
+      }
+      throw err;
+    });
+  const timeoutPromise = new Promise<undefined>((resolve) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      log.warn("move child lro stream init timed out; using db polling", {
+        op_id,
+        scope_type,
+        scope_id,
+        timeout_ms: CHILD_LRO_STREAM_OPEN_TIMEOUT_MS,
+      });
+      resolve(undefined);
+    }, CHILD_LRO_STREAM_OPEN_TIMEOUT_MS);
+    timeoutId.unref?.();
+  });
+  try {
+    return await Promise.race([streamPromise, timeoutPromise]);
+  } catch (err) {
+    log.warn("move child lro stream init failed; using db polling", {
+      op_id,
+      scope_type,
+      scope_id,
+      err,
+    });
+    return undefined;
+  } finally {
+    if (!timedOut && timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 async function cancelChildLro({
   op_id,
   error,
@@ -974,73 +1150,6 @@ async function cancelChildLro({
       op_id,
       err,
     });
-  }
-}
-
-async function waitForExternalChildLroCompletion({
-  op_id,
-  scope_type,
-  scope_id,
-  client,
-  timeout_ms,
-  onProgress,
-  shouldCancel,
-  cancelStage,
-}: {
-  op_id: string;
-  scope_type: "project" | "account" | "host" | "hub";
-  scope_id?: string;
-  client: ReturnType<typeof conat>;
-  timeout_ms?: number;
-  onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
-  shouldCancel?: () => Promise<boolean>;
-  cancelStage: string;
-}): Promise<LroSummary> {
-  if (!shouldCancel) {
-    return await waitForLroCompletion({
-      op_id,
-      scope_type,
-      scope_id,
-      client,
-      timeout_ms,
-      onProgress,
-    });
-  }
-  let cancelPoll: ReturnType<typeof setInterval> | undefined;
-  const cancelPromise = new Promise<never>((_resolve, reject) => {
-    cancelPoll = setInterval(() => {
-      void (async () => {
-        try {
-          if (await shouldCancel()) {
-            await cancelChildLro({
-              op_id,
-              error: `parent move canceled during ${cancelStage}`,
-            });
-            reject(new MoveCanceledError(cancelStage));
-          }
-        } catch (err) {
-          reject(err);
-        }
-      })();
-    }, CHILD_LRO_POLL_INTERVAL_MS);
-    cancelPoll.unref?.();
-  });
-  try {
-    return await Promise.race([
-      waitForLroCompletion({
-        op_id,
-        scope_type,
-        scope_id,
-        client,
-        timeout_ms,
-        onProgress,
-      }),
-      cancelPromise,
-    ]);
-  } finally {
-    if (cancelPoll) {
-      clearInterval(cancelPoll);
-    }
   }
 }
 
@@ -1087,7 +1196,10 @@ async function performBackupRegionCutover({
 
   if (previous_backup_repo_id) {
     try {
-      await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+      await invalidateProjectBackupConfigOnHostWithRetry(
+        context.dest_host_id,
+        context.project_id,
+      );
     } catch (err) {
       log.warn("backup-region cutover invalidation publish failed", {
         project_id: context.project_id,
@@ -1163,7 +1275,10 @@ async function performBackupRegionCutover({
     });
     if (previous_backup_repo_id) {
       try {
-        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+        await invalidateProjectBackupConfigOnHost(
+          context.dest_host_id,
+          context.project_id,
+        );
       } catch (invalidateErr) {
         log.warn("backup-region cutover rollback invalidation publish failed", {
           project_id: context.project_id,
@@ -1367,6 +1482,7 @@ export async function moveProjectToHost(
   let backupRegionCutoverResult: MoveBackupRegionCutoverResult | undefined;
   let moveSentinel: MoveSentinel | undefined;
   let finalBackupId: string | undefined;
+  let currentStage = "initializing";
   const moveLogExtraEvent = () => ({
     source_region: context.project_region,
     dest_region: context.dest_region,
@@ -1478,6 +1594,7 @@ export async function moveProjectToHost(
   };
 
   try {
+    currentStage = "validate";
     progress({
       step: "validate",
       message: "validated move request",
@@ -1489,6 +1606,7 @@ export async function moveProjectToHost(
     await checkCanceled("validate");
     const sourceAvailable = isSourceHostAvailable(context);
     if (sourceAvailable) {
+      currentStage = "write-project-move-request-log";
       await appendProjectMoveLogEntry({
         project_id: context.project_id,
         account_id: context.account_id,
@@ -1539,6 +1657,19 @@ export async function moveProjectToHost(
         },
       });
     } else {
+      if (context.provisioned !== false) {
+        currentStage = "write-move-sentinel";
+        progress({
+          step: "backup",
+          message: "writing move verification sentinel",
+        });
+        moveSentinel = await createMoveSentinel({
+          context,
+          move_log_id,
+          op_id: opts?.op_id,
+        });
+      }
+      currentStage = "stop-source";
       progress({
         step: "stop-source",
         message: "stopping source project",
@@ -1569,6 +1700,7 @@ export async function moveProjectToHost(
       await checkCanceled("stop-source");
 
       if (context.provisioned === false) {
+        currentStage = "backup-skip-unprovisioned";
         progress({
           step: "backup",
           message: "project not provisioned; skipping final backup",
@@ -1581,8 +1713,12 @@ export async function moveProjectToHost(
           },
         );
       } else {
+        currentStage = "invalidate-source-backup-config";
         try {
-          await invalidateProjectBackupConfigOnHost(context.project_host_id);
+          await invalidateProjectBackupConfigOnHost(
+            context.project_host_id,
+            context.project_id,
+          );
         } catch (err) {
           log.warn(
             "moveProjectToHost source backup config invalidation failed",
@@ -1593,15 +1729,7 @@ export async function moveProjectToHost(
             },
           );
         }
-        progress({
-          step: "backup",
-          message: "writing move verification sentinel",
-        });
-        moveSentinel = await createMoveSentinel({
-          context,
-          move_log_id,
-          op_id: opts?.op_id,
-        });
+        currentStage = "backup-final";
         progress({
           step: "backup",
           message: "creating final backup (always)",
@@ -1675,11 +1803,38 @@ export async function moveProjectToHost(
       }
       await checkCanceled("backup");
     }
+    if (startDest && finalBackupId && context.provisioned !== false) {
+      currentStage = "prepare-destination-restore";
+      progress({
+        step: "prepare-dest",
+        message: "clearing stale destination project data before restore",
+        detail: { dest_host_id: context.dest_host_id },
+      });
+      try {
+        await deleteProjectDataOnHost({
+          project_id: context.project_id,
+          host_id: context.dest_host_id,
+        });
+      } catch (err) {
+        log.error("moveProjectToHost destination pre-restore cleanup failed", {
+          project_id: context.project_id,
+          dest_host_id: context.dest_host_id,
+          err,
+        });
+        throw err;
+      }
+      progress({
+        step: "prepare-dest",
+        message: "stale destination project data cleared",
+        detail: { dest_host_id: context.dest_host_id },
+      });
+    }
     progress({
       step: "placement",
       message: "updating project placement",
       detail: { dest_host_id: context.dest_host_id },
     });
+    currentStage = "placement";
     try {
       await savePlacement(context.project_id, {
         host_id: context.dest_host_id,
@@ -1699,8 +1854,12 @@ export async function moveProjectToHost(
     }
     await checkCanceled("placement");
     if (startDest) {
+      currentStage = "invalidate-destination-backup-config";
       try {
-        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+        await invalidateProjectBackupConfigOnHost(
+          context.dest_host_id,
+          context.project_id,
+        );
       } catch (err) {
         log.warn(
           "moveProjectToHost destination backup config invalidation failed",
@@ -1711,6 +1870,7 @@ export async function moveProjectToHost(
           },
         );
       }
+      currentStage = "start-destination";
       progress({
         step: "start-dest",
         message: "starting workspace on destination host",
@@ -1749,11 +1909,10 @@ export async function moveProjectToHost(
             });
             let summary: LroSummary | undefined;
             try {
-              summary = await waitForExternalChildLroCompletion({
+              summary = await waitForChildLroCompletion({
                 op_id: startOp.op_id,
                 scope_type: startOp.scope_type,
                 scope_id: startOp.scope_id,
-                client: conat(),
                 timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
                 onProgress: (event) => {
                   progress({
@@ -1823,7 +1982,7 @@ export async function moveProjectToHost(
               } as LroSummary;
             }
             if (summary && summary.status !== "succeeded") {
-              const reason = summary.error ?? summary.status;
+              const reason = lroFailureReason(summary);
               throw new Error(`destination start failed: ${reason}`);
             }
             return { startOp, summary };
@@ -1851,10 +2010,14 @@ export async function moveProjectToHost(
             message: "verifying restored project content on destination host",
             detail: { dest_host_id: context.dest_host_id },
           });
-          await verifyMoveSentinel({
-            project_id: context.project_id,
-            sentinel: moveSentinel,
-          });
+          try {
+            await verifyMoveSentinel({
+              project_id: context.project_id,
+              sentinel: moveSentinel,
+            });
+          } catch (err) {
+            throw new MoveDestinationVerificationError(err);
+          }
           await deleteMoveSentinelBestEffort({
             project_id: context.project_id,
             path: moveSentinel.path,
@@ -1901,6 +2064,23 @@ export async function moveProjectToHost(
         }
       } catch (err) {
         if ((err as any)?.code === MOVE_CANCELED_CODE) {
+          throw err;
+        }
+        if (err instanceof MoveDestinationVerificationError) {
+          log.warn(
+            "moveProjectToHost destination verification failed after destination start",
+            {
+              project_id: context.project_id,
+              dest_host_id: context.dest_host_id,
+              err,
+            },
+          );
+          progress({
+            step: "verify-dest",
+            message:
+              "destination verification failed after workspace started; preserving destination placement",
+            detail: { dest_host_id: context.dest_host_id, error: `${err}` },
+          });
           throw err;
         }
         log.warn("moveProjectToHost start failed after placement update", {
@@ -2067,6 +2247,12 @@ export async function moveProjectToHost(
       await handleCancel((err as any).stage ?? "unknown");
       throw err;
     }
+    const stagedError =
+      err instanceof MoveDestinationVerificationError
+        ? err
+        : new Error(
+            `${currentStage} failed: ${err instanceof Error ? err.message : `${err}`}`,
+          );
     await appendProjectMoveLogEntry({
       project_id: context.project_id,
       account_id: context.account_id,
@@ -2090,11 +2276,18 @@ export async function moveProjectToHost(
       dest_host_id: context.dest_host_id,
       dest_host_name: context.dest_host_name,
       duration_ms: Date.now() - started_at_ms,
-      error: err instanceof Error ? err.message : `${err}`,
+      error: stagedError.message,
       op_id: opts?.op_id,
       extra_event: moveLogExtraEvent(),
       fresh: true,
     });
-    throw err;
+    throw stagedError;
   }
 }
+
+export const __test__ = {
+  isRestoreBackupNotFoundDuringDestinationStart,
+  isRetryableTransientMoveError,
+  lroFailureReason,
+  retryOnceOnTransientMoveError,
+};

@@ -19,6 +19,7 @@ import type {
   ProjectCollabInviteStatus,
   ProjectCollaboratorInviteUsage,
   ProjectCollaboratorRow,
+  ProjectInviteEmailBlockedReason,
 } from "@cocalc/conat/hub/api/projects";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 
@@ -27,6 +28,18 @@ function browserOrigin(): string | undefined {
     return;
   }
   return window.location?.origin;
+}
+
+export interface ProjectInviteDeliveryResult {
+  email_sent: boolean;
+  email_available: boolean;
+  manual_delivery_required: boolean;
+  email_blocked_reason?: ProjectInviteEmailBlockedReason | null;
+  in_app_notification_sent?: boolean;
+}
+
+export interface ProjectEmailInviteDeliveryResult extends ProjectInviteDeliveryResult {
+  invites: ProjectCollabInviteRow[];
 }
 
 export class ProjectCollaborators {
@@ -52,7 +65,7 @@ export class ProjectCollaborators {
     invite_role?: "collaborator" | "viewer";
     invite_base_url?: string;
     read_policy?: ProjectViewerReadPolicy | null;
-  }): Promise<any> {
+  }): Promise<ProjectEmailInviteDeliveryResult> {
     return await this.conat.hub.projects.inviteCollaboratorWithoutAccount({
       opts: {
         ...opts,
@@ -73,7 +86,7 @@ export class ProjectCollaborators {
     message?: string;
     invite_role?: "collaborator" | "viewer";
     read_policy?: ProjectViewerReadPolicy | null;
-  }): Promise<any> {
+  }): Promise<ProjectInviteDeliveryResult> {
     return await this.conat.hub.projects.inviteCollaborator({
       opts,
     });

@@ -63,11 +63,28 @@ import {
   updateSiteLicense as updateSiteLicense0,
   updateSiteLicensePool as updateSiteLicensePool0,
 } from "@cocalc/server/membership/site-licenses";
+import {
+  addSiteLicenseExternalClaimKey as addSiteLicenseExternalClaimKey0,
+  consumeSiteLicenseExternalClaimToken as consumeSiteLicenseExternalClaimToken0,
+  createSiteLicenseExternalClaimPool as createSiteLicenseExternalClaimPool0,
+  disableSiteLicenseExternalClaimPool as disableSiteLicenseExternalClaimPool0,
+  listSiteLicenseExternalClaimConsumptions as listSiteLicenseExternalClaimConsumptions0,
+  listSiteLicenseExternalClaimKeys as listSiteLicenseExternalClaimKeys0,
+  listSiteLicenseExternalClaimPools as listSiteLicenseExternalClaimPools0,
+  revokeSiteLicenseExternalClaimKey as revokeSiteLicenseExternalClaimKey0,
+} from "@cocalc/server/membership/site-license-external-claims";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
-import purchaseMembershipPackage0 from "@cocalc/server/purchases/membership-package";
+import purchaseMembershipPackage0, {
+  purchaseMembershipPackages as purchaseMembershipPackages0,
+} from "@cocalc/server/purchases/membership-package";
+import {
+  getTeamLicenseOverviewForOwner,
+  resolveTeamLicenseQuote,
+} from "@cocalc/server/membership/team-licenses";
+import { purchaseTeamLicenseChange as purchaseTeamLicenseChange0 } from "@cocalc/server/purchases/team-license";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
@@ -79,6 +96,11 @@ import type {
   MembershipPackageDetails,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseExternalClaimConsumption,
+  SiteLicenseExternalClaimConsumptionStatus,
+  SiteLicenseExternalClaimKey,
+  SiteLicenseExternalClaimPool,
+  SiteLicenseExternalClaimSigningAlgorithm,
   SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
@@ -440,6 +462,130 @@ export async function purchaseMembershipPackage({
   return await purchaseMembershipPackage0({
     account_id,
     product,
+  });
+}
+
+export async function purchaseMembershipPackages({
+  account_id,
+  browser_id,
+  session_hash,
+  products,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  products?: MembershipPackageProduct[];
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "purchase memberships",
+  );
+  await maybeRequireFreshAuthForBrowserPurchaseAction({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  if (!Array.isArray(products) || products.length === 0) {
+    throw Error("at least one membership package product is required");
+  }
+  for (const product of products) {
+    if (product?.type !== "membership-package") {
+      throw Error("product type must be 'membership-package'");
+    }
+    if (product.package_id) {
+      const pkg = await getMembershipPackage({
+        package_id: product.package_id,
+      });
+      if (!pkg) {
+        throw Error("membership package not found");
+      }
+      if (pkg.owner_account_id !== account_id && !(await isAdmin(account_id))) {
+        throw Error("must own membership package");
+      }
+    }
+  }
+  return await purchaseMembershipPackages0({
+    account_id,
+    products,
+  });
+}
+
+export async function getTeamLicense({ account_id }: { account_id?: string }) {
+  const owner = requireAccount(account_id);
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
+  if (home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).getTeamLicense({ account_id: owner });
+  }
+  return await getTeamLicenseOverviewForOwner({ owner_account_id: owner });
+}
+
+export async function getTeamLicenseQuote({
+  account_id,
+  target_seats,
+}: {
+  account_id?: string;
+  target_seats?: Record<string, number>;
+}) {
+  const owner = requireAccount(account_id);
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
+  if (home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).getTeamLicenseQuote({ account_id: owner, target_seats });
+  }
+  return await resolveTeamLicenseQuote({
+    owner_account_id: owner,
+    target_seats,
+  });
+}
+
+export async function purchaseTeamLicenseChange({
+  account_id,
+  browser_id,
+  session_hash,
+  target_seats,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  target_seats?: Record<string, number>;
+}) {
+  const owner = requireAccount(account_id);
+  await assertAccountTrustedForProductAccess(owner, "purchase memberships");
+  await maybeRequireFreshAuthForBrowserPurchaseAction({
+    account_id: owner,
+    browser_id,
+    session_hash,
+  });
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
+  if (home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).purchaseTeamLicenseChange({
+      account_id: owner,
+      target_seats,
+    });
+  }
+  return await purchaseTeamLicenseChange0({
+    account_id: owner,
+    target_seats: target_seats ?? {},
   });
 }
 
@@ -1062,6 +1208,420 @@ export async function addSiteLicensePool({
     return await getSeedSiteLicenseClient().addSiteLicensePool(opts);
   }
   return await addSiteLicensePool0(opts);
+}
+
+export async function createSiteLicenseExternalClaimPool({
+  account_id,
+  browser_id,
+  session_hash,
+  site_license_id,
+  package_id,
+  name,
+  issuer,
+  slug,
+  audience,
+  default_membership_class,
+  allow_membership_class_override,
+  default_membership_duration_days,
+  default_membership_expires_at,
+  allow_membership_expires_at_override,
+  min_membership_duration_days,
+  max_membership_duration_days,
+  max_membership_expires_at,
+  default_rootfs_id,
+  max_claims,
+  max_claims_per_account,
+  starts_at,
+  expires_at,
+  disabled_at,
+  metadata,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  site_license_id?: string;
+  package_id?: string;
+  name?: string;
+  issuer?: string;
+  slug?: string | null;
+  audience?: string;
+  default_membership_class?: string | null;
+  allow_membership_class_override?: boolean;
+  default_membership_duration_days?: number | null;
+  default_membership_expires_at?: Date | string | null;
+  allow_membership_expires_at_override?: boolean;
+  min_membership_duration_days?: number | null;
+  max_membership_duration_days?: number | null;
+  max_membership_expires_at?: Date | string | null;
+  default_rootfs_id?: string | null;
+  max_claims?: number | null;
+  max_claims_per_account?: number | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  disabled_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+} = {}): Promise<SiteLicenseExternalClaimPool> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: `${site_license_id ?? ""}`.trim(),
+    package_id: `${package_id ?? ""}`.trim(),
+    name: `${name ?? ""}`.trim(),
+    issuer: `${issuer ?? ""}`.trim(),
+    slug,
+    audience,
+    default_membership_class,
+    allow_membership_class_override,
+    default_membership_duration_days,
+    default_membership_expires_at,
+    allow_membership_expires_at_override,
+    min_membership_duration_days,
+    max_membership_duration_days,
+    max_membership_expires_at,
+    default_rootfs_id,
+    max_claims,
+    max_claims_per_account,
+    starts_at,
+    expires_at,
+    disabled_at,
+    metadata,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().createSiteLicenseExternalClaimPool(
+      opts,
+    );
+  }
+  return await createSiteLicenseExternalClaimPool0({
+    ...opts,
+    created_by_account_id: actorId,
+  });
+}
+
+export async function addSiteLicenseExternalClaimKey({
+  account_id,
+  browser_id,
+  session_hash,
+  pool_id,
+  kid,
+  alg,
+  public_key_jwk,
+  public_key_pem,
+  starts_at,
+  expires_at,
+  revoked_at,
+  metadata,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  pool_id?: string;
+  kid?: string;
+  alg?: SiteLicenseExternalClaimSigningAlgorithm;
+  public_key_jwk?: Record<string, unknown> | null;
+  public_key_pem?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  revoked_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+} = {}): Promise<SiteLicenseExternalClaimKey> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    pool_id: `${pool_id ?? ""}`.trim(),
+    kid: `${kid ?? ""}`.trim(),
+    alg: alg ?? "EdDSA",
+    public_key_jwk,
+    public_key_pem,
+    starts_at,
+    expires_at,
+    revoked_at,
+    metadata,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().addSiteLicenseExternalClaimKey(
+      opts,
+    );
+  }
+  return await addSiteLicenseExternalClaimKey0({
+    ...opts,
+    created_by_account_id: actorId,
+  });
+}
+
+export async function listSiteLicenseExternalClaimPools({
+  account_id,
+  site_license_id,
+  package_id,
+  pool_id,
+  limit,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+  package_id?: string;
+  pool_id?: string;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimPool[]> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const opts = { site_license_id, package_id, pool_id, limit };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimPools({
+      account_id: actorId,
+      ...opts,
+    });
+  }
+  return await listSiteLicenseExternalClaimPools0(opts);
+}
+
+export async function disableSiteLicenseExternalClaimPool({
+  account_id,
+  browser_id,
+  session_hash,
+  pool_id,
+  disabled_at,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  pool_id?: string;
+  disabled_at?: Date | string | null;
+} = {}): Promise<SiteLicenseExternalClaimPool> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    pool_id: `${pool_id ?? ""}`.trim(),
+    disabled_at,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().disableSiteLicenseExternalClaimPool(
+      opts,
+    );
+  }
+  return await disableSiteLicenseExternalClaimPool0(opts);
+}
+
+export async function listSiteLicenseExternalClaimKeys({
+  account_id,
+  pool_id,
+  limit,
+}: {
+  account_id?: string;
+  pool_id?: string;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimKey[]> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const opts = { pool_id: `${pool_id ?? ""}`.trim(), limit };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimKeys({
+      account_id: actorId,
+      ...opts,
+    });
+  }
+  return await listSiteLicenseExternalClaimKeys0(opts);
+}
+
+export async function revokeSiteLicenseExternalClaimKey({
+  account_id,
+  browser_id,
+  session_hash,
+  pool_id,
+  kid,
+  revoked_at,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  pool_id?: string;
+  kid?: string;
+  revoked_at?: Date | string | null;
+} = {}): Promise<SiteLicenseExternalClaimKey> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    pool_id: `${pool_id ?? ""}`.trim(),
+    kid: `${kid ?? ""}`.trim(),
+    revoked_at,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().revokeSiteLicenseExternalClaimKey(
+      opts,
+    );
+  }
+  return await revokeSiteLicenseExternalClaimKey0(opts);
+}
+
+export async function listSiteLicenseExternalClaimConsumptions({
+  account_id,
+  pool_id,
+  site_license_id,
+  target_account_id,
+  status,
+  limit,
+}: {
+  account_id?: string;
+  pool_id?: string;
+  site_license_id?: string;
+  target_account_id?: string;
+  status?: SiteLicenseExternalClaimConsumptionStatus;
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimConsumption[]> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const opts = {
+    pool_id: `${pool_id ?? ""}`.trim() || undefined,
+    site_license_id: `${site_license_id ?? ""}`.trim() || undefined,
+    account_id: `${target_account_id ?? ""}`.trim() || undefined,
+    status,
+    limit,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimConsumptions(
+      {
+        account_id: actorId,
+        pool_id: opts.pool_id,
+        site_license_id: opts.site_license_id,
+        target_account_id: opts.account_id,
+        status,
+        limit,
+      },
+    );
+  }
+  return await listSiteLicenseExternalClaimConsumptions0(opts);
+}
+
+export async function consumeSiteLicenseExternalClaimToken({
+  account_id,
+  token,
+}: {
+  account_id?: string;
+  token?: string;
+} = {}): Promise<SiteLicenseExternalClaimConsumption> {
+  try {
+    const actorId = requireAccount(account_id);
+    const rawToken = `${token ?? ""}`.trim();
+    if (!rawToken) {
+      throw Error("token required");
+    }
+    const home_bay_id = await resolveTargetAccountHomeBay({
+      account_id: actorId,
+      user_account_id: actorId,
+    });
+    if (home_bay_id !== getConfiguredBayId()) {
+      return await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: home_bay_id,
+      }).consumeSiteLicenseExternalClaimToken({
+        account_id: actorId,
+        token: rawToken,
+      });
+    }
+    await assertAccountTrustedForProductAccess(
+      actorId,
+      "claim site-license external token",
+    );
+    if (!isSeedBay()) {
+      return await getSeedSiteLicenseClient().consumeSiteLicenseExternalClaimToken(
+        {
+          account_id: actorId,
+          token: rawToken,
+        },
+      );
+    }
+    return await consumeSiteLicenseExternalClaimToken0({
+      account_id: actorId,
+      token: rawToken,
+    });
+  } catch (err) {
+    throw asSiteLicenseExternalClaimRpcError(err);
+  }
+}
+
+function asSiteLicenseExternalClaimRpcError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : `${err}`;
+  if (err instanceof Error && (err as any).code) {
+    return err;
+  }
+  return Object.assign(err instanceof Error ? err : new Error(message), {
+    code: classifySiteLicenseExternalClaimError(message),
+  });
+}
+
+function classifySiteLicenseExternalClaimError(message: string): string {
+  const s = message.toLowerCase();
+  if (s.includes("token required")) return "claim_token_required";
+  if (s.includes("external claim key")) return "claim_token_invalid";
+  if (s.includes("pool") && s.includes("disabled")) {
+    return "claim_pool_disabled";
+  }
+  if (s.includes("pool") && s.includes("expired")) {
+    return "claim_pool_disabled";
+  }
+  if (s.includes("site license") && s.includes("disabled")) {
+    return "claim_site_license_disabled";
+  }
+  if (s.includes("site license") && s.includes("expired")) {
+    return "claim_site_license_disabled";
+  }
+  if (s.includes("expired")) return "claim_token_expired";
+  if (s.includes("not active yet")) return "claim_token_not_active";
+  if (s.includes("already consumed")) return "claim_token_already_used";
+  if (s.includes("already claimed for this account")) {
+    return "claim_pool_account_limit";
+  }
+  if (s.includes("no claims available")) return "claim_pool_limit";
+  if (s.includes("not found")) return "claim_not_found";
+  if (s.includes("audience")) return "claim_audience_mismatch";
+  if (s.includes("issuer")) return "claim_issuer_mismatch";
+  if (s.includes("signature") || s.includes("compact jws")) {
+    return "claim_token_invalid";
+  }
+  if (s.includes("membership") || s.includes("seat")) {
+    return "claim_membership_failed";
+  }
+  return "claim_failed";
 }
 
 export async function archiveSiteLicensePool({

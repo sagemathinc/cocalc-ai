@@ -1103,19 +1103,24 @@ export async function buildBootstrapScripts(
 
   const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
     if (tunnel && tunnelEnabled) {
-      const useToken = Boolean(tunnel.token);
-      if (!useToken) {
-        logger.warn("cloudflare tunnel token missing; using credentials file", {
+      const hasCredentials = Boolean(
+        tunnel.account_id && tunnel.id && tunnel.name && tunnel.tunnel_secret,
+      );
+      const useToken = !hasCredentials && Boolean(tunnel.token);
+      if (!hasCredentials && !useToken) {
+        logger.warn("cloudflare tunnel missing credentials and token", {
           host_id: row.id,
           tunnel_id: tunnel.id,
         });
       }
-      const creds = JSON.stringify({
-        AccountTag: tunnel.account_id,
-        TunnelID: tunnel.id,
-        TunnelName: tunnel.name,
-        TunnelSecret: tunnel.tunnel_secret,
-      });
+      const creds = hasCredentials
+        ? JSON.stringify({
+            AccountTag: tunnel.account_id,
+            TunnelID: tunnel.id,
+            TunnelName: tunnel.name,
+            TunnelSecret: tunnel.tunnel_secret,
+          })
+        : undefined;
       return {
         enabled: true,
         hostname: tunnel.hostname,
@@ -1125,7 +1130,7 @@ export async function buildBootstrapScripts(
         sshPort,
         token: useToken ? tunnel.token : undefined,
         tunnelId: tunnel.id,
-        credsJson: useToken ? undefined : creds,
+        credsJson: creds,
       };
     }
     return { enabled: false };
@@ -1687,6 +1692,54 @@ EOF_COCALC_ENV
   sudo chmod +x "$HOST_DIR/env.sh"
   sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$HOST_DIR/env.sh"
 fi
+cat <<'EOF_COCALC_AS_RUNTIME' > "$BOOTSTRAP_ROOT/bin/as-runtime"
+#!/usr/bin/env bash
+set -euo pipefail
+RUNTIME_USER="${scripts.runtimeUser}"
+if [ "$#" -eq 0 ]; then
+  echo "Usage: as-runtime <command> [args...]" >&2
+  exit 2
+fi
+if [ -n "$RUNTIME_USER" ] && [ "$(id -un)" != "$RUNTIME_USER" ]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "as-runtime requires sudo when not already running as $RUNTIME_USER" >&2
+    exit 1
+  fi
+  exec sudo -Hiu "$RUNTIME_USER" bash -lc 'if [ -f "$HOME/cocalc-host/env.sh" ]; then . "$HOME/cocalc-host/env.sh"; fi; exec "$@"' cocalc-as-runtime "$@"
+fi
+if [ -f "$HOME/cocalc-host/env.sh" ]; then
+  . "$HOME/cocalc-host/env.sh"
+fi
+exec "$@"
+EOF_COCALC_AS_RUNTIME
+sudo chmod +x "$BOOTSTRAP_ROOT/bin/as-runtime"
+sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/bin/as-runtime"
+cat <<'EOF_COCALC_PODMAN_HELPER' > "$BOOTSTRAP_ROOT/bin/podman"
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+exec "$SCRIPT_DIR/as-runtime" podman "$@"
+EOF_COCALC_PODMAN_HELPER
+sudo chmod +x "$BOOTSTRAP_ROOT/bin/podman"
+sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/bin/podman"
+cat <<'EOF_COCALC_PROJECT_EXEC' > "$BOOTSTRAP_ROOT/bin/project-exec"
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -lt 2 ]; then
+  echo "Usage: project-exec <project-id|project-container-name> <command> [args...]" >&2
+  exit 2
+fi
+project="$1"
+shift
+case "$project" in
+  project-*) container="$project" ;;
+  *) container="project-$project" ;;
+esac
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+exec "$SCRIPT_DIR/as-runtime" podman exec "$container" "$@"
+EOF_COCALC_PROJECT_EXEC
+sudo chmod +x "$BOOTSTRAP_ROOT/bin/project-exec"
+sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/bin/project-exec"
 cat <<'EOF_COCALC_README' > "$BOOTSTRAP_ROOT/README.md"
 CoCalc Project Host (Direct) Layout
 ===================================
@@ -1703,6 +1756,9 @@ bin/
   logs [lines]            - tail project-host log (runs as runtime user)
   acp-status              - show ACP worker pid/log/container state
   acp-logs [lines]        - tail ACP worker log
+  as-runtime <cmd>        - run a command as the runtime user with podman env
+  podman ...              - rootless podman helper for operator debugging
+  project-exec <id> ...   - podman exec helper for a project container
   logs-cf                 - tail cloudflared logs (if enabled; runtime user)
   ctl-cf                  - cloudflared {start|stop|restart|status} (runtime user)
   fetch-project-bundle.sh - refresh project bundle from software endpoint
@@ -1722,7 +1778,9 @@ Logs and status:
   - Cloudflared logs:   $HOME/cocalc-host/bin/logs-cf
 
 Podman debugging:
-  . $HOME/cocalc-host/env.sh
+  $HOME/cocalc-host/bin/podman ps
+  $HOME/cocalc-host/bin/project-exec <project-id> pwd
+  $HOME/cocalc-host/bin/as-runtime bash -lc 'podman ps'
 
 Deprovision:
   sudo $HOME/cocalc-host/bin/deprovision.sh --force

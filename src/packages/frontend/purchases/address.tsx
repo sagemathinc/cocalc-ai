@@ -7,18 +7,9 @@ import {
   useStripe,
   useElements,
 } from "@stripe/react-stripe-js";
-import {
-  getCustomerSession,
-  getStripeCustomer,
-  setStripeCustomer,
-} from "./api";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
+import { getStripeCustomer, setStripeCustomer } from "./api";
 import ShowError from "@cocalc/frontend/components/error";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
-import type { CustomerSessionSecret } from "@cocalc/util/stripe/types";
 import { BigSpin, ConfirmButton } from "./stripe-payment";
 
 function Title() {
@@ -55,45 +46,39 @@ function AddressModal({ onClose }) {
   );
 }
 
-function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
+export function StripeAddressElement({
+  style,
+  onFinished,
+  showCancel = true,
+}: {
+  style?;
+  onFinished?;
+  showCancel?: boolean;
+}) {
   const [error, setError] = useState<string>("");
-  const [customerSession, setCustomerSession] =
-    useState<CustomerSessionSecret | null>(null);
   const [customer, setCustomer] = useState<any | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
 
   useEffect(() => {
     (async () => {
       try {
-        await runFreshAuthAction(async () => {
-          setCustomerSession(await getCustomerSession());
-          setCustomer(await getStripeCustomer());
-        });
+        setCustomer(await getStripeCustomer());
       } catch (err) {
         setError(`${err}`);
       }
     })();
-  }, [runFreshAuthAction]);
+  }, []);
 
   if (error) {
-    return (
-      <>
-        <ShowError style={style} error={error} setError={setError} />
-        <FreshAuthModal {...freshAuthModalProps} />
-      </>
-    );
+    return <ShowError style={style} error={error} setError={setError} />;
   }
 
-  if (customerSession == null || customer == null) {
-    return <BigSpin style={style} />;
+  if (customer == null) {
+    return <BigSpin style={style} tip="Loading billing details..." />;
   }
 
   return (
     <Elements
       options={{
-        ...customerSession,
         appearance: {
           theme: "stripe",
         },
@@ -104,15 +89,14 @@ function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
       <AddressForm
         style={style}
         onFinished={onFinished}
+        showCancel={showCancel}
         customer={customer}
-        runFreshAuthAction={runFreshAuthAction}
       />
-      <FreshAuthModal {...freshAuthModalProps} />
     </Elements>
   );
 }
 
-function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
+function AddressForm({ style, onFinished, showCancel, customer }) {
   const [error, setError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -138,13 +122,12 @@ function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
       }
       const { complete, value } = await addressElement.getValue();
       if (complete) {
-        await runFreshAuthAction(async () => {
-          await setStripeCustomer(value);
-          setSuccess(true);
-          onFinished();
-        });
+        await setStripeCustomer(value);
+        setSuccess(true);
+        onFinished?.();
         return;
       }
+      setError("Complete billing name and address before continuing.");
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -156,7 +139,7 @@ function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
     <div style={style}>
       Name and address for receipts, invoices and tax.
       <Divider />
-      {!ready && <BigSpin />}
+      {!ready && <BigSpin tip="Loading billing details..." />}
       <AddressElement
         onReady={() => {
           setReady(true);
@@ -174,7 +157,7 @@ function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
               onClick={handleSubmit}
               success={success}
               isSubmitting={isSubmitting}
-              onCancel={() => onFinished()}
+              onCancel={showCancel ? () => onFinished?.() : undefined}
             />
           )}
         </Space>

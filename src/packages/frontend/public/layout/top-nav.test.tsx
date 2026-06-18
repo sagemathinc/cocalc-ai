@@ -59,12 +59,19 @@ describe("PublicTopNav", () => {
   it("uses Projects and Settings as authenticated app actions", async () => {
     await render(
       <PublicConfigProvider
-        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        config={{
+          account_display_name: "Alice Example",
+          account_email_address: "alice@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
       >
         <PublicTopNav />
       </PublicConfigProvider>,
     );
 
+    expect(screen.getByText("Alice Example")).not.toBeNull();
+    expect(screen.queryByText("alice@example.com")).toBeNull();
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();

@@ -66,6 +66,39 @@ const BOTTOM_PADDING_CELL = (
   ></div>
 );
 
+interface RestoreNotebookScrollOptions {
+  scrollTop: any;
+  getElement: () => HTMLElement | null;
+  isMounted: () => boolean;
+  shouldCancel?: () => boolean;
+  wait?: (ms: number) => Promise<unknown>;
+}
+
+export async function restoreNotebookScroll({
+  scrollTop,
+  getElement,
+  isMounted,
+  shouldCancel,
+  wait = delay,
+}: RestoreNotebookScrollOptions): Promise<void> {
+  const targetScrollTop = Number(scrollTop);
+  if (!Number.isFinite(targetScrollTop)) return;
+  /* Restore scroll state while rendering settles.  Large cells can change the
+     scroll height asynchronously, but this must not fight explicit user scrolls.
+  */
+  let scrollHeight = 0;
+  for (const tm of [0, 1, 100, 250, 500, 1000]) {
+    if (!isMounted() || shouldCancel?.()) return;
+    const elt = getElement();
+    if (elt != null && elt.scrollHeight !== scrollHeight) {
+      // dynamically rendering actually changed something
+      elt.scrollTop = targetScrollTop;
+      scrollHeight = elt.scrollHeight;
+    }
+    await wait(tm);
+  }
+}
+
 interface CellListProps {
   actions?: JupyterActions; // if not defined, then everything is read only
   cell_list: immutable.List<string>; // list of ids of cells in order
@@ -158,6 +191,9 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
   const cellListDivRef = useRef<any>(null);
   const is_mounted = useIsMountedRef();
   const frameActions = useNotebookFrameActions();
+  const restoreScrollActiveRef = useRef<boolean>(false);
+  const restoreScrollCancelledRef = useRef<boolean>(false);
+  const restoreScrollTargetRef = useRef<number | null>(null);
 
   useEffect(() => {
     restore_scroll();
@@ -278,22 +314,31 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
   const fileContext = useFileContext();
 
   async function restore_scroll(): Promise<void> {
-    if (scrollTop == null) return;
-    /* restore scroll state -- as rendering happens dynamically
-       and asynchronously, and I have no idea how to know when
-       we are done, we can't just do this once.  Instead, we
-       keep resetting scrollTop a few times.
-    */
-    let scrollHeight: number = 0;
-    for (const tm of [0, 1, 100, 250, 500, 1000]) {
-      if (!is_mounted.current) return;
-      const elt = cellListDivRef.current;
-      if (elt != null && elt.scrollHeight !== scrollHeight) {
-        // dynamically rendering actually changed something
-        elt.scrollTop = scrollTop;
-        scrollHeight = elt.scrollHeight;
-      }
-      await delay(tm);
+    const targetScrollTop = Number(scrollTop);
+    if (!Number.isFinite(targetScrollTop)) return;
+    restoreScrollCancelledRef.current = false;
+    restoreScrollActiveRef.current = true;
+    restoreScrollTargetRef.current = targetScrollTop;
+    try {
+      await restoreNotebookScroll({
+        scrollTop: targetScrollTop,
+        getElement: () => cellListDivRef.current,
+        isMounted: () => is_mounted.current,
+        shouldCancel: () => restoreScrollCancelledRef.current,
+      });
+    } finally {
+      restoreScrollActiveRef.current = false;
+      restoreScrollTargetRef.current = null;
+    }
+  }
+
+  function cancelScrollRestoreIfUserScrolled(): void {
+    if (!restoreScrollActiveRef.current) return;
+    const elt = cellListDivRef.current as HTMLElement | null;
+    const targetScrollTop = restoreScrollTargetRef.current;
+    if (elt == null || targetScrollTop == null) return;
+    if (Math.abs(elt.scrollTop - targetScrollTop) > 1) {
+      restoreScrollCancelledRef.current = true;
     }
   }
 
@@ -799,6 +844,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
           ref={handleCellListRef}
           onClick={actions != null && complete != null ? on_click : undefined}
           onScroll={() => {
+            cancelScrollRestoreIfUserScrolled();
             updateScrollOrResize();
             hydrateVisibleCells();
             minimap.onNotebookScroll();

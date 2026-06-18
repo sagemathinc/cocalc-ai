@@ -8,7 +8,7 @@ export type ProjectFixedRouteTab =
   | "docs"
   | "info"
   | "log"
-  | "project-home"
+  | "rootfs"
   | "servers"
   | "settings"
   | "users"
@@ -88,6 +88,9 @@ export function parseProjectTarget(
 
   switch (mainSegment) {
     case "files": {
+      if (target === "files" || target === "files/") {
+        return { kind: "directory", path: opts.decodeDirectoryPath("") };
+      }
       const fullPath = opts.decodeDirectoryPath(segments.slice(1).join("/"));
       const parentPath = opts.decodeDirectoryPath(
         segments.slice(1, segments.length - 1).join("/"),
@@ -114,11 +117,14 @@ export function parseProjectTarget(
         ),
       };
 
+    case "project-home":
+      return { kind: "directory", path: opts.decodeDirectoryPath("") };
+
     case "agents":
     case "docs":
     case "info":
     case "log":
-    case "project-home":
+    case "rootfs":
     case "servers":
     case "settings":
     case "users":

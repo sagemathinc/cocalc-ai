@@ -119,6 +119,37 @@ describe("notification email outbox maintenance", () => {
     });
   });
 
+  it("renders mention spans as readable text in immediate notification email", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: {
+            description:
+              'Please see <span class="user-mention" account-id=11111111-1111-4111-8111-111111111111 >Ada Lovelace</span> & confirm.',
+            path: "chat.chat",
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    expect(message.text).toContain("@Ada Lovelace");
+    expect(message.text).not.toContain("user-mention");
+    expect(message.text).not.toContain("<span");
+    expect(message.html).toContain("@Ada Lovelace");
+    expect(message.html).toContain("&amp; confirm");
+    expect(message.html).not.toContain("&lt;span");
+    expect(message.html).not.toContain("user-mention");
+  });
+
   it("marks rows skipped when the lane has no backend", async () => {
     claimQueuedNotificationEmails.mockResolvedValue([ROW]);
 
@@ -254,6 +285,36 @@ describe("notification email outbox maintenance", () => {
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
       ],
     });
+  });
+
+  it("renders mention spans as readable text in digest notification email", async () => {
+    claimDigestNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: {
+            description:
+              'Digest ping <span class="user-mention" account-id=11111111-1111-4111-8111-111111111111 >@Ada Lovelace</span>',
+            path: "chat.chat",
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendDailyNotificationDigestBatch({
+      force: true,
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    expect(message.text).toContain("@Ada Lovelace");
+    expect(message.text).not.toContain("user-mention");
+    expect(message.html).toContain("@Ada Lovelace");
+    expect(message.html).not.toContain("&lt;span");
+    expect(message.html).not.toContain("user-mention");
   });
 
   it("marks digest rows failed when help_email is not configured", async () => {

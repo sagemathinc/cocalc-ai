@@ -5,6 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getAdmins from "@cocalc/server/accounts/admins";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -28,8 +29,83 @@ const ALERT_WINDOW_MINUTES = 15;
 const ALERT_INTERVAL_MS = 5 * 60 * 1000;
 const ALERT_INITIAL_DELAY_MS = 60 * 1000;
 
+export type UxLatencySlaThresholds = {
+  project_start_warm_p95_ms: number;
+  project_start_overall_p95_ms: number;
+  project_terminal_ready_p95_ms: number;
+  project_jupyter_ready_p95_ms: number;
+  project_exec_ready_p95_ms: number;
+  file_open_visible_p95_ms: number;
+  file_open_sync_ready_p95_ms: number;
+};
+
+export const DEFAULT_UX_LATENCY_SLA_THRESHOLDS: UxLatencySlaThresholds = {
+  project_start_warm_p95_ms: 10_000,
+  project_start_overall_p95_ms: 5000,
+  project_terminal_ready_p95_ms: 5000,
+  project_jupyter_ready_p95_ms: 10_000,
+  project_exec_ready_p95_ms: 500,
+  file_open_visible_p95_ms: 10_000,
+  file_open_sync_ready_p95_ms: 5000,
+};
+
 let schemaReady: Promise<void> | undefined;
 let alertMaintenanceStarted = false;
+
+function positiveIntegerSetting(
+  settings: Record<string, any> | undefined,
+  key: string,
+  fallback: number,
+): number {
+  const value = Number.parseInt(`${settings?.[key] ?? ""}`.trim(), 10);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+export function getUxLatencySlaThresholdsFromSettings(
+  settings: Record<string, any> | undefined,
+): UxLatencySlaThresholds {
+  return {
+    project_start_warm_p95_ms: positiveIntegerSetting(
+      settings,
+      "launch_sla_project_start_warm_p95_ms",
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS.project_start_warm_p95_ms,
+    ),
+    project_start_overall_p95_ms: positiveIntegerSetting(
+      settings,
+      "launch_sla_project_start_overall_p95_ms",
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS.project_start_overall_p95_ms,
+    ),
+    project_terminal_ready_p95_ms: positiveIntegerSetting(
+      settings,
+      "launch_sla_project_terminal_ready_p95_ms",
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS.project_terminal_ready_p95_ms,
+    ),
+    project_jupyter_ready_p95_ms: positiveIntegerSetting(
+      settings,
+      "launch_sla_project_jupyter_ready_p95_ms",
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS.project_jupyter_ready_p95_ms,
+    ),
+    project_exec_ready_p95_ms: positiveIntegerSetting(
+      settings,
+      "launch_sla_project_exec_ready_p95_ms",
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS.project_exec_ready_p95_ms,
+    ),
+    file_open_visible_p95_ms: positiveIntegerSetting(
+      settings,
+      "launch_sla_file_open_visible_p95_ms",
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS.file_open_visible_p95_ms,
+    ),
+    file_open_sync_ready_p95_ms: positiveIntegerSetting(
+      settings,
+      "launch_sla_file_open_sync_ready_p95_ms",
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS.file_open_sync_ready_p95_ms,
+    ),
+  };
+}
+
+export async function getUxLatencySlaThresholds(): Promise<UxLatencySlaThresholds> {
+  return getUxLatencySlaThresholdsFromSettings(await getServerSettings());
+}
 
 export async function ensureUxLatencySchema(): Promise<void> {
   schemaReady ??= (async () => {
@@ -283,12 +359,17 @@ function formatMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
 }
 
-function latencyBody(row: UxLatencyMetricSummary, expectation: string): string {
+function latencyBody(
+  row: UxLatencyMetricSummary,
+  expectation: string,
+  thresholdMs: number,
+): string {
   return [
     expectation,
     "",
     `Metric: ${row.metric}`,
     row.segment ? `Segment: ${row.segment}` : undefined,
+    `Configured SLA P95: ${formatMs(thresholdMs)}`,
     `Samples: ${row.count}`,
     `P50: ${formatMs(row.p50_ms)}`,
     `P95: ${formatMs(row.p95_ms)}`,
@@ -299,30 +380,43 @@ function latencyBody(row: UxLatencyMetricSummary, expectation: string): string {
     .join("\n");
 }
 
-function alertCandidates(summary: UxLatencySummary): UxLatencyAlertCandidate[] {
+function alertCandidates(
+  summary: UxLatencySummary,
+  sla: UxLatencySlaThresholds,
+): UxLatencyAlertCandidate[] {
   const alerts: UxLatencyAlertCandidate[] = [];
   const warmStart = rowByMetricAndSegment(
     summary.segments,
     "project_start_running",
     "warm_provisioned",
   );
-  if (warmStart && warmStart.count >= 5 && warmStart.p95_ms > 2000) {
+  if (
+    warmStart &&
+    warmStart.count >= 5 &&
+    warmStart.p95_ms > sla.project_start_warm_p95_ms
+  ) {
     alerts.push({
       subject: "warm project starts are slow",
       body: latencyBody(
         warmStart,
-        "Warm provisioned project starts should usually be under 1 second.",
+        "Warm provisioned project starts violated the configured P95 SLA.",
+        sla.project_start_warm_p95_ms,
       ),
     });
   }
 
   const allStarts = rowByMetric(summary.metrics, "project_start_running");
-  if (allStarts && allStarts.count >= 5 && allStarts.p95_ms > 10_000) {
+  if (
+    allStarts &&
+    allStarts.count >= 5 &&
+    allStarts.p95_ms > sla.project_start_overall_p95_ms
+  ) {
     alerts.push({
       subject: "project starts are slow",
       body: latencyBody(
         allStarts,
-        "Overall project start latency is high. Restore/dearchive paths may be expected outliers; check segment rows before treating this as a warm-start regression.",
+        "Overall project start latency violated the configured P95 SLA. Restore/dearchive paths may be expected outliers; check segment rows before treating this as a warm-start regression.",
+        sla.project_start_overall_p95_ms,
       ),
     });
   }
@@ -337,28 +431,87 @@ function alertCandidates(summary: UxLatencySummary): UxLatencyAlertCandidate[] {
       body: latencyBody(
         startTimeouts,
         "At least one project start did not reach browser-observed running state within the monitoring deadline.",
+        sla.project_start_overall_p95_ms,
       ),
     });
   }
 
   const visible = rowByMetric(summary.metrics, "file_open_visible");
-  if (visible && visible.count >= 10 && visible.p95_ms > 3000) {
+  if (
+    visible &&
+    visible.count >= 10 &&
+    visible.p95_ms > sla.file_open_visible_p95_ms
+  ) {
     alerts.push({
       subject: "file open visible latency is high",
       body: latencyBody(
         visible,
-        "Users are waiting too long before file contents are visible.",
+        "File-open visible latency violated the configured P95 SLA.",
+        sla.file_open_visible_p95_ms,
       ),
     });
   }
 
   const syncReady = rowByMetric(summary.metrics, "file_open_sync_ready");
-  if (syncReady && syncReady.count >= 10 && syncReady.p95_ms > 8000) {
+  if (
+    syncReady &&
+    syncReady.count >= 10 &&
+    syncReady.p95_ms > sla.file_open_sync_ready_p95_ms
+  ) {
     alerts.push({
       subject: "file open sync-ready latency is high",
       body: latencyBody(
         syncReady,
-        "Users can see files, but realtime sync is taking too long to become ready.",
+        "File-open sync-ready latency violated the configured P95 SLA.",
+        sla.file_open_sync_ready_p95_ms,
+      ),
+    });
+  }
+
+  const terminalReady = rowByMetric(summary.metrics, "project_terminal_ready");
+  if (
+    terminalReady &&
+    terminalReady.count >= 3 &&
+    terminalReady.p95_ms > sla.project_terminal_ready_p95_ms
+  ) {
+    alerts.push({
+      subject: "terminal ready latency is high",
+      body: latencyBody(
+        terminalReady,
+        "Terminal readiness violated the configured P95 SLA.",
+        sla.project_terminal_ready_p95_ms,
+      ),
+    });
+  }
+
+  const jupyterReady = rowByMetric(summary.metrics, "project_jupyter_ready");
+  if (
+    jupyterReady &&
+    jupyterReady.count >= 3 &&
+    jupyterReady.p95_ms > sla.project_jupyter_ready_p95_ms
+  ) {
+    alerts.push({
+      subject: "Jupyter ready latency is high",
+      body: latencyBody(
+        jupyterReady,
+        "Jupyter readiness violated the configured P95 SLA.",
+        sla.project_jupyter_ready_p95_ms,
+      ),
+    });
+  }
+
+  const execReady = rowByMetric(summary.metrics, "project_exec_ready");
+  if (
+    execReady &&
+    execReady.count >= 3 &&
+    execReady.p95_ms > sla.project_exec_ready_p95_ms
+  ) {
+    alerts.push({
+      subject: "project exec ready latency is high",
+      body: latencyBody(
+        execReady,
+        "Project exec readiness violated the configured P95 SLA.",
+        sla.project_exec_ready_p95_ms,
       ),
     });
   }
@@ -382,10 +535,13 @@ async function getUxLatencyAlertRecipients(): Promise<string[]> {
 }
 
 export async function runUxLatencyAlertCheck(): Promise<number> {
-  const summary = await getUxLatencySummary({
-    window_minutes: ALERT_WINDOW_MINUTES,
-  });
-  const alerts = alertCandidates(summary);
+  const [summary, sla] = await Promise.all([
+    getUxLatencySummary({
+      window_minutes: ALERT_WINDOW_MINUTES,
+    }),
+    getUxLatencySlaThresholds(),
+  ]);
+  const alerts = alertCandidates(summary, sla);
   if (alerts.length === 0) return 0;
   const to_ids = await getUxLatencyAlertRecipients();
   if (to_ids.length === 0) {

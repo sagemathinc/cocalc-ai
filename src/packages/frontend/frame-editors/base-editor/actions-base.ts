@@ -74,6 +74,7 @@ import {
   redux,
 } from "@cocalc/frontend/app-framework";
 import type { PageActions } from "@cocalc/frontend/app/actions";
+import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { get_buffer, set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { filenameMode } from "@cocalc/frontend/file-associations";
@@ -235,6 +236,40 @@ export interface CodeEditorState {
 
 export interface BaseEditorInitOptions {
   readOnlyPreview?: boolean;
+}
+
+function getActiveDisplayPathForEditor(actions: {
+  path: string;
+  project_id: string;
+  redux?: any;
+}): string {
+  const projectStore = actions.redux?.getProjectStore?.(actions.project_id);
+  const activeProjectTab = projectStore?.get?.("active_project_tab");
+  if (typeof activeProjectTab === "string") {
+    const activeDisplayPath = tab_to_path(activeProjectTab);
+    if (typeof activeDisplayPath === "string") {
+      const activeSyncPath = projectStore?.getIn?.([
+        "open_files",
+        activeDisplayPath,
+        "sync_path",
+      ]);
+      if (activeSyncPath === actions.path) {
+        return activeDisplayPath;
+      }
+    }
+  }
+
+  const openFiles = projectStore?.get?.("open_files");
+  let displayPath: string | undefined;
+  openFiles?.forEach?.((_obj, path) => {
+    if (displayPath != null) {
+      return;
+    }
+    if (openFiles.getIn?.([path, "sync_path"]) === actions.path) {
+      displayPath = path;
+    }
+  });
+  return displayPath ?? actions.path;
 }
 
 export class BaseEditorActions<
@@ -1301,9 +1336,12 @@ export class BaseEditorActions<
 
   private __save_local_view_state = (): void => {
     if (!this.store?.get("local_view_state")) return;
-    let value, s;
+    this._save_local_view_state_value(this.store.get("local_view_state"));
+  };
+
+  private _save_local_view_state_value = (s: unknown): void => {
+    let value;
     try {
-      s = this.store.get("local_view_state");
       value = JSON.stringify(s);
     } catch (err) {
       // window.x = s;
@@ -1557,8 +1595,13 @@ export class BaseEditorActions<
           local = local.delete("full_id");
         }
       }
-      this.setState({ local_view_state: local.set("frame_tree", t1) });
-      this._save_local_view_state();
+      const nextLocal = local.set("frame_tree", t1);
+      this.setState({ local_view_state: nextLocal });
+      if (op === "delete_node") {
+        this._save_local_view_state_value(nextLocal);
+      } else {
+        this._save_local_view_state();
+      }
     }
   }
 
@@ -1785,14 +1828,20 @@ export class BaseEditorActions<
     if (this._tree_is_single_leaf()) {
       const node = this._get_frame_node(id);
       if (node == null) return; // does not exist.
-      // closing the only node, so reset to default
+      // Closing the only frame closes the file. Reset saved layout first so the
+      // next open starts from the default frame tree.
       this.reset_local_view_state();
       // Also emit so that the fact it closed is known.
       const type = node.get("type");
       if (type == "chat") {
         this.closeChat();
+      } else if (type == "terminal") {
+        this.terminals.close_terminal(id);
       }
-      this.store.emit("close-frame", { id, type });
+      this.store.emit("close-frame", { id, type, closingFile: true });
+      this._get_project_actions()?.close_tab?.(
+        getActiveDisplayPathForEditor(this),
+      );
       return;
     }
     const node = this._get_frame_node(id);
@@ -2648,8 +2697,9 @@ export class BaseEditorActions<
       return false;
     }
     const state = syncdoc.get_state();
+    if (state == "ready") return true;
     if (state == "closed") return false;
-    if (state == "init") {
+    {
       try {
         await once(syncdoc, "ready");
       } catch {
@@ -2807,23 +2857,13 @@ export class BaseEditorActions<
   }
 
   private formatError = (error?: object | string): string | undefined => {
-    if (error === undefined) {
+    if (error === undefined || error === "") {
       return "";
     }
     if (isTimeoutCallingProject(error)) {
       return TIMEOUT_CALLING_PROJECT_MSG;
     }
-    if (typeof error == "string") {
-      return error;
-    }
-    const e = (error as any).message;
-    if (e === undefined) {
-      let e = JSON.stringify(error);
-      if (e === "{}") {
-        e = `${error}`;
-      }
-    }
-    return e;
+    return normalizeUserFacingError(error).message;
   };
 
   // big scary error shown at top

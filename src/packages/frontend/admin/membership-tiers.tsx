@@ -24,6 +24,7 @@ import {
   Space,
   Switch,
   Table,
+  Tag,
   Typography,
 } from "antd";
 import dayjs from "dayjs";
@@ -46,6 +47,7 @@ import {
   applyMembershipTierTemplateFallbacks,
   TIER_TEMPLATES,
 } from "@cocalc/util/membership-tier-templates";
+import { normalizeMembershipTierCourseAllowedDomains } from "@cocalc/util/membership-tier-domains";
 import {
   analyzeMembershipTierPricingRisk,
   DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS,
@@ -63,6 +65,16 @@ const { Paragraph, Text } = Typography;
 const { Panel: CollapsePanel } = Collapse;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
+const REMOVED_PROJECT_DEFAULT_KEYS = [
+  "cores",
+  "cpu_shares",
+  "mintime",
+  "network",
+  "member_host",
+  "always_running",
+  "ephemeral_state",
+  "ephemeral_disk",
+] as const;
 const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
 const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
 const TEMPLATE_KEYS = [
@@ -131,7 +143,9 @@ interface Tier {
   store_description?: string;
   store_highlights?: readonly string[];
   site_license_pool_description?: string;
+  team_visible?: boolean;
   course_store_visible?: boolean;
+  course_allowed_domains?: string[];
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
@@ -250,6 +264,14 @@ function normalizedRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function cleanProjectDefaults(value: unknown): Record<string, unknown> {
+  const projectDefaults = { ...normalizedRecord(value) };
+  for (const key of REMOVED_PROJECT_DEFAULT_KEYS) {
+    delete projectDefaults[key];
+  }
+  return projectDefaults;
+}
+
 function normalizeExpectedUsageEstimate(value: unknown): ExpectedUsageEstimate {
   const record = normalizedRecord(value);
   const estimate: ExpectedUsageEstimate = {};
@@ -328,22 +350,24 @@ function setOrDeleteBoolean(
 }
 
 function tierToFormValues(tier: Partial<Tier>) {
+  const projectDefaults = cleanProjectDefaults(tier.project_defaults);
   return {
     ...tier,
     pricing_model: normalizePricingModel(tier.pricing_model),
+    course_allowed_domains: normalizeMembershipTierCourseAllowedDomains(
+      tier.course_allowed_domains,
+    ),
     store_highlights_text: storeHighlightsToText(tier.store_highlights),
-    project_defaults: tier.project_defaults ?? {},
+    project_defaults: projectDefaults,
     ai_limits: tier.ai_limits ?? {},
     features: tier.features ?? {},
     usage_limits: tier.usage_limits ?? {},
-    project_default_memory_mb: normalizedOptionalNumber(
-      tier.project_defaults?.memory,
-    ),
+    project_default_memory_mb: normalizedOptionalNumber(projectDefaults.memory),
     project_default_memory_request_mb: normalizedOptionalNumber(
-      tier.project_defaults?.memory_request,
+      projectDefaults.memory_request,
     ),
     project_default_disk_quota_mb: normalizedOptionalNumber(
-      tier.project_defaults?.disk_quota,
+      projectDefaults.disk_quota,
     ),
     feature_create_hosts:
       typeof tier.features?.create_hosts === "boolean"
@@ -426,10 +450,9 @@ function tierToFormValues(tier: Partial<Tier>) {
 }
 
 function buildMembershipTierPayload(values): Tier {
-  const project_defaults = (parseJsonField(
-    values.project_defaults,
-    "project_defaults",
-  ) ?? {}) as Record<string, unknown>;
+  const project_defaults = cleanProjectDefaults(
+    parseJsonField(values.project_defaults, "project_defaults"),
+  );
   const ai_limits = (parseJsonField(values.ai_limits, "ai_limits") ??
     {}) as Record<string, unknown>;
   const features = (parseJsonField(values.features, "features") ??
@@ -583,6 +606,10 @@ function buildMembershipTierPayload(values): Tier {
       site_license_pool_description: normalizedOptionalString(
         values.site_license_pool_description,
       ),
+      team_visible: values.team_visible,
+      course_allowed_domains: normalizeMembershipTierCourseAllowedDomains(
+        values.course_allowed_domains,
+      ),
       disabled: !values.active,
     },
     [
@@ -592,7 +619,9 @@ function buildMembershipTierPayload(values): Tier {
       "store_description",
       "store_highlights",
       "site_license_pool_description",
+      "team_visible",
       "course_store_visible",
+      "course_allowed_domains",
       "priority",
       "price_monthly",
       "price_yearly",
@@ -649,6 +678,11 @@ function parseMembershipTierImportJson(value: unknown): Tier[] {
   });
 }
 
+function prioritySortValue(tier: Tier): number {
+  const priority = Number(tier.priority);
+  return Number.isFinite(priority) ? priority : Number.NEGATIVE_INFINITY;
+}
+
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
@@ -673,7 +707,10 @@ function useMembershipTiers() {
             store_visible: null,
             store_description: null,
             store_highlights: null,
+            site_license_pool_description: null,
+            team_visible: null,
             course_store_visible: null,
+            course_allowed_domains: null,
             priority: null,
             price_monthly: null,
             price_yearly: null,
@@ -777,7 +814,9 @@ function useMembershipTiers() {
       id: trimmedId,
       label: trimmedLabel,
       store_visible: false,
+      team_visible: false,
       course_store_visible: false,
+      course_allowed_domains: [],
       disabled: false,
     });
     const values = tierToFormValues(tier);
@@ -1489,6 +1528,15 @@ export function MembershipTiers() {
                   </Col>
                   <Col {...fieldCol}>
                     <Form.Item
+                      name="team_visible"
+                      label="Team license"
+                      valuePropName="checked"
+                    >
+                      <Checkbox>Available for team licenses</Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
                       name="course_store_visible"
                       label="Course purchase"
                       valuePropName="checked"
@@ -1496,6 +1544,20 @@ export function MembershipTiers() {
                       <Checkbox>
                         Available for course student memberships
                       </Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
+                      name="course_allowed_domains"
+                      label="Course allowed instructor domains"
+                      extra="Optional. If set, only instructors whose current email address is verified and matches one of these domains can select this tier for student course memberships. Use example.edu for exact domains or *.example.edu for subdomains."
+                    >
+                      <Select
+                        mode="tags"
+                        placeholder="ucla.edu, *.school.edu"
+                        tokenSeparators={[",", ";", " ", "\n"]}
+                        style={{ width: "100%" }}
+                      />
                     </Form.Item>
                   </Col>
                   <Col {...fieldCol}>
@@ -3039,7 +3101,8 @@ export function MembershipTiers() {
               <>
                 <Paragraph style={sectionIntroStyle}>
                   The typed controls above merge into these objects on save.
-                  Keep compatibility-only fields here only during migrations.
+                  Removed legacy project-default fields are stripped on save and
+                  export.
                 </Paragraph>
                 <Row gutter={16}>
                   <Col {...wideFieldCol}>
@@ -3487,7 +3550,7 @@ export function MembershipTiers() {
         v.key = v.id;
         return v;
       }),
-      "id",
+      [(tier) => -prioritySortValue(tier), "id"],
     );
     const rowSelection = {
       selectedRowKeys: sel_rows,
@@ -3511,9 +3574,14 @@ export function MembershipTiers() {
           }
         >
           <Table.Column<Tier>
+            title="Priority"
+            dataIndex="priority"
+            defaultSortOrder={"descend"}
+            sorter={(a, b) => prioritySortValue(a) - prioritySortValue(b)}
+          />
+          <Table.Column<Tier>
             title="Tier ID"
             dataIndex="id"
-            defaultSortOrder={"ascend"}
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
           <Table.Column<Tier> title="Label" dataIndex="label" />
@@ -3527,7 +3595,21 @@ export function MembershipTiers() {
             dataIndex="course_store_visible"
             render={(val) => (val ? "Yes" : "")}
           />
-          <Table.Column<Tier> title="Priority" dataIndex="priority" />
+          <Table.Column<Tier>
+            title="Course domains"
+            dataIndex="course_allowed_domains"
+            render={(domains) =>
+              Array.isArray(domains) && domains.length > 0 ? (
+                <Space wrap size={[4, 4]}>
+                  {domains.map((domain) => (
+                    <Tag key={domain}>{domain}</Tag>
+                  ))}
+                </Space>
+              ) : (
+                ""
+              )
+            }
+          />
           <Table.Column<Tier>
             title="Monthly"
             dataIndex="price_monthly"

@@ -6,6 +6,7 @@ import { store } from "./store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { getBackups } from "@cocalc/frontend/project/archive-info";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { selectHostForProjectStart } from "@cocalc/frontend/hosts/select-host-for-project-start";
 
 jest.mock("./store", () => ({
   store: {
@@ -22,6 +23,10 @@ jest.mock("@cocalc/frontend/project/archive-info", () => ({
 
 jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
+}));
+
+jest.mock("@cocalc/frontend/hosts/select-host-for-project-start", () => ({
+  selectHostForProjectStart: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -43,6 +48,12 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             scope_type: "project",
             scope_id: "project-1",
           })),
+          restart: jest.fn(async () => ({
+            op_id: "restart-op-1",
+            scope_type: "project",
+            scope_id: "project-1",
+          })),
+          assignProjectHost: jest.fn(async () => undefined),
           createBackup: jest.fn(async () => ({
             op_id: "backup-op-1",
             scope_type: "project",
@@ -51,6 +62,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             stream_name: "stream-1",
           })),
           archiveProject: jest.fn(async () => undefined),
+        },
+        hosts: {
+          listHosts: jest.fn(async () => []),
         },
       },
       lroWait: jest.fn(async () => ({
@@ -75,6 +89,10 @@ const getBackupsMock = getBackups as jest.MockedFunction<typeof getBackups>;
 const alertMessageMock = alert_message as jest.MockedFunction<
   typeof alert_message
 >;
+const selectHostForProjectStartMock =
+  selectHostForProjectStart as jest.MockedFunction<
+    typeof selectHostForProjectStart
+  >;
 
 describe("ProjectsActions archive flow", () => {
   const project_id = "11111111-1111-4111-8111-111111111111";
@@ -151,6 +169,12 @@ describe("ProjectsActions archive flow", () => {
         if (name === "account") {
           return ImmutableMap({ account_id: "acct-1" });
         }
+        if (name === "customize") {
+          return ImmutableMap({
+            country: "US",
+            cloudflare_region_code: "CA",
+          });
+        }
         return {};
       }),
       _set_state: jest.fn(),
@@ -192,6 +216,10 @@ describe("ProjectsActions archive flow", () => {
     mockedWebappClient.project_collaborators.remove.mockResolvedValue(
       undefined as any,
     );
+    mockedWebappClient.conat_client.hub.hosts.listHosts.mockResolvedValue(
+      [] as any,
+    );
+    selectHostForProjectStartMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -658,6 +686,128 @@ describe("ProjectsActions archive flow", () => {
     expect(setState).toHaveBeenCalledWith({ control_error: "" });
   });
 
+  it("auto-assigns an unplaced project to an available same-region host before starting", async () => {
+    configureProject({
+      state: "opened",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+    });
+    mockedWebappClient.conat_client.hub.hosts.listHosts.mockResolvedValue([
+      {
+        id: "host-west",
+        name: "West host",
+        owner: "acct-1",
+        region: "us-west1",
+        size: "small",
+        gpu: false,
+        status: "running",
+        can_place: true,
+      },
+    ] as any);
+    const { actions } = makeActions();
+    const assign = jest
+      .spyOn(actions, "assign_project_to_host")
+      .mockResolvedValue(true);
+    jest
+      .spyOn(actions as any, "project_log")
+      .mockImplementation(async () => {});
+
+    const started = await actions.start_project(project_id);
+
+    expect(started).toBe(true);
+    expect(assign).toHaveBeenCalledWith(project_id, "host-west");
+    expect(selectHostForProjectStartMock).not.toHaveBeenCalled();
+    expect(
+      mockedWebappClient.conat_client.hub.projects.start,
+    ).toHaveBeenCalledWith({
+      project_id,
+      wait: false,
+    });
+  });
+
+  it("prompts for a remote host when an unplaced project has no same-region hosts", async () => {
+    configureProject({
+      state: "opened",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+    });
+    mockedWebappClient.conat_client.hub.hosts.listHosts.mockResolvedValue([
+      {
+        id: "host-europe",
+        name: "Europe host",
+        owner: "acct-1",
+        region: "europe-west1",
+        size: "small",
+        gpu: false,
+        status: "running",
+        can_place: true,
+      },
+    ] as any);
+    selectHostForProjectStartMock.mockResolvedValue({
+      host_id: "host-europe",
+    });
+    const { actions } = makeActions();
+    const assign = jest
+      .spyOn(actions, "assign_project_to_host")
+      .mockResolvedValue(true);
+    jest
+      .spyOn(actions as any, "project_log")
+      .mockImplementation(async () => {});
+
+    const started = await actions.start_project(project_id);
+
+    expect(started).toBe(true);
+    expect(selectHostForProjectStartMock).toHaveBeenCalledWith({
+      projectRegion: "wnam",
+    });
+    expect(assign).toHaveBeenCalledWith(project_id, "host-europe");
+    expect(
+      mockedWebappClient.conat_client.hub.projects.start,
+    ).toHaveBeenCalledWith({
+      project_id,
+      wait: false,
+    });
+  });
+
+  it("assigns a selected remote host before restoring an archived unplaced project", async () => {
+    configureProject({
+      state: "archived",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+    });
+    mockedWebappClient.conat_client.hub.hosts.listHosts.mockResolvedValue([
+      {
+        id: "host-europe",
+        name: "Europe host",
+        owner: "acct-1",
+        region: "europe-west1",
+        size: "small",
+        gpu: false,
+        status: "running",
+        can_place: true,
+      },
+    ] as any);
+    selectHostForProjectStartMock.mockResolvedValue({
+      host_id: "host-europe",
+    });
+    const { actions } = makeActions();
+    const assign = jest
+      .spyOn(actions, "assign_project_to_host")
+      .mockResolvedValue(true);
+    jest
+      .spyOn(actions as any, "project_log")
+      .mockImplementation(async () => {});
+
+    const started = await actions.start_project(project_id);
+
+    expect(started).toBe(true);
+    expect(assign).toHaveBeenCalledWith(project_id, "host-europe");
+    expect(
+      mockedWebappClient.conat_client.releaseProjectHostRouting,
+    ).toHaveBeenCalledWith({ project_id });
+    expect(assign.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedWebappClient.conat_client.releaseProjectHostRouting.mock
+        .invocationCallOrder[0],
+    );
+  });
+
   it("optimistically marks a started project as starting and schedules targeted reconciliation", async () => {
     jest.useFakeTimers();
     try {
@@ -707,6 +857,56 @@ describe("ProjectsActions archive flow", () => {
 
       await jest.advanceTimersByTimeAsync(5_000);
       expect(reconcile).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("marks restart requests locally so fast restarts still reset runtime consumers", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions, redux, setState, trackStartOp } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("running"),
+      );
+
+      await actions.restart_project(project_id);
+
+      expect(
+        mockedWebappClient.conat_client.hub.projects.restart,
+      ).toHaveBeenCalledWith({
+        project_id,
+        wait: false,
+      });
+      expect(trackStartOp).toHaveBeenCalledWith(
+        expect.objectContaining({ op_id: "restart-op-1" }),
+      );
+      expect(setState).toHaveBeenCalledWith({
+        restart_request: expect.objectContaining({
+          get: expect.any(Function),
+        }),
+      });
+      expect(
+        redux._set_state.mock.calls.some(
+          ([state]) =>
+            state.projects?.project_map?.getIn?.([
+              project_id,
+              "state",
+              "state",
+            ]) === "starting",
+        ),
+      ).toBe(true);
+
+      jest.advanceTimersByTime(8_000);
+      expect(setState).toHaveBeenCalledWith({ restart_request: undefined });
     } finally {
       jest.useRealTimers();
     }

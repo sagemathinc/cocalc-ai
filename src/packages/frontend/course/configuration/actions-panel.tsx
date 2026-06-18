@@ -226,9 +226,10 @@ export function ResendInvites({
     >
       <FormattedMessage
         id="course.actions-panel.resend-invite.info"
-        defaultMessage={`Send another email to every student who didn't sign up yet.
-        This sends a maximum of one email every {days}
-        {days, plural, one {day} other {days}}.`}
+        defaultMessage={`Create or resend pending invite links for every student who has not signed up yet.
+        When email is configured, CoCalc also emails those links. Otherwise,
+        use "Copy pending invite links" and send them manually. This sends at
+        most one email every {days} {days, plural, one {day} other {days}}.`}
         values={{ days: RESEND_INVITE_INTERVAL_DAYS }}
       />
       <hr />

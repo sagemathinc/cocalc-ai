@@ -309,16 +309,7 @@ export const useHostsPageViewModel = () => {
   const [showRuntimeVersions, setShowRuntimeVersions] = React.useState(
     readShowRuntimeVersions,
   );
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      alert_message({
-        type: "error",
-        message:
-          err instanceof Error ? err.message : `Unexpected error: ${err}`,
-        timeout: 20,
-      });
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const parallelOps = useParallelOps(hub, {
     enabled: isAdmin && showParallelLimits,
     runFreshAuthAction,
@@ -943,6 +934,9 @@ export const useHostsPageViewModel = () => {
           const op = await hub.hosts.rolloutHostManagedComponents({
             id: host.id,
             components: [component],
+            ...(source === "hub" && baseUrl
+              ? { base_url: `${baseUrl}/software` }
+              : {}),
             reason: rollout_reason,
           });
           trackHostOp(host.id, op);
@@ -1053,7 +1047,9 @@ export const useHostsPageViewModel = () => {
             const op = await hub.hosts.upgradeHostSoftware({
               id: host.id,
               targets: [{ artifact: "project-host", version: desired_version }],
-              ...(source === "hub" && baseUrl ? { base_url: baseUrl } : {}),
+              ...(source === "hub" && baseUrl
+                ? { base_url: `${baseUrl}/software` }
+                : {}),
               align_runtime_stack: true,
             });
             trackHostOp(host.id, op);

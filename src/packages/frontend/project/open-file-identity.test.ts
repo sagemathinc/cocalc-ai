@@ -680,6 +680,68 @@ describe("open_file wait_for_ready", () => {
     expect(actions.set_active_tab).toHaveBeenCalled();
   });
 
+  it("updates the current directory when a foreground open switches to an already-open alias", async () => {
+    const displayPath = "/home/user/links/report.tex";
+    const aliasPath = "/home/user/papers/report.tex";
+    const syncPath = "/mnt/data/report.tex";
+    const ensureProjectIsOpen = jest.fn().mockResolvedValue(undefined);
+    const saveSession = jest.fn();
+    const { open_files, openFilesState, store } = makeOpenFilesHarness();
+    openFilesState.set(aliasPath, {
+      component: { Editor: () => null },
+      display_path: aliasPath,
+      sync_path: syncPath,
+    });
+
+    jest.spyOn(redux as any, "getStore").mockImplementation((name: string) => {
+      if (name === "page") {
+        return { get: jest.fn().mockReturnValue(false) };
+      }
+      return undefined;
+    });
+    jest
+      .spyOn(redux as any, "getActions")
+      .mockImplementation((name: string) => {
+        if (name === "page") {
+          return { save_session: saveSession };
+        }
+        return {};
+      });
+
+    const actions = {
+      project_id: "project-1",
+      get_store: () => store,
+      open_files,
+      fs: () => ({
+        canonicalSyncIdentityPath: jest.fn().mockResolvedValue(syncPath),
+      }),
+      ensureProjectIsOpen,
+      open_in_new_browser_window: jest.fn(),
+      foreground_project: jest.fn(),
+      set_active_tab: jest.fn(),
+      set_current_path: jest.fn(),
+      initFileRedux: jest.fn(),
+      gotoFragment: jest.fn(),
+      open_chat: jest.fn(),
+      set_activity: jest.fn(),
+    } as any;
+
+    await open_file(actions, {
+      path: displayPath,
+      foreground: true,
+      foreground_project: false,
+      wait_for_ready: true,
+      change_history: false,
+    });
+
+    expect(openFilesState.has(displayPath)).toBe(false);
+    expect(actions.set_current_path).toHaveBeenCalledWith("/home/user/papers");
+    expect(actions.set_active_tab).toHaveBeenCalledWith(
+      "editor-/home/user/papers/report.tex",
+      { change_history: false },
+    );
+  });
+
   it("returns immediately for background opens without hydrating the editor", async () => {
     const path = "/home/user/background.txt";
     const ensureProjectIsOpen = jest.fn().mockResolvedValue(undefined);

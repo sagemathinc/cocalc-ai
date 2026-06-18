@@ -125,7 +125,7 @@ export function ProjectsTableControls({
     if (visible_projects.length > 0) {
       actions.open_project({
         project_id: visible_projects[0],
-        target: "project-home",
+        target: "files/",
       });
     }
   }

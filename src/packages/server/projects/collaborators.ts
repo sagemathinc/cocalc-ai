@@ -156,6 +156,10 @@ export interface InviteEmailDeliveryStatus {
   email_blocked_reason?: InviteEmailBlockedReason | null;
 }
 
+export interface InviteCollaboratorDeliveryStatus extends InviteEmailDeliveryStatus {
+  in_app_notification_sent: boolean;
+}
+
 function getCollaboratorReadMode(): CollaboratorReadMode {
   const value =
     `${process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS ?? ""}`
@@ -3541,13 +3545,20 @@ export async function inviteCollaborator({
     invite_role?: Exclude<ProjectUserRole, "owner">;
     read_policy?: ProjectViewerReadPolicy | null;
   };
-}): Promise<void> {
+}): Promise<InviteCollaboratorDeliveryStatus> {
   await assertLocalProjectCollaborator({
     account_id,
     project_id: opts.project_id,
   });
   const dbg = (...args) => logger.debug("inviteCollaborator", ...args);
   const database = db();
+  const delivery: InviteCollaboratorDeliveryStatus = {
+    email_sent: false,
+    email_available: true,
+    email_blocked_reason: null,
+    in_app_notification_sent: false,
+    manual_delivery_required: false,
+  };
   try {
     await createCollabInvite({
       account_id,
@@ -3557,9 +3568,10 @@ export async function inviteCollaborator({
       invite_role: opts.invite_role,
       read_policy: opts.read_policy,
     });
+    delivery.in_app_notification_sent = true;
   } catch (err) {
     if (isAlreadyCollaboratorError(err)) {
-      return;
+      return delivery;
     }
     throw err;
   }
@@ -3567,15 +3579,16 @@ export async function inviteCollaborator({
   // Everything else in this big function is about notifying the user that they
   // were added.
   if (!opts.email) {
-    return;
+    return delivery;
   }
   if (!(await canSendInviteEmail(account_id))) {
-    return;
+    delivery.email_blocked_reason = "tier_disallows_email";
+    return delivery;
   }
 
   const email_address = await getEmailAddress(opts.account_id);
   if (!email_address) {
-    return;
+    return delivery;
   }
   const when_sent = await callback2(database.when_sent_project_invite, {
     project_id: opts.project_id,
@@ -3585,11 +3598,14 @@ export async function inviteCollaborator({
     when_sent &&
     when_sent >= (await getInviteEmailResendCutoff(account_id))
   ) {
-    return;
+    delivery.email_blocked_reason = "cooldown";
+    return delivery;
   }
   const settings = await callback2(database.get_server_settings_cached);
   if (!settings) {
-    return;
+    delivery.email_available = false;
+    delivery.email_blocked_reason = "email_not_configured";
+    return delivery;
   }
   dbg(`send_email invite to ${email_address}`);
   let subject: string;
@@ -3602,7 +3618,7 @@ export async function inviteCollaborator({
   }
 
   try {
-    await callback2(send_invite_email, {
+    const sendMessage = await callback2<string | undefined>(send_invite_email, {
       to: email_address,
       subject,
       email: opts.email,
@@ -3617,6 +3633,13 @@ export async function inviteCollaborator({
       link2proj: opts.link2proj,
       settings,
     });
+    if (`${sendMessage ?? ""}`.trim()) {
+      delivery.email_available = !emailUnavailableFromSendMessage(sendMessage);
+      delivery.email_blocked_reason = delivery.email_available
+        ? "tier_disallows_email"
+        : "email_not_configured";
+      return delivery;
+    }
   } catch (err) {
     dbg(`FAILED to send email to ${email_address}  -- ${err}`);
     await callback2(database.sent_project_invite, {
@@ -3632,6 +3655,8 @@ export async function inviteCollaborator({
     to: email_address,
     error: undefined,
   });
+  delivery.email_sent = true;
+  return delivery;
 }
 
 export async function inviteCollaboratorWithoutAccount({

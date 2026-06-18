@@ -6,6 +6,7 @@
 import {
   Alert,
   Button,
+  Card,
   Divider,
   Flex,
   Input,
@@ -13,6 +14,7 @@ import {
   Radio,
   Select,
   Space,
+  Table,
   Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -33,13 +35,14 @@ import {
 import { currency, is_valid_uuid_string } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
-import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
+import { MAX_COST, type Purchase } from "@cocalc/util/db-schema/purchases";
 
 import { adminPurchase } from "@cocalc/frontend/store/api";
+import { getPurchasesAdmin } from "@cocalc/frontend/purchases/api";
 
 const { Paragraph, Text } = Typography;
 
-type Product = "membership" | "voucher";
+type Product = "balance" | "membership";
 
 interface MembershipTier extends MembershipTierWithPresentation {
   disabled?: boolean;
@@ -62,9 +65,10 @@ export function AdminPurchaseAdmin() {
   const [membershipClass, setMembershipClass] = useState<string>("");
   const [interval, setInterval] = useState<"month" | "year">("month");
 
-  const [voucherAmount, setVoucherAmount] = useState<number>(25);
-  const [voucherCount, setVoucherCount] = useState<number>(1);
-  const [voucherTitle, setVoucherTitle] = useState<string>("CoCalc voucher");
+  const [balanceAdjustment, setBalanceAdjustment] = useState<number>(25);
+  const [balanceUserNote, setBalanceUserNote] = useState<string>(
+    "Admin balance adjustment",
+  );
 
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [discountAmount, setDiscountAmount] = useState<number>(0);
@@ -75,10 +79,12 @@ export function AdminPurchaseAdmin() {
   const [actionError, setActionError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [resultMessage, setResultMessage] = useState<string>("");
-  const [voucherCodes, setVoucherCodes] = useState<string[]>([]);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const [recentAdminPurchases, setRecentAdminPurchases] = useState<
+    Purchase[] | null
+  >(null);
+  const [recentAdminPurchasesError, setRecentAdminPurchasesError] =
+    useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     let canceled = false;
@@ -104,6 +110,25 @@ export function AdminPurchaseAdmin() {
     return () => {
       canceled = true;
     };
+  }, []);
+
+  async function loadRecentAdminPurchases() {
+    setRecentAdminPurchasesError("");
+    try {
+      const result = await getPurchasesAdmin({
+        includeName: true,
+        limit: 25,
+        tag: "admin-purchase",
+      });
+      setRecentAdminPurchases(result.purchases);
+    } catch (err) {
+      setRecentAdminPurchasesError(`${err}`);
+      setRecentAdminPurchases([]);
+    }
+  }
+
+  useEffect(() => {
+    void loadRecentAdminPurchases();
   }, []);
 
   const sortedTiers = useMemo(
@@ -132,6 +157,9 @@ export function AdminPurchaseAdmin() {
   }, [tiers]);
 
   const basePrice = useMemo(() => {
+    if (product === "balance") {
+      return Math.abs(balanceAdjustment || 0);
+    }
     if (product === "membership") {
       const tier = tierById[membershipClass];
       if (!tier) return 0;
@@ -139,15 +167,8 @@ export function AdminPurchaseAdmin() {
         ? Number(tier.price_yearly ?? 0)
         : Number(tier.price_monthly ?? 0);
     }
-    return toDecimal(voucherAmount).mul(voucherCount).toNumber();
-  }, [
-    product,
-    tierById,
-    membershipClass,
-    interval,
-    voucherAmount,
-    voucherCount,
-  ]);
+    return 0;
+  }, [product, tierById, membershipClass, interval, balanceAdjustment]);
 
   const finalPrice = useMemo(() => {
     const base = toDecimal(basePrice ?? 0);
@@ -204,36 +225,42 @@ export function AdminPurchaseAdmin() {
 
   const canSubmit =
     !!targetUser &&
-    finalPrice.gte(0) &&
+    (product === "balance"
+      ? Number.isFinite(balanceAdjustment) && balanceAdjustment !== 0
+      : finalPrice.gte(0)) &&
     (product !== "membership" || membershipClass);
 
   async function submit() {
     if (!targetUser) return;
     setActionError("");
     setResultMessage("");
-    setVoucherCodes([]);
     try {
       await runFreshAuthAction(async () => {
         setActionLoading(true);
         try {
           const result = await adminPurchase({
-            comment: comment.trim() || undefined,
+            balance_admin_note:
+              product === "balance" ? comment.trim() || undefined : undefined,
+            balance_user_note:
+              product === "balance"
+                ? balanceUserNote.trim() || undefined
+                : undefined,
+            comment:
+              product === "balance" ? undefined : comment.trim() || undefined,
             interval: product === "membership" ? interval : undefined,
             membership_class:
               product === "membership" ? membershipClass : undefined,
-            price: finalPrice.toNumber(),
-            pricing_note: pricingNote,
+            price:
+              product === "balance" ? balanceAdjustment : finalPrice.toNumber(),
+            pricing_note: product === "balance" ? undefined : pricingNote,
             product,
             source,
             user_account_id: targetUser.account_id,
-            voucher_amount: product === "voucher" ? voucherAmount : undefined,
-            voucher_count: product === "voucher" ? voucherCount : undefined,
-            voucher_title:
-              product === "voucher" ? voucherTitle.trim() : undefined,
           });
-          if (product === "voucher") {
-            setVoucherCodes(result.voucher_codes ?? []);
-            setResultMessage("Voucher purchase created.");
+          if (product === "balance") {
+            setResultMessage(
+              `Balance adjusted by ${currency(result.adjustment_amount ?? balanceAdjustment)}.`,
+            );
           } else {
             setResultMessage(
               result.expires_at
@@ -243,6 +270,7 @@ export function AdminPurchaseAdmin() {
                 : "Membership assigned.",
             );
           }
+          void loadRecentAdminPurchases();
         } finally {
           setActionLoading(false);
         }
@@ -250,6 +278,79 @@ export function AdminPurchaseAdmin() {
     } catch (err) {
       setActionError(`${err}`);
     }
+  }
+
+  function renderRecentAdminPurchases() {
+    return (
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Divider style={{ margin: "8px 0" }} />
+        <Flex align="center" justify="space-between">
+          <Text strong>Recent admin purchases and balance edits</Text>
+          <Button size="small" onClick={() => void loadRecentAdminPurchases()}>
+            Refresh
+          </Button>
+        </Flex>
+        {recentAdminPurchasesError ? (
+          <Alert title={recentAdminPurchasesError} type="error" />
+        ) : null}
+        <Table
+          dataSource={recentAdminPurchases ?? []}
+          loading={recentAdminPurchases == null}
+          pagination={false}
+          rowKey="id"
+          size="small"
+          columns={[
+            {
+              title: "Time",
+              dataIndex: "time",
+              key: "time",
+              render: (time) =>
+                time ? new Date(time).toLocaleString() : "unknown",
+            },
+            {
+              title: "User",
+              key: "user",
+              render: (_, purchase) => {
+                const record = purchase as Purchase & {
+                  email_address?: string;
+                  first_name?: string;
+                  last_name?: string;
+                };
+                return (
+                  record.email_address ||
+                  `${record.first_name ?? ""} ${record.last_name ?? ""}`.trim() ||
+                  record.account_id
+                );
+              },
+            },
+            {
+              title: "Service",
+              dataIndex: "service",
+              key: "service",
+            },
+            {
+              title: "Amount",
+              dataIndex: "cost",
+              key: "cost",
+              render: (cost) =>
+                cost == null ? "" : currency(toDecimal(cost).neg().toNumber()),
+            },
+            {
+              title: "User note",
+              key: "description",
+              render: (_, purchase) =>
+                `${purchase.description?.["description"] ?? ""}`,
+            },
+            {
+              title: "Admin notes",
+              dataIndex: "notes",
+              key: "notes",
+              ellipsis: true,
+            },
+          ]}
+        />
+      </Space>
+    );
   }
 
   return (
@@ -287,9 +388,10 @@ export function AdminPurchaseAdmin() {
           <Text strong>Product</Text>
           <Select
             options={[
+              { label: "Balance adjustment", value: "balance" },
               { label: "Membership", value: "membership" },
-              { label: "Credit voucher", value: "voucher" },
             ]}
+            style={{ maxWidth: "100%", width: 260 }}
             value={product}
             onChange={(value) => setProduct(value)}
           />
@@ -326,109 +428,109 @@ export function AdminPurchaseAdmin() {
           </Space>
         )}
 
-        {product === "voucher" && (
+        {product === "balance" && (
           <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Text strong>Voucher details</Text>
+            <Text strong>Balance adjustment</Text>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Positive amounts add account credit. Negative amounts remove
+              account credit. This creates an audited ledger entry, not a Stripe
+              payment.
+            </Paragraph>
+            <Space.Compact>
+              <Button disabled tabIndex={-1}>
+                $
+              </Button>
+              <InputNumber
+                max={MAX_COST}
+                min={-MAX_COST}
+                precision={2}
+                step={5}
+                value={balanceAdjustment}
+                onChange={(value) =>
+                  setBalanceAdjustment(
+                    typeof value === "number" ? value : balanceAdjustment,
+                  )
+                }
+              />
+            </Space.Compact>
+            <Input
+              placeholder="User-visible note"
+              value={balanceUserNote}
+              onChange={(e) => setBalanceUserNote(e.target.value)}
+            />
+          </Space>
+        )}
+
+        {product !== "balance" && <Divider style={{ margin: "8px 0" }} />}
+
+        {product !== "balance" && (
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Text strong>Pricing</Text>
             <Flex gap="middle" wrap="wrap">
+              <InputNumber
+                formatter={(value) => `${value}%`}
+                max={100}
+                min={0}
+                parser={(value) => parseFloat(value ?? "0")}
+                value={discountPercent}
+                onChange={(value) =>
+                  setDiscountPercent(typeof value === "number" ? value : 0)
+                }
+              />
               <Space.Compact>
                 <Button disabled tabIndex={-1}>
                   $
                 </Button>
                 <InputNumber
-                  max={MAX_VOUCHER_VALUE}
-                  min={1}
-                  precision={2}
-                  step={5}
-                  value={voucherAmount}
+                  max={MAX_COST}
+                  min={0}
+                  value={discountAmount}
                   onChange={(value) =>
-                    setVoucherAmount(typeof value === "number" ? value : 25)
+                    setDiscountAmount(typeof value === "number" ? value : 0)
                   }
                 />
               </Space.Compact>
               <Space.Compact>
+                <Button disabled tabIndex={-1}>
+                  $
+                </Button>
                 <InputNumber
-                  max={MAX_VOUCHERS.admin}
-                  min={1}
-                  value={voucherCount}
+                  max={MAX_COST}
+                  min={0}
+                  placeholder="Custom price"
+                  value={customPrice ?? undefined}
                   onChange={(value) =>
-                    setVoucherCount(typeof value === "number" ? value : 1)
+                    setCustomPrice(typeof value === "number" ? value : null)
                   }
                 />
-                <Button disabled tabIndex={-1}>
-                  {`voucher${voucherCount === 1 ? "" : "s"}`}
-                </Button>
               </Space.Compact>
             </Flex>
-            <Input
-              placeholder="Voucher title"
-              value={voucherTitle}
-              onChange={(e) => setVoucherTitle(e.target.value)}
-            />
+            <Text type="secondary">
+              Base {currency(basePrice ?? 0)} → Final{" "}
+              {currency(finalPrice.toNumber())}
+            </Text>
           </Space>
         )}
 
-        <Divider style={{ margin: "8px 0" }} />
-
-        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-          <Text strong>Pricing</Text>
-          <Flex gap="middle" wrap="wrap">
-            <InputNumber
-              formatter={(value) => `${value}%`}
-              max={100}
-              min={0}
-              parser={(value) => parseFloat(value ?? "0")}
-              value={discountPercent}
-              onChange={(value) =>
-                setDiscountPercent(typeof value === "number" ? value : 0)
-              }
-            />
-            <Space.Compact>
-              <Button disabled tabIndex={-1}>
-                $
-              </Button>
-              <InputNumber
-                max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
-                min={0}
-                value={discountAmount}
-                onChange={(value) =>
-                  setDiscountAmount(typeof value === "number" ? value : 0)
-                }
-              />
-            </Space.Compact>
-            <Space.Compact>
-              <Button disabled tabIndex={-1}>
-                $
-              </Button>
-              <InputNumber
-                max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
-                min={0}
-                placeholder="Custom price"
-                value={customPrice ?? undefined}
-                onChange={(value) =>
-                  setCustomPrice(typeof value === "number" ? value : null)
-                }
-              />
-            </Space.Compact>
-          </Flex>
-          <Text type="secondary">
-            Base {currency(basePrice ?? 0)} → Final{" "}
-            {currency(finalPrice.toNumber())}
-          </Text>
-        </Space>
-
-        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-          <Text strong>Source of funds</Text>
-          <Radio.Group
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-          >
-            <Radio value="credit">Use user credit</Radio>
-            <Radio value="free">Free (offsetting credit)</Radio>
-          </Radio.Group>
-        </Space>
+        {product !== "balance" && (
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Text strong>Source of funds</Text>
+            <Radio.Group
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+            >
+              <Radio value="credit">Use user credit</Radio>
+              <Radio value="free">Free (offsetting credit)</Radio>
+            </Radio.Group>
+          </Space>
+        )}
 
         <Input.TextArea
-          placeholder="Admin comment or manual invoice reference"
+          placeholder={
+            product === "balance"
+              ? "Admin-only note or support ticket reference"
+              : "Admin comment or manual invoice reference"
+          }
           rows={3}
           value={comment}
           onChange={(e) => setComment(e.target.value)}
@@ -436,13 +538,6 @@ export function AdminPurchaseAdmin() {
 
         {actionError && <Alert title={actionError} type="error" />}
         {resultMessage && <Alert title={resultMessage} type="success" />}
-        {voucherCodes.length > 0 && (
-          <Alert
-            description={voucherCodes.join(", ")}
-            title="Voucher codes"
-            type="success"
-          />
-        )}
 
         <Button
           disabled={!canSubmit}
@@ -452,8 +547,121 @@ export function AdminPurchaseAdmin() {
         >
           Create admin purchase
         </Button>
+        {renderRecentAdminPurchases()}
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />
     </>
+  );
+}
+
+export function AdminBalanceAdjustment({
+  account_id,
+  onAdjusted,
+}: {
+  account_id: string;
+  onAdjusted?: () => void;
+}) {
+  const [amount, setAmount] = useState<number>(25);
+  const [userNote, setUserNote] = useState<string>("Admin balance adjustment");
+  const [adminNote, setAdminNote] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+  const [success, setSuccess] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+
+  async function submit() {
+    setError("");
+    setSuccess("");
+    try {
+      await runFreshAuthAction(async () => {
+        setLoading(true);
+        try {
+          const result = await adminPurchase({
+            balance_admin_note: adminNote.trim() || undefined,
+            balance_user_note: userNote.trim() || undefined,
+            price: amount,
+            product: "balance",
+            source: "free",
+            user_account_id: account_id,
+          });
+          setSuccess(
+            `Balance adjusted by ${currency(result.adjustment_amount ?? amount)}.`,
+          );
+          onAdjusted?.();
+        } finally {
+          setLoading(false);
+        }
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
+  }
+
+  return (
+    <Card size="small" title="Admin balance adjustment">
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Add or remove prepaid account credit with an audited ledger entry.
+          Positive amounts add credit; negative amounts remove credit.
+        </Paragraph>
+        <Space.Compact>
+          <Button disabled tabIndex={-1}>
+            $
+          </Button>
+          <InputNumber
+            max={MAX_COST}
+            min={-MAX_COST}
+            precision={2}
+            step={5}
+            value={amount}
+            onChange={(value) =>
+              setAmount(typeof value === "number" ? value : amount)
+            }
+          />
+        </Space.Compact>
+        <Input
+          placeholder="User-visible note"
+          value={userNote}
+          onChange={(e) => setUserNote(e.target.value)}
+        />
+        <Input.TextArea
+          placeholder="Admin-only note or support ticket reference"
+          rows={3}
+          value={adminNote}
+          onChange={(e) => setAdminNote(e.target.value)}
+        />
+        {error ? <Alert title={error} type="error" /> : null}
+        {success ? <Alert title={success} type="success" /> : null}
+        <Button
+          disabled={!Number.isFinite(amount) || amount === 0}
+          loading={loading}
+          type="primary"
+          onClick={submit}
+        >
+          Adjust balance
+        </Button>
+      </Space>
+      <FreshAuthModal {...freshAuthModalProps} />
+    </Card>
+  );
+}
+
+export function AdminBalanceAdjustmentButton({
+  account_id,
+}: {
+  account_id: string;
+}) {
+  const [show, setShow] = useState<boolean>(false);
+  return (
+    <div>
+      <Button onClick={() => setShow(!show)} type={show ? "dashed" : undefined}>
+        Balance Adjustment
+      </Button>
+      {show ? (
+        <div style={{ marginTop: "8px" }}>
+          <AdminBalanceAdjustment account_id={account_id} />
+        </div>
+      ) : null}
+    </div>
   );
 }

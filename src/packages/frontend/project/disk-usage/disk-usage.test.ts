@@ -127,20 +127,23 @@ describe("disk usage history chart helpers", () => {
 describe("disk usage backup status helpers", () => {
   it("describes a successful backup with an absolute timestamp", () => {
     const summary = describeLastBackup("2026-05-05T18:00:00.000Z");
-    expect(summary.label).toBe("Backups");
+    expect(summary.label).toBe("Backup");
     expect(summary.date?.toISOString()).toBe("2026-05-05T18:00:00.000Z");
     expect(summary.absolute).toBeTruthy();
+    expect(summary.title).toContain("Last backup");
   });
 
   it("describes missing backups explicitly", () => {
     const summary = describeLastBackup(null);
     expect(summary.label).toBe("No backup");
     expect(summary.detail).toContain("No successful backup");
+    expect(summary.title).toContain("No successful backup");
   });
 
-  it("treats undefined backup timestamps as unknown", () => {
+  it("renders unloaded backup timestamps as a neutral backup tag", () => {
     const summary = describeLastBackup(undefined);
-    expect(summary.label).toBe("Backup unknown");
+    expect(summary.label).toBe("Backup");
     expect(summary.detail).toContain("has not loaded yet");
+    expect(summary.title).toContain("has not loaded yet");
   });
 });

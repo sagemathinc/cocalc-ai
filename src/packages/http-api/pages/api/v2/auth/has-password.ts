@@ -6,6 +6,9 @@ import hasPassword from "@cocalc/server/auth/has-password";
 
 export default async function handle(req, res) {
   try {
+    if (req.header("Authorization")) {
+      throw Error("API keys are not allowed to inspect password status");
+    }
     const account_id = await getAccountId(req);
     if (!account_id) {
       throw Error("must be signed in");

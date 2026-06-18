@@ -491,14 +491,14 @@ describe("NavigatorShell keyboard suppression", () => {
     });
   });
 
-  it("classifies missing project volume errors as start-required", () => {
+  it("classifies missing project volume errors as automatic provisioning", () => {
     expect(
       classifyNavigatorCodexError(
         "Error: project volume does not exist: /mnt/cocalc/project-1",
       ),
     ).toMatchObject({
       kind: "missing-volume",
-      title: "Project files are not available on this host yet.",
+      title: "Project files are being prepared on this host.",
     });
   });
 

@@ -251,6 +251,31 @@ describe("projects.start", () => {
     expect(publishLroSummaryMock).toHaveBeenCalled();
   });
 
+  it("does not initialize optional progress mirroring before project start", async () => {
+    mirrorStartLroProgressMock = jest.fn(() => new Promise(() => undefined));
+    const { start } = await import("./projects");
+
+    await start({
+      account_id: "acct-1",
+      project_id: "proj-1",
+    });
+
+    expect(interBayStartMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      lro_op_id: "op-1",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+    expect(updateLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        op_id: "op-1",
+        status: "succeeded",
+      }),
+    );
+    expect(mirrorStartLroProgressMock).not.toHaveBeenCalled();
+  });
+
   it("keeps the long control timeout for explicit backup restores", async () => {
     const { start } = await import("./projects");
 

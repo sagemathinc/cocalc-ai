@@ -181,6 +181,9 @@ describe("project-backup", () => {
         ) ||
         sql.includes("CREATE TABLE IF NOT EXISTS project_backup_indexes") ||
         sql.includes(
+          "ALTER TABLE project_backup_indexes ALTER COLUMN id SET DEFAULT gen_random_uuid()",
+        ) ||
+        sql.includes(
           "ALTER TABLE projects ADD COLUMN IF NOT EXISTS backup_repo_id",
         ) ||
         sql.includes("CREATE INDEX IF NOT EXISTS project_backup_repos_") ||

@@ -1483,25 +1483,47 @@ async function handleOp(op: LroSummary): Promise<void> {
       );
       let response;
       let rolloutResponse;
+      const phase_timings_ms: Record<string, number> = {};
+      const timePhase = async <T>(
+        name: string,
+        run: () => Promise<T>,
+      ): Promise<T> => {
+        const started = Date.now();
+        try {
+          return await run();
+        } finally {
+          phase_timings_ms[name] =
+            (phase_timings_ms[name] ?? 0) + (Date.now() - started);
+        }
+      };
+      const timingSummary = () =>
+        Object.keys(phase_timings_ms).length > 0 ? { phase_timings_ms } : {};
       try {
         await progressStep("waiting", "running upgrade", {
           host_id,
           targets: input?.targets,
         });
-        response = await upgradeHostSoftwareInternal({
-          account_id,
-          id: host_id,
-          targets: input?.targets ?? [],
-          base_url: input?.base_url,
-          align_runtime_stack: input?.align_runtime_stack,
-          onProgress: async (update) => {
-            await progressStep("waiting", update.rollout_phase_label, {
-              host_id,
-              targets: input?.targets,
-              ...update,
-            });
-          },
-        });
+        response = await timePhase(
+          "host_control_upgrade_ms",
+          async () =>
+            await upgradeHostSoftwareInternal({
+              account_id,
+              id: host_id,
+              targets: input?.targets ?? [],
+              base_url: input?.base_url,
+              align_runtime_stack: input?.align_runtime_stack,
+              record_runtime_deployments:
+                input?.record_runtime_deployments !== false,
+              onProgress: async (update) => {
+                await progressStep("waiting", update.rollout_phase_label, {
+                  host_id,
+                  targets: input?.targets,
+                  ...update,
+                  ...timingSummary(),
+                });
+              },
+            }),
+        );
         const rolloutComponents = rolloutComponentsForUpgradeResults(
           response.results ?? [],
           {
@@ -1516,21 +1538,30 @@ async function handleOp(op: LroSummary): Promise<void> {
             {
               host_id,
               components: rolloutComponents,
+              ...timingSummary(),
             },
           );
-          rolloutResponse = await rolloutHostManagedComponentsInternal({
-            account_id,
-            id: host_id,
-            components: rolloutComponents,
-            reason: "host_software_upgrade",
-            onProgress: async (update) => {
-              await progressStep("waiting", update.rollout_phase_label, {
-                host_id,
+          rolloutResponse = await timePhase(
+            "managed_component_rollout_ms",
+            async () =>
+              await rolloutHostManagedComponentsInternal({
+                account_id,
+                id: host_id,
                 components: rolloutComponents,
-                ...update,
-              });
-            },
-          });
+                base_url: input?.base_url,
+                reason: "host_software_upgrade",
+                record_runtime_deployments:
+                  input?.record_runtime_deployments !== false,
+                onProgress: async (update) => {
+                  await progressStep("waiting", update.rollout_phase_label, {
+                    host_id,
+                    components: rolloutComponents,
+                    ...update,
+                    ...timingSummary(),
+                  });
+                },
+              }),
+          );
         }
       } catch (err) {
         const targetProjectHostVersion =
@@ -1546,11 +1577,13 @@ async function handleOp(op: LroSummary): Promise<void> {
               host_id,
               results: response?.results ?? [],
               automatic_rollback: automaticRollback,
+              ...timingSummary(),
             },
             result: {
               host_id,
               ...(response ? response : {}),
               automatic_rollback: automaticRollback,
+              ...timingSummary(),
             },
             error: `project-host upgrade failed and was automatically rolled back locally: ${err.message}`,
           });
@@ -1563,6 +1596,7 @@ async function handleOp(op: LroSummary): Promise<void> {
             {
               host_id,
               automatic_rollback: automaticRollback,
+              ...timingSummary(),
             },
           );
           return;
@@ -1580,11 +1614,15 @@ async function handleOp(op: LroSummary): Promise<void> {
               previous_version: knownGoodProjectHostVersion,
             },
           );
-          const convergedVersion = await waitForCompletedProjectHostUpgrade({
-            host_id,
-            targetVersion: targetProjectHostVersion,
-            previousVersion: knownGoodProjectHostVersion,
-          });
+          const convergedVersion = await timePhase(
+            "project_host_convergence_ms",
+            async () =>
+              await waitForCompletedProjectHostUpgrade({
+                host_id,
+                targetVersion: targetProjectHostVersion,
+                previousVersion: knownGoodProjectHostVersion,
+              }),
+          );
           if (
             convergedVersion &&
             (!targetProjectHostVersion ||
@@ -1609,6 +1647,7 @@ async function handleOp(op: LroSummary): Promise<void> {
                 ...(rolloutResponse
                   ? { managed_component_rollout: rolloutResponse.results ?? [] }
                   : {}),
+                ...timingSummary(),
               },
               result: {
                 host_id,
@@ -1617,6 +1656,7 @@ async function handleOp(op: LroSummary): Promise<void> {
                 ...(rolloutResponse
                   ? { managed_component_rollout: rolloutResponse.results ?? [] }
                   : {}),
+                ...timingSummary(),
               },
               error: null,
             });
@@ -1630,6 +1670,7 @@ async function handleOp(op: LroSummary): Promise<void> {
                 host_id,
                 target_version: targetProjectHostVersion || convergedVersion,
                 results: response?.results ?? [],
+                ...timingSummary(),
               },
             );
             return;
@@ -1646,16 +1687,24 @@ async function handleOp(op: LroSummary): Promise<void> {
               },
             );
             const rollbackStartedAt = Date.now();
-            const automaticRollback = await rollbackProjectHostOverSshInternal({
-              account_id,
-              id: host_id,
-              version: knownGoodProjectHostVersion,
-              reason: "automatic_project_host_upgrade_rollback",
-            });
-            await waitForHostHeartbeat({
-              host_id,
-              since: rollbackStartedAt,
-            });
+            const automaticRollback = await timePhase(
+              "automatic_rollback_ms",
+              async () =>
+                await rollbackProjectHostOverSshInternal({
+                  account_id,
+                  id: host_id,
+                  version: knownGoodProjectHostVersion,
+                  reason: "automatic_project_host_upgrade_rollback",
+                }),
+            );
+            await timePhase(
+              "post_rollback_heartbeat_wait_ms",
+              async () =>
+                await waitForHostHeartbeat({
+                  host_id,
+                  since: rollbackStartedAt,
+                }),
+            );
             const updated = await updateLro({
               op_id,
               status: "failed",
@@ -1664,11 +1713,13 @@ async function handleOp(op: LroSummary): Promise<void> {
                 host_id,
                 results: response?.results ?? [],
                 automatic_rollback: automaticRollback,
+                ...timingSummary(),
               },
               result: {
                 host_id,
                 ...(response ? response : {}),
                 automatic_rollback: automaticRollback,
+                ...timingSummary(),
               },
               error: `project-host upgrade failed and was automatically rolled back: ${err instanceof Error ? err.message : err}`,
             });
@@ -1681,6 +1732,7 @@ async function handleOp(op: LroSummary): Promise<void> {
               {
                 host_id,
                 automatic_rollback: automaticRollback,
+                ...timingSummary(),
               },
             );
             return;
@@ -1698,6 +1750,18 @@ async function handleOp(op: LroSummary): Promise<void> {
             );
           }
         }
+        if (!requestedProjectHostUpgrade && !response) {
+          logger.warn(
+            "host upgrade: host-control upgrade failed before host-side response",
+            {
+              host_id,
+              targets: input?.targets ?? [],
+              err: `${err}`,
+              ...timingSummary(),
+            },
+          );
+          throw err;
+        }
         logger.warn(
           "host upgrade: managed component rollout failed; retry via ssh reconcile",
           {
@@ -1710,6 +1774,7 @@ async function handleOp(op: LroSummary): Promise<void> {
               },
             ),
             err: `${err}`,
+            ...timingSummary(),
           },
         );
         await progressStep(
@@ -1724,17 +1789,26 @@ async function handleOp(op: LroSummary): Promise<void> {
                 alignRuntimeStack: !!input?.align_runtime_stack,
               },
             ),
+            ...timingSummary(),
           },
         );
-        await reconcileHostSoftwareInternal({ account_id, id: host_id });
+        await timePhase(
+          "ssh_reconcile_ms",
+          async () =>
+            await reconcileHostSoftwareInternal({ account_id, id: host_id }),
+        );
         const row = await loadHostStatus(host_id);
         const baselineSeen = row?.last_seen
           ? new Date(row.last_seen as any).getTime()
           : 0;
-        await waitForHostHeartbeat({
-          host_id,
-          since: baselineSeen,
-        });
+        await timePhase(
+          "post_reconcile_heartbeat_wait_ms",
+          async () =>
+            await waitForHostHeartbeat({
+              host_id,
+              since: baselineSeen,
+            }),
+        );
       }
       const updated = await updateLro({
         op_id,
@@ -1746,6 +1820,7 @@ async function handleOp(op: LroSummary): Promise<void> {
           ...(rolloutResponse
             ? { managed_component_rollout: rolloutResponse.results ?? [] }
             : {}),
+          ...timingSummary(),
         },
         result: {
           host_id,
@@ -1753,6 +1828,7 @@ async function handleOp(op: LroSummary): Promise<void> {
           ...(rolloutResponse
             ? { managed_component_rollout: rolloutResponse.results ?? [] }
             : {}),
+          ...timingSummary(),
         },
         error: null,
       });
@@ -1765,6 +1841,7 @@ async function handleOp(op: LroSummary): Promise<void> {
         ...(rolloutResponse
           ? { managed_component_rollout: rolloutResponse.results ?? [] }
           : {}),
+        ...timingSummary(),
       });
       return;
     }
@@ -1778,6 +1855,7 @@ async function handleOp(op: LroSummary): Promise<void> {
         account_id,
         id: host_id,
         components: input?.components ?? [],
+        base_url: input?.base_url,
         reason: input?.reason,
         onProgress: async (update) => {
           await progressStep("waiting", update.rollout_phase_label, {

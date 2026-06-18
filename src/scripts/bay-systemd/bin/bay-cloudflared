@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+if [[ -z "${COCALC_BAY_CLOUDFLARED_CMD:-}" ]]; then
+  bay_log "cloudflared command is not configured; skipping"
+  exit 0
+fi
+
+if [[ -n "${COCALC_BAY_CLOUDFLARED_EXTRA_ENV:-}" ]]; then
+  # shellcheck disable=SC2086
+  export ${COCALC_BAY_CLOUDFLARED_EXTRA_ENV}
+fi
+
+run_env_cmd COCALC_BAY_CLOUDFLARED_CMD

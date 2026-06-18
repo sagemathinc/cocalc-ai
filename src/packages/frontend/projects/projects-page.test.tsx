@@ -13,6 +13,8 @@ let mockProjectListWindow: any;
 let mockHidden = false;
 let mockSearch = "";
 let mockSelectedHashtags: any = mockEmptyMap;
+let mockEmailVerificationRequired = false;
+let mockActiveTopTab: string | undefined;
 const mockLoadProjectListWindow = jest.fn();
 
 jest.mock("./actions", () => ({}));
@@ -40,12 +42,22 @@ jest.mock("antd", () => {
   };
 });
 
-jest.mock("react-intl", () => ({
-  useIntl: () => ({
-    formatMessage: (message: any) =>
-      message?.defaultMessage ?? message?.id ?? "",
-  }),
-}));
+jest.mock("react-intl", () => {
+  const formatMessage = (message: any, values?: Record<string, any>) => {
+    let text = message?.defaultMessage ?? message?.id ?? "";
+    for (const [key, value] of Object.entries(values ?? {})) {
+      text = text.replaceAll(`{${key}}`, String(value));
+    }
+    return text;
+  };
+  return {
+    createIntl: () => ({ formatMessage }),
+    createIntlCache: () => ({}),
+    defineMessage: (message: any) => message,
+    defineMessages: (messages: any) => messages,
+    useIntl: () => ({ formatMessage }),
+  };
+});
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const React = require("react");
@@ -156,6 +168,21 @@ jest.mock("@cocalc/frontend/file-use/button", () => ({
   RecentDocumentActivityButton: () => <button type="button">Recent</button>,
 }));
 
+jest.mock("@cocalc/frontend/app/verify-email-banner", () => ({
+  useEmailVerificationRequired: () => mockEmailVerificationRequired,
+  VerifyEmailRequiredPanel: ({ description, title }: any) => (
+    <section>
+      <h2>{title}</h2>
+      <div>{description}</div>
+    </section>
+  ),
+}));
+
+jest.mock("@cocalc/frontend/rootfs/manifest", () => ({
+  managedRootfsCatalogUrl: () => "/rootfs/catalog.json",
+  useRootfsImages: () => ({ images: [], loading: false }),
+}));
+
 jest.mock("./filename-search", () => ({
   FilenameSearch: () => <input aria-label="Filename search" />,
 }));
@@ -167,6 +194,11 @@ jest.mock("./project-delete-queue", () => ({
   }),
 }));
 
+jest.mock("./project-rootfs-badge", () => ({
+  projectRootfsEntryLabel: ({ entry, image }: any) =>
+    entry?.label ?? entry?.id ?? image ?? "",
+}));
+
 beforeEach(() => {
   window.localStorage.clear();
   mockVisibleProjects.length = 0;
@@ -174,6 +206,8 @@ beforeEach(() => {
   mockHidden = false;
   mockSearch = "";
   mockSelectedHashtags = mockEmptyMap;
+  mockEmailVerificationRequired = false;
+  mockActiveTopTab = undefined;
   mockLoadProjectListWindow.mockClear();
   (globalThis as any).ResizeObserver = class {
     observe() {}
@@ -189,8 +223,25 @@ beforeEach(() => {
       return mockSelectedHashtags;
     if (store === "projects" && key === "project_list_window")
       return mockProjectListWindow;
+    if (store === "page" && key === "active_top_tab") return mockActiveTopTab;
     return undefined;
   });
+});
+
+test("projects page is replaced by email verification when required", () => {
+  mockEmailVerificationRequired = true;
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByText("Verify your email to use projects")).toBeTruthy();
+  expect(
+    screen.getByText(
+      "Please verify your email address before creating, opening, or running projects.",
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /create/i })).toBeNull();
+  expect(screen.queryByTestId("projects-table")).toBeNull();
+  expect(screen.queryByTestId("project-drawer")).toBeNull();
 });
 
 test("project creation modal does not auto-open for an empty project list", () => {
@@ -371,4 +422,65 @@ test("projects page cancels pending automatic window refresh when the window bec
 
   expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
   jest.useRealTimers();
+});
+
+test("projects page refreshes a dirty backend window when it becomes active", () => {
+  mockVisibleProjects.push("local-project-1", "local-project-2");
+  mockActiveTopTab = "other-tab";
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["stable-backend-project"],
+    loading: false,
+    dirty: true,
+    dirty_count: 1,
+  });
+
+  const { rerender } = render(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
+
+  mockActiveTopTab = "projects";
+  rerender(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).toHaveBeenCalledWith({
+    limit: 200,
+    offset: 0,
+    hidden: false,
+    search: "",
+    sort: "last_edited",
+    force: true,
+  });
+});
+
+test("projects page does not repeatedly refresh a dirty backend window while active", () => {
+  mockActiveTopTab = "projects";
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["stable-backend-project"],
+    loading: false,
+    dirty: true,
+    dirty_count: 1,
+  });
+
+  const { rerender } = render(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).toHaveBeenCalledTimes(1);
+  mockLoadProjectListWindow.mockClear();
+
+  mockProjectListWindow = mockProjectListWindow.set("dirty_count", 2);
+  rerender(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
 });

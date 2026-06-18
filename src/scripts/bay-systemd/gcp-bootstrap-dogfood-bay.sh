@@ -257,6 +257,7 @@ require_tools() {
 }
 
 GCLOUD_CONFIG_DIR=""
+REMOTE_SITE_MASTER_KEY_COPIED=0
 
 configure_gcloud_auth() {
   if [[ -z "$KEY_FILE" ]]; then
@@ -273,6 +274,17 @@ cleanup_gcloud_auth() {
   if [[ -n "$GCLOUD_CONFIG_DIR" ]]; then
     rm -rf "$GCLOUD_CONFIG_DIR"
   fi
+}
+
+cleanup_remote_sensitive_inputs() {
+  if [[ "$REMOTE_SITE_MASTER_KEY_COPIED" -eq 1 ]]; then
+    remote_ssh "sudo rm -f /tmp/site-master-key" >/dev/null 2>&1 || true
+  fi
+}
+
+cleanup() {
+  cleanup_remote_sensitive_inputs
+  cleanup_gcloud_auth
 }
 
 vm_exists() {
@@ -403,7 +415,9 @@ copy_inputs() {
   run remote_ssh "rm -rf /tmp/bay-systemd /tmp/site-master-key /tmp/cocalc-bay-runtime-linux-*.tar.xz /tmp/cocalc-bay-static-linux-*.tar.xz" >&2
   run remote_scp --recurse "$SCRIPT_DIR" "${VM_NAME}:/tmp/bay-systemd" >&2
   run remote_scp "$bundle" "${VM_NAME}:${remote_bundle}" >&2
-  run remote_scp "$SITE_MASTER_KEY_PATH" "${VM_NAME}:/tmp/site-master-key" >&2
+  if [[ "$STATIC_ONLY" -ne 1 ]]; then
+    run remote_scp "$SITE_MASTER_KEY_PATH" "${VM_NAME}:/tmp/site-master-key" >&2
+  fi
 
   printf '%s\n' "$remote_bundle"
 }
@@ -554,7 +568,7 @@ main() {
   parse_args "$@"
   validate_args
   require_tools
-  trap cleanup_gcloud_auth EXIT
+  trap cleanup EXIT
   configure_gcloud_auth
 
   log "repo root: ${REPO_ROOT}"
@@ -567,6 +581,9 @@ main() {
   wait_for_ssh
 
   local remote_bundle
+  if [[ "$STATIC_ONLY" -ne 1 ]]; then
+    REMOTE_SITE_MASTER_KEY_COPIED=1
+  fi
   remote_bundle="$(copy_inputs "$bundle")"
   bootstrap_remote_bay "$remote_bundle"
   health_check

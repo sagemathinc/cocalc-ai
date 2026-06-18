@@ -20,8 +20,7 @@ allowed; use the fresh-auth-protected admin account-creation RPC instead.
 
 API Usage:
 
-curl -d firstName=John00 \
-  -d lastName=Doe00 \
+curl -d displayName='John Doe' \
   -d email=jd@example.com \
   -d password=xyzabc09090 \
   -d terms=true https://cocalc.com/api/v2/auth/sign-up
@@ -51,14 +50,16 @@ import redeemRegistrationToken, {
   validateRegistrationToken,
 } from "@cocalc/server/auth/tokens/redeem";
 import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
-import sendEmailVerification from "@cocalc/server/accounts/send-email-verification";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
 import { selectSignupHomeBay } from "@cocalc/server/accounts/select-home-bay";
 import { SignupEmailDomainPolicyError } from "@cocalc/server/accounts/signup-email-domain-policy";
-import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
+import {
+  createClusterAccount,
+  sendClusterEmailVerification,
+} from "@cocalc/server/inter-bay/accounts";
 import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
   isLaunchpadMode,
@@ -85,6 +86,11 @@ import {
   MIN_PASSWORD_LENGTH,
   MIN_PASSWORD_STRENGTH,
 } from "@cocalc/util/auth";
+import {
+  displayNameFromParts,
+  legacyNamePartsFromDisplayName,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 
 const logger = getLogger("auth:sign-up");
 
@@ -96,6 +102,7 @@ export async function signUp(req, res) {
     terms,
     email,
     password,
+    displayName,
     firstName,
     lastName,
     registrationToken,
@@ -104,10 +111,16 @@ export async function signUp(req, res) {
 
   password = (password ?? "").trim();
   email = (email ?? "").toLowerCase().trim();
-  firstName = (firstName ? firstName : "Anonymous").trim();
-  lastName = (
-    lastName ? lastName : `User-${Math.round(Date.now() / 1000)}`
-  ).trim();
+  displayName =
+    normalizeDisplayName(displayName) ||
+    displayNameFromParts({
+      first_name: firstName,
+      last_name: lastName,
+    }) ||
+    "Anonymous User";
+  const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
+  firstName = normalizeDisplayName(firstName) || legacyNameParts.first_name;
+  lastName = normalizeDisplayName(lastName) || legacyNameParts.last_name;
   registrationToken = (registrationToken ?? "").trim();
 
   if (isLaunchpadMode() && !(await isSoftwareLicenseActivated())) {
@@ -292,6 +305,7 @@ export async function signUp(req, res) {
       account_id: v4(),
       email_address: email,
       password,
+      display_name: displayName,
       first_name: firstName,
       last_name: lastName,
       home_bay_id: selected_home_bay_id,
@@ -398,7 +412,11 @@ export async function signUp(req, res) {
 
     if (email) {
       const onlyVerify = !requiresRegistrationToken;
-      const emailError = await sendEmailVerification(account_id, onlyVerify);
+      const emailError = await sendClusterEmailVerification({
+        account_id,
+        home_bay_id,
+        only_verify: onlyVerify,
+      });
       if (emailError) {
         logger.debug("signup email skipped (no email backend configured)", {
           email,

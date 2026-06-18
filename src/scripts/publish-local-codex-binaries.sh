@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/user/upstream/codex}"
-CODEX_VERSION="${CODEX_VERSION:-0.133.0}"
+CODEX_VERSION="${CODEX_VERSION:-0.140.0}"
 RELEASE_REPO="${CODEX_RELEASE_REPO:-sagemathinc/codex}"
 RELEASE_TAG="${CODEX_RELEASE_TAG:-v${CODEX_VERSION}}"
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"

@@ -240,6 +240,12 @@ export class PageActions extends Actions<PageState> {
         set_window_title("Sign in");
         return;
       }
+      case "claim":
+        if (change_history) {
+          set_url(getPageUrlPath({ page: "claim", kind: "site-license" }));
+        }
+        set_window_title("Claim CoCalc access");
+        return;
       case undefined:
         return;
       default:

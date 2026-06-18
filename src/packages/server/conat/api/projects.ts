@@ -43,9 +43,9 @@ export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
-import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { assertClusterAccountTrustedForProductAccess } from "@cocalc/server/inter-bay/accounts";
@@ -66,6 +66,7 @@ import {
   resolvePublicViewerDns,
 } from "@cocalc/util/public-viewer-origin";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { CodexUsageStatusInfo } from "@cocalc/conat/hub/api/system";
 import {
   cancelCopy as cancelCopyDb,
   listCopiesByOpId,
@@ -92,7 +93,6 @@ import {
   getProjectOwnerAccountId,
 } from "@cocalc/server/membership/project-limits";
 import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
-import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 import {
   drainProjectRehome as drainProjectRehomeControl,
   getProjectRehomeOperation as getProjectRehomeOperationControl,
@@ -2754,10 +2754,10 @@ async function runProjectStartLikeAction({
         context: `${kind}: running`,
       });
     }
-    const stopProgressMirror = await mirrorStartLroProgress({
-      project_id,
-      op_id: op.op_id,
-    });
+    // Keep project start independent of ephemeral progress streams. Move/retry
+    // correctness depends on the durable LRO row and project-host RPC; live
+    // stream mirroring is optional and has caused orphaned queued starts when
+    // the stream backend is unavailable.
     try {
       const ownership = await resolveProjectBay(project_id);
       if (ownership == null) {
@@ -2859,8 +2859,6 @@ async function runProjectStartLikeAction({
         });
       }
       throw err;
-    } finally {
-      await stopProgressMirror();
     }
   };
 
@@ -2912,13 +2910,15 @@ export async function archiveProject({
     backup_repo_id: string | null;
     provisioned: boolean | null;
     state: { state?: string } | null;
+    last_backup: Date | string | null;
   }>(
     `
       SELECT projects.host_id,
              project_hosts.status AS host_status,
              projects.backup_repo_id,
              projects.provisioned,
-             projects.state
+             projects.state,
+             projects.last_backup
       FROM projects
       LEFT JOIN project_hosts
         ON project_hosts.id = projects.host_id
@@ -2948,7 +2948,9 @@ export async function archiveProject({
     !hostStatus || hostStatus === "active" || hostStatus === "running";
 
   if (!hostDeprovisioned) {
-    const routedClient = conatWithProjectRoutingForAccount({
+    const routedClient = await getExplicitProjectRoutedClient({
+      project_id,
+      fresh: true,
       account_id: account_id!,
     });
     try {
@@ -2966,12 +2968,16 @@ export async function archiveProject({
       } catch (err) {
         if (
           !isArchiveInfoUnavailableError(err) ||
-          !(await hasIndexedProjectBackup(project_id))
+          !(
+            (await hasIndexedProjectBackup(project_id)) ||
+            row.last_backup != null
+          )
         ) {
           throw err;
         }
-        log.warn("archiveProject: verified backup via database index", {
+        log.warn("archiveProject: verified backup via database metadata", {
           project_id,
+          last_backup: row.last_backup,
           error: `${err}`,
         });
       }
@@ -3135,6 +3141,21 @@ export async function getProjectAddress({
     account_id,
     epoch: ownership.epoch,
   });
+}
+
+export async function ensureProjectScratchVolume({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  const fileServer = await getProjectFileServerClient({
+    project_id,
+    account_id,
+  });
+  await fileServer.ensureVolume({ project_id, scratch: true });
 }
 
 export async function getProjectActiveOperation({
@@ -4450,6 +4471,33 @@ export async function codexUploadAuthFile({
   throw Error(
     "codex auth-file upload is not implemented on central hub; call a project-host endpoint via project routing",
   );
+}
+
+export async function getCodexUsageStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  timeout?: number;
+}): Promise<CodexUsageStatusInfo> {
+  await assertCollab({ account_id, project_id });
+  return {
+    available: false,
+    checkedAt: new Date().toISOString(),
+    paymentSource: {
+      source: "none",
+      hasSubscription: false,
+      hasProjectApiKey: false,
+      hasAccountApiKey: false,
+      hasSiteApiKey: false,
+      sharedHomeMode: "disabled",
+      project_id,
+    },
+    project_id,
+    reason:
+      "ChatGPT Codex usage is only available through a running project's project-host. Open the project and retry.",
+  };
 }
 
 export async function chatStoreStats({

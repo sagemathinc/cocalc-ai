@@ -37,6 +37,18 @@ describe("createChat", () => {
         command: "Explain this",
         model: "gpt-4o",
         tag: "custom",
+        agentSession: {
+          session_id: "session-1",
+          project_id: "project-1",
+          account_id: "account-1",
+          chat_path: "/home/user/agent.chat",
+          thread_key: "thread-1",
+          title: "Notebook work",
+          created_at: "2026-06-12T00:00:00.000Z",
+          updated_at: "2026-06-12T01:00:00.000Z",
+          status: "active",
+          entrypoint: "file",
+        },
       },
       input: "print('hi')",
     });
@@ -52,6 +64,11 @@ describe("createChat", () => {
         openFloating: true,
         waitForAgent: false,
         codexConfig: { model: "gpt-5.4-mini" },
+        agentSession: expect.objectContaining({
+          session_id: "session-1",
+          chat_path: "/home/user/agent.chat",
+          thread_key: "thread-1",
+        }),
       }),
     );
     expect(dispatchNavigatorPromptIntent).not.toHaveBeenCalled();

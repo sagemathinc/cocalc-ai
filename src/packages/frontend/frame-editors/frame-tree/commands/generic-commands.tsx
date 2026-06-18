@@ -119,7 +119,7 @@ addCommands({
     title: defineMessage({
       id: "command.generic.close.title",
       defaultMessage:
-        "Close this frame. To restore the default layout, select the application menu entry 'Default Layout' or close all frames.",
+        "Close this frame. Closing the last frame closes the file.",
     }),
     onClick: ({ props }) => {
       props.actions.close_frame(props.id);

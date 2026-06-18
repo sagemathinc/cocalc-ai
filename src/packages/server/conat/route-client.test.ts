@@ -85,6 +85,7 @@ function createFakeClient() {
   emitter.connect = jest.fn(() => {
     emitter.conn.connected = true;
   });
+  emitter.waitForInterest = jest.fn(async () => true);
   emitter.close = jest.fn(() => {
     emitter.emit("closed");
   });
@@ -114,6 +115,52 @@ describe("server/conat route-client", () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it("creates an account-scoped explicit project routed client", async () => {
+    const routed = createFakeClient();
+    let authValue: any;
+    let authPromise: Promise<void> | undefined;
+    connectMock.mockImplementationOnce((opts) => {
+      authPromise = Promise.resolve(
+        opts.auth((value) => {
+          authValue = value;
+        }),
+      );
+      return routed;
+    });
+    materializeProjectHostTargetMock.mockResolvedValue({
+      host_id: "host-local",
+      address: "https://host-local.example",
+    });
+
+    const { getExplicitProjectRoutedClient } = await import("./route-client");
+    await expect(
+      getExplicitProjectRoutedClient({
+        project_id: "12345678-1234-1234-1234-123456789012",
+        fresh: true,
+        account_id: "account-1",
+      }),
+    ).resolves.toBe(routed);
+
+    await authPromise;
+    expect(materializeProjectHostTargetMock).toHaveBeenCalledWith(
+      "12345678-1234-1234-1234-123456789012",
+      { fresh: true },
+    );
+    expect(issueProjectHostAuthTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "account",
+        account_id: "account-1",
+        host_id: "host-local",
+      }),
+    );
+    expect(connectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inboxPrefix: "inbox.account-1",
+      }),
+    );
+    expect(authValue).toEqual({ bearer: "token-1" });
   });
 
   it("reconnects routed host clients after connect_error", async () => {
@@ -309,6 +356,62 @@ describe("server/conat route-client", () => {
         address: "https://host-3.example",
         noCache: true,
         forceNew: true,
+      }),
+    );
+  });
+
+  it("uses explicit routed host clients for local host control clients", async () => {
+    const routed = createFakeClient();
+    connectMock.mockImplementationOnce(() => routed);
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-3",
+      address: "https://host-3.example",
+      host_session_id: "session-3",
+    });
+
+    const { getExplicitHostControlClient } = await import("./route-client");
+
+    await expect(
+      getExplicitHostControlClient({ host_id: "host-3" }),
+    ).resolves.toBe(routed);
+    expect(connectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: "https://host-3.example",
+        noCache: true,
+        forceNew: true,
+      }),
+    );
+    expect(routed.waitForInterest).toHaveBeenCalledWith(
+      "project-host.host-3.api",
+      { timeout: 1500 },
+    );
+  });
+
+  it("falls back to the legacy host control route when direct host control is absent", async () => {
+    const routed = createFakeClient();
+    routed.waitForInterest = jest.fn(async () => false);
+    const central = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => routed)
+      .mockImplementationOnce(() => central);
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-3",
+      address: "https://host-3.example",
+      host_session_id: "session-3",
+    });
+
+    const { getExplicitHostControlClient } = await import("./route-client");
+
+    await expect(
+      getExplicitHostControlClient({ host_id: "host-3" }),
+    ).resolves.toBe(central);
+    expect(routed.waitForInterest).toHaveBeenCalledWith(
+      "project-host.host-3.api",
+      { timeout: 1500 },
+    );
+    expect(connectMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        address: "https://hub.example",
       }),
     );
   });

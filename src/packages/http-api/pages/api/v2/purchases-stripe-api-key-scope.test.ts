@@ -21,6 +21,11 @@ const mockUserIsInGroup = jest.fn();
 const mockCancelPaymentIntent = jest.fn();
 const mockGetPaymentIntentAccountId = jest.fn();
 const mockProcessPaymentIntents = jest.fn();
+const mockCreateSetupIntent = jest.fn();
+const mockGetCustomerSession = jest.fn();
+const mockSetCustomer = jest.fn();
+const mockDeletePaymentMethod = jest.fn();
+const mockSetDefaultPaymentMethod = jest.fn();
 const mockGetCurrentAuthSession = jest.fn();
 const mockRequireDangerousSessionAuth = jest.fn();
 
@@ -61,6 +66,7 @@ jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
 
 jest.mock("@cocalc/server/purchases/stripe/customer", () => ({
   getCustomer: (...args) => mockGetCustomer(...args),
+  setCustomer: (...args) => mockSetCustomer(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe/get-payments", () => ({
@@ -83,6 +89,26 @@ jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
 jest.mock("@cocalc/server/purchases/stripe/process-payment-intents", () => ({
   __esModule: true,
   default: (...args) => mockProcessPaymentIntents(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/create-setup-intent", () => ({
+  __esModule: true,
+  default: (...args) => mockCreateSetupIntent(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/get-customer-session", () => ({
+  __esModule: true,
+  default: (...args) => mockGetCustomerSession(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/delete-payment-method", () => ({
+  __esModule: true,
+  default: (...args) => mockDeletePaymentMethod(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/set-default-payment-method", () => ({
+  __esModule: true,
+  default: (...args) => mockSetDefaultPaymentMethod(...args),
 }));
 
 describe("Stripe billing read routes API-key scope", () => {
@@ -110,6 +136,15 @@ describe("Stripe billing read routes API-key scope", () => {
     mockCancelPaymentIntent.mockReset().mockResolvedValue(undefined);
     mockGetPaymentIntentAccountId.mockReset().mockResolvedValue("acct-1");
     mockProcessPaymentIntents.mockReset().mockResolvedValue(0);
+    mockCreateSetupIntent.mockReset().mockResolvedValue({
+      clientSecret: "seti_secret",
+    });
+    mockGetCustomerSession.mockReset().mockResolvedValue({
+      customerSessionClientSecret: "css_secret",
+    });
+    mockSetCustomer.mockReset().mockResolvedValue(undefined);
+    mockDeletePaymentMethod.mockReset().mockResolvedValue(undefined);
+    mockSetDefaultPaymentMethod.mockReset().mockResolvedValue(undefined);
     mockGetCurrentAuthSession.mockReset().mockResolvedValue({
       session_hash: "fresh-session-hash",
     });
@@ -174,6 +209,39 @@ describe("Stripe billing read routes API-key scope", () => {
     expect(mockThrottle).not.toHaveBeenCalled();
     expect(mockProcessPaymentIntents).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["./purchases/stripe/create-setup-intent", mockCreateSetupIntent],
+    ["./purchases/stripe/get-customer-session", mockGetCustomerSession],
+    ["./purchases/stripe/set-customer", mockSetCustomer],
+    ["./purchases/stripe/delete-payment-method", mockDeletePaymentMethod],
+    [
+      "./purchases/stripe/set-default-payment-method",
+      mockSetDefaultPaymentMethod,
+    ],
+  ])(
+    "rejects API-key Stripe billing mutation access to %s before account resolution",
+    async (modulePath, backendCall) => {
+      mockGetParams.mockReturnValue({
+        changes: { name: "Ada Lovelace" },
+        default_payment_method: "pm_123",
+        description: "Add a new payment method.",
+        payment_method: "pm_123",
+      });
+      const { req, res } = createMocks({
+        method: "POST",
+        headers: { Authorization: "Bearer cocalc_api_key_test" },
+      });
+
+      const { default: handler } = await import(modulePath);
+      await handler(req, res);
+
+      expect(res._getJSONData()).toEqual(mutationDenied);
+      expect(mockGetAccountId).not.toHaveBeenCalled();
+      expect(mockThrottle).not.toHaveBeenCalled();
+      expect(backendCall).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps browser-session payment-intent cancellation", async () => {
     mockGetParams.mockReturnValue({

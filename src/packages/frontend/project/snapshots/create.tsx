@@ -15,13 +15,37 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
+const CLOSE_CREATE_SNAPSHOT_MODALS = "cocalc:close-create-snapshot-modals";
+
+let activeCreateSnapshotModal: symbol | undefined = undefined;
+
+function claimCreateSnapshotModal(id: symbol): boolean {
+  if (activeCreateSnapshotModal != null && activeCreateSnapshotModal !== id) {
+    return false;
+  }
+  activeCreateSnapshotModal = id;
+  return true;
+}
+
+function releaseCreateSnapshotModal(id: symbol): void {
+  if (activeCreateSnapshotModal === id) {
+    activeCreateSnapshotModal = undefined;
+  }
+}
+
+function broadcastCloseCreateSnapshotModals(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(CLOSE_CREATE_SNAPSHOT_MODALS));
+}
+
 export default function CreateSnapshot({
   onCreated,
 }: {
-  onCreated?: () => void;
+  onCreated?: () => void | Promise<void>;
 }) {
   const { actions, project_id } = useProjectContext();
   const [loading, setLoading] = useState<boolean>(false);
+  const [creating, setCreating] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
   const [name, setName] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -32,6 +56,16 @@ export default function CreateSnapshot({
   const [rollingReserved, setRollingReserved] = useState<number | null>(null);
   const openCreate = useTypedRedux({ project_id }, "open_create_snapshot");
   const inputRef = useRef<InputRef>(null);
+  const modalIdRef = useRef<symbol>(Symbol("CreateSnapshot"));
+
+  function closeModal(clearName: boolean = false): void {
+    releaseCreateSnapshotModal(modalIdRef.current);
+    setOpen(false);
+    setCreating(false);
+    if (clearName) {
+      setName("");
+    }
+  }
 
   useEffect(() => {
     if (!open) {
@@ -45,9 +79,20 @@ export default function CreateSnapshot({
 
   useEffect(() => {
     if (!openCreate) return;
-    setOpen(true);
+    if (claimCreateSnapshotModal(modalIdRef.current)) {
+      setOpen(true);
+    }
     actions?.setState({ open_create_snapshot: false });
   }, [actions, openCreate]);
+
+  useEffect(() => {
+    const handleClose = () => closeModal(true);
+    window.addEventListener(CLOSE_CREATE_SNAPSHOT_MODALS, handleClose);
+    return () => {
+      window.removeEventListener(CLOSE_CREATE_SNAPSHOT_MODALS, handleClose);
+      releaseCreateSnapshotModal(modalIdRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -87,9 +132,18 @@ export default function CreateSnapshot({
     return null;
   }
 
+  function openModal(): void {
+    if (claimCreateSnapshotModal(modalIdRef.current)) {
+      setOpen(true);
+    }
+  }
+
   async function createSnapshot() {
+    if (creating) {
+      return;
+    }
     try {
-      setLoading(true);
+      setCreating(true);
       setError("");
       if (!name.trim()) {
         throw Error("name must be nonempty");
@@ -98,19 +152,18 @@ export default function CreateSnapshot({
         project_id,
         name,
       });
-      onCreated?.();
-      setName("");
-      setOpen(false);
+      broadcastCloseCreateSnapshotModals();
+      await onCreated?.();
     } catch (err) {
-      setError(err);
+      setError(`${err}`);
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   }
 
   return (
     <>
-      <Button disabled={open} onClick={() => setOpen(!open)}>
+      <Button disabled={open} onClick={openModal}>
         <Icon name="disk-snapshot" /> Create Snapshot
       </Button>
       {open && (
@@ -136,22 +189,23 @@ export default function CreateSnapshot({
               {loading && (
                 <Spin style={{ float: "right", marginRight: "15px" }} />
               )}
+              {creating && (
+                <Spin style={{ float: "right", marginRight: "15px" }} />
+              )}
             </>
           }
           open={open}
-          onOk={() => {
-            setOpen(false);
-          }}
+          onOk={createSnapshot}
           onCancel={() => {
-            setOpen(false);
+            broadcastCloseCreateSnapshotModals();
           }}
           footer={[
             <Button
               key="cancel"
               onClick={() => {
-                setOpen(false);
-                setName("");
+                broadcastCloseCreateSnapshotModals();
               }}
+              disabled={creating}
             >
               Cancel
             </Button>,
@@ -160,11 +214,13 @@ export default function CreateSnapshot({
               type="primary"
               onClick={createSnapshot}
               disabled={
+                creating ||
                 !name.trim() ||
                 (manualLimit != null &&
                   manualCurrent != null &&
                   manualCurrent >= manualLimit)
               }
+              loading={creating}
             >
               Create Snapshot
             </Button>,
@@ -205,7 +261,7 @@ export default function CreateSnapshot({
             onChange={(e) => setName(e.target.value)}
             placeholder="Name of snapshot to create..."
             onPressEnter={() => {
-              if (name.trim()) {
+              if (name.trim() && !creating) {
                 createSnapshot();
               }
             }}

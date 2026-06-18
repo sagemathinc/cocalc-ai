@@ -28,7 +28,7 @@ import { kernelDisplayName, kernelLanguage } from "./kernel-info";
 import SelectKernel from "./select-kernel";
 import LRU from "lru-cache";
 
-// ATTN[i18n]: it's tempting to translate this, but it is a dependency of next (vouchers/notes → slate/code-block → buttons)
+// ATTN[i18n]: it's tempting to translate this, but it is a dependency of next (slate/code-block → buttons)
 
 export type RunFunction = () => Promise<void>;
 type RunRef = MutableRefObject<RunFunction | null>;

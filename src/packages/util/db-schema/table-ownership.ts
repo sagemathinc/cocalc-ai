@@ -84,6 +84,8 @@ export const TABLE_OWNERSHIP = {
       "password_reset_attempts",
       "remember_me",
       "subscriptions",
+      "team_licenses",
+      "team_license_seat_lines",
       "usage_info",
     ],
     {
@@ -263,6 +265,9 @@ export const TABLE_OWNERSHIP = {
       "rootfs_rustic_repos",
       "server_settings",
       "site_license_audit_log",
+      "site_license_external_claim_consumptions",
+      "site_license_external_claim_keys",
+      "site_license_external_claim_pools",
       "site_license_managers",
       "site_license_pool_requests",
       "site_licenses",
@@ -271,8 +276,6 @@ export const TABLE_OWNERSHIP = {
       "software_licenses",
       "sso_domain_policies",
       "sso_providers",
-      "voucher_codes",
-      "vouchers",
       "whitelabeling",
     ],
     {
@@ -382,6 +385,7 @@ function adHocEntries(
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
   ...adHocEntries(
     [
+      "admin_data_explorer_views",
       "cluster_account_api_key_directory",
       "cluster_account_directory",
       "cluster_bay_registry",
@@ -436,6 +440,21 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
         "Account-scoped durable operational state created outside util/db-schema. Reads/writes must route to the account home bay; rehome is unsafe until explicitly audited.",
     },
   ),
+
+  ...adHocEntries(["ai_sessions"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      host_id: "Runtime location for the observed session, not host authority.",
+      project_id:
+        "Project context for the observed session, not project ownership.",
+    },
+    source: "server AI session visibility schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Account-scoped Codex/ACP session visibility state created outside util/db-schema. Account-home routing owns user-visible session history; host/project/payment fields are observability dimensions.",
+  }),
 
   ...adHocEntries(["account_usage_epochs", "account_usage_epoch_resets"], {
     ownership: "seed-global",
@@ -519,6 +538,20 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     migrate_to_schema: true,
     notes:
       "Bay-local UX latency telemetry used for operational monitoring and launch tuning. It is diagnostic history, not authoritative account/project/host state.",
+  }),
+
+  ...adHocEntries(["launch_smoke_results"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id: "Admin actor attribution, not account-home authority.",
+      project_id: "Smoke-test target reference, not project ownership.",
+    },
+    source: "server monitoring schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Bay-local synthetic launch smoke telemetry used for operator health checks. It records diagnostic probe history, not authoritative project state.",
   }),
 
   ...adHocEntries(

@@ -8,14 +8,14 @@ import {
 
 describe("page-routing", () => {
   it("maps settings routes to the account top tab", () => {
-    const parsed = parsePageTarget("settings/vouchers");
+    const parsed = parsePageTarget("settings/payment-methods");
     expect(parsed).toEqual({
       page: "account",
-      tab: "vouchers",
+      tab: "payment-methods",
     });
     expect(getPageTopTab(parsed)).toBe("account");
     expect(getInitialAccountPageState(parsed)).toEqual({
-      active_page: "vouchers",
+      active_page: "payment-methods",
     });
   });
 
@@ -33,6 +33,16 @@ describe("page-routing", () => {
       view: "password-reset",
     });
     expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
+  });
+
+  it("parses site-license claim routes explicitly", () => {
+    const parsed = parsePageTarget("claim/site-license?token=abc");
+    expect(parsed).toEqual({
+      page: "claim",
+      kind: "site-license",
+    });
+    expect(getPageTopTab(parsed)).toBe("claim");
+    expect(getPageUrlPath(parsed)).toBe("/claim/site-license");
   });
 
   it("parses global docs routes", () => {
@@ -91,9 +101,9 @@ describe("page-routing", () => {
       page: "account",
       tab: "membership",
     });
-    expect(parsePageTarget("store/vouchers")).toEqual({
+    expect(parsePageTarget("store/checkout")).toEqual({
       page: "account",
-      tab: "index",
+      tab: "membership",
     });
   });
 

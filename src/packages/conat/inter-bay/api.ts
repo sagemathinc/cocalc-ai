@@ -26,6 +26,7 @@ import type {
   ClaimableMembershipPackage,
   AccountEntitlementOverride,
   AccountUsageOverview,
+  MembershipClass,
   MembershipDetails,
   MembershipEffectiveLimits,
   MembershipPackageAssignment,
@@ -33,10 +34,17 @@ import type {
   MembershipResolution,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseExternalClaimConsumption,
+  SiteLicenseExternalClaimConsumptionStatus,
+  SiteLicenseExternalClaimKey,
+  SiteLicenseExternalClaimPool,
+  SiteLicenseExternalClaimSigningAlgorithm,
   SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
+  TeamLicenseOverview,
+  TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
 import type {
   AcpAdmissionDenialReport,
@@ -532,6 +540,7 @@ export interface AccountApiKeyDirectoryTouchRequest {
 export interface AccountDirectoryCreateRequest {
   email_address: string;
   password: string;
+  display_name?: string;
   first_name: string;
   last_name: string;
   home_bay_id: string;
@@ -894,6 +903,11 @@ export interface AccountLocalRedeemVerifyEmailRequest {
   token: string;
 }
 
+export interface AccountLocalSendEmailVerificationRequest {
+  account_id: string;
+  only_verify?: boolean;
+}
+
 export interface AccountLocalAdminVerifyEmailAddressRequest {
   account_id: string;
 }
@@ -1020,6 +1034,20 @@ export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
 
+export interface AccountLocalGetTeamLicenseRequest {
+  account_id: string;
+}
+
+export interface AccountLocalGetTeamLicenseQuoteRequest {
+  account_id: string;
+  target_seats?: Record<string, number>;
+}
+
+export interface AccountLocalPurchaseTeamLicenseChangeRequest {
+  account_id: string;
+  target_seats?: Record<string, number>;
+}
+
 export interface AccountLocalAdminProvisionSiteLicenseRequest {
   actor_account_id: string;
   owner_account_id?: string;
@@ -1088,6 +1116,85 @@ export interface AccountLocalAddSiteLicensePoolRequest {
   actor_account_id: string;
   site_license_id: string;
   pool: SiteLicensePoolConfig;
+}
+
+export interface AccountLocalCreateSiteLicenseExternalClaimPoolRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  package_id: string;
+  name: string;
+  issuer: string;
+  slug?: string | null;
+  audience?: string;
+  default_membership_class?: MembershipClass | null;
+  allow_membership_class_override?: boolean;
+  default_membership_duration_days?: number | null;
+  default_membership_expires_at?: Date | string | null;
+  allow_membership_expires_at_override?: boolean;
+  min_membership_duration_days?: number | null;
+  max_membership_duration_days?: number | null;
+  max_membership_expires_at?: Date | string | null;
+  default_rootfs_id?: string | null;
+  max_claims?: number | null;
+  max_claims_per_account?: number | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  disabled_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalAddSiteLicenseExternalClaimKeyRequest {
+  actor_account_id: string;
+  pool_id: string;
+  kid: string;
+  alg: SiteLicenseExternalClaimSigningAlgorithm;
+  public_key_jwk?: Record<string, unknown> | null;
+  public_key_pem?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  revoked_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalListSiteLicenseExternalClaimPoolsRequest {
+  account_id: string;
+  site_license_id?: string;
+  package_id?: string;
+  pool_id?: string;
+  limit?: number;
+}
+
+export interface AccountLocalDisableSiteLicenseExternalClaimPoolRequest {
+  actor_account_id: string;
+  pool_id: string;
+  disabled_at?: Date | string | null;
+}
+
+export interface AccountLocalListSiteLicenseExternalClaimKeysRequest {
+  account_id: string;
+  pool_id: string;
+  limit?: number;
+}
+
+export interface AccountLocalRevokeSiteLicenseExternalClaimKeyRequest {
+  actor_account_id: string;
+  pool_id: string;
+  kid: string;
+  revoked_at?: Date | string | null;
+}
+
+export interface AccountLocalListSiteLicenseExternalClaimConsumptionsRequest {
+  account_id: string;
+  pool_id?: string;
+  site_license_id?: string;
+  target_account_id?: string;
+  status?: SiteLicenseExternalClaimConsumptionStatus;
+  limit?: number;
+}
+
+export interface AccountLocalConsumeSiteLicenseExternalClaimTokenRequest {
+  account_id: string;
+  token: string;
 }
 
 export interface AccountLocalArchiveSiteLicensePoolRequest {
@@ -1759,6 +1866,7 @@ export type HostControlMethod =
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
   | "get-backup-execution-status"
+  | "invalidate-backup-config"
   | "get-managed-component-status"
   | "get-installed-runtime-artifacts"
   | "get-host-agent-status"
@@ -1804,6 +1912,7 @@ export type AccountLocalMethod =
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
+  | "send-email-verification"
   | "admin-verify-email-address"
   | "admin-disable-two-factor"
   | "admin-grant-admin-role"
@@ -1832,6 +1941,9 @@ export type AccountLocalMethod =
   | "clear-account-entitlement-override"
   | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
+  | "get-team-license"
+  | "get-team-license-quote"
+  | "purchase-team-license-change"
   | "update-membership-package"
   | "get-claimable-membership-packages"
   | "get-claimable-membership-packages-for-account"
@@ -1840,6 +1952,14 @@ export type AccountLocalMethod =
   | "admin-provision-site-license"
   | "update-site-license"
   | "add-site-license-pool"
+  | "create-site-license-external-claim-pool"
+  | "add-site-license-external-claim-key"
+  | "list-site-license-external-claim-pools"
+  | "disable-site-license-external-claim-pool"
+  | "list-site-license-external-claim-keys"
+  | "revoke-site-license-external-claim-key"
+  | "list-site-license-external-claim-consumptions"
+  | "consume-site-license-external-claim-token"
   | "archive-site-license-pool"
   | "set-site-license-manager"
   | "remove-site-license-manager"
@@ -2626,6 +2746,10 @@ export interface InterBayHostControlApi {
   getBackupExecutionStatus: (opts: {
     host_id: string;
   }) => Promise<HostBackupExecutionStatus>;
+  invalidateBackupConfig: (opts: {
+    host_id: string;
+    invalidate?: HostControlArg<"invalidateBackupConfig">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["invalidateBackupConfig"]>>>;
   getManagedComponentStatus: (opts: {
     host_id: string;
   }) => Promise<HostManagedComponentStatus[]>;
@@ -2757,6 +2881,9 @@ export interface InterBayAccountLocalApi {
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
+  sendEmailVerification: (
+    opts: AccountLocalSendEmailVerificationRequest,
+  ) => Promise<string | undefined>;
   adminVerifyEmailAddress: (
     opts: AccountLocalAdminVerifyEmailAddressRequest,
   ) => Promise<AccountLocalAdminVerifyEmailAddressResult>;
@@ -2841,6 +2968,15 @@ export interface InterBayAccountLocalApi {
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
+  getTeamLicense: (
+    opts: AccountLocalGetTeamLicenseRequest,
+  ) => Promise<TeamLicenseOverview | null>;
+  getTeamLicenseQuote: (
+    opts: AccountLocalGetTeamLicenseQuoteRequest,
+  ) => Promise<TeamLicenseQuote>;
+  purchaseTeamLicenseChange: (
+    opts: AccountLocalPurchaseTeamLicenseChangeRequest,
+  ) => Promise<TeamLicenseOverview>;
   adminProvisionSiteLicense: (
     opts: AccountLocalAdminProvisionSiteLicenseRequest,
   ) => Promise<SiteLicenseOverview>;
@@ -2883,6 +3019,30 @@ export interface InterBayAccountLocalApi {
   addSiteLicensePool: (
     opts: AccountLocalAddSiteLicensePoolRequest,
   ) => Promise<SiteLicenseOverview>;
+  createSiteLicenseExternalClaimPool: (
+    opts: AccountLocalCreateSiteLicenseExternalClaimPoolRequest,
+  ) => Promise<SiteLicenseExternalClaimPool>;
+  addSiteLicenseExternalClaimKey: (
+    opts: AccountLocalAddSiteLicenseExternalClaimKeyRequest,
+  ) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimPools: (
+    opts: AccountLocalListSiteLicenseExternalClaimPoolsRequest,
+  ) => Promise<SiteLicenseExternalClaimPool[]>;
+  disableSiteLicenseExternalClaimPool: (
+    opts: AccountLocalDisableSiteLicenseExternalClaimPoolRequest,
+  ) => Promise<SiteLicenseExternalClaimPool>;
+  listSiteLicenseExternalClaimKeys: (
+    opts: AccountLocalListSiteLicenseExternalClaimKeysRequest,
+  ) => Promise<SiteLicenseExternalClaimKey[]>;
+  revokeSiteLicenseExternalClaimKey: (
+    opts: AccountLocalRevokeSiteLicenseExternalClaimKeyRequest,
+  ) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimConsumptions: (
+    opts: AccountLocalListSiteLicenseExternalClaimConsumptionsRequest,
+  ) => Promise<SiteLicenseExternalClaimConsumption[]>;
+  consumeSiteLicenseExternalClaimToken: (
+    opts: AccountLocalConsumeSiteLicenseExternalClaimTokenRequest,
+  ) => Promise<SiteLicenseExternalClaimConsumption>;
   archiveSiteLicensePool: (
     opts: AccountLocalArchiveSiteLicensePoolRequest,
   ) => Promise<SiteLicenseOverview>;
@@ -3169,6 +3329,10 @@ const HOST_CONTROL_METHOD_SPECS = [
   {
     name: "getBackupExecutionStatus",
     method: "get-backup-execution-status",
+  },
+  {
+    name: "invalidateBackupConfig",
+    method: "invalidate-backup-config",
   },
   {
     name: "getManagedComponentStatus",
@@ -4606,6 +4770,15 @@ export function createInterBayAccountLocalClient({
       method: "redeem-verify-email",
     }),
   });
+  const sendEmailVerificationClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "sendEmailVerification">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "send-email-verification",
+    }),
+  });
   const adminVerifyEmailAddressClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "adminVerifyEmailAddress">
   >({
@@ -4858,6 +5031,33 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-packages",
     }),
   });
+  const getTeamLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getTeamLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-team-license",
+    }),
+  });
+  const getTeamLicenseQuoteClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getTeamLicenseQuote">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-team-license-quote",
+    }),
+  });
+  const purchaseTeamLicenseChangeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "purchaseTeamLicenseChange">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "purchase-team-license-change",
+    }),
+  });
   const adminProvisionSiteLicenseClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
   >({
@@ -4982,6 +5182,78 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "add-site-license-pool",
+    }),
+  });
+  const createSiteLicenseExternalClaimPoolClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "createSiteLicenseExternalClaimPool">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "create-site-license-external-claim-pool",
+    }),
+  });
+  const addSiteLicenseExternalClaimKeyClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "addSiteLicenseExternalClaimKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "add-site-license-external-claim-key",
+    }),
+  });
+  const listSiteLicenseExternalClaimPoolsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listSiteLicenseExternalClaimPools">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-site-license-external-claim-pools",
+    }),
+  });
+  const disableSiteLicenseExternalClaimPoolClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "disableSiteLicenseExternalClaimPool">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "disable-site-license-external-claim-pool",
+    }),
+  });
+  const listSiteLicenseExternalClaimKeysClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listSiteLicenseExternalClaimKeys">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-site-license-external-claim-keys",
+    }),
+  });
+  const revokeSiteLicenseExternalClaimKeyClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "revokeSiteLicenseExternalClaimKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "revoke-site-license-external-claim-key",
+    }),
+  });
+  const listSiteLicenseExternalClaimConsumptionsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listSiteLicenseExternalClaimConsumptions">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-site-license-external-claim-consumptions",
+    }),
+  });
+  const consumeSiteLicenseExternalClaimTokenClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "consumeSiteLicenseExternalClaimToken">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "consume-site-license-external-claim-token",
     }),
   });
   const archiveSiteLicensePoolClient = createServiceClient<
@@ -5165,6 +5437,8 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
+    sendEmailVerification: async (opts) =>
+      await sendEmailVerificationClient.sendEmailVerification(opts),
     adminVerifyEmailAddress: async (opts) =>
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
     adminDisableTwoFactor: async (opts) =>
@@ -5236,6 +5510,12 @@ export function createInterBayAccountLocalClient({
       ),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
+    getTeamLicense: async (opts) =>
+      await getTeamLicenseClient.getTeamLicense(opts),
+    getTeamLicenseQuote: async (opts) =>
+      await getTeamLicenseQuoteClient.getTeamLicenseQuote(opts),
+    purchaseTeamLicenseChange: async (opts) =>
+      await purchaseTeamLicenseChangeClient.purchaseTeamLicenseChange(opts),
     adminProvisionSiteLicense: async (opts) =>
       await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
     listSiteLicenseOverviews: async (opts) =>
@@ -5264,6 +5544,38 @@ export function createInterBayAccountLocalClient({
       await updateSiteLicenseClient.updateSiteLicense(opts),
     addSiteLicensePool: async (opts) =>
       await addSiteLicensePoolClient.addSiteLicensePool(opts),
+    createSiteLicenseExternalClaimPool: async (opts) =>
+      await createSiteLicenseExternalClaimPoolClient.createSiteLicenseExternalClaimPool(
+        opts,
+      ),
+    addSiteLicenseExternalClaimKey: async (opts) =>
+      await addSiteLicenseExternalClaimKeyClient.addSiteLicenseExternalClaimKey(
+        opts,
+      ),
+    listSiteLicenseExternalClaimPools: async (opts) =>
+      await listSiteLicenseExternalClaimPoolsClient.listSiteLicenseExternalClaimPools(
+        opts,
+      ),
+    disableSiteLicenseExternalClaimPool: async (opts) =>
+      await disableSiteLicenseExternalClaimPoolClient.disableSiteLicenseExternalClaimPool(
+        opts,
+      ),
+    listSiteLicenseExternalClaimKeys: async (opts) =>
+      await listSiteLicenseExternalClaimKeysClient.listSiteLicenseExternalClaimKeys(
+        opts,
+      ),
+    revokeSiteLicenseExternalClaimKey: async (opts) =>
+      await revokeSiteLicenseExternalClaimKeyClient.revokeSiteLicenseExternalClaimKey(
+        opts,
+      ),
+    listSiteLicenseExternalClaimConsumptions: async (opts) =>
+      await listSiteLicenseExternalClaimConsumptionsClient.listSiteLicenseExternalClaimConsumptions(
+        opts,
+      ),
+    consumeSiteLicenseExternalClaimToken: async (opts) =>
+      await consumeSiteLicenseExternalClaimTokenClient.consumeSiteLicenseExternalClaimToken(
+        opts,
+      ),
     archiveSiteLicensePool: async (opts) =>
       await archiveSiteLicensePoolClient.archiveSiteLicensePool(opts),
     setSiteLicenseManager: async (opts) =>
@@ -5449,6 +5761,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         redeemVerifyEmail: async (opts) => await impl.redeemVerifyEmail(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "sendEmailVerification">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "send-email-verification",
+      }),
+      impl: {
+        sendEmailVerification: async (opts) =>
+          await impl.sendEmailVerification(opts),
       },
     }),
     createServiceHandler<
@@ -5835,6 +6161,43 @@ export function createInterBayAccountLocalHandler({
           await impl.getMembershipPackages(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getTeamLicense">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-team-license",
+      }),
+      impl: {
+        getTeamLicense: async (opts) => await impl.getTeamLicense(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getTeamLicenseQuote">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-team-license-quote",
+      }),
+      impl: {
+        getTeamLicenseQuote: async (opts) =>
+          await impl.getTeamLicenseQuote(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "purchaseTeamLicenseChange">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "purchase-team-license-change",
+      }),
+      impl: {
+        purchaseTeamLicenseChange: async (opts) =>
+          await impl.purchaseTeamLicenseChange(opts),
+      },
+    }),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
     >({
@@ -6023,6 +6386,118 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         addSiteLicensePool: async (opts) => await impl.addSiteLicensePool(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "createSiteLicenseExternalClaimPool">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "create-site-license-external-claim-pool",
+      }),
+      impl: {
+        createSiteLicenseExternalClaimPool: async (opts) =>
+          await impl.createSiteLicenseExternalClaimPool(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "addSiteLicenseExternalClaimKey">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "add-site-license-external-claim-key",
+      }),
+      impl: {
+        addSiteLicenseExternalClaimKey: async (opts) =>
+          await impl.addSiteLicenseExternalClaimKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "listSiteLicenseExternalClaimPools">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "list-site-license-external-claim-pools",
+      }),
+      impl: {
+        listSiteLicenseExternalClaimPools: async (opts) =>
+          await impl.listSiteLicenseExternalClaimPools(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "disableSiteLicenseExternalClaimPool">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "disable-site-license-external-claim-pool",
+      }),
+      impl: {
+        disableSiteLicenseExternalClaimPool: async (opts) =>
+          await impl.disableSiteLicenseExternalClaimPool(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "listSiteLicenseExternalClaimKeys">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "list-site-license-external-claim-keys",
+      }),
+      impl: {
+        listSiteLicenseExternalClaimKeys: async (opts) =>
+          await impl.listSiteLicenseExternalClaimKeys(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "revokeSiteLicenseExternalClaimKey">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "revoke-site-license-external-claim-key",
+      }),
+      impl: {
+        revokeSiteLicenseExternalClaimKey: async (opts) =>
+          await impl.revokeSiteLicenseExternalClaimKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "listSiteLicenseExternalClaimConsumptions">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "list-site-license-external-claim-consumptions",
+      }),
+      impl: {
+        listSiteLicenseExternalClaimConsumptions: async (opts) =>
+          await impl.listSiteLicenseExternalClaimConsumptions(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "consumeSiteLicenseExternalClaimToken">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "consume-site-license-external-claim-token",
+      }),
+      impl: {
+        consumeSiteLicenseExternalClaimToken: async (opts) =>
+          await impl.consumeSiteLicenseExternalClaimToken(opts),
       },
     }),
     createServiceHandler<

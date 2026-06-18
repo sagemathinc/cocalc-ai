@@ -162,6 +162,51 @@ test("emitError emits structured fresh-auth hint in json mode", () => {
   assert.match(parsed.error.hint, /cocalc auth elevate --dev/);
 });
 
+test("emitError suggests auth login for cookie-required CLI failures", () => {
+  const output = withStderrCapture(() => {
+    emitError(
+      {
+        globals: { output: "table" },
+        apiBaseUrl: "https://lite.example.test",
+        accountId: "acct-1",
+      },
+      "browser files",
+      new Error(
+        "failed to sign in - Error: no auth cookie set; set one of 'hub_password', 'remember_me', api_key, 'project_secret' or 'project_id'",
+      ),
+      (url) => url,
+    );
+  });
+
+  assert.match(output, /no auth cookie set/);
+  assert.match(output, /cookie-backed CLI login/);
+  assert.match(output, /cocalc --api https:\/\/lite\.example\.test auth login/);
+  assert.match(output, /API key or bearer token is not enough/);
+});
+
+test("emitError emits structured auth-login hint in json mode", () => {
+  const output = withStderrCapture(() => {
+    emitError(
+      {
+        globals: { output: "json", api: "lite.example.test" },
+        accountId: "acct-1",
+      },
+      "browser session list",
+      new Error("browser session list unavailable: no remember_me cookie set"),
+      (url) => `https://${url}`,
+    );
+  });
+
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error.code, "command_failed");
+  assert.match(
+    parsed.error.hint,
+    /cocalc --api https:\/\/lite\.example\.test auth login/,
+  );
+  assert.match(parsed.error.hint, /cookie-backed CLI login/);
+});
+
 test("emitError emits structured project hard-delete rate-limit details in json mode", () => {
   const output = withStderrCapture(() => {
     emitError(
