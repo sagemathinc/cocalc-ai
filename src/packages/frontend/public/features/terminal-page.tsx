@@ -180,7 +180,7 @@ function TermFileDiagram() {
         <Flex align="center" gap={12}>
           <IconBadge accent="#096dd9" icon="file" />
           <div>
-            <Text strong>A .term file gives the shell an address</Text>
+            <Text strong>Open the file, land in its folder</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
               Reopen the same terminal context from the project file tree.
             </div>
@@ -245,7 +245,7 @@ function TermFileDiagram() {
 
 function SharedStreamDiagram() {
   const clients = [
-    ["Instructor", "#278c83"],
+    ["Researcher", "#278c83"],
     ["Student", "#096dd9"],
     ["Codex", "#ad6800"],
   ];
@@ -374,10 +374,10 @@ export default function TerminalFeaturePage({
                 A .term file gives the shell an address
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Open <code>research/runs/run.term</code> and the shell starts in
-                <code>research/runs/</code>. Reopen that file later and the
-                terminal context is easy for a collaborator, instructor, or
-                agent to find again.
+                Open <code>research/runs/run.term</code> and the shell starts in{" "}
+                <code>research/runs/</code>. Reopen that file later and the same
+                terminal context — working directory and history — comes back
+                for a collaborator, reviewer, or agent.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 That file anchor makes terminal work part of the project context
@@ -438,7 +438,10 @@ export default function TerminalFeaturePage({
               items={[
                 "Edit a script and run it in the adjacent terminal.",
                 "Tail logs while testing a notebook or local web app.",
-                "Use the `open` command to pop files into the browser workspace.",
+                <>
+                  Use the <code>open</code> command to pop files into the
+                  browser workspace.
+                </>,
               ]}
             />
           </PublicSection>
