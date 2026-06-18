@@ -14,12 +14,7 @@ import {
   featureSupportPath,
   LinkButton,
 } from "./page-components";
-import {
-  ContextList,
-  IconBadge,
-  StartCard,
-  TerminalMock,
-} from "./feature-visuals";
+import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -79,16 +74,6 @@ function RWorkflowMock() {
             </Col>
           ))}
         </Row>
-
-        <TerminalMock
-          title="R terminal"
-          rows={[
-            "$ Rscript analysis.R",
-            "wrote figures/model-diagnostics.pdf",
-            "$ quarto render report.qmd",
-            "created report.html",
-          ]}
-        />
       </Flex>
     </div>
   );
