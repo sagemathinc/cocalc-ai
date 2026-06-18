@@ -228,19 +228,6 @@ function buildClusterDefaultCandidates(
   );
 }
 
-function clusterDefaultDescription(artifact: HostSoftwareArtifact): string {
-  switch (clusterDefaultArtifact(artifact)) {
-    case "project-host":
-      return "Choose the project-host bundle version that new hosts should use by default. Running hosts that follow the default reconcile automatically.";
-    case "project":
-      return "Choose the project bundle version that newly started projects should use by default. Existing running projects keep their current bundle until restarted or reconciled.";
-    case "tools":
-      return "Choose the tools payload that projects should use by default. The selector is deduped by version across catalog sources.";
-    default:
-      return "Choose the runtime artifact version that hosts should use by default.";
-  }
-}
-
 function defaultSelectionForArtifact({
   artifact,
   candidates,
@@ -256,7 +243,13 @@ function defaultSelectionForArtifact({
   const currentMatch = rows.find(
     (row) => row.version === current?.desired_version,
   );
-  return currentMatch?.key ?? rows[0].key;
+  if (current?.desired_version) {
+    return (
+      currentMatch?.key ??
+      `current:${toRuntimeArtifact(artifact)}:${current.desired_version}`
+    );
+  }
+  return rows[0].key;
 }
 
 export const HostRuntimeVersionsPanel: React.FC<
@@ -550,125 +543,106 @@ export const HostRuntimeVersionsPanel: React.FC<
             description={globalDeploymentsError}
           />
         ) : null}
-        {CLUSTER_DEFAULT_ARTIFACTS.map((artifact) => {
-          const candidates = clusterDefaultCandidates.get(artifact) ?? [];
-          const currentDefault = globalDefaultMap.get(
-            toRuntimeArtifact(artifact),
-          );
-          const selectedKey = selectedClusterDefaultKeys[artifact];
-          const selectedVersion = candidates.find(
-            (row) => row.key === selectedKey,
-          );
-          const selectedActionKey = selectedVersion?.version
-            ? `${toRuntimeArtifact(artifact)}:${selectedVersion.version}`
-            : undefined;
-          const selectedIsCurrent =
-            !!selectedVersion?.version &&
-            selectedVersion.version === currentDefault?.desired_version;
-          const label = artifactLabel(artifact);
-          return (
-            <Card
-              key={artifact}
-              size="small"
-              title={`${label} Cluster Default`}
-            >
-              <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                <Typography.Paragraph
-                  type="secondary"
-                  style={{ marginBottom: 0 }}
-                >
-                  {clusterDefaultDescription(artifact)}
-                  {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
-                </Typography.Paragraph>
-                <Space direction="vertical" size={4}>
-                  <Typography.Text strong>
-                    Current cluster default
-                  </Typography.Text>
-                  {currentDefault?.desired_version ? (
-                    <Typography.Text>
-                      <Typography.Text code>
-                        {currentDefault.desired_version}
-                      </Typography.Text>{" "}
-                      <Typography.Text type="secondary">
-                        since <TimeAgo date={currentDefault.updated_at} />
-                      </Typography.Text>
-                    </Typography.Text>
-                  ) : (
-                    <Typography.Text type="secondary">
-                      No {label.toLowerCase()} default is recorded yet.
-                    </Typography.Text>
-                  )}
-                </Space>
-                <Space wrap size={8}>
-                  <Select
-                    style={{ minWidth: 560 }}
-                    placeholder={`Select a ${label.toLowerCase()} version`}
-                    value={selectedKey}
-                    onChange={(value) =>
-                      setSelectedClusterDefaultKeys((current) => ({
-                        ...current,
-                        [artifact]: value,
-                      }))
-                    }
-                    options={candidates.map((row) => ({
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          {CLUSTER_DEFAULT_ARTIFACTS.map((artifact) => {
+            const candidates = clusterDefaultCandidates.get(artifact) ?? [];
+            const currentDefault = globalDefaultMap.get(
+              toRuntimeArtifact(artifact),
+            );
+            const selectedKey = selectedClusterDefaultKeys[artifact];
+            const selectedVersion = candidates.find(
+              (row) => row.key === selectedKey,
+            );
+            const currentFallbackKey = currentDefault?.desired_version
+              ? `current:${toRuntimeArtifact(artifact)}:${currentDefault.desired_version}`
+              : undefined;
+            const selectedActionKey = selectedVersion?.version
+              ? `${toRuntimeArtifact(artifact)}:${selectedVersion.version}`
+              : undefined;
+            const selectedIsCurrent =
+              (!!selectedVersion?.version &&
+                selectedVersion.version === currentDefault?.desired_version) ||
+              (!!currentFallbackKey && selectedKey === currentFallbackKey);
+            const label = artifactLabel(artifact);
+            const options =
+              currentFallbackKey &&
+              currentDefault?.desired_version &&
+              !candidates.some(
+                (row) => row.version === currentDefault.desired_version,
+              )
+                ? [
+                    {
+                      value: currentFallbackKey,
+                      label: `${currentDefault.desired_version} (current, not in catalog)`,
+                    },
+                    ...candidates.map((row) => ({
                       value: row.key,
-                      label: `${row.version} · ${sourceLabel(row.source)} · ${row.running_hosts} running host${row.running_hosts === 1 ? "" : "s"}${
-                        row.size_bytes
-                          ? ` · ${human_readable_size(row.size_bytes)}`
-                          : ""
-                      }`,
-                    }))}
-                  />
-                  <Popconfirm
-                    title={`Set ${label.toLowerCase()} cluster default?`}
-                    description={
-                      selectedVersion?.version
-                        ? `Set ${selectedVersion.version} as the ${label.toLowerCase()} cluster default. Running hosts that follow the default will reconcile automatically.`
-                        : "Select a version first."
+                      label: row.version,
+                    })),
+                  ]
+                : candidates.map((row) => ({
+                    value: row.key,
+                    label: row.version,
+                  }));
+            return (
+              <div
+                key={artifact}
+                style={{
+                  alignItems: "center",
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "180px minmax(320px, 1fr) auto",
+                }}
+              >
+                <Typography.Text strong>{label}</Typography.Text>
+                <Select
+                  placeholder={`Select a ${label.toLowerCase()} version`}
+                  value={selectedKey}
+                  onChange={(value) =>
+                    setSelectedClusterDefaultKeys((current) => ({
+                      ...current,
+                      [artifact]: value,
+                    }))
+                  }
+                  options={options}
+                />
+                <Popconfirm
+                  title="Switch new and existing hosts that follow the default to this version?"
+                  okText="Change version"
+                  disabled={
+                    !selectedVersion?.version ||
+                    !onSetClusterDefault ||
+                    selectedIsCurrent
+                  }
+                  onConfirm={() => {
+                    if (!selectedVersion?.version || !onSetClusterDefault) {
+                      return;
                     }
-                    okText="Set default"
+                    return onSetClusterDefault({
+                      artifact,
+                      desired_version: selectedVersion.version,
+                      source: selectedVersion.source,
+                    });
+                  }}
+                >
+                  <Button
                     disabled={
                       !selectedVersion?.version ||
                       !onSetClusterDefault ||
                       selectedIsCurrent
                     }
-                    onConfirm={() => {
-                      if (!selectedVersion?.version || !onSetClusterDefault) {
-                        return;
-                      }
-                      return onSetClusterDefault({
-                        artifact,
-                        desired_version: selectedVersion.version,
-                        source: selectedVersion.source,
-                      });
-                    }}
+                    loading={
+                      !!selectedActionKey &&
+                      settingClusterDefaultKey === selectedActionKey
+                    }
                   >
-                    <Button
-                      type="primary"
-                      disabled={
-                        !selectedVersion?.version ||
-                        !onSetClusterDefault ||
-                        selectedIsCurrent
-                      }
-                      loading={
-                        !!selectedActionKey &&
-                        settingClusterDefaultKey === selectedActionKey
-                      }
-                    >
-                      Set cluster default
-                    </Button>
-                  </Popconfirm>
-                </Space>
-                {selectedIsCurrent ? (
-                  <Typography.Text type="secondary">
-                    The selected version is already the {label.toLowerCase()}{" "}
-                    cluster default.
-                  </Typography.Text>
-                ) : null}
-              </Space>
-            </Card>
-          );
-        })}
+                    Change version
+                  </Button>
+                </Popconfirm>
+              </div>
+            );
+          })}
+        </Space>
         <details>
           <summary>
             <Typography.Text type="secondary">
@@ -676,6 +650,11 @@ export const HostRuntimeVersionsPanel: React.FC<
             </Typography.Text>
           </summary>
           <div style={{ marginTop: 12 }}>
+            {hubSourceLabel ? (
+              <Typography.Paragraph type="secondary">
+                Hub source: {hubSourceLabel}
+              </Typography.Paragraph>
+            ) : null}
             <Table<VersionRow>
               size="small"
               rowKey="key"
