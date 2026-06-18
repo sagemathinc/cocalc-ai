@@ -1119,6 +1119,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   }
   const rolloutStartedAt = Date.now();
   let response: HostManagedComponentRolloutResponse;
+  let rolloutRequestError: unknown;
   try {
     response = await withTimeout({
       promise: client.rolloutManagedComponents({
@@ -1128,25 +1129,19 @@ export async function rolloutHostManagedComponentsInternalHelper({
       timeoutMs: managedComponentRolloutRpcTimeoutMs,
     });
   } catch (err) {
-    if (
-      requestedProjectHostRollout &&
-      err instanceof ManagedComponentRolloutRpcTimeoutError
-    ) {
-      await onProgress?.({
-        rollout_phase: "managed_components.rpc_timeout",
-        rollout_phase_label:
-          "Managed component rollout request timed out; verifying host state",
-        rollout_phase_owner: "managed component alignment",
-        rollout_target_version: desiredProjectHostVersion,
-      });
-      response = assumedManagedComponentRolloutResponse(components);
-    } else {
-      throw await enrichManagedComponentRolloutError({
-        err,
-        client,
-        components,
-      });
-    }
+    rolloutRequestError = err;
+    const timedOut = err instanceof ManagedComponentRolloutRpcTimeoutError;
+    await onProgress?.({
+      rollout_phase: timedOut
+        ? "managed_components.rpc_timeout"
+        : "managed_components.rpc_interrupted",
+      rollout_phase_label: timedOut
+        ? "Managed component rollout request timed out; verifying host state"
+        : "Managed component rollout request was interrupted; verifying host state",
+      rollout_phase_owner: "managed component alignment",
+      rollout_target_version: desiredProjectHostVersion,
+    });
+    response = assumedManagedComponentRolloutResponse(components);
   }
   let refreshedRow = row;
   if (requestedProjectHostRollout) {
@@ -1337,14 +1332,32 @@ export async function rolloutHostManagedComponentsInternalHelper({
       refreshedRow = await loadHostForStartStop(id, account_id);
     }
     if (lastError != null) {
-      throw new Error(
+      const err = new Error(
         `managed component alignment could not be verified: ${lastError instanceof Error ? lastError.message : lastError}`,
       );
+      throw rolloutRequestError == null
+        ? err
+        : await enrichManagedComponentRolloutError({
+            err: new Error(
+              `${err.message}; rollout request error: ${rolloutRequestError instanceof Error ? rolloutRequestError.message : rolloutRequestError}`,
+            ),
+            client,
+            components,
+          });
     }
     if (lastFailures.length > 0) {
-      throw new Error(
+      const err = new Error(
         `managed component rollout did not converge: ${lastFailures.join("; ")}`,
       );
+      throw rolloutRequestError == null
+        ? err
+        : await enrichManagedComponentRolloutError({
+            err: new Error(
+              `${err.message}; rollout request error: ${rolloutRequestError instanceof Error ? rolloutRequestError.message : rolloutRequestError}`,
+            ),
+            client,
+            components,
+          });
     }
     await onProgress?.({
       rollout_phase: "managed_components.aligned",

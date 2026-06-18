@@ -1712,10 +1712,79 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
         loadEffectiveRuntimeDeployments: async () => [],
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
       }),
     ).rejects.toThrow(
       /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[conat-router\]/,
     );
+  });
+
+  it("accepts interrupted managed rollout RPCs when status verification converges", async () => {
+    const response = await rolloutHostManagedComponentsInternalHelper({
+      account_id: "account-1",
+      id: "host-1",
+      components: ["conat-router"],
+      reason: "automatic_runtime_deployment_reconcile",
+      loadHostForStartStop: async () => ({
+        id: "host-1",
+        status: "running",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: "ph-v1",
+          },
+        },
+      }),
+      assertHostRunningForUpgrade: () => undefined,
+      hostControlClient: async () => ({
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => {
+          throw new Error("socket has been disconnected");
+        },
+        getManagedComponentStatus: async () => [
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: "ph-v1",
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: ["ph-v1"],
+            running_pids: [4321],
+          },
+        ],
+      }),
+      waitForHostHeartbeatAfter: async () => undefined,
+      installedProjectHostArtifactVersion: (row) =>
+        row?.metadata?.software?.project_host,
+      recordProjectHostLocalRollbackInternal: async () => ({
+        host_id: "host-1",
+        rollback_version: "ph-v1",
+        source: "host-agent",
+      }),
+      project_host_local_rollback_error_code: "project_host_local_rollback",
+      setLastKnownGoodArtifactVersionInternal: async () => undefined,
+      runtimeDeploymentsForComponentRollout: () => [],
+      requestedByForRuntimeDeployments: () => "account-1",
+      setProjectHostRuntimeDeployments: async () => undefined,
+      loadEffectiveRuntimeDeployments: async () => [],
+      projectHostRolloutSettleTimeoutMs: 5,
+      projectHostRolloutPollMs: 0,
+    });
+
+    expect(response.results).toEqual([
+      expect.objectContaining({
+        component: "conat-router",
+        action: "restarted",
+      }),
+    ]);
   });
 
   it("uses the effective runtime deployment target as the desired project-host version", async () => {
@@ -1922,6 +1991,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
         loadEffectiveRuntimeDeployments: async () => [],
+        projectHostRolloutSettleTimeoutMs: 5,
+        projectHostRolloutPollMs: 0,
       }),
     ).rejects.toThrow(
       /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[acp-worker\]/,
