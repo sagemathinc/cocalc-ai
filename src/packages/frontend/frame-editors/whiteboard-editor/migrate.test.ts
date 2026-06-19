@@ -17,6 +17,74 @@ function syncdoc(content: string) {
 }
 
 describe("whiteboard document migrations", () => {
+  it("imports legacy slides markdown without escaped delimiters", () => {
+    const doc = syncdoc(
+      [
+        JSON.stringify({
+          data: {
+            color: "#252937",
+            fontSize: 24,
+            initStr: "\n# \n",
+            placeholder: "# Click to edit title\n\n",
+          },
+          h: 121,
+          id: "title",
+          page: "page-1",
+          str: String.raw`# \[hsy\] William \(and Bella\)` + "\n\n",
+          type: "text",
+          w: 847,
+          x: -200,
+          y: -492,
+          z: 0,
+        }),
+        JSON.stringify({
+          data: { color: "#fff9c4" },
+          h: 101,
+          id: "note",
+          page: "page-1",
+          str:
+            String.raw`\[ws\] Harald \(and Blaec\)` + "\n\n\n$$\nx^3\n$$\n\n",
+          type: "note",
+          w: 350,
+          x: -147,
+          y: -272,
+          z: 1,
+        }),
+        JSON.stringify({
+          data: { pos: 0 },
+          id: "page-1",
+          type: "page",
+          z: 0,
+        }),
+        JSON.stringify({
+          id: "code",
+          type: "code",
+          page: "page-1",
+          z: 2,
+          x: 0,
+          y: 0,
+          w: 1,
+          h: 1,
+          str: String.raw`print("\[keep code escaped\]")`,
+        }),
+      ].join("\n"),
+    );
+
+    expect(migrateToCurrentDocumentSchema(doc)).toBe(true);
+
+    const rows = doc.content.split("\n").map((line) => JSON.parse(line));
+    expect(rows.find((row) => row.id === "title").str).toBe(
+      "# [hsy] William (and Bella)\n\n",
+    );
+    expect(rows.find((row) => row.id === "note").str).toBe(
+      "[ws] Harald (and Blaec)\n\n\n$$\nx^3\n$$\n\n",
+    );
+    expect(rows.find((row) => row.id === "code").str).toBe(
+      String.raw`print("\[keep code escaped\]")`,
+    );
+    expect(rows.find((row) => row.id === "page-1").data.schemaVersion).toBe(1);
+  });
+
   it("converts unversioned page-id documents to schema v1", () => {
     const doc = syncdoc(
       [

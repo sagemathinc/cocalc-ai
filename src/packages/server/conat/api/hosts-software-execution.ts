@@ -327,6 +327,13 @@ function observedRunningProjectHostVersion(
   return versions.length === 1 ? versions[0] : undefined;
 }
 
+function observedManagedComponentStatusFromRow(
+  row: any,
+): HostManagedComponentStatus[] | undefined {
+  const observed = row?.metadata?.observed_components;
+  return Array.isArray(observed) ? observed : undefined;
+}
+
 function managedComponentAlignmentFailures({
   statuses,
   components,
@@ -1169,11 +1176,17 @@ export async function rolloutHostManagedComponentsInternalHelper({
       statusClient = await hostControlClient(id, 30_000);
       if (typeof statusClient.getManagedComponentStatus === "function") {
         runningVersion = observedRunningProjectHostVersion(
-          await statusClient.getManagedComponentStatus(),
+          await withTimeout({
+            promise: statusClient.getManagedComponentStatus(),
+            timeoutMs: managedComponentRolloutRpcTimeoutMs,
+          }),
         );
       }
       if (typeof statusClient.getHostAgentStatus === "function") {
-        hostAgentStatus = await statusClient.getHostAgentStatus();
+        hostAgentStatus = await withTimeout({
+          promise: statusClient.getHostAgentStatus(),
+          timeoutMs: managedComponentRolloutRpcTimeoutMs,
+        });
       }
     } catch {
       // The host control RPC can still be coming back after project-host
@@ -1313,7 +1326,10 @@ export async function rolloutHostManagedComponentsInternalHelper({
             "host control client does not support managed component status",
           );
         }
-        const statuses = await statusClient.getManagedComponentStatus();
+        const statuses = await withTimeout({
+          promise: statusClient.getManagedComponentStatus(),
+          timeoutMs: managedComponentRolloutRpcTimeoutMs,
+        });
         lastFailures = managedComponentAlignmentFailures({
           statuses,
           components: componentsRequiringManagedStatusVerification,
@@ -1326,7 +1342,20 @@ export async function rolloutHostManagedComponentsInternalHelper({
         }
       } catch (err) {
         lastError = err;
-        lastFailures = [];
+        const observedStatuses =
+          observedManagedComponentStatusFromRow(refreshedRow);
+        lastFailures = observedStatuses
+          ? managedComponentAlignmentFailures({
+              statuses: observedStatuses,
+              components: componentsRequiringManagedStatusVerification,
+              desiredVersion,
+              row: refreshedRow,
+            })
+          : [];
+        if (observedStatuses && lastFailures.length === 0) {
+          lastError = undefined;
+          break;
+        }
       }
       await delay(projectHostRolloutPollMs);
       refreshedRow = await loadHostForStartStop(id, account_id);

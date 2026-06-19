@@ -63,10 +63,16 @@ describe("NoFiles", () => {
     );
 
     expect(screen.getByText("Welcome to your project")).not.toBeNull();
+    expect(screen.getByTestId("empty-directory-welcome")).toHaveStyle({
+      margin: "32px auto 28px auto",
+      width: "calc(100% - 56px)",
+      maxWidth: "1120px",
+    });
     expect(screen.getByText("Jupyter Notebook")).not.toBeNull();
     expect(screen.getByText("Chat with AI")).not.toBeNull();
     expect(screen.getByText("Upload Files")).not.toBeNull();
     expect(screen.getByText("Browse file types")).not.toBeNull();
+    expect(screen.queryByText("Empty project")).toBeNull();
     expect(screen.getByText("Upload Files").closest("button")).toHaveClass(
       "upload-button",
     );

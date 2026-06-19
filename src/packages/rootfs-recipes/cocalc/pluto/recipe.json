@@ -1,0 +1,68 @@
+{
+  "id": "cocalc/pluto",
+  "version": 1,
+  "description": "Install Pluto.jl into a stable Julia depot and add CoCalc app/action metadata.",
+  "inputs": {
+    "depot": { "type": "string", "default": "/opt/julia-depot" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "julia",
+      "tags": ["pluto"]
+    },
+    "content": {
+      "version": 1,
+      "title": "Julia and Pluto",
+      "subtitle": "Reactive Julia notebooks with example content.",
+      "highlights": ["Julia", "Pluto notebooks"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "Pluto documentation",
+          "url": "https://plutojl.org/"
+        },
+        {
+          "kind": "browse",
+          "label": "Browse Pluto examples",
+          "path": "/opt/pluto/examples"
+        },
+        {
+          "kind": "copy-to-home",
+          "label": "Copy Pluto examples",
+          "source_path": "/opt/pluto/examples",
+          "target_path": "pluto-examples"
+        },
+        {
+          "kind": "project-app",
+          "label": "Launch Pluto",
+          "description": "Start the bundled Pluto notebook server.",
+          "app_spec": {
+            "id": "pluto",
+            "kind": "service",
+            "title": "Pluto",
+            "description": "Reactive Julia notebooks.",
+            "command": {
+              "command": "bash",
+              "args": [
+                "-lc",
+                "export JULIA_DEPOT_PATH=/opt/julia-depot${JULIA_DEPOT_PATH:+:$JULIA_DEPOT_PATH}; julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'"
+              ]
+            },
+            "network": {
+              "port": 6002,
+              "protocol": "http",
+              "base_path": "/apps/pluto"
+            },
+            "readiness": {
+              "type": "http",
+              "path": "/",
+              "timeout_ms": 120000
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -14,6 +14,7 @@ export type AdminSection =
   | "registration-tokens"
   | "rootfs"
   | "site-setup"
+  | "site-license-claims"
   | "site-licenses"
   | "site-settings"
   | "software-licenses"
@@ -32,6 +33,7 @@ const ADMIN_SECTIONS = new Set<AdminSection>([
   "registration-tokens",
   "rootfs",
   "site-setup",
+  "site-license-claims",
   "site-licenses",
   "site-settings",
   "software-licenses",

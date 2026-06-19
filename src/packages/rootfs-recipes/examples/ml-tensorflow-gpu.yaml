@@ -1,0 +1,59 @@
+version: 1
+name: ml-tensorflow-gpu
+
+steps:
+  - uses: cocalc/apt
+    with:
+      upgrade: true
+      packages:
+        - bash
+        - ca-certificates
+        - curl
+        - git
+        - less
+        - libatomic1
+        - libgomp1
+        - procps
+        - python3
+        - python3-pip
+        - python3-venv
+        - sudo
+        - wget
+        - vim
+        - tmux
+
+  - uses: cocalc/jupyter-python
+    with:
+      prefix: /opt/cocalc-jupyter
+      install_bash_kernel: true
+
+  - uses: cocalc/tensorflow-gpu
+    with:
+      prefix: /opt/cocalc-jupyter
+      package: "tensorflow[and-cuda]"
+      create_cuda_symlinks: true
+      require_gpu: false
+
+verify:
+  - command -v jupyter-lab
+  - command -v uv
+  - python3 -c 'import tensorflow as tf; print(tf.__version__, tf.config.list_physical_devices("GPU"))'
+  - python3 -c 'import ipykernel, jupyterlab, numpy, pandas, tensorflow'
+  - jupyter kernelspec list | grep -q python3
+
+publish:
+  label: TensorFlow GPU Machine Learning
+  slug: tensorflow-gpu-ml
+  description: CoCalc machine learning environment with JupyterLab, a Python kernel, scientific Python packages, uv, and TensorFlow with NVIDIA CUDA extras.
+  family: machine-learning
+  version: "2026.06"
+  channel: stable
+  visibility: collaborators
+  tags:
+    - machine-learning
+    - python
+    - jupyter
+    - tensorflow
+    - cuda
+    - nvidia-gpu
+    - uv

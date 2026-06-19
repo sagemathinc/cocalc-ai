@@ -189,6 +189,191 @@ CLI should support the same bundle for `rootfs save` and `rootfs publish`, with
 explicit CLI flags overriding config-file values. This lets an agent publish a
 fully described rootfs without browser-only steps.
 
+## Rootfs Recipes
+
+RootFS config answers "what should users see and click?" Recipes answer "how
+can this image be recreated or adapted on another CoCalc site?" These must stay
+separate from catalog metadata so the catalog entry remains the source of truth
+for published discovery UX.
+
+Recipes should initially live outside the image and outside catalog metadata,
+for example in the `cocalc-ai` repository under a dedicated recipes directory.
+Other organizations should be able to keep their own recipe repositories and
+point the CoCalc CLI at them. A published RootFS catalog entry may link to or
+store recipe provenance later, but ordinary RootFS users should not execute
+recipes implicitly.
+
+### Recipe Goals
+
+- Make useful RootFS images reproducible enough to move between CoCalc sites.
+- Provide a maintained library of best-effort composable installers for common
+  CoCalc stacks: base tools, Python/Jupyter, LaTeX, code-server, Julia/Pluto,
+  Lean, PyTorch/TensorFlow, SageMath, and similar.
+- Let agents combine recipes, run them in a project, inspect failures, patch the
+  recipe, rerun verification, and publish the resulting RootFS.
+- Produce both installed software and CoCalc-specific metadata contributions
+  such as app launchers, RootFS content actions, tags, docs links, and
+  verification status.
+- Avoid reinventing Docker. Recipes are a CoCalc RootFS authoring layer,
+  inspired by devcontainer features and GitHub Actions, not a general container
+  build system.
+
+### Recipe Shape
+
+A top-level build recipe should be readable YAML or JSON:
+
+```yaml
+version: 1
+name: julia-pluto
+base:
+  image: cocalc/minimal-jupyter
+
+steps:
+  - uses: cocalc/apt
+    with:
+      packages: [curl, ca-certificates, tar, xz-utils]
+
+  - uses: cocalc/julia
+    with:
+      version: "1.11"
+      install_prefix: /opt/julia
+
+  - uses: cocalc/pluto
+    with:
+      depot: /opt/julia-depot
+
+  - uses: cocalc/copy
+    with:
+      source: ./examples
+      target: /opt/pluto/examples
+
+verify:
+  - command -v julia
+  - julia -e 'import Pluto'
+
+publish:
+  label: Julia + Pluto
+  family: julia
+  tags: [julia, pluto]
+```
+
+Each `uses:` entry resolves to a recipe module. Initially modules can be local
+repo directories such as:
+
+```text
+src/packages/rootfs-recipes/
+  cocalc/
+    apt/
+      recipe.yaml
+      install.sh
+    julia/
+      recipe.yaml
+      install.sh
+    pluto/
+      recipe.yaml
+      install.sh
+```
+
+A module should define:
+
+- typed input schema and defaults;
+- supported OS/architecture constraints;
+- install script or command;
+- verification commands;
+- cleanup/cache behavior when appropriate;
+- metadata contributions, such as RootFS tags, app specs, content actions, and
+  docs links;
+- enough description for UI/CLI display and agent prompts.
+
+Example module contract:
+
+```yaml
+id: cocalc/apt
+version: 1
+description: Install Debian/Ubuntu packages with apt-get.
+inputs:
+  packages:
+    type: string[]
+    required: true
+  no_recommends:
+    type: boolean
+    default: true
+  update:
+    type: boolean
+    default: true
+run:
+  shell: bash
+  script: install.sh
+verify:
+  shell: bash
+  script: verify.sh
+```
+
+The CLI should validate inputs before execution and pass values through a
+controlled environment or generated JSON file rather than unsafe string
+substitution.
+
+### Recipe CLI
+
+Add a CLI workflow such as:
+
+```bash
+cocalc rootfs recipe run julia-pluto.yaml --project <project_id>
+cocalc rootfs recipe run julia-pluto.yaml --project <project_id> --publish --wait
+cocalc rootfs recipe explain julia-pluto.yaml
+cocalc rootfs recipe verify julia-pluto.yaml --project <project_id>
+```
+
+The first implementation can run recipes in an existing mutable project, then
+reuse the existing RootFS publish flow. Later versions can create a temporary
+builder project, select a base RootFS, run recipe steps, publish, then archive
+or delete the builder project.
+
+Recipe runs should produce structured logs:
+
+- resolved steps and inputs;
+- commands executed;
+- stdout/stderr per step;
+- verification results;
+- catalog metadata contributions;
+- publish operation id and resulting RootFS image id/slug.
+
+### Julia/Pluto Pilot Recipe
+
+The first concrete recipe should recreate the Julia/Pluto smoke image:
+
+- install Julia under `/opt/julia/<version>`;
+- symlink `julia` into `/usr/local/bin`;
+- install Pluto into a stable depot such as `/opt/julia-depot`;
+- set permissions so project users can read/execute the installed stack;
+- add `/opt/pluto/examples` with a hello-world Pluto notebook or Julia example;
+- verify `command -v julia` and `julia -e 'import Pluto'`;
+- contribute a Pluto project app launcher using the existing app spec format;
+- contribute RootFS actions for Julia docs, opening/browsing examples, copying
+  examples into HOME, and launching Pluto.
+
+This pilot should be runnable on another CoCalc site using only the CoCalc CLI,
+the recipe files, and network access to upstream Julia/package sources.
+
+Current implementation note:
+
+- Initial YAML/JSON recipe CLI exists under `cocalc rootfs recipe`.
+- `explain`, `run`, and `verify` subcommands are implemented.
+- `run` creates and starts a clean builder project by default, or uses
+  `--project` when provided.
+- Local recipe modules live under `src/packages/rootfs-recipes`.
+- Initial modules include `cocalc/apt`, `cocalc/jupyter-python`,
+  `cocalc/julia`, `cocalc/pluto`, `cocalc/copy`, `cocalc/pytorch-gpu`,
+  and `cocalc/tensorflow-gpu`.
+- Example recipes exist for Julia/Pluto, the minimal CoCalc site base, and
+  GPU machine learning stacks:
+  `src/packages/rootfs-recipes/examples/julia-pluto.yaml` and
+  `src/packages/rootfs-recipes/examples/cocalc-base.yaml`,
+  `src/packages/rootfs-recipes/examples/ml-pytorch-gpu.yaml`, and
+  `src/packages/rootfs-recipes/examples/ml-tensorflow-gpu.yaml`.
+- Remaining recipe work: local directory upload for examples, richer input type
+  validation, builder cleanup/archive policy, and more modules.
+
 ## Public Landing Page
 
 Route shape can be decided during implementation, but it should support stable
@@ -443,6 +628,21 @@ security and content subsystems.
 - Create a new project from the public landing page and verify that copy,
   browse/open, and app-launch actions work without browser-only catalog editing.
 
+### Phase 9: RootFS Recipes
+
+- Define the recipe file format and module contract.
+- Add a local recipe module registry in the repo.
+- Implement `cocalc rootfs recipe explain/run/verify` for local recipe files
+  and local module references.
+- Add initial modules for `cocalc/apt`, `cocalc/julia`, `cocalc/pluto`, and
+  simple file copy/example installation.
+- Make recipe modules contribute portable RootFS config metadata that can feed
+  the existing publish/config JSON path.
+- Run the Julia/Pluto pilot recipe on a fresh builder project and publish a
+  RootFS image from it.
+- Document how external sites can copy the recipe files and rebuild comparable
+  images on their own CoCalc clusters.
+
 ## Acceptance Criteria
 
 - A rootfs catalog entry can advertise publisher content without starting a
@@ -465,6 +665,9 @@ security and content subsystems.
   slug with immediate validation feedback.
 - The implementation works with seed-global catalog authority and project-owned
   bay routing.
+- A Julia/Pluto RootFS can be rebuilt on another CoCalc site from a recipe file
+  and local recipe modules, with app launch and example-copy actions preserved
+  in published catalog metadata.
 
 ## Open Decisions
 
@@ -490,3 +693,8 @@ security and content subsystems.
 - Whether rootfs config should ever be embedded in the immutable rootfs.
   - Current direction: no. Catalog metadata is the source of truth. Portable
     JSON files are import/export bundles only.
+- Whether recipe provenance should be stored in catalog metadata, attached as a
+  separate provenance record, or only linked to an external repository.
+  - Current direction: keep recipes outside catalog metadata for MVP. The
+    published catalog entry may record a recipe reference or run log later, but
+    recipe execution is an explicit author/admin/agent action.
