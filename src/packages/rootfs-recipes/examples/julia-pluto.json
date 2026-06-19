@@ -11,7 +11,7 @@
     {
       "uses": "cocalc/julia",
       "with": {
-        "version": "1.11.5",
+        "version": "1.12.6",
         "install_prefix": "/opt/julia"
       },
       "timeout": 900
@@ -30,7 +30,7 @@
     "slug": "julia-pluto",
     "description": "Julia with Pluto.jl installed, plus a CoCalc Pluto app launcher and examples.",
     "family": "julia",
-    "version": "1.11",
+    "version": "1.12",
     "channel": "stable",
     "visibility": "collaborators",
     "tags": ["julia", "pluto"]

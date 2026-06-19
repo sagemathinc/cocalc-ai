@@ -6,7 +6,7 @@ else
   SUDO="sudo -n"
 fi
 
-version="${VERSION:-1.11.5}"
+version="${VERSION:-1.12.6}"
 prefix="${INSTALL_PREFIX:-/opt/julia}"
 major_minor="$(printf '%s\n' "$version" | awk -F. '{print $1 "." $2}')"
 machine="$(uname -m)"
