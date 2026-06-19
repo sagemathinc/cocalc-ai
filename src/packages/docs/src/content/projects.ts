@@ -254,6 +254,7 @@ Explain a recipe without running it. You can pass a file path or the name of a
 bundled example recipe:
 
 ~~~sh
+cocalc rootfs recipe ls
 cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/julia-pluto.yaml
 cocalc rootfs recipe explain julia-pluto
 ~~~

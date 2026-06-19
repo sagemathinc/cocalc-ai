@@ -7,6 +7,7 @@ import test from "node:test";
 import { Command } from "commander";
 
 import { registerRootfsCommand } from "./rootfs";
+import { listRootfsRecipes } from "./rootfs-recipe";
 
 function rootfsDeps(overrides: Record<string, any> = {}) {
   let captured: any;
@@ -538,6 +539,35 @@ test("rootfs recipe explain resolves local modules", async () => {
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }
+});
+
+test("rootfs recipe ls lists bundled examples and modules", () => {
+  const result = listRootfsRecipes(join(process.cwd(), "../rootfs-recipes"));
+  assert.ok(result.examples.some((recipe) => recipe.name === "cocalc-base"));
+  assert.ok(result.examples.some((recipe) => recipe.name === "ml-pytorch-gpu"));
+  assert.ok(
+    result.modules.some((module) => module.id === "cocalc/jupyter-python"),
+  );
+  assert.ok(result.modules.some((module) => module.id === "cocalc/apt"));
+});
+
+test("rootfs recipe list is an alias for ls", async () => {
+  const seen: string[] = [];
+  const originalLog = console.log;
+  console.log = (message?: any) => {
+    seen.push(String(message ?? ""));
+  };
+  try {
+    const program = new Command();
+    registerRootfsCommand(program, rootfsDeps().deps as any);
+
+    await program.parseAsync(["node", "test", "rootfs", "recipe", "list"]);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.ok(seen.join("\n").includes("Module directory:"));
+  assert.ok(seen.join("\n").includes("Recipes:"));
+  assert.ok(seen.join("\n").includes("Modules:"));
 });
 
 test("rootfs recipe explain parses bundled cocalc base recipe", async () => {

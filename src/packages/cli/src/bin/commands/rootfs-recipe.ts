@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 
 import type { ExecuteCodeOutput } from "@cocalc/util/types/execute-code";
@@ -96,6 +96,23 @@ export type RootfsRecipeRunResult = {
   verify: RootfsRecipeStepResult[];
   config: RootfsConfigExport;
   publish?: unknown;
+};
+
+export type RootfsRecipeListResult = {
+  module_dir: string;
+  examples: {
+    name: string;
+    path: string;
+    label?: string;
+    description?: string;
+    steps: number;
+  }[];
+  modules: {
+    id: string;
+    name: string;
+    path: string;
+    description?: string;
+  }[];
 };
 
 type RootfsRecipeStepResult = {
@@ -200,6 +217,70 @@ function loadRootfsRecipeSource(
   throw new Error(
     `unknown RootFS recipe '${recipe}'. Use a recipe file path, a bundled example name such as 'cocalc-base', or a module name such as 'cocalc/jupyter-python'.`,
   );
+}
+
+export function listRootfsRecipes(moduleDir?: string): RootfsRecipeListResult {
+  const resolvedModuleDir = resolveRecipeModuleDir(moduleDir, process.cwd());
+  return {
+    module_dir: resolvedModuleDir,
+    examples: listRootfsRecipeExamples(resolvedModuleDir),
+    modules: listRootfsRecipeModules(resolvedModuleDir),
+  };
+}
+
+function listRootfsRecipeExamples(
+  moduleDir: string,
+): RootfsRecipeListResult["examples"] {
+  const examplesDir = join(moduleDir, "examples");
+  if (!existsSync(examplesDir)) return [];
+  return readdirSync(examplesDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(examplesDir, entry.name))
+    .filter((path) => [".json", ".yaml", ".yml"].includes(extname(path)))
+    .map((path) => {
+      const recipe = loadRootfsRecipe(path);
+      return {
+        name: recipe.name ?? basenameWithoutRecipeExtension(path),
+        path,
+        label: recipe.publish?.label,
+        description: recipe.publish?.description,
+        steps: recipe.steps?.length ?? 0,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function listRootfsRecipeModules(
+  moduleDir: string,
+): RootfsRecipeListResult["modules"] {
+  if (!existsSync(moduleDir)) return [];
+  return readdirSync(moduleDir, { withFileTypes: true })
+    .filter((namespace) => namespace.isDirectory())
+    .flatMap((namespace) => {
+      const namespaceDir = join(moduleDir, namespace.name);
+      return readdirSync(namespaceDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(namespaceDir, entry.name, "recipe.json"))
+        .filter((path) => existsSync(path))
+        .map((path) => {
+          const parsed = JSON.parse(readFileSync(path, "utf8"));
+          if (!isRecipeModule(parsed)) {
+            throw new Error(`recipe module file '${path}' is invalid`);
+          }
+          return {
+            id: parsed.id,
+            name: parsed.id.split("/").at(-1) ?? parsed.id,
+            path,
+            description: parsed.description,
+          };
+        });
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function basenameWithoutRecipeExtension(path: string): string {
+  const base = path.split(/[\\/]/).at(-1) ?? path;
+  return base.replace(/\.(json|ya?ml)$/i, "");
 }
 
 function resolveRecipePathFromExistingPath(path: string): string {

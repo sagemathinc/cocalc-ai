@@ -14,8 +14,10 @@ import type {
 } from "@cocalc/util/rootfs-images";
 import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
 import type { RootfsReleaseScanRun } from "@cocalc/util/rootfs-scan";
+import { emitSuccess } from "../core/cli-output";
 import {
   explainRootfsRecipe,
+  listRootfsRecipes,
   runRootfsRecipe,
   type RootfsRecipeRunOptions,
 } from "./rootfs-recipe";
@@ -43,6 +45,30 @@ function bytes(value: unknown): string {
     unit += 1;
   }
   return `${x.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatRootfsRecipeListHuman(
+  result: ReturnType<typeof listRootfsRecipes>,
+): string {
+  const lines = [`Module directory: ${result.module_dir}`, "", "Recipes:"];
+  if (result.examples.length === 0) {
+    lines.push("  (none)");
+  } else {
+    for (const recipe of result.examples) {
+      lines.push(`  ${recipe.name}${recipe.label ? ` - ${recipe.label}` : ""}`);
+    }
+  }
+  lines.push("", "Modules:");
+  if (result.modules.length === 0) {
+    lines.push("  (none)");
+  } else {
+    for (const module of result.modules) {
+      lines.push(
+        `  ${module.id}${module.description ? ` - ${module.description}` : ""}`,
+      );
+    }
+  }
+  return lines.join("\n");
 }
 
 function parseVisibility(value?: string): RootfsImageVisibility | undefined {
@@ -762,6 +788,21 @@ export function registerRootfsCommand(
   const recipe = rootfs
     .command("recipe")
     .description("build RootFS images from recipes or local recipe modules");
+
+  recipe
+    .command("ls")
+    .alias("list")
+    .description("list bundled RootFS recipe examples and local modules")
+    .option("--module-dir <path>", "local recipe module registry directory")
+    .action((opts: { moduleDir?: string }, command: Command) => {
+      const globals = command.optsWithGlobals?.() ?? {};
+      const result = listRootfsRecipes(opts.moduleDir);
+      if (globals.json || globals.output === "json") {
+        emitSuccess({ globals }, "rootfs recipe ls", result);
+      } else if (!globals.quiet) {
+        console.log(formatRootfsRecipeListHuman(result));
+      }
+    });
 
   recipe
     .command("explain <recipe>")
