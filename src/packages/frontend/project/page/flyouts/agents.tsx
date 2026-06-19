@@ -1887,6 +1887,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             : {
                 width: "100%",
                 maxWidth: AGENT_CHAT_MAX_WIDTH_PX,
+                boxSizing: "border-box",
                 margin: "0 auto",
                 padding: "12px 16px 24px",
               }
@@ -2108,6 +2109,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             }
           : {
               width: "100%",
+              boxSizing: "border-box",
               padding: "12px 16px 24px",
             }
       }
