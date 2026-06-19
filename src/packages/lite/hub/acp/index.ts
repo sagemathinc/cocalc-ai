@@ -236,6 +236,7 @@ import {
   startAcpWorkerSupervisor,
 } from "./worker-manager";
 import { buildCodexRuntimeEnv } from "./runtime-env";
+import { automationHasActiveBackendRun } from "./active-automation-run";
 
 export {
   acpAdmissionLimitsFromEffectiveLimits,
@@ -5947,7 +5948,7 @@ async function enqueueAutomationRun(
   } else if (!row.prompt?.trim()) {
     throw new Error("automation is missing a prompt");
   }
-  if (row.status === "running") {
+  if (row.status === "running" || automationHasActiveBackendRun(row)) {
     return row;
   }
   const now = Date.now();
@@ -6124,6 +6125,21 @@ async function finalizeAutomationRun(opts: {
   if (!automation_id) return;
   const current = getAcpAutomationById(automation_id);
   if (!current) return;
+  const currentJobOpId = `${current.last_job_op_id ?? ""}`.trim();
+  const finishingJobOpId = `${opts.last_job_op_id ?? ""}`.trim();
+  if (
+    currentJobOpId &&
+    finishingJobOpId &&
+    currentJobOpId !== finishingJobOpId
+  ) {
+    logger.warn("ignoring stale automation finalization", {
+      automation_id,
+      current_job_op_id: currentJobOpId,
+      finishing_job_op_id: finishingJobOpId,
+      terminal_state: opts.terminalState,
+    });
+    return;
+  }
   const now = Date.now();
   const nextUnacknowledgedRuns = (current.unacknowledged_runs ?? 0) + 1;
   const unattendedLimit =

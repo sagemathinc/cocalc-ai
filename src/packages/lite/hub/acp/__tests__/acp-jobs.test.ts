@@ -19,6 +19,7 @@ import {
   listAcpAutomationsForProject,
   upsertAcpAutomation,
 } from "../../sqlite/acp-automations";
+import { automationHasActiveBackendRun } from "../active-automation-run";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
@@ -700,6 +701,50 @@ describe("acp job queue ordering", () => {
         },
       ),
     ).toEqual({ ok: true });
+  });
+
+  it("detects active backend work for scheduled automations even if the automation row is stale", () => {
+    const baseRequest = makeRequest({
+      userMessageId: "user-automation-1",
+      assistantMessageId: "assistant-automation-1",
+      assistantDate: "2026-03-08T00:00:04.000Z",
+    });
+    const request = {
+      ...baseRequest,
+      chat: {
+        ...baseRequest.chat,
+        automation_id: "automation-running-1",
+      },
+    };
+    const job = enqueueAcpJob(request);
+    const automation = upsertAcpAutomation({
+      automation_id: "automation-running-1",
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      account_id: job.account_id ?? "account-1",
+      enabled: true,
+      status: "active",
+      next_run_at: Date.now() - 1000,
+      unacknowledged_runs: 0,
+      last_job_op_id: job.op_id,
+      last_message_id: job.assistant_message_id,
+      created_at: 10,
+      updated_at: 20,
+    });
+
+    expect(automationHasActiveBackendRun(automation)).toBe(true);
+
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+    });
+    expect(claimed?.op_id).toBe(job.op_id);
+    expect(automationHasActiveBackendRun(automation)).toBe(true);
+
+    setAcpJobState({ op_id: job.op_id, state: "completed" });
+    expect(automationHasActiveBackendRun(automation)).toBe(false);
   });
 
   it("stores recovery metadata for resumed codex turns", () => {
