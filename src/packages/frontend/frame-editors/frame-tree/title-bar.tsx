@@ -940,7 +940,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
 
       const v: (React.JSX.Element | undefined | null)[] = [];
       v.push(renderSaveTimetravelGroup(where));
-      if (props.title != null) {
+      if (props.title != null && where !== "popover") {
         v.push(renderTitle());
       }
       v.push(renderPage());
