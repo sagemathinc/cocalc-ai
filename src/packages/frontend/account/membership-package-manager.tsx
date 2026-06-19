@@ -51,6 +51,7 @@ import {
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
   assignMembershipPackageSeat,
+  assignSiteLicensePoolSeat,
   cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
   getClaimableMembershipPackages,
@@ -575,6 +576,8 @@ function formatSiteLicenseAuditAction({
       return pool ? `${pool} request approved` : "Seat request approved";
     case "pool-request-rejected":
       return pool ? `${pool} request rejected` : "Seat request rejected";
+    case "seat-manually-assigned":
+      return pool ? `${pool} seat manually assigned` : "Seat manually assigned";
     case "seat-released-by-user":
       return pool ? `${pool} seat released` : "Seat released";
     case "seat-released-for-upgrade":
@@ -1672,6 +1675,21 @@ export function SiteLicenseManager({
             setError(`${err}`);
           }
         }}
+        onAssignSeat={async (pool, target_account_id, grant_expires_at) => {
+          setError("");
+          try {
+            await runFreshAuthAction(async () => {
+              await assignSiteLicensePoolSeat({
+                package_id: pool.id,
+                target_account_id,
+                grant_expires_at,
+              });
+              await handleChanged();
+            });
+          } catch (err) {
+            setError(`${err}`);
+          }
+        }}
         onSetManager={async (site_license_id, target_account_id, role) => {
           await runFreshAuthAction(async () => {
             await setSiteLicenseManager({
@@ -1874,6 +1892,21 @@ export function SiteLicenseAdminPanel({
             await revokeSeatOrThrow({
               package_id: pool.id,
               assignment,
+            });
+            await handleChanged();
+          });
+        } catch (err) {
+          setError(`${err}`);
+        }
+      }}
+      onAssignSeat={async (pool, target_account_id, grant_expires_at) => {
+        setError("");
+        try {
+          await runFreshAuthAction(async () => {
+            await assignSiteLicensePoolSeat({
+              package_id: pool.id,
+              target_account_id,
+              grant_expires_at,
             });
             await handleChanged();
           });
@@ -2118,6 +2151,7 @@ function SiteLicenseDashboard({
   onArchivePool,
   onReview,
   onRevokeSeat,
+  onAssignSeat,
   onUpdateLicense,
   onSetManager,
   onRemoveManager,
@@ -2143,6 +2177,11 @@ function SiteLicenseDashboard({
   onRevokeSeat: (
     pool: SiteLicenseOverview["pools"][number],
     assignment: MembershipPackageAssignment,
+  ) => Promise<void>;
+  onAssignSeat: (
+    pool: SiteLicenseOverview["pools"][number],
+    target_account_id: string,
+    grant_expires_at?: Date | string | null,
   ) => Promise<void>;
   onUpdateLicense?: (
     site_license_id: string,
@@ -2181,6 +2220,10 @@ function SiteLicenseDashboard({
   const [addingPoolError, setAddingPoolError] = useState("");
   const [rosterPoolId, setRosterPoolId] = useState("");
   const [rosterSearch, setRosterSearch] = useState("");
+  const [assigningSiteLicensePool, setAssigningSiteLicensePool] = useState<{
+    overview: SiteLicenseOverview;
+    pool: SiteLicenseOverview["pools"][number];
+  } | null>(null);
   const siteLicenseTierOptions = useMemo(
     () => getSiteLicenseProvisioningTiers(tiers),
     [tiers],
@@ -2545,26 +2588,54 @@ function SiteLicenseDashboard({
                                 }
                               />
                             </div>
-                            <Tooltip
-                              title={
-                                activeSeats === 0
-                                  ? "No active users"
-                                  : undefined
-                              }
-                            >
-                              <span>
-                                <Button
-                                  size="small"
-                                  disabled={activeSeats === 0}
-                                  onClick={() => {
-                                    setRosterPoolId(pool.id);
-                                    setRosterSearch("");
-                                  }}
+                            <Space wrap>
+                              <Tooltip
+                                title={
+                                  activeSeats === 0
+                                    ? "No active users"
+                                    : undefined
+                                }
+                              >
+                                <span>
+                                  <Button
+                                    size="small"
+                                    disabled={activeSeats === 0}
+                                    onClick={() => {
+                                      setRosterPoolId(pool.id);
+                                      setRosterSearch("");
+                                    }}
+                                  >
+                                    <Icon name="users" /> Manage users
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                              {canManageLicense ? (
+                                <Tooltip
+                                  title={
+                                    activeSeats >= pool.seat_count
+                                      ? "No available seats"
+                                      : undefined
+                                  }
                                 >
-                                  <Icon name="users" /> Manage users
-                                </Button>
-                              </span>
-                            </Tooltip>
+                                  <span>
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      ghost
+                                      disabled={activeSeats >= pool.seat_count}
+                                      onClick={() =>
+                                        setAssigningSiteLicensePool({
+                                          overview,
+                                          pool,
+                                        })
+                                      }
+                                    >
+                                      <Icon name="plus-circle" /> Add users
+                                    </Button>
+                                  </span>
+                                </Tooltip>
+                              ) : null}
+                            </Space>
                             {description ? (
                               <Text type="secondary">{description}</Text>
                             ) : null}
@@ -2727,6 +2798,18 @@ function SiteLicenseDashboard({
         setRevokingSeat={setRevokingSeat}
         setSearch={setRosterSearch}
       />
+      <AssignSiteLicensePoolSeatModal
+        adminSearch={isAdmin}
+        open={assigningSiteLicensePool != null}
+        pool={assigningSiteLicensePool?.pool}
+        onClose={() => setAssigningSiteLicensePool(null)}
+        onAssigned={async (targetAccountId, grantExpiresAt) => {
+          const pool = assigningSiteLicensePool?.pool;
+          if (pool == null) return;
+          await onAssignSeat(pool, targetAccountId, grantExpiresAt);
+          setAssigningSiteLicensePool(null);
+        }}
+      />
       <EditSiteLicenseSettingsModal
         overview={editingLicense}
         onClose={() => setEditingLicense(null)}
@@ -2884,6 +2967,193 @@ function SeatAssignmentsTable({
         />
       ) : null}
     </Table>
+  );
+}
+
+function AssignSiteLicensePoolSeatModal({
+  adminSearch,
+  open,
+  pool,
+  onClose,
+  onAssigned,
+}: {
+  adminSearch: boolean;
+  open: boolean;
+  pool?: SiteLicenseOverview["pools"][number];
+  onClose: () => void;
+  onAssigned: (
+    target_account_id: string,
+    grant_expires_at?: Date | string | null,
+  ) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<PackageUserSearchResult[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [grantExpiresAt, setGrantExpiresAt] = useState<Dayjs | null>(null);
+  const [assigning, setAssigning] = useState(false);
+  const [error, setError] = useState("");
+  const searchRunRef = useRef(0);
+  const activeAccountIds = useMemo(
+    () =>
+      new Set(
+        pool?.assignments
+          .filter(isActiveAssignment)
+          .map((assignment) => assignment.account_id)
+          .filter((value): value is string => !!value) ?? [],
+      ),
+    [pool],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    setSearching(false);
+    setResults([]);
+    setSelectedAccountId("");
+    setGrantExpiresAt(null);
+    setAssigning(false);
+    setError("");
+  }, [open, pool?.id]);
+
+  async function runSearch(searchQuery = query) {
+    const trimmed = searchQuery.trim();
+    const run = ++searchRunRef.current;
+    if (!trimmed) {
+      setResults([]);
+      setSelectedAccountId("");
+      return;
+    }
+    setSearching(true);
+    setError("");
+    try {
+      const rawResults = await webapp_client.users_client.user_search({
+        query: trimmed,
+        limit: 20,
+        admin: adminSearch,
+      });
+      if (run !== searchRunRef.current) return;
+      const next = (rawResults ?? [])
+        .filter(
+          (result): result is PackageUserSearchResult =>
+            typeof result?.account_id === "string" &&
+            result.account_id.length > 0 &&
+            !activeAccountIds.has(result.account_id),
+        )
+        .slice(0, 20);
+      setResults(next);
+      setSelectedAccountId(
+        next.some((result) => result.account_id === selectedAccountId)
+          ? selectedAccountId
+          : (next[0]?.account_id ?? ""),
+      );
+    } catch (err) {
+      if (run === searchRunRef.current) {
+        setError(`${err}`);
+        setResults([]);
+        setSelectedAccountId("");
+      }
+    } finally {
+      if (run === searchRunRef.current) {
+        setSearching(false);
+      }
+    }
+  }
+
+  async function assign() {
+    if (!selectedAccountId) return;
+    setAssigning(true);
+    setError("");
+    try {
+      await onAssigned(
+        selectedAccountId,
+        grantExpiresAt?.endOf("day").toISOString() ?? null,
+      );
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setAssigning(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      onOk={assign}
+      okText="Grant access"
+      okButtonProps={{ disabled: !selectedAccountId, loading: assigning }}
+      destroyOnHidden
+      title={pool ? `Add users to ${pool.pool_name}` : "Add users"}
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Search for an existing CoCalc account and grant immediate access to
+          this site-license pool. Leave the expiration blank to use the pool or
+          site-license package expiration.
+        </Paragraph>
+        {error ? (
+          <Alert
+            type="error"
+            title={error}
+            closable
+            onClose={() => setError("")}
+          />
+        ) : null}
+        <Input.Search
+          placeholder="Search by name, email, or account id"
+          value={query}
+          enterButton="Search"
+          loading={searching}
+          onChange={(e) => setQuery(e.target.value)}
+          onSearch={(value) => {
+            setQuery(value);
+            void runSearch(value);
+          }}
+        />
+        {searching ? <Spin /> : null}
+        {results.length > 0 ? (
+          <Radio.Group
+            value={selectedAccountId}
+            onChange={(e) => setSelectedAccountId(e.target.value)}
+            style={{ width: "100%" }}
+          >
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              {results.map((result) => (
+                <Radio
+                  key={result.account_id}
+                  value={result.account_id}
+                  style={{ width: "100%" }}
+                >
+                  {packageUserSearchLabel(result)}
+                </Radio>
+              ))}
+            </Space>
+          </Radio.Group>
+        ) : null}
+        {!searching && query.trim() && results.length === 0 && !error ? (
+          <Alert
+            type="info"
+            showIcon
+            title="No matching account found"
+            description="Search for an existing CoCalc account. This direct assignment flow does not reserve seats for email addresses."
+          />
+        ) : null}
+        <div>
+          <Text strong>Access expires at</Text>
+          <DatePicker
+            value={grantExpiresAt}
+            onChange={setGrantExpiresAt}
+            style={{ display: "block", marginTop: 6, width: "100%" }}
+            placeholder="Optional expiration date"
+          />
+        </div>
+      </Space>
+    </Modal>
   );
 }
 

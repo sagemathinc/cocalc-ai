@@ -593,6 +593,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "paid membership seat assignment",
   },
+  "purchases.assignSiteLicensePoolSeat": {
+    decision: "fresh-auth-required",
+    reason: "site-license pool seat assignment",
+  },
   "purchases.cancelSiteLicensePoolRequest": {
     decision: "fresh-auth-not-required",
     reason: "user cancels their own pending site-license pool request",
