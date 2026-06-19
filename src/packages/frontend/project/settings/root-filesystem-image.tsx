@@ -78,11 +78,7 @@ import {
   type RootfsProjectPreset,
 } from "@cocalc/frontend/rootfs/project-presets";
 import { queueRootfsChangeRestart } from "./rootfs-restart";
-import {
-  themeDraftFromTheme,
-  themeFromDraft,
-  type ThemeEditorDraft,
-} from "@cocalc/frontend/theme/types";
+import { themeDraftFromTheme } from "@cocalc/frontend/theme/types";
 import { docsPath } from "@cocalc/docs";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
