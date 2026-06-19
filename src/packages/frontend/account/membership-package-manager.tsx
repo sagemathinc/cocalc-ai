@@ -3027,9 +3027,6 @@ function EditSiteLicenseSettingsModal({
     setError("");
     try {
       const allowed_domains = normalizeDomainList(domains);
-      if (allowed_domains.length === 0) {
-        throw Error("Enter at least one allowed email domain.");
-      }
       await onSave({
         site_license_id: overview.site_license.id,
         name,
@@ -3638,9 +3635,6 @@ function ProvisionSiteLicenseModal({
       if (!cleanOrganizationName) {
         throw Error("Enter an organization name.");
       }
-      if (allowed_domains.length === 0) {
-        throw Error("Enter at least one allowed email domain.");
-      }
       const cleanPools = pools.map((pool) => {
         const poolDomains = normalizeDomainList(pool.allowed_domains ?? []);
         return {
@@ -3790,13 +3784,14 @@ function ProvisionSiteLicenseModal({
         </Card>
 
         <Card
-          title="Eligibility domains"
+          title="Eligibility domains (optional)"
           size="small"
           style={{ borderRadius: 14 }}
         >
           <Text type="secondary">
-            Users must verify an email at one of these domains before they can
-            claim a self-serve seat or request an approval-required seat.
+            Users with verified emails at these domains can claim a self-serve
+            seat or request an approval-required seat. Leave blank for licenses
+            managed only through external claim links or manager assignment.
           </Text>
           <Select
             aria-label="Allowed email domains"
@@ -3941,7 +3936,9 @@ function ProvisionSiteLicenseModal({
           style={{
             display: "grid",
             gap: 14,
-            gridTemplateColumns: "repeat(auto-fit, minmax(285px, 1fr))",
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 285px), 300px))",
+            justifyContent: "start",
           }}
         >
           {pools.map((pool, index) => {
@@ -3953,7 +3950,9 @@ function ProvisionSiteLicenseModal({
                   border: `1px solid ${COLORS.GRAY_LL}`,
                   borderRadius: 18,
                   boxShadow: `0 10px 24px ${COLORS.GRAY_LL}`,
+                  maxWidth: 300,
                   overflow: "hidden",
+                  width: "100%",
                 }}
                 styles={{ body: { padding: 0 } }}
               >
@@ -3994,18 +3993,22 @@ function ProvisionSiteLicenseModal({
                         <Text type="secondary">{theme.description}</Text>
                       </Space>
                     </Space>
-                    <Button
-                      danger
-                      size="small"
+                    <Popconfirm
+                      title={`Remove ${pool.pool_name || `Pool ${index + 1}`}?`}
+                      description="This removes the draft pool from this site license before provisioning."
+                      okText="Remove"
+                      okButtonProps={{ danger: true }}
                       disabled={pools.length <= 1}
-                      onClick={() =>
+                      onConfirm={() =>
                         setPools((current) =>
                           current.filter((_pool, i) => i !== index),
                         )
                       }
                     >
-                      Remove
-                    </Button>
+                      <Button danger size="small" disabled={pools.length <= 1}>
+                        Remove
+                      </Button>
+                    </Popconfirm>
                   </Space>
                   <Space wrap style={{ marginTop: 12 }}>
                     <Tag>{capitalize(pool.membership_class)}</Tag>
@@ -4239,8 +4242,8 @@ function ProvisionPoolEditModal({
           label="Allowed email domains"
           help={
             domainsRequired
-              ? "Add or remove domains for future verified-domain claims. Existing claimed seats stay assigned unless you revoke them explicitly."
-              : "Leave empty to use the site-license domains."
+              ? "Add or remove domains for future verified-domain claims. Leave empty to disable verified-domain claims for this pool. Existing claimed seats stay assigned unless you revoke them explicitly."
+              : "Leave empty to use the site-license domains. If the license domains are also empty, use external claim links or manager assignment instead of verified-domain claims."
           }
         >
           <Select
@@ -4461,9 +4464,6 @@ function EditSiteLicenseModal({
     try {
       if (pool == null) return;
       const allowed_domains = normalizeDomainList(pool.allowed_domains ?? []);
-      if (allowed_domains.length === 0) {
-        throw Error("Enter at least one allowed email domain.");
-      }
       const siteLicenseId =
         `${membershipPackage.metadata?.site_license_id ?? ""}`.trim();
       await updateMembershipPackage({

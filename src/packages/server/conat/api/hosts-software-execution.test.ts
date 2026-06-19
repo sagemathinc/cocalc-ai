@@ -1787,6 +1787,94 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
     ]);
   });
 
+  it("uses heartbeat-observed component status when direct status RPC hangs", async () => {
+    const row = {
+      id: "host-1",
+      status: "running",
+      version: "ph-v2",
+      last_seen: "2026-04-25T05:00:05.000Z",
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: "ph-v2",
+          project_host_build_id: "build-v2",
+        },
+        observed_components: [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: "build-v2",
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: ["build-v2"],
+            running_pids: [123],
+          },
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: "build-v2",
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: ["build-v2"],
+            running_pids: [456],
+          },
+        ],
+      },
+    };
+
+    const response = await rolloutHostManagedComponentsInternalHelper({
+      account_id: "account-1",
+      id: "host-1",
+      components: ["project-host", "conat-router"],
+      reason: "host_software_upgrade",
+      loadHostForStartStop: jest.fn(async () => row),
+      assertHostRunningForUpgrade: () => undefined,
+      hostControlClient: async () => ({
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => new Promise(() => undefined),
+        getManagedComponentStatus: async () => new Promise(() => undefined),
+        getHostAgentStatus: async () => new Promise(() => undefined),
+      }),
+      waitForHostHeartbeatAfter: async () => undefined,
+      installedProjectHostArtifactVersion: (currentRow) =>
+        currentRow?.metadata?.software?.project_host,
+      recordProjectHostLocalRollbackInternal: async () => ({
+        host_id: "host-1",
+        rollback_version: "ph-v1",
+        source: "host-agent",
+      }),
+      project_host_local_rollback_error_code: "project_host_local_rollback",
+      setLastKnownGoodArtifactVersionInternal: async () => undefined,
+      runtimeDeploymentsForComponentRollout: () => [],
+      requestedByForRuntimeDeployments: () => "account-1",
+      setProjectHostRuntimeDeployments: async () => undefined,
+      loadEffectiveRuntimeDeployments: async () => [],
+      managedComponentRolloutRpcTimeoutMs: 1,
+      projectHostRolloutSettleTimeoutMs: 20,
+      projectHostRolloutPollMs: 0,
+      projectHostRolloutMinObservationMs: 0,
+    });
+
+    expect(response.results).toEqual([
+      expect.objectContaining({
+        component: "project-host",
+      }),
+      expect.objectContaining({
+        component: "conat-router",
+      }),
+    ]);
+  });
+
   it("uses the effective runtime deployment target as the desired project-host version", async () => {
     const runtimeDeploymentsForComponentRollout = jest.fn(() => []);
     const upgradeSoftware = jest.fn(async () => ({

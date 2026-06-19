@@ -1,0 +1,37 @@
+version: 1
+name: julia-pluto
+
+steps:
+  - uses: cocalc/apt
+    with:
+      packages:
+        - ca-certificates
+        - curl
+        - tar
+
+  - uses: cocalc/julia
+    with:
+      version: "1.12.6"
+      install_prefix: /opt/julia
+    timeout: 900
+
+  - uses: cocalc/pluto
+    with:
+      depot: /opt/julia-depot
+    timeout: 1800
+
+verify:
+  - command -v julia
+  - julia -e 'import Pluto'
+
+publish:
+  label: Julia + Pluto
+  slug: julia-pluto
+  description: Julia with Pluto.jl installed, plus a CoCalc Pluto app launcher and examples.
+  family: julia
+  version: "1.12"
+  channel: stable
+  visibility: collaborators
+  tags:
+    - julia
+    - pluto

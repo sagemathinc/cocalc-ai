@@ -1,0 +1,11 @@
+{
+  "id": "cocalc/copy",
+  "version": 1,
+  "description": "Copy a path already present in the builder project/rootfs into a target path.",
+  "inputs": {
+    "source": { "type": "string", "required": true },
+    "target": { "type": "string", "required": true }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" }
+}

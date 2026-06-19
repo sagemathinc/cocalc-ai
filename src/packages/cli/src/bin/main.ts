@@ -2556,6 +2556,7 @@ registerProjectCommand(program, projectCommandDeps);
 const rootfsCommandDeps = {
   withContext,
   resolveProjectFromArgOrContext,
+  resolveProjectProjectApi,
   waitForLro,
   serializeLroSummary,
 } satisfies RootfsCommandDeps;

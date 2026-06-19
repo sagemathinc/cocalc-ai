@@ -811,6 +811,52 @@ describe("membership package managers", () => {
     );
   });
 
+  it("provisions an admin site license without allowed email domains", async () => {
+    isAdmin = true;
+    listSiteLicenseOverviews.mockResolvedValue([]);
+    adminProvisionSiteLicense.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "External claim license",
+        organization_name: "Example Program",
+        bay_id: "bay-0",
+        owner_account_id: null,
+        allowed_domains: [],
+      },
+      pools: [],
+      managers: [],
+      pending_requests: [],
+    });
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Provision site license")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Provision site license"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/real site license/i)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Provision license"));
+
+    await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalled();
+      expect(adminProvisionSiteLicense).toHaveBeenCalled();
+    });
+    const provisionCall = adminProvisionSiteLicense.mock.calls[0]?.[0];
+    expect(provisionCall.allowed_domains).toEqual([]);
+    expect(provisionCall.pools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          allowed_domains: [],
+        }),
+      ]),
+    );
+  });
+
   it("shows a compact admin site-license list before the selected dashboard", async () => {
     isAdmin = true;
     listSiteLicenseOverviews.mockResolvedValue([

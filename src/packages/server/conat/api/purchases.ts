@@ -192,13 +192,9 @@ function normalizeAllowedDomain(domain: string): string {
 }
 
 function normalizeAllowedDomains(allowed_domains?: string[]): string[] {
-  const domains = Array.from(
+  return Array.from(
     new Set((allowed_domains ?? []).map(normalizeAllowedDomain)),
   ).sort();
-  if (domains.length === 0) {
-    throw Error("at least one allowed domain is required");
-  }
-  return domains;
 }
 
 async function validatePurchaseFreshAuth({
@@ -1432,17 +1428,23 @@ export async function disableSiteLicenseExternalClaimPool({
 export async function listSiteLicenseExternalClaimKeys({
   account_id,
   pool_id,
+  kid,
   limit,
 }: {
   account_id?: string;
   pool_id?: string;
+  kid?: string;
   limit?: number;
 } = {}): Promise<SiteLicenseExternalClaimKey[]> {
   const actorId = requireAccount(account_id);
   if (!(await isAdmin(actorId))) {
     throw Error("must be an admin");
   }
-  const opts = { pool_id: `${pool_id ?? ""}`.trim(), limit };
+  const opts = {
+    pool_id: `${pool_id ?? ""}`.trim(),
+    kid: `${kid ?? ""}`.trim(),
+    limit,
+  };
   if (!isSeedBay()) {
     return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimKeys({
       account_id: actorId,

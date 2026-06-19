@@ -1,0 +1,58 @@
+version: 1
+name: ml-pytorch-gpu
+
+steps:
+  - uses: cocalc/apt
+    with:
+      upgrade: true
+      packages:
+        - bash
+        - ca-certificates
+        - curl
+        - git
+        - less
+        - libatomic1
+        - libgomp1
+        - procps
+        - python3
+        - python3-pip
+        - python3-venv
+        - sudo
+        - wget
+        - vim
+        - tmux
+
+  - uses: cocalc/jupyter-python
+    with:
+      prefix: /opt/cocalc-jupyter
+      install_bash_kernel: true
+
+  - uses: cocalc/pytorch-gpu
+    with:
+      prefix: /opt/cocalc-jupyter
+      cuda: cu128
+      require_gpu: false
+
+verify:
+  - command -v jupyter-lab
+  - command -v uv
+  - python3 -c 'import torch; assert torch.version.cuda; print(torch.__version__, torch.version.cuda)'
+  - python3 -c 'import ipykernel, jupyterlab, numpy, pandas, torch, torchvision, torchaudio'
+  - jupyter kernelspec list | grep -q python3
+
+publish:
+  label: PyTorch GPU Machine Learning
+  slug: pytorch-gpu-ml
+  description: CoCalc machine learning environment with JupyterLab, a Python kernel, scientific Python packages, uv, and CUDA-enabled PyTorch wheels for NVIDIA GPUs.
+  family: machine-learning
+  version: "2026.06"
+  channel: stable
+  visibility: collaborators
+  tags:
+    - machine-learning
+    - python
+    - jupyter
+    - pytorch
+    - cuda
+    - nvidia-gpu
+    - uv
