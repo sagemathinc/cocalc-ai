@@ -23,12 +23,8 @@ import {
 import jsonic from "jsonic";
 
 import { React } from "@cocalc/frontend/app-framework";
-import {
-  CopyToClipBoard,
-  ErrorDisplay,
-  Loading,
-  TimeAgo,
-} from "@cocalc/frontend/components";
+import { ErrorDisplay, Loading, TimeAgo } from "@cocalc/frontend/components";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -39,7 +35,6 @@ import type {
   SiteLicenseExternalClaimConsumptionStatus,
   SiteLicenseExternalClaimKey,
   SiteLicenseExternalClaimPool,
-  SiteLicenseExternalClaimSigningAlgorithm,
   SiteLicenseOverview,
 } from "@cocalc/conat/hub/api/purchases";
 
@@ -51,20 +46,6 @@ const CLAIM_STATUSES: SiteLicenseExternalClaimConsumptionStatus[] = [
   "failed-retryable",
   "failed-terminal",
 ];
-
-function shortId(value?: string | null): string {
-  if (!value) return "";
-  return value.length <= 12
-    ? value
-    : `${value.slice(0, 8)}...${value.slice(-4)}`;
-}
-
-function copyId(value?: string | null) {
-  if (!value) return null;
-  return (
-    <CopyToClipBoard value={value} display={shortId(value)} inputWidth="18ex" />
-  );
-}
 
 function optionalString(value?: string): string | undefined {
   const trimmed = `${value ?? ""}`.trim();
@@ -128,9 +109,6 @@ function consumptionStatus(status: SiteLicenseExternalClaimConsumptionStatus) {
 
 function keyGenerationCommand(): string {
   return [
-    "# Install cocalc-cli if the cocalc command is not available:",
-    "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
-    "",
     "# Generate a signing keypair. Keep claim-private.pem secret.",
     "mkdir -p ~/.cocalc-site-license-claims",
     "openssl genpkey -algorithm Ed25519 -out ~/.cocalc-site-license-claims/claim-private.pem",
@@ -141,22 +119,34 @@ function keyGenerationCommand(): string {
   ].join("\n");
 }
 
-function sampleTokenCommand(pool?: SiteLicenseExternalClaimPool): string {
+function sampleTokenCommand(kid?: string): string {
   return [
+    "# Install cocalc-cli if the cocalc command is not available:",
+    "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
+    "",
     "cocalc membership site-license sample-token \\",
-    `  --site-license ${pool?.site_license_id ?? "<site-license-id>"} \\`,
-    `  --pool ${pool?.id ?? "<pool-id>"} \\`,
-    `  --issuer ${pool?.issuer ?? "<issuer>"} \\`,
-    "  --kid <key-id> \\",
+    `  --kid ${optionalString(kid) ?? "<key-id>"} \\`,
     "  --private-key-file ~/.cocalc-site-license-claims/claim-private.pem \\",
     "  --expires-in-days 30",
   ].join("\n");
 }
 
+function shellMarkdown(command: string): string {
+  return `\`\`\`sh\n${command}\n\`\`\``;
+}
+
+function siteLicenseLabel(overview: SiteLicenseOverview): string {
+  const name = overview.site_license.name;
+  const organization = overview.site_license.organization_name;
+  return organization && organization !== name
+    ? `${organization} - ${name}`
+    : organization || name;
+}
+
 function siteLicenseOptions(overviews: SiteLicenseOverview[]) {
   return overviews.map((overview) => ({
     value: overview.site_license.id,
-    label: `${overview.site_license.organization_name || overview.site_license.name} (${shortId(overview.site_license.id)})`,
+    label: siteLicenseLabel(overview),
   }));
 }
 
@@ -171,7 +161,9 @@ function packageOptions(
     .flatMap((overview) =>
       overview.pools.map((pool) => ({
         value: pool.id,
-        label: `${pool.pool_name} / ${pool.membership_class} (${shortId(pool.id)})`,
+        label: siteLicenseId
+          ? `${pool.pool_name} / ${pool.membership_class}`
+          : `${siteLicenseLabel(overview)} - ${pool.pool_name} / ${pool.membership_class}`,
       })),
     );
 }
@@ -190,6 +182,10 @@ export function SiteLicenseClaimsAdmin() {
   const [error, setError] = React.useState<string>("");
   const [poolModalOpen, setPoolModalOpen] = React.useState(false);
   const [keyModalOpen, setKeyModalOpen] = React.useState(false);
+  const [directionsKey, setDirectionsKey] =
+    React.useState<SiteLicenseExternalClaimKey | null>(null);
+  const [kidAvailabilityError, setKidAvailabilityError] =
+    React.useState<string>("");
   const [savingPool, setSavingPool] = React.useState(false);
   const [savingKey, setSavingKey] = React.useState(false);
   const [filterSiteLicenseId, setFilterSiteLicenseId] =
@@ -201,6 +197,7 @@ export function SiteLicenseClaimsAdmin() {
 
   const [poolForm] = Form.useForm();
   const [keyForm] = Form.useForm();
+  const watchedKid = Form.useWatch("kid", keyForm);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const selectedPool = React.useMemo(
@@ -273,6 +270,44 @@ export function SiteLicenseClaimsAdmin() {
   React.useEffect(() => {
     loadDetails();
   }, [loadDetails]);
+
+  React.useEffect(() => {
+    if (!keyModalOpen) {
+      setKidAvailabilityError("");
+      return;
+    }
+    const kid = optionalString(watchedKid);
+    if (!kid) {
+      setKidAvailabilityError("");
+      return;
+    }
+    if (keys.some((key) => key.kid === kid)) {
+      setKidAvailabilityError("This key id is already in use.");
+      return;
+    }
+    let canceled = false;
+    const timeout = setTimeout(async () => {
+      try {
+        const matches = await hub.purchases.listSiteLicenseExternalClaimKeys({
+          kid,
+          limit: 1,
+        });
+        if (!canceled) {
+          setKidAvailabilityError(
+            matches.length > 0 ? "This key id is already in use." : "",
+          );
+        }
+      } catch (err) {
+        if (!canceled) {
+          setKidAvailabilityError(`Could not check key id: ${err}`);
+        }
+      }
+    }, 250);
+    return () => {
+      canceled = true;
+      clearTimeout(timeout);
+    };
+  }, [hub, keyModalOpen, keys, watchedKid]);
 
   function openPoolModal() {
     poolForm.resetFields();
@@ -362,19 +397,23 @@ export function SiteLicenseClaimsAdmin() {
 
   function openKeyModal() {
     keyForm.resetFields();
-    keyForm.setFieldsValue({
-      pool_id: selectedPoolId,
-      alg: "EdDSA",
-    });
+    setKidAvailabilityError("");
     setKeyModalOpen(true);
   }
 
   async function addKey() {
     const values = await keyForm.validateFields();
-    const jwk = parseJsonObject(values.public_key_jwk);
     const pem = optionalString(values.public_key_pem);
-    if ((jwk && pem) || (!jwk && !pem)) {
-      message.error("Provide exactly one public key: JWK JSON or PEM.");
+    if (kidAvailabilityError) {
+      message.error(kidAvailabilityError);
+      return;
+    }
+    if (!selectedPoolId) {
+      message.error("Select a pool first.");
+      return;
+    }
+    if (!pem) {
+      message.error("Paste the public key output from the issuer.");
       return;
     }
     setSavingKey(true);
@@ -382,14 +421,12 @@ export function SiteLicenseClaimsAdmin() {
       const completed = await runFreshAuthAction(async () => {
         await hub.purchases.addSiteLicenseExternalClaimKey({
           browser_id: webapp_client.browser_id,
-          pool_id: values.pool_id,
+          pool_id: selectedPoolId,
           kid: values.kid,
-          alg: values.alg as SiteLicenseExternalClaimSigningAlgorithm,
-          public_key_jwk: jwk ?? null,
-          public_key_pem: pem ?? null,
-          starts_at: optionalString(values.starts_at),
-          expires_at: optionalString(values.expires_at),
-          metadata: parseJsonObject(values.metadata_json) ?? null,
+          alg: "EdDSA",
+          public_key_jwk: null,
+          public_key_pem: pem,
+          metadata: null,
         });
       });
       if (!completed) return;
@@ -423,11 +460,9 @@ export function SiteLicenseClaimsAdmin() {
   const poolColumns = [
     {
       title: "Pool",
-      dataIndex: "id",
       render: (_value, pool: SiteLicenseExternalClaimPool) => (
         <Space orientation="vertical" size={0}>
           <Text strong>{pool.name}</Text>
-          {copyId(pool.id)}
           {pool.slug ? <Text type="secondary">slug: {pool.slug}</Text> : null}
         </Space>
       ),
@@ -435,13 +470,12 @@ export function SiteLicenseClaimsAdmin() {
     { title: "Issuer", dataIndex: "issuer" },
     {
       title: "Site license",
-      dataIndex: "site_license_id",
-      render: copyId,
-    },
-    {
-      title: "Package",
-      dataIndex: "package_id",
-      render: copyId,
+      render: (_value, pool: SiteLicenseExternalClaimPool) => {
+        const overview = overviews.find(
+          (entry) => entry.site_license.id === pool.site_license_id,
+        );
+        return overview ? siteLicenseLabel(overview) : "Site license";
+      },
     },
     {
       title: "Claims",
@@ -489,8 +523,7 @@ export function SiteLicenseClaimsAdmin() {
   ];
 
   const keyColumns = [
-    { title: "kid", dataIndex: "kid" },
-    { title: "alg", dataIndex: "alg" },
+    { title: "Key id", dataIndex: "kid" },
     {
       title: "Status",
       render: (_value, key: SiteLicenseExternalClaimKey) => keyStatus(key),
@@ -509,17 +542,22 @@ export function SiteLicenseClaimsAdmin() {
       title: "Actions",
       render: (_value, key: SiteLicenseExternalClaimKey) =>
         key.revoked_at ? null : (
-          <Popconfirm
-            title="Revoke external claim key?"
-            description="Tokens signed with this key will stop working."
-            okText="Revoke"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => revokeKey(key)}
-          >
-            <Button size="small" danger>
-              Revoke
+          <Space wrap>
+            <Button size="small" onClick={() => setDirectionsKey(key)}>
+              Invite command
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title="Revoke external claim key?"
+              description="Tokens signed with this key will stop working."
+              okText="Revoke"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => revokeKey(key)}
+            >
+              <Button size="small" danger>
+                Revoke
+              </Button>
+            </Popconfirm>
+          </Space>
         ),
     },
   ];
@@ -534,11 +572,6 @@ export function SiteLicenseClaimsAdmin() {
       title: "Status",
       dataIndex: "status",
       render: consumptionStatus,
-    },
-    {
-      title: "Account",
-      dataIndex: "account_id",
-      render: copyId,
     },
     {
       title: "Membership",
@@ -578,8 +611,7 @@ export function SiteLicenseClaimsAdmin() {
         <Title level={4}>Site License External Claims</Title>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Create external claim pools, register publisher public keys, and
-          inspect token consumptions. These operations route through the
-          seed-global site-license authority.
+          inspect token consumptions.
         </Paragraph>
       </div>
       {error ? <ErrorDisplay error={error} /> : null}
@@ -636,7 +668,6 @@ export function SiteLicenseClaimsAdmin() {
           title={
             <Space wrap>
               <span>Selected pool: {selectedPool.name}</span>
-              {copyId(selectedPool.id)}
               {poolStatus(selectedPool)}
             </Space>
           }
@@ -650,22 +681,6 @@ export function SiteLicenseClaimsAdmin() {
           }
         >
           <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            <Alert
-              type="info"
-              showIcon
-              message="Claim URL"
-              description={
-                <Space orientation="vertical" size={0}>
-                  <Text>
-                    Send users a signed token link after generating a token with
-                    the publisher/private key workflow.
-                  </Text>
-                  <Text code>
-                    /claim/site-license?token=&lt;signed-token&gt;
-                  </Text>
-                </Space>
-              }
-            />
             {loadingDetails ? <Loading /> : null}
             <Title level={5}>Verification Keys</Title>
             <Table
@@ -830,49 +845,38 @@ export function SiteLicenseClaimsAdmin() {
                 <Text>
                   Send this command block to the issuer. They run it in a
                   terminal, keep the private key file secret, and send back only
-                  the public key output. Paste that output into the Public key
-                  PEM field below.
+                  the public key output. Paste that output below.
                 </Text>
-                <Paragraph copyable={{ text: keyGenerationCommand() }}>
-                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-                    {keyGenerationCommand()}
-                  </pre>
-                </Paragraph>
+                <StaticMarkdown value={shellMarkdown(keyGenerationCommand())} />
                 <Text type="secondary">
                   After this key is saved, signed claim links can be generated
                   with:
                 </Text>
-                <Paragraph
-                  copyable={{ text: sampleTokenCommand(selectedPool) }}
-                >
-                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-                    {sampleTokenCommand(selectedPool)}
-                  </pre>
-                </Paragraph>
+                <StaticMarkdown
+                  value={shellMarkdown(sampleTokenCommand(watchedKid))}
+                />
               </Space>
             }
           />
         </Space>
         <Form form={keyForm} layout="vertical">
           <Form.Item
-            name="pool_id"
-            label="Pool id"
+            name="kid"
+            label="Key id"
+            rules={[{ required: true }]}
+            validateStatus={kidAvailabilityError ? "error" : undefined}
+            help={
+              kidAvailabilityError ||
+              "Use a short globally unique handle, e.g. cup-1 or ucla-instructors."
+            }
+          >
+            <Input placeholder="cup-1" />
+          </Form.Item>
+          <Form.Item
+            name="public_key_pem"
+            label="Public key output from issuer"
             rules={[{ required: true }]}
           >
-            <Input />
-          </Form.Item>
-          <Form.Item name="kid" label="Key id" rules={[{ required: true }]}>
-            <Input placeholder="cup-2026-01" />
-          </Form.Item>
-          <Form.Item name="alg" label="Algorithm" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: "EdDSA", label: "EdDSA" },
-                { value: "ES256", label: "ES256" },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="public_key_pem" label="Public key PEM">
             <Input.TextArea
               rows={6}
               placeholder={[
@@ -882,20 +886,28 @@ export function SiteLicenseClaimsAdmin() {
               ].join("\n")}
             />
           </Form.Item>
-          <Form.Item
-            name="public_key_jwk"
-            label="Public key JWK JSON (advanced alternative)"
-            extra="Use either PEM or JWK, not both."
-          >
-            <Input.TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="expires_at" label="Key expires at">
-            <Input placeholder="Optional ISO timestamp" />
-          </Form.Item>
-          <Form.Item name="metadata_json" label="Metadata JSON">
-            <Input.TextArea rows={3} />
-          </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title={
+          directionsKey
+            ? `Invite command for ${directionsKey.kid}`
+            : "Invite command"
+        }
+        open={directionsKey != null}
+        onCancel={() => setDirectionsKey(null)}
+        footer={null}
+        width={760}
+      >
+        <Space orientation="vertical" style={{ width: "100%" }}>
+          <Text>
+            Send this command to the issuer so they can generate one-use signed
+            claim links with their private key.
+          </Text>
+          <StaticMarkdown
+            value={shellMarkdown(sampleTokenCommand(directionsKey?.kid))}
+          />
+        </Space>
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>

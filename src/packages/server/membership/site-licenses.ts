@@ -473,6 +473,9 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
     "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_pool_kid_idx ON site_license_external_claim_keys (pool_id, kid)",
   );
   await db.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_kid_idx ON site_license_external_claim_keys (kid)",
+  );
+  await db.query(
     "CREATE INDEX IF NOT EXISTS site_license_external_claim_keys_revoked_at_idx ON site_license_external_claim_keys (revoked_at)",
   );
   await db.query(`

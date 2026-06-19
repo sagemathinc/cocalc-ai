@@ -1315,6 +1315,7 @@ export interface Purchases {
   listSiteLicenseExternalClaimKeys: (opts?: {
     account_id?: string;
     pool_id?: string;
+    kid?: string;
     limit?: number;
   }) => Promise<SiteLicenseExternalClaimKey[]>;
   revokeSiteLicenseExternalClaimKey: (opts?: {

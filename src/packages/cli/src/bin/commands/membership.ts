@@ -1636,17 +1636,9 @@ export function registerMembershipCommand(
   siteLicense
     .command("sample-token")
     .description("locally generate a signed external site-license claim token")
-    .requiredOption("--site-license <siteLicenseId>", "site license id")
-    .requiredOption("--pool <poolId>", "external claim pool id")
-    .requiredOption("--issuer <issuer>", "token issuer")
     .requiredOption("--kid <kid>", "token key id")
     .requiredOption("--private-key-file <path>", "private signing key PEM file")
     .option("--alg <alg>", "signing algorithm; currently EdDSA", "EdDSA")
-    .option(
-      "--audience <aud>",
-      "token audience",
-      "cocalc.ai.site-license-claim",
-    )
     .option("--jti <jti>", "explicit token id; defaults to a random UUID")
     .option("--expires-at <iso>", "token expiration time")
     .option(
@@ -1667,13 +1659,9 @@ export function registerMembershipCommand(
     .action(
       async (
         opts: {
-          siteLicense: string;
-          pool: string;
-          issuer: string;
           kid: string;
           privateKeyFile: string;
           alg: string;
-          audience?: string;
           jti?: string;
           expiresAt?: string;
           expiresInDays?: string;
@@ -1690,7 +1678,7 @@ export function registerMembershipCommand(
         await withContext(
           command,
           "membership site-license sample-token",
-          async () => {
+          async (ctx) => {
             const alg = normalizeExternalClaimAlg(opts.alg);
             const expiresAt = `${opts.expiresAt ?? ""}`.trim()
               ? parseIsoDate(opts.expiresAt, "--expires-at")
@@ -1706,13 +1694,8 @@ export function registerMembershipCommand(
                       1000,
                 );
             const payload: Record<string, unknown> = {
-              iss: `${opts.issuer ?? ""}`.trim(),
-              aud: `${opts.audience ?? ""}`.trim(),
-              site_license_id: `${opts.siteLicense ?? ""}`.trim(),
-              pool_id: `${opts.pool ?? ""}`.trim(),
               jti: `${opts.jti ?? ""}`.trim() || randomUUID(),
               exp: dateToNumericDate(expiresAt),
-              iat: dateToNumericDate(new Date()),
             };
             const notBefore = `${opts.notBefore ?? ""}`.trim();
             if (notBefore) {
@@ -1755,13 +1738,7 @@ export function registerMembershipCommand(
               ),
               payload,
             });
-            return {
-              token,
-              alg,
-              kid: `${opts.kid ?? ""}`.trim(),
-              expires_at: expiresAt.toISOString(),
-              payload,
-            };
+            return `${ctx.apiBaseUrl.replace(/\/+$/, "")}/claim/site-license?token=${encodeURIComponent(token)}`;
           },
         );
       },

@@ -729,7 +729,8 @@ export async function addSiteLicenseExternalClaimKey(
         updated)
      VALUES
        ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
-     ON CONFLICT (pool_id, kid) DO UPDATE SET
+     ON CONFLICT (kid) DO UPDATE SET
+       pool_id=EXCLUDED.pool_id,
        alg=EXCLUDED.alg,
        public_key_jwk=EXCLUDED.public_key_jwk,
        public_key_pem=EXCLUDED.public_key_pem,
@@ -818,22 +819,32 @@ export async function disableSiteLicenseExternalClaimPool({
 
 export async function listSiteLicenseExternalClaimKeys({
   pool_id,
+  kid,
   limit = 100,
 }: {
-  pool_id: string;
+  pool_id?: string;
+  kid?: string;
   limit?: number;
 }): Promise<SiteLicenseExternalClaimKey[]> {
   await ensureSiteLicenseSchema();
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (pool_id != null && `${pool_id}`.trim()) {
+    args.push(normalizeUUID(pool_id, "pool_id"));
+    where.push(`pool_id=$${args.length}`);
+  }
+  if (kid != null && `${kid}`.trim()) {
+    args.push(normalizeString(kid, "kid"));
+    where.push(`kid=$${args.length}`);
+  }
+  args.push(Math.max(1, Math.min(1000, Math.floor(Number(limit) || 100))));
   const { rows } = await getPool().query<RawExternalClaimKey>(
     `SELECT *
        FROM site_license_external_claim_keys
-      WHERE pool_id=$1
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY created DESC, kid ASC
-      LIMIT $2`,
-    [
-      normalizeUUID(pool_id, "pool_id"),
-      Math.max(1, Math.min(1000, Math.floor(Number(limit) || 100))),
-    ],
+      LIMIT $${args.length}`,
+    args,
   );
   return rows.map(normalizeKeyRow);
 }
@@ -919,11 +930,9 @@ export async function listSiteLicenseExternalClaimConsumptions({
 }
 
 async function loadActiveClaimKey({
-  pool_id,
   kid,
   alg,
 }: {
-  pool_id: string;
   kid: string;
   alg: "EdDSA" | "ES256";
 }): Promise<SiteLicenseExternalClaimKey> {
@@ -931,11 +940,10 @@ async function loadActiveClaimKey({
   const { rows } = await getPool().query<RawExternalClaimKey>(
     `SELECT *
        FROM site_license_external_claim_keys
-      WHERE pool_id=$1
-        AND kid=$2
-        AND alg=$3
+      WHERE kid=$1
+        AND alg=$2
       LIMIT 1`,
-    [pool_id, kid, alg],
+    [kid, alg],
   );
   const key = rows[0] ? normalizeKeyRow(rows[0]) : undefined;
   if (!key) {
@@ -949,6 +957,22 @@ async function loadActiveClaimKey({
     now: new Date(),
   });
   return key;
+}
+
+async function loadClaimPool(
+  pool_id: string,
+): Promise<SiteLicenseExternalClaimPool> {
+  await ensureSiteLicenseSchema();
+  const { rows } = await getPool().query<RawExternalClaimPool>(
+    `SELECT *
+       FROM site_license_external_claim_pools
+      WHERE id=$1`,
+    [pool_id],
+  );
+  if (!rows[0]) {
+    throw Error("external claim pool not found");
+  }
+  return normalizePoolRow(rows[0]);
 }
 
 function getPublicKeyForVerification(key: SiteLicenseExternalClaimKey) {
@@ -1037,9 +1061,9 @@ export async function verifySiteLicenseExternalClaimToken({
     decodeCompactJws(token);
   const alg = normalizeAlg(protectedHeader.alg);
   const kid = normalizeString(protectedHeader.kid, "kid");
-  const pool_id = normalizeUUID(payload.pool_id, "pool_id");
-  const key = await loadActiveClaimKey({ pool_id, kid, alg });
+  const key = await loadActiveClaimKey({ kid, alg });
   verifyCompactJwsSignature({ alg, key, signingInput, signature });
+  const pool = await loadClaimPool(key.pool_id);
 
   const now = Date.now();
   const expiresAt = normalizeJwtNumericDate(payload.exp, "exp");
@@ -1050,11 +1074,30 @@ export async function verifySiteLicenseExternalClaimToken({
   if (notBefore != null && notBefore.getTime() > now) {
     throw Error("external claim token is not active yet");
   }
+  const payloadPoolId = normalizeOptionalString(payload.pool_id);
+  if (payloadPoolId != null && payloadPoolId !== pool.id) {
+    throw Error("claim pool does not match key");
+  }
+  const payloadSiteLicenseId = normalizeOptionalString(payload.site_license_id);
+  if (
+    payloadSiteLicenseId != null &&
+    payloadSiteLicenseId !== pool.site_license_id
+  ) {
+    throw Error("claim site license does not match key");
+  }
+  const payloadIssuer = normalizeOptionalString(payload.iss);
+  if (payloadIssuer != null && payloadIssuer !== pool.issuer) {
+    throw Error("claim issuer does not match pool");
+  }
+  const payloadAudience = normalizeOptionalString(payload.aud);
+  if (payloadAudience != null && payloadAudience !== pool.audience) {
+    throw Error("claim audience does not match pool");
+  }
   return {
-    issuer: normalizeString(payload.iss, "iss"),
-    audience: normalizeString(payload.aud, "aud"),
-    site_license_id: normalizeUUID(payload.site_license_id, "site_license_id"),
-    pool_id,
+    issuer: pool.issuer,
+    audience: pool.audience,
+    site_license_id: pool.site_license_id,
+    pool_id: pool.id,
     jti: normalizeString(payload.jti, "jti"),
     token_hash: hashSiteLicenseExternalClaimToken({ token }),
     account_id: normalizeUUID(account_id, "account_id"),
