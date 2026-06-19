@@ -317,6 +317,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     string | undefined
   >(undefined);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const [inlineToolbarPortal, setInlineToolbarPortal] =
+    useState<HTMLDivElement | null>(null);
   const [panelWidth, setPanelWidth] = useState<number>(0);
   const isFlyout = layout === "flyout";
   const {
@@ -1128,7 +1130,24 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  function renderFontSizeControls(): React.JSX.Element {
+  function renderToolbarDivider(): React.JSX.Element {
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          display: "inline-block",
+          flexShrink: 0,
+          width: 1,
+          height: 16,
+          background: COLORS.GRAY_LL,
+        }}
+      />
+    );
+  }
+
+  function renderFontSizeControls({
+    embedded = false,
+  }: { embedded?: boolean } = {}): React.JSX.Element {
     return (
       <div
         aria-label="Agent chat text size"
@@ -1137,11 +1156,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           alignItems: "center",
           gap: 4,
           height: 28,
-          padding: "0 7px",
-          marginRight: 8,
-          border: `1px solid ${COLORS.GRAY_LL}`,
-          borderRadius: 7,
-          background: "white",
+          ...(embedded
+            ? undefined
+            : {
+                padding: "0 7px",
+                marginRight: 8,
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: 7,
+                background: "white",
+              }),
           whiteSpace: "nowrap",
         }}
       >
@@ -1157,16 +1180,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           </Button>
         </Tooltip>
         <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-          <span
-            aria-hidden="true"
-            style={{
-              display: "inline-block",
-              flexShrink: 0,
-              width: 1,
-              height: 16,
-              background: COLORS.GRAY_LL,
-            }}
-          />
+          {renderToolbarDivider()}
         </Tooltip>
         <Tooltip title={`Increase chat font size (${fontSize}px)`}>
           <Button
@@ -1179,6 +1193,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             <Icon name="plus" />
           </Button>
         </Tooltip>
+        {embedded ? renderToolbarDivider() : null}
       </div>
     );
   }
@@ -1924,35 +1939,45 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               {renderInlineSessionMenu(inlineSession)}
             </div>
           </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              width: "100%",
-              minWidth: 0,
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-            }}
-          >
-            {showInlineCodexConfig ? (
-              <div style={{ minWidth: 0, flex: "1 1 260px" }}>
-                <CodexConfigButton
-                  threadKey={inlineThreadKey}
-                  chatPath={inlineSession.chat_path}
-                  projectId={project_id}
-                  actions={inlineActions ?? undefined}
-                  threadConfig={inlineThreadMetadata?.acp_config ?? null}
-                  paymentSource={codexPaymentSource}
-                  paymentSourceLoading={codexPaymentSourceLoading}
-                  refreshPaymentSource={refreshCodexPaymentSource}
-                />
-              </div>
-            ) : (
-              <span />
-            )}
-            {renderFontSizeControls()}
-          </div>
+          {showInlineCodexConfig || inlineActions ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                width: "100%",
+                minWidth: 0,
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+              }}
+            >
+              {showInlineCodexConfig ? (
+                <div style={{ minWidth: 0, flex: "1 1 320px" }}>
+                  <CodexConfigButton
+                    threadKey={inlineThreadKey}
+                    chatPath={inlineSession.chat_path}
+                    projectId={project_id}
+                    actions={inlineActions ?? undefined}
+                    threadConfig={inlineThreadMetadata?.acp_config ?? null}
+                    paymentSource={codexPaymentSource}
+                    paymentSourceLoading={codexPaymentSourceLoading}
+                    refreshPaymentSource={refreshCodexPaymentSource}
+                  />
+                </div>
+              ) : (
+                <span style={{ flex: "1 1 auto" }} />
+              )}
+              <div
+                ref={setInlineToolbarPortal}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  flex: "0 0 auto",
+                  minHeight: 28,
+                }}
+              />
+            </div>
+          ) : null}
         </div>
         {error ? (
           <Alert
@@ -1990,6 +2015,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 fontSize={fontSize}
                 onIncreaseFontSize={increaseFontSize}
                 onDecreaseFontSize={decreaseFontSize}
+                threadPanelTopRightControlsPrefix={renderFontSizeControls({
+                  embedded: true,
+                })}
+                threadPanelCompactTopRightControls
+                threadPanelTopRightControlsPortal={inlineToolbarPortal}
                 hideSidebar
                 desc={inlineDesc}
               />
