@@ -15,6 +15,9 @@ export type RootfsRecipe = {
     image?: string;
     image_id?: string;
   };
+  builder?: {
+    run_quota?: JsonObject;
+  };
   steps?: RootfsRecipeStep[];
   verify?: (string | RootfsRecipeCommand)[];
   publish?: RootfsRecipePublish;
@@ -389,6 +392,7 @@ export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {
     recipe: recipe.name ?? loadedRecipe.recipePath,
     recipe_path: loadedRecipe.recipePath,
     base: recipe.base ?? null,
+    builder: recipe.builder ?? null,
     module_dir: baseModuleDir,
     steps,
     verify: recipe.verify ?? [],
@@ -640,9 +644,10 @@ async function resolveOrCreateRecipeProject({
     return { project_id: project.project_id, created: false };
   }
   const projectId = await ctx.hub.projects.createProject({
-    title: options.title ?? `RootFS recipe: ${recipe.name ?? "builder"}`,
+    title: options.title ?? `RootFS build: ${recipe.name ?? "builder"}`,
     rootfs_image: recipe.base?.image,
     rootfs_image_id: recipe.base?.image_id,
+    run_quota: recipe.builder?.run_quota,
     start: false,
   });
   await startProject(ctx, deps, projectId);
@@ -976,7 +981,7 @@ function resultContribution(
   step: RootfsRecipeStep,
   moduleDir: string,
 ): RootfsConfigExport {
-  if (!step.uses) return emptyRecipeConfig({ version: 1 });
+  if (!step.uses) return emptyContributionConfig();
   const module = loadRecipeModule(step.uses, moduleDir).module;
   return {
     kind: "cocalc-rootfs-config",
@@ -985,6 +990,14 @@ function resultContribution(
     metadata: module.contributes?.metadata as any,
     theme: module.contributes?.theme as any,
     content: module.contributes?.content as any,
+  };
+}
+
+function emptyContributionConfig(): RootfsConfigExport {
+  return {
+    kind: "cocalc-rootfs-config",
+    version: 1,
+    exported_at: new Date().toISOString(),
   };
 }
 

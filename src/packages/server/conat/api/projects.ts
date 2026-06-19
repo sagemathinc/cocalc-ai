@@ -140,6 +140,7 @@ import type {
   GenerateProjectSshKeySecretResult,
   ProjectCourseInfo,
   ProjectRootfsConfig,
+  ProjectRootfsPublishConfig,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectCollabInviteAction,
@@ -151,6 +152,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { listProjectedProjectsForAccount } from "@cocalc/database/postgres/account-project-index";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
+import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
 import {
   copyProjectSecrets as copyProjectSecretsInDb,
   deleteProjectSecret as deleteProjectSecretInDb,
@@ -1040,6 +1042,61 @@ export async function getProjectRootfs({
 }): Promise<ProjectRootfsConfig | null> {
   return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
     .rootfs;
+}
+
+export async function getProjectRootfsPublishConfig({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRootfsPublishConfig | null> {
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .rootfs_publish_config;
+}
+
+function validateProjectRootfsPublishConfig(
+  config: ProjectRootfsPublishConfig | null,
+): ProjectRootfsPublishConfig | null {
+  if (config == null) return null;
+  if (
+    !config ||
+    typeof config !== "object" ||
+    Array.isArray(config) ||
+    config.kind !== "cocalc-project-rootfs-publish-config" ||
+    config.version !== 1
+  ) {
+    throw new Error("invalid RootFS publish config envelope");
+  }
+  parseRootfsConfigExport(config.config);
+  return config;
+}
+
+export async function setProjectRootfsPublishConfig({
+  account_id,
+  project_id,
+  config,
+}: {
+  account_id: string;
+  project_id: string;
+  config: ProjectRootfsPublishConfig | null;
+}): Promise<void> {
+  const normalized = validateProjectRootfsPublishConfig(config);
+  await assertCollab({ account_id, project_id });
+  await withProjectRehomeWriteFence({
+    project_id,
+    action: "set project RootFS publish config",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE projects SET rootfs_publish_config = $2 WHERE project_id = $1",
+        [project_id, normalized],
+      );
+    },
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["rootfs_publish_config"],
+  });
 }
 
 export async function setProjectEnv({

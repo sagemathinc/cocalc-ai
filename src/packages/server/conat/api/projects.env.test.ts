@@ -115,6 +115,17 @@ describe("project env helpers", () => {
           env: { FOO: "bar", PATH: "/custom/bin:$PATH" },
           rootfs_image: null,
           rootfs_image_id: null,
+          rootfs_publish_config: {
+            kind: "cocalc-project-rootfs-publish-config",
+            version: 1,
+            updated_at: "2026-06-19T00:00:00.000Z",
+            config: {
+              kind: "cocalc-rootfs-config",
+              version: 1,
+              exported_at: "2026-06-19T00:00:00.000Z",
+              metadata: { label: "Saved RootFS" },
+            },
+          },
           snapshots: null,
           backups: null,
           run_quota: null,
@@ -317,6 +328,77 @@ describe("project env helpers", () => {
       {
         project_id: PROJECT_ID,
         fields: ["env"],
+      },
+    );
+  });
+
+  it("returns saved RootFS publish config for a collaborator", async () => {
+    const { getProjectRootfsPublishConfig } = await import("./projects");
+    await expect(
+      getProjectRootfsPublishConfig({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        kind: "cocalc-project-rootfs-publish-config",
+        config: expect.objectContaining({
+          kind: "cocalc-rootfs-config",
+          metadata: { label: "Saved RootFS" },
+        }),
+      }),
+    );
+  });
+
+  it("updates saved RootFS publish config and publishes detail invalidation", async () => {
+    queryMock = jest.fn(async () => ({ rows: [] }));
+    getPoolMock = jest.fn(() => ({
+      query: queryMock,
+      connect: jest.fn(async () => ({
+        query: queryMock,
+        release: jest.fn(),
+      })),
+    }));
+    const config = {
+      kind: "cocalc-project-rootfs-publish-config" as const,
+      version: 1 as const,
+      updated_at: "2026-06-19T00:00:00.000Z",
+      recipe: {
+        name: "cocalc-base",
+        recipe_path: "/recipes/cocalc-base.yaml",
+      },
+      config: {
+        kind: "cocalc-rootfs-config" as const,
+        version: 1 as const,
+        exported_at: "2026-06-19T00:00:00.000Z",
+        metadata: {
+          label: "CoCalc Base",
+          slug: "cocalc-base",
+        },
+      },
+    };
+    const { setProjectRootfsPublishConfig } = await import("./projects");
+
+    await expect(
+      setProjectRootfsPublishConfig({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        config,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      "UPDATE projects SET rootfs_publish_config = $2 WHERE project_id = $1",
+      [PROJECT_ID, config],
+    );
+    expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
+      {
+        project_id: PROJECT_ID,
+        fields: ["rootfs_publish_config"],
       },
     );
   });
