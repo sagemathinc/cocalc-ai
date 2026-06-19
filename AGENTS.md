@@ -18,6 +18,24 @@ ownership rules, cleanup checklist, and a reference diagram of where public-site
 source, operating docs, command prompts, scratch artifacts, and local runtime
 state belong.
 
+> **READ FIRST every session — live coordination (multiple agents share this repo):**
+> 1. **`src/.agents/active-agent-handoff.md`** — the live "who is doing what right
+>    now" ledger: claimed files, current branch, preview owner, open risks. Updated
+>    at the START and END of every agent turn; update your block before editing. From
+>    another worktree, read the canonical copy at
+>    `/home/user/cocalc-ai-synthesis/src/.agents/active-agent-handoff.md`.
+> 2. **Verify your worktree before editing/building/previewing:** `git worktree list`;
+>    confirm the serving hub with `readlink /proc/<hub-pid>/cwd`. Public-site work =
+>    `/home/user/cocalc-ai-synthesis` (`blaec-synthesis-2026-06-18`); platform UI =
+>    `/home/user/cocalc-ai` (`remove-empty-project-tag`). **Never edit the other
+>    thread's worktree.** (A `cd`-then-`git` slip mutated the wrong worktree this
+>    session — use explicit `git -C <path>`.)
+> 3. **`blaec.cocalc.ai` is served by ONE hub on `:9100`, owned by synthesis.**
+>    Validate the preview by rendered CONTENT (the QA canary), never HTTP 200 — a
+>    stale or wrong-owner hub still returns 200. **Serialize builds** (two concurrent
+>    `build:dev` runs on the shared cache corrupt the bundle and silently revert the
+>    preview).
+
 Current high-level map:
 
 ```text
