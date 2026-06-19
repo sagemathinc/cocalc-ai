@@ -116,3 +116,30 @@ here to avoid breaking the shared hub/DB.
 Before ANY preview judgment, every agent runs `hub-daemon.sh status` in BOTH worktrees +
 `readlink /proc/<hub-pid>/cwd` and confirms cwd `= /home/user/cocalc-ai-synthesis/src`.
 HTTP 200 ≠ correct owner.
+
+---
+
+## Contribution-hygiene / PR-prep (2026-06-18) — NOT pushed
+
+Cut clean, main-based PR branches so William reviews product only (not the 304-commit
+synthesis branch, not scaffolding, not platform work):
+
+- **`public-site-pr`** — worktree `/home/user/cocalc-ai-public-site-pr`. The landing-site
+  PR: **70 files off `origin/main`** (frontend/public pages+tokens+tests, the
+  `hub/servers/app/public-*` backend + `express-app` wiring, `customize/app-base-path`,
+  `util/public-site-metadata`). Verified standalone: **zero** platform/scaffolding imports.
+  Two dev-tooling tests (`public-site-browser-qa-script.test.ts`,
+  `public-site-agent-workflow.test.ts`) were excluded — they assert the QA harness /
+  `.agents/` docs, not product.
+- **`public-site-shells`** — the 3 `cli|launchpad|plus/site/index.html` product marketing
+  pages (3 files off `origin/main`). Split out so the landing PR stays tight.
+- **Scaffolding stays here on `blaec-synthesis-2026-06-18`** (local): `.agents/`, the audit
+  docs, `.claude/commands`, the preview hook + QA harness, the 2 dev-tooling tests.
+- Empirical gate (pnpm install + jest + tsc on the fresh branch) deferred to **CI on the PR**.
+
+**⚠️ Codex — decide the home of the orphaned platform files** (currently only on
+`blaec-synthesis` via `blaec2`, NOT on `remove-empty-project-tag`): `project/page/flyouts/*`
+(6), `projects/project-rootfs-badge.*` (2), `styles/index-base.css` (flyout-star CSS),
+`docs/mockups/file-explorer-*` (6). Provenance commits `d0de512695` (rootfs badge),
+`072401c147` (flyout controls). Cherry-pick onto a platform branch if still wanted; else
+they're harmlessly excluded from the public-site PRs.
