@@ -80,6 +80,7 @@ import {
   ROOTFS_PROJECT_PRESET_TAGS,
   type RootfsProjectPreset,
 } from "@cocalc/frontend/rootfs/project-presets";
+import { queueRootfsChangeRestart } from "./rootfs-restart";
 import {
   themeDraftFromTheme,
   themeFromDraft,
@@ -687,9 +688,14 @@ export default function RootFilesystemImage({
       });
       setValue(currentState?.image ?? image);
       setImageId(currentState?.image_id ?? image_id ?? "");
+      const projectId = project.get("project_id");
       if (project.getIn(["state", "state"]) == "running") {
-        setRestartQueuedAt(new Date().toISOString());
-        redux.getActions("projects").restart_project(project.get("project_id"));
+        await queueRootfsChangeRestart({
+          project_id: projectId,
+          restartProject: (project_id) =>
+            redux.getActions("projects").restart_project(project_id),
+          setRestartQueuedAt,
+        });
       } else {
         setRestartQueuedAt("");
       }
