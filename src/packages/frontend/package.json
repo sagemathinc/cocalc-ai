@@ -2,6 +2,9 @@
   "name": "@cocalc/frontend",
   "version": "1.102.7",
   "description": "CoCalc: Collaborative Calculation",
+  "publishConfig": {
+    "types": "dist/public/index.d.ts"
+  },
   "exports": {
     "./*": "./dist/*.js",
     "./app-framework": "./dist/app-framework/index.js",

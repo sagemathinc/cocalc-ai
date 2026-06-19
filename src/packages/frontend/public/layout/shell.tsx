@@ -49,7 +49,7 @@ const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
   appBasePath,
   "public/fonts/space-grotesk/SpaceGrotesk-wght.woff2",
 );
-const PUBLIC_PAGE_CSS = `
+export const PUBLIC_PAGE_CSS = `
   @font-face {
     font-family: "Space Grotesk";
     src: url("${PUBLIC_DISPLAY_FONT_URL}") format("woff2");

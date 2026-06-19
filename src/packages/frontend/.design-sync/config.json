@@ -1,0 +1,8 @@
+{
+  "pkg": "@cocalc/frontend",
+  "globalName": "CoCalcPublic",
+  "shape": "package",
+  "buildCmd": "pnpm exec tsc --build",
+  "provider": { "component": "DSProvider" },
+  "componentSrcMap": { "DSProvider": null }
+}
