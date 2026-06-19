@@ -192,13 +192,9 @@ function normalizeAllowedDomain(domain: string): string {
 }
 
 function normalizeAllowedDomains(allowed_domains?: string[]): string[] {
-  const domains = Array.from(
+  return Array.from(
     new Set((allowed_domains ?? []).map(normalizeAllowedDomain)),
   ).sort();
-  if (domains.length === 0) {
-    throw Error("at least one allowed domain is required");
-  }
-  return domains;
 }
 
 async function validatePurchaseFreshAuth({
