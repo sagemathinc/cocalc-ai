@@ -13,6 +13,7 @@ import {
 import type { DocsEntry } from "@cocalc/docs";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import {
   Alert,
@@ -21,6 +22,7 @@ import {
   Checkbox,
   Flex,
   Popconfirm,
+  Popover,
   Space,
   Typography,
 } from "antd";
@@ -94,6 +96,87 @@ function NoteEditor({
         ) : null}
       </Space>
     </Flex>
+  );
+}
+
+export function DocsPrivateToolbarActions({
+  accountId,
+  entry,
+  loading,
+  notes,
+  onSaveNote,
+  onToggleStar,
+  showLabel = false,
+  summary,
+}: {
+  accountId?: string;
+  entry: DocsEntry;
+  loading?: boolean;
+  notes: DocsPageNoteV1[];
+  onSaveNote: (entry: DocsEntry, body: string) => void | Promise<void>;
+  onToggleStar: (entry: DocsEntry) => void | Promise<void>;
+  showLabel?: boolean;
+  summary?: DocsPrivateEntrySummary;
+}) {
+  const [addingNote, setAddingNote] = useState(false);
+  const starred = Boolean(summary?.starred);
+  if (!accountId) return null;
+
+  return (
+    <Space.Compact>
+      <Tooltip
+        title={starred ? "Unstar this docs page" : "Star this docs page"}
+      >
+        <Button
+          aria-label={starred ? "Unstar docs page" : "Star docs page"}
+          icon={
+            starred ? (
+              <StarFilled style={{ color: COLORS.STAR }} />
+            ) : (
+              <StarOutlined />
+            )
+          }
+          loading={loading}
+          onClick={() => void onToggleStar(entry)}
+          size="small"
+        />
+      </Tooltip>
+      <Popover
+        content={
+          <div style={{ width: 300 }}>
+            <NoteEditor
+              autoFocus
+              onCancel={() => setAddingNote(false)}
+              onSave={async (value) => {
+                await onSaveNote(entry, value);
+                setAddingNote(false);
+              }}
+            />
+          </div>
+        }
+        onOpenChange={setAddingNote}
+        open={addingNote}
+        placement="bottomRight"
+        title="Add private note"
+        trigger="click"
+      >
+        <Tooltip
+          title={
+            notes.length
+              ? `Add private note (${notes.length} saved)`
+              : "Add private note"
+          }
+        >
+          <Button
+            aria-label="Add private note"
+            icon={<EditOutlined />}
+            size="small"
+          >
+            {showLabel ? "Note" : null}
+          </Button>
+        </Tooltip>
+      </Popover>
+    </Space.Compact>
   );
 }
 
