@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { type CSSProperties, useEffect, useState } from "react";
+
 import { Tag } from "antd";
 
 import { Icon, isIconName, type IconName } from "@cocalc/frontend/components";
@@ -236,6 +238,65 @@ export function rootfsThemeImageUrl(
   return blobImageUrl(theme?.image_blob, "rootfs-theme.png");
 }
 
+export function RootfsThemePreview({
+  entry,
+  size = 56,
+}: {
+  entry?: {
+    theme?: RootfsImageEntry["theme"];
+    label?: string;
+    image?: string;
+  };
+  size?: number;
+}): React.JSX.Element {
+  const imageUrl = rootfsThemeImageUrl(entry?.theme);
+  const [imageFailed, setImageFailed] = useState(false);
+  const accentColor = entry?.theme?.accent_color?.trim();
+  const color = entry?.theme?.color?.trim();
+  const iconName = rootfsCatalogIconName({ theme: entry?.theme });
+  const boxStyle: CSSProperties = {
+    width: size,
+    height: size,
+    borderRadius: size <= 56 ? 12 : 16,
+    flex: "0 0 auto",
+    overflow: "hidden",
+  };
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  if (imageUrl && !imageFailed) {
+    return (
+      <img
+        src={imageUrl}
+        alt={`${entry?.label || entry?.image || "RootFS"} theme`}
+        onError={() => setImageFailed(true)}
+        style={{
+          ...boxStyle,
+          display: "block",
+          objectFit: "cover",
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        ...boxStyle,
+        alignItems: "center",
+        background: accentColor || COLORS.GRAY_LL,
+        color: color || undefined,
+        display: "flex",
+        justifyContent: "center",
+      }}
+    >
+      <Icon name={iconName} style={{ fontSize: size <= 56 ? 24 : 56 }} />
+    </div>
+  );
+}
+
 function shortRootfsRef(image: string): string {
   const contentKey = managedRootfsContentKey(image);
   if (contentKey) {
@@ -260,7 +321,6 @@ function publishedLabel(created?: string): string | undefined {
 }
 
 export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
-  const imageUrl = rootfsThemeImageUrl(entry.theme);
   const themeColor = entry.theme?.color?.trim() || COLORS.GRAY_L;
   const accentColor =
     entry.theme?.accent_color?.trim() || entry.theme?.color?.trim();
@@ -287,38 +347,7 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
       }}
     >
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        {imageUrl ? (
-          <img
-            src={imageUrl}
-            alt={`${themeTitle} theme`}
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 10,
-              objectFit: "cover",
-              flex: "0 0 auto",
-            }}
-          />
-        ) : (
-          <div
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 10,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: accentColor || "#f5f5f5",
-              color: entry.theme?.color || undefined,
-              flex: "0 0 auto",
-            }}
-          >
-            <Icon
-              name={rootfsCatalogIconName(entry)}
-              style={{ fontSize: "22px" }}
-            />
-          </div>
-        )}
+        <RootfsThemePreview entry={entry} size={52} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{
@@ -381,7 +410,9 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
   );
 }
 
-function rootfsCatalogIconName(entry: RootfsImageEntry): IconName {
+function rootfsCatalogIconName(entry: {
+  theme?: RootfsImageEntry["theme"];
+}): IconName {
   const icon = entry.theme?.icon?.trim();
   return isIconName(icon) ? icon : "docker";
 }
