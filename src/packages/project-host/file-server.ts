@@ -197,7 +197,11 @@ const QUOTA_CACHE_TTL_MS = Math.max(
 );
 const PROJECT_QUOTA_REPAIR_SWEEP_MS = Math.max(
   60_000,
-  envToInt("COCALC_PROJECT_QUOTA_REPAIR_SWEEP_MS", 10 * 60 * 1000),
+  envToInt("COCALC_PROJECT_QUOTA_REPAIR_SWEEP_MS", 60 * 60 * 1000),
+);
+const PROJECT_QUOTA_REPAIR_ACTIVE_MS = Math.max(
+  60 * 60 * 1000,
+  envToInt("COCALC_PROJECT_QUOTA_REPAIR_ACTIVE_MS", 7 * 24 * 60 * 60 * 1000),
 );
 const sshWakeInFlight = new Map<string, Promise<number | null>>();
 const quotaCache = new Map<
@@ -1656,6 +1660,21 @@ function positiveFiniteBytes(value: unknown): number | undefined {
   return Math.floor(n);
 }
 
+function shouldRepairProjectQuota(project: {
+  state?: string;
+  last_seen?: number;
+  updated_at?: number;
+}): boolean {
+  if (project.state === "running" || project.state === "starting") {
+    return true;
+  }
+  const lastActivity = Math.max(
+    Number(project.last_seen) || 0,
+    Number(project.updated_at) || 0,
+  );
+  return Date.now() - lastActivity <= PROJECT_QUOTA_REPAIR_ACTIVE_MS;
+}
+
 async function repairProjectVolumeQuota({
   project_id,
   scratch,
@@ -1702,10 +1721,15 @@ async function repairProjectQuotaLimits(
     repaired: 0,
     missing: 0,
     skipped: 0,
+    inactive: 0,
     errors: 0,
   };
   try {
     for (const project of listProjects()) {
+      if (!shouldRepairProjectQuota(project)) {
+        counts.inactive += 1;
+        continue;
+      }
       const disk = positiveFiniteBytes(project.disk);
       const scratch = positiveFiniteBytes(project.scratch ?? project.disk);
       if (disk == null && scratch == null) {
