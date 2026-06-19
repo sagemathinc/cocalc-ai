@@ -272,6 +272,7 @@ export interface MembershipPackageAssignment {
   metadata?: Record<string, unknown> | null;
   grant_id?: string | null;
   grant_source?: string | null;
+  grant_expires_at?: Date | string | null;
   grant_purchase_id?: number | null;
 }
 
