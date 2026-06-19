@@ -77,6 +77,7 @@ import type {
   ProjectHiddenResult,
   ProjectRegion,
   ProjectRootfsConfig,
+  ProjectRootfsPublishConfig,
   ProjectRunQuota,
   ProjectSecretMetadata,
   ProjectSnapshotSchedule,
@@ -135,6 +136,7 @@ export interface ProjectDetails {
   created: ProjectCreated;
   env: ProjectEnv;
   rootfs: ProjectRootfsConfig | null;
+  rootfs_publish_config: ProjectRootfsPublishConfig | null;
   snapshots: ProjectSnapshotSchedule;
   backups: ProjectBackupSchedule;
   run_quota: ProjectRunQuota;

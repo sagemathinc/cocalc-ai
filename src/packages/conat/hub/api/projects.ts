@@ -18,6 +18,7 @@ import {
   type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import type { RootfsConfigExport } from "@cocalc/util/rootfs-images";
 import type { CodexUsageStatusInfo } from "./system";
 import type {
   ProjectUserRole,
@@ -641,6 +642,16 @@ export interface ProjectRootfsConfig {
   image: string;
   image_id?: string | null;
 }
+export interface ProjectRootfsPublishConfig {
+  kind: "cocalc-project-rootfs-publish-config";
+  version: 1;
+  updated_at: Date | string;
+  recipe?: {
+    name?: string;
+    recipe_path?: string;
+  };
+  config: RootfsConfigExport;
+}
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
@@ -684,6 +695,8 @@ export const projects = {
   copyProjectSecrets: authFirstRequireAccount,
   generateProjectSshKeySecret: authFirstRequireAccount,
   getProjectRootfs: authFirstRequireAccount,
+  getProjectRootfsPublishConfig: authFirstRequireAccount,
+  setProjectRootfsPublishConfig: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
   getProjectRuntimeSponsorStatus: authFirstRequireAccount,
   getAccountRuntimeSponsorStatus: authFirstRequireAccount,
@@ -896,6 +909,17 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectRootfsConfig | null>;
+
+  getProjectRootfsPublishConfig: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectRootfsPublishConfig | null>;
+
+  setProjectRootfsPublishConfig: (opts: {
+    account_id?: string;
+    project_id: string;
+    config: ProjectRootfsPublishConfig | null;
+  }) => Promise<void>;
 
   getProjectCourseInfo: (opts: {
     account_id?: string;

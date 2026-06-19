@@ -22,7 +22,7 @@ steps:
 
 verify:
   - command -v julia
-  - julia -e 'import Pluto'
+  - export JULIA_DEPOT_PATH=/opt/julia-depot${JULIA_DEPOT_PATH:+:$JULIA_DEPOT_PATH}; julia -e 'import Pluto'
 
 publish:
   label: Julia + Pluto

@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { Command } from "commander";
+import type { ProjectRootfsPublishConfig } from "@cocalc/conat/hub/api/projects";
 import type {
   RootfsConfigExport,
   RootfsAdminCatalogEntry,
@@ -188,6 +189,40 @@ function parseRootfsConfigFile(value?: string): RootfsConfigExport | undefined {
   }
 }
 
+function projectRootfsPublishConfigEnvelope(
+  result: RootfsRecipeRunResult,
+): ProjectRootfsPublishConfig {
+  return {
+    kind: "cocalc-project-rootfs-publish-config",
+    version: 1,
+    updated_at: new Date().toISOString(),
+    recipe: {
+      name: result.recipe,
+      recipe_path: result.recipe_path,
+    },
+    config: result.config,
+  };
+}
+
+async function rootfsPublishConfigForProject({
+  ctx,
+  configFile,
+  project_id,
+}: {
+  ctx: any;
+  configFile?: string;
+  project_id: string;
+}): Promise<RootfsConfigExport | undefined> {
+  const fileConfig = parseRootfsConfigFile(configFile);
+  if (fileConfig != null) return fileConfig;
+  const saved = await ctx.hub.projects.getProjectRootfsPublishConfig?.({
+    project_id,
+  });
+  return saved?.config == null
+    ? undefined
+    : parseRootfsConfigExport(saved.config);
+}
+
 function rootfsCatalogConfigPayload(
   opts: {
     label?: string;
@@ -205,7 +240,9 @@ function rootfsCatalogConfigPayload(
 ) {
   const label = `${opts.label ?? config?.metadata?.label ?? ""}`.trim();
   if (!label) {
-    throw new Error("missing RootFS label; pass --label or --config-file");
+    throw new Error(
+      "missing RootFS label; pass --label, --config-file, or first run rootfs build for this project",
+    );
   }
   const content =
     config?.content != null
@@ -976,6 +1013,73 @@ export function registerRootfsCommand(
     );
 
   rootfs
+    .command("build <recipe>")
+    .description(
+      "build a RootFS recipe in a clean builder project or existing project and save publish defaults on the project",
+    )
+    .option("-w, --project <project>", "existing project id or name to use")
+    .option("--module-dir <path>", "local recipe module registry directory")
+    .option(
+      "--title <title>",
+      "title for a new builder project; defaults to the recipe name",
+    )
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
+    .option("--config-out <path>", "also write generated RootFS config JSON")
+    .option(
+      "--step-timeout <seconds>",
+      "default timeout for each recipe step command",
+      "900",
+    )
+    .action(
+      async (
+        recipePath: string,
+        opts: RootfsRecipeRunOptions,
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build", async (ctx) => {
+          const result = await runRootfsRecipe({
+            ctx,
+            deps: {
+              resolveProjectFromArgOrContext,
+              resolveProjectProjectApi,
+              waitForLro,
+              serializeLroSummary,
+            },
+            options: {
+              ...opts,
+              publish: false,
+              wait: false,
+            },
+            recipePath,
+          });
+          const publishConfig = projectRootfsPublishConfigEnvelope(result);
+          await ctx.hub.projects.setProjectRootfsPublishConfig({
+            project_id: result.project_id,
+            config: publishConfig,
+          });
+          if (opts.configOut) {
+            writeFileSync(
+              opts.configOut,
+              `${JSON.stringify(result.config, null, 2)}\n`,
+            );
+          }
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return {
+              ...result,
+              saved_rootfs_publish_config: true,
+            };
+          }
+          return [
+            formatRootfsRecipeRunHuman(result),
+            "",
+            "saved_rootfs_publish_config: true",
+            `next: cocalc rootfs publish --project=${result.project_id}`,
+          ].join("\n");
+        });
+      },
+    );
+
+  rootfs
     .command("list")
     .description("list visible RootFS catalog entries")
     .option(
@@ -1545,7 +1649,11 @@ export function registerRootfsCommand(
       ) => {
         await withContext(command, "rootfs publish", async (ctx) => {
           const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-          const config = parseRootfsConfigFile(opts.configFile);
+          const config = await rootfsPublishConfigForProject({
+            ctx,
+            configFile: opts.configFile,
+            project_id: ws.project_id,
+          });
           const payload = rootfsCatalogConfigPayload(opts, config);
           const op = await ctx.hub.system.publishProjectRootfsImage({
             project_id: ws.project_id,
