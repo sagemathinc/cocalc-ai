@@ -119,6 +119,7 @@ describe("remote project detail reads", () => {
       created: new Date("2026-04-08T20:00:00Z"),
       env: { FOO: "bar" },
       rootfs: { image: "buildpack-deps:noble-scm" },
+      rootfs_publish_config: null,
       snapshots: { daily: 7 },
       backups: { daily: 1 },
       run_quota: { disk_quota: 1234 },

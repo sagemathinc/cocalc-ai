@@ -144,15 +144,22 @@ export class SubvolumeQuota {
       warning,
     } = await this.qgroup();
     let size = rawSize;
+    const warnings: string[] = [];
+    if (warning) {
+      warnings.push(warning);
+    }
     if (size == "none") {
       size = 0;
+      warnings.push(
+        "No btrfs quota limit is currently enforced on this subvolume.",
+      );
     }
     return {
       used,
       size,
       qgroupid,
       scope: "subvolume",
-      warning,
+      warning: warnings.length > 0 ? warnings.join(" ") : undefined,
     };
   };
 

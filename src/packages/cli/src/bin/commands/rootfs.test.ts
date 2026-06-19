@@ -481,6 +481,91 @@ test("rootfs publish accepts config json and lets flags override it", async () =
   });
 });
 
+test("rootfs publish uses saved project RootFS publish config", async () => {
+  let capturedArgs: any;
+  const harness = rootfsDeps({
+    resolveProjectFromArgOrContext: async () => ({ project_id: "project-1" }),
+    projects: {
+      getProjectRootfsPublishConfig: async (opts: any) => {
+        assert.deepEqual(opts, { project_id: "project-1" });
+        return {
+          kind: "cocalc-project-rootfs-publish-config",
+          version: 1,
+          updated_at: "2026-06-19T00:00:00.000Z",
+          config: {
+            kind: "cocalc-rootfs-config",
+            version: 1,
+            exported_at: "2026-06-19T00:00:00.000Z",
+            metadata: {
+              label: "Saved label",
+              slug: "saved-label",
+              tags: ["saved"],
+            },
+            content: {
+              version: 1,
+              title: "Saved content",
+              actions: [{ kind: "browse", label: "Browse", path: "/" }],
+            },
+          },
+        };
+      },
+    },
+    system: {
+      publishProjectRootfsImage: async (opts: any) => {
+        capturedArgs = opts;
+        return { op_id: "op-1", scope_type: "project", scope_id: "project-1" };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "publish",
+    "--project",
+    "project-1",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    project_id: "project-1",
+    browser_id: undefined,
+    label: "Saved label",
+    slug: "saved-label",
+    family: undefined,
+    version: undefined,
+    channel: undefined,
+    supersedes_image_id: undefined,
+    description: undefined,
+    visibility: undefined,
+    tags: ["saved"],
+    theme: undefined,
+    content: {
+      version: 1,
+      title: "Saved content",
+      subtitle: undefined,
+      description: undefined,
+      publisher: undefined,
+      license: undefined,
+      actions: [
+        {
+          kind: "browse",
+          label: "Browse",
+          path: "/",
+          description: undefined,
+        },
+      ],
+    },
+    content_warnings: [],
+    official: undefined,
+    prepull: undefined,
+    hidden: undefined,
+    switch_project: undefined,
+  });
+});
+
 test("rootfs recipe explain resolves local modules", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-"));
   const recipePath = join(dir, "recipe.yaml");
@@ -659,10 +744,68 @@ test("rootfs recipe explain parses bundled machine learning GPU recipes", async 
     ]);
 
     assert.equal(harness.captured.steps[0].uses, "cocalc/apt");
-    assert.equal(harness.captured.steps[1].uses, "cocalc/jupyter-python");
-    assert.equal(harness.captured.steps[2].uses, module);
+    assert.equal(harness.captured.steps[1].kind, "run");
+    assert.equal(harness.captured.steps[2].uses, "cocalc/jupyter-python");
+    assert.equal(
+      harness.captured.steps[2].inputs.python,
+      "/opt/cocalc-python/bin/python3.12",
+    );
+    assert.equal(harness.captured.steps[3].uses, module);
     assert.equal(harness.captured.publish.slug, slug);
     assert.ok(harness.captured.publish.tags.includes("nvidia-gpu"));
+  }
+});
+
+test("rootfs build runs recipe and saves publish config on the project", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-build-"));
+  const recipePath = join(dir, "recipe.json");
+  let savedConfig: any;
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "build-demo",
+        steps: [{ name: "install", run: "true" }],
+        publish: {
+          label: "Build demo",
+          slug: "build-demo",
+          tags: ["demo"],
+        },
+      }),
+    );
+    const harness = rootfsDeps({
+      globals: { quiet: true },
+      projects: {
+        createProject: async (opts: any) => {
+          assert.equal(opts.title, "RootFS build: build-demo");
+          return "builder-project";
+        },
+        start: async () => ({ op_id: "start-op" }),
+        setProjectRootfsPublishConfig: async (opts: any) => {
+          savedConfig = opts;
+        },
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync(["node", "test", "rootfs", "build", recipePath]);
+
+    assert.equal(savedConfig.project_id, "builder-project");
+    assert.equal(
+      savedConfig.config.kind,
+      "cocalc-project-rootfs-publish-config",
+    );
+    assert.equal(savedConfig.config.recipe.name, "build-demo");
+    assert.equal(savedConfig.config.config.metadata.label, "Build demo");
+    assert.match(
+      harness.captured,
+      /next: cocalc rootfs publish --project=builder-project/,
+    );
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
   }
 });
 
@@ -853,7 +996,7 @@ test("rootfs recipe run human summary omits command logs", async () => {
     assert.match(harness.captured, /project_id: builder-project/);
     assert.match(harness.captured, /steps:\n  - install noisy package: ok/);
     assert.match(harness.captured, /verify:\n  - verify 1: ok/);
-    assert.match(harness.captured, /label: RootFS recipe image/);
+    assert.match(harness.captured, /label: Human demo image/);
     assert.match(harness.captured, /tags: demo/);
     assert.doesNotMatch(harness.captured, /this is the full command log/);
   } finally {
@@ -938,6 +1081,99 @@ test("rootfs recipe run polls async command output and honors step timeout", asy
     assert.equal(execCalls[0].async_call, true);
     assert.equal(execCalls[0].timeout, 123);
     assert.ok(execCalls.some((call) => call.async_get === "job-1"));
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs recipe run reconnects while polling async command output", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-reconnect-"));
+  const recipePath = join(dir, "recipe.json");
+  const execCalls: any[] = [];
+  let resolveCalls = 0;
+  let refreshWaits = 0;
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "reconnect-demo",
+        steps: [{ name: "slow install", run: "echo installing" }],
+      }),
+    );
+    const harness = rootfsDeps({
+      globals: { json: true, quiet: true },
+      projects: {
+        createProject: async () => "builder-project",
+        start: async () => ({ op_id: "start-op" }),
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+      resolveProjectProjectApi: async (_ctx: any, project_id: string) => {
+        resolveCalls += 1;
+        const firstConnection = resolveCalls === 1;
+        return {
+          project: { project_id },
+          api: {
+            waitUntilReady: async () => {
+              if (!firstConnection) refreshWaits += 1;
+            },
+            system: {
+              exec: async (opts: any) => {
+                execCalls.push({ connection: resolveCalls, opts });
+                if (opts.async_call) {
+                  return {
+                    type: "async",
+                    job_id: "job-1",
+                    status: "running",
+                    stdout: "started\n",
+                    stderr: "",
+                    exit_code: 0,
+                    start: Date.now(),
+                  };
+                }
+                assert.equal(opts.async_get, "job-1");
+                if (firstConnection) {
+                  throw new Error("socket has been disconnected");
+                }
+                return {
+                  type: "async",
+                  job_id: "job-1",
+                  status: "completed",
+                  stdout: "started\nreconnected\ndone\n",
+                  stderr: "",
+                  exit_code: 0,
+                  start: Date.now(),
+                };
+              },
+            },
+          },
+        };
+      },
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+    ]);
+
+    assert.equal(harness.captured.steps[0].exit_code, 0);
+    assert.equal(
+      harness.captured.steps[0].stdout,
+      "started\nreconnected\ndone\n",
+    );
+    assert.equal(resolveCalls, 2);
+    assert.equal(refreshWaits, 1);
+    assert.ok(
+      execCalls.some(
+        (call) => call.connection === 2 && call.opts.async_get === "job-1",
+      ),
+    );
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }

@@ -191,6 +191,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "external-claim-consumed",
   "external-claim-granted",
   "external-claim-side-effect-failed",
+  "seat-manually-assigned",
   "seat-released-by-user",
   "seat-released-for-upgrade",
   "seat-affiliation-reverified",
@@ -2820,6 +2821,117 @@ export async function revokeSiteLicensePoolSeat({
     return await revokeWithClient(client);
   }
   return await withLocalSiteLicenseTransaction(revokeWithClient);
+}
+
+export async function assignSiteLicensePoolSeat({
+  actor_account_id,
+  package_id,
+  target_account_id,
+  grant_expires_at,
+  trusted_admin = false,
+  client,
+}: {
+  actor_account_id: string;
+  package_id: string;
+  target_account_id: string;
+  grant_expires_at?: Date | string | null;
+  trusted_admin?: boolean;
+  client?: PoolClient;
+}): Promise<MembershipPackageAssignment> {
+  const actorAccountId = normalizeAccountId(
+    actor_account_id,
+    "actor_account_id",
+  );
+  const packageId = normalizePackageId(package_id);
+  const targetAccountId = normalizeAccountId(
+    target_account_id,
+    "target_account_id",
+  );
+  const grantExpiresAt = asDate(grant_expires_at);
+  const now = new Date();
+  if (grantExpiresAt != null && grantExpiresAt <= now) {
+    throw Error("grant expiration must be in the future");
+  }
+  await assertTargetAccountExists(targetAccountId);
+
+  const assignWithClient = async (
+    dbClient: PoolClient,
+  ): Promise<MembershipPackageAssignment> => {
+    const { siteLicense, pkg } = await getSiteLicenseForPackage(
+      packageId,
+      dbClient,
+    );
+    if (!trusted_admin) {
+      await assertSiteLicenseManager({
+        account_id: actorAccountId,
+        site_license_id: siteLicense.id,
+        write: true,
+        client: dbClient,
+      });
+    }
+    const exclusiveGroup = getPackageExclusiveGroup(pkg);
+    const releasedAssignments =
+      await revokeOtherActiveSiteLicenseAssignmentsForAccount({
+        site_license_id: siteLicense.id,
+        keep_package_id: pkg.id,
+        account_id: targetAccountId,
+        client: dbClient,
+      });
+    const canceledRequests =
+      await cancelPendingSiteLicensePoolRequestsForAccount({
+        site_license_id: siteLicense.id,
+        account_id: targetAccountId,
+        reviewer_account_id: actorAccountId,
+        review_note: "Canceled by direct site-license manager assignment.",
+        client: dbClient,
+      });
+    const assignment = await assignMembershipPackageSeat(
+      {
+        package_id: pkg.id,
+        account_id: targetAccountId,
+        assigned_by_account_id: actorAccountId,
+        metadata: {
+          site_license_id: siteLicense.id,
+          site_license_name: siteLicense.name,
+          organization_name: siteLicense.organization_name,
+          site_license_bay_id: siteLicense.bay_id,
+          site_license_owner_account_id: siteLicense.owner_account_id ?? null,
+          pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
+          verification_policy: "manager-approval",
+          exclusive_group: exclusiveGroup,
+          grant_source: "site-license-manual-assignment",
+          grant_expires_at: grantExpiresAt?.toISOString() ?? null,
+          manually_assigned_by_account_id: actorAccountId,
+          manually_assigned_at: now.toISOString(),
+        },
+      },
+      dbClient,
+    );
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicense.id,
+      action: "seat-manually-assigned",
+      actor_account_id: actorAccountId,
+      target_account_id: targetAccountId,
+      package_id: pkg.id,
+      metadata: {
+        assignment_id: assignment.id,
+        grant_id: assignment.grant_id ?? null,
+        grant_expires_at: grantExpiresAt?.toISOString() ?? null,
+        exclusive_group: exclusiveGroup,
+        released_assignment_ids: releasedAssignments.map(
+          (row) => row.assignment_id,
+        ),
+        canceled_request_ids: canceledRequests.map((row) => row.id),
+      },
+      client: dbClient,
+    });
+    return assignment;
+  };
+
+  if (client != null) {
+    return await assignWithClient(client);
+  }
+  return await withLocalSiteLicenseTransaction(assignWithClient);
 }
 
 export async function releaseSiteLicensePoolSeat({
