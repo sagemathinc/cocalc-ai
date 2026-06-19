@@ -711,7 +711,7 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
       "echo installing $VALUE\n",
     );
     const harness = rootfsDeps({
-      globals: { quiet: true },
+      globals: { json: true, quiet: true },
       projects: {
         createProject: async (opts: any) => {
           assert.equal(opts.rootfs_image, "cocalc/base");
@@ -798,6 +798,69 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
   }
 });
 
+test("rootfs recipe run human summary omits command logs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-human-"));
+  const recipePath = join(dir, "recipe.json");
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "human-demo",
+        steps: [{ name: "install noisy package", run: "echo huge log" }],
+        verify: ["echo verify log"],
+        publish: {
+          label: "Human demo image",
+          tags: ["demo"],
+        },
+      }),
+    );
+    const harness = rootfsDeps({
+      globals: { quiet: true },
+      projects: {
+        createProject: async () => "builder-project",
+        start: async () => ({ op_id: "start-op" }),
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+      resolveProjectProjectApi: async (_ctx: any, project_id: string) => ({
+        project: { project_id },
+        api: {
+          waitUntilReady: async () => undefined,
+          system: {
+            exec: async () => ({
+              type: "blocking",
+              stdout: "this is the full command log",
+              stderr: "",
+              exit_code: 0,
+            }),
+          },
+        },
+      }),
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+    ]);
+
+    assert.match(harness.captured, /recipe: human-demo/);
+    assert.match(harness.captured, /project_id: builder-project/);
+    assert.match(harness.captured, /steps:\n  - install noisy package: ok/);
+    assert.match(harness.captured, /verify:\n  - verify 1: ok/);
+    assert.match(harness.captured, /label: RootFS recipe image/);
+    assert.match(harness.captured, /tags: demo/);
+    assert.doesNotMatch(harness.captured, /this is the full command log/);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
 test("rootfs recipe run polls async command output and honors step timeout", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-async-"));
   const recipePath = join(dir, "recipe.json");
@@ -813,7 +876,7 @@ test("rootfs recipe run polls async command output and honors step timeout", asy
       }),
     );
     const harness = rootfsDeps({
-      globals: { quiet: true },
+      globals: { json: true, quiet: true },
       projects: {
         createProject: async () => "builder-project",
         start: async () => ({ op_id: "start-op" }),

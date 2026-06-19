@@ -19,6 +19,7 @@ import {
   explainRootfsRecipe,
   listRootfsRecipes,
   runRootfsRecipe,
+  type RootfsRecipeRunResult,
   type RootfsRecipeRunOptions,
 } from "./rootfs-recipe";
 
@@ -69,6 +70,62 @@ function formatRootfsRecipeListHuman(
     }
   }
   return lines.join("\n");
+}
+
+function formatRootfsRecipeRunHuman(result: RootfsRecipeRunResult): string {
+  const lines = [
+    `recipe: ${result.recipe}`,
+    `recipe_path: ${result.recipe_path}`,
+    `project_id: ${result.project_id}`,
+    `created_project: ${result.created_project}`,
+  ];
+  if (result.steps.length > 0) {
+    lines.push("steps:");
+    for (const step of result.steps) {
+      lines.push(`  - ${step.name}: ${formatExitCode(step.exit_code)}`);
+    }
+  }
+  if (result.verify.length > 0) {
+    lines.push("verify:");
+    for (const step of result.verify) {
+      lines.push(`  - ${step.name}: ${formatExitCode(step.exit_code)}`);
+    }
+  }
+  const metadata = result.config.metadata ?? {};
+  const content =
+    result.config.content &&
+    typeof result.config.content === "object" &&
+    !Array.isArray(result.config.content)
+      ? (result.config.content as Record<string, unknown>)
+      : {};
+  const actions = Array.isArray(content.actions) ? content.actions : [];
+  lines.push(
+    "config:",
+    `  label: ${metadata.label ?? "-"}`,
+    `  title: ${content.title ?? "-"}`,
+    `  tags: ${(metadata.tags ?? []).join(", ") || "-"}`,
+    `  actions: ${actions.length}`,
+  );
+  if (result.publish != null) {
+    lines.push(`publish: ${formatPublishSummary(result.publish)}`);
+  }
+  return lines.join("\n");
+}
+
+function formatExitCode(exitCode: number): string {
+  return exitCode === 0 ? "ok" : `exit ${exitCode}`;
+}
+
+function formatPublishSummary(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return `${value}`;
+  }
+  const publish = value as Record<string, unknown>;
+  const fields = ["status", "op_id", "scope_type", "scope_id"].flatMap(
+    (field) =>
+      publish[field] == null ? [] : [`${field}=${String(publish[field])}`],
+  );
+  return fields.length > 0 ? fields.join(" ") : JSON.stringify(publish);
 }
 
 function parseVisibility(value?: string): RootfsImageVisibility | undefined {
@@ -867,7 +924,10 @@ export function registerRootfsCommand(
               `${JSON.stringify(result.config, null, 2)}\n`,
             );
           }
-          return result;
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return result;
+          }
+          return formatRootfsRecipeRunHuman(result);
         });
       },
     );
@@ -890,8 +950,8 @@ export function registerRootfsCommand(
         opts: RootfsRecipeRunOptions,
         command: Command,
       ) => {
-        await withContext(command, "rootfs recipe verify", async (ctx) =>
-          runRootfsRecipe({
+        await withContext(command, "rootfs recipe verify", async (ctx) => {
+          const result = await runRootfsRecipe({
             ctx,
             deps: {
               resolveProjectFromArgOrContext,
@@ -906,8 +966,12 @@ export function registerRootfsCommand(
               verifyOnly: true,
             },
             recipePath,
-          }),
-        );
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return result;
+          }
+          return formatRootfsRecipeRunHuman(result);
+        });
       },
     );
 
