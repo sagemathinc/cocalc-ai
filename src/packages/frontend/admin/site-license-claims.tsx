@@ -126,8 +126,7 @@ function sampleTokenCommand(kid?: string): string {
     "",
     "cocalc membership site-license sample-token \\",
     `  --kid ${optionalString(kid) ?? "<key-id>"} \\`,
-    "  --private-key-file ~/.cocalc-site-license-claims/claim-private.pem \\",
-    "  --expires-in-days 30",
+    "  --private-key-file ~/.cocalc-site-license-claims/claim-private.pem",
   ].join("\n");
 }
 

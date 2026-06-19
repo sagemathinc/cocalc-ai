@@ -1295,3 +1295,58 @@ test("membership site-license sample-token generates a compact claim token", asy
   assert.equal(payload.subject, "reader-1");
   assert.deepEqual(payload.metadata, { course: "Math 101" });
 });
+
+test("membership site-license sample-token defaults link expiry to 14 days", async () => {
+  let captured: any;
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-claim-token-"));
+  const privateKeyFile = join(dir, "ed25519.pem");
+  writeFileSync(
+    privateKeyFile,
+    privateKey.export({ format: "pem", type: "pkcs8" }),
+  );
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      captured = await fn({
+        accountId: "admin-1",
+        apiBaseUrl: "https://cocalc.ai",
+        hub: { purchases: {} },
+      });
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-06-01T00:00:00.000Z");
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "membership",
+      "site-license",
+      "sample-token",
+      "--kid",
+      "key-2026-06",
+      "--private-key-file",
+      privateKeyFile,
+    ]);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  const url = new URL(captured);
+  const parts = `${url.searchParams.get("token") ?? ""}`.split(".");
+  assert.equal(parts.length, 3);
+  const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+  assert.equal(
+    payload.exp,
+    Math.floor(Date.parse("2026-06-15T00:00:00.000Z") / 1000),
+  );
+});

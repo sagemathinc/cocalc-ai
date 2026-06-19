@@ -1642,9 +1642,9 @@ export function registerMembershipCommand(
     .option("--jti <jti>", "explicit token id; defaults to a random UUID")
     .option("--expires-at <iso>", "token expiration time")
     .option(
-      "--expires-in-days <days>",
-      "token lifetime when --expires-at is omitted",
-      "1",
+      "--link-expires-in-days <days>",
+      "link lifetime when --expires-at is omitted",
+      "14",
     )
     .option("--not-before <iso>", "optional token not-before time")
     .option("--membership-class <class>", "optional membership class override")
@@ -1664,7 +1664,7 @@ export function registerMembershipCommand(
           alg: string;
           jti?: string;
           expiresAt?: string;
-          expiresInDays?: string;
+          linkExpiresInDays?: string;
           notBefore?: string;
           membershipClass?: string;
           membershipExpiresAt?: string;
@@ -1685,8 +1685,8 @@ export function registerMembershipCommand(
               : new Date(
                   Date.now() +
                     parsePositiveInteger(
-                      opts.expiresInDays,
-                      "--expires-in-days",
+                      opts.linkExpiresInDays,
+                      "--link-expires-in-days",
                     ) *
                       24 *
                       60 *
