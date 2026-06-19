@@ -65,3 +65,49 @@ describe("SubvolumeQuota kill switch", () => {
     expect(btrfsMock).not.toHaveBeenCalled();
   });
 });
+
+describe("SubvolumeQuota.get", () => {
+  const previousEnv = process.env.COCALC_DISABLE_BTRFS_QUOTAS;
+
+  beforeEach(() => {
+    btrfsMock.mockClear();
+    queueSetSubvolumeQuotaMock.mockClear();
+    delete process.env.COCALC_DISABLE_BTRFS_QUOTAS;
+  });
+
+  afterAll(() => {
+    if (previousEnv == null) {
+      delete process.env.COCALC_DISABLE_BTRFS_QUOTAS;
+    } else {
+      process.env.COCALC_DISABLE_BTRFS_QUOTAS = previousEnv;
+    }
+  });
+
+  it("warns when btrfs reports no enforced limit", async () => {
+    btrfsMock.mockResolvedValueOnce({
+      stdout: `
+Qgroupid Referenced Exclusive Max referenced Max exclusive Path
+-------- ---------- --------- -------------- ------------- ----
+0/123    456        456       none           none          project-1
+`,
+      stderr: "",
+    });
+    const quota = new SubvolumeQuota({
+      path: "/mnt/test/project-1",
+      getSubvolumeId: async () => 123,
+      filesystem: {
+        opts: {
+          mount: "/mnt/test",
+        },
+      },
+    } as any);
+
+    await expect(quota.get()).resolves.toEqual({
+      size: 0,
+      used: 456,
+      qgroupid: "0/123",
+      scope: "subvolume",
+      warning: "No btrfs quota limit is currently enforced on this subvolume.",
+    });
+  });
+});

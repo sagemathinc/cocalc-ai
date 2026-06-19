@@ -527,6 +527,20 @@ export async function revokeMembershipPackageSeat(opts: {
   });
 }
 
+export async function assignSiteLicensePoolSeat(opts: {
+  package_id: string;
+  target_account_id: string;
+  grant_expires_at?: Date | string | null;
+}): Promise<MembershipPackageAssignment> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).assignSiteLicensePoolSeat({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
 export async function getClaimableMembershipPackages(opts?: {
   include_claimed_site_license_pools?: boolean;
 }): Promise<ClaimableMembershipPackage[]> {
