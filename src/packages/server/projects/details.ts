@@ -10,6 +10,7 @@ import type {
   ProjectEnv,
   ProjectCourseInfo,
   ProjectRootfsConfig,
+  ProjectRootfsPublishConfig,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectRunQuota,
@@ -20,6 +21,7 @@ export interface ProjectReadDetails {
   created: ProjectCreated;
   env: ProjectEnv;
   rootfs: ProjectRootfsConfig | null;
+  rootfs_publish_config: ProjectRootfsPublishConfig | null;
   snapshots: ProjectSnapshotSchedule;
   backups: ProjectBackupSchedule;
   run_quota: ProjectRunQuota;
@@ -35,6 +37,7 @@ export async function loadProjectReadDetailsDirect(
     env: ProjectEnv | null;
     rootfs_image: string | null;
     rootfs_image_id: string | null;
+    rootfs_publish_config: ProjectRootfsPublishConfig | null;
     snapshots: ProjectSnapshotSchedule | null;
     backups: ProjectBackupSchedule | null;
     run_quota: ProjectRunQuota | null;
@@ -47,6 +50,7 @@ export async function loadProjectReadDetailsDirect(
         env,
         rootfs_image,
         rootfs_image_id,
+        rootfs_publish_config,
         snapshots,
         backups,
         run_quota,
@@ -73,6 +77,7 @@ export async function loadProjectReadDetailsDirect(
           image,
           ...(image_id ? { image_id } : undefined),
         },
+    rootfs_publish_config: row?.rootfs_publish_config ?? null,
     snapshots: row?.snapshots ?? null,
     backups: row?.backups ?? null,
     run_quota: row?.run_quota ?? null,

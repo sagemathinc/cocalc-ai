@@ -491,6 +491,10 @@ Table({
       type: "string",
       desc: "Optional managed RootFS image identifier bound to this project.",
     },
+    rootfs_publish_config: {
+      type: "map",
+      desc: "Saved RootFS publish configuration defaults for this project. This is project metadata, not a file inside the RootFS image.",
+    },
     addons: {
       type: "map",
       desc: "Configure project-runtime addons, e.g. academic software or license keys.",

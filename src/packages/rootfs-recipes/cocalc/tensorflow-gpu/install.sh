@@ -10,7 +10,9 @@ if [ ! -x "$python_bin" ]; then
 fi
 
 if [ -x "$prefix/bin/uv" ]; then
+  export UV_CACHE_DIR="$prefix/.uv-cache"
   "$prefix/bin/uv" pip install --python "$python_bin" "$package"
+  rm -rf "$UV_CACHE_DIR"
 else
   "$python_bin" -m pip install --no-cache-dir "$package"
 fi
@@ -31,14 +33,14 @@ PY
   )
 
   ptxas="$("$python_bin" - <<'PY'
+import importlib.util
 from pathlib import Path
 
-try:
-    import nvidia.cuda_nvcc
-except Exception:
+spec = importlib.util.find_spec("nvidia.cuda_nvcc")
+if spec is None or spec.submodule_search_locations is None:
     raise SystemExit(0)
 
-root = Path(nvidia.cuda_nvcc.__file__).resolve().parents[1]
+root = Path(next(iter(spec.submodule_search_locations))).resolve()
 for path in root.glob("*/bin/ptxas"):
     print(path)
     break
