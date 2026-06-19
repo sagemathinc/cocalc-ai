@@ -1,0 +1,13 @@
+{
+  "id": "cocalc/apt",
+  "version": 1,
+  "description": "Install Debian or Ubuntu packages with apt-get.",
+  "inputs": {
+    "packages": { "type": "string[]", "required": true },
+    "no_recommends": { "type": "boolean", "default": true },
+    "update": { "type": "boolean", "default": true },
+    "clean": { "type": "boolean", "default": true }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" }
+}

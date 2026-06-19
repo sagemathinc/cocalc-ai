@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { Command } from "commander";
 import type {
   RootfsConfigExport,
@@ -14,10 +14,16 @@ import type {
 } from "@cocalc/util/rootfs-images";
 import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
 import type { RootfsReleaseScanRun } from "@cocalc/util/rootfs-scan";
+import {
+  explainRootfsRecipe,
+  runRootfsRecipe,
+  type RootfsRecipeRunOptions,
+} from "./rootfs-recipe";
 
 export type RootfsCommandDeps = {
   withContext: any;
   resolveProjectFromArgOrContext: any;
+  resolveProjectProjectApi: any;
   waitForLro: any;
   serializeLroSummary: any;
 };
@@ -745,12 +751,110 @@ export function registerRootfsCommand(
   const {
     withContext,
     resolveProjectFromArgOrContext,
+    resolveProjectProjectApi,
     waitForLro,
     serializeLroSummary,
   } = deps;
   const rootfs = program
     .command("rootfs")
     .description("managed RootFS catalog and publish operations");
+
+  const recipe = rootfs
+    .command("recipe")
+    .description("build RootFS images from local recipe files");
+
+  recipe
+    .command("explain <recipe>")
+    .description("show resolved RootFS recipe steps and module inputs")
+    .option("--module-dir <path>", "local recipe module registry directory")
+    .action(
+      async (
+        recipePath: string,
+        opts: { moduleDir?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs recipe explain", async () =>
+          explainRootfsRecipe(recipePath, opts.moduleDir),
+        );
+      },
+    );
+
+  recipe
+    .command("run <recipe>")
+    .description(
+      "run a RootFS recipe in a clean builder project or existing project",
+    )
+    .option("-w, --project <project>", "existing project id or name to use")
+    .option("--module-dir <path>", "local recipe module registry directory")
+    .option("--title <title>", "title for a new builder project")
+    .option("--publish", "publish the resulting project RootFS after running")
+    .option(
+      "--switch-project",
+      "switch the builder project to the published image",
+    )
+    .option("--wait", "wait for publish completion")
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
+    .option("--config-out <path>", "write generated RootFS config JSON")
+    .action(
+      async (
+        recipePath: string,
+        opts: RootfsRecipeRunOptions,
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs recipe run", async (ctx) => {
+          const result = await runRootfsRecipe({
+            ctx,
+            deps: {
+              resolveProjectFromArgOrContext,
+              resolveProjectProjectApi,
+              waitForLro,
+              serializeLroSummary,
+            },
+            options: opts,
+            recipePath,
+          });
+          if (opts.configOut) {
+            writeFileSync(
+              opts.configOut,
+              `${JSON.stringify(result.config, null, 2)}\n`,
+            );
+          }
+          return result;
+        });
+      },
+    );
+
+  recipe
+    .command("verify <recipe>")
+    .description("run the top-level verification commands for a RootFS recipe")
+    .requiredOption("-w, --project <project>", "project id or name to verify")
+    .option("--module-dir <path>", "local recipe module registry directory")
+    .action(
+      async (
+        recipePath: string,
+        opts: RootfsRecipeRunOptions,
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs recipe verify", async (ctx) =>
+          runRootfsRecipe({
+            ctx,
+            deps: {
+              resolveProjectFromArgOrContext,
+              resolveProjectProjectApi,
+              waitForLro,
+              serializeLroSummary,
+            },
+            options: {
+              ...opts,
+              project: opts.project,
+              publish: false,
+              verifyOnly: true,
+            },
+            recipePath,
+          }),
+        );
+      },
+    );
 
   rootfs
     .command("list")

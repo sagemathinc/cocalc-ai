@@ -236,6 +236,44 @@ CLI flags override values in the config file. This is useful when an agent
 starts with a reusable config and then sets the label, slug, visibility, or
 version for a specific publication.
 
+## RootFS recipes
+
+RootFS recipes are a build-time authoring layer for recreating images across
+CoCalc sites. They are inspired by devcontainer features and GitHub Actions:
+a recipe has steps, each step can use a local module such as \`cocalc/apt\`,
+\`cocalc/julia\`, or \`cocalc/pluto\`, and modules can contribute RootFS catalog
+metadata such as tags, theme, content actions, and app launchers.
+The initial CLI supports JSON recipe files.
+
+Recipes are not the live source of truth for a published RootFS entry. The
+published catalog metadata remains authoritative. Recipes are for authors,
+admins, and agents who need to rebuild or adapt an image.
+
+Explain a recipe without running it:
+
+~~~sh
+cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/julia-pluto.json
+~~~
+
+Run a recipe in a clean builder project:
+
+~~~sh
+cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.json
+~~~
+
+Run and publish the result:
+
+~~~sh
+cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.json \
+  --publish \
+  --switch-project \
+  --wait
+~~~
+
+Pass \`--project <project_id>\` to run in an existing project instead of creating
+a clean builder project. Pass \`--config-out rootfs-config.json\` to save the
+generated portable RootFS config JSON for inspection or reuse.
+
 ## Test checklist
 
 After publishing, test the full user path:

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,9 +15,14 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
       const ctx = {
         globals: overrides.globals ?? {},
         hub: {
+          lro: overrides.lro ?? {},
+          projects: {},
           system: {},
         },
+        pollMs: 100,
+        timeoutMs: 60_000,
       };
+      Object.assign(ctx.hub.projects, overrides.projects ?? {});
       Object.assign(ctx.hub.system, overrides.system ?? {});
       captured = await fn(ctx);
       return captured;
@@ -25,7 +30,23 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
     resolveProjectFromArgOrContext:
       overrides.resolveProjectFromArgOrContext ??
       (async () => ({ project_id: "project-id" })),
-    waitForLro: async () => ({ status: "done" }),
+    resolveProjectProjectApi:
+      overrides.resolveProjectProjectApi ??
+      (async (_ctx: any, project_id: string) => ({
+        project: { project_id },
+        api: {
+          waitUntilReady: async () => undefined,
+          system: {
+            exec: async () => ({
+              type: "blocking",
+              stdout: "",
+              stderr: "",
+              exit_code: 0,
+            }),
+          },
+        },
+      })),
+    waitForLro: overrides.waitForLro ?? (async () => ({ status: "done" })),
     serializeLroSummary: (summary: any) => summary,
   };
   return {
@@ -457,4 +478,187 @@ test("rootfs publish accepts config json and lets flags override it", async () =
     hidden: undefined,
     switch_project: true,
   });
+});
+
+test("rootfs recipe explain resolves local modules", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-"));
+  const recipePath = join(dir, "recipe.json");
+  const moduleDir = join(dir, "modules");
+  mkdirSync(join(moduleDir, "cocalc", "apt"), { recursive: true });
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "demo",
+        steps: [{ uses: "cocalc/apt", with: { packages: ["curl"] } }],
+        publish: { label: "Demo" },
+      }),
+    );
+    writeFileSync(
+      join(moduleDir, "cocalc", "apt", "recipe.json"),
+      JSON.stringify({
+        id: "cocalc/apt",
+        description: "Install packages",
+        inputs: {
+          packages: { required: true },
+          no_recommends: { default: true },
+        },
+        run: { script: "install.sh" },
+      }),
+    );
+    writeFileSync(join(moduleDir, "cocalc", "apt", "install.sh"), "true\n");
+    const harness = rootfsDeps();
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "explain",
+      recipePath,
+      "--module-dir",
+      moduleDir,
+    ]);
+
+    assert.equal(harness.captured.recipe, "demo");
+    assert.equal(harness.captured.steps[0].uses, "cocalc/apt");
+    assert.deepEqual(harness.captured.steps[0].inputs, {
+      packages: ["curl"],
+      no_recommends: true,
+    });
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs recipe run creates project, executes modules, and publishes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-run-"));
+  const recipePath = join(dir, "recipe.json");
+  const moduleDir = join(dir, "modules");
+  mkdirSync(join(moduleDir, "cocalc", "demo"), { recursive: true });
+  const execCalls: any[] = [];
+  let publishArgs: any;
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "demo",
+        base: { image: "cocalc/base" },
+        steps: [{ uses: "cocalc/demo", with: { value: "ok" } }],
+        verify: ["test -x /usr/local/bin/demo"],
+        publish: {
+          label: "Demo image",
+          slug: "demo-image",
+          tags: ["demo"],
+        },
+      }),
+    );
+    writeFileSync(
+      join(moduleDir, "cocalc", "demo", "recipe.json"),
+      JSON.stringify({
+        id: "cocalc/demo",
+        inputs: { value: { required: true } },
+        run: { script: "install.sh" },
+        verify: { command: "command -v demo" },
+        contributes: {
+          metadata: { tags: ["module"] },
+          content: {
+            version: 1,
+            title: "Demo content",
+            actions: [{ kind: "browse", label: "Browse", path: "/" }],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(moduleDir, "cocalc", "demo", "install.sh"),
+      "echo installing $VALUE\n",
+    );
+    const harness = rootfsDeps({
+      projects: {
+        createProject: async (opts: any) => {
+          assert.equal(opts.rootfs_image, "cocalc/base");
+          return "builder-project";
+        },
+        start: async () => ({ op_id: "start-op" }),
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+      lro: {
+        get: async () => ({ op_id: "publish-op", status: "succeeded" }),
+      },
+      resolveProjectProjectApi: async (_ctx: any, project_id: string) => ({
+        project: { project_id },
+        api: {
+          waitUntilReady: async () => undefined,
+          system: {
+            exec: async (opts: any) => {
+              execCalls.push(opts);
+              return {
+                type: "blocking",
+                stdout: "ok",
+                stderr: "",
+                exit_code: 0,
+              };
+            },
+          },
+        },
+      }),
+      system: {
+        publishProjectRootfsImage: async (opts: any) => {
+          publishArgs = opts;
+          return {
+            op_id: "publish-op",
+            scope_type: "project",
+            scope_id: opts.project_id,
+          };
+        },
+      },
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+      "--module-dir",
+      moduleDir,
+      "--publish",
+      "--wait",
+    ]);
+
+    assert.equal(harness.captured.project_id, "builder-project");
+    assert.equal(harness.captured.created_project, true);
+    assert.equal(execCalls.length, 3);
+    assert.equal(execCalls[0].env.VALUE, "ok");
+    assert.deepEqual(publishArgs, {
+      project_id: "builder-project",
+      browser_id: undefined,
+      label: "Demo image",
+      slug: "demo-image",
+      description: undefined,
+      family: undefined,
+      version: undefined,
+      channel: undefined,
+      visibility: undefined,
+      tags: ["demo", "module"],
+      theme: {},
+      content: {
+        version: 1,
+        title: "Demo content",
+        actions: [{ kind: "browse", label: "Browse", path: "/" }],
+      },
+      content_warnings: [],
+      switch_project: undefined,
+    });
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
 });

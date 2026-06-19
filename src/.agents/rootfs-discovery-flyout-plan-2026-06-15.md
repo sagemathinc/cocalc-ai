@@ -355,6 +355,21 @@ The first concrete recipe should recreate the Julia/Pluto smoke image:
 This pilot should be runnable on another CoCalc site using only the CoCalc CLI,
 the recipe files, and network access to upstream Julia/package sources.
 
+Current implementation note:
+
+- Initial JSON-only recipe CLI exists under `cocalc rootfs recipe`.
+- `explain`, `run`, and `verify` subcommands are implemented.
+- `run` creates and starts a clean builder project by default, or uses
+  `--project` when provided.
+- Local recipe modules live under `src/packages/rootfs-recipes`.
+- Initial modules include `cocalc/apt`, `cocalc/julia`, `cocalc/pluto`, and
+  `cocalc/copy`.
+- A Julia/Pluto example recipe exists at
+  `src/packages/rootfs-recipes/examples/julia-pluto.json`.
+- Remaining recipe work: YAML support if desired, local directory upload for
+  examples, richer input type validation, builder cleanup/archive policy, and
+  more modules.
+
 ## Public Landing Page
 
 Route shape can be decided during implementation, but it should support stable
