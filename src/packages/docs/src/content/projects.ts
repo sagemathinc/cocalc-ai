@@ -274,6 +274,14 @@ Run a recipe in a clean builder project:
 cocalc rootfs recipe run julia-pluto
 ~~~
 
+Recipe steps stream command output while they run. Each step defaults to a
+900-second command timeout; use \`--step-timeout <seconds>\` for larger builds
+such as SageMath, CUDA stacks, or source builds:
+
+~~~sh
+cocalc rootfs recipe run cocalc-base --step-timeout 1800
+~~~
+
 Run and publish the result:
 
 ~~~sh

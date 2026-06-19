@@ -711,6 +711,7 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
       "echo installing $VALUE\n",
     );
     const harness = rootfsDeps({
+      globals: { quiet: true },
       projects: {
         createProject: async (opts: any) => {
           assert.equal(opts.rootfs_image, "cocalc/base");
@@ -770,6 +771,8 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
     assert.equal(harness.captured.created_project, true);
     assert.equal(execCalls.length, 3);
     assert.equal(execCalls[0].env.VALUE, "ok");
+    assert.equal(execCalls[0].async_call, true);
+    assert.equal(execCalls[0].timeout, 900);
     assert.deepEqual(publishArgs, {
       project_id: "builder-project",
       browser_id: undefined,
@@ -790,6 +793,88 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
       content_warnings: [],
       switch_project: undefined,
     });
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs recipe run polls async command output and honors step timeout", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-async-"));
+  const recipePath = join(dir, "recipe.json");
+  const execCalls: any[] = [];
+  let polls = 0;
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "async-demo",
+        steps: [{ name: "slow install", run: "echo installing" }],
+      }),
+    );
+    const harness = rootfsDeps({
+      globals: { quiet: true },
+      projects: {
+        createProject: async () => "builder-project",
+        start: async () => ({ op_id: "start-op" }),
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+      resolveProjectProjectApi: async (_ctx: any, project_id: string) => ({
+        project: { project_id },
+        api: {
+          waitUntilReady: async () => undefined,
+          system: {
+            exec: async (opts: any) => {
+              execCalls.push(opts);
+              if (opts.async_call) {
+                return {
+                  type: "async",
+                  job_id: "job-1",
+                  status: "running",
+                  stdout: "started\n",
+                  stderr: "",
+                  exit_code: 0,
+                  start: Date.now(),
+                };
+              }
+              assert.equal(opts.async_get, "job-1");
+              polls += 1;
+              return {
+                type: "async",
+                job_id: "job-1",
+                status: polls === 1 ? "running" : "completed",
+                stdout:
+                  polls === 1
+                    ? "started\nworking\n"
+                    : "started\nworking\ndone\n",
+                stderr: "",
+                exit_code: 0,
+                start: Date.now(),
+              };
+            },
+          },
+        },
+      }),
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+      "--step-timeout",
+      "123",
+    ]);
+
+    assert.equal(harness.captured.steps.length, 1);
+    assert.equal(harness.captured.steps[0].stdout, "started\nworking\ndone\n");
+    assert.equal(execCalls[0].async_call, true);
+    assert.equal(execCalls[0].timeout, 123);
+    assert.ok(execCalls.some((call) => call.async_get === "job-1"));
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }

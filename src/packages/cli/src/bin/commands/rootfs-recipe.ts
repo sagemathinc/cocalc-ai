@@ -81,6 +81,7 @@ export type RootfsRecipeRunOptions = {
   moduleDir?: string;
   project?: string;
   publish?: boolean;
+  stepTimeout?: string;
   switchProject?: boolean;
   title?: string;
   verifyOnly?: boolean;
@@ -150,6 +151,8 @@ type LoadedRecipe = {
   recipeDir: string;
   recipePath: string;
 };
+
+const DEFAULT_RECIPE_COMMAND_TIMEOUT_SECONDS = 900;
 
 export function loadRootfsRecipe(recipePath: string): RootfsRecipe {
   const resolved = resolve(recipePath);
@@ -407,105 +410,214 @@ export async function runRootfsRecipe({
   const loadedRecipe = loadRootfsRecipeSource(recipePath, options.moduleDir);
   const { recipe } = loadedRecipe;
   const moduleDir = loadedRecipe.moduleDir;
-  const project = await resolveOrCreateRecipeProject({
+  const defaultCommandTimeout = parseRecipeCommandTimeout(options.stepTimeout);
+  const recipeTimeoutMs = recipeRunTimeoutMs(
     ctx,
-    deps,
-    options,
     recipe,
-  });
-  const resolved = await deps.resolveProjectProjectApi(ctx, project.project_id);
-  await resolved.api.waitUntilReady?.({ timeout: ctx.timeoutMs });
+    defaultCommandTimeout,
+  );
 
-  const stepResults: RootfsRecipeStepResult[] = [];
-  const contributionConfig = emptyRecipeConfig(recipe);
-  if (!options.verifyOnly) {
-    for (let i = 0; i < (recipe.steps ?? []).length; i += 1) {
-      const step = recipe.steps![i];
-      const result = await runRecipeStep({
+  return await withRecipeTransportTimeout(ctx, recipeTimeoutMs, async () => {
+    const project = await resolveOrCreateRecipeProject({
+      ctx,
+      deps,
+      options,
+      recipe,
+    });
+    emitRecipeProgress(
+      ctx,
+      `${project.created ? "created" : "using"} builder project ${project.project_id}`,
+    );
+    emitRecipeProgress(ctx, "connecting to project host api");
+    const resolved = await phase(
+      `connect to project host api for ${project.project_id}`,
+      async () => await deps.resolveProjectProjectApi(ctx, project.project_id),
+    );
+    await phase(
+      `wait for project host api for ${project.project_id}`,
+      async () =>
+        await resolved.api.waitUntilReady?.({ timeout: ctx.timeoutMs }),
+    );
+
+    const stepResults: RootfsRecipeStepResult[] = [];
+    const contributionConfig = emptyRecipeConfig(recipe);
+    if (!options.verifyOnly) {
+      for (let i = 0; i < (recipe.steps ?? []).length; i += 1) {
+        const step = recipe.steps![i];
+        emitRecipeProgress(
+          ctx,
+          `running step ${i + 1}/${recipe.steps!.length}: ${
+            step.name ?? step.uses ?? "run"
+          }`,
+        );
+        const result = await runRecipeStep({
+          api: resolved.api,
+          ctx,
+          defaultCommandTimeout,
+          moduleDir,
+          recipeDir: loadedRecipe.recipeDir,
+          step,
+          stepIndex: i + 1,
+        });
+        stepResults.push(result);
+        if (result.exit_code !== 0) {
+          throw new Error(
+            `recipe step failed: ${result.name} exit_code=${result.exit_code}\n${result.stderr ?? ""}`,
+          );
+        }
+        mergeRecipeConfig(
+          contributionConfig,
+          resultContribution(step, moduleDir),
+        );
+      }
+    }
+
+    const verifyResults: RootfsRecipeStepResult[] = [];
+    for (let i = 0; i < (recipe.verify ?? []).length; i += 1) {
+      const verify = recipe.verify![i];
+      emitRecipeProgress(
+        ctx,
+        `running top-level verification ${i + 1}/${recipe.verify!.length}`,
+      );
+      const result = await execRecipeCommand({
         api: resolved.api,
-        moduleDir,
-        recipeDir: loadedRecipe.recipeDir,
-        step,
-        stepIndex: i + 1,
+        ctx,
+        defaultTimeout: defaultCommandTimeout,
+        env: {},
+        name: `verify ${i + 1}`,
+        script: typeof verify === "string" ? verify : verify.command,
+        timeout: typeof verify === "string" ? undefined : verify.timeout,
       });
-      stepResults.push(result);
+      verifyResults.push(result);
       if (result.exit_code !== 0) {
         throw new Error(
-          `recipe step failed: ${result.name} exit_code=${result.exit_code}\n${result.stderr ?? ""}`,
+          `recipe verification failed: ${result.name} exit_code=${result.exit_code}\n${result.stderr ?? ""}`,
         );
       }
-      mergeRecipeConfig(
-        contributionConfig,
-        resultContribution(step, moduleDir),
-      );
     }
-  }
 
-  const verifyResults: RootfsRecipeStepResult[] = [];
-  for (let i = 0; i < (recipe.verify ?? []).length; i += 1) {
-    const verify = recipe.verify![i];
-    const result = await execRecipeCommand({
-      api: resolved.api,
-      env: {},
-      name: `verify ${i + 1}`,
-      script: typeof verify === "string" ? verify : verify.command,
-      timeout: typeof verify === "string" ? undefined : verify.timeout,
-    });
-    verifyResults.push(result);
-    if (result.exit_code !== 0) {
-      throw new Error(
-        `recipe verification failed: ${result.name} exit_code=${result.exit_code}\n${result.stderr ?? ""}`,
-      );
-    }
-  }
-
-  let publishResult: unknown;
-  if (options.publish && !options.verifyOnly) {
-    const payload = recipeConfigToCatalogPayload(contributionConfig);
-    const op = await ctx.hub.system.publishProjectRootfsImage({
-      project_id: project.project_id,
-      browser_id: `${options.browserId ?? ""}`.trim() || undefined,
-      ...payload,
-      switch_project: options.switchProject ? true : undefined,
-    });
-    if (options.wait) {
-      const waited = await deps.waitForLro(ctx, op.op_id, {
-        timeoutMs: ctx.timeoutMs,
-        pollMs: ctx.pollMs,
+    let publishResult: unknown;
+    if (options.publish && !options.verifyOnly) {
+      emitRecipeProgress(ctx, "publishing builder project RootFS");
+      const payload = recipeConfigToCatalogPayload(contributionConfig);
+      const op = await ctx.hub.system.publishProjectRootfsImage({
+        project_id: project.project_id,
+        browser_id: `${options.browserId ?? ""}`.trim() || undefined,
+        ...payload,
+        switch_project: options.switchProject ? true : undefined,
       });
-      if (waited.timedOut) {
-        throw new Error(
-          `rootfs recipe publish timed out (op=${op.op_id}, last_status=${waited.status})`,
-        );
+      if (options.wait) {
+        const waited = await deps.waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (waited.timedOut) {
+          throw new Error(
+            `rootfs recipe publish timed out (op=${op.op_id}, last_status=${waited.status})`,
+          );
+        }
+        const summary = await ctx.hub.lro.get({ op_id: op.op_id });
+        if (summary?.status && summary.status !== "succeeded") {
+          throw new Error(
+            `rootfs recipe publish failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+          );
+        }
+        publishResult = summary ? deps.serializeLroSummary(summary) : waited;
+      } else {
+        publishResult = {
+          op_id: op.op_id,
+          scope_type: op.scope_type,
+          scope_id: op.scope_id,
+          stream_name: op.stream_name,
+          status: "queued",
+        };
       }
-      const summary = await ctx.hub.lro.get({ op_id: op.op_id });
-      if (summary?.status && summary.status !== "succeeded") {
-        throw new Error(
-          `rootfs recipe publish failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
-        );
-      }
-      publishResult = summary ? deps.serializeLroSummary(summary) : waited;
-    } else {
-      publishResult = {
-        op_id: op.op_id,
-        scope_type: op.scope_type,
-        scope_id: op.scope_id,
-        stream_name: op.stream_name,
-        status: "queued",
-      };
     }
-  }
 
-  return {
-    recipe: recipe.name ?? loadedRecipe.recipePath,
-    recipe_path: loadedRecipe.recipePath,
-    project_id: project.project_id,
-    created_project: project.created,
-    steps: stepResults,
-    verify: verifyResults,
-    config: contributionConfig,
-    publish: publishResult,
-  };
+    return {
+      recipe: recipe.name ?? loadedRecipe.recipePath,
+      recipe_path: loadedRecipe.recipePath,
+      project_id: project.project_id,
+      created_project: project.created,
+      steps: stepResults,
+      verify: verifyResults,
+      config: contributionConfig,
+      publish: publishResult,
+    };
+  });
+}
+
+async function phase<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    throw new Error(`${name} failed: ${errorMessage(err)}`);
+  }
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return `${err}`;
+}
+
+function parseRecipeCommandTimeout(value?: string): number {
+  if (value == null || `${value}`.trim() === "") {
+    return DEFAULT_RECIPE_COMMAND_TIMEOUT_SECONDS;
+  }
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`invalid recipe step timeout '${value}'`);
+  }
+  return seconds;
+}
+
+function recipeRunTimeoutMs(
+  ctx: any,
+  recipe: RootfsRecipe,
+  defaultCommandTimeout: number,
+): number {
+  const seconds = [
+    ...(recipe.steps ?? []).map(
+      (step) => step.timeout ?? defaultCommandTimeout,
+    ),
+    ...(recipe.verify ?? []).map((verify) =>
+      typeof verify === "string"
+        ? defaultCommandTimeout
+        : (verify.timeout ?? defaultCommandTimeout),
+    ),
+  ].filter((value): value is number => Number.isFinite(value));
+  const maxCommandMs = seconds.length
+    ? Math.max(...seconds.map((value) => value * 1000 + 5_000))
+    : 0;
+  return Math.max(Number(ctx.timeoutMs ?? 0), maxCommandMs, 30_000);
+}
+
+async function withRecipeTransportTimeout<T>(
+  ctx: any,
+  timeoutMs: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const prevTimeoutMs = ctx.timeoutMs;
+  const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
+  ctx.timeoutMs = Math.max(Number(prevTimeoutMs ?? 0), timeoutMs);
+  ctx.rpcTimeoutMs = Math.max(Number(prevRpcTimeoutMs ?? 0), timeoutMs);
+  try {
+    return await fn();
+  } finally {
+    ctx.timeoutMs = prevTimeoutMs;
+    ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+  }
+}
+
+function emitRecipeProgress(ctx: any, message: string): void {
+  if (
+    ctx.globals?.quiet ||
+    ctx.globals?.json ||
+    ctx.globals?.output === "json"
+  ) {
+    return;
+  }
+  console.error(`[rootfs recipe] ${message}`);
 }
 
 async function resolveOrCreateRecipeProject({
@@ -561,12 +673,16 @@ async function startProject(
 
 async function runRecipeStep({
   api,
+  ctx,
+  defaultCommandTimeout,
   moduleDir,
   recipeDir,
   step,
   stepIndex,
 }: {
   api: any;
+  ctx: any;
+  defaultCommandTimeout: number;
   moduleDir: string;
   recipeDir: string;
   step: RootfsRecipeStep;
@@ -579,6 +695,8 @@ async function runRecipeStep({
     }
     return await execRecipeCommand({
       api,
+      ctx,
+      defaultTimeout: defaultCommandTimeout,
       env: {},
       name: step.name ?? `step ${stepIndex}`,
       script: typeof run === "string" ? run : run.command,
@@ -601,6 +719,8 @@ async function runRecipeStep({
     : run.command!;
   const result = await execRecipeCommand({
     api,
+    ctx,
+    defaultTimeout: defaultCommandTimeout,
     env: recipeEnv(inputs, step.uses),
     name: step.name ?? step.uses,
     script,
@@ -614,6 +734,8 @@ async function runRecipeStep({
       : verify.command!;
     const verifyResult = await execRecipeCommand({
       api,
+      ctx,
+      defaultTimeout: defaultCommandTimeout,
       env: recipeEnv(inputs, step.uses),
       name: `${step.name ?? step.uses} verify`,
       script: verifyScript,
@@ -626,31 +748,110 @@ async function runRecipeStep({
 
 async function execRecipeCommand({
   api,
+  ctx,
+  defaultTimeout,
   env,
   name,
   script,
   timeout,
 }: {
   api: any;
+  ctx: any;
+  defaultTimeout: number;
   env: Record<string, string>;
   name: string;
   script: string;
   timeout?: number;
 }): Promise<RootfsRecipeStepResult> {
-  const output = (await api.system.exec({
+  const commandTimeout = timeout ?? defaultTimeout;
+  const started = Date.now();
+  const initial = (await api.system.exec({
     bash: true,
     command: script,
     env,
     err_on_exit: false,
     max_output: 200_000,
-    timeout: timeout ?? 900,
+    timeout: commandTimeout,
+    async_call: true,
   })) as ExecuteCodeOutput;
-  return {
-    name,
-    exit_code: output.exit_code,
-    stdout: output.stdout,
-    stderr: output.stderr,
-  };
+  if (initial.type !== "async") {
+    emitRecipeOutput(ctx, name, initial, { stdout: 0, stderr: 0 });
+    return {
+      name,
+      exit_code: initial.exit_code,
+      stdout: initial.stdout,
+      stderr: initial.stderr,
+    };
+  }
+
+  emitRecipeProgress(
+    ctx,
+    `${name}: started job ${initial.job_id} (timeout ${commandTimeout}s)`,
+  );
+  const offsets = { stdout: 0, stderr: 0 };
+  let last: ExecuteCodeOutput = initial;
+  emitRecipeOutput(ctx, name, last, offsets);
+  while (Date.now() - started <= commandTimeout * 1000 + 5_000) {
+    await sleep(Math.max(250, Number(ctx.pollMs ?? 1000)));
+    last = (await api.system.exec({
+      async_get: initial.job_id,
+    })) as ExecuteCodeOutput;
+    emitRecipeOutput(ctx, name, last, offsets);
+    if (last.type !== "async" || isTerminalAsyncStatus(last.status)) {
+      return {
+        name,
+        exit_code: last.exit_code,
+        stdout: last.stdout,
+        stderr: last.stderr,
+      };
+    }
+  }
+  throw new Error(
+    `${name}: timeout waiting for async exec job ${initial.job_id}; last_status=${
+      last.type === "async" ? last.status : "completed"
+    }`,
+  );
+}
+
+function isTerminalAsyncStatus(status?: string): boolean {
+  return status === "completed" || status === "error" || status === "killed";
+}
+
+function emitRecipeOutput(
+  ctx: any,
+  name: string,
+  output: Pick<ExecuteCodeOutput, "stdout" | "stderr">,
+  offsets: { stdout: number; stderr: number },
+): void {
+  if (
+    ctx.globals?.quiet ||
+    ctx.globals?.json ||
+    ctx.globals?.output === "json"
+  ) {
+    return;
+  }
+  const stdout = output.stdout ?? "";
+  if (stdout.length > offsets.stdout) {
+    emitPrefixedLines(name, stdout.slice(offsets.stdout));
+    offsets.stdout = stdout.length;
+  }
+  const stderr = output.stderr ?? "";
+  if (stderr.length > offsets.stderr) {
+    emitPrefixedLines(name, stderr.slice(offsets.stderr));
+    offsets.stderr = stderr.length;
+  }
+}
+
+function emitPrefixedLines(name: string, text: string): void {
+  const write = process.stderr.write.bind(process.stderr);
+  for (const line of text.split(/\r?\n/)) {
+    if (!line) continue;
+    write(`[${name}] ${line}\n`);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function recipeEnv(

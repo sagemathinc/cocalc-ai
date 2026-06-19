@@ -838,6 +838,11 @@ export function registerRootfsCommand(
     .option("--wait", "wait for publish completion")
     .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option("--config-out <path>", "write generated RootFS config JSON")
+    .option(
+      "--step-timeout <seconds>",
+      "default timeout for each recipe step command",
+      "900",
+    )
     .action(
       async (
         recipePath: string,
@@ -874,6 +879,11 @@ export function registerRootfsCommand(
     )
     .requiredOption("-w, --project <project>", "project id or name to verify")
     .option("--module-dir <path>", "local recipe module registry directory")
+    .option(
+      "--step-timeout <seconds>",
+      "default timeout for each recipe verification command",
+      "900",
+    )
     .action(
       async (
         recipePath: string,
