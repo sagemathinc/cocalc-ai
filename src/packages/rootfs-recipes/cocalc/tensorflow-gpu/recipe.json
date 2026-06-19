@@ -1,0 +1,32 @@
+{
+  "id": "cocalc/tensorflow-gpu",
+  "version": 1,
+  "description": "Install TensorFlow with NVIDIA CUDA support into CoCalc's Python/Jupyter environment.",
+  "inputs": {
+    "prefix": { "type": "string", "default": "/opt/cocalc-jupyter" },
+    "package": { "type": "string", "default": "tensorflow[and-cuda]" },
+    "create_cuda_symlinks": { "type": "boolean", "default": true },
+    "require_gpu": { "type": "boolean", "default": false }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "machine-learning",
+      "tags": ["python", "jupyter", "tensorflow", "cuda", "nvidia-gpu"]
+    },
+    "content": {
+      "version": 1,
+      "title": "TensorFlow GPU Machine Learning",
+      "subtitle": "Jupyter-ready Python environment with TensorFlow's CUDA extras.",
+      "highlights": ["TensorFlow", "CUDA", "JupyterLab", "Python kernel"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "TensorFlow documentation",
+          "url": "https://www.tensorflow.org/guide"
+        }
+      ]
+    }
+  }
+}

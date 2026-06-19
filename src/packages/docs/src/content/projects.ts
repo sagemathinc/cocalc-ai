@@ -236,6 +236,88 @@ CLI flags override values in the config file. This is useful when an agent
 starts with a reusable config and then sets the label, slug, visibility, or
 version for a specific publication.
 
+## RootFS recipes
+
+RootFS recipes are a build-time authoring layer for recreating images across
+CoCalc sites. They are inspired by devcontainer features and GitHub Actions:
+a recipe has steps, each step can use a local module such as \`cocalc/apt\`,
+\`cocalc/julia\`, or \`cocalc/pluto\`, and modules can contribute RootFS catalog
+metadata such as tags, theme, content actions, and app launchers.
+The CLI supports YAML and JSON recipe files; YAML is the recommended authoring
+format.
+
+Recipes are not the live source of truth for a published RootFS entry. The
+published catalog metadata remains authoritative. Recipes are for authors,
+admins, and agents who need to rebuild or adapt an image.
+
+Explain a recipe without running it. You can pass a file path or the name of a
+bundled example recipe:
+
+~~~sh
+cocalc rootfs recipe ls
+cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/julia-pluto.yaml
+cocalc rootfs recipe explain julia-pluto
+~~~
+
+Recipe modules such as \`cocalc/jupyter-python\` are composable steps, not full
+published builds. The CLI can still explain a module by treating it as a
+one-step recipe:
+
+~~~sh
+cocalc rootfs recipe explain cocalc/jupyter-python
+cocalc rootfs recipe explain jupyter-python
+~~~
+
+Run a recipe in a clean builder project:
+
+~~~sh
+cocalc rootfs recipe run julia-pluto
+~~~
+
+Recipe steps stream command output while they run. Each step defaults to a
+900-second command timeout; use \`--step-timeout <seconds>\` for larger builds
+such as SageMath, CUDA stacks, or source builds:
+
+~~~sh
+cocalc rootfs recipe run cocalc-base --step-timeout 1800
+~~~
+
+Run and publish the result:
+
+~~~sh
+cocalc rootfs recipe run julia-pluto \
+  --publish \
+  --switch-project \
+  --wait
+~~~
+
+Pass \`--project <project_id>\` to run in an existing project instead of creating
+a clean builder project. Pass \`--config-out rootfs-config.json\` to save the
+generated portable RootFS config JSON for inspection or reuse.
+
+The repository also includes a minimal CoCalc site base recipe with basic shell
+tools, LaTeX, Python, JupyterLab, scientific Python packages, uv, SFTP support,
+and both Python and bash Jupyter kernels:
+
+~~~sh
+cocalc rootfs recipe explain cocalc-base
+~~~
+
+GPU machine learning recipes are also included. They build on the same
+Jupyter/uv base and install NVIDIA GPU-enabled Python packages:
+
+~~~sh
+cocalc rootfs recipe explain ml-pytorch-gpu
+cocalc rootfs recipe explain ml-tensorflow-gpu
+~~~
+
+The PyTorch recipe uses the official CUDA wheel index, defaulting to CUDA 12.8.
+The TensorFlow recipe installs \`tensorflow[and-cuda]\` and applies the
+recommended virtual-environment symlink fix for NVIDIA libraries. Both recipes
+can be verified on a non-GPU builder by checking that the GPU-enabled packages
+are installed; set the module input \`require_gpu: true\` when the builder
+project must also prove that an NVIDIA GPU is visible.
+
 ## Test checklist
 
 After publishing, test the full user path:
