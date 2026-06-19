@@ -389,7 +389,8 @@ export type SiteLicenseManagerRole = "manager" | "viewer";
 export type SiteLicenseVerificationPolicy =
   | "email-domain"
   | "sso-affiliation"
-  | "manager-approval";
+  | "manager-approval"
+  | "external-claim";
 export type SiteLicensePoolRequestState =
   | "pending"
   | "approved"

@@ -166,6 +166,7 @@ const SITE_LICENSE_VERIFICATION_POLICIES =
     "email-domain",
     "sso-affiliation",
     "manager-approval",
+    "external-claim",
   ]);
 const SITE_LICENSE_POOL_REQUEST_STATES = new Set<SiteLicensePoolRequestState>([
   "pending",
@@ -454,7 +455,7 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
     CREATE TABLE IF NOT EXISTS site_license_external_claim_keys (
       id UUID PRIMARY KEY,
       pool_id UUID NOT NULL,
-      kid TEXT NOT NULL,
+      kid TEXT NOT NULL UNIQUE,
       alg TEXT NOT NULL,
       public_key_jwk JSONB,
       public_key_pem TEXT,
