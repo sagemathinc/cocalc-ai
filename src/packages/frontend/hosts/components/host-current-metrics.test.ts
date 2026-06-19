@@ -3,6 +3,7 @@ import type { Host } from "@cocalc/conat/hub/api/hosts";
 import {
   formatBytesDense,
   getConfiguredSharedScratchTotalBytes,
+  getMetadataDisplayTone,
   getSharedScratchUsedBytes,
   getSharedScratchUsedPercent,
   getSharedScratchTotalBytes,
@@ -13,6 +14,28 @@ describe("host current metrics dense formatting", () => {
   it("uses short binary units without spaces in dense resource rows", () => {
     expect(formatBytesDense(10 * 1024 ** 3)).toBe("10G");
     expect(formatBytesDense(2 * 1024 ** 4)).toBe("2T");
+  });
+});
+
+describe("host current metrics btrfs metadata display", () => {
+  it("uses derived metadata risk instead of raw allocated metadata percent", () => {
+    expect(
+      getMetadataDisplayTone({
+        metadataPercent: 95,
+        derived: {
+          window_minutes: 60,
+          disk: { level: "healthy" },
+          metadata: { level: "healthy", used_percent: 95 },
+          alerts: [],
+          admission_allowed: true,
+          auto_grow_recommended: false,
+        },
+      }),
+    ).toBe("green");
+  });
+
+  it("falls back to raw metadata percent when derived risk is unavailable", () => {
+    expect(getMetadataDisplayTone({ metadataPercent: 95 })).toBe("red");
   });
 });
 
