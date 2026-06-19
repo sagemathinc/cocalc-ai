@@ -101,7 +101,10 @@ import {
 } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
 import { handleForcedPlainTextPaste } from "./clipboard";
-import { differsOnlyByTrailingMarkdownBlankWhitespace } from "./trailing-whitespace";
+import {
+  differsOnlyByTrailingMarkdownBlankWhitespace,
+  preserveSourceForTrailingBlankWhitespaceOnly,
+} from "./trailing-whitespace";
 import {
   applyBlockDiffPatch,
   diffBlockSignatures,
@@ -2156,12 +2159,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           cache: editor.syncCache,
           preserveBlankLines,
         });
+    const cleanMarkdownValue = preserveBlankLines
+      ? value
+      : preserveSourceForTrailingBlankWhitespaceOnly({
+          source: value,
+          normalized: normalizedValue,
+        });
     editor.syncCausedUpdate = true;
     Editor.withoutNormalizing(editor, () => {
       editor.children = nextEditorValue;
     });
     editor.resetHasUnsavedChanges();
-    editor.markdownValue = normalizedValue;
+    editor.markdownValue = cleanMarkdownValue;
     setEditorValue(nextEditorValue);
     setChange((prev) => prev + 1);
     onSlateChange?.([...nextEditorValue], {
@@ -2208,13 +2217,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           cache: editor.syncCache,
           preserveBlankLines,
         });
+    const cleanMarkdownValue = preserveBlankLines
+      ? value
+      : preserveSourceForTrailingBlankWhitespaceOnly({
+          source: value,
+          normalized: normalizedValue,
+        });
 
-    if (lastSetValueRef.current == normalizedValue) {
+    if (lastSetValueRef.current == cleanMarkdownValue) {
       debugSyncLog("value-skip:last-set");
       lastSetValueRef.current = null;
       return;
     }
-    if (normalizedValue == editor.getMarkdownValue()) {
+    if (cleanMarkdownValue == editor.getMarkdownValue()) {
       debugSyncLog("value-skip:same-as-editor");
       // nothing to do, and in fact doing something
       // could be really annoying, since we don't want to
@@ -2234,8 +2249,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       focused: mergeFocused,
       blockPatchEnabled,
       blockPatchDebugEnabled,
-      sameAsLastSet: lastSetValueRef.current == normalizedValue,
-      sameAsEditor: normalizedValue == editor.getMarkdownValue(),
+      sameAsLastSet: lastSetValueRef.current == cleanMarkdownValue,
+      sameAsEditor: cleanMarkdownValue == editor.getMarkdownValue(),
       valueLength: normalizedValue.length,
       forceDirectSetForClear,
     });
@@ -2292,7 +2307,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     ) {
       // No ops needed, but still update markdown bookkeeping.
       editor.resetHasUnsavedChanges();
-      editor.markdownValue = value;
+      editor.markdownValue = cleanMarkdownValue;
       return;
     }
 
@@ -2420,7 +2435,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           // know the markdown state with zero changes.  This is important, so
           // we don't save out a change if we don't explicitly make one.
           editor.resetHasUnsavedChanges();
-          editor.markdownValue = normalizedValue;
+          editor.markdownValue = cleanMarkdownValue;
         }
 
         try {

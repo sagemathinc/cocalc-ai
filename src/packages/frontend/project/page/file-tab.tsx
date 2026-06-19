@@ -270,6 +270,8 @@ export function FileTab(props: Readonly<Props>) {
     useAccountOtherSetting<boolean>("hide_file_popovers") ?? false;
   const workspaceRecord =
     path != null ? workspaces.resolveWorkspaceForPath(path) : null;
+  const userMap = useTypedRedux("users", "user_map");
+  const currentAccountId = useTypedRedux("account", "account_id");
 
   // True if there is activity (e.g., active output) in this tab
   const has_activity = useRedux(
@@ -355,8 +357,10 @@ export function FileTab(props: Readonly<Props>) {
       }
     } else if (path != null) {
       label =
-        generatedWorkspaceChatLabel(path, workspaceRecord) ??
-        path_split(path).tail;
+        generatedWorkspaceChatLabel(path, workspaceRecord, {
+          currentAccountId,
+          userMap,
+        }) ?? path_split(path).tail;
     }
   }
 

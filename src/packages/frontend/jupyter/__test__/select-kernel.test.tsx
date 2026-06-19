@@ -254,7 +254,7 @@ describe("KernelSelector", () => {
 
     render(
       <IntlProvider locale="en" messages={{}}>
-        <KernelSelector actions={actions} embedded />
+        <KernelSelector actions={actions} />
       </IntlProvider>,
     );
 
@@ -291,5 +291,6 @@ describe("KernelSelector", () => {
       "User request:\nInstall the bash Jupyter kernel with bash_kernel.",
     );
     expect(mockSaveSelectedAgentSession).toHaveBeenCalled();
+    await waitFor(() => expect(actions.hide_select_kernel).toHaveBeenCalled());
   });
 });

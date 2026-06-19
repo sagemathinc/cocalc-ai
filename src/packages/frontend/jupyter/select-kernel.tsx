@@ -264,6 +264,9 @@ export function KernelSelector({
         throw new Error("Unable to submit request to Agent.");
       }
       setPendingAgentInstall(null);
+      if (!embedded) {
+        actions.hide_select_kernel();
+      }
     } catch (err) {
       alert_message({
         type: "error",
