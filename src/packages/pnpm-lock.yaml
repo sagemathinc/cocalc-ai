@@ -340,6 +340,9 @@ importers:
       reflect-sync:
         specifier: 0.15.1
         version: 0.15.1
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.10

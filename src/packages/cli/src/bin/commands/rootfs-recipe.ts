@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 
 import type { ExecuteCodeOutput } from "@cocalc/util/types/execute-code";
 
 import type { RootfsConfigExport } from "@cocalc/util/rootfs-images";
+import { parse as parseYaml } from "yaml";
 
 type JsonObject = Record<string, any>;
 
@@ -130,13 +131,20 @@ export function loadRootfsRecipe(recipePath: string): RootfsRecipe {
   const resolved = resolve(recipePath);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(resolved, "utf8"));
+    parsed = parseRecipeText(resolved, readFileSync(resolved, "utf8"));
   } catch (err) {
     throw new Error(
-      `invalid recipe file '${recipePath}': ${err}. Only JSON recipes are supported in this MVP.`,
+      `invalid recipe file '${recipePath}': ${err}. Expected .json, .yaml, or .yml.`,
     );
   }
   return normalizeRecipe(parsed, resolved);
+}
+
+function parseRecipeText(path: string, text: string): unknown {
+  const ext = extname(path).toLowerCase();
+  if (ext === ".json") return JSON.parse(text);
+  if (ext === ".yaml" || ext === ".yml") return parseYaml(text);
+  throw new Error(`unsupported recipe extension '${ext || "(none)"}'`);
 }
 
 export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {

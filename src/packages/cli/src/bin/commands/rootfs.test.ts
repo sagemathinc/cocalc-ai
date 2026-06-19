@@ -482,18 +482,24 @@ test("rootfs publish accepts config json and lets flags override it", async () =
 
 test("rootfs recipe explain resolves local modules", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-"));
-  const recipePath = join(dir, "recipe.json");
+  const recipePath = join(dir, "recipe.yaml");
   const moduleDir = join(dir, "modules");
   mkdirSync(join(moduleDir, "cocalc", "apt"), { recursive: true });
   try {
     writeFileSync(
       recipePath,
-      JSON.stringify({
-        version: 1,
-        name: "demo",
-        steps: [{ uses: "cocalc/apt", with: { packages: ["curl"] } }],
-        publish: { label: "Demo" },
-      }),
+      [
+        "version: 1",
+        "name: demo",
+        "steps:",
+        "  - uses: cocalc/apt",
+        "    with:",
+        "      packages:",
+        "        - curl",
+        "publish:",
+        "  label: Demo",
+        "",
+      ].join("\n"),
     );
     writeFileSync(
       join(moduleDir, "cocalc", "apt", "recipe.json"),

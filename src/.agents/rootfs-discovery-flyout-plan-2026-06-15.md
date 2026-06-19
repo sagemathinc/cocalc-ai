@@ -357,7 +357,7 @@ the recipe files, and network access to upstream Julia/package sources.
 
 Current implementation note:
 
-- Initial JSON-only recipe CLI exists under `cocalc rootfs recipe`.
+- Initial YAML/JSON recipe CLI exists under `cocalc rootfs recipe`.
 - `explain`, `run`, and `verify` subcommands are implemented.
 - `run` creates and starts a clean builder project by default, or uses
   `--project` when provided.
@@ -365,10 +365,9 @@ Current implementation note:
 - Initial modules include `cocalc/apt`, `cocalc/julia`, `cocalc/pluto`, and
   `cocalc/copy`.
 - A Julia/Pluto example recipe exists at
-  `src/packages/rootfs-recipes/examples/julia-pluto.json`.
-- Remaining recipe work: YAML support if desired, local directory upload for
-  examples, richer input type validation, builder cleanup/archive policy, and
-  more modules.
+  `src/packages/rootfs-recipes/examples/julia-pluto.yaml`.
+- Remaining recipe work: local directory upload for examples, richer input type
+  validation, builder cleanup/archive policy, and more modules.
 
 ## Public Landing Page
 
@@ -694,3 +693,4 @@ security and content subsystems.
   - Current direction: keep recipes outside catalog metadata for MVP. The
     published catalog entry may record a recipe reference or run log later, but
     recipe execution is an explicit author/admin/agent action.
+

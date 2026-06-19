@@ -243,7 +243,8 @@ CoCalc sites. They are inspired by devcontainer features and GitHub Actions:
 a recipe has steps, each step can use a local module such as \`cocalc/apt\`,
 \`cocalc/julia\`, or \`cocalc/pluto\`, and modules can contribute RootFS catalog
 metadata such as tags, theme, content actions, and app launchers.
-The initial CLI supports JSON recipe files.
+The CLI supports YAML and JSON recipe files; YAML is the recommended authoring
+format.
 
 Recipes are not the live source of truth for a published RootFS entry. The
 published catalog metadata remains authoritative. Recipes are for authors,
@@ -252,19 +253,19 @@ admins, and agents who need to rebuild or adapt an image.
 Explain a recipe without running it:
 
 ~~~sh
-cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/julia-pluto.json
+cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/julia-pluto.yaml
 ~~~
 
 Run a recipe in a clean builder project:
 
 ~~~sh
-cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.json
+cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.yaml
 ~~~
 
 Run and publish the result:
 
 ~~~sh
-cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.json \
+cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.yaml \
   --publish \
   --switch-project \
   --wait
