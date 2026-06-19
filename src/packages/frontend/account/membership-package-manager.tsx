@@ -3936,7 +3936,9 @@ function ProvisionSiteLicenseModal({
           style={{
             display: "grid",
             gap: 14,
-            gridTemplateColumns: "repeat(auto-fit, minmax(285px, 1fr))",
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 285px), 300px))",
+            justifyContent: "start",
           }}
         >
           {pools.map((pool, index) => {
@@ -3948,7 +3950,9 @@ function ProvisionSiteLicenseModal({
                   border: `1px solid ${COLORS.GRAY_LL}`,
                   borderRadius: 18,
                   boxShadow: `0 10px 24px ${COLORS.GRAY_LL}`,
+                  maxWidth: 300,
                   overflow: "hidden",
+                  width: "100%",
                 }}
                 styles={{ body: { padding: 0 } }}
               >
