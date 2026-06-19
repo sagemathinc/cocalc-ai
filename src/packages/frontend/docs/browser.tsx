@@ -45,6 +45,7 @@ import {
   type DocsAction,
   type DocsEntry,
 } from "@cocalc/docs";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
@@ -213,7 +214,6 @@ export function DocsFontSizeFrame({
     decreaseFontSize,
     fontSize,
     increaseFontSize,
-    resetFontSize,
   } = useDocsFontSize(defaultFontSize);
 
   return (
@@ -227,38 +227,56 @@ export function DocsFontSizeFrame({
             zIndex: 1,
           }}
         >
-          <Space.Compact
-            size="small"
+          <div
             style={{
-              background: "white",
-              borderRadius: 6,
-              boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 2,
+              height: 28,
+              padding: "0 3px",
+              border: `1px solid ${COLORS.GRAY_L0}`,
+              borderRadius: 7,
+              background: COLORS.TOP_BAR.ACTIVE,
+              whiteSpace: "nowrap",
             }}
           >
-            <Button
-              aria-label="Decrease docs font size"
-              disabled={!canDecreaseFontSize}
-              onClick={decreaseFontSize}
-              title="Decrease docs font size"
-            >
-              A-
-            </Button>
-            <Button
-              aria-label="Reset docs font size"
-              onClick={resetFontSize}
-              title="Reset docs font size"
-            >
-              {fontSize}px
-            </Button>
-            <Button
-              aria-label="Increase docs font size"
-              disabled={!canIncreaseFontSize}
-              onClick={increaseFontSize}
-              title="Increase docs font size"
-            >
-              A+
-            </Button>
-          </Space.Compact>
+            <Tooltip title={`Decrease docs font size (${fontSize}px)`}>
+              <Button
+                aria-label="Decrease docs font size"
+                disabled={!canDecreaseFontSize}
+                onClick={decreaseFontSize}
+                size="small"
+                type="text"
+                style={{ minWidth: 24, height: 22, padding: "0 4px" }}
+              >
+                <Icon name="minus" />
+              </Button>
+            </Tooltip>
+            <Tooltip title={`Docs font size: ${fontSize}px`}>
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block",
+                  flexShrink: 0,
+                  width: 1,
+                  height: 16,
+                  background: COLORS.GRAY_LL,
+                }}
+              />
+            </Tooltip>
+            <Tooltip title={`Increase docs font size (${fontSize}px)`}>
+              <Button
+                aria-label="Increase docs font size"
+                disabled={!canIncreaseFontSize}
+                onClick={increaseFontSize}
+                size="small"
+                type="text"
+                style={{ minWidth: 24, height: 22, padding: "0 4px" }}
+              >
+                <Icon name="plus" />
+              </Button>
+            </Tooltip>
+          </div>
         </Flex>
       ) : null}
       <div
