@@ -75,3 +75,26 @@ Known risks:
 - **Last commit (reported):** `1a3d836` spacing fix on `remove-empty-project-tag`.
 - **Known risks:** ran `pnpm -C src build:dev` ~1h ago; if that shared a cache with
   the synthesis build, it may have contributed to the stale public bundle.
+
+---
+
+## Preview-ownership incident (2026-06-18) — ROOT CAUSE of the reverted homepage
+
+**Not a code/build/merge problem.** The synthesis build and source are current and
+correct. The revert is a **hub-ownership collision**:
+
+- Both worktrees' hub daemons are configured for the **same** `http://localhost:9100`.
+- Synthesis hub daemon = **stopped**; platform hub daemon = **running** (pid 100501,
+  cwd `/home/user/cocalc-ai/src`). So `blaec.cocalc.ai` is served by the **platform**
+  hub → it shows the **platform worktree's old public pages**.
+- Diagnostic that nails it: `bash scripts/dev/hub-daemon.sh status` in each worktree,
+  plus `readlink /proc/<hub-pid>/cwd`. The serving cwd must be
+  `/home/user/cocalc-ai-synthesis/src`; right now it is not.
+
+**Immediate fix (coordinated — disrupts the platform preview, so don't do it solo):**
+stop the platform hub, start the synthesis hub, re-validate by content canary.
+
+**Structural fix (the real lesson):** two worktree hub daemons must NOT contend for
+one port/preview slot. Either give each worktree its own port, or make "who owns
+:9100 / blaec.cocalc.ai" an explicit, enforced field here that every agent checks
+(`hub-daemon.sh status` + cwd) before any preview judgment. HTTP 200 ≠ correct owner.
