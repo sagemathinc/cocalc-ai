@@ -20,6 +20,7 @@ interface Props {
   onCreateFile: (ext: string) => void;
   onCreateFolder: () => void;
   onCustomize: () => void;
+  moreFileTypeItems?: MenuItems;
   title?: React.JSX.Element | string;
   button?: boolean;
   showDown?: boolean;
@@ -34,6 +35,7 @@ export function QuickCreateDropdown({
   onCreateFile,
   onCreateFolder,
   onCustomize,
+  moreFileTypeItems,
   title = (
     <span style={{ whiteSpace: "nowrap" }}>
       <Icon name="plus-circle" /> New
@@ -88,16 +90,30 @@ export function QuickCreateDropdown({
       menuItems.push({ type: "divider" });
     }
 
-    menuItems.push(
-      {
-        key: "folder",
-        onClick: onCreateFolder,
+    menuItems.push({
+      key: "folder",
+      onClick: onCreateFolder,
+      label: (
+        <span style={{ whiteSpace: "nowrap" }}>
+          <Icon name="folder" /> Folder
+        </span>
+      ),
+    });
+
+    if (moreFileTypeItems != null && moreFileTypeItems.length > 0) {
+      menuItems.push({
+        key: "more-file-types",
         label: (
           <span style={{ whiteSpace: "nowrap" }}>
-            <Icon name="folder" /> Folder
+            <Icon name="file" /> More file types
           </span>
         ),
-      },
+        children: moreFileTypeItems,
+        popupClassName: "cc-quick-create-more-file-types-submenu",
+      });
+    }
+
+    menuItems.push(
       { type: "divider" },
       {
         key: "customize",
@@ -113,6 +129,7 @@ export function QuickCreateDropdown({
   }, [
     availableFeatures,
     disabledExtensions,
+    moreFileTypeItems,
     onCreateFile,
     onCreateFolder,
     onCustomize,
@@ -120,13 +137,23 @@ export function QuickCreateDropdown({
   ]);
 
   return (
-    <DropdownMenu
-      title={title}
-      button={button}
-      showDown={showDown}
-      items={items}
-      size={size}
-      style={style}
-    />
+    <>
+      <style>
+        {`
+          .cc-quick-create-more-file-types-submenu .ant-dropdown-menu {
+            max-height: min(420px, 55vh);
+            overflow-y: auto;
+          }
+        `}
+      </style>
+      <DropdownMenu
+        title={title}
+        button={button}
+        showDown={showDown}
+        items={items}
+        size={size}
+        style={style}
+      />
+    </>
   );
 }

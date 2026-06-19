@@ -28,6 +28,7 @@ import {
   ErrorDisplay,
 } from "@cocalc/frontend/components";
 import { FileUploadWrapper } from "@cocalc/frontend/file-upload";
+import { file_associations } from "@cocalc/frontend/file-associations";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -56,10 +57,15 @@ import {
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import { QuickCreateDropdown } from "@cocalc/frontend/project/new/quick-create-dropdown";
+import {
+  getQuickCreateSpec,
+  isQuickCreateAvailable,
+} from "@cocalc/frontend/project/new/launcher-catalog";
+import { BANNED_FILE_TYPES } from "@cocalc/frontend/project/redux/file-creation";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { PLATFORM_MODE_CLOUD } from "@cocalc/util/db-schema/site-defaults";
-import { separate_file_extension, strictMod } from "@cocalc/util/misc";
+import { keys, separate_file_extension, strictMod } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
 import { DEFAULT_EXT, FLYOUT_PADDING } from "./consts";
@@ -218,6 +224,47 @@ export function FilesHeader({
     accountPrefs: accountLauncherPrefs,
     siteDefaults: siteLauncherDefaults,
   });
+  const moreFileTypeMenuItems = React.useMemo<MenuItems>(() => {
+    const quickExts = new Set(
+      mergedLauncher.quickCreate
+        .filter((id) => isQuickCreateAvailable(id, availableFeatures))
+        .map((id) => getQuickCreateSpec(id).ext),
+    );
+    const seen = new Set<string>();
+    return keys(file_associations)
+      .sort()
+      .flatMap((ext) => {
+        if (ext === "/" || ext === "sage") return [];
+        const data = file_associations[ext];
+        if (data?.exclude_from_menu) return [];
+        const value = data?.ext ?? ext;
+        if (
+          !value ||
+          value === "sage" ||
+          BANNED_FILE_TYPES.has(ext) ||
+          BANNED_FILE_TYPES.has(value) ||
+          quickExts.has(value)
+        ) {
+          return [];
+        }
+        const duplicateKey = data?.name ?? value;
+        if (seen.has(duplicateKey)) return [];
+        seen.add(duplicateKey);
+        return [
+          {
+            key: `more:${value}`,
+            label: <TypeFilterLabel ext={value} />,
+            onClick: () => createQuickFile(value),
+          },
+        ];
+      });
+  }, [
+    actions,
+    availableFeatures,
+    effective_current_path,
+    file_search,
+    mergedLauncher.quickCreate,
+  ]);
 
   useEffect(() => {
     if (!highlighNothingFound) return;
@@ -825,6 +872,7 @@ export function FilesHeader({
                     onCreateFile={createQuickFile}
                     onCreateFolder={createQuickFolder}
                     onCustomize={() => setShowCustomizeModal(true)}
+                    moreFileTypeItems={moreFileTypeMenuItems}
                   />
                 </span>
               </Tooltip>
