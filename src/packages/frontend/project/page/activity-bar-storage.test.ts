@@ -117,6 +117,19 @@ describe("activity-bar storage", () => {
     });
   });
 
+  it("persists an empty hidden list so every button can stay on the rail", () => {
+    setActivityBarHiddenTabs([], { liteMode: true });
+
+    expect(
+      readActivityBarPreferences({
+        liteMode: true,
+      }).hidden,
+    ).toEqual([]);
+    expect(
+      redux.getStore("page")?.get("activity_bar_hidden")?.toJS?.(),
+    ).toEqual([]);
+  });
+
   it("prefers page-scoped runtime state over persisted storage", () => {
     setActivityBarCollapsed(false);
     redux.getStore("page")?.setState({

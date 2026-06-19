@@ -68,6 +68,16 @@ describe("activity-bar preferences", () => {
     });
   });
 
+  it("keeps an empty hidden preference as all buttons visible", () => {
+    expect(normalizeHiddenFixedTabs([], { liteMode: true })).toEqual([]);
+    expect(normalizeHiddenFixedTabs(undefined, { liteMode: true })).toEqual([
+      "active",
+      "log",
+      "servers",
+      "info",
+    ]);
+  });
+
   it("accepts immutable map payloads with numeric keys from account settings", () => {
     const order = normalizeFixedTabOrder(
       fromJS({
