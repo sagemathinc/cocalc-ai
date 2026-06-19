@@ -6,7 +6,9 @@
   "provider": { "component": "DSProvider" },
   "componentSrcMap": { "DSProvider": null },
   "overrides": {
-    "CodeBlock": { "cardMode": "column" },
     "PublicGrid": { "cardMode": "column" }
+  },
+  "libOverrides": {
+    "bundle.mjs": "minify + stub dead markdown/katex (unused by wave-1 barrel) for <5MB upload"
   }
 }

@@ -66,3 +66,22 @@ Repo-specific gotchas for `/design-sync` (package shape, synced wave-by-wave).
 - Render check needs playwright + a browser: `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i
   playwright` in `.ds-sync/`, then run capture/validate with
   `DS_CHROMIUM_PATH=/usr/bin/google-chrome` (no 200MB chromium download).
+
+## Slim for upload (minify + dead-stub) — 10.9MB → 4.14MB
+
+- `.design-sync/overrides/bundle.mjs` forks `lib/bundle.mjs` (declared in `cfg.libOverrides`):
+  (1) **`minify: true`** — the converter hardcodes `minify:false`; that alone is the
+  10.9→5.2MB halving. The `@ds-bundle` header is prepended POST-esbuild by `stampHeader`,
+  so minify can't strip it (contract-safe). (2) An `onLoad` stub for
+  `/dist/(markdown/|misc/math-to-html.js)` → empty Proxy, dropping **katex (271KB) +
+  markdown-it (185KB)** that `PublicPage`/`MarkdownSection` pull in but the wave-1 barrel
+  never exports. Result: **4.14MB**, under the 5MB limit.
+- Re-sync: re-copy the staged scripts, RE-DIFF `.design-sync/overrides/bundle.mjs` against
+  upstream `lib/bundle.mjs` and merge upstream changes (the fork only adds minify + the stub
+  plugin). On a fresh clone recreate the symlink: `ln -sfn ../.ds-sync/node_modules .design-sync/node_modules`.
+- **KNOWN validate false-positive: CodeBlock `[RENDER] rootEmpty`.** Under minify the antd
+  App-context re-render (CodeCopyButton's `App.useApp()`) lands just past the validate
+  text/height measurement window → `texts:['','','']` while the SAME run's screenshot has
+  content (~31KB PNG). CodeBlock renders correctly — confirmed by the per-cell capture
+  (grades good) AND the whole-card screenshot. Not a real failure. Do NOT "fix" by dropping
+  cells or `skip` (which would remove its previews). Bundle anchor/build are otherwise clean.
