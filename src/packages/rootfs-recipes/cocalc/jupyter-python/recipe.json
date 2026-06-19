@@ -4,7 +4,7 @@
   "description": "Install CoCalc's minimal Python/Jupyter environment into /opt/cocalc-jupyter.",
   "inputs": {
     "prefix": { "type": "string", "default": "/opt/cocalc-jupyter" },
-    "python": { "type": "string", "default": "python3" },
+    "python": { "type": "string", "default": "/usr/bin/python3" },
     "kernel_name": { "type": "string", "default": "python3" },
     "packages": {
       "type": "string[]",

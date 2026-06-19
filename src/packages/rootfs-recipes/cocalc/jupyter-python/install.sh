@@ -7,7 +7,7 @@ else
 fi
 
 prefix="${PREFIX:-/opt/cocalc-jupyter}"
-python="${PYTHON:-python3}"
+python="${PYTHON:-/usr/bin/python3}"
 kernel_name="${KERNEL_NAME:-python3}"
 owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
@@ -16,7 +16,7 @@ packages="${PACKAGES:-ipykernel ipywidgets jupyterlab matplotlib notebook numpy 
 
 $SUDO mkdir -p "$prefix"
 $SUDO chown -R "$(id -u):$(id -g)" "$prefix"
-$python -m venv "$prefix"
+$python -m venv --clear "$prefix"
 "$prefix/bin/pip" install --no-cache-dir --upgrade pip setuptools wheel
 "$prefix/bin/pip" install --no-cache-dir $packages
 
@@ -30,8 +30,20 @@ if [ "${INSTALL_BASH_KERNEL:-true}" = "true" ]; then
   $SUDO "$prefix/bin/python" -m bash_kernel.install --prefix=/usr/local
 fi
 
-for exe in python python3 pip pip3 uv jupyter jupyter-lab jupyter-notebook; do
+for exe in python python3; do
+  if [ -x "$prefix/bin/python" ]; then
+    $SUDO rm -f "/usr/local/bin/$exe"
+    $SUDO tee "/usr/local/bin/$exe" >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "$prefix/bin/python" "\$@"
+EOF
+    $SUDO chmod 755 "/usr/local/bin/$exe"
+  fi
+done
+
+for exe in pip pip3 uv jupyter jupyter-lab jupyter-notebook; do
   if [ -x "$prefix/bin/$exe" ]; then
+    $SUDO rm -f "/usr/local/bin/$exe"
     $SUDO ln -sf "$prefix/bin/$exe" "/usr/local/bin/$exe"
   fi
 done
