@@ -758,6 +758,44 @@ describe("site license seat pools", () => {
     );
   });
 
+  it("provisions a site license without allowed email domains", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await provisionSiteLicenseForTest({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "External Claim Campus",
+      organization_name: "Example Program",
+      allowed_domains: [],
+      pools: [
+        {
+          pool_name: "Teachers",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "external-claim",
+          exclusive_group: "teachers",
+          allowed_domains: [],
+        },
+      ],
+    });
+
+    expect(overview.site_license.allowed_domains).toEqual([]);
+    expect(overview.pools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            allowed_domains: [],
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("prevents active site license domain overlap", async () => {
     const admin_account_id = uuid();
     const first_owner_account_id = uuid();
