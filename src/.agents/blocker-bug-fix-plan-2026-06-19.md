@@ -1,4 +1,4 @@
-# Blocker Bug Fix Plan - 2026-06-19
+# (done) Blocker Bug Fix Plan - 2026-06-19
 
 Source: `/home/user/wstein-todo/wstein.tasks.md`, read on 2026-06-19.
 
@@ -17,6 +17,8 @@ project host/provisioning item, which William confirmed is completely fixed.
   live dev smoke where the bug is UI or runtime dependent.
 - Do not leave a dirty tracked worktree between bug iterations unless the next
   iteration intentionally depends on the previous one.
+
+Potentially useful images are in `/home/user/wstein-todo/wstein.tasks.md` 
 
 ## Excluded Item
 
@@ -42,7 +44,7 @@ completely fixed. Do not spend time on it unless a fresh reproduction appears.
    `local-validation`.
 9. Slate markdown open should not add trailing whitespace.
 
-## Iteration 1: Btrfs Quota Cleanup Deadlock
+## (done) Iteration 1: Btrfs Quota Cleanup Deadlock
 
 Severity: high. Users can fill quota and then fail to free space because
 snapshot deletion itself needs temporary metadata space.
@@ -98,7 +100,7 @@ Commit shape:
 
 - `file-server/btrfs: allow quota-full snapshot cleanup`
 
-## Iteration 2: Slides/Whiteboard Sync Corruption
+## (done) Iteration 2: Slides/Whiteboard Sync Corruption
 
 Severity: high. This is data corruption and can hang all collaborators'
 browsers.
@@ -154,7 +156,7 @@ Commit shape:
 - `frontend/slides: prevent collaborative note sync feedback`
 - Optional separate forensic-only commit if the script is useful long term.
 
-## Iteration 3: ACP Worker Chat Persistence
+## (invalid) Iteration 3: ACP Worker Chat Persistence
 
 Severity: high/medium. Live state exists, but initial file load can be stale for
 an hour or more, causing confusing agent history and making `.chat` files less
@@ -198,7 +200,7 @@ Commit shape:
 
 - `lite/acp: periodically persist active chat files`
 
-## Iteration 4: Legacy Markdown Import For Slides And Whiteboards
+## (done) Iteration 4: Legacy Markdown Import For Slides And Whiteboards
 
 Severity: medium/high. Legacy CoCalc documents import incorrectly and remain
 visibly escaped.
@@ -245,7 +247,7 @@ Commit shape:
 
 - `frontend/whiteboard: migrate legacy markdown delimiters`
 
-## Iteration 5: Rootfs Upgrade Should Restart Running Projects
+## (done) Iteration 5: Rootfs Upgrade Should Restart Running Projects
 
 Severity: medium. The project appears upgraded but the running container can
 continue using the old rootfs until manual restart.
@@ -495,3 +497,4 @@ cd src && eval "$(pnpm -s dev:hub:env)"
   control-plane APIs, read `src/.agents/scalable-architecture.md`.
 - The course project item was intentionally omitted from active work because it
   has already been fixed.
+
