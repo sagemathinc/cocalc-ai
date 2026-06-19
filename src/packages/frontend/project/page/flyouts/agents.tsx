@@ -26,7 +26,7 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type {
   AgentSessionRecord,
@@ -64,6 +64,7 @@ import {
   ChatRoomModals,
   type ChatRoomModalHandlers,
 } from "@cocalc/frontend/chat/chatroom-modals";
+import { ChatFontSizeControls } from "@cocalc/frontend/chat/chat-font-size-controls";
 import { GitCommitDrawer } from "@cocalc/frontend/chat/git-commit-drawer";
 import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
 import CodexConfigButton from "@cocalc/frontend/chat/codex";
@@ -108,7 +109,6 @@ import {
   isCodexModelName,
   normalizeCodexSessionId,
 } from "@cocalc/util/ai/codex";
-import { COLORS } from "@cocalc/util/theme";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "success",
@@ -1237,21 +1237,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  function renderToolbarDivider(): React.JSX.Element {
-    return (
-      <span
-        aria-hidden="true"
-        style={{
-          display: "inline-block",
-          flexShrink: 0,
-          width: 1,
-          height: 16,
-          background: COLORS.GRAY_LL,
-        }}
-      />
-    );
-  }
-
   function renderSessionMenuSupport(): React.JSX.Element | null {
     if (!sessionMenuActions || !sessionMenuRecord) return null;
     return (
@@ -1336,52 +1321,16 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     embedded = false,
   }: { embedded?: boolean } = {}): React.JSX.Element {
     return (
-      <div
-        aria-label="Agent chat text size"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 4,
-          height: 28,
-          ...(embedded
-            ? undefined
-            : {
-                padding: "0 7px",
-                marginRight: 8,
-                border: `1px solid ${COLORS.GRAY_LL}`,
-                borderRadius: 7,
-                background: "white",
-              }),
-          whiteSpace: "nowrap",
-        }}
-      >
-        <Tooltip title={`Decrease chat font size (${fontSize}px)`}>
-          <Button
-            size="small"
-            type="text"
-            disabled={!canDecreaseFontSize}
-            onClick={decreaseFontSize}
-            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
-          >
-            <Icon name="minus" />
-          </Button>
-        </Tooltip>
-        <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-          {renderToolbarDivider()}
-        </Tooltip>
-        <Tooltip title={`Increase chat font size (${fontSize}px)`}>
-          <Button
-            size="small"
-            type="text"
-            disabled={!canIncreaseFontSize}
-            onClick={increaseFontSize}
-            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
-          >
-            <Icon name="plus" />
-          </Button>
-        </Tooltip>
-        {embedded ? renderToolbarDivider() : null}
-      </div>
+      <ChatFontSizeControls
+        fontSize={fontSize}
+        onDecreaseFontSize={decreaseFontSize}
+        onIncreaseFontSize={increaseFontSize}
+        canDecreaseFontSize={canDecreaseFontSize}
+        canIncreaseFontSize={canIncreaseFontSize}
+        embedded={embedded}
+        label="Agent chat text size"
+        tooltipLabel="Agent chat"
+      />
     );
   }
 
