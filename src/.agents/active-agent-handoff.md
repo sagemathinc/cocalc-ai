@@ -72,10 +72,12 @@ Known risks:
 - **Task:** terminal/frame overflow menu cleanup — remove the repeated frame title
   from the `...` popover while preserving menu commands, toolbar actions, and
   frame controls.
-- **Worktree / Branch:** `/home/user/cocalc-ai` / `remove-empty-project-tag`
+- **Worktree / Branch:** `/home/user/cocalc-ai` / `frontend/frame-overflow-title-cleanup`
 - **Preview owner this turn:** YES for platform UI verification. `blaec.cocalc.ai`
   is currently served from `/home/user/cocalc-ai/src` by hub pid `149046`.
-- **Last commit (reported):** `c95efbd8ba` terminal/frame overflow menu title cleanup.
+- **Last commit (reported):** `33ece9767f` terminal/frame overflow menu title cleanup
+  on the clean PR branch.
+- **Open PR:** <https://github.com/sagemathinc/cocalc-ai/pull/72>
 - **Next step:** user verifies the terminal frame `...` menu on `blaec.cocalc.ai`.
   After verification, either keep preview on platform for the next platform UI task
   or explicitly hand it back to synthesis before public-site work resumes.
