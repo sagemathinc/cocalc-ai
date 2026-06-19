@@ -13,8 +13,16 @@ export function isLegacyDocumentSchemaVersion(version: unknown): boolean {
   return typeof version !== "number" || version < 1;
 }
 
+function isMarkdownElement(element: Element): boolean {
+  return (
+    element.type === "text" ||
+    element.type === "note" ||
+    element.type === "speaker_notes"
+  );
+}
+
 export function normalizeLegacyTextElement(element: Element): Element {
-  if (element.type !== "text" || element.str == null) {
+  if (!isMarkdownElement(element) || element.str == null) {
     return element;
   }
   const str = legacyEscapedMathDelimitersToText(element.str);
