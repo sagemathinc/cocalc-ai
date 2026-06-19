@@ -156,7 +156,7 @@ type RootfsConfigImportOptions = {
   content: boolean;
 };
 
-type RootFilesystemImageMode = "inline" | "modal" | "page";
+type RootFilesystemImageMode = "inline" | "flyout" | "modal" | "page";
 
 interface RootFilesystemImageProps {
   mode?: RootFilesystemImageMode;
@@ -170,6 +170,7 @@ interface RootFilesystemImageModalProps {
 export default function RootFilesystemImage({
   mode = "inline",
 }: RootFilesystemImageProps = {}) {
+  const isFlyout = mode === "flyout";
   const isModal = mode === "modal";
   const isPage = mode === "page";
   const { actions, project, project_id } = useProjectContext();
@@ -1150,13 +1151,19 @@ export default function RootFilesystemImage({
   return (
     <div
       style={
-        isModal || isPage
+        isFlyout || isModal || isPage
           ? undefined
           : { marginTop: "-4px", marginLeft: "-10px" }
       }
     >
       <FreshAuthModal {...freshAuthModalProps} />
-      <div style={isModal || isPage ? undefined : { marginLeft: "15px" }}>
+      <div
+        style={
+          isFlyout || isModal || isPage
+            ? { boxSizing: "border-box", minWidth: 0, width: "100%" }
+            : { marginLeft: "15px" }
+        }
+      >
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <div
             style={{
@@ -1165,7 +1172,15 @@ export default function RootFilesystemImage({
               padding: isPage ? 24 : undefined,
             }}
           >
-            <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+            <div
+              style={{
+                alignItems: "flex-start",
+                display: "flex",
+                flexWrap: isFlyout ? "wrap" : undefined,
+                gap: 16,
+                minWidth: 0,
+              }}
+            >
               {renderRootfsThemePreview(activeDisplayEntry, isPage ? 112 : 56)}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <Space
@@ -2929,10 +2944,24 @@ function renderRootfsStateLifecycleDetail({
   const updated = formatRootfsDateTime(state.updated_at);
   const setBy = state.set_by_name || state.set_by_account_id;
   return (
-    <span>
-      {setBy ? `Set by ${setBy}. ` : ""}
-      {updated ? `Updated ${updated}. ` : ""}
-      <code>{state.image}</code>
+    <span style={{ display: "block", maxWidth: "100%", minWidth: 0 }}>
+      <span>
+        {setBy ? `Set by ${setBy}. ` : ""}
+        {updated ? `Updated ${updated}.` : ""}
+      </span>
+      <code
+        style={{
+          display: "block",
+          lineHeight: 1.35,
+          marginTop: 2,
+          maxWidth: "100%",
+          overflowWrap: "anywhere",
+          whiteSpace: "normal",
+          wordBreak: "break-all",
+        }}
+      >
+        {state.image}
+      </code>
     </span>
   );
 }
@@ -3183,9 +3212,12 @@ function rootfsSummaryCardStyle(entry?: {
   return {
     border: `1px solid ${themeColor}`,
     borderRadius: 12,
+    boxSizing: "border-box",
     padding: "12px 14px",
     background: accentColor ? `${accentColor}18` : "rgba(0, 0, 0, 0.02)",
     maxWidth: "760px",
+    minWidth: 0,
+    width: "100%",
   };
 }
 
@@ -3351,7 +3383,9 @@ function RootfsCatalogCard({
         display: "flex",
         font: "inherit",
         gap: 12,
+        boxSizing: "border-box",
         minHeight: 150,
+        minWidth: 0,
         padding: 12,
         textAlign: "left",
         width: "100%",
@@ -4283,11 +4317,24 @@ function RuntimePanel({
       style={{
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 12,
+        boxSizing: "border-box",
         padding: 14,
         background: "white",
+        maxWidth: "100%",
+        minWidth: 0,
+        width: "100%",
       }}
     >
-      <Space align="start" size={10} style={{ marginBottom: 12 }}>
+      <div
+        style={{
+          alignItems: "flex-start",
+          display: "flex",
+          gap: 10,
+          marginBottom: 12,
+          minWidth: 0,
+          width: "100%",
+        }}
+      >
         <div
           style={{
             alignItems: "center",
@@ -4295,6 +4342,7 @@ function RuntimePanel({
             borderRadius: 9,
             color: COLORS.ANTD_LINK_BLUE,
             display: "flex",
+            flex: "0 0 auto",
             height: 34,
             justifyContent: "center",
             width: 34,
@@ -4302,11 +4350,11 @@ function RuntimePanel({
         >
           <Icon name={icon as any} />
         </div>
-        <div>
+        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
           <div style={{ fontWeight: 700 }}>{title}</div>
           <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
         </div>
-      </Space>
+      </div>
       {children}
     </div>
   );
@@ -4327,18 +4375,38 @@ function RuntimeAction({
         alignItems: "center",
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 10,
+        boxSizing: "border-box",
         display: "flex",
         flexWrap: "wrap",
         gap: 10,
+        minWidth: 0,
         padding: "10px 12px",
+        width: "100%",
       }}
     >
       <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-        <div style={{ fontWeight: 600 }}>{title}</div>
-        <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{description}</div>
+        <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{title}</div>
+        <div
+          style={{
+            color: COLORS.GRAY_M,
+            fontSize: 12,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {description}
+        </div>
       </div>
       {action ? (
-        <div style={{ flex: "0 0 auto", marginLeft: "auto", maxWidth: "100%" }}>
+        <div
+          style={{
+            display: "flex",
+            flex: "0 1 auto",
+            justifyContent: "flex-end",
+            marginLeft: "auto",
+            maxWidth: "100%",
+            minWidth: 0,
+          }}
+        >
           {action}
         </div>
       ) : null}
@@ -4409,9 +4477,12 @@ function LifecycleRow({
     <div
       style={{
         alignItems: "start",
+        boxSizing: "border-box",
         display: "grid",
         gap: 8,
         gridTemplateColumns: "88px minmax(0, 1fr)",
+        minWidth: 0,
+        width: "100%",
       }}
     >
       <Tag style={{ marginInlineEnd: 0, textAlign: "center" }}>{label}</Tag>
@@ -4427,7 +4498,16 @@ function LifecycleRow({
         >
           {value}
         </div>
-        <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{detail}</div>
+        <div
+          style={{
+            color: COLORS.GRAY_M,
+            fontSize: 12,
+            minWidth: 0,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {detail}
+        </div>
         {action ? <div style={{ marginTop: 8 }}>{action}</div> : null}
       </div>
     </div>
@@ -4611,7 +4691,10 @@ function TechnicalGroup({
       style={{
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 10,
+        boxSizing: "border-box",
+        minWidth: 0,
         padding: "10px 12px",
+        width: "100%",
       }}
     >
       <div style={{ fontWeight: 700, marginBottom: 8 }}>{title}</div>
@@ -4619,7 +4702,9 @@ function TechnicalGroup({
         style={{
           display: "grid",
           gap: 8,
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
+          minWidth: 0,
         }}
       >
         {children}

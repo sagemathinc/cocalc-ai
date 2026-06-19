@@ -20,20 +20,22 @@ export function RootfsPanel({
   return (
     <div
       style={{
+        boxSizing: "border-box",
+        minWidth: 0,
         padding: page ? "24px" : `14px ${FLYOUT_PADDING} ${FLYOUT_PADDING} 0`,
+        width: "100%",
       }}
     >
       <div
-        style={
-          page
-            ? {
-                margin: "0 auto",
-                maxWidth: 1120,
-              }
-            : undefined
-        }
+        style={{
+          boxSizing: "border-box",
+          margin: page ? "0 auto" : undefined,
+          maxWidth: page ? 1120 : undefined,
+          minWidth: 0,
+          width: "100%",
+        }}
       >
-        <RootFilesystemImage mode={page ? "page" : "inline"} />
+        <RootFilesystemImage mode={page ? "page" : "flyout"} />
       </div>
     </div>
   );
