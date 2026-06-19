@@ -363,10 +363,14 @@ Current implementation note:
   `--project` when provided.
 - Local recipe modules live under `src/packages/rootfs-recipes`.
 - Initial modules include `cocalc/apt`, `cocalc/jupyter-python`,
-  `cocalc/julia`, `cocalc/pluto`, and `cocalc/copy`.
-- Example recipes exist for Julia/Pluto and the minimal CoCalc site base:
+  `cocalc/julia`, `cocalc/pluto`, `cocalc/copy`, `cocalc/pytorch-gpu`,
+  and `cocalc/tensorflow-gpu`.
+- Example recipes exist for Julia/Pluto, the minimal CoCalc site base, and
+  GPU machine learning stacks:
   `src/packages/rootfs-recipes/examples/julia-pluto.yaml` and
-  `src/packages/rootfs-recipes/examples/cocalc-base.yaml`.
+  `src/packages/rootfs-recipes/examples/cocalc-base.yaml`,
+  `src/packages/rootfs-recipes/examples/ml-pytorch-gpu.yaml`, and
+  `src/packages/rootfs-recipes/examples/ml-tensorflow-gpu.yaml`.
 - Remaining recipe work: local directory upload for examples, richer input type
   validation, builder cleanup/archive policy, and more modules.
 

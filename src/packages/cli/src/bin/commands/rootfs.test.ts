@@ -561,6 +561,32 @@ test("rootfs recipe explain parses bundled cocalc base recipe", async () => {
   assert.equal(harness.captured.publish.slug, "cocalc-minimal-base");
 });
 
+test("rootfs recipe explain parses bundled machine learning GPU recipes", async () => {
+  for (const [recipe, module, slug] of [
+    ["ml-pytorch-gpu.yaml", "cocalc/pytorch-gpu", "pytorch-gpu-ml"],
+    ["ml-tensorflow-gpu.yaml", "cocalc/tensorflow-gpu", "tensorflow-gpu-ml"],
+  ]) {
+    const harness = rootfsDeps();
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "explain",
+      join(process.cwd(), "../rootfs-recipes/examples", recipe),
+    ]);
+
+    assert.equal(harness.captured.steps[0].uses, "cocalc/apt");
+    assert.equal(harness.captured.steps[1].uses, "cocalc/jupyter-python");
+    assert.equal(harness.captured.steps[2].uses, module);
+    assert.equal(harness.captured.publish.slug, slug);
+    assert.ok(harness.captured.publish.tags.includes("nvidia-gpu"));
+  }
+});
+
 test("rootfs recipe run creates project, executes modules, and publishes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-run-"));
   const recipePath = join(dir, "recipe.json");

@@ -1,0 +1,36 @@
+{
+  "id": "cocalc/pytorch-gpu",
+  "version": 1,
+  "description": "Install CUDA-enabled PyTorch packages into CoCalc's Python/Jupyter environment.",
+  "inputs": {
+    "prefix": { "type": "string", "default": "/opt/cocalc-jupyter" },
+    "cuda": { "type": "string", "default": "cu128" },
+    "index_url": { "type": "string", "default": "" },
+    "packages": {
+      "type": "string[]",
+      "default": ["torch", "torchvision", "torchaudio"]
+    },
+    "require_gpu": { "type": "boolean", "default": false }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "machine-learning",
+      "tags": ["python", "jupyter", "pytorch", "cuda", "nvidia-gpu"]
+    },
+    "content": {
+      "version": 1,
+      "title": "PyTorch GPU Machine Learning",
+      "subtitle": "Jupyter-ready Python environment with CUDA-enabled PyTorch wheels.",
+      "highlights": ["PyTorch", "CUDA", "JupyterLab", "Python kernel"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "PyTorch documentation",
+          "url": "https://pytorch.org/docs/stable/index.html"
+        }
+      ]
+    }
+  }
+}

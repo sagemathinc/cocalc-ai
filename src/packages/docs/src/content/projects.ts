@@ -283,6 +283,21 @@ and both Python and bash Jupyter kernels:
 cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/cocalc-base.yaml
 ~~~
 
+GPU machine learning recipes are also included. They build on the same
+Jupyter/uv base and install NVIDIA GPU-enabled Python packages:
+
+~~~sh
+cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/ml-pytorch-gpu.yaml
+cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/ml-tensorflow-gpu.yaml
+~~~
+
+The PyTorch recipe uses the official CUDA wheel index, defaulting to CUDA 12.8.
+The TensorFlow recipe installs \`tensorflow[and-cuda]\` and applies the
+recommended virtual-environment symlink fix for NVIDIA libraries. Both recipes
+can be verified on a non-GPU builder by checking that the GPU-enabled packages
+are installed; set the module input \`require_gpu: true\` when the builder
+project must also prove that an NVIDIA GPU is visible.
+
 ## Test checklist
 
 After publishing, test the full user path:
