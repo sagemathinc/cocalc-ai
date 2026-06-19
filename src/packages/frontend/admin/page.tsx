@@ -33,6 +33,7 @@ import { ManagedCpuAdminOverview } from "./managed-cpu-overview";
 import { ProjectBackupShardsAdmin } from "./project-backup-shards";
 import { SsoAdmin } from "./sso";
 import { SiteSetupAdmin, SiteSetupBanner } from "./site-setup";
+import { SiteLicenseClaimsAdmin } from "./site-license-claims";
 import { SiteLicensesAdmin } from "./site-licenses";
 import { AdminPurchaseAdmin } from "./admin-purchase";
 import { UsageStatistics } from "./stats/page";
@@ -475,6 +476,14 @@ function getAdminSections({
       icon: "users",
       group: "commercial",
       component: () => <SiteLicensesAdmin />,
+    },
+    {
+      key: "site-license-claims",
+      title: "Site License Claims",
+      description: "Manage external claim pools, keys, and consumptions.",
+      icon: "key",
+      group: "commercial",
+      component: () => <SiteLicenseClaimsAdmin />,
     },
   ];
 }

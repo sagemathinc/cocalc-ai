@@ -20,6 +20,10 @@ describe("admin routing", () => {
       kind: "index",
       section: "site-setup",
     });
+    expect(parseAdminRoute("admin/site-license-claims")).toEqual({
+      kind: "index",
+      section: "site-license-claims",
+    });
     expect(parseAdminRoute("admin/managed-cpu")).toEqual({
       kind: "index",
       section: "managed-cpu",
