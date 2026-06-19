@@ -9,7 +9,6 @@ import MultiMarkdownInput from "@cocalc/frontend/editors/markdown-input/multimod
 import useEditFocus from "./edit-focus";
 import useMouseClickDrag from "./mouse-click-drag";
 import useResizeObserver from "use-resize-observer";
-import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 
 const MIN_HEIGHT = 78;
 
@@ -87,44 +86,35 @@ function EditText({
   const getValueRef = useRef<any>(null);
   const saveValueRef = useRef<any>(() => {});
   const dirtyRef = useRef<boolean>(false);
-  const [localValue, setLocalValue] = useState<string>(
-    element.str ?? element.data?.initStr ?? "",
+  const remoteValue = element.str ?? element.data?.initStr ?? "";
+  const remoteValueRef = useRef<string>(remoteValue);
+  remoteValueRef.current = remoteValue;
+  const [localValue, setLocalValue] = useState<string>(remoteValue);
+
+  const saveAndResetDirty = useCallback(
+    (str?: string) => {
+      const current = str ?? getValueRef.current?.() ?? "";
+      dirtyRef.current = false;
+      setLocalValue(current);
+      if (current !== remoteValueRef.current) {
+        actions.setElement({ obj: { id: element.id, str: current } });
+      }
+    },
+    [actions, element.id],
   );
-  const mergeHelperRef = useRef<SimpleInputMerge>(
-    new SimpleInputMerge(element.str ?? element.data?.initStr ?? ""),
-  );
-  const saveAndResetDirty = useCallback(() => {
-    const current = getValueRef.current?.() ?? "";
-    dirtyRef.current = false;
-    setLocalValue(current);
-    actions.setElement({ obj: { id: element.id, str: current } });
-    mergeHelperRef.current.noteSaved(current);
-  }, [actions, element.id]);
 
   // NOTE: do **NOT** autoFocus the MultiMarkdownInput.  This causes many serious problems,
   // including break first render of the overall canvas if any text is focused.
 
   const mouseClickDrag = useMouseClickDrag({ editFocus, setEditFocus });
 
-  // Reset baseline when switching elements.
+  // Propagate incoming sync updates to MultiMarkdownInput.  That component
+  // owns the actual remote/local merge; this wrapper must not write merged
+  // values back from a remote-change effect, since multiple focused clients can
+  // otherwise echo and amplify text patches.
   useEffect(() => {
-    const initial = element.str ?? element.data?.initStr ?? "";
-    setLocalValue(initial);
-    mergeHelperRef.current.reset(initial);
-  }, [element.id]);
-
-  // Merge incoming remote updates with local edits preserved.
-  useEffect(() => {
-    const remote = element.str ?? element.data?.initStr ?? "";
-    mergeHelperRef.current.handleRemote({
-      remote,
-      getLocal: () => getValueRef.current?.() ?? localValue,
-      applyMerged: (v) => {
-        setLocalValue(v);
-        actions.setElement({ obj: { id: element.id, str: v } });
-      },
-    });
-  }, [element.str]);
+    setLocalValue(remoteValue);
+  }, [element.id, remoteValue]);
 
   // Save current buffer to the store (optionally using provided string).
   useEffect(() => {
@@ -132,16 +122,12 @@ function EditText({
       if (!dirtyRef.current) {
         return;
       }
-      const current = str ?? getValueRef.current?.() ?? "";
-      dirtyRef.current = false;
-      setLocalValue(current);
-      actions.setElement({ obj: { id: element.id, str: current } });
-      mergeHelperRef.current.noteSaved(current);
+      saveAndResetDirty(str);
     };
     return () => {
       saveValueRef.current();
     };
-  }, [element.id, actions]);
+  }, [saveAndResetDirty]);
 
   // On component unmount, save any unsaved changes.
   useEffect(() => {
@@ -237,8 +223,8 @@ function EditText({
       value={localValue}
       fontSize={element.data?.fontSize ?? DEFAULT_FONT_SIZE}
       style={getStyle(element)}
-      onChange={() => {
-        saveValueRef.current?.();
+      onChange={(value) => {
+        saveValueRef.current?.(value);
       }}
       autoGrow
       cmOptions={{
