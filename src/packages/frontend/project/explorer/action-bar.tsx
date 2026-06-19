@@ -318,8 +318,9 @@ function ActionBarEnabled({
       ) : null;
 
     if (checked === 0) {
-      if (!readOnly && autoUpdateButton == null) return;
-      if (!readOnly && refreshButton == null) return;
+      if (!readOnly && autoUpdateButton == null && refreshButton == null) {
+        return;
+      }
       return (
         <div style={style}>
           {readOnly ? (
