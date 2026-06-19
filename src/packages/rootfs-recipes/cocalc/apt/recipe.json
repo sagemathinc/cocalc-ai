@@ -6,6 +6,7 @@
     "packages": { "type": "string[]", "required": true },
     "no_recommends": { "type": "boolean", "default": true },
     "update": { "type": "boolean", "default": true },
+    "upgrade": { "type": "boolean", "default": false },
     "clean": { "type": "boolean", "default": true }
   },
   "run": { "shell": "bash", "script": "install.sh" },

@@ -362,10 +362,11 @@ Current implementation note:
 - `run` creates and starts a clean builder project by default, or uses
   `--project` when provided.
 - Local recipe modules live under `src/packages/rootfs-recipes`.
-- Initial modules include `cocalc/apt`, `cocalc/julia`, `cocalc/pluto`, and
-  `cocalc/copy`.
-- A Julia/Pluto example recipe exists at
-  `src/packages/rootfs-recipes/examples/julia-pluto.yaml`.
+- Initial modules include `cocalc/apt`, `cocalc/jupyter-python`,
+  `cocalc/julia`, `cocalc/pluto`, and `cocalc/copy`.
+- Example recipes exist for Julia/Pluto and the minimal CoCalc site base:
+  `src/packages/rootfs-recipes/examples/julia-pluto.yaml` and
+  `src/packages/rootfs-recipes/examples/cocalc-base.yaml`.
 - Remaining recipe work: local directory upload for examples, richer input type
   validation, builder cleanup/archive policy, and more modules.
 
@@ -693,4 +694,3 @@ security and content subsystems.
   - Current direction: keep recipes outside catalog metadata for MVP. The
     published catalog entry may record a recipe reference or run log later, but
     recipe execution is an explicit author/admin/agent action.
-

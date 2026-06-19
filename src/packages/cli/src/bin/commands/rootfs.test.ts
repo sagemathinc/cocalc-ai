@@ -540,6 +540,27 @@ test("rootfs recipe explain resolves local modules", async () => {
   }
 });
 
+test("rootfs recipe explain parses bundled cocalc base recipe", async () => {
+  const harness = rootfsDeps();
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "explain",
+    join(process.cwd(), "../rootfs-recipes/examples/cocalc-base.yaml"),
+  ]);
+
+  assert.equal(harness.captured.recipe, "cocalc-base");
+  assert.equal(harness.captured.steps[0].uses, "cocalc/apt");
+  assert.equal(harness.captured.steps[1].kind, "run");
+  assert.equal(harness.captured.steps[2].uses, "cocalc/jupyter-python");
+  assert.equal(harness.captured.publish.slug, "cocalc-minimal-base");
+});
+
 test("rootfs recipe run creates project, executes modules, and publishes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-run-"));
   const recipePath = join(dir, "recipe.json");

@@ -275,6 +275,14 @@ Pass \`--project <project_id>\` to run in an existing project instead of creatin
 a clean builder project. Pass \`--config-out rootfs-config.json\` to save the
 generated portable RootFS config JSON for inspection or reuse.
 
+The repository also includes a minimal CoCalc site base recipe with basic shell
+tools, LaTeX, Python, JupyterLab, scientific Python packages, uv, SFTP support,
+and both Python and bash Jupyter kernels:
+
+~~~sh
+cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/cocalc-base.yaml
+~~~
+
 ## Test checklist
 
 After publishing, test the full user path:

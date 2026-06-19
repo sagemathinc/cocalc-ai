@@ -1,0 +1,49 @@
+{
+  "id": "cocalc/jupyter-python",
+  "version": 1,
+  "description": "Install CoCalc's minimal Python/Jupyter environment into /opt/cocalc-jupyter.",
+  "inputs": {
+    "prefix": { "type": "string", "default": "/opt/cocalc-jupyter" },
+    "python": { "type": "string", "default": "python3" },
+    "kernel_name": { "type": "string", "default": "python3" },
+    "packages": {
+      "type": "string[]",
+      "default": [
+        "ipykernel",
+        "ipywidgets",
+        "jupyterlab",
+        "matplotlib",
+        "notebook",
+        "numpy",
+        "pandas",
+        "scipy",
+        "scikit-learn",
+        "sympy",
+        "uv",
+        "jupyter-console"
+      ]
+    },
+    "install_bash_kernel": { "type": "boolean", "default": true },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "python",
+      "tags": ["python", "jupyter", "bash-kernel"]
+    },
+    "content": {
+      "version": 1,
+      "title": "CoCalc Python and Jupyter",
+      "subtitle": "Python, JupyterLab, scientific Python packages, uv, and a bash notebook kernel.",
+      "highlights": [
+        "Python 3",
+        "JupyterLab",
+        "bash kernel",
+        "scientific Python"
+      ]
+    }
+  }
+}
