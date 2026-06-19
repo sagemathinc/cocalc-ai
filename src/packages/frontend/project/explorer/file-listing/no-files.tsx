@@ -5,7 +5,7 @@
 
 import { Alert, Button, Space } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { NEW_FILETYPE_ICONS } from "@cocalc/frontend/project/new/consts";
@@ -159,14 +159,16 @@ function EmptyDirectoryWelcome({
   const actions: {
     title: string;
     description: string;
+    tooltip: string;
     icon: IconName;
     color: string;
     onClick?: () => void;
     className?: string;
   }[] = [
     {
-      title: "Jupyter Notebook",
-      description: "Explore data and run code interactively.",
+      title: "Jupyter",
+      description: "Notebook",
+      tooltip: "Create a notebook for code, text, plots, and results.",
       icon: NEW_FILETYPE_ICONS.ipynb,
       color: COLORS.COCALC_ORANGE,
       onClick: () => createFile("ipynb"),
@@ -174,8 +176,9 @@ function EmptyDirectoryWelcome({
     ...(aiAllowed
       ? [
           {
-            title: "Chat with AI",
-            description: "Plan, explain, and work through ideas.",
+            title: "Agents",
+            description: "AI chat",
+            tooltip: "Start an AI agent thread in this project.",
             icon: NEW_FILETYPE_ICONS.chat,
             color: COLORS.ANTD_LINK_BLUE,
             onClick: () => createFile("chat"),
@@ -184,32 +187,52 @@ function EmptyDirectoryWelcome({
       : []),
     {
       title: "Terminal",
-      description: "Use a shell in this project environment.",
+      description: "Shell",
+      tooltip: "Open a shell in this project environment.",
       icon: NEW_FILETYPE_ICONS.term,
       color: COLORS.GRAY_D,
       onClick: () => createFile("term"),
     },
     {
-      title: "Upload Files",
-      description: "Drop files here or choose them from your computer.",
+      title: "Upload",
+      description: "Files",
+      tooltip: "Add files from your computer to this project.",
       icon: "cloud-upload",
       color: COLORS.BS_GREEN_D,
       onClick: openUploadFiles,
       className: "upload-button",
     },
     {
-      title: "LaTeX Document",
-      description: "Write and compile math-rich documents.",
+      title: "LaTeX",
+      description: "Document",
+      tooltip: "Create a LaTeX document for math-rich writing.",
       icon: NEW_FILETYPE_ICONS.tex,
       color: COLORS.BLUE_D,
       onClick: () => createFile("tex"),
     },
     {
-      title: "Markdown Notes",
-      description: "Start a lightweight document or README.",
+      title: "Markdown",
+      description: "Notes",
+      tooltip: "Create a Markdown note, README, or project context file.",
       icon: NEW_FILETYPE_ICONS.md,
       color: COLORS.ANTD_LINK_BLUE_DARK,
       onClick: () => createFile("md"),
+    },
+    {
+      title: "Folder",
+      description: "Directory",
+      tooltip: "Create a folder to organize files in this project.",
+      icon: "folder",
+      color: COLORS.BS_GREEN,
+      onClick: () => createFile("/"),
+    },
+    {
+      title: "Other",
+      description: "More types",
+      tooltip: "Open the full file creator for more file types.",
+      icon: "plus-circle",
+      color: COLORS.GRAY_M,
+      onClick: openNewPage,
     },
   ];
 
@@ -219,17 +242,17 @@ function EmptyDirectoryWelcome({
       style={{
         margin: "32px auto 28px auto",
         width: "calc(100% - 56px)",
-        maxWidth: 1120,
+        maxWidth: 960,
         border: `1px solid ${COLORS.GRAY_DDD}`,
-        borderRadius: 18,
+        borderRadius: 16,
         overflow: "hidden",
         background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL} 0%, ${COLORS.GRAY_LLL} 55%, ${COLORS.BS_GREEN_LL} 100%)`,
-        boxShadow: `0 16px 40px ${COLORS.GRAY_DDD}`,
+        boxShadow: `0 12px 32px ${COLORS.GRAY_DDD}`,
       }}
     >
       <div
         style={{
-          padding: "30px 30px 12px 30px",
+          padding: "26px 28px 10px 28px",
           textAlign: "center",
         }}
       >
@@ -237,7 +260,7 @@ function EmptyDirectoryWelcome({
           style={{
             margin: "0 0 6px 0",
             color: COLORS.GRAY_DD,
-            fontSize: 28,
+            fontSize: 26,
             fontWeight: 700,
           }}
         >
@@ -246,92 +269,87 @@ function EmptyDirectoryWelcome({
         <div
           style={{
             color: COLORS.GRAY_M,
-            fontSize: 16,
+            fontSize: 15,
             maxWidth: 620,
             margin: "0 auto",
           }}
         >
-          Create, compute, write, or upload files to get started.
+          Create a notebook, terminal, folder, or upload files to get started.
         </div>
       </div>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 16,
-          padding: "24px 28px 28px 28px",
+          gridTemplateColumns: "repeat(auto-fit, minmax(112px, 1fr))",
+          gap: 10,
+          padding: "18px 22px 22px 22px",
         }}
       >
         {actions.map((action) => (
-          <button
+          <Tooltip
             key={action.title}
-            className={action.className}
-            onClick={action.onClick}
-            type="button"
-            style={{
-              textAlign: "left",
-              border: `1px solid ${COLORS.GRAY_DDD}`,
-              borderRadius: 14,
-              padding: 16,
-              minHeight: 112,
-              background: "white",
-              cursor: "pointer",
-              boxShadow: `0 8px 24px ${COLORS.GRAY_DDD}`,
-            }}
+            title={action.tooltip}
+            placement="bottom"
+            mouseEnterDelay={0.35}
           >
-            <div
+            <button
+              aria-label={action.tooltip}
+              className={action.className}
+              onClick={action.onClick}
+              type="button"
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                marginBottom: 10,
+                textAlign: "center",
+                border: `1px solid ${COLORS.GRAY_DDD}`,
+                borderRadius: 12,
+                padding: "12px 10px",
+                minHeight: 88,
+                background: "white",
+                cursor: "pointer",
+                boxShadow: `0 6px 18px ${COLORS.GRAY_DDD}`,
               }}
             >
-              <span
+              <div
                 style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 12,
-                  display: "inline-flex",
+                  display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
-                  background: action.color,
-                  color: "white",
-                  fontSize: 18,
+                  gap: 8,
+                  marginBottom: 6,
                 }}
               >
-                <Icon name={action.icon} />
-              </span>
-              <strong style={{ color: COLORS.GRAY_DD, fontSize: 15 }}>
-                {action.title}
-              </strong>
-            </div>
-            <div style={{ color: COLORS.GRAY_M, lineHeight: 1.35 }}>
-              {action.description}
-            </div>
-          </button>
+                <span
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 10,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: action.color,
+                    color: "white",
+                    fontSize: 16,
+                  }}
+                >
+                  <Icon name={action.icon} />
+                </span>
+                <strong style={{ color: COLORS.GRAY_DD, fontSize: 15 }}>
+                  {action.title}
+                </strong>
+              </div>
+              <div
+                style={{
+                  color: COLORS.GRAY_M,
+                  lineHeight: 1.25,
+                  fontSize: 12,
+                }}
+              >
+                {action.description}
+              </div>
+            </button>
+          </Tooltip>
         ))}
-      </div>
-
-      <div
-        style={{
-          borderTop: `1px solid ${COLORS.GRAY_DDD}`,
-          background: "white",
-          padding: "14px 22px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 14,
-          flexWrap: "wrap",
-        }}
-      >
-        <span style={{ color: COLORS.GRAY_M }}>
-          Prefer the full launcher with more file types?
-        </span>
-        <Button type="primary" onClick={openNewPage}>
-          Browse file types
-        </Button>
       </div>
     </div>
   );
