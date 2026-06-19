@@ -110,6 +110,7 @@ import {
   isCodexModelName,
   normalizeCodexSessionId,
 } from "@cocalc/util/ai/codex";
+import { COLORS } from "@cocalc/util/theme";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "success",
@@ -1134,16 +1135,17 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         style={{
           display: "inline-flex",
           alignItems: "center",
-          gap: 2,
+          gap: 4,
           height: 28,
-          padding: "0 3px",
-          border: "1px solid #d9d9d9",
+          padding: "0 7px",
+          marginRight: 8,
+          border: `1px solid ${COLORS.GRAY_LL}`,
           borderRadius: 7,
-          background: "#fff",
+          background: "white",
           whiteSpace: "nowrap",
         }}
       >
-        <Tooltip title="Decrease chat font size">
+        <Tooltip title={`Decrease chat font size (${fontSize}px)`}>
           <Button
             size="small"
             type="text"
@@ -1155,14 +1157,18 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           </Button>
         </Tooltip>
         <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-          <Typography.Text
-            type="secondary"
-            style={{ fontSize: 12, padding: "0 4px" }}
-          >
-            Text {fontSize}
-          </Typography.Text>
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              flexShrink: 0,
+              width: 1,
+              height: 16,
+              background: COLORS.GRAY_LL,
+            }}
+          />
         </Tooltip>
-        <Tooltip title="Increase chat font size">
+        <Tooltip title={`Increase chat font size (${fontSize}px)`}>
           <Button
             size="small"
             type="text"
