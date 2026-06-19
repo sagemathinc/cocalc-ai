@@ -250,22 +250,33 @@ Recipes are not the live source of truth for a published RootFS entry. The
 published catalog metadata remains authoritative. Recipes are for authors,
 admins, and agents who need to rebuild or adapt an image.
 
-Explain a recipe without running it:
+Explain a recipe without running it. You can pass a file path or the name of a
+bundled example recipe:
 
 ~~~sh
 cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/julia-pluto.yaml
+cocalc rootfs recipe explain julia-pluto
+~~~
+
+Recipe modules such as \`cocalc/jupyter-python\` are composable steps, not full
+published builds. The CLI can still explain a module by treating it as a
+one-step recipe:
+
+~~~sh
+cocalc rootfs recipe explain cocalc/jupyter-python
+cocalc rootfs recipe explain jupyter-python
 ~~~
 
 Run a recipe in a clean builder project:
 
 ~~~sh
-cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.yaml
+cocalc rootfs recipe run julia-pluto
 ~~~
 
 Run and publish the result:
 
 ~~~sh
-cocalc rootfs recipe run src/packages/rootfs-recipes/examples/julia-pluto.yaml \
+cocalc rootfs recipe run julia-pluto \
   --publish \
   --switch-project \
   --wait
@@ -280,15 +291,15 @@ tools, LaTeX, Python, JupyterLab, scientific Python packages, uv, SFTP support,
 and both Python and bash Jupyter kernels:
 
 ~~~sh
-cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/cocalc-base.yaml
+cocalc rootfs recipe explain cocalc-base
 ~~~
 
 GPU machine learning recipes are also included. They build on the same
 Jupyter/uv base and install NVIDIA GPU-enabled Python packages:
 
 ~~~sh
-cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/ml-pytorch-gpu.yaml
-cocalc rootfs recipe explain src/packages/rootfs-recipes/examples/ml-tensorflow-gpu.yaml
+cocalc rootfs recipe explain ml-pytorch-gpu
+cocalc rootfs recipe explain ml-tensorflow-gpu
 ~~~
 
 The PyTorch recipe uses the official CUDA wheel index, defaulting to CUDA 12.8.

@@ -561,6 +561,55 @@ test("rootfs recipe explain parses bundled cocalc base recipe", async () => {
   assert.equal(harness.captured.publish.slug, "cocalc-minimal-base");
 });
 
+test("rootfs recipe explain resolves bundled recipe examples by name", async () => {
+  const harness = rootfsDeps();
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "explain",
+    "cocalc-base",
+  ]);
+
+  assert.equal(harness.captured.recipe, "cocalc-base");
+  assert.equal(harness.captured.steps[2].uses, "cocalc/jupyter-python");
+  assert.equal(harness.captured.publish.slug, "cocalc-minimal-base");
+});
+
+test("rootfs recipe explain treats bundled modules as one-step recipes", async () => {
+  for (const recipe of [
+    "cocalc/jupyter-python",
+    "jupyter-python",
+    join(process.cwd(), "../rootfs-recipes/cocalc/jupyter-python"),
+    join(process.cwd(), "../rootfs-recipes/cocalc/jupyter-python/recipe.json"),
+  ]) {
+    const harness = rootfsDeps();
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "explain",
+      recipe,
+    ]);
+
+    assert.equal(harness.captured.recipe, "cocalc/jupyter-python");
+    assert.equal(harness.captured.steps.length, 1);
+    assert.equal(harness.captured.steps[0].uses, "cocalc/jupyter-python");
+    assert.equal(
+      harness.captured.steps[0].inputs.prefix,
+      "/opt/cocalc-jupyter",
+    );
+  }
+});
+
 test("rootfs recipe explain parses bundled machine learning GPU recipes", async () => {
   for (const [recipe, module, slug] of [
     ["ml-pytorch-gpu.yaml", "cocalc/pytorch-gpu", "pytorch-gpu-ml"],

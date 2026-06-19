@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 
 import type { ExecuteCodeOutput } from "@cocalc/util/types/execute-code";
@@ -127,6 +127,13 @@ type LoadedModule = {
   module: RootfsRecipeModule;
 };
 
+type LoadedRecipe = {
+  moduleDir: string;
+  recipe: RootfsRecipe;
+  recipeDir: string;
+  recipePath: string;
+};
+
 export function loadRootfsRecipe(recipePath: string): RootfsRecipe {
   const resolved = resolve(recipePath);
   let parsed: unknown;
@@ -140,6 +147,128 @@ export function loadRootfsRecipe(recipePath: string): RootfsRecipe {
   return normalizeRecipe(parsed, resolved);
 }
 
+function loadRootfsRecipeSource(
+  recipe: string,
+  requestedModuleDir?: string,
+): LoadedRecipe {
+  const candidatePath = resolve(recipe);
+  if (existsSync(candidatePath)) {
+    const path = resolveRecipePathFromExistingPath(candidatePath);
+    const parsed = parseRecipeText(path, readFileSync(path, "utf8"));
+    if (isRecipeModule(parsed)) {
+      const moduleDir =
+        requestedModuleDir != null
+          ? resolveRecipeModuleDir(requestedModuleDir, dirname(path))
+          : moduleDirFromModuleRecipePath(path);
+      return {
+        moduleDir,
+        recipe: moduleAsRecipe(parsed),
+        recipeDir: dirname(path),
+        recipePath: path,
+      };
+    }
+    return {
+      moduleDir: resolveRecipeModuleDir(requestedModuleDir, dirname(path)),
+      recipe: normalizeRecipe(parsed, path),
+      recipeDir: dirname(path),
+      recipePath: path,
+    };
+  }
+
+  const moduleDir = resolveRecipeModuleDir(requestedModuleDir, process.cwd());
+  const examplePath = resolveBundledExamplePath(recipe, moduleDir);
+  if (examplePath) {
+    return {
+      moduleDir,
+      recipe: loadRootfsRecipe(examplePath),
+      recipeDir: dirname(examplePath),
+      recipePath: examplePath,
+    };
+  }
+
+  const moduleId = resolveRecipeModuleId(recipe, moduleDir);
+  if (moduleId) {
+    const loaded = loadRecipeModule(moduleId, moduleDir);
+    return {
+      moduleDir,
+      recipe: moduleAsRecipe(loaded.module),
+      recipeDir: loaded.dir,
+      recipePath: join(loaded.dir, "recipe.json"),
+    };
+  }
+
+  throw new Error(
+    `unknown RootFS recipe '${recipe}'. Use a recipe file path, a bundled example name such as 'cocalc-base', or a module name such as 'cocalc/jupyter-python'.`,
+  );
+}
+
+function resolveRecipePathFromExistingPath(path: string): string {
+  if (!statSync(path).isDirectory()) return path;
+  for (const name of ["recipe.yaml", "recipe.yml", "recipe.json"]) {
+    const candidate = join(path, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    `recipe directory '${path}' must contain recipe.yaml, recipe.yml, or recipe.json`,
+  );
+}
+
+function resolveBundledExamplePath(
+  recipe: string,
+  moduleDir: string,
+): string | undefined {
+  if (recipe.includes("/") || recipe.includes("\\")) return;
+  const examplesDir = join(moduleDir, "examples");
+  const candidates = extname(recipe)
+    ? [join(examplesDir, recipe)]
+    : [
+        join(examplesDir, `${recipe}.yaml`),
+        join(examplesDir, `${recipe}.yml`),
+        join(examplesDir, `${recipe}.json`),
+      ];
+  return candidates.find((path) => existsSync(path));
+}
+
+function resolveRecipeModuleId(
+  recipe: string,
+  moduleDir: string,
+): string | undefined {
+  const candidates: string[] = [];
+  if (/^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*$/i.test(recipe)) {
+    candidates.push(recipe);
+  } else if (/^[a-z0-9][a-z0-9_-]*$/i.test(recipe)) {
+    candidates.push(`cocalc/${recipe}`);
+  }
+  return candidates.find((id) =>
+    existsSync(join(moduleDir, ...id.split("/"), "recipe.json")),
+  );
+}
+
+function isRecipeModule(value: unknown): value is RootfsRecipeModule {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as RootfsRecipeModule).id === "string" &&
+    ((value as RootfsRecipeModule).run != null ||
+      (value as RootfsRecipeModule).verify != null ||
+      (value as RootfsRecipeModule).inputs != null)
+  );
+}
+
+function moduleAsRecipe(module: RootfsRecipeModule): RootfsRecipe {
+  return {
+    version: 1,
+    name: module.id,
+    steps: [{ uses: module.id }],
+    verify: [],
+  };
+}
+
+function moduleDirFromModuleRecipePath(path: string): string {
+  return dirname(dirname(dirname(path)));
+}
+
 function parseRecipeText(path: string, text: string): unknown {
   const ext = extname(path).toLowerCase();
   if (ext === ".json") return JSON.parse(text);
@@ -148,9 +277,9 @@ function parseRecipeText(path: string, text: string): unknown {
 }
 
 export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {
-  const resolved = resolve(recipePath);
-  const recipe = loadRootfsRecipe(resolved);
-  const baseModuleDir = resolveRecipeModuleDir(moduleDir, dirname(resolved));
+  const loadedRecipe = loadRootfsRecipeSource(recipePath, moduleDir);
+  const { recipe } = loadedRecipe;
+  const baseModuleDir = loadedRecipe.moduleDir;
   const steps = (recipe.steps ?? []).map((step, index) => {
     if (!step.uses) {
       return {
@@ -173,8 +302,8 @@ export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {
     };
   });
   return {
-    recipe: recipe.name ?? resolved,
-    recipe_path: resolved,
+    recipe: recipe.name ?? loadedRecipe.recipePath,
+    recipe_path: loadedRecipe.recipePath,
     base: recipe.base ?? null,
     module_dir: baseModuleDir,
     steps,
@@ -194,12 +323,9 @@ export async function runRootfsRecipe({
   options: RootfsRecipeRunOptions;
   recipePath: string;
 }): Promise<RootfsRecipeRunResult> {
-  const resolvedRecipePath = resolve(recipePath);
-  const recipe = loadRootfsRecipe(resolvedRecipePath);
-  const moduleDir = resolveRecipeModuleDir(
-    options.moduleDir,
-    dirname(resolvedRecipePath),
-  );
+  const loadedRecipe = loadRootfsRecipeSource(recipePath, options.moduleDir);
+  const { recipe } = loadedRecipe;
+  const moduleDir = loadedRecipe.moduleDir;
   const project = await resolveOrCreateRecipeProject({
     ctx,
     deps,
@@ -217,7 +343,7 @@ export async function runRootfsRecipe({
       const result = await runRecipeStep({
         api: resolved.api,
         moduleDir,
-        recipeDir: dirname(resolvedRecipePath),
+        recipeDir: loadedRecipe.recipeDir,
         step,
         stepIndex: i + 1,
       });
@@ -290,8 +416,8 @@ export async function runRootfsRecipe({
   }
 
   return {
-    recipe: recipe.name ?? resolvedRecipePath,
-    recipe_path: resolvedRecipePath,
+    recipe: recipe.name ?? loadedRecipe.recipePath,
+    recipe_path: loadedRecipe.recipePath,
     project_id: project.project_id,
     created_project: project.created,
     steps: stepResults,

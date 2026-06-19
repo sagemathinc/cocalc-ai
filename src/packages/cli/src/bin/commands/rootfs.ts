@@ -761,11 +761,13 @@ export function registerRootfsCommand(
 
   const recipe = rootfs
     .command("recipe")
-    .description("build RootFS images from local recipe files");
+    .description("build RootFS images from recipes or local recipe modules");
 
   recipe
     .command("explain <recipe>")
-    .description("show resolved RootFS recipe steps and module inputs")
+    .description(
+      "show resolved RootFS recipe steps and module inputs; <recipe> may be a file path, bundled example name, or module name",
+    )
     .option("--module-dir <path>", "local recipe module registry directory")
     .action(
       async (
@@ -782,7 +784,7 @@ export function registerRootfsCommand(
   recipe
     .command("run <recipe>")
     .description(
-      "run a RootFS recipe in a clean builder project or existing project",
+      "run a RootFS recipe file, bundled example, or module in a clean builder project or existing project",
     )
     .option("-w, --project <project>", "existing project id or name to use")
     .option("--module-dir <path>", "local recipe module registry directory")
@@ -826,7 +828,9 @@ export function registerRootfsCommand(
 
   recipe
     .command("verify <recipe>")
-    .description("run the top-level verification commands for a RootFS recipe")
+    .description(
+      "run the top-level verification commands for a RootFS recipe file or bundled example",
+    )
     .requiredOption("-w, --project <project>", "project id or name to verify")
     .option("--module-dir <path>", "local recipe module registry directory")
     .action(
