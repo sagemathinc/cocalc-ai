@@ -23,6 +23,10 @@ function createSubvolume() {
       chmod: jest.fn(async () => undefined),
       readdir: jest.fn(async () => []),
     },
+    quota: {
+      get: jest.fn(async () => ({ size: 100, used: 100 })),
+      set: jest.fn(async () => undefined),
+    },
   };
 }
 
@@ -45,6 +49,11 @@ function createSubvolumeWithSnapshots(snapshotNames: string[]) {
 describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
   beforeEach(() => {
     btrfsMock.mockClear();
+    process.env.COCALC_BTRFS_SNAPSHOT_CLEANUP_QUOTA_RELIEF_BYTES = "50";
+  });
+
+  afterEach(() => {
+    delete process.env.COCALC_BTRFS_SNAPSHOT_CLEANUP_QUOTA_RELIEF_BYTES;
   });
 
   it("creates snapshots without any tracking-qgroup follow-up work", async () => {
@@ -80,9 +89,8 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
   });
 
   it("temporarily makes snapshots writable while pruning a path", async () => {
-    const snapshots = new SubvolumeSnapshots(
-      createSubvolumeWithSnapshots(["snap1", "snap2"]) as any,
-    );
+    const subvolume = createSubvolumeWithSnapshots(["snap1", "snap2"]) as any;
+    const snapshots = new SubvolumeSnapshots(subvolume);
     await expect(
       snapshots.prunePath({
         path: "large/data",
@@ -93,6 +101,8 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
       snapshots: ["snap1", "snap2"],
     });
 
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 150);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
     expect(btrfsMock).toHaveBeenCalledWith({
       args: [
         "property",
@@ -133,6 +143,34 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
         "true",
       ],
     });
+  });
+
+  it("temporarily raises project quota while deleting a snapshot", async () => {
+    const subvolume = createSubvolumeWithSnapshots(["snap1"]) as any;
+    const snapshots = new SubvolumeSnapshots(subvolume);
+    await snapshots.delete("snap1");
+
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 150);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
+    expect(btrfsMock).toHaveBeenCalledWith({
+      args: ["subvolume", "delete", "/mnt/test/project-1/.snapshots/snap1"],
+    });
+
+    const raiseOrder = subvolume.quota.set.mock.invocationCallOrder[0];
+    const deleteOrder = btrfsMock.mock.invocationCallOrder[0];
+    const restoreOrder = subvolume.quota.set.mock.invocationCallOrder[1];
+    expect(raiseOrder).toBeLessThan(deleteOrder);
+    expect(deleteOrder).toBeLessThan(restoreOrder);
+  });
+
+  it("restores project quota when snapshot deletion fails", async () => {
+    btrfsMock.mockRejectedValueOnce(new Error("delete failed"));
+    const subvolume = createSubvolumeWithSnapshots(["snap1"]) as any;
+    const snapshots = new SubvolumeSnapshots(subvolume);
+
+    await expect(snapshots.delete("snap1")).rejects.toThrow("delete failed");
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 150);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
   });
 
   it("rejects pruning the snapshots directory", async () => {
