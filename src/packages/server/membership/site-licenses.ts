@@ -466,11 +466,19 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
       created_by_account_id UUID,
       metadata JSONB,
       created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CHECK (public_key_jwk IS NOT NULL OR public_key_pem IS NOT NULL),
-      CHECK (NOT (public_key_jwk IS NOT NULL AND public_key_pem IS NOT NULL))
+      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  for (const constraint of [
+    "site_license_external_claim_keys_check",
+    "site_license_external_claim_keys_check1",
+    "site_license_external_claim_keys_check2",
+    "site_license_external_claim_keys_one_public_key",
+  ]) {
+    await db.query(
+      `ALTER TABLE site_license_external_claim_keys DROP CONSTRAINT IF EXISTS ${constraint}`,
+    );
+  }
   await db.query(
     "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_pool_kid_idx ON site_license_external_claim_keys (pool_id, kid)",
   );
