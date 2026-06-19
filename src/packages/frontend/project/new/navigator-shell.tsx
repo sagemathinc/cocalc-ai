@@ -1,4 +1,4 @@
-import { Alert, Button, Modal, Select, Space, Typography } from "antd";
+import { Alert, Button, Modal, Select, Space } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   redux,
@@ -1220,16 +1220,17 @@ export function NavigatorShell({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 2,
+        gap: 4,
         height: 28,
-        padding: "0 3px",
-        border: "1px solid #d9d9d9",
+        padding: "0 7px",
+        marginRight: 8,
+        border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 7,
-        background: "#fff",
+        background: "white",
         whiteSpace: "nowrap",
       }}
     >
-      <Tooltip title="Decrease chat font size">
+      <Tooltip title={`Decrease chat font size (${fontSize}px)`}>
         <Button
           size="small"
           type="text"
@@ -1241,14 +1242,18 @@ export function NavigatorShell({
         </Button>
       </Tooltip>
       <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-        <Typography.Text
-          type="secondary"
-          style={{ fontSize: 12, padding: "0 4px" }}
-        >
-          Text {fontSize}
-        </Typography.Text>
+        <span
+          aria-hidden="true"
+          style={{
+            display: "inline-block",
+            flexShrink: 0,
+            width: 1,
+            height: 16,
+            background: COLORS.GRAY_LL,
+          }}
+        />
       </Tooltip>
-      <Tooltip title="Increase chat font size">
+      <Tooltip title={`Increase chat font size (${fontSize}px)`}>
         <Button
           size="small"
           type="text"
