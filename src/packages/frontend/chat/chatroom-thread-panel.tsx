@@ -24,6 +24,7 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
+import { createPortal } from "react-dom";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { containingPath, humanSize } from "@cocalc/util/misc";
@@ -428,6 +429,9 @@ interface ChatRoomThreadPanelProps {
   allowSidebarToggle?: boolean;
   sidebarHidden?: boolean;
   onToggleSidebar?: () => void;
+  topRightControlsPrefix?: React.ReactNode;
+  compactTopRightControls?: boolean;
+  topRightControlsPortal?: HTMLElement | null;
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
@@ -473,6 +477,9 @@ export function ChatRoomThreadPanel({
   allowSidebarToggle = false,
   sidebarHidden = false,
   onToggleSidebar,
+  topRightControlsPrefix,
+  compactTopRightControls = false,
+  topRightControlsPortal,
   onOpenGitBrowser,
   readOnly = false,
 }: ChatRoomThreadPanelProps) {
@@ -1641,6 +1648,90 @@ export function ChatRoomThreadPanel({
   const runningStatusTop = showTopControls ? 52 : 8;
   const contentTopInset =
     (showTopControls ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
+  const compactTopRightButtonStyle = compactTopRightControls
+    ? { minWidth: 24, height: 22, padding: "0 4px" }
+    : undefined;
+  const showGitTopRightButton = Boolean(
+    !readOnly &&
+    onOpenGitBrowser != null &&
+    showGitBrowserButton &&
+    selectedThreadKey,
+  );
+  const renderTopRightControls = () => (
+    <div
+      style={{
+        ...(topRightControlsPortal === undefined
+          ? {
+              position: "absolute" as const,
+              top: 8,
+              right: threadImagePreview ? 116 : 12,
+              zIndex: 20,
+            }
+          : undefined),
+        display: "inline-flex",
+        alignItems: "center",
+        gap: compactTopRightControls ? 4 : 6,
+        ...(compactTopRightControls
+          ? {
+              height: 28,
+              padding: "0 7px",
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: 7,
+              background: "white",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+              whiteSpace: "nowrap" as const,
+            }
+          : undefined),
+      }}
+    >
+      {topRightControlsPrefix}
+      {showGitTopRightButton ? (
+        <Tooltip title="Open git browser">
+          <Button
+            size="small"
+            type={compactTopRightControls ? "text" : "default"}
+            aria-label="Open git browser"
+            onClick={() => {
+              if (!selectedThreadKey) {
+                return;
+              }
+              onOpenGitBrowser?.({ threadKey: selectedThreadKey });
+            }}
+            icon={<Icon name="git" />}
+            style={compactTopRightButtonStyle}
+          >
+            {compactTopRightControls ? null : "Git"}
+          </Button>
+        </Tooltip>
+      ) : null}
+      <Tooltip title="Search thread (Ctrl/Cmd+F)">
+        <Button
+          size="small"
+          type={compactTopRightControls ? "text" : "default"}
+          aria-label="Search thread"
+          onClick={() => {
+            setThreadSearchOpen((open) => {
+              const next = !open;
+              if (next) {
+                setTimeout(() => searchInputRef.current?.focus?.(), 0);
+              }
+              return next;
+            });
+          }}
+          icon={<Icon name="search" />}
+          style={compactTopRightButtonStyle}
+        >
+          {compactTopRightControls ? null : "Search"}
+        </Button>
+      </Tooltip>
+    </div>
+  );
+  const topRightControls =
+    topRightControlsPortal === undefined
+      ? renderTopRightControls()
+      : topRightControlsPortal != null
+        ? createPortal(renderTopRightControls(), topRightControlsPortal)
+        : null;
 
   return (
     <div
@@ -1803,54 +1894,7 @@ export function ChatRoomThreadPanel({
             {compactThreadLabel}
           </div>
         )}
-      <div
-        style={{
-          position: "absolute",
-          top: 8,
-          right: threadImagePreview ? 116 : 12,
-          zIndex: 20,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        {!readOnly &&
-        onOpenGitBrowser != null &&
-        showGitBrowserButton &&
-        selectedThreadKey ? (
-          <Tooltip title="Open git browser">
-            <Button
-              size="small"
-              onClick={() => {
-                if (!selectedThreadKey) {
-                  return;
-                }
-                onOpenGitBrowser({ threadKey: selectedThreadKey });
-              }}
-              icon={<Icon name="git" />}
-            >
-              Git
-            </Button>
-          </Tooltip>
-        ) : null}
-        <Tooltip title="Search thread (Ctrl/Cmd+F)">
-          <Button
-            size="small"
-            onClick={() => {
-              setThreadSearchOpen((open) => {
-                const next = !open;
-                if (next) {
-                  setTimeout(() => searchInputRef.current?.focus?.(), 0);
-                }
-                return next;
-              });
-            }}
-            icon={<Icon name="search" />}
-          >
-            Search
-          </Button>
-        </Tooltip>
-      </div>
+      {topRightControls}
       {threadSearchOpen ? (
         <div
           style={{

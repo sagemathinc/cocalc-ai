@@ -520,6 +520,9 @@ export interface ChatPanelProps {
   ) => void;
   onIncreaseFontSize?: () => void;
   onDecreaseFontSize?: () => void;
+  threadPanelTopRightControlsPrefix?: React.ReactNode;
+  threadPanelCompactTopRightControls?: boolean;
+  threadPanelTopRightControlsPortal?: HTMLElement | null;
   readOnly?: boolean;
 }
 
@@ -568,6 +571,9 @@ export function ChatPanel({
   onComposerReady,
   onIncreaseFontSize,
   onDecreaseFontSize,
+  threadPanelTopRightControlsPrefix,
+  threadPanelCompactTopRightControls = false,
+  threadPanelTopRightControlsPortal,
   readOnly = false,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -2401,6 +2407,9 @@ export function ChatPanel({
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
+        topRightControlsPrefix={threadPanelTopRightControlsPrefix}
+        compactTopRightControls={threadPanelCompactTopRightControls}
+        topRightControlsPortal={threadPanelTopRightControlsPortal}
         readOnly={readOnly}
       />
       {automationBanner}
