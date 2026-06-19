@@ -1428,17 +1428,23 @@ export async function disableSiteLicenseExternalClaimPool({
 export async function listSiteLicenseExternalClaimKeys({
   account_id,
   pool_id,
+  kid,
   limit,
 }: {
   account_id?: string;
   pool_id?: string;
+  kid?: string;
   limit?: number;
 } = {}): Promise<SiteLicenseExternalClaimKey[]> {
   const actorId = requireAccount(account_id);
   if (!(await isAdmin(actorId))) {
     throw Error("must be an admin");
   }
-  const opts = { pool_id: `${pool_id ?? ""}`.trim(), limit };
+  const opts = {
+    pool_id: `${pool_id ?? ""}`.trim(),
+    kid: `${kid ?? ""}`.trim(),
+    limit,
+  };
   if (!isSeedBay()) {
     return await getSeedSiteLicenseClient().listSiteLicenseExternalClaimKeys({
       account_id: actorId,

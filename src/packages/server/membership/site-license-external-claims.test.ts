@@ -296,10 +296,6 @@ describe("site license external claim tokens", () => {
       privateKey,
       kid,
       payload: {
-        iss: claimPool.issuer,
-        aud: claimPool.audience,
-        site_license_id: claimPool.site_license_id,
-        pool_id: claimPool.id,
         jti,
         exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
         subject: "reader-456",

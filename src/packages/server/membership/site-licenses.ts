@@ -166,6 +166,7 @@ const SITE_LICENSE_VERIFICATION_POLICIES =
     "email-domain",
     "sso-affiliation",
     "manager-approval",
+    "external-claim",
   ]);
 const SITE_LICENSE_POOL_REQUEST_STATES = new Set<SiteLicensePoolRequestState>([
   "pending",
@@ -454,7 +455,7 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
     CREATE TABLE IF NOT EXISTS site_license_external_claim_keys (
       id UUID PRIMARY KEY,
       pool_id UUID NOT NULL,
-      kid TEXT NOT NULL,
+      kid TEXT NOT NULL UNIQUE,
       alg TEXT NOT NULL,
       public_key_jwk JSONB,
       public_key_pem TEXT,
@@ -471,6 +472,9 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
   `);
   await db.query(
     "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_pool_kid_idx ON site_license_external_claim_keys (pool_id, kid)",
+  );
+  await db.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_kid_idx ON site_license_external_claim_keys (kid)",
   );
   await db.query(
     "CREATE INDEX IF NOT EXISTS site_license_external_claim_keys_revoked_at_idx ON site_license_external_claim_keys (revoked_at)",

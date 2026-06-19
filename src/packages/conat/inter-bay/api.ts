@@ -1172,7 +1172,8 @@ export interface AccountLocalDisableSiteLicenseExternalClaimPoolRequest {
 
 export interface AccountLocalListSiteLicenseExternalClaimKeysRequest {
   account_id: string;
-  pool_id: string;
+  pool_id?: string;
+  kid?: string;
   limit?: number;
 }
 
