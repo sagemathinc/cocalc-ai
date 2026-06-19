@@ -13,6 +13,20 @@ import { btrfsQuotasDisabled } from "./config";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
 
+const DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES = 1024 ** 3;
+const cleanupQuotaLocks = new Map<string, Promise<void>>();
+
+function cleanupQuotaReliefBytes(): number {
+  const value = Number.parseInt(
+    `${process.env.COCALC_BTRFS_SNAPSHOT_CLEANUP_QUOTA_RELIEF_BYTES ?? ""}`,
+    10,
+  );
+  if (Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  return DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES;
+}
+
 export class SubvolumeSnapshots {
   public readonly snapshotsDir: string;
 
@@ -139,9 +153,96 @@ export class SubvolumeSnapshots {
     if (await this.subvolume.fs.exists(this.path(`.${name}.lock`))) {
       throw Error(`snapshot ${name} is locked`);
     }
-    await btrfs({
-      args: ["subvolume", "delete", join(this.snapshotsDir, name)],
+    await this.withCleanupQuotaRelief({
+      operation: "delete-snapshot",
+      run: async () => {
+        await btrfs({
+          args: ["subvolume", "delete", join(this.snapshotsDir, name)],
+        });
+      },
     });
+  };
+
+  private withCleanupQuotaRelief = async <T>({
+    operation,
+    run,
+  }: {
+    operation: string;
+    run: () => Promise<T>;
+  }): Promise<T> => {
+    const key = this.subvolume.path;
+    const previous = cleanupQuotaLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chained = previous.then(
+      () => current,
+      () => current,
+    );
+    cleanupQuotaLocks.set(key, chained);
+    await previous.catch(() => undefined);
+    try {
+      return await this.withCleanupQuotaReliefUnlocked({ operation, run });
+    } finally {
+      release();
+      if (cleanupQuotaLocks.get(key) === chained) {
+        cleanupQuotaLocks.delete(key);
+      }
+    }
+  };
+
+  private withCleanupQuotaReliefUnlocked = async <T>({
+    operation,
+    run,
+  }: {
+    operation: string;
+    run: () => Promise<T>;
+  }): Promise<T> => {
+    if (btrfsQuotasDisabled()) {
+      return await run();
+    }
+    const quota = await this.subvolume.quota.get();
+    if (!quota.size || quota.size <= 0) {
+      return await run();
+    }
+    const reliefSize =
+      Math.max(quota.size, quota.used) + cleanupQuotaReliefBytes();
+    let result: T;
+    let actionError: unknown;
+    logger.info("temporarily increasing quota for snapshot cleanup", {
+      operation,
+      subvolume: this.subvolume.name,
+      path: this.subvolume.path,
+      quotaSize: quota.size,
+      quotaUsed: quota.used,
+      reliefSize,
+    });
+    await this.subvolume.quota.set(reliefSize);
+    try {
+      result = await run();
+    } catch (err) {
+      actionError = err;
+    }
+    try {
+      await this.subvolume.quota.set(quota.size);
+    } catch (restoreError) {
+      logger.error("failed to restore quota after snapshot cleanup", {
+        operation,
+        subvolume: this.subvolume.name,
+        path: this.subvolume.path,
+        quotaSize: quota.size,
+        reliefSize,
+        restoreError,
+      });
+      if (actionError == null) {
+        throw restoreError;
+      }
+    }
+    if (actionError != null) {
+      throw actionError;
+    }
+    return result!;
   };
 
   private setReadOnly = async (name: string, readOnly: boolean) => {
@@ -203,15 +304,20 @@ export class SubvolumeSnapshots {
         throw Error(`snapshot ${name} is locked`);
       }
     }
-    for (const name of names) {
-      const target = await this.safePruneTargetPath(name, path);
-      await this.setReadOnly(name, false);
-      try {
-        await rm(target, { recursive: true, force: true });
-      } finally {
-        await this.setReadOnly(name, true);
-      }
-    }
+    await this.withCleanupQuotaRelief({
+      operation: "prune-snapshot-path",
+      run: async () => {
+        for (const name of names) {
+          const target = await this.safePruneTargetPath(name, path);
+          await this.setReadOnly(name, false);
+          try {
+            await rm(target, { recursive: true, force: true });
+          } finally {
+            await this.setReadOnly(name, true);
+          }
+        }
+      },
+    });
     return { path, snapshots: names };
   };
 

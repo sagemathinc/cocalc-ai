@@ -87,11 +87,7 @@ export function migrateToCurrentDocumentSchema(syncdoc): boolean {
         },
       };
     }
-    if (
-      element.type == "text" &&
-      element.page != null &&
-      legacyPageIds.has(element.page)
-    ) {
+    if (element.page != null && legacyPageIds.has(element.page)) {
       return normalizeLegacyTextElement(element);
     }
     return element;

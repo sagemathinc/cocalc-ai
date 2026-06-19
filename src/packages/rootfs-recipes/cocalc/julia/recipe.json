@@ -1,0 +1,22 @@
+{
+  "id": "cocalc/julia",
+  "version": 1,
+  "description": "Install Julia from the official binary tarball.",
+  "inputs": {
+    "version": { "type": "string", "default": "1.12.6" },
+    "install_prefix": { "type": "string", "default": "/opt/julia" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "julia",
+      "tags": ["julia"]
+    },
+    "theme": {
+      "icon": "julia",
+      "color": "#ffffff",
+      "accent_color": "#9558b2"
+    }
+  }
+}

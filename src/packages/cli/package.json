@@ -74,7 +74,8 @@
     "ascii-table3": "^1.0.1",
     "commander": "^14.0.1",
     "playwright-core": "^1.57.0",
-    "reflect-sync": "0.15.1"
+    "reflect-sync": "0.15.1",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",

@@ -355,6 +355,25 @@ The first concrete recipe should recreate the Julia/Pluto smoke image:
 This pilot should be runnable on another CoCalc site using only the CoCalc CLI,
 the recipe files, and network access to upstream Julia/package sources.
 
+Current implementation note:
+
+- Initial YAML/JSON recipe CLI exists under `cocalc rootfs recipe`.
+- `explain`, `run`, and `verify` subcommands are implemented.
+- `run` creates and starts a clean builder project by default, or uses
+  `--project` when provided.
+- Local recipe modules live under `src/packages/rootfs-recipes`.
+- Initial modules include `cocalc/apt`, `cocalc/jupyter-python`,
+  `cocalc/julia`, `cocalc/pluto`, `cocalc/copy`, `cocalc/pytorch-gpu`,
+  and `cocalc/tensorflow-gpu`.
+- Example recipes exist for Julia/Pluto, the minimal CoCalc site base, and
+  GPU machine learning stacks:
+  `src/packages/rootfs-recipes/examples/julia-pluto.yaml` and
+  `src/packages/rootfs-recipes/examples/cocalc-base.yaml`,
+  `src/packages/rootfs-recipes/examples/ml-pytorch-gpu.yaml`, and
+  `src/packages/rootfs-recipes/examples/ml-tensorflow-gpu.yaml`.
+- Remaining recipe work: local directory upload for examples, richer input type
+  validation, builder cleanup/archive policy, and more modules.
+
 ## Public Landing Page
 
 Route shape can be decided during implementation, but it should support stable
