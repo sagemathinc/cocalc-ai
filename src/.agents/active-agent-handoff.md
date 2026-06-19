@@ -73,8 +73,11 @@ Known risks:
 - **Worktree / Branch:** `/home/user/cocalc-ai` / `remove-empty-project-tag`
 - **Preview owner this turn:** NO (left the synthesis hub untouched — correct).
 - **Last commit (reported):** `1a3d836` spacing fix on `remove-empty-project-tag`.
-- **Known risks:** ran `pnpm -C src build:dev` ~1h ago; if that shared a cache with
-  the synthesis build, it may have contributed to the stale public bundle.
+- **⚠️ Action needed (2026-06-18 17:07):** the platform hub was STOPPED to return the
+  `:9100` / `blaec.cocalc.ai` slot to synthesis (it had silently taken it, reverting the
+  public preview). When the platform thread resumes preview/dev, do NOT restart on
+  `:9100` — configure a different port in `/home/user/cocalc-ai/.local/hub-daemon.env`
+  first (see the incident's structural fix above).
 
 ---
 
@@ -91,10 +94,17 @@ correct. The revert is a **hub-ownership collision**:
   plus `readlink /proc/<hub-pid>/cwd`. The serving cwd must be
   `/home/user/cocalc-ai-synthesis/src`; right now it is not.
 
-**Immediate fix (coordinated — disrupts the platform preview, so don't do it solo):**
-stop the platform hub, start the synthesis hub, re-validate by content canary.
+**Immediate fix — DONE (2026-06-18 17:07):** stopped the platform hub, started the
+synthesis hub on `:9100` (pid 119412), cloudflared tunnel back up. Content canary
+**0 failures / 75 assertions** across `/`, `/features/ai`, `/features/jupyter-notebook`,
+`/pricing`. `blaec.cocalc.ai` now serves the current synthesis pages. Platform hub
+is STOPPED.
 
-**Structural fix (the real lesson):** two worktree hub daemons must NOT contend for
-one port/preview slot. Either give each worktree its own port, or make "who owns
-:9100 / blaec.cocalc.ai" an explicit, enforced field here that every agent checks
-(`hub-daemon.sh status` + cwd) before any preview judgment. HTTP 200 ≠ correct owner.
+**Structural fix — STILL OPEN (needs the platform thread / Blaec):** two worktree
+hub daemons must NOT contend for one port/preview slot. `:9100` belongs to
+**synthesis** (it backs `blaec.cocalc.ai` via cloudflared). The **platform** hub
+should run on a DIFFERENT port — set it in `/home/user/cocalc-ai/.local/hub-daemon.env`
+(platform worktree, so the platform agent owns that change). Until then, whichever
+hub starts last steals `:9100`. Rule for every agent: before any preview judgment,
+run `hub-daemon.sh status` in BOTH worktrees + `readlink /proc/<hub-pid>/cwd` and
+confirm the cwd is `/home/user/cocalc-ai-synthesis/src`. HTTP 200 ≠ correct owner.
