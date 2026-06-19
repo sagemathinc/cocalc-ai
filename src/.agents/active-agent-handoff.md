@@ -100,11 +100,19 @@ synthesis hub on `:9100` (pid 119412), cloudflared tunnel back up. Content canar
 `/pricing`. `blaec.cocalc.ai` now serves the current synthesis pages. Platform hub
 is STOPPED.
 
-**Structural fix — STILL OPEN (needs the platform thread / Blaec):** two worktree
-hub daemons must NOT contend for one port/preview slot. `:9100` belongs to
-**synthesis** (it backs `blaec.cocalc.ai` via cloudflared). The **platform** hub
-should run on a DIFFERENT port — set it in `/home/user/cocalc-ai/.local/hub-daemon.env`
-(platform worktree, so the platform agent owns that change). Until then, whichever
-hub starts last steals `:9100`. Rule for every agent: before any preview judgment,
-run `hub-daemon.sh status` in BOTH worktrees + `readlink /proc/<hub-pid>/cwd` and
-confirm the cwd is `/home/user/cocalc-ai-synthesis/src`. HTTP 200 ≠ correct owner.
+**Structural fix — STILL OPEN; bigger than a port var (Codex/platform infra).**
+Investigated 2026-06-18 17:1x: the synthesis hub-daemon.env is
+`HUB_CMD="DATA_BASE=/home/user/cocalc-ai/src/data/app ./packages/hub/bin/start.sh postgres"`.
+The platform worktree has NO `src/.local/hub-daemon.env`, so its hub inherits the
+hub's default `:9100`. **Both hubs share the same `DATA_BASE`** (`cocalc-ai/src/data/app`
+— DB, postgres, cloudflared). So running both simultaneously needs the platform hub to
+get (a) its OWN port AND (b) its OWN `DATA_BASE`/data dir — otherwise they collide on
+`:9100` and/or the shared DB. That is platform-worktree infra: the platform agent should
+create `cocalc-ai/src/.local/hub-daemon.env` with a distinct port + DATA_BASE. NOT done
+here to avoid breaking the shared hub/DB.
+
+**Interim rule (in force now):** ONE hub on `:9100`, owned by **synthesis** (it backs
+`blaec.cocalc.ai`). The platform hub stays stopped unless it explicitly takes a handoff.
+Before ANY preview judgment, every agent runs `hub-daemon.sh status` in BOTH worktrees +
+`readlink /proc/<hub-pid>/cwd` and confirms cwd `= /home/user/cocalc-ai-synthesis/src`.
+HTTP 200 ≠ correct owner.
