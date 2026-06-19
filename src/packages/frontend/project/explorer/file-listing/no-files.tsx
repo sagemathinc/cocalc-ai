@@ -291,6 +291,7 @@ function EmptyDirectoryWelcome({
             key={action.title}
             title={action.tooltip}
             placement="bottom"
+            arrow={false}
             mouseEnterDelay={0.35}
           >
             <button
