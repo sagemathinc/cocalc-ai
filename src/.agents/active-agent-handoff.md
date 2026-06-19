@@ -49,24 +49,24 @@ Known risks:
 ## Current state (2026-06-18)
 
 ### Claude — public-site thread
-- **Task:** Plan-A token cleanup (done) → diagnosing the reverted `blaec.cocalc.ai`.
+- **Task (2026-06-19):** Design-sync wave 1 **DONE + uploaded** — 13 public-site components
+  live in the `CoCalc Design System` claude.ai/design project
+  (`cf9ec244-ae2b-43a4-9306-2c10894d83bc`), bundle slimmed 10.9MB→4.14MB. **PARKED** as a
+  proven experiment (user's call): 13 marketing primitives are too narrow to be a daily
+  tool, and CoCalc isn't design-system-first. **Returning to the landing site.**
 - **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` / `blaec-synthesis-2026-06-18`
-- **Preview owner this turn:** YES (must verify hub cwd before each build).
-- **Claimed files/routes:** `public/__tests__/test-helpers.ts`,
-  `public/features/__tests__/app.test.tsx`, `public/__tests__/type-scale.test.ts`,
-  `public/features/*-page.tsx` (#fff sweep — committed), this ledger.
-- **Do not touch:** anything under `/home/user/cocalc-ai` (platform), `blaec2`,
-  `blaec` (historical).
-- **Validation required:** synthesis public Jest (232) + tsc + lint + a content
-  canary against the live preview.
-- **Last commit:** `0460b72` render-time type-scale guard (local; not pushed).
-- **Open PR:** none.
-- **Next step:** serialized clean rebuild of the synthesis preview (cache cleared,
-  no concurrent build) + canary re-check.
-- **Known risks:** synthesis `dist` currently builds a STALE main chunk
-  ("Codex thread") despite current source — suspected shared-cache/concurrent-build
-  corruption. Do not trust the preview until a clean serialized rebuild passes the
-  canary.
+- **Preview owner this turn:** NO — Codex owns `blaec.cocalc.ai` (:9100, platform) for PR #72.
+  When site work resumes and needs the live preview, coordinate the handoff (stop platform
+  hub → start synthesis on :9100 → validate by content). The Stop-hook canary is now
+  ownership-aware (it SKIPs, not blocks, while another worktree owns :9100).
+- **Claimed files/routes:** none active. Design-sync all committed (barrel, DSProvider,
+  publishConfig, `.design-sync/{previews,config,overrides,NOTES}`, the `bundle.mjs` fork).
+- **Do not touch:** anything under `/home/user/cocalc-ai` (platform), `blaec2`, `blaec`.
+- **Last commit:** `5293aa47b2` (design-sync projectId pin).
+- **Next step:** pick the next landing-site task with the user (product/buyer pages loop, or
+  push the staged `public-site-pr` branch for William).
+- **Known risks:** clean PR branches `public-site-pr` (70 files) + `public-site-shells` are
+  staged off main, NOT pushed. Design-sync project stays on claude.ai/design for revisit anytime.
 
 ### Codex — platform-UI thread
 - **Task:** terminal/frame overflow menu cleanup — remove the repeated frame title
