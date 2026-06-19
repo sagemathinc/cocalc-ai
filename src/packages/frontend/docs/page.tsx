@@ -23,6 +23,7 @@ import {
 import {
   DocsLearnedControl,
   DocsPrivateNotesPanel,
+  DocsPrivateToolbarActions,
 } from "@cocalc/frontend/docs/private-state/panel";
 import {
   exportDocsPrivateStateBundle,
@@ -303,7 +304,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
         {contextHolder}
         <DocsFontSizeFrame
           defaultFontSize={accountFontSize}
-          showControls={!print}
+          showControls={false}
         >
           <Flex gap="middle" vertical>
             {!print ? (
@@ -372,6 +373,18 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
                         entry={entry}
                         loading={docsPrivateState.loading}
                         onSetLearned={docsPrivateState.setLearned}
+                        summary={docsPrivateState.summaries[entry.id]}
+                      />
+                    ),
+                    renderToolbarActions: (entry) => (
+                      <DocsPrivateToolbarActions
+                        accountId={accountId}
+                        entry={entry}
+                        loading={docsPrivateState.loading}
+                        notes={docsPrivateState.notesForEntry(entry.id)}
+                        onSaveNote={docsPrivateState.saveNote}
+                        onToggleStar={docsPrivateState.toggleStar}
+                        showLabel
                         summary={docsPrivateState.summaries[entry.id]}
                       />
                     ),
