@@ -69,15 +69,19 @@ Known risks:
   canary.
 
 ### Codex — platform-UI thread
-- **Task:** empty-file-explorer spacing fix (`no-files.tsx`) — reported committed.
+- **Task:** terminal/frame overflow menu cleanup — remove the repeated frame title
+  from the `...` popover while preserving menu commands, toolbar actions, and
+  frame controls.
 - **Worktree / Branch:** `/home/user/cocalc-ai` / `remove-empty-project-tag`
-- **Preview owner this turn:** NO (left the synthesis hub untouched — correct).
-- **Last commit (reported):** `1a3d836` spacing fix on `remove-empty-project-tag`.
-- **⚠️ Action needed (2026-06-18 17:07):** the platform hub was STOPPED to return the
-  `:9100` / `blaec.cocalc.ai` slot to synthesis (it had silently taken it, reverting the
-  public preview). When the platform thread resumes preview/dev, do NOT restart on
-  `:9100` — configure a different port in `/home/user/cocalc-ai/.local/hub-daemon.env`
-  first (see the incident's structural fix above).
+- **Preview owner this turn:** YES for platform UI verification. `blaec.cocalc.ai`
+  is currently served from `/home/user/cocalc-ai/src` by hub pid `149046`.
+- **Last commit (reported):** `c95efbd8ba` terminal/frame overflow menu title cleanup.
+- **Next step:** user verifies the terminal frame `...` menu on `blaec.cocalc.ai`.
+  After verification, either keep preview on platform for the next platform UI task
+  or explicitly hand it back to synthesis before public-site work resumes.
+- **Known risks:** synthesis public-site preview is not the current owner while this
+  verification is active. Do not assume `blaec.cocalc.ai` is showing public-site
+  changes until the hub cwd is switched back to `/home/user/cocalc-ai-synthesis/src`.
 
 ---
 
