@@ -102,6 +102,10 @@ import type { LineItem } from "@cocalc/util/stripe/types";
 const { Paragraph, Text, Title } = Typography;
 const TEAM_LICENSE_FINALIZATION_TIMEOUT_MS = 75_000;
 const TEAM_LICENSE_FINALIZATION_POLL_MS = 6_000;
+const SITE_LICENSE_USERS_DRAWER_WIDTH_KEY = "cocalc-site-license-users-width";
+const DEFAULT_SITE_LICENSE_USERS_DRAWER_WIDTH = 760;
+const MIN_SITE_LICENSE_USERS_DRAWER_WIDTH = 520;
+const MAX_SITE_LICENSE_USERS_DRAWER_WIDTH = 1280;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -113,6 +117,36 @@ function retryDelayFromError(err: unknown, fallbackMs: number): number {
     return (Number(match[1]) + 1) * 1000;
   }
   return fallbackMs;
+}
+
+function clampSiteLicenseUsersDrawerWidth(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SITE_LICENSE_USERS_DRAWER_WIDTH;
+  }
+  return Math.max(
+    MIN_SITE_LICENSE_USERS_DRAWER_WIDTH,
+    Math.min(MAX_SITE_LICENSE_USERS_DRAWER_WIDTH, Math.round(value)),
+  );
+}
+
+function readSiteLicenseUsersDrawerWidth(): number {
+  try {
+    const value = Number(
+      localStorage.getItem(SITE_LICENSE_USERS_DRAWER_WIDTH_KEY),
+    );
+    return clampSiteLicenseUsersDrawerWidth(value);
+  } catch {
+    return DEFAULT_SITE_LICENSE_USERS_DRAWER_WIDTH;
+  }
+}
+
+function persistSiteLicenseUsersDrawerWidth(value: number): void {
+  try {
+    localStorage.setItem(
+      SITE_LICENSE_USERS_DRAWER_WIDTH_KEY,
+      `${clampSiteLicenseUsersDrawerWidth(value)}`,
+    );
+  } catch {}
 }
 
 interface Props {
@@ -542,6 +576,24 @@ function assignmentSearchText({
 function formatSeatGivenOn(value?: Date | string | null): string {
   const date = siteLicenseDate(value);
   return date == null ? "-" : formatSiteLicenseDate(date);
+}
+
+function getAssignmentExpiresAt(
+  assignment: MembershipPackageAssignment,
+): Dayjs | undefined {
+  const grantExpiresAt = siteLicenseDate(assignment.grant_expires_at);
+  if (grantExpiresAt != null) {
+    return grantExpiresAt;
+  }
+  const metadataExpiresAt = siteLicenseDate(
+    assignment.metadata?.grant_expires_at as Date | string | null | undefined,
+  );
+  return metadataExpiresAt ?? undefined;
+}
+
+function formatSeatExpiresAt(assignment: MembershipPackageAssignment): string {
+  const expiresAt = getAssignmentExpiresAt(assignment);
+  return expiresAt == null ? "Never" : formatSiteLicenseDate(expiresAt);
 }
 
 function siteLicenseAuditPoolLabel(
@@ -1675,15 +1727,17 @@ export function SiteLicenseManager({
             setError(`${err}`);
           }
         }}
-        onAssignSeat={async (pool, target_account_id, grant_expires_at) => {
+        onAssignSeat={async (pool, target_account_ids, grant_expires_at) => {
           setError("");
           try {
             await runFreshAuthAction(async () => {
-              await assignSiteLicensePoolSeat({
-                package_id: pool.id,
-                target_account_id,
-                grant_expires_at,
-              });
+              for (const target_account_id of target_account_ids) {
+                await assignSiteLicensePoolSeat({
+                  package_id: pool.id,
+                  target_account_id,
+                  grant_expires_at,
+                });
+              }
               await handleChanged();
             });
           } catch (err) {
@@ -1899,15 +1953,17 @@ export function SiteLicenseAdminPanel({
           setError(`${err}`);
         }
       }}
-      onAssignSeat={async (pool, target_account_id, grant_expires_at) => {
+      onAssignSeat={async (pool, target_account_ids, grant_expires_at) => {
         setError("");
         try {
           await runFreshAuthAction(async () => {
-            await assignSiteLicensePoolSeat({
-              package_id: pool.id,
-              target_account_id,
-              grant_expires_at,
-            });
+            for (const target_account_id of target_account_ids) {
+              await assignSiteLicensePoolSeat({
+                package_id: pool.id,
+                target_account_id,
+                grant_expires_at,
+              });
+            }
             await handleChanged();
           });
         } catch (err) {
@@ -2180,7 +2236,7 @@ function SiteLicenseDashboard({
   ) => Promise<void>;
   onAssignSeat: (
     pool: SiteLicenseOverview["pools"][number],
-    target_account_id: string,
+    target_account_ids: string[],
     grant_expires_at?: Date | string | null,
   ) => Promise<void>;
   onUpdateLicense?: (
@@ -2803,10 +2859,10 @@ function SiteLicenseDashboard({
         open={assigningSiteLicensePool != null}
         pool={assigningSiteLicensePool?.pool}
         onClose={() => setAssigningSiteLicensePool(null)}
-        onAssigned={async (targetAccountId, grantExpiresAt) => {
+        onAssigned={async (targetAccountIds, grantExpiresAt) => {
           const pool = assigningSiteLicensePool?.pool;
           if (pool == null) return;
-          await onAssignSeat(pool, targetAccountId, grantExpiresAt);
+          await onAssignSeat(pool, targetAccountIds, grantExpiresAt);
           setAssigningSiteLicensePool(null);
         }}
       />
@@ -2871,7 +2927,7 @@ function SeatAssignmentsTable({
   scrollY,
   setRevokingSeat,
   shownAssignments,
-  tableWidth = canManage ? 690 : 570,
+  tableWidth = canManage ? 850 : 730,
 }: {
   accountNames: AccountNames;
   canManage: boolean;
@@ -2932,6 +2988,26 @@ function SeatAssignmentsTable({
         width={140}
         render={(_, assignment) => formatSeatGivenOn(assignment.assigned_at)}
       />
+      <Table.Column<MembershipPackageAssignment>
+        title="Expires"
+        width={150}
+        sorter={(left, right) =>
+          dateSortValue(getAssignmentExpiresAt(left)?.toDate()) -
+          dateSortValue(getAssignmentExpiresAt(right)?.toDate())
+        }
+        render={(_, assignment) => {
+          const expiresAt = getAssignmentExpiresAt(assignment);
+          return expiresAt == null ? (
+            <Text type="secondary">Never</Text>
+          ) : (
+            <Tooltip title={formatSeatExpiresAt(assignment)}>
+              <span>
+                <TimeAgo date={expiresAt.toDate()} />
+              </span>
+            </Tooltip>
+          );
+        }}
+      />
       {canManage ? (
         <Table.Column<MembershipPackageAssignment>
           align="right"
@@ -2982,14 +3058,15 @@ function AssignSiteLicensePoolSeatModal({
   pool?: SiteLicenseOverview["pools"][number];
   onClose: () => void;
   onAssigned: (
-    target_account_id: string,
+    target_account_ids: string[],
     grant_expires_at?: Date | string | null,
   ) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
+  const [lastSearchQuery, setLastSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<PackageUserSearchResult[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [grantExpiresAt, setGrantExpiresAt] = useState<Dayjs | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState("");
@@ -3008,9 +3085,10 @@ function AssignSiteLicensePoolSeatModal({
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setLastSearchQuery("");
     setSearching(false);
     setResults([]);
-    setSelectedAccountId("");
+    setSelectedAccountIds([]);
     setGrantExpiresAt(null);
     setAssigning(false);
     setError("");
@@ -3020,8 +3098,9 @@ function AssignSiteLicensePoolSeatModal({
     const trimmed = searchQuery.trim();
     const run = ++searchRunRef.current;
     if (!trimmed) {
+      setLastSearchQuery("");
       setResults([]);
-      setSelectedAccountId("");
+      setSelectedAccountIds([]);
       return;
     }
     setSearching(true);
@@ -3042,16 +3121,17 @@ function AssignSiteLicensePoolSeatModal({
         )
         .slice(0, 20);
       setResults(next);
-      setSelectedAccountId(
-        next.some((result) => result.account_id === selectedAccountId)
-          ? selectedAccountId
-          : (next[0]?.account_id ?? ""),
+      setLastSearchQuery(trimmed);
+      setSelectedAccountIds((selected) =>
+        selected.filter((accountId) =>
+          next.some((result) => result.account_id === accountId),
+        ),
       );
     } catch (err) {
       if (run === searchRunRef.current) {
         setError(`${err}`);
         setResults([]);
-        setSelectedAccountId("");
+        setSelectedAccountIds([]);
       }
     } finally {
       if (run === searchRunRef.current) {
@@ -3061,12 +3141,12 @@ function AssignSiteLicensePoolSeatModal({
   }
 
   async function assign() {
-    if (!selectedAccountId) return;
+    if (selectedAccountIds.length === 0) return;
     setAssigning(true);
     setError("");
     try {
       await onAssigned(
-        selectedAccountId,
+        selectedAccountIds,
         grantExpiresAt?.endOf("day").toISOString() ?? null,
       );
     } catch (err) {
@@ -3082,7 +3162,10 @@ function AssignSiteLicensePoolSeatModal({
       onCancel={onClose}
       onOk={assign}
       okText="Grant access"
-      okButtonProps={{ disabled: !selectedAccountId, loading: assigning }}
+      okButtonProps={{
+        disabled: selectedAccountIds.length === 0,
+        loading: assigning,
+      }}
       destroyOnHidden
       title={pool ? `Add users to ${pool.pool_name}` : "Add users"}
     >
@@ -3105,7 +3188,12 @@ function AssignSiteLicensePoolSeatModal({
           value={query}
           enterButton="Search"
           loading={searching}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setLastSearchQuery("");
+            setResults([]);
+            setSelectedAccountIds([]);
+          }}
           onSearch={(value) => {
             setQuery(value);
             void runSearch(value);
@@ -3113,9 +3201,11 @@ function AssignSiteLicensePoolSeatModal({
         />
         {searching ? <Spin /> : null}
         {results.length > 0 ? (
-          <Radio.Group
-            value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
+          <Checkbox.Group
+            value={selectedAccountIds}
+            onChange={(values) =>
+              setSelectedAccountIds(values.map((value) => `${value}`))
+            }
             style={{ width: "100%" }}
           >
             <Space
@@ -3124,18 +3214,18 @@ function AssignSiteLicensePoolSeatModal({
               style={{ width: "100%" }}
             >
               {results.map((result) => (
-                <Radio
+                <Checkbox
                   key={result.account_id}
                   value={result.account_id}
                   style={{ width: "100%" }}
                 >
                   {packageUserSearchLabel(result)}
-                </Radio>
+                </Checkbox>
               ))}
             </Space>
-          </Radio.Group>
+          </Checkbox.Group>
         ) : null}
-        {!searching && query.trim() && results.length === 0 && !error ? (
+        {!searching && lastSearchQuery && results.length === 0 && !error ? (
           <Alert
             type="info"
             showIcon
@@ -3183,6 +3273,9 @@ function PoolUsersDrawer({
   setRevokingSeat: (value: string) => void;
   setSearch: (value: string) => void;
 }) {
+  const [drawerWidth, setDrawerWidth] = useState<number>(
+    readSiteLicenseUsersDrawerWidth,
+  );
   const activeAssignments = useMemo(
     () => pool?.assignments.filter(isActiveAssignment) ?? [],
     [pool],
@@ -3196,7 +3289,7 @@ function PoolUsersDrawer({
       ),
     );
   }, [accountNames, activeAssignments, search]);
-  const tableWidth = canManageLicense ? 690 : 570;
+  const tableWidth = canManageLicense ? 850 : 730;
   const emptyText =
     activeAssignments.length === 0
       ? "No active users."
@@ -3215,7 +3308,14 @@ function PoolUsersDrawer({
           <span>{pool ? `${pool.pool_name} users` : "Users"}</span>
         </Space>
       }
-      size={760}
+      size={drawerWidth}
+      resizable={{
+        onResize: (value) => {
+          const next = clampSiteLicenseUsersDrawerWidth(value);
+          setDrawerWidth(next);
+          persistSiteLicenseUsersDrawerWidth(next);
+        },
+      }}
       styles={{ body: { padding: 16 } }}
     >
       {pool ? (

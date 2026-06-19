@@ -101,6 +101,7 @@ interface RawMembershipPackageAssignment {
   metadata?: Record<string, unknown> | null;
   grant_id?: string | null;
   grant_source?: string | null;
+  grant_expires_at?: Date | string | null;
   grant_purchase_id?: number | null;
 }
 
@@ -260,6 +261,7 @@ function normalizeAssignmentRecord(
     metadata,
     grant_id: row.grant_id ?? metadataGrantId,
     grant_source: row.grant_source ?? metadataGrantSource,
+    grant_expires_at: asDate(row.grant_expires_at),
     grant_purchase_id: row.grant_purchase_id ?? metadataGrantPurchaseId,
   };
 }
@@ -1837,6 +1839,7 @@ export async function listMembershipPackageAssignments({
         a.metadata,
         g.id AS grant_id,
         g.source AS grant_source,
+        g.expires_at AS grant_expires_at,
         g.purchase_id AS grant_purchase_id
       FROM membership_package_assignments a
       LEFT JOIN accounts
