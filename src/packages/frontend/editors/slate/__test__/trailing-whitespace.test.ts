@@ -1,5 +1,6 @@
 import {
   differsOnlyByTrailingMarkdownBlankWhitespace,
+  preserveSourceForTrailingBlankWhitespaceOnly,
   removeTrailingMarkdownBlankWhitespace,
 } from "../trailing-whitespace";
 
@@ -34,5 +35,29 @@ describe("trailing markdown blank whitespace", () => {
     expect(differsOnlyByTrailingMarkdownBlankWhitespace("a", "a  ")).toBe(
       false,
     );
+  });
+
+  it("keeps the source baseline when normalization only adds EOF blank whitespace", () => {
+    expect(
+      preserveSourceForTrailingBlankWhitespaceOnly({
+        source: "a",
+        normalized: "a\n",
+      }),
+    ).toBe("a");
+    expect(
+      preserveSourceForTrailingBlankWhitespaceOnly({
+        source: "a\n",
+        normalized: "a\n\n",
+      }),
+    ).toBe("a\n");
+  });
+
+  it("uses the normalized value when content changes", () => {
+    expect(
+      preserveSourceForTrailingBlankWhitespaceOnly({
+        source: "a",
+        normalized: "b\n",
+      }),
+    ).toBe("b\n");
   });
 });
