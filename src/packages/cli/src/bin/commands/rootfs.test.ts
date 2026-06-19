@@ -1085,3 +1085,96 @@ test("rootfs recipe run polls async command output and honors step timeout", asy
     rmSync(dir, { force: true, recursive: true });
   }
 });
+
+test("rootfs recipe run reconnects while polling async command output", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-reconnect-"));
+  const recipePath = join(dir, "recipe.json");
+  const execCalls: any[] = [];
+  let resolveCalls = 0;
+  let refreshWaits = 0;
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "reconnect-demo",
+        steps: [{ name: "slow install", run: "echo installing" }],
+      }),
+    );
+    const harness = rootfsDeps({
+      globals: { json: true, quiet: true },
+      projects: {
+        createProject: async () => "builder-project",
+        start: async () => ({ op_id: "start-op" }),
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+      resolveProjectProjectApi: async (_ctx: any, project_id: string) => {
+        resolveCalls += 1;
+        const firstConnection = resolveCalls === 1;
+        return {
+          project: { project_id },
+          api: {
+            waitUntilReady: async () => {
+              if (!firstConnection) refreshWaits += 1;
+            },
+            system: {
+              exec: async (opts: any) => {
+                execCalls.push({ connection: resolveCalls, opts });
+                if (opts.async_call) {
+                  return {
+                    type: "async",
+                    job_id: "job-1",
+                    status: "running",
+                    stdout: "started\n",
+                    stderr: "",
+                    exit_code: 0,
+                    start: Date.now(),
+                  };
+                }
+                assert.equal(opts.async_get, "job-1");
+                if (firstConnection) {
+                  throw new Error("socket has been disconnected");
+                }
+                return {
+                  type: "async",
+                  job_id: "job-1",
+                  status: "completed",
+                  stdout: "started\nreconnected\ndone\n",
+                  stderr: "",
+                  exit_code: 0,
+                  start: Date.now(),
+                };
+              },
+            },
+          },
+        };
+      },
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+    ]);
+
+    assert.equal(harness.captured.steps[0].exit_code, 0);
+    assert.equal(
+      harness.captured.steps[0].stdout,
+      "started\nreconnected\ndone\n",
+    );
+    assert.equal(resolveCalls, 2);
+    assert.equal(refreshWaits, 1);
+    assert.ok(
+      execCalls.some(
+        (call) => call.connection === 2 && call.opts.async_get === "job-1",
+      ),
+    );
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
