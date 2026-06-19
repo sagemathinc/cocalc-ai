@@ -16,15 +16,6 @@ export const ApiCall = () => (
   </DSProvider>
 );
 
-export const InstallCommand = () => (
-  <DSProvider>
-    <CodeBlock
-      ariaLabel="Install command"
-      code="curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash"
-    />
-  </DSProvider>
-);
-
 export const JupyterCommands = () => (
   <DSProvider>
     <CodeBlock

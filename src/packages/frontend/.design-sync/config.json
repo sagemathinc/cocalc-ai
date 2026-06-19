@@ -4,5 +4,9 @@
   "shape": "package",
   "buildCmd": "pnpm exec tsc --build",
   "provider": { "component": "DSProvider" },
-  "componentSrcMap": { "DSProvider": null }
+  "componentSrcMap": { "DSProvider": null },
+  "overrides": {
+    "CodeBlock": { "cardMode": "column" },
+    "PublicGrid": { "cardMode": "column" }
+  }
 }

@@ -45,3 +45,24 @@ Repo-specific gotchas for `/design-sync` (package shape, synced wave-by-wave).
 - `publishConfig.types` was added to `packages/frontend/package.json` for this —
   it scopes converter discovery to `dist/public` and does not affect dev type
   resolution.
+
+## Preview authoring (wave 1)
+
+- **Convention:** each `.design-sync/previews/<Name>.tsx` imports the component +
+  `DSProvider` (+ sibling components) from `"@cocalc/frontend"` ONLY — the converter
+  aliases that to `window.CoCalcPublic`. NO `antd`/`react`/`@ant-design/icons` imports
+  (they don't resolve / double-bundle). For text use plain `<p>/<span>/<div>`; for
+  buttons use `LinkButton`; for icons pass `IconName` strings. Each named export = one
+  story cell wrapped in `<DSProvider>`. Real page copy, no foo/bar.
+- **App-served image assets 404 in standalone previews.** `<img src="/public/...">`
+  (e.g. team headshots) renders broken — there's no app server. Drop the image or use
+  an inline/remote URL. (Hit on `PublicCard` TeamMemberCard.)
+- **`cfg.overrides.<Name>.cardMode = "column"`** (full-width, one cell per row) is set
+  for `CodeBlock` + `PublicGrid` (wide content). NOTE: `cardMode` arranges story CELLS,
+  it does NOT widen a single component or wrap a long line — `CodeBlock` long single-line
+  commands still overflow the card (no-wrap is the real behavior; we dropped the long
+  install cell rather than fight it). `PublicGrid` 3/4-column variants wrap in the narrow
+  review viewport — responsive behavior, not a defect.
+- Render check needs playwright + a browser: `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i
+  playwright` in `.ds-sync/`, then run capture/validate with
+  `DS_CHROMIUM_PATH=/usr/bin/google-chrome` (no 200MB chromium download).
