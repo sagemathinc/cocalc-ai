@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { fromJS } from "immutable";
 import { generatedWorkspaceChatLabel } from "./chat-display";
 import type { WorkspaceRecord } from "@cocalc/conat/workspaces";
 
@@ -42,5 +43,82 @@ describe("generatedWorkspaceChatLabel", () => {
         },
       ),
     ).toBe("HOME Chat");
+  });
+
+  it("labels the current account implicit navigator chat as the main chat", () => {
+    expect(
+      generatedWorkspaceChatLabel(
+        "/home/user/.local/share/cocalc/navigator-acct-1.chat",
+        null,
+        { currentAccountId: "acct-1" },
+      ),
+    ).toBe("Main Chat");
+  });
+
+  it("labels the unsuffixed implicit navigator chat as the main chat", () => {
+    expect(
+      generatedWorkspaceChatLabel(
+        "/home/user/.local/share/cocalc/navigator.chat",
+        null,
+        { currentAccountId: "acct-1" },
+      ),
+    ).toBe("Main Chat");
+  });
+
+  it("labels another user's implicit navigator chat by display name", () => {
+    expect(
+      generatedWorkspaceChatLabel(
+        "/home/user/.local/share/cocalc/navigator-acct-2.chat",
+        null,
+        {
+          currentAccountId: "acct-1",
+          userMap: fromJS({
+            "acct-2": {
+              first_name: "Ada",
+              last_name: "Lovelace",
+              display_name: "Ada L.",
+            },
+          }),
+        },
+      ),
+    ).toBe("Ada L.'s Main Chat");
+  });
+
+  it("falls back to first and last name for another user's navigator chat", () => {
+    expect(
+      generatedWorkspaceChatLabel(
+        "/home/user/.local/share/cocalc/navigator-acct-2.chat",
+        null,
+        {
+          currentAccountId: "acct-1",
+          userMap: fromJS({
+            "acct-2": {
+              first_name: "Ada",
+              last_name: "Lovelace",
+            },
+          }),
+        },
+      ),
+    ).toBe("Ada Lovelace's Main Chat");
+  });
+
+  it("falls back to account id for another user's navigator chat", () => {
+    expect(
+      generatedWorkspaceChatLabel(
+        "/home/user/.local/share/cocalc/navigator-acct-2.chat",
+        null,
+        { currentAccountId: "acct-1" },
+      ),
+    ).toBe("acct-2's Main Chat");
+  });
+
+  it("does not relabel ordinary chat files near local cocalc metadata", () => {
+    expect(
+      generatedWorkspaceChatLabel(
+        "/home/user/.local/share/cocalc/project-notes.chat",
+        null,
+        { currentAccountId: "acct-1" },
+      ),
+    ).toBeUndefined();
   });
 });
