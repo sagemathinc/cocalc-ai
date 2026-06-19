@@ -13,6 +13,10 @@
 // (Shell/nav/footer and the CoCalc-routed CTA helpers come in later waves once
 // their appBasePath/PublicConfig coupling is stubbed.)
 
+// MUST be first — defines a browser `process` global before any component module
+// evaluates (the shared dist tree reads process.env.*). See _ds-process-shim.ts.
+import "./_ds-process-shim";
+
 export {
   PublicHero,
   PublicSection,

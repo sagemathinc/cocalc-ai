@@ -16,6 +16,9 @@
   "exclude": [
     "dist",
     "node_modules",
+    "ds-bundle",
+    ".ds-sync",
+    ".design-sync",
     "account/test",
     "jupyter/test",
     "app-framework/__tests__/",
