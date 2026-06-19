@@ -3994,18 +3994,22 @@ function ProvisionSiteLicenseModal({
                         <Text type="secondary">{theme.description}</Text>
                       </Space>
                     </Space>
-                    <Button
-                      danger
-                      size="small"
+                    <Popconfirm
+                      title={`Remove ${pool.pool_name || `Pool ${index + 1}`}?`}
+                      description="This removes the draft pool from this site license before provisioning."
+                      okText="Remove"
+                      okButtonProps={{ danger: true }}
                       disabled={pools.length <= 1}
-                      onClick={() =>
+                      onConfirm={() =>
                         setPools((current) =>
                           current.filter((_pool, i) => i !== index),
                         )
                       }
                     >
-                      Remove
-                    </Button>
+                      <Button danger size="small" disabled={pools.length <= 1}>
+                        Remove
+                      </Button>
+                    </Popconfirm>
                   </Space>
                   <Space wrap style={{ marginTop: 12 }}>
                     <Tag>{capitalize(pool.membership_class)}</Tag>
