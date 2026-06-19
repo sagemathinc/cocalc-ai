@@ -1461,6 +1461,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           }}
           style={{
             width: "100%",
+            boxSizing: "border-box",
             border: "1px solid #e8e8e8",
             borderRadius: 8,
             padding: isFlyout ? 8 : 10,
