@@ -104,7 +104,7 @@ import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import { isValidUUID } from "@cocalc/util/misc";
-import { getProject } from "./sqlite/projects";
+import { getProject, listProjects } from "./sqlite/projects";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
@@ -194,6 +194,10 @@ const SSH_WAKE_POLL_MS = Math.max(
 const QUOTA_CACHE_TTL_MS = Math.max(
   0,
   envToInt("COCALC_PROJECT_HOST_QUOTA_CACHE_TTL_MS", 60_000),
+);
+const PROJECT_QUOTA_REPAIR_SWEEP_MS = Math.max(
+  60_000,
+  envToInt("COCALC_PROJECT_QUOTA_REPAIR_SWEEP_MS", 10 * 60 * 1000),
 );
 const sshWakeInFlight = new Map<string, Promise<number | null>>();
 const quotaCache = new Map<
@@ -1637,6 +1641,132 @@ async function setQuota({
   const vol = await fs.subvolumes.get(volumeName(project_id, scratch));
   await vol.quota.set(size);
   invalidateQuotaCache(project_id, scratch);
+}
+
+function projectQuotaRepairEnabled(): boolean {
+  const raw = `${process.env.COCALC_PROJECT_QUOTA_REPAIR ?? "yes"}`
+    .trim()
+    .toLowerCase();
+  return !["0", "false", "no", "off"].includes(raw);
+}
+
+function positiveFiniteBytes(value: unknown): number | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.floor(n);
+}
+
+async function repairProjectVolumeQuota({
+  project_id,
+  scratch,
+  desired,
+}: {
+  project_id: string;
+  scratch?: boolean;
+  desired: number;
+}): Promise<"repaired" | "ok" | "missing"> {
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const vol = await fs.subvolumes.get(volumeName(project_id, scratch));
+  if (!(await exists(vol.path))) {
+    return "missing";
+  }
+  const current = await vol.quota.get();
+  if (current.size === desired) {
+    return "ok";
+  }
+  logger.warn("repairing project btrfs quota limit", {
+    project_id,
+    scratch: scratch === true,
+    current_size: current.size,
+    desired_size: desired,
+    warning: current.warning,
+  });
+  await vol.quota.set(desired);
+  invalidateQuotaCache(project_id, scratch);
+  return "repaired";
+}
+
+let quotaRepairRunning = false;
+let quotaRepairTimer: ReturnType<typeof setInterval> | undefined;
+
+async function repairProjectQuotaLimits(
+  context: "startup" | "periodic" | "manual",
+): Promise<void> {
+  if (!projectQuotaRepairEnabled() || fs == null) return;
+  if (quotaRepairRunning) return;
+  quotaRepairRunning = true;
+  const counts = {
+    checked: 0,
+    repaired: 0,
+    missing: 0,
+    skipped: 0,
+    errors: 0,
+  };
+  try {
+    for (const project of listProjects()) {
+      const disk = positiveFiniteBytes(project.disk);
+      const scratch = positiveFiniteBytes(project.scratch ?? project.disk);
+      if (disk == null && scratch == null) {
+        counts.skipped += 1;
+        continue;
+      }
+      for (const entry of [
+        { scratch: false, desired: disk },
+        { scratch: true, desired: scratch },
+      ]) {
+        if (entry.desired == null) continue;
+        counts.checked += 1;
+        try {
+          const result = await repairProjectVolumeQuota({
+            project_id: project.project_id,
+            scratch: entry.scratch,
+            desired: entry.desired,
+          });
+          if (result === "repaired") {
+            counts.repaired += 1;
+          } else if (result === "missing") {
+            counts.missing += 1;
+          }
+        } catch (err) {
+          counts.errors += 1;
+          logger.warn("project quota repair failed", {
+            context,
+            project_id: project.project_id,
+            scratch: entry.scratch,
+            desired: entry.desired,
+            err: `${err}`,
+          });
+        }
+      }
+    }
+    if (counts.repaired > 0 || counts.errors > 0) {
+      logger.warn("project quota repair sweep finished", {
+        context,
+        ...counts,
+      });
+    } else {
+      logger.debug("project quota repair sweep finished", {
+        context,
+        ...counts,
+      });
+    }
+  } finally {
+    quotaRepairRunning = false;
+  }
+}
+
+function startProjectQuotaRepairMonitor(): void {
+  if (!projectQuotaRepairEnabled() || quotaRepairTimer != null) return;
+  void repairProjectQuotaLimits("startup");
+  quotaRepairTimer = setInterval(() => {
+    void repairProjectQuotaLimits("periodic");
+  }, PROJECT_QUOTA_REPAIR_SWEEP_MS);
+  quotaRepairTimer.unref?.();
+  logger.info("started project quota repair monitor", {
+    sweepMs: PROJECT_QUOTA_REPAIR_SWEEP_MS,
+  });
 }
 
 async function cp({
@@ -4200,6 +4330,7 @@ export async function initFileServer({
   });
   const viewerFile = await initViewerFsServer({ client });
   logger.debug("initFileServer: fs successfully initialized");
+  startProjectQuotaRepairMonitor();
 
   // Expose fast in-host file I/O for ACP/container executor when running
   // inside project-host. The detached ACP worker also calls this directly so
