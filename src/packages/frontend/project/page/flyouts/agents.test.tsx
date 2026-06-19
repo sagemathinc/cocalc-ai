@@ -669,7 +669,9 @@ describe("AgentsPanel session cards", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    });
 
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
   });
@@ -687,13 +689,49 @@ describe("AgentsPanel session cards", () => {
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
   });
 
+  it("shows the full chat thread menu from session cards", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText("Open Chat File")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Go to Chat")).toBeNull();
+    expect(screen.getByText("Appearance...")).toBeTruthy();
+    expect(screen.getByText("Behavior...")).toBeTruthy();
+    expect(screen.getByText("Pin chat")).toBeTruthy();
+    expect(screen.getByText("Archive chat")).toBeTruthy();
+    expect(screen.getByText("Automation settings…")).toBeTruthy();
+    expect(screen.getByText("Git browser")).toBeTruthy();
+    expect(screen.getByText("Export...")).toBeTruthy();
+    expect(screen.getByText("Import...")).toBeTruthy();
+    expect(screen.getByText("Fork chat…")).toBeTruthy();
+    expect(screen.getByText("Clear thread")).toBeTruthy();
+    expect(screen.getByText("Delete chat")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Open Chat File"));
+    expect(mockOpenFile).toHaveBeenCalledWith({
+      path: "/home/user/agent.chat",
+    });
+  });
+
   it("clears a session from the flyout menu into a fresh codex thread", async () => {
     render(<AgentsPanel project_id="project-1" layout="page" />);
 
     await waitFor(() =>
       expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByText("Clear Thread"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    });
+    await waitFor(() => expect(screen.getByText("Clear thread")).toBeTruthy());
+    fireEvent.click(screen.getByText("Clear thread"));
 
     expect(mockModalConfirm).toHaveBeenCalledWith(
       expect.objectContaining({

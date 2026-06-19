@@ -37,6 +37,9 @@ export interface ChatRoomThreadMenuProps {
   confirmDeleteThread: (threadKey: string, label: string) => void;
   openChatFile?: () => void;
   openAutomationModal?: (threadKey: string) => void;
+  archiveLabel?: string;
+  onArchive?: () => void | Promise<void>;
+  onPinChange?: (pinned: boolean) => void | Promise<void>;
   showClearThread?: boolean;
   buttonLabel?: ReactNode;
   buttonSize?: "small" | "middle" | "large";
@@ -73,6 +76,9 @@ export function ChatRoomThreadMenu({
   confirmDeleteThread,
   openChatFile,
   openAutomationModal,
+  archiveLabel = "Archive chat",
+  onArchive,
+  onPinChange,
   showClearThread = true,
   buttonLabel,
   buttonSize = "small",
@@ -120,7 +126,7 @@ export function ChatRoomThreadMenu({
       },
       {
         key: "archive",
-        label: "Archive chat",
+        label: archiveLabel,
       },
       ...automationItems,
       ...codexItems,
@@ -169,11 +175,17 @@ export function ChatRoomThreadMenu({
       } else if (key === "open-chat-file") {
         openChatFile?.();
       } else if (key === "pin" || key === "unpin") {
+        const pinned = key === "pin";
+        if (onPinChange != null) {
+          void Promise.resolve(onPinChange(pinned)).catch((err) => {
+            antdMessage.error(`${err}`);
+          });
+          return;
+        }
         if (!actions?.setThreadPin) {
           antdMessage.error("Pinning chats is not available.");
           return;
         }
-        const pinned = key === "pin";
         const success = actions.setThreadPin(threadKey, pinned);
         if (!success) {
           antdMessage.error("Unable to update chat pin state.");
@@ -193,6 +205,12 @@ export function ChatRoomThreadMenu({
       } else if (key === "clear") {
         confirmResetThread(threadKey, plainLabel);
       } else if (key === "archive") {
+        if (onArchive != null) {
+          void Promise.resolve(onArchive()).catch((err) => {
+            antdMessage.error(`${err}`);
+          });
+          return;
+        }
         if (!actions?.setThreadArchived) {
           antdMessage.error("Archiving chats is not available.");
           return;
