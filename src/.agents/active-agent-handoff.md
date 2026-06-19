@@ -143,3 +143,14 @@ synthesis branch, not scaffolding, not platform work):
 `docs/mockups/file-explorer-*` (6). Provenance commits `d0de512695` (rootfs badge),
 `072401c147` (flyout controls). Cherry-pick onto a platform branch if still wanted; else
 they're harmlessly excluded from the public-site PRs.
+
+---
+
+## main-sync (2026-06-18) — synthesis now current with upstream
+
+Merged `origin/main` (`5a0688d925`, incl **PR #71** empty-explorer spacing, xterm 5.5.0,
+idle handling) into `blaec-synthesis-2026-06-18` — **clean, zero conflicts** (synthesis
+public-site changes and main's in-app changes didn't overlap). Rebuilt via `static:dev`
+(new bundle `app-408615…` embeds the merge commit + #71's `no-files.tsx`) and restarted
+the synthesis hub. **Public content canary: 0 failures.** #71 is a project/in-app change —
+verify its spacing in the logged-in explorer view, NOT on the public landing pages. NOT pushed.
