@@ -126,6 +126,10 @@ type RootfsRecipeStepResult = {
   stderr?: string;
 };
 
+type RecipeProjectApiRef = {
+  api: any;
+};
+
 type RootfsRecipeRunnerDeps = {
   resolveProjectFromArgOrContext: (
     ctx: any,
@@ -437,10 +441,18 @@ export async function runRootfsRecipe({
       `connect to project host api for ${project.project_id}`,
       async () => await deps.resolveProjectProjectApi(ctx, project.project_id),
     );
+    const apiRef: RecipeProjectApiRef = { api: resolved.api };
+    const refreshProjectApi = async () => {
+      const refreshed = await deps.resolveProjectProjectApi(
+        ctx,
+        project.project_id,
+      );
+      await refreshed.api.waitUntilReady?.({ timeout: ctx.timeoutMs });
+      apiRef.api = refreshed.api;
+    };
     await phase(
       `wait for project host api for ${project.project_id}`,
-      async () =>
-        await resolved.api.waitUntilReady?.({ timeout: ctx.timeoutMs }),
+      async () => await apiRef.api.waitUntilReady?.({ timeout: ctx.timeoutMs }),
     );
 
     const stepResults: RootfsRecipeStepResult[] = [];
@@ -455,11 +467,12 @@ export async function runRootfsRecipe({
           }`,
         );
         const result = await runRecipeStep({
-          api: resolved.api,
+          apiRef,
           ctx,
           defaultCommandTimeout,
           moduleDir,
           recipeDir: loadedRecipe.recipeDir,
+          refreshProjectApi,
           step,
           stepIndex: i + 1,
         });
@@ -484,11 +497,12 @@ export async function runRootfsRecipe({
         `running top-level verification ${i + 1}/${recipe.verify!.length}`,
       );
       const result = await execRecipeCommand({
-        api: resolved.api,
+        apiRef,
         ctx,
         defaultTimeout: defaultCommandTimeout,
         env: {},
         name: `verify ${i + 1}`,
+        refreshProjectApi,
         script: typeof verify === "string" ? verify : verify.command,
         timeout: typeof verify === "string" ? undefined : verify.timeout,
       });
@@ -677,19 +691,21 @@ async function startProject(
 }
 
 async function runRecipeStep({
-  api,
+  apiRef,
   ctx,
   defaultCommandTimeout,
   moduleDir,
   recipeDir,
+  refreshProjectApi,
   step,
   stepIndex,
 }: {
-  api: any;
+  apiRef: RecipeProjectApiRef;
   ctx: any;
   defaultCommandTimeout: number;
   moduleDir: string;
   recipeDir: string;
+  refreshProjectApi: () => Promise<void>;
   step: RootfsRecipeStep;
   stepIndex: number;
 }): Promise<RootfsRecipeStepResult> {
@@ -699,11 +715,12 @@ async function runRecipeStep({
       throw new Error(`recipe step ${stepIndex} must specify uses or run`);
     }
     return await execRecipeCommand({
-      api,
+      apiRef,
       ctx,
       defaultTimeout: defaultCommandTimeout,
       env: {},
       name: step.name ?? `step ${stepIndex}`,
+      refreshProjectApi,
       script: typeof run === "string" ? run : run.command,
       timeout:
         step.timeout ?? (typeof run === "string" ? undefined : run.timeout),
@@ -723,11 +740,12 @@ async function runRecipeStep({
     ? readFileSync(join(loaded.dir, run.script), "utf8")
     : run.command!;
   const result = await execRecipeCommand({
-    api,
+    apiRef,
     ctx,
     defaultTimeout: defaultCommandTimeout,
     env: recipeEnv(inputs, step.uses),
     name: step.name ?? step.uses,
+    refreshProjectApi,
     script,
     timeout: step.timeout,
   });
@@ -738,11 +756,12 @@ async function runRecipeStep({
       ? readFileSync(join(loaded.dir, verify.script), "utf8")
       : verify.command!;
     const verifyResult = await execRecipeCommand({
-      api,
+      apiRef,
       ctx,
       defaultTimeout: defaultCommandTimeout,
       env: recipeEnv(inputs, step.uses),
       name: `${step.name ?? step.uses} verify`,
+      refreshProjectApi,
       script: verifyScript,
       timeout: step.timeout,
     });
@@ -752,25 +771,27 @@ async function runRecipeStep({
 }
 
 async function execRecipeCommand({
-  api,
+  apiRef,
   ctx,
   defaultTimeout,
   env,
   name,
+  refreshProjectApi,
   script,
   timeout,
 }: {
-  api: any;
+  apiRef: RecipeProjectApiRef;
   ctx: any;
   defaultTimeout: number;
   env: Record<string, string>;
   name: string;
+  refreshProjectApi: () => Promise<void>;
   script: string;
   timeout?: number;
 }): Promise<RootfsRecipeStepResult> {
   const commandTimeout = timeout ?? defaultTimeout;
   const started = Date.now();
-  const initial = (await api.system.exec({
+  const initial = (await apiRef.api.system.exec({
     bash: true,
     command: script,
     env,
@@ -795,12 +816,27 @@ async function execRecipeCommand({
   );
   const offsets = { stdout: 0, stderr: 0 };
   let last: ExecuteCodeOutput = initial;
+  let reconnectAttempts = 0;
   emitRecipeOutput(ctx, name, last, offsets);
   while (Date.now() - started <= commandTimeout * 1000 + 5_000) {
     await sleep(Math.max(250, Number(ctx.pollMs ?? 1000)));
-    last = (await api.system.exec({
-      async_get: initial.job_id,
-    })) as ExecuteCodeOutput;
+    try {
+      last = (await apiRef.api.system.exec({
+        async_get: initial.job_id,
+      })) as ExecuteCodeOutput;
+      reconnectAttempts = 0;
+    } catch (err) {
+      if (!isRetryableProjectApiError(err)) {
+        throw err;
+      }
+      reconnectAttempts += 1;
+      emitRecipeProgress(
+        ctx,
+        `${name}: project api disconnected while polling job ${initial.job_id}; reconnecting (${reconnectAttempts})`,
+      );
+      await refreshProjectApi();
+      continue;
+    }
     emitRecipeOutput(ctx, name, last, offsets);
     if (last.type !== "async" || isTerminalAsyncStatus(last.status)) {
       return {
@@ -815,6 +851,13 @@ async function execRecipeCommand({
     `${name}: timeout waiting for async exec job ${initial.job_id}; last_status=${
       last.type === "async" ? last.status : "completed"
     }`,
+  );
+}
+
+function isRetryableProjectApiError(err: unknown): boolean {
+  const message = errorMessage(err);
+  return /socket has been disconnected|socket is disconnected|connection closed|once: .* not emitted before "closed"|timeout of \d+ms waiting for "info"/i.test(
+    message,
   );
 }
 
