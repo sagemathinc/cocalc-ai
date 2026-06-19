@@ -22,7 +22,7 @@ describe("whiteboard document schema compatibility", () => {
     ).toBe("Title (the slide) and [not math]");
   });
 
-  it("normalizes only legacy text element strings", () => {
+  it("normalizes legacy markdown-bearing element strings", () => {
     expect(
       normalizeLegacyTextElement({
         id: "text",
@@ -35,6 +35,32 @@ describe("whiteboard document schema compatibility", () => {
         z: 0,
       }).str,
     ).toBe("See (this)");
+
+    expect(
+      normalizeLegacyTextElement({
+        id: "note",
+        type: "note",
+        str: String.raw`\[note\]`,
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1,
+        z: 0,
+      }).str,
+    ).toBe("[note]");
+
+    expect(
+      normalizeLegacyTextElement({
+        id: "speaker-notes",
+        type: "speaker_notes",
+        str: String.raw`Slide note \(private\)`,
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1,
+        z: 0,
+      }).str,
+    ).toBe("Slide note (private)");
 
     const pen = {
       id: "pen",
