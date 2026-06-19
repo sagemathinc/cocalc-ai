@@ -22,6 +22,7 @@ import {
   updateAccountLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
+import { buildMoreFileTypeMenuItems } from "@cocalc/frontend/project/new/more-file-types";
 import { QuickCreateDropdown } from "@cocalc/frontend/project/new/quick-create-dropdown";
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
 import { ProjectActions } from "@cocalc/frontend/project_store";
@@ -115,6 +116,26 @@ export const NewButton: React.FC<Props> = ({
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 
+  const disabledExtensions = React.useMemo(
+    () => getDisabledExtensions(),
+    [configuration],
+  );
+  const moreFileTypeMenuItems = React.useMemo(
+    () =>
+      buildMoreFileTypeMenuItems({
+        quickCreateIds: mergedLauncher.quickCreate,
+        availableFeatures,
+        disabledExtensions,
+        onCreateFile: choose_extension,
+      }),
+    [
+      availableFeatures,
+      disabledExtensions,
+      mergedLauncher.quickCreate,
+      choose_extension,
+    ],
+  );
+
   return (
     <>
       <Space.Compact>
@@ -128,10 +149,11 @@ export const NewButton: React.FC<Props> = ({
           showDown
           quickCreateIds={mergedLauncher.quickCreate}
           availableFeatures={availableFeatures}
-          disabledExtensions={getDisabledExtensions()}
+          disabledExtensions={disabledExtensions}
           onCreateFile={choose_extension}
           onCreateFolder={on_create_folder_button_clicked}
           onCustomize={() => setShowCustomizeModal(true)}
+          moreFileTypeItems={moreFileTypeMenuItems}
         />
       </Space.Compact>
       <LauncherCustomizeModal
