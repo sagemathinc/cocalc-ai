@@ -47,7 +47,7 @@ const CLAIM_STATUSES: SiteLicenseExternalClaimConsumptionStatus[] = [
   "failed-terminal",
 ];
 
-function optionalString(value?: string): string | undefined {
+function optionalString(value?: string | null): string | undefined {
   const trimmed = `${value ?? ""}`.trim();
   return trimmed || undefined;
 }
@@ -85,6 +85,7 @@ function poolStatus(pool: SiteLicenseExternalClaimPool) {
 
 function keyStatus(key: SiteLicenseExternalClaimKey) {
   if (key.revoked_at) return <Tag color="red">revoked</Tag>;
+  if (!keyHasPublicKey(key)) return <Tag color="blue">pending public key</Tag>;
   if (key.expires_at && new Date(key.expires_at).getTime() < Date.now()) {
     return <Tag color="orange">expired</Tag>;
   }
@@ -92,6 +93,12 @@ function keyStatus(key: SiteLicenseExternalClaimKey) {
     return <Tag color="blue">scheduled</Tag>;
   }
   return <Tag color="green">active</Tag>;
+}
+
+function keyHasPublicKey(key: SiteLicenseExternalClaimKey): boolean {
+  return (
+    key.public_key_jwk != null || optionalString(key.public_key_pem) != null
+  );
 }
 
 function consumptionStatus(status: SiteLicenseExternalClaimConsumptionStatus) {
@@ -132,6 +139,27 @@ function sampleTokenCommand(kid?: string): string {
 
 function shellMarkdown(command: string): string {
   return `\`\`\`sh\n${command}\n\`\`\``;
+}
+
+function IssuerKeyInstructions({
+  claimKey,
+}: {
+  claimKey: SiteLicenseExternalClaimKey;
+}) {
+  return (
+    <Space orientation="vertical" style={{ width: "100%" }}>
+      <Text>
+        Send this setup command to the issuer. They run it in a terminal, keep
+        the private key file secret, and send back only the public key output.
+      </Text>
+      <StaticMarkdown value={shellMarkdown(keyGenerationCommand())} />
+      <Text type="secondary">
+        After the public key is added in CoCalc, the issuer can generate one-use
+        signed claim links with:
+      </Text>
+      <StaticMarkdown value={shellMarkdown(sampleTokenCommand(claimKey.kid))} />
+    </Space>
+  );
 }
 
 function siteLicenseLabel(overview: SiteLicenseOverview): string {
@@ -181,6 +209,10 @@ export function SiteLicenseClaimsAdmin() {
   const [error, setError] = React.useState<string>("");
   const [poolModalOpen, setPoolModalOpen] = React.useState(false);
   const [keyModalOpen, setKeyModalOpen] = React.useState(false);
+  const [completingKey, setCompletingKey] =
+    React.useState<SiteLicenseExternalClaimKey | null>(null);
+  const [reservedKey, setReservedKey] =
+    React.useState<SiteLicenseExternalClaimKey | null>(null);
   const [directionsKey, setDirectionsKey] =
     React.useState<SiteLicenseExternalClaimKey | null>(null);
   const [kidAvailabilityError, setKidAvailabilityError] =
@@ -275,6 +307,10 @@ export function SiteLicenseClaimsAdmin() {
       setKidAvailabilityError("");
       return;
     }
+    if (completingKey != null || reservedKey != null) {
+      setKidAvailabilityError("");
+      return;
+    }
     const kid = optionalString(watchedKid);
     if (!kid) {
       setKidAvailabilityError("");
@@ -306,7 +342,7 @@ export function SiteLicenseClaimsAdmin() {
       canceled = true;
       clearTimeout(timeout);
     };
-  }, [hub, keyModalOpen, keys, watchedKid]);
+  }, [completingKey, hub, keyModalOpen, keys, reservedKey, watchedKid]);
 
   function openPoolModal() {
     poolForm.resetFields();
@@ -394,13 +430,34 @@ export function SiteLicenseClaimsAdmin() {
     }
   }
 
-  function openKeyModal() {
+  function closeKeyModal() {
+    setKeyModalOpen(false);
+    setCompletingKey(null);
+    setReservedKey(null);
     keyForm.resetFields();
     setKidAvailabilityError("");
+  }
+
+  function openKeyModal() {
+    closeKeyModal();
     setKeyModalOpen(true);
   }
 
-  async function addKey() {
+  function openCompleteKeyModal(key: SiteLicenseExternalClaimKey) {
+    closeKeyModal();
+    setCompletingKey(key);
+    keyForm.setFieldsValue({
+      kid: key.kid,
+      public_key_pem: "",
+    });
+    setKeyModalOpen(true);
+  }
+
+  async function saveKey() {
+    if (reservedKey != null) {
+      closeKeyModal();
+      return;
+    }
     const values = await keyForm.validateFields();
     const pem = optionalString(values.public_key_pem);
     if (kidAvailabilityError) {
@@ -411,27 +468,33 @@ export function SiteLicenseClaimsAdmin() {
       message.error("Select a pool first.");
       return;
     }
-    if (!pem) {
+    if (completingKey != null && !pem) {
       message.error("Paste the public key output from the issuer.");
       return;
     }
     setSavingKey(true);
     try {
+      let savedKey: SiteLicenseExternalClaimKey | undefined;
       const completed = await runFreshAuthAction(async () => {
-        await hub.purchases.addSiteLicenseExternalClaimKey({
+        savedKey = await hub.purchases.addSiteLicenseExternalClaimKey({
           browser_id: webapp_client.browser_id,
-          pool_id: selectedPoolId,
+          pool_id: completingKey?.pool_id ?? selectedPoolId,
           kid: values.kid,
           alg: "EdDSA",
           public_key_jwk: null,
-          public_key_pem: pem,
+          public_key_pem: pem ?? null,
           metadata: null,
         });
       });
       if (!completed) return;
-      message.success("External claim key saved");
-      setKeyModalOpen(false);
       await loadDetails();
+      if (completingKey != null) {
+        message.success("External claim key completed");
+        closeKeyModal();
+      } else if (savedKey != null) {
+        message.success("Key id reserved");
+        setReservedKey(savedKey);
+      }
     } catch (err) {
       message.error(`Failed to save key: ${err}`);
     } finally {
@@ -543,8 +606,13 @@ export function SiteLicenseClaimsAdmin() {
         key.revoked_at ? null : (
           <Space wrap>
             <Button size="small" onClick={() => setDirectionsKey(key)}>
-              Invite command
+              Instructions
             </Button>
+            {!keyHasPublicKey(key) ? (
+              <Button size="small" onClick={() => openCompleteKeyModal(key)}>
+                Add public key
+              </Button>
+            ) : null}
             <Popconfirm
               title="Revoke external claim key?"
               description="Tokens signed with this key will stop working."
@@ -674,7 +742,7 @@ export function SiteLicenseClaimsAdmin() {
             <Space wrap>
               <Button onClick={loadDetails}>Refresh details</Button>
               <Button type="primary" onClick={openKeyModal}>
-                Add key
+                Reserve key id
               </Button>
             </Space>
           }
@@ -826,72 +894,93 @@ export function SiteLicenseClaimsAdmin() {
         </Form>
       </Modal>
       <Modal
-        title="Add external claim verification key"
+        title={
+          completingKey
+            ? `Add public key for ${completingKey.kid}`
+            : reservedKey
+              ? `Key id reserved: ${reservedKey.kid}`
+              : "Reserve external claim key id"
+        }
         open={keyModalOpen}
-        onCancel={() => setKeyModalOpen(false)}
-        onOk={addKey}
-        okText="Save key"
+        onCancel={closeKeyModal}
+        onOk={saveKey}
+        okText={
+          reservedKey
+            ? "Done"
+            : completingKey
+              ? "Save public key"
+              : "Reserve key id"
+        }
         confirmLoading={savingKey}
         width={820}
       >
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <Alert
-            type="info"
-            showIcon
-            message="Recommended key workflow"
-            description={
-              <Space orientation="vertical" style={{ width: "100%" }}>
-                <Text>
-                  Send this command block to the issuer. They run it in a
-                  terminal, keep the private key file secret, and send back only
-                  the public key output. Paste that output below.
-                </Text>
-                <StaticMarkdown value={shellMarkdown(keyGenerationCommand())} />
-                <Text type="secondary">
-                  After this key is saved, signed claim links can be generated
-                  with:
-                </Text>
-                <StaticMarkdown
-                  value={shellMarkdown(sampleTokenCommand(watchedKid))}
-                />
-              </Space>
-            }
-          />
-        </Space>
-        <Form form={keyForm} layout="vertical">
-          <Form.Item
-            name="kid"
-            label="Key id"
-            rules={[{ required: true }]}
-            validateStatus={kidAvailabilityError ? "error" : undefined}
-            help={
-              kidAvailabilityError ||
-              "Use a short globally unique handle, e.g. cup-1 or ucla-instructors."
-            }
-          >
-            <Input placeholder="cup-1" />
-          </Form.Item>
-          <Form.Item
-            name="public_key_pem"
-            label="Public key output from issuer"
-            rules={[{ required: true }]}
-          >
-            <Input.TextArea
-              rows={6}
-              placeholder={[
-                "-----BEGIN PUBLIC KEY-----",
-                "...",
-                "-----END PUBLIC KEY-----",
-              ].join("\n")}
+        {reservedKey != null ? (
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            <Alert
+              type="success"
+              showIcon
+              message="Key id is reserved"
+              description="This key is pending until the issuer sends back their public key and you add it here."
             />
-          </Form.Item>
-        </Form>
+            <IssuerKeyInstructions claimKey={reservedKey} />
+          </Space>
+        ) : (
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            {completingKey == null ? (
+              <Alert
+                type="info"
+                showIcon
+                message="Step 1: reserve a key id"
+                description="Choose a short globally unique key id. After it is reserved, this dialog will show instructions to send to the issuer. The key will stay pending until their public key is added."
+              />
+            ) : (
+              <Alert
+                type="info"
+                showIcon
+                message="Step 2: add the issuer public key"
+                description="Paste the public key output the issuer sent back. The private key must stay with the issuer."
+              />
+            )}
+            <Form form={keyForm} layout="vertical">
+              <Form.Item
+                name="kid"
+                label="Key id"
+                rules={[{ required: true }]}
+                validateStatus={kidAvailabilityError ? "error" : undefined}
+                help={
+                  completingKey
+                    ? "This pending key id is already reserved."
+                    : kidAvailabilityError ||
+                      "Use a short globally unique handle, e.g. cup-1 or ucla-instructors."
+                }
+              >
+                <Input placeholder="cup-1" disabled={completingKey != null} />
+              </Form.Item>
+              {completingKey != null ? (
+                <Form.Item
+                  name="public_key_pem"
+                  label="Public key output from issuer"
+                  rules={[{ required: true }]}
+                >
+                  <Input.TextArea
+                    rows={6}
+                    placeholder={[
+                      "-----BEGIN PUBLIC KEY-----",
+                      "...",
+                      "-----END PUBLIC KEY-----",
+                    ].join("\n")}
+                  />
+                </Form.Item>
+              ) : null}
+            </Form>
+          </Space>
+        )}
       </Modal>
       <Modal
         title={
           directionsKey
-            ? `Invite command for ${directionsKey.kid}`
-            : "Invite command"
+            ? `Issuer instructions for ${directionsKey.kid}`
+            : "Issuer instructions"
         }
         open={directionsKey != null}
         onCancel={() => setDirectionsKey(null)}
@@ -899,13 +988,9 @@ export function SiteLicenseClaimsAdmin() {
         width={760}
       >
         <Space orientation="vertical" style={{ width: "100%" }}>
-          <Text>
-            Send this command to the issuer so they can generate one-use signed
-            claim links with their private key.
-          </Text>
-          <StaticMarkdown
-            value={shellMarkdown(sampleTokenCommand(directionsKey?.kid))}
-          />
+          {directionsKey ? (
+            <IssuerKeyInstructions claimKey={directionsKey} />
+          ) : null}
         </Space>
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />

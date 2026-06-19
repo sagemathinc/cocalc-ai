@@ -679,11 +679,11 @@ Table({
     },
     public_key_jwk: {
       type: "map",
-      desc: "Public key in JWK form.",
+      desc: "Public key in JWK form. Null while key setup is pending.",
     },
     public_key_pem: {
       type: "string",
-      desc: "Public key in PEM form.",
+      desc: "Public key in PEM form. Null while key setup is pending.",
     },
     starts_at: {
       type: "timestamp",

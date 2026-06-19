@@ -716,9 +716,6 @@ export async function addSiteLicenseExternalClaimKey(
   const normalizedAlg = normalizeAlg(alg);
   const normalizedJwk = normalizeMetadata(public_key_jwk);
   const normalizedPem = normalizeOptionalString(public_key_pem);
-  if (normalizedJwk == null && normalizedPem == null) {
-    throw Error("public_key_jwk or public_key_pem is required");
-  }
   if (normalizedJwk != null && normalizedPem != null) {
     throw Error("only one public key representation may be set");
   }
@@ -747,7 +744,8 @@ export async function addSiteLicenseExternalClaimKey(
             created_by_account_id=$9,
             metadata=$10::jsonb,
             updated=NOW()
-      WHERE kid=$2
+      WHERE pool_id=$1
+        AND kid=$2
       RETURNING *`,
     values,
   );
@@ -987,6 +985,9 @@ async function loadClaimPool(
 function getPublicKeyForVerification(key: SiteLicenseExternalClaimKey) {
   if (key.public_key_jwk != null) {
     return createPublicKey({ key: key.public_key_jwk as any, format: "jwk" });
+  }
+  if (key.public_key_pem == null) {
+    throw Error("external claim public key is pending");
   }
   return createPublicKey(normalizeString(key.public_key_pem, "public_key_pem"));
 }
