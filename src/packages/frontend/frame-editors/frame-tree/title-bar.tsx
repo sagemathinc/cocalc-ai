@@ -446,8 +446,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         style={{
           display: "flex",
           flex: "0 0 auto",
-          alignItems: "stretch",
-          marginLeft: "auto",
+          alignItems: popup ? "center" : "stretch",
+          marginLeft: popup ? undefined : "auto",
           minWidth: "fit-content",
           position: "relative",
           zIndex: 1,
@@ -456,10 +456,11 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       >
         <ButtonGroup
           style={{
-            padding: "3.5px 0 0 0",
+            padding: popup ? 0 : "3.5px 0 0 0",
             height: button_height(),
             display: "flex",
             flex: "0 0 auto",
+            alignItems: popup ? "center" : undefined,
           }}
           key={"control-buttons"}
         >
@@ -467,6 +468,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
             style={{
               display: "flex",
               flex: "0 0 auto",
+              alignItems: popup ? "center" : undefined,
               ...(is_active ? undefined : { opacity: 0.3 }),
             }}
           >
@@ -994,12 +996,17 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     if (!is_active) {
       return null;
     }
+    const popoverOpen = !!(
+      props.tab_is_visible &&
+      props.is_visible &&
+      showMainButtonsPopover
+    );
     return (
       <Popover
         styles={{ root: { zIndex: 990 } }}
-        open={
-          props.tab_is_visible && props.is_visible && showMainButtonsPopover
-        }
+        trigger="click"
+        open={popoverOpen}
+        onOpenChange={setShowMainButtonsPopover}
         content={() => {
           return (
             <div
@@ -1007,6 +1014,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
                 display: "flex",
                 flexDirection: "column",
                 maxWidth: "100vw",
+                gap: "4px",
               }}
             >
               <div
@@ -1021,16 +1029,18 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
                   "popover",
                 )}
               </div>
-              <div>
+              <div
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  gap: "4px",
+                  justifyContent: "center",
+                  padding: "0 3px 2px",
+                }}
+              >
+                {renderButtonBar(true)}
                 {renderFrameControls(true)}
-                <Button
-                  style={{ float: "right" }}
-                  onClick={() => setShowMainButtonsPopover(false)}
-                >
-                  {intl.formatMessage(labels.close)}
-                </Button>
               </div>
-              {renderButtonBar(true)}
             </div>
           );
         }}
@@ -1046,9 +1056,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
               fontSize: "14pt",
               padding: "0 5px",
               height: props.is_only || props.is_full ? "34px" : "30px",
-              background: showMainButtonsPopover ? "#eee" : undefined,
+              background: popoverOpen ? "#eee" : undefined,
             }}
-            onClick={() => setShowMainButtonsPopover(!showMainButtonsPopover)}
           >
             <Icon name="ellipsis" rotate="90" />
           </Button>
@@ -1305,9 +1314,11 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       return wrapButtonBarContextMenu(
         <div
           style={{
-            marginTop: "3px",
+            marginTop: popup ? 0 : "3px",
             display: "flex",
             flex: "0 1 auto",
+            alignItems: popup ? "center" : undefined,
+            height: popup ? button_height() : undefined,
             minWidth: 0,
             overflow: "hidden",
           }}
