@@ -126,6 +126,33 @@ function consumptionStatus(status: SiteLicenseExternalClaimConsumptionStatus) {
   }
 }
 
+function keyGenerationCommand(): string {
+  return [
+    "# Install cocalc-cli if the cocalc command is not available:",
+    "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
+    "",
+    "# Generate a signing keypair. Keep claim-private.pem secret.",
+    "mkdir -p ~/.cocalc-site-license-claims",
+    "openssl genpkey -algorithm Ed25519 -out ~/.cocalc-site-license-claims/claim-private.pem",
+    "openssl pkey -in ~/.cocalc-site-license-claims/claim-private.pem -pubout -out ~/.cocalc-site-license-claims/claim-public.pem",
+    "",
+    "# Send this public key output to the CoCalc operator.",
+    "cat ~/.cocalc-site-license-claims/claim-public.pem",
+  ].join("\n");
+}
+
+function sampleTokenCommand(pool?: SiteLicenseExternalClaimPool): string {
+  return [
+    "cocalc membership site-license sample-token \\",
+    `  --site-license ${pool?.site_license_id ?? "<site-license-id>"} \\`,
+    `  --pool ${pool?.id ?? "<pool-id>"} \\`,
+    `  --issuer ${pool?.issuer ?? "<issuer>"} \\`,
+    "  --kid <key-id> \\",
+    "  --private-key-file ~/.cocalc-site-license-claims/claim-private.pem \\",
+    "  --expires-in-days 30",
+  ].join("\n");
+}
+
 function siteLicenseOptions(overviews: SiteLicenseOverview[]) {
   return overviews.map((overview) => ({
     value: overview.site_license.id,
@@ -793,6 +820,39 @@ export function SiteLicenseClaimsAdmin() {
         confirmLoading={savingKey}
         width={820}
       >
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="Recommended key workflow"
+            description={
+              <Space orientation="vertical" style={{ width: "100%" }}>
+                <Text>
+                  Send this command block to the issuer. They run it in a
+                  terminal, keep the private key file secret, and send back only
+                  the public key output. Paste that output into the Public key
+                  PEM field below.
+                </Text>
+                <Paragraph copyable={{ text: keyGenerationCommand() }}>
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                    {keyGenerationCommand()}
+                  </pre>
+                </Paragraph>
+                <Text type="secondary">
+                  After this key is saved, signed claim links can be generated
+                  with:
+                </Text>
+                <Paragraph
+                  copyable={{ text: sampleTokenCommand(selectedPool) }}
+                >
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                    {sampleTokenCommand(selectedPool)}
+                  </pre>
+                </Paragraph>
+              </Space>
+            }
+          />
+        </Space>
         <Form form={keyForm} layout="vertical">
           <Form.Item
             name="pool_id"
@@ -812,11 +872,22 @@ export function SiteLicenseClaimsAdmin() {
               ]}
             />
           </Form.Item>
-          <Form.Item name="public_key_jwk" label="Public key JWK JSON">
-            <Input.TextArea rows={5} />
-          </Form.Item>
           <Form.Item name="public_key_pem" label="Public key PEM">
-            <Input.TextArea rows={5} />
+            <Input.TextArea
+              rows={6}
+              placeholder={[
+                "-----BEGIN PUBLIC KEY-----",
+                "...",
+                "-----END PUBLIC KEY-----",
+              ].join("\n")}
+            />
+          </Form.Item>
+          <Form.Item
+            name="public_key_jwk"
+            label="Public key JWK JSON (advanced alternative)"
+            extra="Use either PEM or JWK, not both."
+          >
+            <Input.TextArea rows={4} />
           </Form.Item>
           <Form.Item name="expires_at" label="Key expires at">
             <Input placeholder="Optional ISO timestamp" />
