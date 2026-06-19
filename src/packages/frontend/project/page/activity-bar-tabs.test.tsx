@@ -1,7 +1,10 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { getActivityBarCollapsed } from "./activity-bar-storage";
+import {
+  getActivityBarCollapsed,
+  setActivityBarHiddenTabs,
+} from "./activity-bar-storage";
 
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
@@ -330,6 +333,16 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(rootfsRail).toHaveTextContent("python");
     expect(rootfsRail).toHaveAttribute("data-bg", "#3572a5");
     expect(rootfsRail).toHaveAttribute("data-color", "#fff");
+  });
+
+  it("keeps rail controls available when every tab is visible", () => {
+    setActivityBarHiddenTabs([], { liteMode: true });
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.getByTestId("rail-log")).toBeTruthy();
+    expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
+    expect(screen.getByTestId("menu-overflow:customize")).toBeTruthy();
   });
 
   it("lets viewers remove themselves from the overflow rail menu", () => {
