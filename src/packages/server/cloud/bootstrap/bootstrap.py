@@ -4528,13 +4528,35 @@ def configure_cloudflared_with_options(
         run_cmd(cfg, ["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared")
     else:
         log_line(cfg, "bootstrap: reconciling cloudflared config")
-    Path("/etc/cloudflared").mkdir(parents=True, exist_ok=True)
-    if cfg.cloudflared.token:
-        Path("/etc/cloudflared/token.env").write_text(f"CLOUDFLARED_TOKEN={cfg.cloudflared.token}\n", encoding="utf-8")
-        os.chmod("/etc/cloudflared/token.env", 0o600)
+    cloudflared_dir = Path("/etc/cloudflared")
+    cloudflared_dir.mkdir(parents=True, exist_ok=True)
+    credentials_path = cloudflared_dir / f"{cfg.cloudflared.tunnel_id}.json"
+    token_path = cloudflared_dir / "token"
+
+    def read_legacy_token_env() -> str | None:
+        env_path = cloudflared_dir / "token.env"
+        if not env_path.exists():
+            return None
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "CLOUDFLARED_TOKEN":
+                token = value.strip()
+                return token or None
+        return None
+
+    token = cfg.cloudflared.token
     if cfg.cloudflared.creds_json:
-        Path(f"/etc/cloudflared/{cfg.cloudflared.tunnel_id}.json").write_text(cfg.cloudflared.creds_json, encoding="utf-8")
-        os.chmod(f"/etc/cloudflared/{cfg.cloudflared.tunnel_id}.json", 0o600)
+        credentials_path.write_text(cfg.cloudflared.creds_json, encoding="utf-8")
+        os.chmod(credentials_path, 0o600)
+    use_credentials = credentials_path.exists()
+    if not use_credentials:
+        token = token or read_legacy_token_env()
+        if not token:
+            raise RuntimeError(
+                "cloudflared enabled but no tunnel credentials JSON or token is available"
+            )
+        token_path.write_text(token + "\n", encoding="utf-8")
+        os.chmod(token_path, 0o600)
     def yaml_quote(value: str) -> str:
         return json.dumps(value)
 
@@ -4563,9 +4585,9 @@ def configure_cloudflared_with_options(
     ingress_lines.append("  - service: http_status:404")
     ingress = "\n".join(ingress_lines)
     config_lines = []
-    if not cfg.cloudflared.token:
+    if use_credentials:
         config_lines.append(f"tunnel: {cfg.cloudflared.tunnel_id}")
-        config_lines.append(f"credentials-file: /etc/cloudflared/{cfg.cloudflared.tunnel_id}.json")
+        config_lines.append(f"credentials-file: {credentials_path}")
     config_lines.append(ingress)
     Path("/etc/cloudflared/config.yml").write_text("\n".join(config_lines) + "\n", encoding="utf-8")
     unit = """[Unit]
@@ -4576,11 +4598,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 """
-    if cfg.cloudflared.token:
-        unit += "EnvironmentFile=/etc/cloudflared/token.env\n"
     unit += "ExecStart=/usr/bin/cloudflared --config /etc/cloudflared/config.yml tunnel run"
-    if cfg.cloudflared.token:
-        unit += " --token $CLOUDFLARED_TOKEN"
+    if not use_credentials:
+        unit += f" --token-file {token_path}"
     unit += "\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n"
     Path("/etc/systemd/system/cocalc-cloudflared.service").write_text(unit, encoding="utf-8")
     run_cmd(cfg, ["systemctl", "daemon-reload"], "daemon-reload")

@@ -102,9 +102,13 @@ type PartialClickEvent = Pick<
 
 const EMPTY_DIRECTORY_FILES: DirectoryListing = [];
 
-function isMissingProjectVolumeError(error: unknown): boolean {
+function isStartRequiredFilesystemError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
-  return text.includes("project volume does not exist");
+  return (
+    text.includes("project host id unavailable") ||
+    text.includes("host routing info unavailable") ||
+    text.includes("has no host assigned")
+  );
 }
 
 export interface ActiveFileSort {
@@ -300,7 +304,7 @@ export function FilesFlyout({
     !projectIsRunning &&
     !projectIsArchived &&
     !projectIsNew &&
-    isMissingProjectVolumeError(effectiveError);
+    isStartRequiredFilesystemError(effectiveError);
   const suppressRoutingError =
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
     shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });

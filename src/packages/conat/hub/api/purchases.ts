@@ -389,7 +389,8 @@ export type SiteLicenseManagerRole = "manager" | "viewer";
 export type SiteLicenseVerificationPolicy =
   | "email-domain"
   | "sso-affiliation"
-  | "manager-approval";
+  | "manager-approval"
+  | "external-claim";
 export type SiteLicensePoolRequestState =
   | "pending"
   | "approved"
@@ -1315,6 +1316,7 @@ export interface Purchases {
   listSiteLicenseExternalClaimKeys: (opts?: {
     account_id?: string;
     pool_id?: string;
+    kid?: string;
     limit?: number;
   }) => Promise<SiteLicenseExternalClaimKey[]>;
   revokeSiteLicenseExternalClaimKey: (opts?: {

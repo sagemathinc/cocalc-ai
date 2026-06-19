@@ -173,7 +173,7 @@ export function computeAutomaticArtifactUpgradeTargets({
   for (const deployment of status.effective ?? []) {
     if (deployment.target_type !== "artifact") continue;
     const target = deployment.target as HostRuntimeArtifact;
-    if (target === "project-host" || target === "bootstrap-environment") {
+    if (target === "bootstrap-environment") {
       continue;
     }
     const observed = observedTargets.get(target);

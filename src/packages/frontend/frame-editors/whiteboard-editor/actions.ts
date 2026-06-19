@@ -8,7 +8,7 @@ Whiteboard frame Editor Actions
 */
 
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
-import { Map as ImmutableMap, fromJS } from "immutable";
+import { Map as ImmutableMap, fromJS, is as immutableIs } from "immutable";
 import { alert_message } from "@cocalc/frontend/alerts";
 import type { FrameTree } from "../frame-tree/types";
 import {
@@ -370,6 +370,15 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
     // (none at 100% zoom), and saves a lot of space in the
     // JSON object representation.
     roundRectParams(obj);
+    if (!create) {
+      const current = this._syncstring.get_one({ id: obj.id });
+      if (current != null && elementPatchIsNoop(current, obj)) {
+        if (cursors != null) {
+          this.setCursors(obj.id, cursors);
+        }
+        return;
+      }
+    }
     this._syncstring.set(obj);
     if (commit) {
       this.syncstring_commit();
@@ -1696,6 +1705,21 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
   languageModelGetLanguage() {
     return "md";
   }
+}
+
+function elementPatchIsNoop(
+  current: ImmutableMap<string, any>,
+  patch: Partial<Element>,
+): boolean {
+  for (const [key, value] of Object.entries(patch)) {
+    if (key == "id") continue;
+    if (value === null) {
+      if (current.has(key)) return false;
+    } else if (!immutableIs(current.get(key), fromJS(value))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function elementsList(

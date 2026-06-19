@@ -215,8 +215,11 @@ function EmptyDirectoryWelcome({
 
   return (
     <div
+      data-testid="empty-directory-welcome"
       style={{
-        margin: "18px 24px 0 24px",
+        margin: "32px auto 28px auto",
+        width: "calc(100% - 56px)",
+        maxWidth: 1120,
         border: `1px solid ${COLORS.GRAY_DDD}`,
         borderRadius: 18,
         overflow: "hidden",
@@ -226,28 +229,13 @@ function EmptyDirectoryWelcome({
     >
       <div
         style={{
-          padding: "28px 28px 8px 28px",
+          padding: "30px 30px 12px 30px",
           textAlign: "center",
         }}
       >
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 12px",
-            borderRadius: 999,
-            background: "white",
-            color: COLORS.BLUE_DD,
-            fontWeight: 600,
-            boxShadow: `0 4px 18px ${COLORS.GRAY_DDD}`,
-          }}
-        >
-          <Icon name="folder-open" /> Empty project
-        </div>
         <h2
           style={{
-            margin: "16px 0 6px 0",
+            margin: "0 0 6px 0",
             color: COLORS.GRAY_DD,
             fontSize: 28,
             fontWeight: 700,
@@ -270,9 +258,9 @@ function EmptyDirectoryWelcome({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-          gap: 14,
-          padding: 22,
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 16,
+          padding: "24px 28px 28px 28px",
         }}
       >
         {actions.map((action) => (

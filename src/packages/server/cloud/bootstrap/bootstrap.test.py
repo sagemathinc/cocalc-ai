@@ -1615,6 +1615,101 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             )
             self.assertIn((["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared"), recorded)
 
+    def test_configure_cloudflared_prefers_credentials_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                cloudflared=bootstrap.CloudflaredSpec(
+                    True,
+                    hostname="host.example.test",
+                    port=9002,
+                    token="token",
+                    tunnel_id="tunnel-id",
+                    creds_json='{"TunnelSecret":"secret"}',
+                ),
+            )
+            writes = []
+
+            original_run_cmd = bootstrap.run_cmd
+            original_which = bootstrap.shutil.which
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            original_exists = Path.exists
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.run_cmd = lambda *_args, **_kwargs: None
+                bootstrap.shutil.which = lambda name: "/usr/bin/cloudflared"
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, text, encoding="utf-8": writes.append(  # type: ignore[method-assign]
+                    (str(self), text, encoding)
+                ) or len(text)
+                Path.exists = lambda self: str(self) == "/etc/cloudflared/tunnel-id.json"  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.configure_cloudflared_with_options(
+                    cfg, install_package=False
+                )
+            finally:
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.shutil.which = original_which
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+                Path.exists = original_exists  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            config = next(data for path, data, _ in writes if path == "/etc/cloudflared/config.yml")
+            unit = next(data for path, data, _ in writes if path == "/etc/systemd/system/cocalc-cloudflared.service")
+            self.assertIn("credentials-file: /etc/cloudflared/tunnel-id.json", config)
+            self.assertNotIn("--token", unit)
+            self.assertNotIn("EnvironmentFile=/etc/cloudflared/token.env", unit)
+
+    def test_configure_cloudflared_uses_token_file_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                cloudflared=bootstrap.CloudflaredSpec(
+                    True,
+                    hostname="host.example.test",
+                    port=9002,
+                    token="token",
+                    tunnel_id="tunnel-id",
+                ),
+            )
+            writes = []
+
+            original_run_cmd = bootstrap.run_cmd
+            original_which = bootstrap.shutil.which
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            original_exists = Path.exists
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.run_cmd = lambda *_args, **_kwargs: None
+                bootstrap.shutil.which = lambda name: "/usr/bin/cloudflared"
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, text, encoding="utf-8": writes.append(  # type: ignore[method-assign]
+                    (str(self), text, encoding)
+                ) or len(text)
+                Path.exists = lambda self: False  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.configure_cloudflared_with_options(
+                    cfg, install_package=False
+                )
+            finally:
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.shutil.which = original_which
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+                Path.exists = original_exists  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            token = next(data for path, data, _ in writes if path == "/etc/cloudflared/token")
+            config = next(data for path, data, _ in writes if path == "/etc/cloudflared/config.yml")
+            unit = next(data for path, data, _ in writes if path == "/etc/systemd/system/cocalc-cloudflared.service")
+            self.assertEqual(token, "token\n")
+            self.assertNotIn("credentials-file:", config)
+            self.assertIn("--token-file /etc/cloudflared/token", unit)
+            self.assertNotIn("EnvironmentFile=/etc/cloudflared/token.env", unit)
+
 
 class BootstrapModesTest(unittest.TestCase):
     def test_bootstrap_operation_lock_times_out_when_another_process_holds_it(self) -> None:

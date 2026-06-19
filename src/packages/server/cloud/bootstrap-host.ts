@@ -1103,19 +1103,24 @@ export async function buildBootstrapScripts(
 
   const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
     if (tunnel && tunnelEnabled) {
-      const useToken = Boolean(tunnel.token);
-      if (!useToken) {
-        logger.warn("cloudflare tunnel token missing; using credentials file", {
+      const hasCredentials = Boolean(
+        tunnel.account_id && tunnel.id && tunnel.name && tunnel.tunnel_secret,
+      );
+      const useToken = !hasCredentials && Boolean(tunnel.token);
+      if (!hasCredentials && !useToken) {
+        logger.warn("cloudflare tunnel missing credentials and token", {
           host_id: row.id,
           tunnel_id: tunnel.id,
         });
       }
-      const creds = JSON.stringify({
-        AccountTag: tunnel.account_id,
-        TunnelID: tunnel.id,
-        TunnelName: tunnel.name,
-        TunnelSecret: tunnel.tunnel_secret,
-      });
+      const creds = hasCredentials
+        ? JSON.stringify({
+            AccountTag: tunnel.account_id,
+            TunnelID: tunnel.id,
+            TunnelName: tunnel.name,
+            TunnelSecret: tunnel.tunnel_secret,
+          })
+        : undefined;
       return {
         enabled: true,
         hostname: tunnel.hostname,
@@ -1125,7 +1130,7 @@ export async function buildBootstrapScripts(
         sshPort,
         token: useToken ? tunnel.token : undefined,
         tunnelId: tunnel.id,
-        credsJson: useToken ? undefined : creds,
+        credsJson: creds,
       };
     }
     return { enabled: false };

@@ -50,6 +50,7 @@ export const TAGS = [
   "I18N",
   "Security",
   "SSH",
+  "SLA",
   "Support",
   "SSO",
   "Cookie Banner",

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/user/upstream/codex}"
 CODEX_UPSTREAM_REPO="${CODEX_UPSTREAM_REPO:-https://github.com/openai/codex.git}"
-CODEX_VERSION="${CODEX_VERSION:-0.139.0}"
+CODEX_VERSION="${CODEX_VERSION:-0.140.0}"
 CODEX_TAG="rust-v${CODEX_VERSION}"
 CODEX_BRANCH="cocalc-local-build-v${CODEX_VERSION}"
 PATCH_DIR="${REPO_ROOT}/src/scripts/patches"
@@ -23,6 +23,12 @@ ARM64_RELEASE_LTO="${CODEX_ARM64_RELEASE_LTO:-${RELEASE_LTO}}"
 ARM64_RELEASE_CODEGEN_UNITS="${CODEX_ARM64_RELEASE_CODEGEN_UNITS:-${RELEASE_CODEGEN_UNITS}}"
 ARM64_SYSROOT_LIB_DIR="${AARCH64_UNKNOWN_LINUX_GNU_LIB_DIR:-/usr/lib/aarch64-linux-gnu}"
 PUBLISH_AFTER_BUILD="${CODEX_PUBLISH_RELEASE:-0}"
+STRIP_BINARIES="${CODEX_STRIP_BINARIES:-1}"
+RELEASE_STRIP="${CODEX_RELEASE_STRIP:-symbols}"
+if [[ "${STRIP_BINARIES}" != "1" ]]; then
+  RELEASE_STRIP="none"
+fi
+ARM64_RELEASE_STRIP="${CODEX_ARM64_RELEASE_STRIP:-${RELEASE_STRIP}}"
 
 if [[ ! -d "${UPSTREAM_DIR}/.git" ]]; then
   echo "Missing upstream codex checkout at ${UPSTREAM_DIR}" >&2
@@ -65,6 +71,37 @@ EOF
   fi
 }
 
+binary_size() {
+  stat -c%s "$1" 2>/dev/null || wc -c < "$1"
+}
+
+strip_binary_if_available() {
+  local binary="$1"
+  local label="$2"
+  shift 2
+  if [[ "${STRIP_BINARIES}" != "1" ]]; then
+    echo "Skipping strip for ${label}: CODEX_STRIP_BINARIES=${STRIP_BINARIES}"
+    return
+  fi
+
+  local before
+  before="$(binary_size "${binary}")"
+  local tool
+  for tool in "$@"; do
+    if [[ -z "${tool}" ]] || ! command -v "${tool}" >/dev/null 2>&1; then
+      continue
+    fi
+    if "${tool}" "${binary}"; then
+      local after
+      after="$(binary_size "${binary}")"
+      echo "Stripped ${label} with ${tool}: ${before} -> ${after} bytes"
+      return
+    fi
+  done
+
+  echo "Skipping extra strip for ${label}; no usable strip tool found among: $*"
+}
+
 echo "Using upstream checkout: ${UPSTREAM_DIR}"
 echo "Using upstream source: ${CODEX_UPSTREAM_REPO}"
 echo "Using output directory: ${LOCAL_BIN_ROOT}/${CODEX_VERSION}"
@@ -77,7 +114,7 @@ git -C "${UPSTREAM_DIR}" restore --source="${CODEX_TAG}" --staged --worktree .
 git -C "${UPSTREAM_DIR}" restore codex-rs/Cargo.lock
 
 for patch_file in "${PATCH_FILES[@]}"; do
-  git -C "${UPSTREAM_DIR}" apply "${patch_file}"
+  git -C "${UPSTREAM_DIR}" apply --whitespace=nowarn "${patch_file}"
 done
 
 cargo fmt --manifest-path "${CARGO_MANIFEST}" --all >/dev/null
@@ -86,6 +123,7 @@ cargo metadata --format-version 1 --manifest-path "${CARGO_MANIFEST}" >/dev/null
 
 CARGO_PROFILE_RELEASE_LTO="${RELEASE_LTO}" \
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${RELEASE_CODEGEN_UNITS}" \
+  CARGO_PROFILE_RELEASE_STRIP="${RELEASE_STRIP}" \
   cargo build --release --locked -p codex-cli --manifest-path "${CARGO_MANIFEST}"
 case "${ARM64_BUILD_TOOL}" in
   auto)
@@ -96,10 +134,12 @@ case "${ARM64_BUILD_TOOL}" in
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${ARM_LINKER}" \
         CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
         CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
+        CARGO_PROFILE_RELEASE_STRIP="${ARM64_RELEASE_STRIP}" \
         cargo build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     elif command -v cross >/dev/null 2>&1; then
       CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
         CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
+        CARGO_PROFILE_RELEASE_STRIP="${ARM64_RELEASE_STRIP}" \
         cross build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     else
       require_arm64_cross_libs
@@ -108,12 +148,14 @@ case "${ARM64_BUILD_TOOL}" in
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${ARM_LINKER}" \
         CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
         CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
+        CARGO_PROFILE_RELEASE_STRIP="${ARM64_RELEASE_STRIP}" \
         cargo build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     fi
     ;;
   cross)
     CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
+      CARGO_PROFILE_RELEASE_STRIP="${ARM64_RELEASE_STRIP}" \
       cross build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     ;;
   cargo)
@@ -123,6 +165,7 @@ case "${ARM64_BUILD_TOOL}" in
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${ARM_LINKER}" \
       CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
+      CARGO_PROFILE_RELEASE_STRIP="${ARM64_RELEASE_STRIP}" \
       cargo build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     ;;
   *)
@@ -138,6 +181,15 @@ mkdir -p "${X64_DEST}" "${ARM64_DEST}"
 install -m 755 "${UPSTREAM_DIR}/codex-rs/target/release/codex" "${X64_DEST}/codex"
 install -m 755 "${UPSTREAM_DIR}/codex-rs/target/aarch64-unknown-linux-gnu/release/codex" "${ARM64_DEST}/codex"
 
+strip_binary_if_available "${X64_DEST}/codex" "linux-x64 codex" \
+  "${CODEX_X64_STRIP_TOOL:-}" \
+  strip \
+  llvm-strip
+strip_binary_if_available "${ARM64_DEST}/codex" "linux-arm64 codex" \
+  "${CODEX_ARM64_STRIP_TOOL:-}" \
+  aarch64-linux-gnu-strip \
+  llvm-strip
+
 UPSTREAM_HEAD="$(git -C "${UPSTREAM_DIR}" rev-parse HEAD)"
 cat > "${LOCAL_BIN_ROOT}/${CODEX_VERSION}/manifest.json" <<EOF
 {
@@ -147,6 +199,9 @@ cat > "${LOCAL_BIN_ROOT}/${CODEX_VERSION}/manifest.json" <<EOF
   "upstream_head": "${UPSTREAM_HEAD}",
   "x64_binary": "${X64_DEST}/codex",
   "arm64_binary": "${ARM64_DEST}/codex",
+  "strip_binaries": "${STRIP_BINARIES}",
+  "release_strip": "${RELEASE_STRIP}",
+  "arm64_release_strip": "${ARM64_RELEASE_STRIP}",
   "built_at_utc": "$(date -u +%FT%TZ)"
 }
 EOF

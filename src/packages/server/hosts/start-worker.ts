@@ -1512,6 +1512,8 @@ async function handleOp(op: LroSummary): Promise<void> {
               targets: input?.targets ?? [],
               base_url: input?.base_url,
               align_runtime_stack: input?.align_runtime_stack,
+              record_runtime_deployments:
+                input?.record_runtime_deployments !== false,
               onProgress: async (update) => {
                 await progressStep("waiting", update.rollout_phase_label, {
                   host_id,
@@ -1548,6 +1550,8 @@ async function handleOp(op: LroSummary): Promise<void> {
                 components: rolloutComponents,
                 base_url: input?.base_url,
                 reason: "host_software_upgrade",
+                record_runtime_deployments:
+                  input?.record_runtime_deployments !== false,
                 onProgress: async (update) => {
                   await progressStep("waiting", update.rollout_phase_label, {
                     host_id,
