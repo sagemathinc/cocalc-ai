@@ -90,6 +90,28 @@ else
   ( cd "$REPO/src/packages/static" && timeout 165 pnpm -s build:dev >/dev/null 2>&1 ) || true
 fi
 
+# --- preview-ownership guard (multi-agent) ----------------------------------
+# blaec.cocalc.ai is ONE hub on :9100; another worktree may own it (documented
+# handoff). If so, the canary/capture would assert the WRONG worktree's pages,
+# so emit a note (NEVER a block) and skip. The dist was still rebuilt above.
+# Owner = the pid holding the :9100 LISTEN socket (port 0x238C, state 0A),
+# matched to a hub pid by socket inode (works for our own processes, no privs).
+INODE="$(awk '$4=="0A" && $2 ~ /:238C$/ {print $10}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | head -1)"
+OWNER_PID=""
+if [ -n "$INODE" ]; then
+  for pid in $(pgrep -f "packages/hub" 2>/dev/null); do
+    if ls -l "/proc/$pid/fd" 2>/dev/null | grep -q "socket:\[$INODE\]"; then OWNER_PID="$pid"; break; fi
+  done
+fi
+OWNER_CWD="$(readlink "/proc/${OWNER_PID:-0}/cwd" 2>/dev/null || true)"
+case "$OWNER_CWD" in
+  "$REPO"/*|"$REPO"|"") : ;;  # this worktree owns it, or owner unresolved → proceed (don't mask real failures)
+  *)
+    printf '%s' "$HEAD_NOW" > "$MARKER"
+    emit_context "preview-snapshot: canary SKIPPED — blaec.cocalc.ai (:9100) is served by another worktree ($OWNER_CWD), not this one ($REPO/src). Testing it would assert the wrong pages, so the canary was not run this turn. This is the documented multi-agent preview handoff, NOT a regression. The dist here was rebuilt; reclaim :9100 to validate these pages live."
+    exit 0 ;;
+esac
+
 # --- capture ----------------------------------------------------------------
 mkdir -p "$SNAP_DIR"
 QA_JSON="$(timeout 150 node "$QA" "${ROUTE_ARGS[@]}" --viewport desktop --viewport mobile 2>/dev/null | tail -c 200000)"
