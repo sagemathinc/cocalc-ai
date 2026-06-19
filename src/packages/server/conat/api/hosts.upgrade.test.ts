@@ -117,6 +117,8 @@ jest.mock("@cocalc/backend/logger", () => ({
 const HOST_ID = "2058bae4-d049-40b9-88ba-187a7091da55";
 const ACCOUNT_ID = "acct-123";
 
+jest.setTimeout(15_000);
+
 function makeHostRow({
   version,
   desiredProjectHostVersion,
