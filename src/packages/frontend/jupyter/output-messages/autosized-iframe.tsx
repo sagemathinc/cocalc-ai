@@ -8,7 +8,7 @@ import type { CSSProperties, SyntheticEvent } from "react";
 
 const RESIZE_MESSAGE_TYPE = "cocalc-jupyter-iframe-height";
 const DEFAULT_HEIGHT = 320;
-const MIN_HEIGHT = 80;
+const MIN_HEIGHT = 20;
 
 interface Props {
   src?: string;
@@ -116,15 +116,29 @@ export default function AutosizedIframe({
 function measureDocumentHeight(doc: Document, depth = 0): number {
   resizeAccessibleChildIframes(doc, depth);
   const body = doc.body;
+  const bodyHeight = body == null ? 0 : measureElementHeight(body);
+  if (bodyHeight > 0) {
+    return normalizeHeight(bodyHeight);
+  }
   const documentElement = doc.documentElement;
   return normalizeHeight(
-    Math.max(
-      body?.scrollHeight ?? 0,
-      body?.offsetHeight ?? 0,
-      documentElement?.scrollHeight ?? 0,
-      documentElement?.offsetHeight ?? 0,
-    ),
+    documentElement == null ? 0 : measureElementHeight(documentElement),
   );
+}
+
+function measureElementHeight(element: HTMLElement): number {
+  const rect = element.getBoundingClientRect();
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  const viewportHeight = element.ownerDocument.defaultView?.innerHeight ?? 0;
+  const boxHeight = Math.max(element.offsetHeight, rect.height);
+  const scrollHeight = element.scrollHeight;
+  const contentHeight =
+    scrollHeight > boxHeight && Math.abs(scrollHeight - viewportHeight) > 1
+      ? scrollHeight
+      : boxHeight;
+  const marginTop = parseFloat(style?.marginTop ?? "0") || 0;
+  const marginBottom = parseFloat(style?.marginBottom ?? "0") || 0;
+  return contentHeight + marginTop + marginBottom;
 }
 
 function resizeAccessibleChildIframes(doc: Document, depth: number): void {
@@ -156,12 +170,20 @@ function injectResizeBridge(srcDoc: string, resizeId: string): string {
     resizeChildIframes(document, 0);
     var body = document.body;
     var doc = document.documentElement;
-    return Math.max(
-      body ? body.scrollHeight : 0,
-      body ? body.offsetHeight : 0,
-      doc ? doc.scrollHeight : 0,
-      doc ? doc.offsetHeight : 0
-    );
+    var bodyHeight = body ? elementHeight(body) : 0;
+    return bodyHeight > 0 ? bodyHeight : (doc ? elementHeight(doc) : 0);
+  }
+  function elementHeight(element) {
+    var rect = element.getBoundingClientRect();
+    var win = element.ownerDocument && element.ownerDocument.defaultView ? element.ownerDocument.defaultView : window;
+    var style = win.getComputedStyle(element);
+    var viewportHeight = win.innerHeight || 0;
+    var boxHeight = Math.max(element.offsetHeight || 0, rect.height || 0);
+    var scrollHeight = element.scrollHeight || 0;
+    var contentHeight = scrollHeight > boxHeight && Math.abs(scrollHeight - viewportHeight) > 1 ? scrollHeight : boxHeight;
+    var marginTop = parseFloat(style.marginTop || "0") || 0;
+    var marginBottom = parseFloat(style.marginBottom || "0") || 0;
+    return contentHeight + marginTop + marginBottom;
   }
   function resizeChildIframes(doc, depth) {
     if (depth >= 3) return;
@@ -171,15 +193,11 @@ function injectResizeBridge(srcDoc: string, resizeId: string): string {
         var iframe = iframes[i];
         var childDoc = iframe.contentWindow && iframe.contentWindow.document;
         if (!childDoc) continue;
-        var body = childDoc.body;
-        var child = childDoc.documentElement;
         resizeChildIframes(childDoc, depth + 1);
-        iframe.style.height = Math.max(
-          body ? body.scrollHeight : 0,
-          body ? body.offsetHeight : 0,
-          child ? child.scrollHeight : 0,
-          child ? child.offsetHeight : 0
-        ) + "px";
+        var childBody = childDoc.body;
+        var childElement = childDoc.documentElement;
+        var childBodyHeight = childBody ? elementHeight(childBody) : 0;
+        iframe.style.height = (childBodyHeight > 0 ? childBodyHeight : (childElement ? elementHeight(childElement) : 0)) + "px";
         if (!iframe.style.width && !iframe.getAttribute("width")) {
           iframe.style.width = "100%";
         }
