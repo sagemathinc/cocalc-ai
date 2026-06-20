@@ -23,6 +23,10 @@ export let project_id = "";
 let client: ConatClient | null = null;
 let initPromise: Promise<void> | null = null;
 
+export function getRemoteHubForChildProcess(): string | undefined {
+  return REMOTE_HUB;
+}
+
 function parseRemoteHub(remoteHub: string): {
   address: string;
   apiKey: string;
