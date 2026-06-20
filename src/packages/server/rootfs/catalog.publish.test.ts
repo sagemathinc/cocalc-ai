@@ -114,4 +114,42 @@ describe("publishProjectRootfsCatalogEntry", () => {
   });
 });
 
+describe("saveRootfsImage", () => {
+  beforeEach(() => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT DISTINCT jsonb_object_keys")) {
+        return { rows: [] };
+      }
+      if (sql.includes("COUNT(*)::INTEGER AS total")) {
+        return { rows: [emptyCounts()] };
+      }
+      return { rows: [] };
+    });
+  });
+
+  it("uses the requested public slug when saving a catalog entry", async () => {
+    const { saveRootfsImage } = await import("./catalog");
+
+    const result = await saveRootfsImage({
+      account_id: ACCOUNT_ID,
+      body: {
+        image: "cocalc.local/rootfs/save-test",
+        label: "Saved RootFS",
+        slug: "saved-rootfs",
+        visibility: "public",
+      },
+    });
+
+    const insert = queryMock.mock.calls.find(
+      ([sql, params]) =>
+        `${sql}`.includes("INSERT INTO rootfs_images") &&
+        Array.isArray(params) &&
+        params.length === 27,
+    );
+    expect(insert).toBeDefined();
+    expect(insert?.[1]?.[22]).toBe("saved-rootfs");
+    expect(result.slug).toBe("saved-rootfs");
+  });
+});
+
 export {};

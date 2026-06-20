@@ -47,6 +47,8 @@ $SUDO chown -R "$(id -u):$(id -g)" "$prefix"
     --public-url "http://127.0.0.1:$frontend_port"
 )
 
+$SUDO rm -rf "$prefix/.git"
+
 $SUDO tee /usr/local/bin/cocalc-overleaf >/dev/null <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
