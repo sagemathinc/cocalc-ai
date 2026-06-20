@@ -128,7 +128,7 @@ export const DISK_TYPES = [
 const DEFAULT_DISK_TYPES = ["ssd"];
 
 const PROVIDER_DISK_TYPES: Partial<Record<HostProvider, string[]>> = {
-  gcp: ["balanced", "ssd", "standard"],
+  gcp: ["balanced", "ssd"],
   hyperstack: ["ssd"],
   nebius: ["ssd_io_m3", "ssd"],
 };

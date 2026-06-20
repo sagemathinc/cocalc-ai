@@ -13,12 +13,7 @@ import type {
   HostSoftwareChannel,
 } from "@cocalc/conat/hub/api/hosts";
 
-export const HOST_CREATE_DISK_TYPES = new Set([
-  "ssd",
-  "balanced",
-  "standard",
-  "ssd_io_m3",
-]);
+export const HOST_CREATE_DISK_TYPES = new Set(["ssd", "balanced", "ssd_io_m3"]);
 export const HOST_CREATE_STORAGE_MODES = new Set(["persistent", "ephemeral"]);
 const HOST_CREATE_READY_STATUSES = new Set(["running", "active"]);
 const HOST_CREATE_FAILED_STATUSES = new Set(["error", "deprovisioned"]);
