@@ -615,4 +615,32 @@ describe("CodexUsageMeters", () => {
     expect(screen.getByText("93%")).toBeTruthy();
     expect(screen.getAllByText("time-ago-date")).toHaveLength(2);
   });
+
+  it("marks cached compact usage as stale while it updates", () => {
+    render(
+      <CodexUsageMeters
+        compact
+        stale
+        updating
+        status={
+          {
+            rateLimits: {
+              rateLimits: {
+                primary: {
+                  usedPercent: 42,
+                  windowDurationMins: 300,
+                  resetsAt: 1_800_000_000,
+                },
+              },
+            },
+          } as any
+        }
+      />,
+    );
+
+    expect(screen.getByText("5-hour limit")).toBeTruthy();
+    expect(screen.getByText("58%")).toBeTruthy();
+    expect(screen.getByLabelText("Updating Codex usage")).toBeTruthy();
+    expect(screen.getByText("Updating...")).toBeTruthy();
+  });
 });

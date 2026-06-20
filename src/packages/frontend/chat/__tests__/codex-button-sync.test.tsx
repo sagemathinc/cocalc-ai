@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { writeCachedCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
 import { CodexConfigButton, codexThreadConfigKey } from "../codex";
 
 const getCodexUsageStatus = jest.fn();
@@ -88,10 +89,12 @@ jest.mock("@cocalc/frontend/lite", () => ({
 
 jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
   CodexCredentialsPanel: () => null,
-  CodexUsageMeters: ({ compact, status }: any) => (
+  CodexUsageMeters: ({ compact, status, stale, updating }: any) => (
     <div>
       {compact ? "compact usage meters" : "usage meters"}
       {status?.available ? " usage loaded" : ""}
+      {stale ? " stale" : ""}
+      {updating ? " updating" : ""}
     </div>
   ),
 }));
@@ -126,7 +129,7 @@ describe("CodexConfigButton", () => {
     stableForm.getFieldsValue.mockReturnValue({});
     getCodexUsageStatus.mockReset();
     getCodexUsageStatus.mockResolvedValue({ available: true });
-    window.localStorage.removeItem("cocalc.chat.codexControlsCollapsed");
+    window.localStorage.clear();
   });
 
   it("updates the closed top bar when thread config arrives after mount", async () => {
@@ -457,5 +460,75 @@ describe("CodexConfigButton", () => {
     expect(text.indexOf("compact usage meters usage loaded")).toBeLessThan(
       text.indexOf("Payment & Credentials"),
     );
+  });
+
+  it("shows cached compact ChatGPT usage while refreshing live usage", async () => {
+    let resolveLiveUsage: (status: unknown) => void = () => {};
+    const liveUsagePromise = new Promise((resolve) => {
+      resolveLiveUsage = resolve;
+    });
+    getCodexUsageStatus.mockReturnValue(liveUsagePromise);
+    writeCachedCodexUsageStatus({
+      projectId: "project-1",
+      status: {
+        available: true,
+        checkedAt: "2026-06-20T00:00:00.000Z",
+        paymentSource: {
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        },
+        rateLimits: {
+          rateLimits: {
+            primary: {
+              usedPercent: 42,
+              windowDurationMins: 300,
+            },
+          },
+        },
+      } as any,
+    });
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("compact usage meters usage loaded stale updating"),
+      ).toBeTruthy();
+    });
+
+    resolveLiveUsage({ available: true, fresh: true });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("compact usage meters usage loaded"),
+      ).toBeTruthy();
+    });
   });
 });

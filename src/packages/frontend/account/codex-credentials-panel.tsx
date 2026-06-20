@@ -212,25 +212,69 @@ function getUsageWindows(rateLimit: any): Array<{
 export function CodexUsageMeters({
   status,
   compact = false,
+  stale = false,
+  updating = false,
 }: {
   status?: CodexUsageStatusInfo;
   compact?: boolean;
+  stale?: boolean;
+  updating?: boolean;
 }): React.JSX.Element | null {
   const usageWindows = getUsageWindows(getCodexRateLimit(status));
   if (!usageWindows.length) return null;
+  const showStaleState = stale || updating;
   return (
     <div
       style={{
         display: "grid",
         gap: compact ? 8 : 12,
         gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        position: "relative",
         width: "100%",
       }}
     >
+      {showStaleState ? (
+        <div
+          aria-label={updating ? "Updating Codex usage" : "Stale Codex usage"}
+          style={{
+            alignItems: "center",
+            background: COLORS.GRAY_LLL,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 999,
+            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.06)",
+            display: "inline-flex",
+            gap: 5,
+            lineHeight: 1,
+            padding: compact ? "3px 7px" : "4px 8px",
+            pointerEvents: "none",
+            position: "absolute",
+            right: compact ? 6 : 10,
+            top: compact ? 6 : 10,
+            zIndex: 1,
+          }}
+        >
+          <span
+            style={{
+              background: updating ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_M,
+              borderRadius: "50%",
+              display: "inline-block",
+              height: 6,
+              width: 6,
+            }}
+          />
+          <Text type="secondary" style={{ fontSize: compact ? 10 : 11 }}>
+            {updating ? "Updating..." : "Stale"}
+          </Text>
+        </div>
+      ) : null}
       {usageWindows.map((window) => (
         <div
           key={window.key}
-          style={compact ? compactUsageLimitStyle : usageLimitStyle}
+          style={{
+            ...(compact ? compactUsageLimitStyle : usageLimitStyle),
+            opacity: showStaleState ? 0.58 : 1,
+            transition: "opacity 120ms ease",
+          }}
         >
           <div
             style={{

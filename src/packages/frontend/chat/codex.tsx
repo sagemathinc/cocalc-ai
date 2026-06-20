@@ -30,6 +30,8 @@ import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
   getLiveCodexUsageStatus,
+  readCachedCodexUsageStatus,
+  writeCachedCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -346,6 +348,7 @@ export function CodexConfigButton({
     CodexUsageStatusInfo | undefined
   >(undefined);
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
+  const [codexUsageStale, setCodexUsageStale] = useState(false);
   const [hoveredPillSegment, setHoveredPillSegment] = useState<
     PillSegment | undefined
   >(undefined);
@@ -474,16 +477,32 @@ export function CodexConfigButton({
     if (!open || paymentSource?.source !== "subscription") {
       setCodexUsageStatus(undefined);
       setCodexUsageLoading(false);
+      setCodexUsageStale(false);
       return;
     }
     let cancelled = false;
+    const cached = readCachedCodexUsageStatus({ projectId });
+    if (cached) {
+      setCodexUsageStatus(cached.status);
+      setCodexUsageStale(true);
+    } else {
+      setCodexUsageStatus(undefined);
+      setCodexUsageStale(false);
+    }
     setCodexUsageLoading(true);
     void getLiveCodexUsageStatus({ projectId })
       .then((status: CodexUsageStatusInfo) => {
-        if (!cancelled) setCodexUsageStatus(status);
+        if (cancelled) return;
+        setCodexUsageStatus(status);
+        setCodexUsageStale(false);
+        writeCachedCodexUsageStatus({ projectId, status });
       })
       .catch(() => {
-        if (!cancelled) setCodexUsageStatus(undefined);
+        if (cancelled) return;
+        if (!cached) {
+          setCodexUsageStatus(undefined);
+          setCodexUsageStale(false);
+        }
       })
       .finally(() => {
         if (!cancelled) setCodexUsageLoading(false);
@@ -878,7 +897,12 @@ export function CodexConfigButton({
                     Checking ChatGPT Codex usage...
                   </Text>
                 ) : null}
-                <CodexUsageMeters status={codexUsageStatus} compact />
+                <CodexUsageMeters
+                  status={codexUsageStatus}
+                  compact
+                  stale={codexUsageStale}
+                  updating={codexUsageLoading && codexUsageStale}
+                />
               </div>
             ) : null}
             <Space
