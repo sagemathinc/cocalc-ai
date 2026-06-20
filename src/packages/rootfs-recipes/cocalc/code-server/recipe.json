@@ -1,0 +1,76 @@
+{
+  "id": "cocalc/code-server",
+  "version": 1,
+  "description": "Install code-server as a standalone release and add a CoCalc VS Code app launcher.",
+  "inputs": {
+    "prefix": { "type": "string", "default": "/opt/code-server" },
+    "version": { "type": "string", "default": "latest" },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "code-server",
+      "tags": ["code-server", "vscode", "ide"]
+    },
+    "theme": {
+      "icon": "code",
+      "color": "#ffffff",
+      "accent_color": "#007acc"
+    },
+    "content": {
+      "version": 1,
+      "title": "code-server",
+      "subtitle": "VS Code in the browser, running inside this RootFS environment.",
+      "highlights": ["VS Code", "code-server", "browser IDE"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "code-server documentation",
+          "url": "https://coder.com/docs/code-server"
+        },
+        {
+          "kind": "project-app",
+          "label": "Launch VS Code",
+          "description": "Start code-server using the bundled RootFS installation.",
+          "app_spec": {
+            "version": 1,
+            "id": "code-server",
+            "title": "code-server",
+            "kind": "service",
+            "command": {
+              "exec": "bash",
+              "args": [
+                "-lc",
+                "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none"
+              ]
+            },
+            "lifecycle": {
+              "mode": "managed"
+            },
+            "network": {
+              "listen_host": "127.0.0.1",
+              "port": 6004,
+              "protocol": "http"
+            },
+            "proxy": {
+              "base_path": "/apps/code-server",
+              "strip_prefix": true,
+              "websocket": true,
+              "open_mode": "proxy",
+              "health_path": "/healthz",
+              "readiness_timeout_s": 120
+            },
+            "wake": {
+              "enabled": true,
+              "keep_warm_s": 1800,
+              "startup_timeout_s": 120
+            }
+          }
+        }
+      ]
+    }
+  }
+}
