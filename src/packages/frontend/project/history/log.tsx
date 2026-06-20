@@ -47,6 +47,7 @@ import { LogEntry } from "./log-entry";
 import { LogSearch } from "./search";
 import { EventRecord, to_search_string } from "./types";
 import { handleFileEntryClick } from "./utils";
+import type { IconName } from "@cocalc/frontend/components/icon";
 
 interface Props {
   project_id: string;
@@ -597,8 +598,8 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
     return render_log_panel();
   }
 
-  function render_search(): React.JSX.Element | void {
-    if (actions == null) return;
+  function render_search(): React.JSX.Element | null {
+    if (actions == null) return null;
     const openSelectedFile =
       mode === "files"
         ? (_value: string, info: any): void => {
@@ -697,7 +698,7 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
 
   function render_file_controls(): React.JSX.Element | null {
     if (mode !== "files") return null;
-    const icon = deduplicate ? "file" : "copy";
+    const icon: IconName = deduplicate ? "file" : "copy";
     return (
       <Tooltip title="If enabled, duplicate file-open entries are shown. By default, only the most recent open file activity is shown.">
         <Button
@@ -720,7 +721,7 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
   }: {
     active: boolean;
     filter: FlyoutLogFilter;
-    icon: string;
+    icon: IconName;
     title: string;
   }): React.JSX.Element {
     return (

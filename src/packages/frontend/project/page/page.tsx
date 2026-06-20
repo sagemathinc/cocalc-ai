@@ -1648,7 +1648,7 @@ function FlyoutDragbar({
       {...attributes}
       onDoubleClick={resetFlyoutWidth}
     >
-      <FlyoutGutterLine active={active} />
+      <FlyoutGutterLine active={!!active} />
     </div>
   );
 }
