@@ -45,6 +45,7 @@ const mockedIsMfaRequiredAuthResponse = jest.mocked(isMfaRequiredAuthResponse);
 const mockedEnableForceConsent = jest.mocked(enableForceConsent);
 const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
   site_name: "Launchpad",
+  strategies: [],
   ...overrides,
 });
 

@@ -46,8 +46,6 @@ interface PublicAuthAppProps {
   redirectToPath?: string;
 }
 
-const EMPTY_SSO_STRATEGIES: PublicSSOStrategy[] = [];
-
 function titleForRoute(route: PublicAuthRoute, siteName: string): string {
   switch (route.kind) {
     case "auth-form":
@@ -148,7 +146,6 @@ export default function PublicAuthApp({
   const ssoStrategies =
     initialSSOStrategies ??
     (resolvedConfig?.strategies as PublicSSOStrategy[] | undefined);
-  const formSsoStrategies = ssoStrategies ?? EMPTY_SSO_STRATEGIES;
 
   useEffect(() => {
     setRoute(initialRoute);
@@ -215,7 +212,7 @@ export default function PublicAuthApp({
         {route.kind === "auth-form" && route.view === "sign-in" && (
           <PublicSignInForm
             cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
-            initialSSOStrategies={formSsoStrategies}
+            initialSSOStrategies={ssoStrategies}
             onNavigate={onNavigate}
             redirectToPath={redirectToPath}
           />
@@ -225,7 +222,7 @@ export default function PublicAuthApp({
             cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
             initialChallengeId={route.challengeId}
             initialInfo="Single sign-on succeeded. Enter your CoCalc second factor to finish signing in."
-            initialSSOStrategies={formSsoStrategies}
+            initialSSOStrategies={ssoStrategies}
             onNavigate={onNavigate}
             redirectToPath={redirectToPath}
           />
@@ -233,7 +230,7 @@ export default function PublicAuthApp({
         {route.kind === "auth-form" && route.view === "sign-up" && (
           <PublicSignUpForm
             cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
-            initialSSOStrategies={formSsoStrategies}
+            initialSSOStrategies={ssoStrategies}
             onNavigate={onNavigate}
             redirectToPath={redirectToPath}
             signupEmailDomainPolicy={
@@ -258,7 +255,7 @@ export default function PublicAuthApp({
             {!resolvedConfig?.is_authenticated ? (
               <PublicSignInForm
                 cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
-                initialSSOStrategies={formSsoStrategies}
+                initialSSOStrategies={ssoStrategies}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -276,7 +273,7 @@ export default function PublicAuthApp({
             {!resolvedConfig?.is_authenticated ? (
               <PublicSignInForm
                 cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
-                initialSSOStrategies={formSsoStrategies}
+                initialSSOStrategies={ssoStrategies}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -309,7 +306,7 @@ export default function PublicAuthApp({
             {!resolvedConfig?.is_authenticated ? (
               <PublicSignInForm
                 cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
-                initialSSOStrategies={formSsoStrategies}
+                initialSSOStrategies={ssoStrategies}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
