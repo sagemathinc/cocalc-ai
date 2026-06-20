@@ -356,6 +356,18 @@ Plus/Star/Launchpad`).
   `packages/static build:dev` passed, and browser QA passed on `/features/cli` and `/features`
   desktop/mobile (`68` assertions, `0` failures; screenshots in
   `/tmp/cocalc-public-qa-DD9BA7`). No PR. The paused Jupyter screenshot trial remains unexecuted.
+- **SYNC 2026-06-20 16:11 PDT:** Read `/home/user/cocalc-shared/working-agreement.md` and the
+  current shared coordination notes (`shipped-features-audit-2026-06-20.md`,
+  `agent-era-pitch-challenge-2026-06-20.md`, `products-framing-audit-2026-06-20.md`,
+  `chooser-grouping-spec-2026-06-20.md`). Operating agreement accepted: Codex acts/owns source,
+  tests, builds, `:9100`, commits, pushes, and this repo ledger; Claude audits read-only and writes
+  to `/home/user/cocalc-shared`; Blaec decides; no PRs unless explicitly asked. Verified synthesis
+  status: clean except untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`;
+  Claude's snapshot-script edit is reverted; preview owner remains synthesis hub pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`). Work queue now recorded as: hold CLI structural demotion
+  until the agent-era pitch challenge resolves; next candidates are whiteboard/slides copy cleanup
+  and dedicated-compute scoping, followed by products detail-page subtraction and the confirmed
+  5-products/3-operating-model chooser grouping. No source edit, build, commit, or PR for this sync.
 
 ### Codex — platform-UI thread
 
