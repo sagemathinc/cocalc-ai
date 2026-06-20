@@ -47,6 +47,35 @@ $SUDO chown -R "$(id -u):$(id -g)" "$prefix"
     --public-url "http://127.0.0.1:$frontend_port"
 )
 
+python3 - "$prefix/native/start-overleaf.sh" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+old = '''  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" >/dev/null 2>&1; then
+    echo "$name already running"
+    return
+  fi
+'''
+new = '''  if [[ -f "$pidfile" ]]; then
+    existing_pid="$(cat "$pidfile" 2>/dev/null || true)"
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      existing_cwd="$(readlink "/proc/$existing_pid/cwd" 2>/dev/null || true)"
+      expected_cwd="$(cd "$workdir" && pwd -P)"
+      if [[ "$existing_cwd" == "$expected_cwd" ]]; then
+        echo "$name already running"
+        return
+      fi
+    fi
+    rm -f "$pidfile"
+  fi
+'''
+if old not in text:
+    raise SystemExit("start-overleaf.sh start_service block changed")
+path.write_text(text.replace(old, new))
+PY
+
 $SUDO rm -rf "$prefix/.git"
 
 $SUDO tee /usr/local/bin/cocalc-overleaf >/dev/null <<EOF
