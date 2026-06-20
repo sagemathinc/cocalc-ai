@@ -24,6 +24,7 @@ import {
   parseRusticSnapshotsOutput,
   SubvolumeRustic,
 } from "./subvolume-rustic";
+import { clearBtrfsOperationCachesForTest } from "./operation-cache";
 
 describe("parseRusticSnapshotsOutput", () => {
   it("parses grouped rustic snapshot JSON", () => {
@@ -77,6 +78,7 @@ describe("parseRusticSnapshotsOutput", () => {
 
 describe("SubvolumeRustic.backup", () => {
   beforeEach(() => {
+    clearBtrfsOperationCachesForTest();
     btrfsMock = jest.fn(async () => undefined);
     sudoMock = jest.fn(async () => undefined);
     rusticHostMock = jest.fn();
@@ -235,5 +237,81 @@ describe("SubvolumeRustic.backup", () => {
       expect.arrayContaining(["--parent", "snap-parent"]),
       expect.any(Object),
     );
+  });
+
+  it("serializes concurrent backups on the same mount", async () => {
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      const wait = new Promise<void>((release) => {
+        releaseFirst = release;
+      });
+      backupFsRusticMock = jest.fn(async () => {
+        resolve();
+        await wait;
+        return {
+          stdout: Buffer.from(
+            JSON.stringify({
+              time: "2026-04-30T21:00:00.000Z",
+              id: "snap-1",
+              summary: { files_new: 1 },
+            }),
+          ),
+          stderr: Buffer.alloc(0),
+          code: 0,
+          truncated: false,
+        };
+      });
+    });
+    sandboxedFilesystemMock = jest.fn((_path, _opts) => ({
+      rustic: backupFsRusticMock,
+    }));
+
+    const rustic1 = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: {
+        opts: { mount: "/mnt/test" },
+      },
+      fs: {
+        rusticRepo: "/repo",
+        rustic: jest.fn(),
+      },
+    } as any);
+    const rustic2 = new SubvolumeRustic({
+      name: "project-2",
+      path: "/mnt/test/project-2",
+      filesystem: {
+        opts: { mount: "/mnt/test" },
+      },
+      fs: {
+        rusticRepo: "/repo",
+        rustic: jest.fn(),
+      },
+    } as any);
+
+    const first = rustic1.backup();
+    await firstStarted;
+    const second = rustic2.backup();
+    await Promise.resolve();
+
+    expect(backupFsRusticMock).toHaveBeenCalledTimes(1);
+    expect(btrfsMock).toHaveBeenCalledTimes(1);
+
+    backupFsRusticMock.mockImplementation(async () => ({
+      stdout: Buffer.from(
+        JSON.stringify({
+          time: "2026-04-30T22:00:00.000Z",
+          id: "snap-2",
+          summary: { files_new: 2 },
+        }),
+      ),
+      stderr: Buffer.alloc(0),
+      code: 0,
+      truncated: false,
+    }));
+    releaseFirst();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(backupFsRusticMock).toHaveBeenCalledTimes(2);
+    expect(btrfsMock).toHaveBeenCalledTimes(4);
   });
 });
