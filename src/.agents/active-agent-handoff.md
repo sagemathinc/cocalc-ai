@@ -48,42 +48,93 @@ Known risks:
 
 ## Current state (2026-06-18)
 
-### Claude — public-site thread
-- **Task (2026-06-19):** Design-sync wave 1 **DONE + uploaded** — 13 public-site components
-  live in the `CoCalc Design System` claude.ai/design project
-  (`cf9ec244-ae2b-43a4-9306-2c10894d83bc`), bundle slimmed 10.9MB→4.14MB. **PARKED** as a
-  proven experiment (user's call): 13 marketing primitives are too narrow to be a daily
-  tool, and CoCalc isn't design-system-first. **Returning to the landing site.**
-- **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` / `blaec-synthesis-2026-06-18`
-- **Preview owner this turn:** NO — Codex owns `blaec.cocalc.ai` (:9100, platform) for PR #72.
-  When site work resumes and needs the live preview, coordinate the handoff (stop platform
-  hub → start synthesis on :9100 → validate by content). The Stop-hook canary is now
-  ownership-aware (it SKIPs, not blocks, while another worktree owns :9100).
-- **Claimed files/routes:** none active. Design-sync all committed (barrel, DSProvider,
-  publishConfig, `.design-sync/{previews,config,overrides,NOTES}`, the `bundle.mjs` fork).
-- **Do not touch:** anything under `/home/user/cocalc-ai` (platform), `blaec2`, `blaec`.
-- **Last commit:** `5293aa47b2` (design-sync projectId pin).
-- **Next step:** pick the next landing-site task with the user (product/buyer pages loop, or
-  push the staged `public-site-pr` branch for William).
-- **Known risks:** clean PR branches `public-site-pr` (70 files) + `public-site-shells` are
-  staged off main, NOT pushed. Design-sync project stays on claude.ai/design for revisit anytime.
+### Claude — now ASSISTANT / observer (role change 2026-06-20)
+- **Role:** Codex now drives BOTH platform UI and the landing page; Claude is the personal
+  assistant — tracks Codex's work, reviews changes/images against the Brief on request, and
+  does NOT edit platform / `/tmp` worktrees (read-only via `git -C`). Editable home = this
+  synthesis worktree, only when Blaec assigns public-site work.
+- **VERIFIED REALITY 2026-06-20 (supersedes the stale lines in the Codex block below):**
+  - **:9100 preview HANDED to synthesis 2026-06-20** (Claude, at Blaec's instruction): stopped
+    the `public-site-pr-refresh` hub, rebuilt synthesis dist, started the synthesis hub (**pid
+    228054**, `/home/user/cocalc-ai-synthesis/src`); cloudflared up, `blaec.cocalc.ai` 200,
+    content canary 0 failures on / + /products. **CANONICAL landing-page branch =
+    `blaec-synthesis-2026-06-18`** — the only branch carrying the operating system (Brief,
+    /site-* commands, Stop hook, C1/D1 tests) AND the latest content; the clean PR for William
+    is re-sliced off `main` at the end. Re-verify owner each turn via `/proc` (NOT HTTP 200).
+  - **Codex recovered + very active:** 9 worktrees; open PRs **#96 / #97 / #98**; a **24-file
+    uncommitted pile** in `/home/user/cocalc-ai` that OVERLAPS files already on #96/#97/#98
+    (highest coordination risk — divergent versions / clobbers). The "session lost" note below
+    is historical.
+  - **Public-site forked across 3 branches:** `blaec-synthesis-2026-06-18` = content source of
+    truth (323 commits, **NO upstream → loss risk**); `public-site-pr` (clean staged);
+    `public-site-pr-refresh` (clean, SSO superset, serving :9100 but **LAGS the 06-19 synthesis
+    content**). Pick ONE canonical landing-page branch before deep work.
+  - **Launchpad/Rocket "merge":** NOT a hard merge — shipped state is keep-5-products,
+    group-as-3-operating-models (chooser intro `products/app.tsx:175-179`, commit `d30e9f0884`);
+    the Brief still lists 5 distinct paths. A full 4-card collapse is proposed but unexecuted +
+    gated on Blaec + William.
+- **Image hand-off:** `/home/user/cocalc-shared/` (created, empty) — Codex drops mockups/
+  screenshots there; Claude reads on request.
+- **Claude's last actions:** reverted its temporary app-server-card overlay from the platform
+  worktree; removed `/tmp/recover-wt`. Recovery branch `frontend/app-server-preset-card-compact`
+  (@ `254013663a` — card redesign + drop-Learn-more) is preserved but in NO worktree — tell
+  Codex it lives there so it isn't redone.
+
+### Codex — public-site driver (START 2026-06-20 12:30 PDT)
+- **Task:** take over public landing-site work under the synthesis operating system; read the
+  required guardrails/brief/workflow/skill files; verify preview ownership; do branch hygiene
+  before any new page edits.
+- **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` / `blaec-synthesis-2026-06-18`.
+- **Preview owner this turn:** YES. Verified hub pid `228054`, cwd
+  `/home/user/cocalc-ai-synthesis/src`; no second `build:dev` observed.
+- **Claimed files/routes:** `src/.agents/active-agent-handoff.md` only for this start ledger
+  update. No public route/content files claimed yet.
+- **Do not touch:** `/home/user/cocalc-ai` platform WIP, `/tmp/public-site-refresh-wt`,
+  `public-site-pr`, `public-site-pr-refresh`, or any public-site route until Blaec chooses the
+  first evidence-gated round.
+- **Validation required:** housekeeping/status audit only; no page build needed unless a source
+  edit follows.
+- **Last commit:** `fb87cbc1d1` (`frontend/public/products: drop the redundant closing section on
+  Plus/Star/Launchpad`).
+- **Open PRs:** `gh pr list --repo sagemathinc/cocalc-ai --state open` currently returns none from
+  this environment; prior ledger references #96/#97/#98, so treat PR status as a coordination risk
+  until re-confirmed with Blaec/Claude.
+- **Known risks:** branch has no upstream; `/home/user/cocalc-ai` still has 24 modified platform
+  files on `frontend/files-toolbar-tooltip-polish`; `gh` is authenticated as `williamstein`, so PR
+  authorship/attribution must be handled deliberately before any PR creation. Blaec explicitly
+  said: do not create PRs unless he explicitly asks for one.
+- **END 2026-06-20 12:32 PDT:** required guardrails/operating-system/brief/skill/ledger and
+  `/site-*` prompt templates read; preview ownership re-verified; branch backup pushed and upstream
+  set to `origin/blaec-synthesis-2026-06-18`; app-server preset-card recovery branch verified at
+  `254013663a`. Platform 24-file WIP was audited but not modified, because it is outside the
+  public-site lane and likely belongs to the existing platform PR stack. Next public-site round
+  should be chosen by Blaec; the most recent concrete landing-page issue is the `/features`
+  Automations card being too close to HTTPS Automations.
 
 ### Codex — platform-UI thread
 - **Task:** terminal/frame overflow menu cleanup — remove the repeated frame title
   from the `...` popover while preserving menu commands, toolbar actions, and
   frame controls.
 - **Worktree / Branch:** `/home/user/cocalc-ai` / `frontend/frame-overflow-title-cleanup`
-- **Preview owner this turn:** YES for platform UI verification. `blaec.cocalc.ai`
-  is currently served from `/home/user/cocalc-ai/src` by hub pid `149046`.
-- **Last commit (reported):** `33ece9767f` terminal/frame overflow menu title cleanup
-  on the clean PR branch.
-- **Open PR:** <https://github.com/sagemathinc/cocalc-ai/pull/72>
-- **Next step:** user verifies the terminal frame `...` menu on `blaec.cocalc.ai`.
-  After verification, either keep preview on platform for the next platform UI task
-  or explicitly hand it back to synthesis before public-site work resumes.
-- **Known risks:** synthesis public-site preview is not the current owner while this
-  verification is active. Do not assume `blaec.cocalc.ai` is showing public-site
-  changes until the hub cwd is switched back to `/home/user/cocalc-ai-synthesis/src`.
+- **Preview owner:** platform still owns `blaec.cocalc.ai` (:9100; hub pids 294/333,
+  cwd `/home/user/cocalc-ai/src`). Reclaim for synthesis before any live public-site preview.
+- **⚠️ Codex session lost (2026-06-19).** The interactive Codex conversation vanished. All
+  *committed* Codex work is intact on a long stack of pushed `frontend/*` branches (current
+  platform checkout `frontend/files-toolbar-tooltip-polish` @ `cf1cdfa654`, clean). The only
+  at-risk work was ONE uncommitted edit in the platform worktree — a `PresetSummaryCard`
+  redesign in `frontend/project/app-server-panel.tsx`.
+- **Recovery (Claude, at user's request):** committed the recovered edit to a clean branch
+  off `origin/main` (`frontend/app-server-preset-card-compact`). PR #91 was opened then
+  **CLOSED** — opening it without Blaec's per-change sign-off was premature (lesson recorded
+  in memory `explicit-approval-before-pr`). Blaec then chose "revise before any re-PR":
+  follow-up commit `254013663a` drops the card's off-platform "Learn more" link (it opened
+  third-party homepages in a new tab; functional links kept — running-app public URL, CoCalc
+  CLI download). Branch HEAD `254013663a`; prettier+oxlint clean; **NOT pushed**, awaiting
+  Blaec's approval to re-PR. Worktree re-added at `/tmp/recover-wt`; recovered patch also at
+  `/tmp/recover-app-server.patch`.
+- **Open PRs:** #72 (frame overflow menu, earlier). #91 is CLOSED.
+- **Known risks:** PR #91 not locally typechecked end-to-end (CI gates it). The rest of
+  Codex's `frontend/*` stack is pushed but its review/merge status is unknown to this thread.
 
 ---
 
