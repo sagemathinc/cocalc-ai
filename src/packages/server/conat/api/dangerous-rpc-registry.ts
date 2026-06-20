@@ -335,6 +335,18 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "aiSessions.adminList": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only diagnostic Codex session visibility",
+  },
+  "aiSessions.adminInterrupt": {
+    decision: "fresh-auth-required",
+    reason: "admin interruption of a Codex session",
+  },
+  "aiSessions.adminInterruptAll": {
+    decision: "fresh-auth-required",
+    reason: "admin bulk interruption of Codex sessions",
+  },
   "lro.cancel": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

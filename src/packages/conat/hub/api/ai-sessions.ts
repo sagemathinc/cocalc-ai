@@ -54,6 +54,10 @@ export interface AiSessionsListOptions {
   limit?: number;
 }
 
+export interface AiSessionsAdminListOptions extends AiSessionsListOptions {
+  target_account_id?: string;
+}
+
 export interface AiSessionIdentity {
   session_key?: string;
   session_id?: string;
@@ -91,6 +95,10 @@ export interface AiSessionInterruptAllOptions {
   note?: string;
 }
 
+export interface AiSessionAdminInterruptAllOptions extends AiSessionInterruptAllOptions {
+  target_account_id?: string;
+}
+
 export interface AiSessionInterruptAllResponse {
   total: number;
   terminal: number;
@@ -106,6 +114,13 @@ export interface AiSessionsApi {
   ) => Promise<AiSessionInterruptResponse>;
   interruptAll: (
     opts?: AiSessionInterruptAllOptions,
+  ) => Promise<AiSessionInterruptAllResponse>;
+  adminList: (opts?: AiSessionsAdminListOptions) => Promise<AiSessionRecord[]>;
+  adminInterrupt: (
+    opts: AiSessionInterruptOptions,
+  ) => Promise<AiSessionInterruptResponse>;
+  adminInterruptAll: (
+    opts?: AiSessionAdminInterruptAllOptions,
   ) => Promise<AiSessionInterruptAllResponse>;
 }
 
@@ -140,4 +155,7 @@ export const aiSessions = {
   list: authFirstRequireAccount,
   interrupt: authFirstRequireAccount,
   interruptAll: authFirstRequireAccount,
+  adminList: authFirstRequireAccount,
+  adminInterrupt: authFirstRequireAccount,
+  adminInterruptAll: authFirstRequireAccount,
 };

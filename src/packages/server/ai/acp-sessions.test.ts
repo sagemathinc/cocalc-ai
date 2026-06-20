@@ -5,7 +5,9 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
+  interruptAiSessionForAdmin,
   interruptAiSessionForAccount,
+  listAiSessionsForAdmin,
   listAiSessionsForAccount,
   markHostStoppedAiSessions,
   markStaleAiSessionsPossiblyActive,
@@ -265,5 +267,41 @@ describe("AI ACP session registry interrupts", () => {
         terminal: false,
       }),
     ]);
+  });
+
+  it("lets admins list sessions without narrowing to the caller account", async () => {
+    await seedSession();
+
+    await expect(listAiSessionsForAdmin()).resolves.toMatchObject([
+      expect.objectContaining({
+        session_key: "session-key",
+        account_id: ACCOUNT_ID,
+      }),
+    ]);
+  });
+
+  it("lets admins interrupt a session by global identity", async () => {
+    await seedSession();
+    mockInterruptAcp.mockResolvedValue({ ok: true, state: "interrupted" });
+
+    await expect(
+      interruptAiSessionForAdmin({
+        actor_account_id: "44444444-4444-4444-8444-444444444444",
+        session_key: "session-key",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      state: "interrupted",
+      terminal: true,
+      session_key: "session-key",
+    });
+
+    expect(mockInterruptAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "44444444-4444-4444-8444-444444444444",
+        project_id: PROJECT_ID,
+      }),
+      expect.anything(),
+    );
   });
 });
