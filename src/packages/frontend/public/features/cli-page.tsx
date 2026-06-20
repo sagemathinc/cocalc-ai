@@ -127,7 +127,7 @@ function CliFitSection() {
                 label: "Inspect browser tabs and workspace state when needed",
               },
               {
-                icon: "robot" as IconName,
+                icon: "gears" as IconName,
                 label: "Give agents typed actions they can run and report",
               },
             ]}

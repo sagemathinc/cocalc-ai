@@ -236,6 +236,17 @@ Plus/Star/Launchpad`).
   passing; browser QA on `/features` and `/features/cli` desktop/mobile `68` assertions, `0`
   failures before commit (`/tmp/cocalc-public-qa-zalVUg`) and after the post-commit rebuild
   (`/tmp/cocalc-public-qa-kl0j74`). Committed and pushed synthesis branch backup. No PR.
+- **START 2026-06-20 14:33 PDT:** Blaec flagged that the `/features/cli` context list uses a red
+  bug-looking icon for the agent item. Existing unrelated dirt remains the snapshot script and
+  untracked `dedicated-compute-page.tsx`; leaving both untouched. Claiming only the CLI page and
+  this ledger to replace that icon with a neutral CLI/control icon, rebuild, QA, commit, and push.
+  No PR.
+- **END 2026-06-20 14:35 PDT:** Replaced the CLI page agent-context `robot` icon with the neutral
+  `gears`/control icon so the row no longer reads as a red bug/error. Validation: prettier
+  passed, focused feature Jest `88/88` passing, `lint:frontend` passing, `git diff --check` clean,
+  `pnpm -C src/packages/static build:dev` passing, and browser QA on `/features/cli` and
+  `/features` desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-C6sGUU`).
+  No PR.
 
 ### Codex — platform-UI thread
 
