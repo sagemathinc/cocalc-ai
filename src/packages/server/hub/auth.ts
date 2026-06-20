@@ -81,6 +81,7 @@ import {
   googleProfileFromClaims,
   verifyGoogleIdToken,
 } from "@cocalc/server/auth/sso/google-oidc";
+import getAccountId from "@cocalc/server/auth/get-account";
 import {
   directSamlConfig,
   passportProfileFromSamlProfile,
@@ -139,6 +140,7 @@ interface HandleReturnOpts {
 interface GoogleOidcState {
   nonce: string;
   target?: string;
+  authenticatedAccountId?: string;
   termsAccepted?: boolean;
   marketingConsent?: boolean;
   registrationToken?: string;
@@ -765,6 +767,7 @@ export class PassportManager {
           const savedState: GoogleOidcState = {
             nonce,
             target: safeAuthTarget(req.query.target),
+            authenticatedAccountId: await getAccountId(req),
             termsAccepted: booleanQueryFlag(req.query.terms),
             marketingConsent: booleanQueryFlag(req.query.marketing_consent),
             registrationToken: stringQueryValue(req.query.registration_token),
@@ -844,6 +847,7 @@ export class PassportManager {
           update_on_login: strategy.info?.update_on_login ?? false,
           cookie_ttl_s: strategy.info?.cookie_ttl_s,
           target: savedState.target,
+          authenticated_account_id: savedState.authenticatedAccountId,
           terms_accepted: savedState.termsAccepted,
           marketing_consent: savedState.marketingConsent,
           registration_token: savedState.registrationToken,

@@ -4759,6 +4759,10 @@ export async function createHost({
   const owner = requireAccount(account_id);
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   await assertUserHostCreateAllowed({ account_id: owner });
+  assertProjectHostDiskTypeSupported({
+    cloud: machine?.cloud,
+    disk_type: machine?.disk_type,
+  });
   if (normalizeProviderId(machine?.cloud) === "self-host") {
     if (!(await isAdmin(owner))) {
       throw new Error("self-hosted hosts are limited to admins");
@@ -4801,6 +4805,20 @@ export async function createHost({
     defaultInterruptionRestorePolicy,
     parseRow,
   });
+}
+
+function assertProjectHostDiskTypeSupported({
+  cloud,
+  disk_type,
+}: {
+  cloud?: HostMachine["cloud"];
+  disk_type?: HostMachine["disk_type"];
+}) {
+  if (normalizeProviderId(cloud) === "gcp" && disk_type === "standard") {
+    throw new Error(
+      "GCP standard persistent disks are not supported for project hosts; use balanced or ssd",
+    );
+  }
 }
 
 async function createHostLro({
@@ -5716,6 +5734,10 @@ export async function updateHostMachine({
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
   const effectiveFundingCloud = requestedCloud ?? machineCloud;
+  assertProjectHostDiskTypeSupported({
+    cloud: effectiveFundingCloud,
+    disk_type: disk_type,
+  });
   if (
     (requestedCloud === "self-host" || machineCloud === "self-host") &&
     !(await isAdmin(owner))

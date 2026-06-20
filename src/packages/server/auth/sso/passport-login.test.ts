@@ -16,6 +16,7 @@ const restoreRedeemedRegistrationTokenMock = jest.fn();
 const setEmailAddressVerifiedMock = jest.fn();
 const assertSignupEmailDomainAllowedMock = jest.fn();
 const validateRegistrationTokenMock = jest.fn();
+const getEmailAddressMock = jest.fn();
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   assertNoClusterBannedEquivalentEmailAccount: jest.fn(),
@@ -35,6 +36,11 @@ jest.mock("@cocalc/server/accounts/security-state", () => ({
 jest.mock("@cocalc/server/accounts/signup-email-domain-policy", () => ({
   assertSignupEmailDomainAllowed: (...args: any[]) =>
     assertSignupEmailDomainAllowedMock(...args),
+}));
+
+jest.mock("../../accounts/get-email-address", () => ({
+  __esModule: true,
+  default: (...args: any[]) => getEmailAddressMock(...args),
 }));
 
 jest.mock("@cocalc/database/postgres/account/queries", () => ({
@@ -90,6 +96,7 @@ describe("PassportLogin SSO account creation", () => {
     ensureAccountSecurityStateReadyMock
       .mockReset()
       .mockResolvedValue(undefined);
+    getEmailAddressMock.mockReset().mockResolvedValue("ada@example.com");
     getEnabledSsoDomainPolicyForEmailMock.mockReset().mockResolvedValue(null);
     getRequiresRegistrationTokenMock.mockReset().mockResolvedValue(false);
     isAccountBannedCachedMock.mockReset().mockReturnValue(false);
@@ -218,6 +225,63 @@ describe("PassportLogin SSO account creation", () => {
     );
     expect(locals.account_id).toBe("11111111-1111-4111-8111-111111111111");
     expect(locals.new_account_created).toBe(true);
+  });
+
+  it("links Google to the authenticated account preserved in OAuth state", async () => {
+    const passportExistsMock = jest.fn().mockResolvedValue(undefined);
+    const accountExistsMock = jest.fn();
+    const { PassportLogin } = await import("./passport-login");
+    const opts = {
+      passports: {
+        google: {
+          strategy: "google",
+          conf: { type: "oidc" },
+          info: {},
+        },
+      },
+      database: {
+        account_exists: accountExistsMock,
+        create_passport: createPassportMock,
+        get_server_settings_cached: jest.fn(),
+        log: jest.fn(),
+        passport_exists: passportExistsMock,
+      },
+      strategyName: "google",
+      profile: {
+        id: "google-id",
+        email: "ada@example.com",
+        email_verified: true,
+      },
+      id: "google-id",
+      first_name: "Ada",
+      last_name: "Lovelace",
+      emails: ["ada@example.com"],
+      authenticated_account_id: "22222222-2222-4222-8222-222222222222",
+      req: { headers: {}, header: jest.fn() },
+      res: { send: jest.fn() },
+      update_on_login: false,
+      host: "",
+      site_url: "https://cocalc.test",
+    };
+    const login = new PassportLogin(opts as any);
+
+    await expect(login.login()).resolves.toBeUndefined();
+
+    expect(createPassportMock).toHaveBeenCalledWith({
+      account_id: "22222222-2222-4222-8222-222222222222",
+      strategy: "google",
+      id: "google-id",
+      profile: opts.profile,
+      email_address: "ada@example.com",
+      first_name: "Ada",
+      last_name: "Lovelace",
+    });
+    expect(accountExistsMock).not.toHaveBeenCalled();
+    expect(setEmailAddressVerifiedMock).toHaveBeenCalledWith({
+      db: opts.database,
+      account_id: "22222222-2222-4222-8222-222222222222",
+      email_address: "ada@example.com",
+    });
   });
 
   it("rejects SSO login for accounts banned in the replicated security cache", async () => {

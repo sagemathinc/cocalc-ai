@@ -22,6 +22,7 @@ export interface PassportLoginOpts {
   host: string;
   site_url: string;
   target?: string;
+  authenticated_account_id?: string;
   terms_accepted?: boolean;
   marketing_consent?: boolean;
   registration_token?: string;

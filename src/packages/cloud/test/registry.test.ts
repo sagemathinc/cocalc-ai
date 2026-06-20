@@ -16,6 +16,11 @@ describe("cloud registry", () => {
         (entry) => entry.value === "balanced",
       )?.durability,
     ).toBe("replicated");
+    expect(
+      PROVIDERS.gcp?.capabilities.sharedScratchDisk?.disk_types.map(
+        (entry) => entry.value,
+      ),
+    ).not.toContain("standard");
     expect(PROVIDERS.nebius?.capabilities.sharedScratchDisk).toMatchObject({
       supported: true,
       growable: true,

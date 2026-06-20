@@ -14,6 +14,7 @@ ROOTFS_CACHE_ARTIFACT="${COCALC_STAR_DOCKER_ROOTFS_CACHE_ARTIFACT:-}"
 CACHE_BTRFS_SIZE="${COCALC_STAR_DOCKER_CACHE_BTRFS_SIZE:-20G}"
 BUILD_ROOTFS_CACHE_ALLOW_DEGRADED="${COCALC_STAR_DOCKER_CACHE_ALLOW_DEGRADED:-1}"
 DOCKER="${DOCKER:-docker}"
+CONTEXT_ROOT="${COCALC_STAR_DOCKER_CONTEXT_ROOT:-${REPO_ROOT}/dist/star/docker-preview}"
 KEEP_CONTEXT=0
 
 log() {
@@ -53,6 +54,7 @@ Environment:
   COCALC_STAR_DOCKER_ROOTFS_CACHE_ARTIFACT
   COCALC_STAR_DOCKER_CACHE_BTRFS_SIZE=20G
   COCALC_STAR_DOCKER_CACHE_ALLOW_DEGRADED=1
+  COCALC_STAR_DOCKER_CONTEXT_ROOT
 
 The generated image expects rootful Docker and systemd support at runtime, e.g.
 
@@ -171,7 +173,8 @@ make_context() {
   if [[ -n "$context" && "$KEEP_CONTEXT" -ne 1 ]]; then
     rm -rf "$context"
   fi
-  context="$(mktemp -d)"
+  mkdir -p "$CONTEXT_ROOT"
+  context="$(mktemp -d "${CONTEXT_ROOT}/docker-context.XXXXXX")"
   cp "$SCRIPT_DIR/Dockerfile" "$context/Dockerfile"
   cp "$SCRIPT_DIR/cocalc-star-docker-preflight.sh" "$context/cocalc-star-docker-preflight.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-init.sh" "$context/cocalc-star-docker-init.sh"

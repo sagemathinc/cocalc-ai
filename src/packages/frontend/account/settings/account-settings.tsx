@@ -29,6 +29,7 @@ import {
   SettingBox,
   TimeAgo,
 } from "@cocalc/frontend/components";
+import GoogleLogo from "@cocalc/frontend/components/google-logo";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import api from "@cocalc/frontend/client/api";
@@ -41,6 +42,7 @@ import {
 } from "@cocalc/frontend/passports";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { keys, startswith } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import {
   FreshAuthModal,
@@ -61,6 +63,20 @@ type PublicSsoStrategy = {
   exclusiveDomains?: string[];
   doNotHide?: boolean;
 };
+
+const GOOGLE_ACCOUNT_BUTTON_STYLE = {
+  background: "white",
+  borderColor: "#ccc",
+  boxShadow: "none",
+  color: COLORS.GRAY_D,
+  fontWeight: 600,
+} as const;
+
+const GOOGLE_ACCOUNT_BUTTON_CONTENT_STYLE = {
+  alignItems: "center",
+  display: "inline-flex",
+  gap: "8px",
+} as const;
 
 interface Props {
   account_id?: string;
@@ -149,7 +165,7 @@ export function AccountSettings(props: Readonly<Props>) {
       <Card size="small">
         <Flex vertical gap="middle">
           <Typography.Title level={4}>
-            <PassportStrategyIcon strategy={strategy_js} /> {name}
+            {renderStrategyIcon(strategy_js)} {name}
           </Typography.Title>
           <Typography.Paragraph>
             Link to your {name} account, so you can use {name} to login to your{" "}
@@ -194,7 +210,7 @@ export function AccountSettings(props: Readonly<Props>) {
       await runFreshAuthAction(async () => {
         await webapp_client.account_client.unlink_passport(strategy, id);
       });
-      // console.log("ret:", x);
+      set_account_table({ passports: { [`${strategy}-${id}`]: null } });
     } catch (err) {
       ugly_error(err);
     }
@@ -238,7 +254,7 @@ export function AccountSettings(props: Readonly<Props>) {
         <Card size="small">
           <Flex vertical gap="middle">
             <Typography.Title level={4}>
-              <PassportStrategyIcon strategy={strategy_js} /> {name}
+              {renderStrategyIcon(strategy_js)} {name}
             </Typography.Title>
             <Typography.Paragraph>
               Your <SiteName /> account is linked to your {name} account, so you
@@ -267,6 +283,7 @@ export function AccountSettings(props: Readonly<Props>) {
     account_passports: string[],
   ): Rendered {
     if (strategy.get("name") !== "email") {
+      const strategyName = strategy.get("name");
       const is_configured = account_passports.includes(strategy.get("name"));
       const strategy_js = strategy.toJS();
       const btn = (
@@ -281,10 +298,14 @@ export function AccountSettings(props: Readonly<Props>) {
             }
           }}
           key={strategy.get("name")}
-          type={is_configured ? "primary" : "default"}
+          style={
+            strategyName === "google" ? GOOGLE_ACCOUNT_BUTTON_STYLE : undefined
+          }
+          type={
+            is_configured && strategyName !== "google" ? "primary" : "default"
+          }
         >
-          <PassportStrategyIcon strategy={strategy_js} small={true} />{" "}
-          {strategy2display(strategy_js)}
+          {renderStrategyButtonContents(strategy_js)}
         </Button>
       );
       return btn;
@@ -510,6 +531,30 @@ function ssoStrategyToPassportStrategy(
     exclusive_domains: strategy.exclusiveDomains,
     do_not_hide: strategy.doNotHide,
   }) as unknown as ImmutablePassportStrategy;
+}
+
+function renderStrategyButtonContents(strategy: PassportStrategyFrontend) {
+  if (strategy.name === "google") {
+    return (
+      <span style={GOOGLE_ACCOUNT_BUTTON_CONTENT_STYLE}>
+        <GoogleLogo size={18} />
+        <span>{strategy2display(strategy)}</span>
+      </span>
+    );
+  }
+  return (
+    <>
+      <PassportStrategyIcon strategy={strategy} small={true} />{" "}
+      {strategy2display(strategy)}
+    </>
+  );
+}
+
+function renderStrategyIcon(strategy: PassportStrategyFrontend) {
+  if (strategy.name === "google") {
+    return <GoogleLogo size={24} />;
+  }
+  return <PassportStrategyIcon strategy={strategy} />;
 }
 
 function mergeStrategies(
