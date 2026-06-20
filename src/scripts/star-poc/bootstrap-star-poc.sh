@@ -632,6 +632,16 @@ build_default_rootfs_image() {
   case "$build_image" in
     containers-storage:*) build_image="${build_image#containers-storage:}" ;;
   esac
+  local isolation_arg=""
+  case "${STAR_DEFAULT_ROOTFS_BUILD_ISOLATION:-}" in
+    "") ;;
+    chroot | oci | rootless)
+      isolation_arg="--isolation=${STAR_DEFAULT_ROOTFS_BUILD_ISOLATION}"
+      ;;
+    *)
+      die "invalid STAR_DEFAULT_ROOTFS_BUILD_ISOLATION: ${STAR_DEFAULT_ROOTFS_BUILD_ISOLATION}"
+      ;;
+  esac
 
   local containerfile="${STAR_ROOT}/default-rootfs.Containerfile"
   cat >"$containerfile" <<EOF
@@ -698,7 +708,7 @@ RUN apt-get update \\
   && rm -rf /var/lib/apt/lists/*
 EOF
   chown "$STAR_USER:$STAR_USER" "$containerfile"
-  as_star_user "existing_version=\"\$(podman image inspect '$build_image' --format '{{ index .Config.Labels \"com.cocalc.star.default_rootfs_version\" }}' 2>/dev/null || true)\"; if [ \"\$existing_version\" = '$STAR_DEFAULT_ROOTFS_VERSION' ]; then exit 0; fi; if [ -n \"\$existing_version\" ]; then podman rmi -f '$build_image' >/dev/null 2>&1 || true; fi; podman build --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
+  as_star_user "existing_version=\"\$(podman image inspect '$build_image' --format '{{ index .Config.Labels \"com.cocalc.star.default_rootfs_version\" }}' 2>/dev/null || true)\"; if [ \"\$existing_version\" = '$STAR_DEFAULT_ROOTFS_VERSION' ]; then exit 0; fi; if [ -n \"\$existing_version\" ]; then podman rmi -f '$build_image' >/dev/null 2>&1 || true; fi; podman build ${isolation_arg} --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
 }
 
 unpack_prebuilt_rootfs_cache() {

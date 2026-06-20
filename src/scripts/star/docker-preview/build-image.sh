@@ -13,6 +13,9 @@ BUILD_ROOTFS_CACHE="${COCALC_STAR_DOCKER_BUILD_ROOTFS_CACHE:-1}"
 ROOTFS_CACHE_ARTIFACT="${COCALC_STAR_DOCKER_ROOTFS_CACHE_ARTIFACT:-}"
 CACHE_BTRFS_SIZE="${COCALC_STAR_DOCKER_CACHE_BTRFS_SIZE:-20G}"
 BUILD_ROOTFS_CACHE_ALLOW_DEGRADED="${COCALC_STAR_DOCKER_CACHE_ALLOW_DEGRADED:-1}"
+ROOTFS_BASE_IMAGE="${COCALC_STAR_DOCKER_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
+ROOTFS_VERSION="${COCALC_STAR_DOCKER_ROOTFS_VERSION:-20260609-python-venv}"
+ROOTFS_IMAGE_NAME="${COCALC_STAR_DOCKER_ROOTFS_IMAGE_NAME:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 DOCKER="${DOCKER:-docker}"
 CONTEXT_ROOT="${COCALC_STAR_DOCKER_CONTEXT_ROOT:-${REPO_ROOT}/dist/star/docker-preview}"
 KEEP_CONTEXT=0
@@ -196,6 +199,23 @@ build_image() {
   docker_cli build -t "$tag" "$context"
 }
 
+dump_builder_diagnostics() {
+  local container="$1"
+  log "RootFS cache builder diagnostics for $container"
+  log "--- docker logs: $container ---"
+  docker_cli logs "$container" 2>&1 || true
+  log "--- cocalc-star-docker-init log ---"
+  docker_cli exec "$container" tail -n 400 /var/log/cocalc-star-docker-init.log 2>&1 || true
+  log "--- systemd unit status ---"
+  docker_cli exec "$container" systemctl status cocalc-star-docker-init.service --no-pager 2>&1 || true
+  log "--- systemd unit journal ---"
+  docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 400 --no-pager 2>&1 || true
+  log "--- rootfs build containerfile ---"
+  docker_cli exec "$container" sed -n '1,220p' /var/lib/cocalc/star/default-rootfs.Containerfile 2>&1 || true
+  log "--- podman state ---"
+  docker_cli exec "$container" sudo -u cocalc-star bash -lc 'podman ps -a && podman images' 2>&1 || true
+}
+
 wait_for_builder_container() {
   local container="$1"
   local deadline=$((SECONDS + 2400))
@@ -208,7 +228,7 @@ wait_for_builder_container() {
       return 0
     fi
     if [[ -n "$result" && "$result" != "success" ]]; then
-      docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+      dump_builder_diagnostics "$container"
       die "RootFS cache builder failed: systemd result=$result"
     fi
     if ((SECONDS - last_log >= 30)); then
@@ -217,44 +237,144 @@ wait_for_builder_container() {
     fi
     sleep 5
   done
-  docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+  dump_builder_diagnostics "$container"
   die "RootFS cache builder timed out"
 }
 
 build_rootfs_cache_artifact() {
   local output="$1"
-  local suffix container volume temp_tag
+  local suffix rootfs_context rootfs_tag rootfs_container packer volume
   suffix="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  container="cocalc-star-rootfs-cache-${suffix}"
-  volume="cocalc-star-rootfs-cache-${suffix}"
-  temp_tag="cocalc-star-rootfs-cache-builder:${suffix}"
-
-  build_image "$temp_tag" ""
-  log "running RootFS cache builder container $container"
-  docker_cli run -d \
-    --name "$container" \
-    --privileged \
-    --cgroupns=host \
-    --security-opt seccomp=unconfined \
-    --tmpfs /run \
-    --tmpfs /run/lock \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-    -v "${volume}:/var/lib/cocalc" \
-    -e COCALC_STAR_BTRFS_SIZE="$CACHE_BTRFS_SIZE" \
-    -e COCALC_STAR_DOCKER_ALLOW_DEGRADED="$BUILD_ROOTFS_CACHE_ALLOW_DEGRADED" \
-    "$temp_tag" >/dev/null
+  mkdir -p "$CONTEXT_ROOT"
+  rootfs_context="$(mktemp -d "${CONTEXT_ROOT}/rootfs-context.XXXXXX")"
+  rootfs_tag="cocalc-star-rootfs-cache-source:${suffix}"
+  rootfs_container="cocalc-star-rootfs-cache-source-${suffix}"
+  packer="cocalc-star-rootfs-cache-pack-${suffix}"
+  volume="cocalc-star-rootfs-cache-pack-${suffix}"
 
   cleanup_builder() {
-    docker_cli rm -f "$container" >/dev/null 2>&1 || true
+    docker_cli rm -f "$rootfs_container" >/dev/null 2>&1 || true
+    docker_cli rm -f "$packer" >/dev/null 2>&1 || true
     docker_cli volume rm "$volume" >/dev/null 2>&1 || true
-    docker_cli image rm "$temp_tag" >/dev/null 2>&1 || true
+    docker_cli image rm "$rootfs_tag" >/dev/null 2>&1 || true
+    rm -rf "$rootfs_context"
   }
   trap 'cleanup_builder; cleanup' EXIT
 
-  wait_for_builder_container "$container"
-  log "exporting prebuilt RootFS cache to $output"
-  docker_cli exec "$container" tar --numeric-owner -C /mnt/cocalc/data/cache/images -czf /tmp/cocalc-star-rootfs-cache.tar.gz .
-  docker_cli cp "${container}:/tmp/cocalc-star-rootfs-cache.tar.gz" "$output"
+  cat >"$rootfs_context/Dockerfile" <<EOF
+FROM ${ROOTFS_BASE_IMAGE}
+
+LABEL com.cocalc.star.default_rootfs_version="${ROOTFS_VERSION}"
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \\
+  && apt-get install -y --no-install-recommends \\
+    bash \\
+    ca-certificates \\
+    curl \\
+    git \\
+    latexmk \\
+    less \\
+    libatomic1 \\
+    openssh-client \\
+    procps \\
+    python3 \\
+    python3-pip \\
+    python3-venv \\
+    sudo \\
+    texlive-fonts-recommended \\
+    texlive-latex-base \\
+    texlive-latex-recommended \\
+    wget \\
+  && python3 -m venv /opt/cocalc-jupyter \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir \\
+    ipykernel \\
+    ipywidgets \\
+    jupyterlab \\
+    matplotlib \\
+    notebook \\
+    numpy \\
+    pandas \\
+    scipy \\
+    scikit-learn \\
+    sympy \\
+    uv \\
+  && /opt/cocalc-jupyter/bin/python -m ipykernel install --prefix=/usr/local --name python3 \\
+  && ln -s /opt/cocalc-jupyter/bin/python /usr/local/bin/python \\
+  && ln -s /opt/cocalc-jupyter/bin/python /usr/local/bin/python3 \\
+  && ln -s /opt/cocalc-jupyter/bin/pip /usr/local/bin/pip \\
+  && ln -s /opt/cocalc-jupyter/bin/pip /usr/local/bin/pip3 \\
+  && ln -s /opt/cocalc-jupyter/bin/uv /usr/local/bin/uv \\
+  && ln -s /opt/cocalc-jupyter/bin/jupyter /usr/local/bin/jupyter \\
+  && ln -s /opt/cocalc-jupyter/bin/jupyter-lab /usr/local/bin/jupyter-lab \\
+  && ln -s /opt/cocalc-jupyter/bin/jupyter-notebook /usr/local/bin/jupyter-notebook \\
+  && chown -R 2001:2001 /opt/cocalc-jupyter \\
+  && mkdir -p \\
+    /home/user \\
+    /scratch \\
+    /run/secrets/cocalc \\
+    /opt/cocalc/bin \\
+    /opt/cocalc/bin2 \\
+    /opt/cocalc/lib \\
+    /opt/cocalc/runtime-lib \\
+    /opt/cocalc/src \\
+    /opt/cocalc/project-bundle \\
+    /opt/cocalc/project-bundles \\
+  && chmod 0755 /home/user /scratch /run/secrets /run/secrets/cocalc /opt/cocalc \\
+  && rm -rf /var/lib/apt/lists/*
+EOF
+
+  log "building RootFS cache source image $rootfs_tag"
+  docker_cli build --pull=always -t "$rootfs_tag" "$rootfs_context"
+  docker_cli create --name "$rootfs_container" "$rootfs_tag" >/dev/null
+
+  local cache_key metadata_path inspect_path
+  cache_key="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$ROOTFS_IMAGE_NAME")"
+  metadata_path="${rootfs_context}/normalized.json"
+  inspect_path="${rootfs_context}/inspect.json"
+  docker_cli image inspect "$rootfs_tag" --format '{{json .}}' >"$inspect_path"
+  node - "$metadata_path" "$ROOTFS_IMAGE_NAME" "$cache_key" <<'EOF'
+const fs = require("fs");
+const [file, image, cacheKey] = process.argv.slice(2);
+fs.writeFileSync(
+  file,
+  `${JSON.stringify(
+    {
+      version: 11,
+      normalized_at: new Date().toISOString(),
+      image,
+      rootfs_path: `/mnt/cocalc/data/cache/images/${cacheKey}`,
+      distro_family: "debian",
+      package_manager: "apt-get",
+      shell: "/bin/bash",
+      glibc: true,
+      sudo_present: true,
+      ca_certificates_present: true,
+    },
+    null,
+    2,
+  )}\n`,
+);
+EOF
+
+  docker_cli pull ubuntu:24.04 >/dev/null
+  docker_cli create --name "$packer" -v "${volume}:/cache" ubuntu:24.04 sleep infinity >/dev/null
+  docker_cli start "$packer" >/dev/null
+  docker_cli export "$rootfs_container" | docker_cli exec -i "$packer" sh -c 'cat >/tmp/rootfs.tar'
+  docker_cli cp "$inspect_path" "${packer}:/tmp/inspect.json"
+  docker_cli cp "$metadata_path" "${packer}:/tmp/normalized.json"
+  log "packing prebuilt RootFS cache artifact $output"
+  docker_cli exec "$packer" bash -lc '
+set -euo pipefail
+cache_key="$1"
+mkdir -p "/cache/images/${cache_key}"
+tar --numeric-owner -C "/cache/images/${cache_key}" -xf /tmp/rootfs.tar
+cp /tmp/inspect.json "/cache/images/.${cache_key}.json"
+cp /tmp/normalized.json "/cache/images/.${cache_key}.normalized.json"
+tar --numeric-owner -C /cache/images -czf /tmp/cocalc-star-rootfs-cache.tar.gz .
+' _ "$cache_key"
+  docker_cli cp "${packer}:/tmp/cocalc-star-rootfs-cache.tar.gz" "$output"
   cleanup_builder
   trap cleanup EXIT
 }
