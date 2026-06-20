@@ -20,6 +20,7 @@ interface Props {
   file_search: string;
   current_path: string;
   project_id: string;
+  canCreateFiles?: boolean;
   openUploadFiles?: () => void;
 }
 
@@ -27,6 +28,7 @@ export default function NoFiles({
   file_search = "",
   current_path,
   project_id,
+  canCreateFiles = true,
   openUploadFiles,
 }: Props) {
   let actions:
@@ -143,6 +145,7 @@ export default function NoFiles({
       openNewPage={openNewPage}
       createFile={createFile}
       aiAllowed={aiAllowed}
+      canCreateFiles={canCreateFiles}
       openUploadFiles={openUploadFiles}
     />
   );
@@ -152,11 +155,13 @@ function EmptyDirectoryWelcome({
   createFile,
   openNewPage,
   aiAllowed,
+  canCreateFiles,
   openUploadFiles,
 }: {
   createFile: (ext: string) => void;
   openNewPage: () => void;
   aiAllowed: boolean;
+  canCreateFiles: boolean;
   openUploadFiles?: () => void;
 }) {
   const [showMoreFileTypes, setShowMoreFileTypes] = useState(false);
@@ -225,9 +230,11 @@ function EmptyDirectoryWelcome({
     {
       title: "More",
       description: "File types",
-      tooltip: "Choose from more file types without leaving this page.",
+      tooltip: canCreateFiles
+        ? "Choose from more file types without leaving this page."
+        : "Open the guarded file creator for more file types.",
       icon: "plus-circle",
-      onClick: () => setShowMoreFileTypes(true),
+      onClick: canCreateFiles ? () => setShowMoreFileTypes(true) : openNewPage,
     },
   ];
 

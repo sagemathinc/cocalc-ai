@@ -226,6 +226,34 @@ describe("NoFiles", () => {
     expect(setActiveTab).not.toHaveBeenCalled();
   });
 
+  it("routes More file types through the guarded New page when creation is read-only", () => {
+    const askFilename = jest.fn();
+    const setActiveTab = jest.fn();
+    const setCurrentPath = jest.fn();
+    getProjectActionsMock.mockReturnValue({
+      ask_filename: askFilename,
+      setState: jest.fn(),
+      set_active_tab: setActiveTab,
+      set_current_path: setCurrentPath,
+      set_file_search: jest.fn(),
+    });
+
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+        canCreateFiles={false}
+      />,
+    );
+    fireEvent.click(screen.getByText("More"));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
+    expect(setActiveTab).toHaveBeenCalledWith("new");
+    expect(askFilename).not.toHaveBeenCalled();
+  });
+
   it("uses the existing filename prompt for first-run quick actions", () => {
     const askFilename = jest.fn();
     const setCurrentPath = jest.fn();
