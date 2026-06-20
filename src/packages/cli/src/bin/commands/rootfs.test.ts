@@ -629,7 +629,11 @@ test("rootfs recipe explain resolves local modules", async () => {
 test("rootfs recipe ls lists bundled examples and modules", () => {
   const result = listRootfsRecipes(join(process.cwd(), "../rootfs-recipes"));
   assert.ok(result.examples.some((recipe) => recipe.name === "cocalc-base"));
+  assert.ok(result.examples.some((recipe) => recipe.name === "code-server"));
   assert.ok(result.examples.some((recipe) => recipe.name === "ml-pytorch-gpu"));
+  assert.ok(
+    result.modules.some((module) => module.id === "cocalc/code-server"),
+  );
   assert.ok(
     result.modules.some((module) => module.id === "cocalc/jupyter-python"),
   );
@@ -693,6 +697,31 @@ test("rootfs recipe explain resolves bundled recipe examples by name", async () 
   assert.equal(harness.captured.recipe, "cocalc-base");
   assert.equal(harness.captured.steps[2].uses, "cocalc/jupyter-python");
   assert.equal(harness.captured.publish.slug, "cocalc-minimal-base");
+});
+
+test("rootfs recipe explain parses bundled code-server recipe", async () => {
+  const harness = rootfsDeps();
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "explain",
+    "code-server",
+  ]);
+
+  assert.equal(harness.captured.recipe, "code-server");
+  assert.equal(harness.captured.steps[0].uses, "cocalc/apt");
+  assert.equal(harness.captured.steps[1].uses, "cocalc/code-server");
+  assert.equal(harness.captured.steps[1].inputs.prefix, "/opt/code-server");
+  assert.equal(harness.captured.publish.slug, "code-server");
+  assert.equal(
+    harness.captured.steps[1].contributes.content.actions[1].app_spec.id,
+    "code-server",
+  );
 });
 
 test("rootfs recipe explain treats bundled modules as one-step recipes", async () => {

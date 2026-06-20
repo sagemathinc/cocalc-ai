@@ -1,0 +1,23 @@
+version: 1
+name: r
+
+steps:
+  - uses: cocalc/r
+    timeout: 1800
+
+verify:
+  - command -v R
+  - Rscript --vanilla -e 'stopifnot(requireNamespace("IRkernel", quietly=TRUE))'
+
+publish:
+  label: R
+  slug: r
+  description: R with common development libraries and an IRkernel Jupyter kernel.
+  family: r
+  version: stable
+  channel: stable
+  visibility: public
+  tags:
+    - r
+    - statistics
+    - jupyter

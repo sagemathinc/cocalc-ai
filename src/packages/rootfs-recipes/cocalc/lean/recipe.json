@@ -1,0 +1,37 @@
+{
+  "id": "cocalc/lean",
+  "version": 1,
+  "description": "Install Lean 4 using elan and expose lean, lake, and elan on PATH.",
+  "inputs": {
+    "toolchain": { "type": "string", "default": "leanprover/lean4:stable" },
+    "prefix": { "type": "string", "default": "/opt/elan" },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "lean",
+      "tags": ["lean", "theorem-proving", "lake"]
+    },
+    "theme": {
+      "icon": "check-square",
+      "color": "#ffffff",
+      "accent_color": "#64748b"
+    },
+    "content": {
+      "version": 1,
+      "title": "Lean",
+      "subtitle": "Lean 4 theorem prover installed with elan.",
+      "highlights": ["Lean 4", "elan", "lake"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "Lean documentation",
+          "url": "https://lean-lang.org/documentation/"
+        }
+      ]
+    }
+  }
+}

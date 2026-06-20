@@ -1,0 +1,21 @@
+version: 1
+name: content-actions
+
+steps:
+  - uses: cocalc/content-actions
+    timeout: 120
+
+verify:
+  - test -f /opt/cocalc-content-actions/examples/hello.txt
+
+publish:
+  label: RootFS content actions
+  slug: content-actions
+  description: A small RootFS fixture with external-link, open, browse, and copy actions.
+  family: content-actions
+  version: "1"
+  channel: stable
+  visibility: public
+  tags:
+    - rootfs-actions
+    - examples

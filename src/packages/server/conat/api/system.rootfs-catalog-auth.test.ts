@@ -244,6 +244,8 @@ describe("RootFS catalog dangerous-session auth", () => {
       browser_id: "browser-1",
       project_id: "project-1",
       label: "Published RootFS",
+      slug: "published-rootfs",
+      visibility: "public",
       switch_project: true,
     });
 
@@ -262,6 +264,8 @@ describe("RootFS catalog dangerous-session auth", () => {
         input: expect.objectContaining({
           project_id: "project-1",
           label: "Published RootFS",
+          slug: "published-rootfs",
+          visibility: "public",
           switch_project: true,
         }),
       }),

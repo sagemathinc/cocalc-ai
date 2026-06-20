@@ -1,0 +1,27 @@
+version: 1
+name: sagemath
+
+builder:
+  run_quota:
+    disk_quota: 80000
+
+steps:
+  - uses: cocalc/sagemath
+    timeout: 7200
+
+verify:
+  - command -v sage
+  - sage -c 'from sage.all import ZZ; assert ZZ(2) + ZZ(2) == 4'
+
+publish:
+  label: SageMath
+  slug: sagemath
+  description: SageMath from Ubuntu packages with Jupyter integration when available.
+  family: sagemath
+  version: apt
+  channel: stable
+  visibility: public
+  tags:
+    - sagemath
+    - math
+    - jupyter

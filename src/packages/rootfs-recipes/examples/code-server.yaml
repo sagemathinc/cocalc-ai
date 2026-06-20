@@ -1,0 +1,33 @@
+version: 1
+name: code-server
+
+steps:
+  - uses: cocalc/apt
+    with:
+      packages:
+        - ca-certificates
+        - curl
+        - tar
+
+  - uses: cocalc/code-server
+    with:
+      prefix: /opt/code-server
+      version: latest
+    timeout: 900
+
+verify:
+  - command -v code-server
+  - code-server --version
+
+publish:
+  label: code-server
+  slug: code-server
+  description: VS Code in the browser via code-server, installed into the RootFS with a CoCalc app launcher.
+  family: code-server
+  version: "latest"
+  channel: stable
+  visibility: collaborators
+  tags:
+    - code-server
+    - vscode
+    - ide
