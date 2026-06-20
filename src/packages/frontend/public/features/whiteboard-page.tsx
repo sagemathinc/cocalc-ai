@@ -280,21 +280,10 @@ export default function WhiteboardFeaturePage({
                 Whiteboards and slides for math, code, and collaboration.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                CoCalc whiteboards cover the essential collaborative canvas
-                workflow, but are shaped around technical material: editable
-                explanations, KaTeX math, Jupyter cells, pages, frames, and
-                drawings. The same canvas can also become slide-sized pages for
-                talks, lectures, demos, and walkthroughs.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                They suit research and engineering work as much as teaching,
-                wherever code and math should be editable parts of the board
-                rather than pasted screenshots.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Because the board lives in the project, the math, code, and
-                explanations stay together — so collaborators can see how an
-                idea developed and pick it back up later.
+                Use a shared canvas for editable math, Jupyter cells, diagrams,
+                and slide-sized pages. Everything lives in the project, so
+                collaborators keep the code, explanations, and presentation
+                together.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

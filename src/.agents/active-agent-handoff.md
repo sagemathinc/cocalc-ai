@@ -165,6 +165,18 @@ Plus/Star/Launchpad`).
   passed on `/features/whiteboard` and `/features/slides` (33 assertions / 0 failures), and
   desktop and mobile screenshots were reviewed from `/tmp/cocalc-public-qa-r2IXlu` and
   `/tmp/cocalc-public-qa-Z13Ovs`. No PR created.
+- **START 2026-06-20 13:50 PDT:** Blaec flagged the `/features/whiteboard` hero body as too much
+  text. Verified clean branch at `34df9c8f39`, synthesis hub still owns preview pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`), and no active build. Claiming only
+  `src/packages/frontend/public/features/whiteboard-page.tsx` plus this ledger to shorten the hero
+  copy, rebuild, verify, commit, and push. No PR.
+- **END 2026-06-20 13:52 PDT:** shortened the `/features/whiteboard` hero body from three
+  paragraphs to one compact two-sentence paragraph. Validation: prettier passed, focused feature
+  Jest passed (86 tests; existing React/AntD jsdom warnings), `lint:frontend` passed,
+  `packages/static build:dev` passed, browser QA passed on `/features/whiteboard` in desktop and
+  mobile (17 assertions each / 0 failures), and the desktop screenshot
+  `/tmp/cocalc-public-qa-yZXkFz/features-whiteboard-desktop-full.png` was reviewed for reduced
+  first-screen density. No PR created.
 
 ### Codex — platform-UI thread
 
