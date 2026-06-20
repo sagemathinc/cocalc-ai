@@ -163,6 +163,10 @@ describe("ChatInput send lifecycle regressions", () => {
       lastMarkdownInputProps.onModeChange("markdown");
     });
     expect(lastMarkdownInputProps.modeSwitchRightContent).toBeTruthy();
+    const trigger =
+      lastMarkdownInputProps.modeSwitchRightContent.props.children;
+    expect(trigger.props["aria-label"]).toBe("Markdown help");
+    expect(trigger.props.children.props.name).toBe("info-circle");
   });
 
   it("routes ctrl-enter through the immediate callback when provided", () => {
