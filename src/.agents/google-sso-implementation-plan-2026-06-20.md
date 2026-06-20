@@ -530,6 +530,7 @@ Recommendation:
 
 - Yes, if implementation is not too invasive. It matches user expectations on
   `/auth/sign-up`.
+  - USER:  it's currently a setting in the admin settings dropdown, but I do NOT like the current setup:  <img src="/blobs/paste-i2q7go5kh7.png?uuid=76cfdda8-bbb0-4031-8a40-0e3694782fa3"   width="1126px"  height="165px"  style="object-fit:cover"/>It should be impossible to set this to public_allowed if a registration token is required.  Also if no reg token is required, it should NOT be possible to set it to registration_token_required.  The only reasonable settings should be enabled/disabled for SSO.   
 - If deferred, explicitly communicate that Google can be linked after creating
   an email/password account with the token.
 
@@ -542,7 +543,11 @@ Question:
 Recommendation:
 
 - No for this release. Require setting an email first, then link matching
-  Google. This keeps the matching-email invariant simple and reviewable.
+  Google. This keeps the matching-email invariant simple and reviewable.   
+- USER: it should be easy to create an account without setting a password, i.e., SSO only. But a key invariant should be that SSO email = cocalc email.    
+  - do not allow removing SSO if no password is set
+  - do allow adding a password even if SSO is set.
+  - if google doesn't provide an email for some reason, do NOT allow account creation.
 
 ### SAML UI
 
@@ -555,6 +560,7 @@ Recommendation:
 - Only show SAML through the existing `/sso` index/detail flow or
   domain-required flow. Do not expand SAML UX as part of the Google release
   blocker unless it falls out naturally from the shared strategy component.
+- USER: agreed; we won't configure SAML for a while.
 
 ## Risks
 
@@ -583,3 +589,4 @@ Recommendation:
 - Linking marks the matching account email verified.
 - Focused unit tests pass.
 - Lite1b browser smoke passes.
+
