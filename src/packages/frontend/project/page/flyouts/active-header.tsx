@@ -11,7 +11,10 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useAppContext } from "@cocalc/frontend/app/context";
 import { Icon } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { FIXED_PROJECT_TABS } from "@cocalc/frontend/project/page/file-tab";
+import {
+  FixedProjectTabIcon,
+  FIXED_PROJECT_TABS,
+} from "@cocalc/frontend/project/page/file-tab";
 
 export function ActiveHeader() {
   const { formatIntl } = useAppContext();
@@ -62,7 +65,7 @@ export function ActiveHeader() {
           whiteSpace: "nowrap",
         }}
       >
-        <Icon name={FIXED_PROJECT_TABS.active.icon} />{" "}
+        <FixedProjectTabIcon name="active" />{" "}
         {formatIntl(FIXED_PROJECT_TABS.active.label)}
       </span>
       {renderScroll()}

@@ -55,12 +55,12 @@ describe("activity-bar storage", () => {
       order: [
         "files",
         "agents",
-        "workspaces",
-        "rootfs",
         "new",
         "search",
         "docs",
         "settings",
+        "workspaces",
+        "rootfs",
         "active",
         "log",
         "servers",
@@ -74,12 +74,12 @@ describe("activity-bar storage", () => {
       [
         "files",
         "agents",
-        "workspaces",
-        "rootfs",
         "new",
         "search",
         "docs",
         "settings",
+        "workspaces",
+        "rootfs",
         "active",
         "log",
         "servers",
@@ -100,21 +100,34 @@ describe("activity-bar storage", () => {
       collapsed: false,
       labels: true,
       order: [
-        "workspaces",
-        "agents",
         "files",
-        "rootfs",
+        "agents",
         "new",
         "search",
         "docs",
         "settings",
+        "workspaces",
+        "rootfs",
         "active",
         "log",
         "servers",
         "info",
       ],
-      hidden: ["active", "log", "servers", "info"],
+      hidden: ["workspaces", "rootfs", "active", "log", "servers", "info"],
     });
+  });
+
+  it("persists an empty hidden list so every button can stay on the rail", () => {
+    setActivityBarHiddenTabs([], { liteMode: true });
+
+    expect(
+      readActivityBarPreferences({
+        liteMode: true,
+      }).hidden,
+    ).toEqual([]);
+    expect(
+      redux.getStore("page")?.get("activity_bar_hidden")?.toJS?.(),
+    ).toEqual([]);
   });
 
   it("prefers page-scoped runtime state over persisted storage", () => {

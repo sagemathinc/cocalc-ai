@@ -11,7 +11,7 @@ import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator"
 
 import { capitalize } from "@cocalc/util/misc";
 import { FIX_BORDER } from "../common";
-import { FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
+import { FixedProjectTabIcon, FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
 import { FIXED_TABS_BG_COLOR } from "../activity-bar-tabs";
 import { ActiveHeader } from "./active-header";
 import { FLYOUT_PADDING } from "./consts";
@@ -42,9 +42,8 @@ export function FlyoutHeader(_: Readonly<Props>) {
   }
 
   function renderIcon() {
-    const iconName = FIXED_PROJECT_TABS[flyout].icon;
-    if (iconName != null) {
-      return <Icon name={iconName} />;
+    if (FIXED_PROJECT_TABS[flyout].icon != null) {
+      return <FixedProjectTabIcon name={flyout} />;
     } else {
       return null;
     }

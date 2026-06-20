@@ -41,7 +41,12 @@ import { confirmRemoveMyselfFromProject } from "@cocalc/frontend/projects/remove
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { ACTIVITY_BAR_TOGGLE_LABELS } from "./activity-bar-consts";
-import { FileTab, FIXED_PROJECT_TABS, FixedTab } from "./file-tab";
+import {
+  FileTab,
+  FixedProjectTabIcon,
+  FIXED_PROJECT_TABS,
+  FixedTab,
+} from "./file-tab";
 import FileTabs from "./file-tabs";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
@@ -434,10 +439,11 @@ export function VerticalFixedTabs({
   }
 
   function renderOverflowMenu(): ReactNode {
-    if (!accountStoreReady || overflowTabs.length === 0) return null;
+    if (!accountStoreReady) return null;
     const isActive =
       moreOpen ||
       (active_flyout != null && overflowTabs.includes(active_flyout));
+    const hasOverflowTabs = overflowTabs.length > 0;
     const items = createRailMenuItems({
       intl,
       names: overflowTabs,
@@ -487,7 +493,10 @@ export function VerticalFixedTabs({
       },
     });
     return (
-      <Tooltip title="More" placement="rightTop">
+      <Tooltip
+        title={hasOverflowTabs ? "More" : "Rail options"}
+        placement="rightTop"
+      >
         <div
           style={{
             width: "100%",
@@ -501,7 +510,7 @@ export function VerticalFixedTabs({
           <Dropdown
             menu={{ items }}
             trigger={["click"]}
-            placement="topLeft"
+            placement="bottomLeft"
             transitionName=""
             onOpenChange={(next) => setMoreOpen(next)}
           >
@@ -545,7 +554,9 @@ export function VerticalFixedTabs({
                   rotate="90"
                   style={{ fontSize: condensed ? "18px" : "24px" }}
                 />
-                {showActBarLabels ? <span>More</span> : null}
+                {showActBarLabels ? (
+                  <span>{hasOverflowTabs ? "More" : "Rail"}</span>
+                ) : null}
               </div>
             </button>
           </Dropdown>
@@ -803,8 +814,9 @@ function createRailMenuItems(opts: {
   const items: NonNullable<MenuProps["items"]> = names.map((name) => ({
     key: `${sectionKeyPrefix}:${name}`,
     label: renderMenuLabel(
-      <Icon
-        name={tabIcons?.[name] ?? FIXED_PROJECT_TABS[name].icon}
+      <FixedProjectTabIcon
+        name={name}
+        iconName={tabIcons?.[name]}
         style={tabIconStyles?.[name]}
       />,
       renderFixedTabLabel(name, intl),
@@ -1016,7 +1028,7 @@ export function CustomizeRailButtonsModal({
                   checked={visible}
                   onChange={(e) => setTabVisible(name, e.target.checked)}
                 />
-                <Icon name={FIXED_PROJECT_TABS[name].icon} />
+                <FixedProjectTabIcon name={name} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {renderFixedTabLabel(name, intl)}
                 </div>
