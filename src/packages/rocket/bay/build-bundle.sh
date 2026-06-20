@@ -58,6 +58,7 @@ cleanup() {
     rm -rf "$TMP_ROOT" || true
   fi
   if [[ "$LOCKDIR_HELD" == "1" ]]; then
+    rm -f "$LOCKFILE/pid" 2>/dev/null || true
     rmdir "$LOCKFILE" 2>/dev/null || true
   fi
 }
@@ -97,8 +98,23 @@ if command -v flock >/dev/null 2>&1; then
 elif mkdir "$LOCKFILE" 2>/dev/null; then
   LOCKDIR_HELD=1
 else
-  echo "ERROR: bundle lock exists at $LOCKFILE" >&2
-  exit 1
+  lock_pid=""
+  if [[ -f "$LOCKFILE/pid" ]]; then
+    lock_pid="$(cat "$LOCKFILE/pid" 2>/dev/null || true)"
+  fi
+  if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+    echo "ERROR: active bundle lock exists at $LOCKFILE (pid $lock_pid)" >&2
+    exit 1
+  fi
+  rm -rf "$LOCKFILE"
+  mkdir "$LOCKFILE" 2>/dev/null || {
+    echo "ERROR: bundle lock exists at $LOCKFILE" >&2
+    exit 1
+  }
+  LOCKDIR_HELD=1
+fi
+if [[ "$LOCKDIR_HELD" == "1" ]]; then
+  printf '%s\n' "$$" >"$LOCKFILE/pid"
 fi
 trap cleanup EXIT
 
