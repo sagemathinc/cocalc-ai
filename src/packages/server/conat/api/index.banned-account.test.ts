@@ -13,6 +13,14 @@ jest.mock("@cocalc/server/accounts/security-state", () => ({
   startAccountSecurityStateSyncLoop: jest.fn(),
 }));
 
+jest.mock("./ai-sessions", () => ({
+  __esModule: true,
+  interrupt: jest.fn(),
+  interruptAll: jest.fn(),
+  list: jest.fn(),
+  upsertProjectHostSession: jest.fn(),
+}));
+
 describe("hub conat api banned account enforcement", () => {
   const account_id = "11111111-1111-4111-8111-111111111111";
 

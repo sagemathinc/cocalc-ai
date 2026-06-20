@@ -31,6 +31,11 @@ jest.mock("../codex-defaults-panel", () => ({
   CodexDefaultsPanel: () => <div>CodexDefaultsPanel</div>,
 }));
 
+jest.mock("../codex-sessions-panel", () => ({
+  __esModule: true,
+  default: () => <div>CodexSessionsPanel</div>,
+}));
+
 jest.mock("../lite-ai-settings", () => ({
   __esModule: true,
   default: () => <div>LiteAISettings</div>,
