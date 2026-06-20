@@ -236,16 +236,16 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Languages")).not.toBeNull();
     expect(screen.getByText("Teaching")).not.toBeNull();
     const indexText = container.textContent ?? "";
+    expect(indexText.indexOf("Runtime")).toBeLessThan(
+      indexText.indexOf("Notebooks and writing"),
+    );
+    expect(indexText.indexOf("Notebooks and writing")).toBeLessThan(
+      indexText.indexOf("AI workflows"),
+    );
     expect(indexText.indexOf("AI workflows")).toBeLessThan(
-      indexText.indexOf("Notebooks and writing"),
+      indexText.indexOf("Languages"),
     );
     expect(indexText.indexOf("Teaching")).toBeGreaterThan(
-      indexText.indexOf("Notebooks and writing"),
-    );
-    expect(indexText.indexOf("Teaching")).toBeGreaterThan(
-      indexText.indexOf("Runtime"),
-    );
-    expect(indexText.indexOf("Teaching")).toBeLessThan(
       indexText.indexOf("Languages"),
     );
     // Group-label identity + order is pinned positively above; the prior

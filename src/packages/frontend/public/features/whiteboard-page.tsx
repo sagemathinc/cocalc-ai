@@ -234,16 +234,14 @@ function SlideDeckSection() {
               Slide decks stay close to the project.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Use slide-sized pages when a board becomes a lecture, research
-              talk, demo, or walkthrough. The deck can still include markdown,
-              math, diagrams, drawings, and notebook-backed material alongside
-              the files and context behind the presentation.
+              Use slide-sized pages for ordered presentations built from the
+              same editable material as the board: markdown, math, diagrams,
+              drawings, and notebook-backed explanations.
             </Paragraph>
             <BulletList
               items={[
                 "Move from exploratory board work into an ordered presentation without leaving the project.",
-                "Keep slides near the notebooks, data, files, and terminal work that support the talk.",
-                "Collaborate on presentation material with the same project history around it.",
+                "Keep slides near the notebooks, data, files, and terminal work behind the presentation.",
               ]}
             />
             <Flex wrap gap={12}>
@@ -289,7 +287,7 @@ export default function WhiteboardFeaturePage({
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
                 </Button>
-                <Button href="#slide-decks">Slide decks</Button>
+                <Button href={appPath("features/slides")}>Slide decks</Button>
                 <Button href={appPath("features/jupyter-notebook")}>
                   Jupyter notebooks
                 </Button>
@@ -302,11 +300,11 @@ export default function WhiteboardFeaturePage({
         </Row>
       </PublicSection>
 
-      <ExecutionGraph />
-
       <div id="slide-decks">
         <SlideDeckSection />
       </div>
+
+      <ExecutionGraph />
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
@@ -320,7 +318,7 @@ export default function WhiteboardFeaturePage({
                   "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
                   "Review a collaborator's work in place — the code, output, and math are all on the board to inspect.",
                   "Run office hours or a live support session on a shared board everyone can edit.",
-                  "Move to slide-sized pages when that same board becomes a talk, lecture, or demo.",
+                  "Choose a deck when the explanation needs an ordered presentation path, not a static export.",
                 ]}
               />
               <Flex wrap gap={12}>

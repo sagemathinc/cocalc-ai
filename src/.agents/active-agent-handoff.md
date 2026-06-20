@@ -368,6 +368,23 @@ Plus/Star/Launchpad`).
   until the agent-era pitch challenge resolves; next candidates are whiteboard/slides copy cleanup
   and dedicated-compute scoping, followed by products detail-page subtraction and the confirmed
   5-products/3-operating-model chooser grouping. No source edit, build, commit, or PR for this sync.
+- **START 2026-06-20 16:26 PDT:** Blaec approved the recommended whiteboard/slides cleanup and
+  asked for a quick `/features` group-order swap: exchange AI Workflows with Runtime, and Teaching
+  with Languages. Verified synthesis is clean except untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx`; preview owner is still
+  synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Claiming
+  `src/packages/frontend/public/features/{app.tsx,whiteboard-page.tsx,slides-page.tsx,__tests__/app.test.tsx}`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, and this ledger. No PR.
+- **END 2026-06-20 16:34 PDT:** Completed the requested `/features` group-order swap so Runtime
+  leads, Notebooks remains second, AI Workflows moves below Notebooks, Languages moves above
+  Teaching, and Teaching closes the index. Trimmed the whiteboard/slides overlap: shortened the
+  whiteboard slide-decks section, moved it above the Jupyter execution-graph section, changed the
+  hero `Slide decks` CTA to navigate to `/features/slides`, and tightened the slides page copy.
+  Validation: prettier passed, focused feature Jest passed (`88/88`; existing React/AntD jsdom
+  warnings), `lint:frontend` passed, `git diff --check` clean, `packages/static build:dev` passed,
+  and browser QA passed on `/features`, `/features/whiteboard`, and `/features/slides`
+  desktop/mobile (`112` assertions, `0` failures; screenshots in
+  `/tmp/cocalc-public-qa-ZvMtil`). No PR. The untracked dedicated-compute draft remains untouched.
 
 ### Codex — platform-UI thread
 

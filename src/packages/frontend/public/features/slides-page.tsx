@@ -118,7 +118,7 @@ function SlideFlow() {
           >
             Build a deck in a few steps: choose a slide size, write the story in
             markdown and math, add Jupyter cells, diagrams, or drawings, then
-            present — with presets for talks, lectures, and demos.
+            present from the same project.
           </Paragraph>
         </div>
         <div
@@ -187,10 +187,6 @@ export default function SlidesFeaturePage({
                 collaborative editing in the same project as the files and
                 notebooks behind the presentation.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Use them for lectures, research talks, demos, and presentations
-                that need more than static text and exported screenshots.
-              </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
@@ -221,7 +217,7 @@ export default function SlidesFeaturePage({
               </Title>
               <BulletList
                 items={[
-                  "Present research talks, lectures, classroom demos, and technical walkthroughs.",
+                  "Present technical walkthroughs from the same editable canvas where the material was built.",
                   "Keep slides close to notebooks, files, data, and terminal work.",
                   "Use math, diagrams, markdown, and code in technical talks.",
                   "Collaborate on the deck and keep TimeTravel history around it.",
@@ -250,7 +246,7 @@ export default function SlidesFeaturePage({
           </Col>
           <Col xs={24} lg={11}>
             <StartCard
-              body="Open a project and create a slide deck for a lecture, demo, or research presentation."
+              body="Open a project and create a slide deck for a technical presentation."
               href={primaryHref}
               label={finalLabel}
               title="Start with a deck"

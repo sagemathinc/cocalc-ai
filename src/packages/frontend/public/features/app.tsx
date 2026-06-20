@@ -97,12 +97,12 @@ const FEATURE_INDEX_PRIORITY = [
 
 const FEATURE_GROUPS = [
   {
-    accent: COLORS.AI_ASSISTANT_FONT,
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
     description:
-      "Use Codex inside CoCalc projects, automate recurring project work, or drive CoCalc from scripts and pipelines.",
-    icon: "robot",
-    slugs: ["ai", "automations", "cli"],
-    title: "AI workflows",
+      "Find shell, Linux, and dedicated hosted capacity for work that needs a real runtime.",
+    icon: "terminal",
+    slugs: ["terminal", "linux", "project-hosts"],
+    title: "Runtime",
     variant: "cards",
   },
   {
@@ -115,12 +115,12 @@ const FEATURE_GROUPS = [
     variant: "cards",
   },
   {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    accent: COLORS.AI_ASSISTANT_FONT,
     description:
-      "Find shell, Linux, and dedicated hosted capacity for work that needs a real runtime.",
-    icon: "terminal",
-    slugs: ["terminal", "linux", "project-hosts"],
-    title: "Runtime",
+      "Use Codex inside CoCalc projects, automate recurring project work, or drive CoCalc from scripts and pipelines.",
+    icon: "robot",
+    slugs: ["ai", "automations", "cli"],
+    title: "AI workflows",
     variant: "cards",
   },
   {
@@ -690,7 +690,7 @@ function FeaturesIndex() {
       {FEATURE_GROUPS.map((group) => (
         <Fragment key={group.title}>
           <FeatureGroupSection group={group} pages={pages} />
-          {group.title === "Runtime" ? <TeachingWorkflowCallout /> : null}
+          {group.title === "Languages" ? <TeachingWorkflowCallout /> : null}
         </Fragment>
       ))}
     </>
