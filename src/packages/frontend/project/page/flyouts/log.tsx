@@ -70,6 +70,12 @@ interface OpenedFile {
 
 const LOG_WORKSPACE_ONLY_STORAGE_PREFIX = "project-log-workspace-only";
 
+const LOG_FILTER_ACTIVE_BUTTON_STYLE: React.CSSProperties = {
+  backgroundColor: COLORS.BLUE_LLLL,
+  borderColor: COLORS.BLUE_LLL,
+  color: COLORS.BLUE_DD,
+};
+
 function workspaceOnlyStorageKey(project_id: string): string {
   return `${LOG_WORKSPACE_ONLY_STORAGE_PREFIX}:${project_id}`;
 }
@@ -611,8 +617,9 @@ export function LogFlyout({
     const icon: IconName = deduplicate ? "file" : "copy";
     return (
       <BSButton
-        active={!deduplicate}
+        active={false}
         bsSize="xsmall"
+        style={!deduplicate ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
         title={
           <FormattedMessage
             id="page.flyouts.log.deduplicate.tooltip"
@@ -655,18 +662,20 @@ export function LogFlyout({
             Show:
           </BSButton>
           <BSButton
-            active={showOpenFiles}
+            active={false}
             bsSize="xsmall"
+            style={showOpenFiles ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("open", !showOpenFiles);
             }}
             title={"Show file open events"}
           >
-            <Icon name="edit" />
+            <Icon name="file" />
           </BSButton>
           <BSButton
-            active={showFileActions}
+            active={false}
             bsSize="xsmall"
+            style={showFileActions ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("files", !showFileActions);
             }}
@@ -675,18 +684,20 @@ export function LogFlyout({
             <Icon name="files" />
           </BSButton>
           <BSButton
-            active={showProject}
+            active={false}
             bsSize="xsmall"
+            style={showProject ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("project", !showProject);
             }}
             title={"Show project events"}
           >
-            <Icon name="edit" />
+            <Icon name="project-outlined" />
           </BSButton>
           <BSButton
-            active={showUser}
+            active={false}
             bsSize="xsmall"
+            style={showUser ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("user", !showUser);
             }}
@@ -695,8 +706,9 @@ export function LogFlyout({
             <Icon name="users" />
           </BSButton>
           <BSButton
-            active={showOther}
+            active={false}
             bsSize="xsmall"
+            style={showOther ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("other", !showOther);
             }}
