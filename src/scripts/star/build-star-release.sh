@@ -58,6 +58,7 @@ case "$STAR_RELEASE_ID" in
 esac
 
 command -v git >/dev/null 2>&1 || die "git is required"
+command -v node >/dev/null 2>&1 || die "node is required"
 command -v tar >/dev/null 2>&1 || die "tar is required"
 command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
 [ -x "$BUILD_TARBALL" ] || die "missing source tarball builder: $BUILD_TARBALL"
@@ -153,7 +154,17 @@ if [ "$MODE" = "runtime" ]; then
 fi
 bash "$INSTALLER_TMP/src/scripts/star/install-from-tarball.sh" "$TARBALL"
 EOF
-sed -i "s/__STAR_RELEASE_ID__/${STAR_RELEASE_ID}/g" "${staging}/install.sh"
+node - "${staging}/install.sh" "${STAR_RELEASE_ID}" <<'EOF'
+const fs = require("fs");
+
+const [file, releaseId] = process.argv.slice(2);
+const marker = "__STAR_RELEASE_ID__";
+const source = fs.readFileSync(file, "utf8");
+if (!source.includes(marker)) {
+  throw new Error(`release id marker not found in ${file}`);
+}
+fs.writeFileSync(file, source.replaceAll(marker, releaseId));
+EOF
 chmod 0755 "${staging}/install.sh"
 cp "${SCRIPT_DIR}/install-release.sh" "${staging}/install-release.sh"
 chmod 0755 "${staging}/install-release.sh"
