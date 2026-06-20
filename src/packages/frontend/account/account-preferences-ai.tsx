@@ -12,6 +12,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 import { CodexDefaultsPanel } from "./codex-defaults-panel";
+import CodexSessionsPanel from "./codex-sessions-panel";
 import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -54,6 +55,7 @@ export function AccountPreferencesAI() {
         <CodexCredentialsPanel />
         <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
+        <CodexSessionsPanel />
       </>
     );
   }
@@ -77,6 +79,7 @@ export function AccountPreferencesAI() {
       <AIUsageStatus variant="full" showHelp />
       <CodexCredentialsPanel />
       <CodexDefaultsPanel other_settings={other_settings} />
+      <CodexSessionsPanel />
     </>
   );
 }
