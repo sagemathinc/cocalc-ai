@@ -38,6 +38,10 @@ die() {
   exit 1
 }
 
+resolve_path() {
+  node -e 'console.log(require("node:path").resolve(process.argv[1]))' "$1"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --entrypoint)
@@ -81,8 +85,8 @@ done
 [[ -n "$ENTRYPOINT" ]] || die "--entrypoint is required"
 [[ -n "$OUT" ]] || die "--out is required"
 
-ENTRYPOINT="$(realpath -m "$ROOT/$ENTRYPOINT")"
-OUT="$(realpath -m "$OUT")"
+ENTRYPOINT="$(resolve_path "$ROOT/$ENTRYPOINT")"
+OUT="$(resolve_path "$OUT")"
 [[ -f "$ENTRYPOINT" ]] || die "entrypoint does not exist: $ENTRYPOINT"
 
 case "${OSTYPE}" in
