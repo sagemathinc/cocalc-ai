@@ -3,22 +3,34 @@ name: sagemath
 
 builder:
   run_quota:
-    disk_quota: 80000
+    disk_quota: 50000
 
 steps:
   - uses: cocalc/sagemath
-    timeout: 7200
+    with:
+      method: source
+      version: "10.9"
+      prefix: /usr/local/sage
+      jobs: auto
+    timeout: 28800
 
 verify:
   - command -v sage
+  - command -v python
+  - command -v pip
+  - command -v jupyter
+  - sage --version
   - sage -c 'from sage.all import ZZ; assert ZZ(2) + ZZ(2) == 4'
+  - python -c 'from sage.all import ZZ; assert ZZ(19).is_prime()'
+  - jupyter kernelspec list | grep -qi sagemath
+  - jupyter kernelspec list | grep -q python3
 
 publish:
   label: SageMath
   slug: sagemath
-  description: SageMath from Ubuntu packages with Jupyter integration when available.
+  description: SageMath built from source with Sage Python as the default Python and Sage/Python Jupyter kernels.
   family: sagemath
-  version: apt
+  version: "10.9"
   channel: stable
   visibility: public
   tags:

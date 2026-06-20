@@ -1,14 +1,24 @@
 {
   "id": "cocalc/sagemath",
   "version": 1,
-  "description": "Install SageMath from Ubuntu packages when available.",
+  "description": "Build SageMath from source, install Sage/Python Jupyter kernels, and expose Sage's Python as the default Python.",
   "inputs": {
-    "method": { "type": "string", "default": "auto" },
+    "method": { "type": "string", "default": "source" },
+    "version": { "type": "string", "default": "10.9" },
+    "source_url": {
+      "type": "string",
+      "default": "https://github.com/sagemath/sage.git"
+    },
+    "build_dir": { "type": "string", "default": "/tmp/cocalc-sagemath-build" },
+    "jobs": { "type": "string", "default": "auto" },
+    "clean_build_dir": { "type": "string", "default": "true" },
+    "install_recommended_apt_packages": { "type": "string", "default": "true" },
+    "install_sagetex": { "type": "string", "default": "true" },
     "packages": {
       "type": "array",
       "default": ["sagemath", "sagemath-jupyter"]
     },
-    "prefix": { "type": "string", "default": "/opt/sagemath" },
+    "prefix": { "type": "string", "default": "/usr/local/sage" },
     "micromamba_prefix": { "type": "string", "default": "/opt/micromamba" },
     "conda_packages": { "type": "array", "default": ["sage"] },
     "owner_uid": { "type": "string", "default": "2001" },
@@ -29,8 +39,8 @@
     "content": {
       "version": 1,
       "title": "SageMath",
-      "subtitle": "Open-source mathematics software with Jupyter integration.",
-      "highlights": ["SageMath", "Python", "Jupyter"],
+      "subtitle": "SageMath built from source with Sage and Python Jupyter kernels.",
+      "highlights": ["SageMath 10.9", "Sage Python", "Jupyter"],
       "actions": [
         {
           "kind": "external-link",
