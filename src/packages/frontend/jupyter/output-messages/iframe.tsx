@@ -9,21 +9,19 @@ Handle iframe output messages involving a src doc.
 
 import { Spin } from "antd";
 import { delay } from "awaiting";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import useBlob from "./use-blob";
 import useIsMountedRef from "@cocalc/frontend/app-framework/is-mounted-hook";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import HTML from "./mime-types/html";
 import ShowError from "@cocalc/frontend/components/error";
+import AutosizedIframe from "./autosized-iframe";
 // This impact loading the iframe data from the backend project (via the sha1 hash).
 // Doing retries is useful, e.g., since the project might not be running.
 const MAX_ATTEMPTS = 10;
 const MAX_WAIT = 5000;
 const BACKOFF = 1.3;
-
-const HEIGHT = "70vh";
-const WIDTH = "70vw";
-const DEFAULT_INLINE_HEIGHT = "80px";
+const UNTRUSTED_IFRAME_SANDBOX = "allow-forms allow-scripts allow-presentation";
 
 interface Props {
   sha1: string;
@@ -65,21 +63,26 @@ export default function IFrame(props: Props) {
       </div>
     );
   }
-  if (!src?.startsWith("blob:") && (props.cacheid == null || !props.trust)) {
+  if (src.startsWith("blob:")) {
+    return (
+      <AutosizedIframe
+        src={src}
+        sandbox={props.trust ? undefined : UNTRUSTED_IFRAME_SANDBOX}
+        title="Jupyter HTML output"
+      />
+    );
+  }
+  if (props.cacheid == null || !props.trust) {
     return <NonCachedIFrame src={src} />;
   } else {
-    // we only use cached iframe if the iframecontext is setup, e.g., it is in
-    // Jupyter notebooks, but not in whiteboards.
+    // Trusted HTML that does not require iframe isolation is rendered inline so
+    // it gets normal notebook output sizing and state preservation.
     return (
       <HTML
         id={props.cacheid}
         index={props.index}
         trust={props.trust}
-        value={
-          src?.startsWith("blob:")
-            ? `<iframe src="${src}" style="border:0;height:${HEIGHT};width:${WIDTH}"/>`
-            : src
-        }
+        value={src}
       />
     );
   }
@@ -90,16 +93,6 @@ function NonCachedIFrame({ src }) {
   const [failed, setFailed] = useState<boolean>(false);
   const delayRef = useRef<number>(500);
   const isMountedRef = useIsMountedRef();
-  const iframeRef = useRef<any>(null);
-
-  useEffect(() => {
-    const elt = iframeRef.current;
-    if (elt == null) return;
-    elt.onload = function () {
-      elt.style.height = elt.contentWindow.document.body.scrollHeight + "px";
-    };
-  }, []);
-
   async function load_error(): Promise<void> {
     if (attempts >= MAX_ATTEMPTS) {
       setFailed(true);
@@ -107,7 +100,7 @@ function NonCachedIFrame({ src }) {
     }
     await delay(delayRef.current);
     if (!isMountedRef.current) return;
-    delayRef.current = Math.max(MAX_WAIT, delayRef.current * BACKOFF);
+    delayRef.current = Math.min(MAX_WAIT, delayRef.current * BACKOFF);
     incAttempts();
   }
 
@@ -131,12 +124,11 @@ function NonCachedIFrame({ src }) {
   }
 
   return (
-    <iframe
+    <AutosizedIframe
       src={src}
       srcDoc={srcDoc}
-      ref={iframeRef}
       onError={load_error}
-      style={{ border: 0, width: WIDTH, minHeight: DEFAULT_INLINE_HEIGHT }}
+      title="Jupyter HTML output"
     />
   );
 }

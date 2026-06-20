@@ -10,39 +10,10 @@ Also if heuristics suggest the html is just math typesetting, e.g., as output by
 we also use sanitized html.
 */
 
-import { useEffect, useRef } from "react";
 import register from "./register";
-import useIsMountedRef from "@cocalc/frontend/app-framework/is-mounted-hook";
-
-const DEFAULT_IFRAME_HEIGHT = 80;
+import AutosizedIframe from "../autosized-iframe";
 
 const IframeHtml = ({ value }) => {
-  const iframeRef = useRef<any>(null);
-  const isMountedRef = useIsMountedRef();
-  // After mounting, we measure the content of the iframe and resize to better fit it.
-  // TODO: Might wnat to switch to https://www.npmjs.com/package/iframe-resizer-react
-  // instead of the hack of timeouts below...
-  useEffect(() => {
-    if (iframeRef.current == null) {
-      return;
-    }
-    const f = () => {
-      if (iframeRef.current != null && isMountedRef.current) {
-        try {
-          iframeRef.current.height = `${
-            iframeRef.current.contentWindow.document.documentElement
-              ?.offsetHeight ?? DEFAULT_IFRAME_HEIGHT
-          }px`;
-        } catch (_err) {
-          // this fails on the share server for security reasons, which is good.
-        }
-      }
-    };
-    f();
-    setTimeout(f, 10);
-    setTimeout(f, 250);
-  }, []);
-
   let src: undefined | string = undefined;
   let srcDoc: undefined | string = undefined;
   if (
@@ -55,16 +26,11 @@ const IframeHtml = ({ value }) => {
     srcDoc = value;
   }
   return (
-    <iframe
-      ref={iframeRef}
-      width="100%"
-      height={
-        `${DEFAULT_IFRAME_HEIGHT}px` /* Resized after load when same-origin. */
-      }
-      style={{ overflow: "auto", border: 0 }}
+    <AutosizedIframe
       src={src}
       srcDoc={srcDoc}
       sandbox="allow-forms allow-scripts allow-presentation"
+      title="Jupyter HTML output"
     />
   );
 };
