@@ -59,7 +59,8 @@ export default function CloneProject({ project_id, flyout, disabled }: Props) {
             Cloning will copy "
             <ProjectTitle project_id={project_id} noClick />
             ", including changes to the root filesystem / (e.g., systemwide
-            software install), but without any edit history or collaborators.
+            software install) and TimeTravel edit history, but without
+            collaborators.
           </>
         }
         mouseEnterDelay={0}
