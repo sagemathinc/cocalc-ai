@@ -25,6 +25,7 @@ import { COLORS } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
 import AutomationsFeaturePage from "./automations-page";
+import { FEATURE_ACCENTS } from "./feature-accents";
 import {
   getFeatureIndexPages,
   getFeaturePage,
@@ -147,14 +148,14 @@ const FEATURE_GROUPS = [
 const FEATURE_META = {
   ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot" },
   api: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "api" },
-  automations: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "sync" },
+  automations: { accent: FEATURE_ACCENTS.automations, icon: "sync" },
   cli: { accent: COLORS.GRAY_D, icon: "terminal" },
   compare: { accent: COLORS.BLUE_D, icon: "swap" },
   "jupyter-notebook": {
     accent: COLORS.BLUE_D,
     icon: "jupyter",
   },
-  julia: { accent: COLORS.BRWN, icon: "julia" },
+  julia: { accent: FEATURE_ACCENTS.julia, icon: "julia" },
   "latex-editor": { accent: COLORS.YELL_D, icon: "tex" },
   linux: {
     accent: COLORS.ANTD_LINK_BLUE_DARK,

@@ -13,6 +13,7 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
+import { FEATURE_ACCENTS } from "./feature-accents";
 import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
@@ -39,7 +40,7 @@ function AutomationFlowMock() {
     >
       <Flex vertical gap={16}>
         <Flex align="center" gap={10} wrap>
-          <IconBadge accent="#096dd9" icon="sync" />
+          <IconBadge accent={FEATURE_ACCENTS.automations} icon="sync" />
           <div>
             <Text strong>Recurring project workflow</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
@@ -61,7 +62,11 @@ function AutomationFlowMock() {
                 }}
               >
                 <Flex align="center" gap={12}>
-                  <IconBadge accent="#096dd9" icon={icon} size="sm" />
+                  <IconBadge
+                    accent={FEATURE_ACCENTS.automations}
+                    icon={icon}
+                    size="sm"
+                  />
                   <div>
                     <Text strong>{title}</Text>
                     <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
@@ -99,7 +104,7 @@ function AutomationProjectFit() {
         </Col>
         <Col xs={24} lg={12}>
           <ContextList
-            accent="#096dd9"
+            accent={FEATURE_ACCENTS.automations}
             items={[
               {
                 icon: "calendar-check",

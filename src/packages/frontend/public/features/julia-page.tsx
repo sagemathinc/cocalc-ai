@@ -13,6 +13,7 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
+import { FEATURE_ACCENTS } from "./feature-accents";
 import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
@@ -40,7 +41,7 @@ function JuliaProjectMock() {
       <Flex vertical gap={16}>
         <Flex align="center" justify="space-between" wrap gap={10}>
           <Flex align="center" gap={10}>
-            <IconBadge accent="#9558b2" icon="julia" />
+            <IconBadge accent={FEATURE_ACCENTS.julia} icon="julia" />
             <div>
               <Text strong>Julia project</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
@@ -63,7 +64,7 @@ function JuliaProjectMock() {
                 }}
               >
                 <Flex align="center" gap={12}>
-                  <IconBadge accent="#9558b2" icon={icon} />
+                  <IconBadge accent={FEATURE_ACCENTS.julia} icon={icon} />
                   <div>
                     <Text strong>{title}</Text>
                     <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
@@ -102,7 +103,7 @@ function JuliaProjectFit() {
         </Col>
         <Col xs={24} lg={12}>
           <ContextList
-            accent="#9558b2"
+            accent={FEATURE_ACCENTS.julia}
             items={[
               { icon: "jupyter", label: "Collaborative Jupyter notebooks" },
               { icon: "layout", label: "Pluto for reactive notebooks" },

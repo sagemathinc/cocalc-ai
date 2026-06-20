@@ -203,6 +203,23 @@ Plus/Star/Launchpad`).
   `git diff --check` clean; new docs are ASCII-only; banned/category-collapse terms appear only
   in internal "do not say" rows. The two draft feature pages remain uncommitted and should be
   re-evaluated under FS-001 before being wired in. No PR.
+- **START 2026-06-20 14:12 PDT:** Blaec flagged mismatched accent colors between `/features`
+  cards and the detail pages for Project Automations and Julia. Verified synthesis hub owns
+  preview pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Existing unrelated dirt:
+  `src/packages/frontend/scripts/public-site-turn-snapshot.sh` plus untracked draft
+  `cli-page.tsx` and `dedicated-compute-page.tsx`; leaving them untouched. Claiming
+  `src/packages/frontend/public/features/{app.tsx,automations-page.tsx,julia-page.tsx}` plus
+  this ledger to centralize the two accents, rebuild, QA `/features`, `/features/automations`,
+  and `/features/julia`, then commit. No PR.
+- **END 2026-06-20 14:17 PDT:** fixed the accent drift by adding shared `FEATURE_ACCENTS` for
+  Automations blue and Julia purple, then using them on both the feature index and the
+  associated detail pages. Validation: prettier passed, focused feature Jest passed (86 tests;
+  existing React/AntD jsdom warnings), `lint:frontend` passed, `git diff --check` clean,
+  `packages/static build:dev` passed, and browser QA passed for `/features`,
+  `/features/automations`, and `/features/julia` on desktop and mobile (104 assertions / 0
+  failures; screenshots in `/tmp/cocalc-public-qa-sw83Va`). Generic `pnpm -C src test ...`
+  still fails before focused tests because the environment lacks Python `requests` for the
+  unrelated docs URL checker. No PR.
 
 ### Codex — platform-UI thread
 
