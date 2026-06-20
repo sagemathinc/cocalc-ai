@@ -73,6 +73,7 @@ afterAll(after);
 describe("membership packages", () => {
   const teamTier = `team-tier-${uuid()}`;
   const teamTier2 = `team-tier-${uuid()}`;
+  const hiddenTeamTier = `hidden-team-tier-${uuid()}`;
   const courseTier = `course-tier-${uuid()}`;
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
@@ -118,12 +119,21 @@ describe("membership packages", () => {
       priority: 25,
       price_monthly: 20,
       price_yearly: 200,
+      team_visible: true,
     });
     await createTestMembershipTier({
       id: teamTier2,
       priority: 30,
       price_monthly: 50,
       price_yearly: 500,
+      team_visible: true,
+    });
+    await createTestMembershipTier({
+      id: hiddenTeamTier,
+      priority: 35,
+      price_monthly: 60,
+      price_yearly: 600,
+      team_visible: false,
     });
     await createTestMembershipTier({
       id: courseTier,
@@ -1300,6 +1310,89 @@ describe("membership packages", () => {
         { kind: "team", membership_class: teamTier, seat_count: 2 },
         { kind: "team", membership_class: teamTier2, seat_count: 1 },
       ]),
+    );
+  });
+
+  it("rejects hidden team tiers in membership package purchases and expansions", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: hiddenTeamTier,
+      seat_count: 1,
+      interval: "year" as const,
+    };
+
+    await expect(resolveMembershipPackageQuote(product)).rejects.toThrow(
+      `membership tier "${hiddenTeamTier}" is not available for team packages`,
+    );
+    await expect(
+      purchaseMembershipPackage({
+        account_id: owner_account_id,
+        amount: 600,
+        product,
+      }),
+    ).rejects.toThrow(
+      `membership tier "${hiddenTeamTier}" is not available for team packages`,
+    );
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: hiddenTeamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "year",
+        seat_price: 600,
+      },
+    });
+    await expect(
+      resolveMembershipPackageQuote({
+        ...product,
+        package_id,
+      }),
+    ).rejects.toThrow(
+      `membership tier "${hiddenTeamTier}" is not available for team packages`,
+    );
+  });
+
+  it("rejects generic site membership package purchases", async () => {
+    await expect(
+      resolveMembershipPackageQuote({
+        type: "membership-package",
+        kind: "site",
+        membership_class: teamTier,
+        seat_count: 1,
+        interval: "year",
+      }),
+    ).rejects.toThrow(
+      "site membership packages must be managed through site licenses",
+    );
+
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "year",
+        seat_price: 200,
+      },
+    });
+    await expect(
+      resolveMembershipPackageQuote({
+        type: "membership-package",
+        kind: "site",
+        membership_class: teamTier,
+        seat_count: 1,
+        interval: "year",
+        package_id,
+      }),
+    ).rejects.toThrow(
+      "site membership packages must be managed through site licenses",
     );
   });
 

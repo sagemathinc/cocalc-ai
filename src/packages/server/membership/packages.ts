@@ -43,7 +43,11 @@ import {
   queueMembershipGrantSyncEffect,
   queueMembershipProjectUsageSyncEffect,
 } from "./side-effects";
-import { getMembershipPrice, getMembershipTierById } from "./tiers";
+import {
+  getMembershipPrice,
+  getMembershipTierById,
+  type MembershipTierRecord,
+} from "./tiers";
 import {
   resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
@@ -170,6 +174,53 @@ function normalizePackageKind(kind?: string): MembershipPackageKind {
     throw Error(`unsupported membership package kind '${kind}'`);
   }
   return kind as MembershipPackageKind;
+}
+
+function isMembershipTierVisibleForPackageKind({
+  kind,
+  tier,
+}: {
+  kind: MembershipPackageKind;
+  tier: MembershipTierRecord;
+}): boolean {
+  switch (kind) {
+    case "course":
+      return tier.course_store_visible === true;
+    case "team":
+      return tier.team_visible === true;
+    case "site":
+      return false;
+  }
+}
+
+async function getPurchasableMembershipTierForPackageKind({
+  kind,
+  membership_class,
+  client,
+}: {
+  kind: MembershipPackageKind;
+  membership_class: MembershipClass;
+  client?: PoolClient;
+}): Promise<MembershipTierRecord> {
+  if (kind === "site") {
+    throw Error(
+      "site membership packages must be managed through site licenses",
+    );
+  }
+  const tier = await getMembershipTierById({
+    id: membership_class,
+    client,
+  });
+  if (
+    !tier ||
+    tier.disabled ||
+    !isMembershipTierVisibleForPackageKind({ kind, tier })
+  ) {
+    throw Error(
+      `membership tier "${membership_class}" is not available for ${kind} packages`,
+    );
+  }
+  return tier;
 }
 
 function normalizeStoredPackageKind(kind?: string): MembershipPackageKind {
@@ -1217,13 +1268,12 @@ async function getTierSeatQuote({
   expires_at?: Date;
   client?: PoolClient;
 }): Promise<MembershipPackageQuote> {
-  const tier = await getMembershipTierById({
-    id: membership_class,
+  const kind = normalizePackageKind(product.kind);
+  const tier = await getPurchasableMembershipTierForPackageKind({
+    kind,
+    membership_class,
     client,
   });
-  if (!tier || tier.disabled) {
-    throw Error(`membership tier "${membership_class}" is not available`);
-  }
   const seat_price = getMembershipPrice(tier, interval);
   const start = starts_at ?? new Date();
   const end =
@@ -1232,7 +1282,7 @@ async function getTierSeatQuote({
       ? dayjs(start).add(1, "month").toDate()
       : dayjs(start).add(1, "year").toDate());
   return {
-    kind: normalizePackageKind(product.kind),
+    kind,
     membership_class,
     seat_count: normalizeSeatCount(product.seat_count),
     seat_price,
@@ -1263,6 +1313,11 @@ export async function resolveMembershipPackageQuote(
     if (!existing) {
       throw Error("membership package not found");
     }
+    await getPurchasableMembershipTierForPackageKind({
+      kind: existing.kind,
+      membership_class: existing.membership_class,
+      client,
+    });
     const seat_price =
       toNumber(existing.metadata?.seat_price) ??
       (existing.kind === "course" &&
@@ -1280,7 +1335,7 @@ export async function resolveMembershipPackageQuote(
           ).seat_price
         : (
             await getTierSeatQuote({
-              product,
+              product: { ...product, kind: existing.kind },
               membership_class: existing.membership_class,
               interval:
                 (`${existing.metadata?.interval ?? product.interval ?? ""}` ===
