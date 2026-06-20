@@ -363,6 +363,35 @@ describe("CodexConfigButton", () => {
     });
   });
 
+  it("collapses expanded controls from the in-pill chevron without opening settings", async () => {
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace write")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText("Hide Codex controls"));
+
+    expect(screen.queryByText("Codex configuration for this chat")).toBeNull();
+    expect(screen.getByLabelText("Expand Codex controls")).toBeTruthy();
+  });
+
   it("shows the ChatGPT Codex usage link in payment settings", async () => {
     render(
       <CodexConfigButton

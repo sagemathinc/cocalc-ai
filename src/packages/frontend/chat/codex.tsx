@@ -167,7 +167,10 @@ const pillSegmentBaseStyle: React.CSSProperties = {
   font: "inherit",
   lineHeight: 1.2,
   minWidth: 0,
-  padding: "2px 5px",
+  paddingBottom: 2,
+  paddingLeft: 5,
+  paddingRight: 5,
+  paddingTop: 2,
   whiteSpace: "nowrap",
 };
 
@@ -693,7 +696,6 @@ export function CodexConfigButton({
                 alignItems: "center",
                 background: "white",
                 border: `1px solid ${COLORS.GRAY_L}`,
-                borderColor: COLORS.GRAY_L,
                 borderRadius: 999,
                 boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
                 display: "inline-flex",
@@ -780,16 +782,31 @@ export function CodexConfigButton({
                   </Text>
                 </>
               ) : null}
+              <Tooltip title="Hide Codex controls">
+                <button
+                  type="button"
+                  aria-label="Hide Codex controls"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleControlsCollapsed();
+                  }}
+                  onMouseEnter={() => setHoveredPillSegment("expand")}
+                  onMouseLeave={() => setHoveredPillSegment(undefined)}
+                  style={{
+                    ...pillSegmentStyle("expand"),
+                    color:
+                      hoveredPillSegment === "expand"
+                        ? COLORS.BS_BLUE_TEXT
+                        : COLORS.GRAY_D,
+                    fontWeight: 600,
+                    paddingLeft: 3,
+                    paddingRight: 3,
+                  }}
+                >
+                  <Icon name="chevron-left" />
+                </button>
+              </Tooltip>
             </span>
-            <Tooltip title="Hide Codex controls">
-              <Button
-                size="small"
-                aria-label="Hide Codex controls"
-                icon={<Icon name="chevron-left" />}
-                onClick={toggleControlsCollapsed}
-                style={{ background: "white" }}
-              />
-            </Tooltip>
             {paymentNeedsAttention ? (
               <Tooltip title={sourceTooltip}>
                 <Button
