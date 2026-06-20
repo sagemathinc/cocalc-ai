@@ -88,8 +88,9 @@ export function FlyoutHeader(_: Readonly<Props>) {
     return (
       <>
         <Tooltip
-          title="Open this side panel as a full page. You can also Shift-click or Ctrl/Cmd-click its button in the left rail."
+          title="Open as full page"
           placement="bottom"
+          mouseEnterDelay={0.2}
         >
           <Icon
             name="expand"
