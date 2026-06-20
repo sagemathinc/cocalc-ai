@@ -125,6 +125,23 @@ Plus/Star/Launchpad`).
   routes `/features`, `/features/automations`, `/features/more-languages` with 45 browser QA
   assertions / 0 failures, focused Jest passed (`public/features/__tests__/app.test.tsx`, 86
   tests), and `lint:frontend` passed. No PR created.
+- **START 2026-06-20 13:19 PDT:** Blaec asked whether More Languages under-represents important
+  languages CoCalc.ai supports. Verified preview still owned by synthesis hub pid `228054`, no
+  active build, and current branch is clean with one local commit ahead of origin
+  (`8f4a340f40`, whiteboard QA text). Claiming
+  `src/packages/frontend/public/features/more-languages-page.tsx`,
+  `src/packages/frontend/public/features/catalog.ts`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/util/public-site-metadata.ts`, and this ledger to broaden the More Languages copy
+  and rebuild preview. No PR.
+- **END 2026-06-20 13:25 PDT:** broadened More Languages from four example languages into
+  audience-relevant language families: compiled code, scripting/shell, JVM/web, and data
+  workflows. Updated the detail page, feature index summary, feature catalog metadata, public
+  route metadata, and the compressed-page regression test. Validation: focused Jest
+  `public/features/__tests__/app.test.tsx` passed (86 tests; existing React/AntD jsdom warnings),
+  `lint:frontend` passed, `packages/static build:dev` passed, browser QA passed on `/features`
+  and `/features/more-languages` (34 assertions / 0 failures total), and a live Playwright text
+  assertion confirmed the new `/features/more-languages` content. No PR created.
 
 ### Codex — platform-UI thread
 

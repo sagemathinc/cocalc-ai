@@ -960,7 +960,12 @@ describe("PublicFeaturesApp", () => {
         slug: "octave",
       },
       {
-        removedHeadings: ["C / C++", "Fortran", "Bash", "JavaScript"],
+        removedHeadings: [
+          "Compiled code",
+          "Scripting and shell",
+          "JVM and web",
+          "Data workflows",
+        ],
         slug: "more-languages",
       },
     ] as const;

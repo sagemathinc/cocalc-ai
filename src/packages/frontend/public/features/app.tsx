@@ -199,7 +199,7 @@ const FEATURE_INDEX_CARD_OVERRIDES = {
     href: featurePath("more-languages"),
     slug: "more-languages",
     summary:
-      "Use C, C++, Bash, Fortran, JavaScript, and many other tools through terminals, scripts, and project software.",
+      "Use C, C++, Fortran, Rust, Go, Java, Bash, SQL, JavaScript, TypeScript, and many other tools through terminals, scripts, and project software.",
     title: "More",
   },
 } satisfies Record<

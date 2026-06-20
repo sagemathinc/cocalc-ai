@@ -109,7 +109,7 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
     slug: "more-languages",
     title: "More Languages",
     summary:
-      "Use C, C++, Fortran, Bash, JavaScript, TypeScript, and other tools through shared project files, terminals, notebooks, and scripts.",
+      "Use C, C++, Fortran, Rust, Go, Java, Bash, SQL, JavaScript, TypeScript, and many other tools through shared project files, terminals, notebooks, and scripts.",
     image: "/public/features/terminal.png",
   },
   {

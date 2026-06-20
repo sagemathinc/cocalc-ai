@@ -19,10 +19,10 @@ const { Paragraph, Text, Title } = Typography;
 
 function MoreLanguagesProjectMock() {
   const blocks = [
-    ["file-code", "C / C++", "compiled source files"],
-    ["code", "Fortran", "numerical programs"],
-    ["terminal", "Bash", "scripts and commands"],
-    ["file-alt", "JavaScript", "project tooling"],
+    ["file-code", "Compiled code", "C, C++, Fortran, Rust, Go"],
+    ["terminal", "Scripting and shell", "Bash, Perl, Ruby, CLI tools"],
+    ["code", "JVM and web", "Java, JavaScript, TypeScript"],
+    ["database", "Data workflows", "SQL, data files, pipelines"],
   ] satisfies [IconName, string, string][];
 
   return (
@@ -88,9 +88,9 @@ function MoreLanguagesFit() {
             <Paragraph style={{ margin: 0 }}>
               The headline feature cards cover the most common public pages, but
               CoCalc projects are ordinary collaborative Linux workspaces. That
-              makes room for compiled languages, shell scripts, command-line
-              tools, and supporting code that does not need its own top-level
-              feature page.
+              makes room for compiled languages, JVM and web stacks, shell
+              scripts, SQL/data tools, command-line tools, and supporting code
+              that does not need its own top-level feature page.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               Keep the source, generated output, notes, and review context
@@ -155,9 +155,9 @@ export default function MoreLanguagesFeaturePage({
                 Use many other languages from the same project.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Work with C, C++, Fortran, Bash, JavaScript, TypeScript, and
-                other tools in the same place as notebooks, files, terminals,
-                and collaborators.
+                Work with C, C++, Fortran, Rust, Go, Java, Bash, SQL,
+                JavaScript, TypeScript, and many other tools in the same place
+                as notebooks, files, terminals, and collaborators.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 CoCalc is a good fit when the language is part of a broader

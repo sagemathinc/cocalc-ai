@@ -146,7 +146,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "More Languages",
     tagline: "Use many other languages from the same project.",
     summary:
-      "Use C, C++, Fortran, Bash, JavaScript, TypeScript, and other tools through project files, terminals, notebooks, and scripts.",
+      "Use C, C++, Fortran, Rust, Go, Java, Bash, SQL, JavaScript, TypeScript, and many other tools through project files, terminals, notebooks, and scripts.",
     image: "/public/features/terminal.png",
     index: true,
   },
