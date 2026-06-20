@@ -141,16 +141,14 @@ export default function RenameFile({
         <div style={{ marginBottom: "8px", fontWeight: 500 }}>New name</div>
         {input}
       </div>
-      {!duplicate && (
-        <Checkbox
-          style={{ marginTop: "15px" }}
-          disabled={!ext}
-          checked={editExtension}
-          onChange={() => setEditExtension(!editExtension)}
-        >
-          Edit filename extension
-        </Checkbox>
-      )}
+      <Checkbox
+        style={{ marginTop: "15px" }}
+        disabled={!ext}
+        checked={editExtension}
+        onChange={() => setEditExtension(!editExtension)}
+      >
+        Edit filename extension
+      </Checkbox>
       {editExtension &&
         filename_extension(checked_files?.first() ?? "") != ext && (
           <Alert
