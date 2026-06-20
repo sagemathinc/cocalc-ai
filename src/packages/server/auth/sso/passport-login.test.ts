@@ -84,7 +84,9 @@ describe("PassportLogin SSO account creation", () => {
     const login = new PassportLogin(opts as any);
 
     await expect(
-      (login as any).create_account(opts, opts.emails[0]),
+      (login as any).create_account(opts, opts.emails[0], {
+        trustedProductAccess: false,
+      }),
     ).resolves.toBe("11111111-1111-4111-8111-111111111111");
 
     expect(createClusterAccountMock).toHaveBeenCalledWith({
@@ -93,7 +95,14 @@ describe("PassportLogin SSO account creation", () => {
       first_name: "Ada",
       last_name: "Lovelace",
       home_bay_id: "bay-sso",
+      customize: undefined,
+      ephemeral: undefined,
+      other_settings: expect.objectContaining({
+        newsletter: false,
+      }),
       signup_reason: "SSO account creation via google",
+      trusted_product_access: false,
+      trusted_product_access_reason: undefined,
     });
     expect(createPassportMock).toHaveBeenCalledWith({
       account_id: "11111111-1111-4111-8111-111111111111",

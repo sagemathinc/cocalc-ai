@@ -56,6 +56,14 @@ import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import type { AccountCreationAuthMethod } from "@cocalc/server/auth/account-creation-policy";
 import { evaluateAccountCreationPolicy } from "@cocalc/server/auth/account-creation-policy";
 import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
+import redeemRegistrationToken, {
+  restoreRedeemedRegistrationToken,
+  validateRegistrationToken,
+} from "@cocalc/server/auth/tokens/redeem";
+import {
+  recordSignUpTokenFail,
+  signUpTokenCheck,
+} from "@cocalc/server/auth/throttle";
 import { getEnabledSsoDomainPolicyForEmail } from "@cocalc/database/settings/sso-policies";
 import {
   createSignInSecondFactorChallenge,
@@ -67,6 +75,12 @@ import {
   ssoAuditEmailDomain,
   ssoAuditProviderType,
 } from "./audit";
+import { buildMarketingConsentOtherSettings } from "@cocalc/util/notification-preferences";
+
+interface SsoAccountCreationContext {
+  tokenInfo?: any;
+  trustedProductAccess: boolean;
+}
 
 const logger = getLogger("server:auth:sso:passport-login");
 
@@ -178,7 +192,7 @@ export class PassportLogin {
       has_valid_remember_me: false,
       account_id: undefined,
       email_address: undefined,
-      target: base_path,
+      target: this.opts.target ?? base_path,
       remember_me_cookie: cookies.get(REMEMBER_ME_COOKIE_NAME),
       get_api_key: cookies.get(SSO_API_KEY_COOKIE_NAME),
       action: undefined,
@@ -311,6 +325,17 @@ export class PassportLogin {
       first_name: opts.first_name,
       last_name: opts.last_name,
     });
+
+    if (
+      locals.email_address != null &&
+      this.isTrustedSsoEmail(opts, locals.email_address)
+    ) {
+      await set_email_address_verified({
+        db: this.database,
+        account_id: locals.account_id,
+        email_address: locals.email_address,
+      });
+    }
   }
 
   // this checks if the login info contains an email address, which belongs to an exclusive SSO strategy
@@ -503,6 +528,25 @@ export class PassportLogin {
             `It is not possible to link any other SSO accounts to the account your're current logged in with.`,
           );
         }
+        if (opts.strategyName === "google") {
+          const accountEmail = normalizedEmail(account_email_address);
+          if (
+            !accountEmail ||
+            !opts.emails?.some(
+              (email) => normalizedEmail(email) === accountEmail,
+            )
+          ) {
+            throw new Error(
+              "It is not possible to link this Google account because its email address does not match your CoCalc account email address.",
+            );
+          }
+          if (!this.isTrustedSsoEmail(opts, accountEmail)) {
+            throw new Error(
+              "It is not possible to link this Google account because Google did not return a verified matching email address.",
+            );
+          }
+          locals.email_address = accountEmail;
+        }
       }
 
       // user authenticated, passport not known, adding to the user's account
@@ -590,6 +634,7 @@ export class PassportLogin {
   private async create_account(
     opts: PassportLoginOpts,
     email_address: string | undefined,
+    creationContext: SsoAccountCreationContext,
   ): Promise<string> {
     const email = normalizedEmail(email_address) ?? "";
     const created = await createClusterAccount({
@@ -598,6 +643,15 @@ export class PassportLogin {
       first_name: opts.first_name ?? "",
       last_name: opts.last_name ?? "",
       home_bay_id: getConfiguredBayId(),
+      ephemeral: creationContext.tokenInfo?.ephemeral,
+      customize: creationContext.tokenInfo?.customize,
+      other_settings: buildMarketingConsentOtherSettings(
+        opts.marketing_consent === true,
+      ),
+      trusted_product_access: creationContext.trustedProductAccess,
+      trusted_product_access_reason: creationContext.trustedProductAccess
+        ? "registration_token"
+        : undefined,
       signup_reason: `SSO account creation via ${opts.strategyName}`,
     });
     await this.database.create_passport({
@@ -627,6 +681,11 @@ export class PassportLogin {
       locals.email_address = opts.emails[0];
     }
     L(`emails=${opts.emails} email_address=${locals.email_address}`);
+    if (opts.terms_accepted !== true) {
+      throw Error(
+        "You must agree to the terms of usage before creating an account.",
+      );
+    }
     const accountCreation =
       opts.passports[opts.strategyName].info?.account_creation;
     const domainPolicy = await getEnabledSsoDomainPolicyForEmail(
@@ -685,6 +744,27 @@ export class PassportLogin {
     if (creationPolicy.type !== "allow_create") {
       throw Error("SSO account creation is not allowed.");
     }
+    let tokenInfo: any;
+    if (requiresRegistrationToken) {
+      const email = locals.email_address ?? "";
+      const registrationToken = opts.registration_token ?? "";
+      const tokenThrottle = signUpTokenCheck(email, opts.req.ip);
+      if (tokenThrottle) {
+        throw Error(tokenThrottle);
+      }
+      try {
+        await validateRegistrationToken(registrationToken);
+      } catch (err) {
+        recordSignUpTokenFail(email, opts.req.ip);
+        throw Error(`Issue with registration token -- ${err.message}`);
+      }
+      try {
+        tokenInfo = await redeemRegistrationToken(registrationToken);
+      } catch (err) {
+        recordSignUpTokenFail(email, opts.req.ip);
+        throw Error(`Issue with registration token -- ${err.message}`);
+      }
+    }
     await assertSignupEmailDomainAllowed({
       email_address: locals.email_address,
     });
@@ -692,7 +772,31 @@ export class PassportLogin {
       email_address: locals.email_address,
     });
 
-    locals.account_id = await this.create_account(opts, locals.email_address);
+    try {
+      locals.account_id = await this.create_account(
+        opts,
+        locals.email_address,
+        {
+          tokenInfo,
+          trustedProductAccess: requiresRegistrationToken,
+        },
+      );
+    } catch (err) {
+      if (requiresRegistrationToken && opts.registration_token && tokenInfo) {
+        try {
+          await restoreRedeemedRegistrationToken(opts.registration_token);
+        } catch (restoreErr) {
+          logger.warn(
+            "failed to restore registration token after SSO signup error",
+            {
+              email: locals.email_address,
+              err: restoreErr,
+            },
+          );
+        }
+      }
+      throw err;
+    }
     locals.new_account_created = true;
 
     if (locals.email_address != null && emailVerified) {

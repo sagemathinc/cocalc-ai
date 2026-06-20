@@ -1086,9 +1086,9 @@ export const EXTRAS: SettingsExtras = {
   },
   google_sso_signup_mode: {
     name: "Google SSO Account Creation",
-    desc: "Controls whether Google SSO may create new accounts. `Registration token required` is the safest general setting; users can still link Google SSO after creating an account with a valid registration token.",
+    desc: "Deprecated. Google SSO account creation now follows the normal site registration-token policy.",
     default: "registration_token_required",
-    show: google_sso_enabled,
+    show: () => false,
     valid: ["disabled", "registration_token_required", "public_allowed"],
     tags: ["SSO", "Security"],
     group: "Access & Identity",

@@ -50,7 +50,6 @@ describe("googleSsoStateFromSettings", () => {
         icon: "google",
         allowed_domains: ["example.com", "school.edu"],
         exclusive_domains: ["example.com", "school.edu"],
-        account_creation: "public_allowed",
       },
     });
     expect(state.signupMode).toBe("public_allowed");
