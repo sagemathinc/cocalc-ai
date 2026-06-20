@@ -1,6 +1,7 @@
 import { fromJS } from "immutable";
 import {
   getDefaultFixedTabOrder,
+  getDefaultHiddenFixedTabs,
   moveFixedTab,
   normalizeFixedTabOrder,
   normalizeHiddenFixedTabs,
@@ -10,14 +11,14 @@ import {
 describe("activity-bar preferences", () => {
   it("uses the curated default order in lite mode", () => {
     expect(getDefaultFixedTabOrder({ liteMode: true })).toEqual([
-      "workspaces",
-      "agents",
       "files",
-      "rootfs",
+      "agents",
       "new",
       "search",
       "docs",
       "settings",
+      "workspaces",
+      "rootfs",
       "active",
       "log",
       "servers",
@@ -33,7 +34,53 @@ describe("activity-bar preferences", () => {
     ).toEqual([
       "files",
       "agents",
+      "new",
+      "search",
+      "docs",
+      "settings",
       "workspaces",
+      "rootfs",
+      "active",
+      "log",
+      "servers",
+      "info",
+    ]);
+  });
+
+  it("hides specialist buttons in the default rail", () => {
+    expect(getDefaultHiddenFixedTabs({ liteMode: true })).toEqual([
+      "workspaces",
+      "rootfs",
+      "active",
+      "log",
+      "servers",
+      "info",
+    ]);
+  });
+
+  it("preserves explicit saved legacy order and hidden tabs", () => {
+    expect(
+      normalizeFixedTabOrder(
+        [
+          "workspaces",
+          "agents",
+          "files",
+          "rootfs",
+          "new",
+          "search",
+          "docs",
+          "settings",
+          "active",
+          "log",
+          "servers",
+          "info",
+        ],
+        { liteMode: true },
+      ),
+    ).toEqual([
+      "workspaces",
+      "agents",
+      "files",
       "rootfs",
       "new",
       "search",
@@ -44,33 +91,36 @@ describe("activity-bar preferences", () => {
       "servers",
       "info",
     ]);
+    expect(
+      normalizeHiddenFixedTabs(["active", "log", "servers", "info"], {
+        liteMode: true,
+      }),
+    ).toEqual(["active", "log", "servers", "info"]);
   });
 
   it("splits visible and overflow tabs from hidden preferences", () => {
     const order = normalizeFixedTabOrder(undefined, { liteMode: true });
-    const hidden = normalizeHiddenFixedTabs(["log", "info"], {
+    const hidden = normalizeHiddenFixedTabs(undefined, {
       liteMode: true,
     });
     expect(splitRailTabs(order, hidden)).toEqual({
       visible: [
-        "workspaces",
-        "agents",
         "files",
-        "rootfs",
+        "agents",
         "new",
         "search",
         "docs",
         "settings",
-        "active",
-        "servers",
       ],
-      overflow: ["log", "info"],
+      overflow: ["workspaces", "rootfs", "active", "log", "servers", "info"],
     });
   });
 
   it("keeps an empty hidden preference as all buttons visible", () => {
     expect(normalizeHiddenFixedTabs([], { liteMode: true })).toEqual([]);
     expect(normalizeHiddenFixedTabs(undefined, { liteMode: true })).toEqual([
+      "workspaces",
+      "rootfs",
       "active",
       "log",
       "servers",
@@ -106,7 +156,7 @@ describe("activity-bar preferences", () => {
       { liteMode: true },
     );
     expect(splitRailTabs(order, hidden)).toEqual({
-      visible: ["workspaces", "agents", "files", "new", "rootfs", "docs"],
+      visible: ["workspaces", "agents", "files", "new", "docs", "rootfs"],
       overflow: ["search", "settings", "active", "log", "servers", "info"],
     });
   });
@@ -119,12 +169,12 @@ describe("activity-bar preferences", () => {
     ).toEqual([
       "files",
       "settings",
-      "workspaces",
       "agents",
-      "rootfs",
       "new",
       "search",
       "docs",
+      "workspaces",
+      "rootfs",
       "active",
       "log",
       "servers",

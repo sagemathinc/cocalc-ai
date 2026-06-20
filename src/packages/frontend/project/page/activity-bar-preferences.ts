@@ -6,14 +6,14 @@
 import { FIXED_PROJECT_TABS, type FixedTab } from "./file-tab";
 
 const DEFAULT_ORDER: readonly FixedTab[] = [
-  "workspaces",
-  "agents",
   "files",
-  "rootfs",
+  "agents",
   "new",
   "search",
   "docs",
   "settings",
+  "workspaces",
+  "rootfs",
   "active",
   "log",
   "servers",
@@ -21,6 +21,8 @@ const DEFAULT_ORDER: readonly FixedTab[] = [
 ] as const;
 
 const DEFAULT_HIDDEN: readonly FixedTab[] = [
+  "workspaces",
+  "rootfs",
   "active",
   "log",
   "servers",
@@ -60,6 +62,20 @@ function filterAvailable(
   return tabs.filter((name) => !(liteMode && FIXED_PROJECT_TABS[name].noLite));
 }
 
+function normalizeRawTabs(
+  raw: readonly string[],
+  allowed: ReadonlySet<FixedTab>,
+): FixedTab[] {
+  const normalized: FixedTab[] = [];
+  for (const name of raw) {
+    if (!allowed.has(name as FixedTab)) continue;
+    const tab = name as FixedTab;
+    if (normalized.includes(tab)) continue;
+    normalized.push(tab);
+  }
+  return normalized;
+}
+
 export function getDefaultFixedTabOrder(opts?: {
   liteMode?: boolean;
 }): FixedTab[] {
@@ -79,13 +95,7 @@ export function normalizeFixedTabOrder(
   const available = getDefaultFixedTabOrder(opts);
   const allowed = new Set<FixedTab>(available);
   const raw = toTabNames(value);
-  const ordered: FixedTab[] = [];
-  for (const name of raw) {
-    if (!allowed.has(name as FixedTab)) continue;
-    const tab = name as FixedTab;
-    if (ordered.includes(tab)) continue;
-    ordered.push(tab);
-  }
+  const ordered = normalizeRawTabs(raw, allowed);
   for (const tab of available) {
     if (!ordered.includes(tab)) {
       ordered.push(tab);
@@ -106,14 +116,7 @@ export function normalizeHiddenFixedTabs(
   if (raw.length === 0 && !hasTabListShape(value)) {
     return getDefaultHiddenFixedTabs(opts);
   }
-  const hidden: FixedTab[] = [];
-  for (const name of raw) {
-    if (!available.has(name as FixedTab)) continue;
-    const tab = name as FixedTab;
-    if (hidden.includes(tab)) continue;
-    hidden.push(tab);
-  }
-  return hidden;
+  return normalizeRawTabs(raw, available);
 }
 
 export function splitRailTabs(
