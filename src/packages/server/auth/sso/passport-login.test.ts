@@ -258,7 +258,7 @@ describe("PassportLogin SSO account creation", () => {
       emails: ["ada@example.com"],
       authenticated_account_id: "22222222-2222-4222-8222-222222222222",
       req: { headers: {}, header: jest.fn() },
-      res: { send: jest.fn() },
+      res: { type: jest.fn().mockReturnThis(), send: jest.fn() },
       update_on_login: false,
       host: "",
       site_url: "https://cocalc.test",
