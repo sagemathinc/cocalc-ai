@@ -298,7 +298,7 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function render_linked_external_accounts(): Rendered {
-    if (strategies == null || strategies.size <= 1) {
+    if (!hasExternalStrategies(strategies)) {
       // not configured by server
       return;
     }
@@ -330,7 +330,7 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function render_available_to_link(): Rendered {
-    if (strategies == null || strategies.size <= 1) {
+    if (!hasExternalStrategies(strategies)) {
       // not configured by server yet, or nothing but email
       return;
     }
@@ -532,4 +532,12 @@ function mergeStrategies(
     }
   }
   return merged;
+}
+
+function hasExternalStrategies(
+  strategies?: List<ImmutablePassportStrategy>,
+): strategies is List<ImmutablePassportStrategy> {
+  return (
+    strategies?.some((strategy) => strategy.get("name") !== "email") ?? false
+  );
 }
