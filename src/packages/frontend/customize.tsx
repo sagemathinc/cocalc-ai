@@ -176,7 +176,6 @@ export interface CustomizeState {
   lite?: boolean;
   account_id?: string;
   project_id?: string;
-  remote_sync?: boolean;
 }
 
 export class CustomizeStore extends Store<CustomizeState> {
