@@ -1181,6 +1181,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   function renderInlineSessionMenu(
     record: AgentSessionRecord,
   ): React.JSX.Element {
+    const inlineSessionMenuLabel = "Agent chat actions";
     const threadKey = `${record.thread_key ?? ""}`.trim();
     const metadata = threadKey
       ? inlineActions?.getThreadMetadata?.(threadKey, { threadId: threadKey })
@@ -1195,46 +1196,60 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
     if (!inlineActions || !threadKey) {
       return (
-        <Button
-          size="small"
-          type="text"
-          icon={<Icon name="ellipsis" />}
-          aria-label="Chat thread actions"
-          disabled
-        />
+        <Tooltip title={inlineSessionMenuLabel}>
+          <span style={{ display: "inline-flex", alignItems: "center" }}>
+            <Button
+              size="small"
+              type="text"
+              icon={<Icon name="ellipsis" />}
+              aria-label={inlineSessionMenuLabel}
+              disabled
+            />
+          </span>
+        </Tooltip>
       );
     }
     return (
-      <ChatRoomThreadMenu
-        actions={inlineActions}
-        threadKey={threadKey}
-        plainLabel={label}
-        hasCustomName={Boolean(metadata?.name?.trim())}
-        isPinned={metadata?.pin ?? record.thread_pin ?? false}
-        isAI={isAI}
-        isCodexThread={isCodexModelName(`${model ?? record.model ?? ""}`)}
-        threadColor={metadata?.thread_color}
-        threadIcon={metadata?.thread_icon}
-        openAppearanceModal={
-          modalHandlers?.openAppearanceModal ?? (() => undefined)
-        }
-        openBehaviorModal={
-          modalHandlers?.openBehaviorModal ?? (() => undefined)
-        }
-        openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
-        openImportModal={modalHandlers?.openImportModal ?? (() => undefined)}
-        openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
-        confirmResetThread={() => confirmClearThread(record)}
-        confirmDeleteThread={() => confirmDeleteInlineThread(record)}
-        openChatFile={() => actions?.open_file({ path: record.chat_path })}
-        openAutomationModal={(key) => openAutomationModal(key, inlineActions)}
-        openGitBrowser={(key) =>
-          openGitBrowserForThread(key, inlineActions, record.chat_path)
-        }
-        buttonType="text"
-        buttonAriaLabel="Chat thread actions"
-        buttonTestId="agents-inline-thread-menu"
-      />
+      <Tooltip title={inlineSessionMenuLabel}>
+        <span style={{ display: "inline-flex", alignItems: "center" }}>
+          <ChatRoomThreadMenu
+            actions={inlineActions}
+            threadKey={threadKey}
+            plainLabel={label}
+            hasCustomName={Boolean(metadata?.name?.trim())}
+            isPinned={metadata?.pin ?? record.thread_pin ?? false}
+            isAI={isAI}
+            isCodexThread={isCodexModelName(`${model ?? record.model ?? ""}`)}
+            threadColor={metadata?.thread_color}
+            threadIcon={metadata?.thread_icon}
+            openAppearanceModal={
+              modalHandlers?.openAppearanceModal ?? (() => undefined)
+            }
+            openBehaviorModal={
+              modalHandlers?.openBehaviorModal ?? (() => undefined)
+            }
+            openExportModal={
+              modalHandlers?.openExportModal ?? (() => undefined)
+            }
+            openImportModal={
+              modalHandlers?.openImportModal ?? (() => undefined)
+            }
+            openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
+            confirmResetThread={() => confirmClearThread(record)}
+            confirmDeleteThread={() => confirmDeleteInlineThread(record)}
+            openChatFile={() => actions?.open_file({ path: record.chat_path })}
+            openAutomationModal={(key) =>
+              openAutomationModal(key, inlineActions)
+            }
+            openGitBrowser={(key) =>
+              openGitBrowserForThread(key, inlineActions, record.chat_path)
+            }
+            buttonType="text"
+            buttonAriaLabel={inlineSessionMenuLabel}
+            buttonTestId="agents-inline-thread-menu"
+          />
+        </span>
+      </Tooltip>
     );
   }
 
@@ -2083,6 +2098,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 flexDirection: "column",
                 height: "100%",
                 minHeight: 0,
+                boxSizing: "border-box",
+                padding: "0 8px 8px",
               }
             : {
                 width: "100%",
@@ -2101,6 +2118,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             marginBottom: 10,
             width: "100%",
             minWidth: 0,
+            boxSizing: "border-box",
           }}
         >
           <div
@@ -2139,7 +2157,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 {ellipsize(inlineTitle, isFlyout ? 34 : 72)}
               </Typography.Text>
             </div>
-            <div style={{ flex: "0 0 auto" }}>
+            <div
+              style={{
+                flex: "0 0 auto",
+              }}
+            >
               {renderInlineSessionMenu(inlineSession)}
             </div>
           </div>

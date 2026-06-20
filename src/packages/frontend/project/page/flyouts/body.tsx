@@ -73,8 +73,8 @@ export function FlyoutBody({
   }
 
   const padding = hideActionButtons
-    ? `${FLYOUT_PADDING} 0 0 0`
-    : `${FLYOUT_PADDING} 0 0 ${FLYOUT_PADDING}`;
+    ? `${FLYOUT_PADDING} ${FLYOUT_PADDING} 0 0`
+    : `${FLYOUT_PADDING} ${FLYOUT_PADDING} 0 ${FLYOUT_PADDING}`;
 
   const style: CSS = {
     display: "flex",
