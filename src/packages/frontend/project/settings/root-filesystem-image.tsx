@@ -65,6 +65,7 @@ import { rootfsPath } from "@cocalc/frontend/public/rootfs/routes";
 import {
   RootfsScanDetailsButton,
   RootfsScanStatus,
+  useRootfsScanEnabled,
 } from "@cocalc/frontend/rootfs/scan-status";
 import {
   ROOTFS_PROJECT_PRESET_LABELS,
@@ -218,6 +219,7 @@ export default function RootFilesystemImage({
   );
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const canUseCustomRootfs = isAdmin;
+  const rootfsScanEnabled = useRootfsScanEnabled();
   const rootfsPublishOps = useTypedRedux({ project_id }, "rootfs_publish_ops");
   const seenCompletedPublishOpsRef = useRef<Set<string>>(new Set());
 
@@ -951,6 +953,10 @@ export default function RootFilesystemImage({
   }
 
   async function scanCurrentProjectRootfs() {
+    if (!rootfsScanEnabled) {
+      setError("RootFS vulnerability scanning is disabled for this site.");
+      return;
+    }
     try {
       setError("");
       setScanningLiveRootfs(true);
@@ -1251,7 +1257,7 @@ export default function RootFilesystemImage({
             />
           ) : null}
 
-          {liveRootfsScan ? (
+          {rootfsScanEnabled && liveRootfsScan ? (
             <Alert
               type={
                 Number(liveRootfsScan.summary.severity_counts?.critical ?? 0) >
@@ -1292,8 +1298,12 @@ export default function RootFilesystemImage({
               title="Actions"
               subtitle={
                 isCustomRootfs
-                  ? "Change, scan, or publish this custom image."
-                  : "Change, publish, scan, or manage the catalog entry."
+                  ? rootfsScanEnabled
+                    ? "Change, scan, or publish this custom image."
+                    : "Change or publish this custom image."
+                  : rootfsScanEnabled
+                    ? "Change, publish, scan, or manage the catalog entry."
+                    : "Change, publish, or manage the catalog entry."
               }
             >
               <Space direction="vertical" size={10} style={{ width: "100%" }}>
@@ -1363,19 +1373,21 @@ export default function RootFilesystemImage({
                     }
                   />
                 ) : null}
-                <RuntimeAction
-                  title="Scan current RootFS"
-                  description="Run a vulnerability preflight against the live project RootFS before publishing or continuing to use it."
-                  action={
-                    <Button
-                      disabled={open || scanningLiveRootfs}
-                      loading={scanningLiveRootfs}
-                      onClick={scanCurrentProjectRootfs}
-                    >
-                      Scan
-                    </Button>
-                  }
-                />
+                {rootfsScanEnabled ? (
+                  <RuntimeAction
+                    title="Scan current RootFS"
+                    description="Run a vulnerability preflight against the live project RootFS before publishing or continuing to use it."
+                    action={
+                      <Button
+                        disabled={open || scanningLiveRootfs}
+                        loading={scanningLiveRootfs}
+                        onClick={scanCurrentProjectRootfs}
+                      >
+                        Scan
+                      </Button>
+                    }
+                  />
+                ) : null}
               </Space>
             </RuntimePanel>
 
@@ -2062,61 +2074,71 @@ export default function RootFilesystemImage({
                     </Space>
                   ),
                 },
-                {
-                  key: "scan",
-                  label: "Scan",
-                  children:
-                    publishMode === "copy" && publishCopyMode === "project" ? (
-                      <Alert
-                        type={
-                          liveRootfsScan
-                            ? Number(
-                                liveRootfsScan.summary.severity_counts
-                                  ?.critical ?? 0,
-                              ) > 0
-                              ? "warning"
-                              : "success"
-                            : "info"
-                        }
-                        showIcon
-                        title="Preflight scan the live project RootFS before publishing"
-                        description={
-                          <Space
-                            direction="vertical"
-                            size="small"
-                            style={{ width: "100%" }}
-                          >
-                            <div>
-                              This scans the currently mounted project RootFS.
-                              Published images are scanned again after
-                              publication, but this check catches obvious
-                              vulnerabilities before creating the image.
-                            </div>
-                            {liveRootfsScan ? (
-                              <>
-                                {renderLiveRootfsScanSummary(liveRootfsScan)}
-                                {renderLiveRootfsScanActions(liveRootfsScan)}
-                              </>
-                            ) : null}
-                            <Button
-                              size="small"
-                              loading={scanningLiveRootfs}
-                              onClick={scanCurrentProjectRootfs}
-                            >
-                              Scan current RootFS now
-                            </Button>
-                          </Space>
-                        }
-                      />
-                    ) : (
-                      <Alert
-                        type="info"
-                        showIcon
-                        message="Preflight scan is only for publishing a live project RootFS."
-                        description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live RootFS to scan in this dialog."
-                      />
-                    ),
-                },
+                ...(rootfsScanEnabled
+                  ? [
+                      {
+                        key: "scan",
+                        label: "Scan",
+                        children:
+                          publishMode === "copy" &&
+                          publishCopyMode === "project" ? (
+                            <Alert
+                              type={
+                                liveRootfsScan
+                                  ? Number(
+                                      liveRootfsScan.summary.severity_counts
+                                        ?.critical ?? 0,
+                                    ) > 0
+                                    ? "warning"
+                                    : "success"
+                                  : "info"
+                              }
+                              showIcon
+                              title="Preflight scan the live project RootFS before publishing"
+                              description={
+                                <Space
+                                  direction="vertical"
+                                  size="small"
+                                  style={{ width: "100%" }}
+                                >
+                                  <div>
+                                    This scans the currently mounted project
+                                    RootFS. Published images are scanned again
+                                    after publication, but this check catches
+                                    obvious vulnerabilities before creating the
+                                    image.
+                                  </div>
+                                  {liveRootfsScan ? (
+                                    <>
+                                      {renderLiveRootfsScanSummary(
+                                        liveRootfsScan,
+                                      )}
+                                      {renderLiveRootfsScanActions(
+                                        liveRootfsScan,
+                                      )}
+                                    </>
+                                  ) : null}
+                                  <Button
+                                    size="small"
+                                    loading={scanningLiveRootfs}
+                                    onClick={scanCurrentProjectRootfs}
+                                  >
+                                    Scan current RootFS now
+                                  </Button>
+                                </Space>
+                              }
+                            />
+                          ) : (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="Preflight scan is only for publishing a live project RootFS."
+                              description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live RootFS to scan in this dialog."
+                            />
+                          ),
+                      },
+                    ]
+                  : []),
                 {
                   key: "metadata",
                   label: "Metadata",

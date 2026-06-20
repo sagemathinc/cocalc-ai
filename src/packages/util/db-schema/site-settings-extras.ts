@@ -252,6 +252,7 @@ export type SiteSettingsExtrasKeys =
   | "conat_admission_project_exec_stream_max_active"
   | "conat_admission_near_limit_percent"
   | "conat_admission_near_limit_log_interval_ms"
+  | "rootfs_scan_enabled"
   | "rootfs_scan_container_image"
   | "rootfs_scan_trivy_cache_dir"
   | "rootfs_scan_timeout_minutes"
@@ -652,6 +653,16 @@ export const EXTRAS: SettingsExtras = {
     group: "System / Advanced",
     subgroup: "Conat Admission",
   },
+  rootfs_scan_enabled: {
+    name: "RootFS Scan: Enabled",
+    desc: "Enable RootFS vulnerability scanning UI, scheduled scans, and manual scan RPCs for this site. Disabled by default because it requires Trivy image/cache storage and project-host scan capacity.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
   rootfs_scan_container_image: {
     name: "RootFS Scan: Trivy Container Image",
     desc: "Pinned Trivy scanner container image used by project hosts for official RootFS vulnerability scans. Blank uses docker.io/aquasec/trivy:latest; production should use an internal image reference pinned by digest.",
@@ -714,7 +725,7 @@ export const EXTRAS: SettingsExtras = {
   },
   rootfs_scan_scheduled_enabled: {
     name: "RootFS Scan: Scheduled Official Scans",
-    desc: "Run scheduled vulnerability scans for official non-hidden RootFS images. Blank or yes enables weekly scanning; no disables the scheduler.",
+    desc: "Run scheduled vulnerability scans for official non-hidden RootFS images when RootFS scanning is enabled. Blank or yes enables weekly scanning; no disables the scheduler.",
     default: "yes",
     valid: only_booleans,
     to_val: to_bool,

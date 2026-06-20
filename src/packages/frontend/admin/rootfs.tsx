@@ -29,7 +29,10 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import type { Host, HostRootfsImage } from "@cocalc/conat/hub/api/hosts";
-import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
+import {
+  RootfsScanStatus,
+  useRootfsScanEnabled,
+} from "@cocalc/frontend/rootfs/scan-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   RootfsAdminCatalogCounts,
@@ -442,6 +445,7 @@ function scanHostCandidateLabel(candidate: RootfsScanHostCandidate) {
 
 export function RootfsAdmin() {
   const hub = webapp_client.conat_client.hub;
+  const rootfsScanEnabled = useRootfsScanEnabled();
   const [rows, setRows] = React.useState<RootfsAdminCatalogEntry[]>([]);
   const [total, setTotal] = React.useState(0);
   const [counts, setCounts] = React.useState<RootfsAdminCatalogCounts>({
@@ -666,6 +670,10 @@ export function RootfsAdmin() {
   }
 
   async function openScanHostPicker(entry: RootfsAdminCatalogEntry) {
+    if (!rootfsScanEnabled) {
+      message.error("RootFS vulnerability scanning is disabled for this site.");
+      return;
+    }
     if (!entry.release_id) {
       message.error("This catalog entry does not reference a managed release.");
       return;
@@ -817,9 +825,13 @@ export function RootfsAdmin() {
         <Tag color="red">{counts.deleted} deleted</Tag>
         <Tag color="orange">{counts.pending_delete} pending release GC</Tag>
         <Tag color="gold">{counts.blocked} blocked</Tag>
-        <Tag>{counts.official_unscanned} official unscanned</Tag>
-        <Tag color="red">{counts.official_critical} official critical</Tag>
-        <Tag color="red">{counts.official_scan_failed} scan failed</Tag>
+        {rootfsScanEnabled ? (
+          <>
+            <Tag>{counts.official_unscanned} official unscanned</Tag>
+            <Tag color="red">{counts.official_critical} official critical</Tag>
+            <Tag color="red">{counts.official_scan_failed} scan failed</Tag>
+          </>
+        ) : null}
       </Space>
       {error ? <ErrorDisplay error={error} /> : null}
       {loading && rows.length === 0 ? (
@@ -903,43 +915,53 @@ export function RootfsAdmin() {
               key: "events",
               render: (_, entry) => recentEvents(entry),
             },
-            {
-              title: "Scan",
-              key: "scan",
-              render: (_, entry) => (
-                <Space orientation="vertical" size={0}>
-                  <RootfsScanStatus
-                    entry={entry}
-                    detailsTitle={`RootFS scan details: ${entry.label}`}
-                    onDownloadReport={
-                      entry.scan?.report?.artifact_id
-                        ? () => downloadScanReport(entry)
-                        : undefined
-                    }
-                  />
-                  {entry.scan?.report_url ? (
-                    <Typography.Link
-                      href={entry.scan.report_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 12 }}
-                    >
-                      View report
-                    </Typography.Link>
-                  ) : null}
-                  {actionLoading(entry, "download") ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Downloading report...
-                    </Typography.Text>
-                  ) : null}
-                  {entry.scanned_at ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      <TimeAgo date={entry.scanned_at} />
-                    </Typography.Text>
-                  ) : null}
-                </Space>
-              ),
-            },
+            ...(rootfsScanEnabled
+              ? [
+                  {
+                    title: "Scan",
+                    key: "scan",
+                    render: (_, entry) => (
+                      <Space orientation="vertical" size={0}>
+                        <RootfsScanStatus
+                          entry={entry}
+                          detailsTitle={`RootFS scan details: ${entry.label}`}
+                          onDownloadReport={
+                            entry.scan?.report?.artifact_id
+                              ? () => downloadScanReport(entry)
+                              : undefined
+                          }
+                        />
+                        {entry.scan?.report_url ? (
+                          <Typography.Link
+                            href={entry.scan.report_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ fontSize: 12 }}
+                          >
+                            View report
+                          </Typography.Link>
+                        ) : null}
+                        {actionLoading(entry, "download") ? (
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12 }}
+                          >
+                            Downloading report...
+                          </Typography.Text>
+                        ) : null}
+                        {entry.scanned_at ? (
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12 }}
+                          >
+                            <TimeAgo date={entry.scanned_at} />
+                          </Typography.Text>
+                        ) : null}
+                      </Space>
+                    ),
+                  },
+                ]
+              : []),
             {
               title: "Actions",
               key: "actions",
@@ -1036,7 +1058,7 @@ export function RootfsAdmin() {
                   ) : (
                     <Typography.Text type="secondary">Deleted</Typography.Text>
                   )}
-                  {!entry.deleted ? (
+                  {!entry.deleted && rootfsScanEnabled ? (
                     <Button
                       size="small"
                       loading={actionLoading(entry, "scan")}

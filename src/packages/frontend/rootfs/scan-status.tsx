@@ -15,6 +15,7 @@ import {
 } from "antd";
 import { useState, type ReactNode } from "react";
 
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import type {
   RootfsImageEntry,
@@ -30,6 +31,10 @@ const SEVERITIES: RootfsScanSeverity[] = [
   "low",
   "unknown",
 ];
+
+export function useRootfsScanEnabled(): boolean {
+  return useTypedRedux("customize", "rootfs_scan_enabled") === true;
+}
 
 function severityTotal(scan?: RootfsScanSummary): number {
   return SEVERITIES.reduce(
@@ -179,6 +184,8 @@ export function RootfsScanStatusTag({
   entry: Pick<RootfsImageEntry, "scan" | "official">;
   showUnknown?: boolean;
 }) {
+  const rootfsScanEnabled = useRootfsScanEnabled();
+  if (!rootfsScanEnabled) return null;
   const color = rootfsScanStatusColor(entry);
   if (!color && !showUnknown) return null;
   return (
@@ -477,7 +484,9 @@ export function RootfsScanDetailsButton({
   title?: string;
   onDownloadReport?: () => void;
 }) {
+  const rootfsScanEnabled = useRootfsScanEnabled();
   const [open, setOpen] = useState(false);
+  if (!rootfsScanEnabled) return null;
   if (!scan?.status || scan.status === "unknown") return null;
   return (
     <>
@@ -515,8 +524,10 @@ export function RootfsScanSummaryButton({
   title?: string;
   onDownloadReport?: () => void;
 }) {
+  const rootfsScanEnabled = useRootfsScanEnabled();
   const scan = entry.scan;
   const [open, setOpen] = useState(false);
+  if (!rootfsScanEnabled) return null;
   if (!scan?.status || scan.status === "unknown") {
     return entry.official ? (
       <Tag style={{ marginInlineEnd: 0 }}>Security Scan: not scanned</Tag>
@@ -583,6 +594,8 @@ export function RootfsScanStatus({
   detailsTitle?: string;
   onDownloadReport?: () => void;
 }) {
+  const rootfsScanEnabled = useRootfsScanEnabled();
+  if (!rootfsScanEnabled) return null;
   const scan = entry.scan;
   if ((!scan?.status || scan.status === "unknown") && !showUnknown) {
     return null;

@@ -41,6 +41,15 @@ function firstNonEmptyString(...values: unknown[]): string {
   return "";
 }
 
+function settingsBoolean(value: unknown, fallback: boolean): boolean {
+  if (value == null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  const normalized = `${value}`.trim().toLowerCase();
+  if (["true", "yes", "1", "on"].includes(normalized)) return true;
+  if (["false", "no", "0", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 export async function getRootfsScanConfig({
   scanner_image,
   trivy_cache_dir,
@@ -56,6 +65,11 @@ export async function getRootfsScanConfig({
   retention_days: number;
 }> {
   const settings = await getServerSettings();
+  if (!settingsBoolean((settings as any).rootfs_scan_enabled, false)) {
+    throw new Error(
+      "RootFS vulnerability scanning is disabled for this site; enable rootfs_scan_enabled in site settings first.",
+    );
+  }
   const image = firstNonEmptyString(
     scanner_image,
     (settings as any).rootfs_scan_container_image,
