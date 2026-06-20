@@ -57,6 +57,11 @@ describe("PublicFeaturesApp", () => {
       slug: "automations",
     },
     {
+      context: "feature-cli",
+      label: "Ask about CLI automation",
+      slug: "cli",
+    },
+    {
       context: "feature-jupyter-notebook",
       label: "Ask about Jupyter workflows",
       slug: "jupyter-notebook",
@@ -136,6 +141,10 @@ describe("PublicFeaturesApp", () => {
     {
       marker: "Turn recurring project workflows into repeatable runs.",
       slug: "automations",
+    },
+    {
+      marker: "CoCalc CLI for project automation.",
+      slug: "cli",
     },
     {
       marker: "Jupyter notebooks for work that needs to keep going",
@@ -250,7 +259,7 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByRole("link", { name: /Compare CoCalc/i })).toBeNull();
     expect(
       screen.getByRole("link", { name: /CoCalc CLI/i }).getAttribute("href"),
-    ).toBe("/docs/cli/use-cocalc-cli");
+    ).toBe("/features/cli");
     expect(
       screen
         .getByRole("link", { name: /Project Automations/i })

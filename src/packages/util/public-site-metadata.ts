@@ -71,6 +71,13 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
     image: "/public/features/terminal.png",
   },
   {
+    slug: "cli",
+    title: "CoCalc CLI",
+    summary:
+      "Use the CoCalc CLI for project automation, browser scripting, notebook execution, and operational workflows that need typed commands.",
+    image: "/public/features/terminal.png",
+  },
+  {
     slug: "slides",
     title: "Slides",
     summary:

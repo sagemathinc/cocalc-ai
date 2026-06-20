@@ -220,6 +220,22 @@ Plus/Star/Launchpad`).
   failures; screenshots in `/tmp/cocalc-public-qa-sw83Va`). Generic `pnpm -C src test ...`
   still fails before focused tests because the environment lacks Python `requests` for the
   unrelated docs URL checker. No PR.
+- **START 2026-06-20 14:20 PDT:** Blaec flagged that the CoCalc CLI card on `/features` still
+  routes directly to docs instead of a consistent short overview page. Verified preview remains
+  owned by synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Existing unrelated
+  dirt remains `src/packages/frontend/scripts/public-site-turn-snapshot.sh` and untracked
+  `dedicated-compute-page.tsx`; leaving both untouched. Claiming the CLI route/page, feature
+  index, feature catalog/metadata/tests, framing workplan, and this ledger to promote the
+  existing CLI draft into `/features/cli`, keep docs as a secondary link, rebuild, QA, commit,
+  and push. No PR.
+- **END 2026-06-20 14:31 PDT:** Promoted CoCalc CLI from a docs-only feature-index card to
+  `/features/cli`, with the CLI guide retained as a secondary CTA. Added catalog/metadata entries,
+  route tests, and the CLI route frame in the persistent workplan. Validation: focused feature
+  Jest `88/88` passing after removing the generic operating-model CTA from the CLI route;
+  `lint:frontend` passing; `git diff --check` clean; `pnpm -C src/packages/static build:dev`
+  passing; browser QA on `/features` and `/features/cli` desktop/mobile `68` assertions, `0`
+  failures before commit (`/tmp/cocalc-public-qa-zalVUg`) and after the post-commit rebuild
+  (`/tmp/cocalc-public-qa-kl0j74`). Committed and pushed synthesis branch backup. No PR.
 
 ### Codex — platform-UI thread
 

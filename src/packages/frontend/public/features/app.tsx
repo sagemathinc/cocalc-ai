@@ -25,6 +25,7 @@ import { COLORS } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
 import AutomationsFeaturePage from "./automations-page";
+import CliFeaturePage from "./cli-page";
 import { FEATURE_ACCENTS } from "./feature-accents";
 import {
   getFeatureIndexPages,
@@ -66,6 +67,7 @@ const FEATURE_DETAIL_COMPONENTS = {
   ai: AIFeaturePage,
   api: ApiFeaturePage,
   automations: AutomationsFeaturePage,
+  cli: CliFeaturePage,
   compare: CompareFeaturePage,
   "jupyter-notebook": JupyterNotebookFeaturePage,
   julia: JuliaFeaturePage,
@@ -183,7 +185,7 @@ const FEATURE_META = {
 // detail-page metadata, plus intentional docs-only surfaces.
 const FEATURE_INDEX_CARD_OVERRIDES = {
   cli: {
-    href: appPath("docs/cli/use-cocalc-cli"),
+    href: featurePath("cli"),
     slug: "cli",
     summary:
       "Use the CoCalc CLI for technical automation, browser scripting, and operational workflows that need a command-line surface.",
@@ -725,6 +727,7 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
     [
       "ai",
       "automations",
+      "cli",
       "compare",
       "jupyter-notebook",
       "api",
@@ -820,6 +823,11 @@ function FeatureDetailContent({
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
       />
+    );
+  }
+  if (slug === "cli") {
+    return (
+      <CliFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
     );
   }
   if (slug === "jupyter-notebook") {

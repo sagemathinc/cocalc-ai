@@ -95,6 +95,15 @@ export const FEATURE_PAGES: FeaturePage[] = [
     index: true,
   },
   {
+    slug: "cli",
+    title: "CoCalc CLI",
+    tagline: "Use typed commands for repeatable project automation.",
+    summary:
+      "Use the CoCalc CLI for technical automation, browser scripting, notebook execution, and operational workflows that need a command-line surface.",
+    image: "/public/features/terminal.png",
+    index: true,
+  },
+  {
     slug: "slides",
     title: "Slides",
     tagline: "A focused slide-deck detail for Whiteboards and Slides.",

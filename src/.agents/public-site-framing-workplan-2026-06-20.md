@@ -24,7 +24,7 @@ Evidence:
 - User flagged a `/features` card that goes directly to docs while other cards
   open local feature pages.
 - Source audit found docs-only card overrides for `CoCalc CLI` and `Dedicated
-  Compute`; "Project notes and Markdown" is a non-card group text link.
+Compute`; "Project notes and Markdown" is a non-card group text link.
 - External/source framing says docs links should support feature pages, not
   replace feature pages when the tile looks like a normal feature card.
 
@@ -45,6 +45,27 @@ Risks:
   executive product.
 - Dedicated compute must avoid internal project-host terminology and unproven
   performance or capacity claims.
+
+Current route frame for `/features/cli`:
+
+```md
+Route: /features/cli
+Visitor: engineer, researcher, platform teammate, or agent-assisted operator
+Visitor question: when should I use the CoCalc CLI instead of clicking through
+the UI or starting from the HTTP API?
+One-sentence promise: typed commands make recurring CoCalc project work easier
+to repeat, inspect, and hand to people or agents.
+Proof mechanism: project, notebook, browser, docs, and command examples that
+start from the same project context.
+Primary next step: open projects / create account.
+Secondary next step: CLI guide and related automation pages.
+What this must not claim: not an executive product path, not a replacement for
+the main workspace, not a benchmark or automation outcome claim.
+Evidence consulted: pitch docs classify CLI as an automation/integration
+surface; user feedback requires feature-card consistency; framing system says
+feature-like cards should route to feature pages.
+Decision: promote the short CLI overview page and keep docs as a supporting CTA.
+```
 
 ### FS-002 - Keep More Languages useful without becoming a language inventory
 
