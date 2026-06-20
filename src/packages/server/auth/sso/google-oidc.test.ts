@@ -128,6 +128,71 @@ describe("verifyGoogleIdToken", () => {
       }),
     ).rejects.toThrow("Google did not verify the email address.");
   });
+
+  it("requires a matching hosted domain when configured", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { idToken, jwk } = signedToken({
+      claims: {
+        iss: "https://accounts.google.com",
+        aud: "client-id",
+        exp: now + 600,
+        nonce: "nonce",
+        sub: "google-subject",
+        email: "user@example.com",
+        email_verified: true,
+        hd: "example.com",
+      },
+      kid: "hosted-domain-key",
+    });
+    (axios.get as jest.Mock).mockResolvedValueOnce({
+      data: { keys: [jwk] },
+      headers: { "cache-control": "max-age=0" },
+    });
+
+    await expect(
+      verifyGoogleIdToken({
+        idToken,
+        clientID: "client-id",
+        hostedDomains: ["school.edu"],
+        nonce: "nonce",
+      }),
+    ).rejects.toThrow(
+      "Google ID token is missing a matching hosted domain claim.",
+    );
+  });
+
+  it("accepts matching hosted domains when configured", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { idToken, jwk } = signedToken({
+      claims: {
+        iss: "https://accounts.google.com",
+        aud: "client-id",
+        exp: now + 600,
+        nonce: "nonce",
+        sub: "google-subject",
+        email: "user@dept.school.edu",
+        email_verified: true,
+        hd: "dept.school.edu",
+      },
+      kid: "matching-hosted-domain-key",
+    });
+    (axios.get as jest.Mock).mockResolvedValueOnce({
+      data: { keys: [jwk] },
+      headers: { "cache-control": "max-age=0" },
+    });
+
+    await expect(
+      verifyGoogleIdToken({
+        idToken,
+        clientID: "client-id",
+        hostedDomains: ["school.edu"],
+        nonce: "nonce",
+      }),
+    ).resolves.toMatchObject({
+      hd: "dept.school.edu",
+      sub: "google-subject",
+    });
+  });
 });
 
 describe("googleProfileFromClaims", () => {

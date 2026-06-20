@@ -53,6 +53,7 @@ export interface GoogleIdTokenClaims {
   sub: string;
   email: string;
   email_verified: boolean | string;
+  hd?: string;
   name?: string;
   given_name?: string;
   family_name?: string;
@@ -67,6 +68,14 @@ function base64UrlDecode(value: string): Buffer {
 
 function decodeJsonSegment<T>(value: string): T {
   return JSON.parse(base64UrlDecode(value).toString("utf8"));
+}
+
+function normalizeDomain(value: unknown): string {
+  return `${value ?? ""}`.trim().toLowerCase();
+}
+
+function domainMatches(domain: string, allowedDomain: string): boolean {
+  return domain === allowedDomain || domain.endsWith(`.${allowedDomain}`);
 }
 
 function parseCacheMaxAge(cacheControl: unknown): number {
@@ -92,10 +101,12 @@ async function getGoogleJwks(): Promise<GoogleJwks> {
 function assertValidClaims({
   claims,
   clientID,
+  hostedDomains,
   nonce,
 }: {
   claims: GoogleIdTokenClaims;
   clientID: string;
+  hostedDomains?: string[];
   nonce: string;
 }): void {
   const now = Math.floor(Date.now() / 1000);
@@ -129,6 +140,22 @@ function assertValidClaims({
   }
   if (claims.email_verified !== true && claims.email_verified !== "true") {
     throw new Error("Google did not verify the email address.");
+  }
+  const allowedHostedDomains = (hostedDomains ?? [])
+    .map(normalizeDomain)
+    .filter(Boolean);
+  if (allowedHostedDomains.length > 0) {
+    const hostedDomain = normalizeDomain(claims.hd);
+    if (
+      !hostedDomain ||
+      !allowedHostedDomains.some((allowedDomain) =>
+        domainMatches(hostedDomain, allowedDomain),
+      )
+    ) {
+      throw new Error(
+        "Google ID token is missing a matching hosted domain claim.",
+      );
+    }
   }
 }
 
@@ -191,10 +218,12 @@ export async function exchangeGoogleOidcCode({
 export async function verifyGoogleIdToken({
   idToken,
   clientID,
+  hostedDomains,
   nonce,
 }: {
   idToken: string;
   clientID: string;
+  hostedDomains?: string[];
   nonce: string;
 }): Promise<GoogleIdTokenClaims> {
   const [encodedHeader, encodedPayload, encodedSignature] = idToken.split(".");
@@ -231,7 +260,7 @@ export async function verifyGoogleIdToken({
   }
 
   const claims = decodeJsonSegment<GoogleIdTokenClaims>(encodedPayload);
-  assertValidClaims({ claims, clientID, nonce });
+  assertValidClaims({ claims, clientID, hostedDomains, nonce });
   return claims;
 }
 

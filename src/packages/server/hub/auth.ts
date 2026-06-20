@@ -860,6 +860,7 @@ export class PassportManager {
         const claims = await verifyGoogleIdToken({
           idToken: tokens.id_token,
           clientID,
+          hostedDomains: strategy.info?.allowed_domains,
           nonce: savedState.nonce,
         });
         const profile = googleProfileFromClaims(claims);
