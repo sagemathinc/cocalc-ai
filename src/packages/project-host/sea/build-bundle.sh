@@ -14,13 +14,16 @@
 set -euo pipefail
 
 ROOT="$(realpath "$(dirname "$0")/../../..")"
+resolve_path() {
+  node -e 'console.log(require("node:path").resolve(process.argv[1]))' "$1"
+}
 DEFAULT_OUT="$ROOT/packages/project-host/build/bundle"
 OUT_ARG="${1:-}"
 if [ -n "$OUT_ARG" ] && [[ "$OUT_ARG" != --* ]]; then
-  OUT="$(realpath -m "$OUT_ARG")"
+  OUT="$(resolve_path "$OUT_ARG")"
   shift
 else
-  OUT="$(realpath -m "$DEFAULT_OUT")"
+  OUT="$(resolve_path "$DEFAULT_OUT")"
 fi
 TARBALL="${1:-}"
 if [ -n "$TARBALL" ] && [[ "$TARBALL" != --* ]]; then
@@ -46,7 +49,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if [ -n "$TARBALL" ]; then
-  TARBALL="$(realpath -m "$TARBALL")"
+  TARBALL="$(resolve_path "$TARBALL")"
 fi
 FINAL_OUT="$OUT"
 FINAL_TARBALL="$TARBALL"
