@@ -10,6 +10,7 @@ import {
   DropdownMenu,
   Icon,
   Tip,
+  Tooltip,
   VisibleLG,
   type MenuItems,
 } from "@cocalc/frontend/components";
@@ -20,7 +21,7 @@ import { serverURL, SPEC } from "@cocalc/frontend/project/named-server-panel";
 
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { type JSX, type MouseEvent } from "react";
+import { type JSX, type MouseEvent, type ReactNode } from "react";
 import { SNAPSHOTS, isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import Snapshots from "@cocalc/frontend/project/snapshots";
 import Backups from "@cocalc/frontend/project/backups";
@@ -31,11 +32,30 @@ import TourButton from "./tour/button";
 import CloneProject from "./clone";
 
 const SHOW_APPS = false;
+const FILE_TOOLBAR_TOOLTIP_PROPS = {
+  mouseEnterDelay: 0,
+  mouseLeaveDelay: 0,
+  placement: "bottom" as const,
+};
 
 const OPEN_MSG = defineMessage({
   id: "project.explorer.misc-side-buttons.open_dir.tooltip",
   defaultMessage: `Opens the current directory in a {name} server instance, running inside this project.`,
 });
+
+function FileToolbarTooltip({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: ReactNode;
+}) {
+  return (
+    <Tooltip title={title} {...FILE_TOOLBAR_TOOLTIP_PROPS}>
+      <span style={{ display: "inline-flex" }}>{children}</span>
+    </Tooltip>
+  );
+}
 
 export function MiscSideButtons({
   refreshSnapshots,
@@ -126,35 +146,37 @@ export function MiscSideButtons({
 
   function render_hidden_toggle(): JSX.Element {
     const icon = show_hidden ? "eye" : "eye-slash";
+    const tooltip = show_hidden ? "Hide hidden files" : "Show hidden files";
     return (
-      <Button bsSize="small" onClick={handle_hidden_toggle}>
-        <Tip
-          title={intl.formatMessage(labels.hidden_files, {
-            hidden: show_hidden,
-          })}
-          placement={"bottom"}
+      <FileToolbarTooltip title={tooltip}>
+        <Button
+          bsSize="small"
+          onClick={handle_hidden_toggle}
+          aria-label={tooltip}
         >
           <Icon name={icon} />
-        </Tip>
-      </Button>
+        </Button>
+      </FileToolbarTooltip>
     );
   }
 
   function render_recovery(): JSX.Element | undefined {
     return (
-      <DropdownMenu
-        button
-        showDown
-        items={recoveryMenuItems}
-        title={
-          <span style={{ whiteSpace: "nowrap" }}>
-            <Icon name="disk-snapshot" />{" "}
-            <VisibleLG>
-              <span style={{ fontSize: 12 }}>Recovery</span>
-            </VisibleLG>
-          </span>
-        }
-      />
+      <FileToolbarTooltip title="Snapshots and backups">
+        <DropdownMenu
+          button
+          showDown={false}
+          items={recoveryMenuItems}
+          title={
+            <span style={{ whiteSpace: "nowrap" }}>
+              <Icon name="disk-snapshot" />{" "}
+              <VisibleLG>
+                <span style={{ fontSize: 12 }}>Recovery</span>
+              </VisibleLG>
+            </span>
+          }
+        />
+      </FileToolbarTooltip>
     );
   }
 
@@ -225,14 +247,16 @@ export function MiscSideButtons({
       return;
     }
     return (
-      <Button
-        bsSize="small"
-        className="upload-button"
-        title={intl.formatMessage(labels.upload_tooltip)}
-      >
-        <Icon name="upload" />{" "}
-        <VisibleLG>{intl.formatMessage(labels.upload)}</VisibleLG>
-      </Button>
+      <FileToolbarTooltip title="Upload files">
+        <Button
+          bsSize="small"
+          className="upload-button"
+          aria-label="Upload files"
+        >
+          <Icon name="upload" />{" "}
+          <VisibleLG>{intl.formatMessage(labels.upload)}</VisibleLG>
+        </Button>
+      </FileToolbarTooltip>
     );
   }
 
