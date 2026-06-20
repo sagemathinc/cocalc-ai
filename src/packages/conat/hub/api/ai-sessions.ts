@@ -3,6 +3,7 @@ import { authFirstRequireAccount } from "./util";
 export type AiSessionState =
   | "queued"
   | "running"
+  | "interrupting"
   | "completed"
   | "failed"
   | "interrupted"
@@ -53,9 +54,59 @@ export interface AiSessionsListOptions {
   limit?: number;
 }
 
+export interface AiSessionIdentity {
+  session_key?: string;
+  session_id?: string;
+  op_id?: string;
+}
+
+export type AiSessionInterruptState =
+  | "interrupted"
+  | "repaired"
+  | "queued"
+  | "missing"
+  | "not_authorized"
+  | "transport_failed"
+  | "already_terminal";
+
+export interface AiSessionInterruptOptions extends AiSessionIdentity {
+  account_id?: string;
+  note?: string;
+}
+
+export interface AiSessionInterruptResponse {
+  ok: boolean;
+  state: AiSessionInterruptState;
+  terminal: boolean;
+  session_key?: string | null;
+  session_id?: string | null;
+  op_id?: string | null;
+  project_id?: string | null;
+  message?: string;
+}
+
+export interface AiSessionInterruptAllOptions {
+  account_id?: string;
+  limit?: number;
+  note?: string;
+}
+
+export interface AiSessionInterruptAllResponse {
+  total: number;
+  terminal: number;
+  uncertain: number;
+  results: AiSessionInterruptResponse[];
+}
+
 export interface AiSessionsApi {
   upsertProjectHostSession: (record: AiSessionRecord) => Promise<void>;
   list: (opts?: AiSessionsListOptions) => Promise<AiSessionRecord[]>;
+  interrupt: (
+    opts: AiSessionInterruptOptions,
+  ) => Promise<AiSessionInterruptResponse>;
+  interruptAll: (
+    opts?: AiSessionInterruptAllOptions,
+  ) => Promise<AiSessionInterruptAllResponse>;
 }
 
 function authForSessionPublication({
@@ -87,4 +138,6 @@ function authForSessionPublication({
 export const aiSessions = {
   upsertProjectHostSession: authForSessionPublication,
   list: authFirstRequireAccount,
+  interrupt: authFirstRequireAccount,
+  interruptAll: authFirstRequireAccount,
 };
