@@ -1,0 +1,21 @@
+version: 1
+name: app-launcher
+
+steps:
+  - uses: cocalc/app-launcher
+    timeout: 300
+
+verify:
+  - test -x /opt/cocalc-app-launcher/hello-server.py
+
+publish:
+  label: RootFS app launcher
+  slug: app-launcher
+  description: A tiny HTTP service packaged as a RootFS project app launcher.
+  family: app-launcher
+  version: "1"
+  channel: stable
+  visibility: public
+  tags:
+    - rootfs-actions
+    - app-launcher

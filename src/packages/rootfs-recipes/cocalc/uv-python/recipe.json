@@ -1,0 +1,54 @@
+{
+  "id": "cocalc/uv-python",
+  "version": 1,
+  "description": "Install a compact Python/Jupyter environment managed by uv.",
+  "inputs": {
+    "prefix": { "type": "string", "default": "/opt/cocalc-uv-python" },
+    "python": { "type": "string", "default": "/usr/bin/python3" },
+    "packages": {
+      "type": "array",
+      "default": [
+        "ipykernel",
+        "ipywidgets",
+        "jupyterlab",
+        "notebook",
+        "numpy",
+        "pandas",
+        "matplotlib",
+        "scipy",
+        "sympy",
+        "uv",
+        "jupyter-console"
+      ]
+    },
+    "kernel_name": { "type": "string", "default": "python3" },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "python",
+      "tags": ["python", "uv", "jupyter"]
+    },
+    "theme": {
+      "icon": "code-2",
+      "color": "#ffffff",
+      "accent_color": "#3776ab"
+    },
+    "content": {
+      "version": 1,
+      "title": "Python + uv",
+      "subtitle": "Python, uv, and a Jupyter kernel.",
+      "highlights": ["Python", "uv", "Jupyter"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "uv documentation",
+          "url": "https://docs.astral.sh/uv/"
+        }
+      ]
+    }
+  }
+}

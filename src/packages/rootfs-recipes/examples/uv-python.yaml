@@ -1,0 +1,23 @@
+version: 1
+name: uv-python
+
+steps:
+  - uses: cocalc/uv-python
+    timeout: 1800
+
+verify:
+  - command -v uv
+  - python3 -c 'import numpy, pandas, ipykernel'
+
+publish:
+  label: Python + uv
+  slug: uv-python
+  description: Python, uv, and a Jupyter kernel in a compact RootFS.
+  family: python
+  version: uv
+  channel: stable
+  visibility: public
+  tags:
+    - python
+    - uv
+    - jupyter

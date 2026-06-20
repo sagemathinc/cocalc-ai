@@ -1,0 +1,34 @@
+{
+  "id": "cocalc/quarto",
+  "version": 1,
+  "description": "Install Quarto CLI from GitHub releases.",
+  "inputs": {
+    "version": { "type": "string", "default": "latest" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "quarto",
+      "tags": ["quarto", "publishing", "markdown"]
+    },
+    "theme": {
+      "icon": "file-text",
+      "color": "#ffffff",
+      "accent_color": "#39729e"
+    },
+    "content": {
+      "version": 1,
+      "title": "Quarto",
+      "subtitle": "Scientific and technical publishing with the Quarto CLI.",
+      "highlights": ["Quarto", "Markdown", "Publishing"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "Quarto documentation",
+          "url": "https://quarto.org/docs/"
+        }
+      ]
+    }
+  }
+}

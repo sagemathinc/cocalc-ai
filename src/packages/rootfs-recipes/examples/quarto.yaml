@@ -1,0 +1,23 @@
+version: 1
+name: quarto
+
+steps:
+  - uses: cocalc/quarto
+    timeout: 900
+
+verify:
+  - command -v quarto
+  - quarto --version
+
+publish:
+  label: Quarto
+  slug: quarto
+  description: Quarto CLI for scientific and technical publishing.
+  family: quarto
+  version: latest
+  channel: stable
+  visibility: public
+  tags:
+    - quarto
+    - markdown
+    - publishing
