@@ -274,11 +274,11 @@ Manual validation:
 - Should preview use `--cgroupns=host`, or can we support a safer private
   cgroup namespace with explicit delegation on current Docker releases?
 - Should the first image use the same Star bootstrap scripts as VM installs or
-  a container-specific bootstrap path?
+  a container-specific bootstrap path? (ANS: we have a new "rootfs recipe" cli subcommand -- see src/packages/rootfs-recipes which should likely be used INSTEAD of what we do now; it's more flexible and easy to maintain!)
 - Do we want Cloudflare tunnel support in v1, or keep v1 localhost/explicit
-  hostname only?
-- How much migration tooling is needed before public preview?
-- Should the image be published publicly, or generated locally by the CLI first?
+  hostname only?  (ANS: v1 localhost only; not cloudflare tunnel; it should be like the lima version)
+- How much migration tooling is needed before public preview?   (ans: none)
+- Should the image be published publicly, or generated locally by the CLI first?  (ans: I think public is fine, but we should have a candidate tag before a stable or whatever tag.  NO need to keep anything secret.)
 
 ## Acceptance Criteria For V1
 
@@ -289,3 +289,4 @@ Manual validation:
 - Two projects run in separate cgroups.
 - Data persists across container restart.
 - Docs label the mode as privileged preview/evaluation, not production.
+

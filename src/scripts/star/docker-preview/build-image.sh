@@ -9,6 +9,10 @@ BUILD_RELEASE="${SRC_ROOT}/scripts/star/build-star-release.sh"
 TAG="${COCALC_STAR_DOCKER_TAG:-cocalc/star:preview}"
 RELEASE_ARTIFACT="${COCALC_STAR_DOCKER_RELEASE_ARTIFACT:-}"
 BUILD_RUNTIME="${COCALC_STAR_DOCKER_BUILD_RUNTIME:-1}"
+BUILD_ROOTFS_CACHE="${COCALC_STAR_DOCKER_BUILD_ROOTFS_CACHE:-1}"
+ROOTFS_CACHE_ARTIFACT="${COCALC_STAR_DOCKER_ROOTFS_CACHE_ARTIFACT:-}"
+CACHE_BTRFS_SIZE="${COCALC_STAR_DOCKER_CACHE_BTRFS_SIZE:-20G}"
+BUILD_ROOTFS_CACHE_ALLOW_DEGRADED="${COCALC_STAR_DOCKER_CACHE_ALLOW_DEGRADED:-1}"
 DOCKER="${DOCKER:-docker}"
 KEEP_CONTEXT=0
 
@@ -31,6 +35,11 @@ Options:
   --tag <name>             Docker tag to produce (default: cocalc/star:preview)
   --release-artifact <tgz> Use an existing cocalc-star release artifact
   --skip-runtime-build     Package current runtime artifacts without rebuilding
+  --rootfs-cache <tgz>     Use an existing prebuilt RootFS cache artifact
+  --skip-rootfs-cache      Do not prebuild/embed the default RootFS cache
+  --cache-btrfs-size <size>
+                          Btrfs image size for the cache builder container
+                          (default: 20G)
   --docker <path>          Docker-compatible CLI (default: docker)
   --keep-context           keep the temporary Docker build context
   -h, --help               show this help
@@ -39,6 +48,10 @@ Environment:
   COCALC_STAR_DOCKER_TAG
   COCALC_STAR_DOCKER_RELEASE_ARTIFACT
   COCALC_STAR_DOCKER_BUILD_RUNTIME=0
+  COCALC_STAR_DOCKER_BUILD_ROOTFS_CACHE=0
+  COCALC_STAR_DOCKER_ROOTFS_CACHE_ARTIFACT
+  COCALC_STAR_DOCKER_CACHE_BTRFS_SIZE=20G
+  COCALC_STAR_DOCKER_CACHE_ALLOW_DEGRADED=1
 
 The generated image expects rootful Docker and systemd support at runtime, e.g.
 
@@ -64,6 +77,19 @@ while [[ $# -gt 0 ]]; do
     --skip-runtime-build)
       BUILD_RUNTIME=0
       shift
+      ;;
+    --rootfs-cache)
+      ROOTFS_CACHE_ARTIFACT="$2"
+      BUILD_ROOTFS_CACHE=0
+      shift 2
+      ;;
+    --skip-rootfs-cache)
+      BUILD_ROOTFS_CACHE=0
+      shift
+      ;;
+    --cache-btrfs-size)
+      CACHE_BTRFS_SIZE="$2"
+      shift 2
       ;;
     --docker)
       DOCKER="$2"
@@ -104,27 +130,122 @@ else
   [ -f "$RELEASE_ARTIFACT" ] || die "release artifact does not exist: $RELEASE_ARTIFACT"
 fi
 
-context="$(mktemp -d)"
+context=""
 cleanup() {
-  if [[ "$KEEP_CONTEXT" -eq 1 ]]; then
+  if [[ -n "$context" && "$KEEP_CONTEXT" -eq 1 ]]; then
     log "kept Docker build context: $context"
-  else
+  elif [[ -n "$context" ]]; then
     rm -rf "$context"
   fi
 }
 trap cleanup EXIT
 
-cp "$SCRIPT_DIR/Dockerfile" "$context/Dockerfile"
-cp "$SCRIPT_DIR/cocalc-star-docker-preflight.sh" "$context/cocalc-star-docker-preflight.sh"
-cp "$SCRIPT_DIR/cocalc-star-docker-init.sh" "$context/cocalc-star-docker-init.sh"
-cp "$SCRIPT_DIR/cocalc-star-docker-init.service" "$context/cocalc-star-docker-init.service"
-cp "$RELEASE_ARTIFACT" "$context/cocalc-star-release.tar.gz"
+make_context() {
+  local rootfs_cache="${1:-}"
+  if [[ -n "$context" && "$KEEP_CONTEXT" -ne 1 ]]; then
+    rm -rf "$context"
+  fi
+  context="$(mktemp -d)"
+  cp "$SCRIPT_DIR/Dockerfile" "$context/Dockerfile"
+  cp "$SCRIPT_DIR/cocalc-star-docker-preflight.sh" "$context/cocalc-star-docker-preflight.sh"
+  cp "$SCRIPT_DIR/cocalc-star-docker-init.sh" "$context/cocalc-star-docker-init.sh"
+  cp "$SCRIPT_DIR/cocalc-star-docker-entrypoint.sh" "$context/cocalc-star-docker-entrypoint.sh"
+  cp "$SCRIPT_DIR/cocalc-star-docker-init.service" "$context/cocalc-star-docker-init.service"
+  cp "$RELEASE_ARTIFACT" "$context/cocalc-star-release.tar.gz"
+  if [[ -n "$rootfs_cache" ]]; then
+    cp "$rootfs_cache" "$context/cocalc-star-rootfs-cache.tar.gz"
+  else
+    : >"$context/cocalc-star-rootfs-cache.tar.gz"
+  fi
+}
 
-log "building Docker image $TAG"
-"$DOCKER" build -t "$TAG" "$context"
+build_image() {
+  local tag="$1"
+  local rootfs_cache="${2:-}"
+  make_context "$rootfs_cache"
+  log "building Docker image $tag"
+  "$DOCKER" build -t "$tag" "$context"
+}
+
+wait_for_builder_container() {
+  local container="$1"
+  local deadline=$((SECONDS + 2400))
+  local last_log=0
+  while ((SECONDS < deadline)); do
+    local result active
+    result="$("$DOCKER" exec "$container" systemctl show -p Result --value cocalc-star-docker-init.service 2>/dev/null || true)"
+    active="$("$DOCKER" exec "$container" systemctl is-active cocalc-star-docker-init.service 2>/dev/null || true)"
+    if [[ "$result" == "success" && "$active" == "active" ]]; then
+      return 0
+    fi
+    if [[ -n "$result" && "$result" != "success" ]]; then
+      "$DOCKER" exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+      die "RootFS cache builder failed: systemd result=$result"
+    fi
+    if ((SECONDS - last_log >= 30)); then
+      log "waiting for RootFS cache builder: active=${active:-unknown} result=${result:-unknown}"
+      last_log="$SECONDS"
+    fi
+    sleep 5
+  done
+  "$DOCKER" exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+  die "RootFS cache builder timed out"
+}
+
+build_rootfs_cache_artifact() {
+  local output="$1"
+  local suffix container volume temp_tag
+  suffix="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  container="cocalc-star-rootfs-cache-${suffix}"
+  volume="cocalc-star-rootfs-cache-${suffix}"
+  temp_tag="cocalc-star-rootfs-cache-builder:${suffix}"
+
+  build_image "$temp_tag" ""
+  log "running RootFS cache builder container $container"
+  "$DOCKER" run -d \
+    --name "$container" \
+    --privileged \
+    --cgroupns=host \
+    --security-opt seccomp=unconfined \
+    --tmpfs /run \
+    --tmpfs /run/lock \
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+    -v "${volume}:/var/lib/cocalc" \
+    -e COCALC_STAR_BTRFS_SIZE="$CACHE_BTRFS_SIZE" \
+    -e COCALC_STAR_DOCKER_ALLOW_DEGRADED="$BUILD_ROOTFS_CACHE_ALLOW_DEGRADED" \
+    "$temp_tag" >/dev/null
+
+  cleanup_builder() {
+    "$DOCKER" rm -f "$container" >/dev/null 2>&1 || true
+    "$DOCKER" volume rm "$volume" >/dev/null 2>&1 || true
+    "$DOCKER" image rm "$temp_tag" >/dev/null 2>&1 || true
+  }
+  trap 'cleanup_builder; cleanup' EXIT
+
+  wait_for_builder_container "$container"
+  log "exporting prebuilt RootFS cache to $output"
+  "$DOCKER" exec "$container" tar --numeric-owner -C /mnt/cocalc/data/cache/images -czf /tmp/cocalc-star-rootfs-cache.tar.gz .
+  "$DOCKER" cp "${container}:/tmp/cocalc-star-rootfs-cache.tar.gz" "$output"
+  cleanup_builder
+  trap cleanup EXIT
+}
+
+if [[ -n "$ROOTFS_CACHE_ARTIFACT" ]]; then
+  ROOTFS_CACHE_ARTIFACT="$(realpath "$ROOTFS_CACHE_ARTIFACT")"
+  [ -f "$ROOTFS_CACHE_ARTIFACT" ] || die "RootFS cache artifact does not exist: $ROOTFS_CACHE_ARTIFACT"
+elif [[ "$BUILD_ROOTFS_CACHE" == "1" ]]; then
+  rootfs_cache_dir="${REPO_ROOT}/dist/star/docker-preview"
+  mkdir -p "$rootfs_cache_dir"
+  ROOTFS_CACHE_ARTIFACT="${rootfs_cache_dir}/cocalc-star-rootfs-cache-$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf nogit).tar.gz"
+  build_rootfs_cache_artifact "$ROOTFS_CACHE_ARTIFACT"
+fi
+
+build_image "$TAG" "$ROOTFS_CACHE_ARTIFACT"
 
 cat <<EOF
 Built ${TAG}
+
+RootFS cache: ${ROOTFS_CACHE_ARTIFACT:-not embedded}
 
 Run locally with:
   ${DOCKER} run --privileged --cgroupns=host \\

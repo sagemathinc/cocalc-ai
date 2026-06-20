@@ -5,8 +5,8 @@ STAR_API="${STAR_API:-http://127.0.0.1:9100}"
 SRC_ROOT="${SRC_ROOT:-${HOME}/cocalc-ai/src}"
 STATE_DIR="${STAR_SMOKE_STATE:-/var/lib/cocalc/star/smoke}"
 BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-/var/lib/cocalc/star/bootstrap-result.json}"
-STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
-SMOKE_NOTEBOOK_PATH="${STAR_SMOKE_NOTEBOOK_PATH:-star-smoke/smoke.ipynb}"
+STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-}"
+SMOKE_NOTEBOOK_PATH="${STAR_SMOKE_NOTEBOOK_PATH:-/home/user/star-smoke/smoke.ipynb}"
 STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}"
 STAR_SMOKE_NOTEBOOK="${STAR_SMOKE_NOTEBOOK:-1}"
 STAR_SMOKE_BROWSER="${STAR_SMOKE_BROWSER:-0}"
@@ -282,10 +282,12 @@ main() {
     cocalc_cli --timeout 5m --rpc-timeout 1m project stop -w "$project_id" --wait >"${STATE_DIR}/project-stop.json"
   else
     log "creating project"
-    cocalc_cli project create \
-      --rootfs-image "$STAR_SMOKE_ROOTFS_IMAGE" \
-      "Star Smoke $(date -u +%Y%m%dT%H%M%SZ)" \
-      >"${STATE_DIR}/project-create.json"
+    create_args=(project create)
+    if [ -n "$STAR_SMOKE_ROOTFS_IMAGE" ]; then
+      create_args+=(--rootfs-image "$STAR_SMOKE_ROOTFS_IMAGE")
+    fi
+    create_args+=("Star Smoke $(date -u +%Y%m%dT%H%M%SZ)")
+    cocalc_cli "${create_args[@]}" >"${STATE_DIR}/project-create.json"
     project_id="$(json_field "${STATE_DIR}/project-create.json" data.project_id)"
     printf '%s\n' "$project_id" >"$project_id_file"
     chmod 600 "$project_id_file"

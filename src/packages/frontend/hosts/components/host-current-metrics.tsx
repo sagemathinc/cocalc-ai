@@ -32,6 +32,7 @@ type MetricBarProps = {
   percent?: number;
   detail?: string;
   unknownLabel?: string;
+  tone?: ResourceTone;
   compact?: boolean;
   historyPoints?: SparklinePoint[];
   color?: string;
@@ -162,6 +163,29 @@ function percentTone(percent?: number): ResourceTone {
   if (percent >= 90) return "red";
   if (percent >= 75) return "orange";
   return "green";
+}
+
+function riskLevelTone(level: HostMetricsRiskLevel): ResourceTone {
+  switch (level) {
+    case "critical":
+      return "red";
+    case "warning":
+      return "orange";
+    default:
+      return "green";
+  }
+}
+
+export function getMetadataDisplayTone({
+  derived,
+  metadataPercent,
+}: {
+  derived?: HostMetricsDerived;
+  metadataPercent?: number;
+}): ResourceTone {
+  return derived
+    ? riskLevelTone(derived.metadata.level)
+    : percentTone(metadataPercent);
 }
 
 type DiskUsageSource = {
@@ -486,7 +510,7 @@ function renderDerivedRiskTags(
     tags.push(
       <Tooltip
         key="admission-blocked"
-        title="Storage-heavy admissions should be blocked until the host recovers."
+        title={admissionBlockedTooltip(derived)}
         overlayInnerStyle={overlayInnerStyle}
       >
         <Tag color="red">admission blocked</Tag>
@@ -512,6 +536,26 @@ function renderDerivedRiskTags(
   );
 }
 
+function admissionBlockedTooltip(derived: HostMetricsDerived): React.ReactNode {
+  const blockers = [
+    derived.disk.level === "critical"
+      ? `Disk: ${derived.disk.reason ?? "critical pressure"}`
+      : undefined,
+    derived.metadata.level === "critical"
+      ? `Metadata: ${derived.metadata.reason ?? "critical pressure"}`
+      : undefined,
+  ].filter((line): line is string => typeof line === "string");
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ fontWeight: 600 }}>Admission blocked</div>
+      <div>Storage-heavy admissions should wait until pressure clears.</div>
+      {blockers.map((line, i) => (
+        <div key={`admission-blocked-${i}`}>{line}</div>
+      ))}
+    </div>
+  );
+}
+
 function resourceHealth({
   derived,
   diskPercent,
@@ -525,6 +569,9 @@ function resourceHealth({
   metadataPercent?: number;
   stale?: boolean;
 }): { label: string; tone: ResourceTone; detail: string } {
+  const metadataPercentTone = derived
+    ? undefined
+    : percentTone(metadataPercent);
   if (
     derived?.disk.level === "critical" ||
     derived?.shared_scratch?.level === "critical" ||
@@ -532,7 +579,7 @@ function resourceHealth({
     derived?.admission_allowed === false ||
     percentTone(diskPercent) === "red" ||
     percentTone(sharedScratchPercent) === "red" ||
-    percentTone(metadataPercent) === "red"
+    metadataPercentTone === "red"
   ) {
     return { label: "Critical", tone: "red", detail: "Resource pressure" };
   }
@@ -543,7 +590,7 @@ function resourceHealth({
     derived?.auto_grow_recommended ||
     percentTone(diskPercent) === "orange" ||
     percentTone(sharedScratchPercent) === "orange" ||
-    percentTone(metadataPercent) === "orange"
+    metadataPercentTone === "orange"
   ) {
     return { label: "Watch disk", tone: "orange", detail: "Overall health" };
   }
@@ -785,16 +832,19 @@ function CompactMetricLine({
   percent,
   detail,
   unknownLabel,
+  tone,
   color,
 }: {
   label: string;
   percent?: number;
   detail?: string;
   unknownLabel?: string;
+  tone?: ResourceTone;
   color?: string;
 }) {
   const displayPercent = normalizePercent(percent);
-  const toneColors = RESOURCE_TONES[percentTone(displayPercent)];
+  const displayTone = tone ?? percentTone(displayPercent);
+  const toneColors = RESOURCE_TONES[displayTone];
   const display =
     displayPercent != null ? Math.round(displayPercent) : undefined;
   return (
@@ -825,7 +875,7 @@ function CompactMetricLine({
       <Progress
         percent={display ?? 0}
         size="small"
-        status={progressStatus(displayPercent)}
+        status={tone ? "normal" : progressStatus(displayPercent)}
         showInfo={false}
         strokeColor={color ?? toneColors.text}
       />
@@ -854,6 +904,7 @@ function MetricBar({
   percent,
   detail,
   unknownLabel,
+  tone,
   compact,
   historyPoints,
   color,
@@ -861,8 +912,8 @@ function MetricBar({
 }: MetricBarProps) {
   const displayPercent = normalizePercent(percent);
   const trendPoints = historyPoints ?? [];
-  const tone = percentTone(displayPercent);
-  const toneColors = RESOURCE_TONES[tone];
+  const displayTone = tone ?? percentTone(displayPercent);
+  const toneColors = RESOURCE_TONES[displayTone];
   const display =
     displayPercent != null ? Math.round(displayPercent) : undefined;
   return (
@@ -918,7 +969,7 @@ function MetricBar({
         <Progress
           percent={display ?? 0}
           size="small"
-          status={progressStatus(displayPercent)}
+          status={tone ? "normal" : progressStatus(displayPercent)}
           showInfo={false}
           strokeColor={toneColors.text}
         />
@@ -1215,6 +1266,11 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
     history?.growth?.metadata_used_bytes_per_hour,
   );
   const derived = history?.derived;
+  const metadataTone = getMetadataDisplayTone({
+    derived,
+    metadataPercent,
+  });
+  const metadataColor = RESOURCE_TONES[metadataTone].text;
   const riskTags = renderDerivedRiskTags(derived);
   const metricsStaleness = getMetricsStaleness(host);
   const health = resourceHealth({
@@ -1252,7 +1308,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
     if (dense) {
       const metadataCritical =
         derived?.metadata.level === "critical" ||
-        percentTone(metadataPercent) === "red";
+        (derived == null && percentTone(metadataPercent) === "red");
       const healthTagColor =
         health.tone === "red"
           ? "red"
@@ -1332,12 +1388,13 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             <CompactMetricLine
               label="Meta"
               percent={metadataPercent}
+              tone={metadataTone}
               detail={
                 metadataUsed && metadataTotal
                   ? `${metadataUsed} / ${metadataTotal}`
                   : undefined
               }
-              color={COLORS.ANTD_RED}
+              color={metadataColor}
             />
           ) : null}
           <div
@@ -1421,6 +1478,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         <MetricBar
           label="Metadata"
           percent={metadataPercent}
+          tone={metadataTone}
           detail={
             metadataUsed && metadataTotal
               ? `${metadataUsed} / ${metadataTotal}`
@@ -1428,7 +1486,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           }
           compact
           historyPoints={metadataHistory}
-          color={COLORS.ANTD_RED}
+          color={metadataColor}
           icon={<DatabaseOutlined />}
         />
       </>
@@ -1574,13 +1632,14 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         <MetricBar
           label="Metadata"
           percent={metadataPercent}
+          tone={metadataTone}
           detail={
             metadataUsed && metadataTotal
               ? `${metadataUsed} / ${metadataTotal}`
               : undefined
           }
           historyPoints={metadataHistory}
-          color={COLORS.ANTD_RED}
+          color={metadataColor}
           icon={<DatabaseOutlined />}
         />
       </div>

@@ -43,6 +43,11 @@ import {
   type RusticProgressUpdate,
 } from "./rustic-progress";
 import { btrfs, sudo } from "./util";
+import {
+  invalidateBtrfsQgroupShowRaw,
+  invalidateBtrfsSubvolumeShow,
+  withBtrfsMutationLock,
+} from "./operation-cache";
 
 export const RUSTIC = "rustic";
 
@@ -146,6 +151,20 @@ export type RusticRestoreRunner = (opts: {
   progress?: (update: RusticProgressUpdate) => void;
 }) => Promise<void>;
 
+type RusticBackupOptions = {
+  timeout?: number;
+  limit?: number;
+  tags?: string[];
+  parent?: string;
+  progress?: (update: RusticProgressUpdate) => void;
+  index?: {
+    project_id: string;
+    enabled?: boolean;
+    upload?: "rustic" | "local-only";
+  };
+  runner?: RusticBackupRunner;
+};
+
 export class SubvolumeRustic {
   constructor(public readonly subvolume: Subvolume) {}
 
@@ -173,6 +192,8 @@ export class SubvolumeRustic {
     await btrfs({
       args: ["subvolume", "snapshot", "-r", this.subvolume.path, snapshotPath],
     });
+    invalidateBtrfsSubvolumeShow(snapshotPath);
+    invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
     return { snapshotPath };
   }
 
@@ -182,6 +203,8 @@ export class SubvolumeRustic {
       err_on_exit: false,
       verbose: false,
     });
+    invalidateBtrfsSubvolumeShow(snapshotPath);
+    invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
   }
 
   private rusticHost = async (
@@ -196,8 +219,7 @@ export class SubvolumeRustic {
     });
   };
 
-  // create a new rustic backup
-  backup = async ({
+  private backupUnlocked = async ({
     limit,
     timeout = 30 * 60 * 1000,
     tags,
@@ -205,19 +227,7 @@ export class SubvolumeRustic {
     progress,
     index,
     runner,
-  }: {
-    timeout?: number;
-    limit?: number;
-    tags?: string[];
-    parent?: string;
-    progress?: (update: RusticProgressUpdate) => void;
-    index?: {
-      project_id: string;
-      enabled?: boolean;
-      upload?: "rustic" | "local-only";
-    };
-    runner?: RusticBackupRunner;
-  } = {}): Promise<Snapshot> => {
+  }: RusticBackupOptions = {}): Promise<Snapshot> => {
     if (limit != null && (await this.snapshots()).length >= limit) {
       // 507 = "insufficient storage" for http
       throw new ConatError(`there is a limit of ${limit} backups`, {
@@ -322,6 +332,15 @@ export class SubvolumeRustic {
         await this.deleteTempBackupSnapshot(snapshotPath);
       } catch {}
     }
+  };
+
+  // create a new rustic backup
+  backup = async (opts: RusticBackupOptions = {}): Promise<Snapshot> => {
+    return await withBtrfsMutationLock({
+      mount: this.subvolume.filesystem.opts.mount,
+      operation: "rustic-backup",
+      run: async () => await this.backupUnlocked(opts),
+    });
   };
 
   restore = async ({

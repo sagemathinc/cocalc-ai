@@ -13,6 +13,10 @@ import { SubvolumeQuota } from "./subvolume-quota";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { btrfs, sudo } from "./util";
+import {
+  cachedBtrfsSubvolumeShow,
+  invalidateBtrfsSubvolumeShow,
+} from "./operation-cache";
 
 import getLogger from "@cocalc/backend/logger";
 
@@ -99,10 +103,8 @@ export class Subvolume {
 }
 
 export async function isBtrfsSubvolume(path: string): Promise<boolean> {
-  const { exit_code, stderr } = await btrfs({
-    args: ["subvolume", "show", path],
+  const { exit_code, stderr } = await cachedBtrfsSubvolumeShow(path, {
     err_on_exit: false,
-    verbose: false,
   });
   if (!exit_code) return true;
   if (typeof stderr === "string" && stderr.includes("Not a Btrfs subvolume")) {
@@ -130,10 +132,7 @@ export async function getSubvolumeField(
   path: string,
   field: string,
 ): Promise<string> {
-  const { stdout } = await btrfs({
-    args: ["subvolume", "show", path],
-    verbose: false,
-  });
+  const { stdout } = await cachedBtrfsSubvolumeShow(path);
   // Avoid relying on positional splits; scan lines for the field name.
   const re = new RegExp(`^\\s*${field}\\s*:\\s*(.+)$`, "im");
   const match = stdout.match(re);
@@ -147,4 +146,8 @@ export async function getSubvolumeField(
 
 export async function getSubvolumeId(path: string): Promise<number> {
   return parseInt(await getSubvolumeField(path, "Subvolume ID"));
+}
+
+export function invalidateSubvolumeMetadata(path: string): void {
+  invalidateBtrfsSubvolumeShow(path);
 }

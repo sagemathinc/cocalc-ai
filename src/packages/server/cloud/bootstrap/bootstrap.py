@@ -2297,6 +2297,17 @@ case "$cmd" in
     # RootFS trees.
     exec /usr/bin/rsync -aAX --numeric-ids "$src"/ "$dest"/
     ;;
+  copy-tree-reflink)
+    if [ "$#" -ne 2 ]; then
+      echo "usage: cocalc-runtime-storage copy-tree-reflink <src> <dest>" >&2
+      exit 2
+    fi
+    src="$1"
+    dest="$2"
+    check_args "$src" "$dest"
+    mkdir -p "$dest"
+    exec /bin/cp -a --reflink=auto "$src"/. "$dest"/
+    ;;
   normalize-rootfs)
     skip_ownership_bridge=false
     ownership_source="${COCALC_ROOTFS_OWNERSHIP_SOURCE:-keep-id}"

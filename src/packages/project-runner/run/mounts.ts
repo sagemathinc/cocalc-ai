@@ -57,6 +57,9 @@ export function getCoCalcMounts(
     // container runs at startup.
     mounts[join(dirname(root), "src")] = COCALC_SRC;
     mounts[tools] = COCALC_BIN2;
+    if (pathExists(join(tools, "node"))) {
+      nodePath = join(COCALC_BIN2, "node");
+    }
     return mounts;
   }
 
