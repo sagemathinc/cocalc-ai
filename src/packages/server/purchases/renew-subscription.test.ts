@@ -12,6 +12,7 @@ import {
   createTestAccount,
   createTestMembershipSubscription,
 } from "./test-data";
+import createCredit from "./create-credit";
 import dayjs from "dayjs";
 import getPool from "@cocalc/database/pool";
 import { before, after } from "@cocalc/server/test";
@@ -64,6 +65,15 @@ describe("membership subscription renewal", () => {
     await createTestAccount(account_id);
     const created = await createTestMembershipSubscription(account_id, {
       class: "member",
+      status: "unpaid",
+    });
+    await createCredit({
+      account_id,
+      amount: created.cost,
+      description: {
+        description: "test renewal funding",
+        purpose: "test",
+      },
     });
     subscription_id = created.subscription_id;
     original_end = created.end;
@@ -93,5 +103,43 @@ describe("membership subscription renewal", () => {
     expect(rows[0].service).toBe("membership");
     expect(rows[0].description?.type).toBe("membership");
     expect(rows[0].description?.class).toBe(membershipClass);
+  });
+
+  it("rejects renewal when the subscription is already active", async () => {
+    const activeAccount = uuid();
+    await createTestAccount(activeAccount);
+    const { subscription_id, cost } = await createTestMembershipSubscription(
+      activeAccount,
+      {
+        status: "active",
+      },
+    );
+    await createCredit({
+      account_id: activeAccount,
+      amount: cost,
+      description: {
+        description: "test renewal funding",
+        purpose: "test",
+      },
+    });
+
+    await expect(
+      renewSubscription({ account_id: activeAccount, subscription_id }),
+    ).rejects.toThrow("subscription is already active");
+  });
+
+  it("rejects unpaid renewal without enough account balance", async () => {
+    const unpaidAccount = uuid();
+    await createTestAccount(unpaidAccount);
+    const { subscription_id } = await createTestMembershipSubscription(
+      unpaidAccount,
+      {
+        status: "unpaid",
+      },
+    );
+
+    await expect(
+      renewSubscription({ account_id: unpaidAccount, subscription_id }),
+    ).rejects.toThrow(/Please pay/);
   });
 });

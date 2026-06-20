@@ -8,7 +8,6 @@ import {
   toDecimal,
 } from "@cocalc/util/money";
 import dayjs from "dayjs";
-import { ALLOWED_SLACK } from "@cocalc/server/purchases/allowed-slack";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import createPaymentIntent from "./create-payment-intent";
 import getBalance from "@cocalc/server/purchases/get-balance";
@@ -22,6 +21,7 @@ import { useBalanceTowardSubscriptions } from "../subscription-renewal-notice";
 
 // nothing should ever be this small, but just in case:
 const MIN_SUBSCRIPTION_AMOUNT = 1;
+const SUBSCRIPTION_PAYMENT_SLACK = 0.01;
 
 const logger = getLogger("purchases:stripe:create-subscription-payment");
 
@@ -197,13 +197,11 @@ export async function processSubscriptionRenewal({
   paymentIntent,
   amount,
   client,
-  force,
 }: {
   account_id: string;
   paymentIntent: { metadata: { subscription_id: number | string } };
   amount: number;
   client?;
-  force?: boolean;
 }) {
   const { subscription_id } = paymentIntent?.metadata ?? {};
   logger.debug("processSubscriptionRenewal", {
@@ -237,7 +235,7 @@ export async function processSubscriptionRenewal({
   if (metadata?.type != "membership") {
     throw Error("subscription must be for a membership");
   }
-  if (!force && amountValue.add(ALLOWED_SLACK).lte(costValue)) {
+  if (amountValue.add(SUBSCRIPTION_PAYMENT_SLACK).lt(costValue)) {
     logger.debug("processSubscriptionRenewal: SUSPICIOUS! -- not doing it.");
     throw Error(
       `subscription costs a lot more than payment -- contact support.`,
@@ -428,7 +426,6 @@ export async function processResumeSubscription({
     account_id,
     paymentIntent,
     amount,
-    force: true,
   });
   await clearResumeSubscriptionPayment({ account_id, paymentIntent });
 }
