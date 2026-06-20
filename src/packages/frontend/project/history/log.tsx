@@ -599,11 +599,23 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
 
   function render_search(): React.JSX.Element | void {
     if (actions == null) return;
+    const openSelectedFile =
+      mode === "files"
+        ? (_value: string, info: any): void => {
+            const file = get_opened_files()[cursor_index];
+            if (file == null) return;
+            actions.open_file({
+              path: file.filename,
+              foreground: !info?.ctrl_down,
+            });
+          }
+        : undefined;
     return (
       <LogSearch
         actions={actions}
         search={search}
         selected={mode === "history" ? get_log().get(cursor_index) : undefined}
+        onSubmit={openSelectedFile}
         increment_cursor={(): void => {
           increment_cursor();
         }}

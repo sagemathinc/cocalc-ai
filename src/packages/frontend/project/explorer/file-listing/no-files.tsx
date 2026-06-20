@@ -435,8 +435,7 @@ function MoreFileTypesModal({
   open: boolean;
 }) {
   const [search, setSearch] = useState("");
-  const [sortMode, setSortMode] =
-    useState<MoreFileTypeSort>("recommended");
+  const [sortMode, setSortMode] = useState<MoreFileTypeSort>("recommended");
   const [viewMode, setViewMode] = useState<MoreFileTypeView>("grid");
   const fileTypes = useMemo(() => buildMoreFileTypes(), []);
   const sortedFileTypes = useMemo(() => {
@@ -512,7 +511,9 @@ function MoreFileTypesModal({
         style={{
           display: "grid",
           gridTemplateColumns:
-            viewMode === "grid" ? "repeat(auto-fit, minmax(130px, 1fr))" : "1fr",
+            viewMode === "grid"
+              ? "repeat(auto-fit, minmax(130px, 1fr))"
+              : "1fr",
           gap: 8,
           maxHeight: 360,
           overflowY: "auto",

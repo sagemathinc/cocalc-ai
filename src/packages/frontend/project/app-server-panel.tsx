@@ -254,19 +254,19 @@ function presetCategoryTagStyle(category?: string): CSSProperties {
       color: COLORS.BLUE_DOC,
     },
     publishing: {
-      background: "#e6fffb",
-      borderColor: "#87e8de",
-      color: "#006d75",
+      background: COLORS.YELL_LLL,
+      borderColor: COLORS.YELL_LL,
+      color: COLORS.YELL_D,
     },
     "python-web": {
       background: COLORS.BS_GREEN_LL,
-      borderColor: "#c8e6c9",
+      borderColor: COLORS.BS_GREEN,
       color: COLORS.BS_GREEN_D,
     },
     "python-notebooks": {
-      background: "#f9f0ff",
-      borderColor: "#d3adf7",
-      color: "#531dab",
+      background: COLORS.BLUE_LLLL,
+      borderColor: COLORS.BLUE_LL,
+      color: COLORS.BLUE_DD,
     },
   };
   return {

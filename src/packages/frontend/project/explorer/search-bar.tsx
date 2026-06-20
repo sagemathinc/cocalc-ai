@@ -555,7 +555,7 @@ export const SearchBar = memo(
     return (
       <Flex style={{ flex: "1 0 auto", position: "relative" }} vertical={true}>
         <Tooltip
-          title={inputFocused ? undefined : "Filter files"}
+          title={inputFocused ? "" : "Filter files"}
           {...SEARCH_TOOLTIP_PROPS}
         >
           <span style={{ display: "block" }}>
