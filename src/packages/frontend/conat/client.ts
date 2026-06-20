@@ -2855,6 +2855,20 @@ export class ConatClient extends EventEmitter {
     }
   };
 
+  public callHubApi = async ({
+    name,
+    args = [],
+    project_id,
+    timeout,
+  }: {
+    name: string;
+    args?: any[];
+    project_id?: string;
+    timeout?: number;
+  }) => {
+    return await this.callHub({ name, args, project_id, timeout });
+  };
+
   // Debug helper for manually validating project-host subject ACL from browser devtools.
   // Example:
   //   await cc.conat._testPublishToProjectHost({

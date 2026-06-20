@@ -300,6 +300,7 @@ function RootfsCreateProject({
         rootfs_image: entry.image,
         rootfs_image_id: entry.id,
         start: true,
+        timeout: 60_000,
         title,
       });
       window.location.href = appPath(`projects/${projectId}/rootfs`);

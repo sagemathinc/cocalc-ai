@@ -23,6 +23,7 @@ const BACKOFF = 1.3;
 
 const HEIGHT = "70vh";
 const WIDTH = "70vw";
+const DEFAULT_INLINE_HEIGHT = "80px";
 
 interface Props {
   sha1: string;
@@ -135,7 +136,7 @@ function NonCachedIFrame({ src }) {
       srcDoc={srcDoc}
       ref={iframeRef}
       onError={load_error}
-      style={{ border: 0, width: WIDTH, minHeight: HEIGHT }}
+      style={{ border: 0, width: WIDTH, minHeight: DEFAULT_INLINE_HEIGHT }}
     />
   );
 }

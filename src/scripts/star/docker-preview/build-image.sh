@@ -40,7 +40,8 @@ Options:
   --cache-btrfs-size <size>
                           Btrfs image size for the cache builder container
                           (default: 20G)
-  --docker <path>          Docker-compatible CLI (default: docker)
+  --docker <command>       Docker-compatible CLI (default: docker; may be
+                          "sudo docker")
   --keep-context           keep the temporary Docker build context
   -h, --help               show this help
 
@@ -109,7 +110,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-command -v "$DOCKER" >/dev/null 2>&1 || die "missing Docker CLI: $DOCKER"
+DOCKER_CMD=()
+read -r -a DOCKER_CMD <<<"$DOCKER"
+[ "${#DOCKER_CMD[@]}" -gt 0 ] || die "empty Docker CLI command"
+command -v "${DOCKER_CMD[0]}" >/dev/null 2>&1 ||
+  die "missing Docker CLI: ${DOCKER_CMD[0]}"
+
+docker_cli() {
+  "${DOCKER_CMD[@]}" "$@"
+}
+
+if ! docker_cli info >/dev/null 2>&1; then
+  if [[ "${DOCKER_CMD[0]}" != "sudo" ]] && command -v sudo >/dev/null 2>&1; then
+    if sudo -n "${DOCKER_CMD[@]}" info >/dev/null 2>&1; then
+      DOCKER_CMD=(sudo -n "${DOCKER_CMD[@]}")
+      log "using sudo for Docker CLI"
+    else
+      log "Docker CLI is not usable without sudo; trying sudo for Docker commands"
+      DOCKER_CMD=(sudo "${DOCKER_CMD[@]}")
+      docker_cli info >/dev/null ||
+        die "Docker CLI failed even when invoked through sudo"
+    fi
+  else
+    die "Docker CLI failed; ensure Docker is running and the current user can access the Docker socket"
+  fi
+fi
+DOCKER_DISPLAY="${DOCKER_CMD[*]}"
 [ -x "$BUILD_RELEASE" ] || die "missing Star release builder: $BUILD_RELEASE"
 
 if [[ -z "$RELEASE_ARTIFACT" ]]; then
@@ -164,7 +190,7 @@ build_image() {
   local rootfs_cache="${2:-}"
   make_context "$rootfs_cache"
   log "building Docker image $tag"
-  "$DOCKER" build -t "$tag" "$context"
+  docker_cli build -t "$tag" "$context"
 }
 
 wait_for_builder_container() {
@@ -173,13 +199,13 @@ wait_for_builder_container() {
   local last_log=0
   while ((SECONDS < deadline)); do
     local result active
-    result="$("$DOCKER" exec "$container" systemctl show -p Result --value cocalc-star-docker-init.service 2>/dev/null || true)"
-    active="$("$DOCKER" exec "$container" systemctl is-active cocalc-star-docker-init.service 2>/dev/null || true)"
+    result="$(docker_cli exec "$container" systemctl show -p Result --value cocalc-star-docker-init.service 2>/dev/null || true)"
+    active="$(docker_cli exec "$container" systemctl is-active cocalc-star-docker-init.service 2>/dev/null || true)"
     if [[ "$result" == "success" && "$active" == "active" ]]; then
       return 0
     fi
     if [[ -n "$result" && "$result" != "success" ]]; then
-      "$DOCKER" exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+      docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
       die "RootFS cache builder failed: systemd result=$result"
     fi
     if ((SECONDS - last_log >= 30)); then
@@ -188,7 +214,7 @@ wait_for_builder_container() {
     fi
     sleep 5
   done
-  "$DOCKER" exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+  docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
   die "RootFS cache builder timed out"
 }
 
@@ -202,7 +228,7 @@ build_rootfs_cache_artifact() {
 
   build_image "$temp_tag" ""
   log "running RootFS cache builder container $container"
-  "$DOCKER" run -d \
+  docker_cli run -d \
     --name "$container" \
     --privileged \
     --cgroupns=host \
@@ -216,16 +242,16 @@ build_rootfs_cache_artifact() {
     "$temp_tag" >/dev/null
 
   cleanup_builder() {
-    "$DOCKER" rm -f "$container" >/dev/null 2>&1 || true
-    "$DOCKER" volume rm "$volume" >/dev/null 2>&1 || true
-    "$DOCKER" image rm "$temp_tag" >/dev/null 2>&1 || true
+    docker_cli rm -f "$container" >/dev/null 2>&1 || true
+    docker_cli volume rm "$volume" >/dev/null 2>&1 || true
+    docker_cli image rm "$temp_tag" >/dev/null 2>&1 || true
   }
   trap 'cleanup_builder; cleanup' EXIT
 
   wait_for_builder_container "$container"
   log "exporting prebuilt RootFS cache to $output"
-  "$DOCKER" exec "$container" tar --numeric-owner -C /mnt/cocalc/data/cache/images -czf /tmp/cocalc-star-rootfs-cache.tar.gz .
-  "$DOCKER" cp "${container}:/tmp/cocalc-star-rootfs-cache.tar.gz" "$output"
+  docker_cli exec "$container" tar --numeric-owner -C /mnt/cocalc/data/cache/images -czf /tmp/cocalc-star-rootfs-cache.tar.gz .
+  docker_cli cp "${container}:/tmp/cocalc-star-rootfs-cache.tar.gz" "$output"
   cleanup_builder
   trap cleanup EXIT
 }
@@ -248,7 +274,7 @@ Built ${TAG}
 RootFS cache: ${ROOTFS_CACHE_ARTIFACT:-not embedded}
 
 Run locally with:
-  ${DOCKER} run --privileged --cgroupns=host \\
+  ${DOCKER_DISPLAY} run --privileged --cgroupns=host \\
     --security-opt seccomp=unconfined \\
     --tmpfs /run --tmpfs /run/lock \\
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \\

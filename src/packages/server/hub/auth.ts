@@ -175,6 +175,133 @@ function strategyToPassportFrontend(
   };
 }
 
+function escapeHtml(value: unknown): string {
+  return `${value ?? ""}`
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function displayNameForPassport(name: string): string {
+  return name === GOOGLE_SSO_STRATEGY ? "Google" : name;
+}
+
+function passportLoginErrorHtml({
+  name,
+  message,
+  details,
+  helpEmail,
+}: {
+  name: string;
+  message: string;
+  details?: string;
+  helpEmail?: string;
+}): string {
+  const provider = escapeHtml(displayNameForPassport(name));
+  const signInUrl = path_join(base_path, "auth", "sign-in");
+  const profileUrl = path_join(base_path, "settings", "profile");
+  const escapedHelpEmail = escapeHtml(helpEmail);
+  const support =
+    helpEmail != null
+      ? `<p class="muted">If this keeps happening, contact <a href="mailto:${escapedHelpEmail}">${escapedHelpEmail}</a>.</p>`
+      : "";
+  const detailsHtml = details
+    ? `<details><summary>Technical details</summary><pre>${escapeHtml(details)}</pre></details>`
+    : "";
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Could not sign in with ${provider}</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      background: #f6f7fb;
+      color: #1f2933;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 32px 16px;
+    }
+    main {
+      background: white;
+      border: 1px solid #d9d9d9;
+      border-radius: 14px;
+      box-shadow: 0 12px 36px rgba(31, 41, 51, 0.12);
+      margin: 0 auto;
+      max-width: 720px;
+      padding: 28px;
+    }
+    h1 {
+      font-size: 24px;
+      line-height: 1.25;
+      margin: 0 0 14px;
+    }
+    .message {
+      background: #fff7e6;
+      border: 1px solid #ffd591;
+      border-radius: 10px;
+      color: #7c4a03;
+      font-size: 16px;
+      line-height: 1.5;
+      margin: 16px 0;
+      padding: 14px 16px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 22px;
+    }
+    a.button {
+      background: #1677ff;
+      border-radius: 8px;
+      color: white;
+      display: inline-block;
+      font-weight: 700;
+      padding: 10px 16px;
+      text-decoration: none;
+    }
+    a.secondary {
+      background: white;
+      border: 1px solid #ccc;
+      color: #1f2933;
+    }
+    .muted {
+      color: #657282;
+      line-height: 1.5;
+    }
+    details {
+      color: #657282;
+      margin-top: 22px;
+    }
+    pre {
+      background: #f5f5f5;
+      border-radius: 8px;
+      overflow: auto;
+      padding: 12px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Could not sign in with ${provider}</h1>
+    <div class="message">${escapeHtml(message)}</div>
+    <p class="muted">If you already have a CoCalc account, sign in with your email and password first. Then open account settings and link your ${provider} account from the Profile page.</p>
+    ${support}
+    <div class="actions">
+      <a class="button" href="${escapeHtml(signInUrl)}">Sign in with email</a>
+      <a class="button secondary" href="${escapeHtml(profileUrl)}">Open account settings</a>
+    </div>
+    ${detailsHtml}
+  </main>
+</body>
+</html>`;
+}
+
 export class PassportManager {
   // express js, passed in from hub's main file
   private readonly router: express.Router;
@@ -511,16 +638,21 @@ export class PassportManager {
         let err_msg = "";
         // due to https://github.com/Microsoft/TypeScript/issues/13965 we have to check on name and can't use instanceof
         if (err.name === "PassportLoginError") {
-          const signInUrl = path_join(base_path, "auth", "sign-in");
-          err_msg = `Problem signing in using '${name}':<br/><strong>${
-            err.message ?? `${err}`
-          }</strong><br/><a href="${signInUrl}">Sign-in again</a>`;
+          err_msg = passportLoginErrorHtml({
+            name,
+            message: err.message ?? `${err}`,
+          });
         } else {
           const helpEmail = await passportLogin.getHelpEmail();
-          err_msg = `Error trying to login using '${name}' -- if this problem persists please contact ${helpEmail} -- ${err}<br/><pre>${err.stack}</pre>`;
+          err_msg = passportLoginErrorHtml({
+            name,
+            message: `An unexpected error occurred while signing in with ${displayNameForPassport(name)}.`,
+            helpEmail,
+            details: `${err}\n${err.stack ?? ""}`.trim(),
+          });
         }
         Lret(`sending error "${err_msg}"`);
-        res.send(err_msg);
+        res.status(400).type("html").send(err_msg);
       }
     };
   }
@@ -540,22 +672,26 @@ export class PassportManager {
   }): Promise<void> {
     let err_msg = "";
     if (err.name === "PassportLoginError") {
-      const signInUrl = path_join(base_path, "auth", "sign-in");
-      err_msg = `Problem signing in using '${name}':<br/><strong>${
-        err.message ?? `${err}`
-      }</strong><br/><a href="${signInUrl}">Sign-in again</a>`;
+      err_msg = passportLoginErrorHtml({
+        name,
+        message: err.message ?? `${err}`,
+      });
     } else {
       const helpEmail =
         passportLogin != null
           ? await passportLogin.getHelpEmail()
           : (await cb2(this.database.get_server_settings_cached)).help_email;
-      err_msg = `Error trying to login using '${name}' -- if this problem persists please contact ${helpEmail}`;
-      if (includeDetails) {
-        err_msg += ` -- ${err}`;
-      }
+      err_msg = passportLoginErrorHtml({
+        name,
+        message: `An unexpected error occurred while signing in with ${displayNameForPassport(name)}.`,
+        helpEmail,
+        details: includeDetails
+          ? `${err}\n${err.stack ?? ""}`.trim()
+          : undefined,
+      });
     }
     logger.debug(`sending error "${err_msg}"`);
-    res.send(err_msg);
+    res.status(400).type("html").send(err_msg);
   }
 
   private async logSsoReturnDenied({

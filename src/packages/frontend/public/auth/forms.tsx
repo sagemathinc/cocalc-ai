@@ -101,6 +101,39 @@ const BUTTON_STYLE: CSSProperties = {
   cursor: "pointer",
 } as const;
 
+const SSO_BUTTON_STYLE: CSSProperties = {
+  ...BUTTON_STYLE,
+  background: "white",
+  border: "1px solid #ccc",
+  color: COLORS.GRAY_D,
+  display: "block",
+  opacity: 1,
+  textAlign: "center",
+  textDecoration: "none",
+} as const;
+
+const SSO_BUTTON_CONTENT_STYLE: CSSProperties = {
+  alignItems: "center",
+  display: "grid",
+  gap: "10px",
+  gridTemplateColumns: "24px 1fr 24px",
+} as const;
+
+const DIVIDER_STYLE: CSSProperties = {
+  alignItems: "center",
+  color: COLORS.GRAY_M,
+  display: "flex",
+  fontSize: "13px",
+  gap: "12px",
+  lineHeight: "18px",
+} as const;
+
+const DIVIDER_LINE_STYLE: CSSProperties = {
+  background: COLORS.GRAY_LL,
+  flex: "1 1 auto",
+  height: "1px",
+} as const;
+
 const LINK_ROW_STYLE: CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
@@ -253,6 +286,45 @@ function ActionButton(props: {
   );
 }
 
+function GoogleLogo() {
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      height="20"
+      viewBox="0 0 24 24"
+      width="20"
+    >
+      <path
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+        fill="#4285F4"
+      />
+      <path
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+        fill="#34A853"
+      />
+      <path
+        d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"
+        fill="#FBBC05"
+      />
+      <path
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06L5.84 9.9c.87-2.6 3.3-4.52 6.16-4.52z"
+        fill="#EA4335"
+      />
+    </svg>
+  );
+}
+
+function AuthDivider({ children = "or" }: { children?: ReactNode }) {
+  return (
+    <div style={DIVIDER_STYLE}>
+      <span aria-hidden="true" style={DIVIDER_LINE_STYLE} />
+      <span>{children}</span>
+      <span aria-hidden="true" style={DIVIDER_LINE_STYLE} />
+    </div>
+  );
+}
+
 function NavLink(props: { children: ReactNode; onClick: () => void }) {
   return (
     <a
@@ -379,14 +451,8 @@ function SsoButton({
     <a
       href={href}
       style={{
-        ...BUTTON_STYLE,
-        background: "white",
-        border: `1px solid ${COLORS.GRAY_LL}`,
-        color: COLORS.GRAY_D,
-        display: "block",
+        ...SSO_BUTTON_STYLE,
         opacity: disabled ? 0.65 : 1,
-        textAlign: "center",
-        textDecoration: "none",
       }}
       aria-disabled={disabled}
       onClick={(event) => {
@@ -403,7 +469,11 @@ function SsoButton({
         }
       }}
     >
-      {children}
+      <span style={SSO_BUTTON_CONTENT_STYLE}>
+        <GoogleLogo />
+        <span>{children}</span>
+        <span aria-hidden="true" />
+      </span>
     </a>
   );
 }
@@ -601,15 +671,18 @@ export function PublicSignInForm({
       {!challengeId ? (
         <>
           {googleStrategy != null ? (
-            <SsoButton
-              cookieBannerEnabled={cookieBannerEnabled}
-              cookieConsentReady={cookieConsentReady}
-              href={ssoLoginHref("google", {
-                target: resolveAuthRedirectPath(redirectToPath),
-              })}
-            >
-              Continue with {googleStrategy.display}
-            </SsoButton>
+            <>
+              <SsoButton
+                cookieBannerEnabled={cookieBannerEnabled}
+                cookieConsentReady={cookieConsentReady}
+                href={ssoLoginHref("google", {
+                  target: resolveAuthRedirectPath(redirectToPath),
+                })}
+              >
+                Continue with {googleStrategy.display}
+              </SsoButton>
+              <AuthDivider />
+            </>
           ) : null}
           <div style={FIELD_STYLE}>
             <div style={LABEL_STYLE}>Email address</div>
@@ -1123,9 +1196,7 @@ export function PublicSignUpForm({
           >
             Sign up with {googleStrategy.display}
           </SsoButton>
-          <div style={TERMS_NOTICE_STYLE}>
-            Or create an account with an email address and password.
-          </div>
+          <AuthDivider>or create an account with email</AuthDivider>
         </>
       ) : null}
       <div style={FIELD_STYLE}>

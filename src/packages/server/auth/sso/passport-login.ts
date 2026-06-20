@@ -697,11 +697,6 @@ export class PassportLogin {
         `Account creation is disabled for "@${domainPolicy.domain}".`,
       );
     }
-    if (domainPolicy?.signup_mode === "registration_token_required") {
-      throw Error(
-        "Account creation requires a valid registration token. Create an account using email/password and a registration token first, then link SSO from account settings.",
-      );
-    }
     if (domainPolicy?.require_cocalc_2fa) {
       throw Error(
         `Account creation is disabled for "@${domainPolicy.domain}" because that domain requires CoCalc two-factor authentication. Contact your site administrator to create or prepare your account.`,
@@ -716,9 +711,27 @@ export class PassportLogin {
       domainPolicy?.signup_mode === "public_allowed" ||
       accountCreation === "public_allowed"
         ? false
-        : accountCreation === "registration_token_required"
+        : domainPolicy?.signup_mode === "registration_token_required" ||
+            accountCreation === "registration_token_required"
           ? true
           : await getRequiresRegistrationToken();
+    let tokenInfo: any;
+    let registrationTokenValidated = false;
+    const registrationToken = opts.registration_token ?? "";
+    if (requiresRegistrationToken) {
+      const email = locals.email_address ?? "";
+      const tokenThrottle = signUpTokenCheck(email, opts.req.ip);
+      if (tokenThrottle) {
+        throw Error(tokenThrottle);
+      }
+      try {
+        await validateRegistrationToken(registrationToken);
+        registrationTokenValidated = true;
+      } catch (err) {
+        recordSignUpTokenFail(email, opts.req.ip);
+        throw Error(`Issue with registration token -- ${err.message}`);
+      }
+    }
     const domainSsoValidated = this.checkEmailMatchesExclusiveSSO(
       opts,
       locals.email_address,
@@ -729,6 +742,7 @@ export class PassportLogin {
       email: locals.email_address,
       email_verified: emailVerified,
       requires_registration_token: requiresRegistrationToken,
+      registration_token_validated: registrationTokenValidated,
       domain_sso_validated: domainSsoValidated,
     });
     if (creationPolicy.type === "deny_registration_token_required") {
@@ -744,20 +758,8 @@ export class PassportLogin {
     if (creationPolicy.type !== "allow_create") {
       throw Error("SSO account creation is not allowed.");
     }
-    let tokenInfo: any;
     if (requiresRegistrationToken) {
       const email = locals.email_address ?? "";
-      const registrationToken = opts.registration_token ?? "";
-      const tokenThrottle = signUpTokenCheck(email, opts.req.ip);
-      if (tokenThrottle) {
-        throw Error(tokenThrottle);
-      }
-      try {
-        await validateRegistrationToken(registrationToken);
-      } catch (err) {
-        recordSignUpTokenFail(email, opts.req.ip);
-        throw Error(`Issue with registration token -- ${err.message}`);
-      }
       try {
         tokenInfo = await redeemRegistrationToken(registrationToken);
       } catch (err) {

@@ -210,3 +210,37 @@ export function getPublicAuthRouteFromPath(
 
   return { kind: "auth-form", view: "sign-in" };
 }
+
+export function isPublicAuthRoutePath(
+  pathname: string,
+  search?: string,
+): boolean {
+  const path = pathname.split("?")[0];
+  const url = new URL(
+    `https://example.invalid${path}${normalizeSearch(search)}`,
+  );
+  const routeParts = getRouteParts(url.pathname);
+
+  if (routeParts[0] !== "auth") {
+    return false;
+  }
+  if (routeParts.length === 1) {
+    return true;
+  }
+  switch (routeParts[1]) {
+    case "sign-in":
+    case "sign-up":
+    case "password-reset-done":
+      return routeParts.length === 2;
+    case "password-reset":
+      return routeParts.length <= 3;
+    case "second-factor":
+    case "cli-login":
+    case "cli-elevate":
+      return routeParts.length === 3;
+    case "verify":
+      return true;
+    default:
+      return false;
+  }
+}

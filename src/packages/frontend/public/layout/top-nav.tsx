@@ -33,7 +33,11 @@ type PublicInfoPageKey =
   | "policies"
   | "support";
 
-export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
+export type PublicTopNavActiveKey =
+  | PublicInfoPageKey
+  | "auth"
+  | "auth-sign-in"
+  | "auth-sign-up";
 
 type PublicTopNavItemKey = PublicInfoPageKey;
 
@@ -172,19 +176,24 @@ export default function PublicTopNav({
     ),
   }));
   const selectedKeys =
-    active != null && active !== "auth" && active !== "home" ? [active] : [];
+    active != null && !active.startsWith("auth") && active !== "home"
+      ? [active]
+      : [];
+  const primaryAuthAction =
+    active === "auth" || active === "auth-sign-in" ? "sign-in" : "sign-up";
   const authActions = isAuthenticated ? null : (
     <>
       <Button
         href={appPath("auth/sign-in")}
         size={isCompact ? "small" : "middle"}
+        type={primaryAuthAction === "sign-in" ? "primary" : "default"}
       >
         Sign in
       </Button>
       <Button
         href={appPath("auth/sign-up")}
         size={isCompact ? "small" : "middle"}
-        type="primary"
+        type={primaryAuthAction === "sign-up" ? "primary" : "default"}
       >
         Sign up
       </Button>

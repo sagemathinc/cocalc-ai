@@ -13,10 +13,13 @@
 set -euo pipefail
 
 ROOT="$(realpath "$(dirname "$0")/../../..")"
-OUT="$(realpath -m "${1:-$ROOT/packages/project/build/bundle}")"
+resolve_path() {
+  node -e 'console.log(require("node:path").resolve(process.argv[1]))' "$1"
+}
+OUT="$(resolve_path "${1:-$ROOT/packages/project/build/bundle}")"
 TARBALL="${2:-}"
 if [ -n "$TARBALL" ]; then
-  TARBALL="$(realpath -m "$TARBALL")"
+  TARBALL="$(resolve_path "$TARBALL")"
 fi
 FINAL_OUT="$OUT"
 FINAL_TARBALL="$TARBALL"
