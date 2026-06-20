@@ -1,4 +1,4 @@
-import getPool, { PoolClient } from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import send, { support, url, name } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { moneyToCurrency } from "@cocalc/util/money";
@@ -19,10 +19,13 @@ export default async function cancelSubscription({
   const pool = client ?? getPool();
   const now = new Date();
 
-  await pool.query(
+  const update = await pool.query(
     "UPDATE subscriptions SET status='canceled', canceled_at=$1, canceled_reason=$2 WHERE id=$3 AND account_id=$4",
     [now, reason, subscription_id, account_id],
   );
+  if (update.rowCount != 1) {
+    throw Error(`You do not have a subscription with id ${subscription_id}.`);
+  }
   await sendCancelNotification({ subscription_id, client });
 }
 
