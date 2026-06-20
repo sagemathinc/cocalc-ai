@@ -1605,6 +1605,50 @@ describe("hosts browser fresh auth gating", () => {
     ).rejects.toThrow("self-hosted hosts are limited to admins");
   });
 
+  it("rejects explicit GCP standard persistent disk updates", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-west1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  disk_type: "balanced",
+                  metadata: {},
+                },
+                pricing_model: "on_demand",
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        disk_type: "standard",
+      }),
+    ).rejects.toThrow("GCP standard persistent disks are not supported");
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE project_hosts"),
+      expect.anything(),
+    );
+  });
+
   it("adds shared scratch to an already provisioned host", async () => {
     const ensureSharedScratchDisk = jest.fn(async (runtime: any) => ({
       ...runtime,

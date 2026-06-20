@@ -63,7 +63,6 @@ const HOST_CREATE_FUNDING_MODES = new Set([
 const HOST_SHARED_SCRATCH_DISK_TYPES = new Set([
   "ssd",
   "balanced",
-  "standard",
   "ssd_io_m3",
 ]);
 const NEBIUS_DISK_INCREMENT_GB = 93;
@@ -1861,7 +1860,7 @@ export function registerHostCommand(
     )
     .option(
       "--type <type>",
-      "disk type: ssd|balanced|standard|ssd_io_m3 (only used when creating scratch)",
+      "disk type: ssd|balanced|ssd_io_m3 (only used when creating scratch)",
     )
     .action(
       async (
@@ -3714,14 +3713,11 @@ Examples:
     .option("--machine-type <machineType>", "provider machine type")
     .option("--zone <zone>", "provider zone")
     .option("--disk-gb <diskGb>", "boot disk size in GB")
-    .option(
-      "--disk-type <diskType>",
-      "disk type: ssd|balanced|standard|ssd_io_m3",
-    )
+    .option("--disk-type <diskType>", "disk type: ssd|balanced|ssd_io_m3")
     .option("--shared-disk-gb <diskGb>", "shared /scratch disk size in GB")
     .option(
       "--shared-disk-type <diskType>",
-      "shared /scratch disk type: ssd|balanced|standard|ssd_io_m3",
+      "shared /scratch disk type: ssd|balanced|ssd_io_m3",
     )
     .option(
       "--storage-mode <storageMode>",

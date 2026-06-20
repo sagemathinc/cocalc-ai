@@ -294,6 +294,29 @@ describe("hosts.createHost", () => {
     );
   });
 
+  it("rejects GCP standard persistent disks on create", async () => {
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        name: "standard-gcp",
+        region: "us-west1",
+        size: "e2-standard-2",
+        machine: {
+          cloud: "gcp",
+          disk_gb: 100,
+          disk_type: "standard",
+          storage_mode: "persistent",
+        },
+      }),
+    ).rejects.toThrow("GCP standard persistent disks are not supported");
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_hosts"),
+      expect.anything(),
+    );
+  });
+
   it("can create a managed cloud host without starting it", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       const accountResult = maybeHandleAccountDirectoryQuery(sql, params);

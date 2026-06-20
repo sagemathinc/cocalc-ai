@@ -36,6 +36,10 @@ import {
   PROJECT_NOT_FOUND_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import type {
+  PublishProjectRootfsArtifact,
+  RootfsUploadedArtifactResult,
+} from "@cocalc/util/rootfs-images";
 
 const logger = getLogger("server:projects:rootfs-publish-worker");
 
@@ -66,6 +70,34 @@ let inFlight = 0;
 
 type RootfsPublishTopologyRow = {
   project_host_id: string | null;
+};
+
+type RootfsPublishHostDiagnosticsRow = {
+  id: string;
+  name: string | null;
+  region: string | null;
+  metadata: Record<string, any> | null;
+};
+
+export type RootfsPublishHostDiagnostics = {
+  host_id: string;
+  host?: {
+    name?: string | null;
+    cloud?: string | null;
+    region?: string | null;
+    zone?: string | null;
+    machine_type?: string | null;
+    disk_type?: string | null;
+    disk_gb?: number | null;
+  };
+};
+
+export type RootfsPublishDiagnostics = RootfsPublishHostDiagnostics & {
+  source_bytes?: number;
+  artifact_bytes?: number;
+  upload_ms?: number;
+  upload_artifact_bytes_per_second?: number;
+  upload_source_bytes_per_second?: number;
 };
 
 type RootfsPublishClaimCandidateRecord = LroSummary & {
@@ -159,6 +191,77 @@ function progressEvent({
   });
 }
 
+function finitePositiveNumber(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function throughputBytesPerSecond({
+  bytes,
+  ms,
+}: {
+  bytes?: number;
+  ms?: number;
+}): number | undefined {
+  if (bytes == null || ms == null || ms <= 0) return undefined;
+  return Math.round((bytes * 1000) / ms);
+}
+
+function firstPositiveTiming(
+  ...values: Array<number | string | null | undefined>
+): number | undefined {
+  for (const value of values) {
+    const parsed = finitePositiveNumber(value);
+    if (parsed != null) return parsed;
+  }
+  return undefined;
+}
+
+export function computeRootfsPublishDiagnostics({
+  hostDiagnostics,
+  artifact,
+  uploadResult,
+  phase_timings_ms,
+}: {
+  hostDiagnostics: RootfsPublishHostDiagnostics;
+  artifact: Pick<
+    PublishProjectRootfsArtifact,
+    "size_bytes" | "phase_timings_ms"
+  >;
+  uploadResult?: Pick<
+    RootfsUploadedArtifactResult,
+    "artifact_bytes" | "phase_timings_ms"
+  >;
+  phase_timings_ms?: Record<string, number>;
+}): RootfsPublishDiagnostics {
+  const sourceBytes = finitePositiveNumber(artifact.size_bytes);
+  const artifactBytes = finitePositiveNumber(uploadResult?.artifact_bytes);
+  const publishTimings = artifact.phase_timings_ms ?? {};
+  const uploadTimings = uploadResult?.phase_timings_ms ?? {};
+  const uploadMs = firstPositiveTiming(
+    uploadTimings.rustic_backup,
+    uploadTimings.upload,
+    publishTimings.upload_rustic,
+    publishTimings.rustic_backup,
+    phase_timings_ms?.upload,
+    phase_timings_ms?.publish,
+  );
+  return {
+    ...hostDiagnostics,
+    source_bytes: sourceBytes,
+    artifact_bytes: artifactBytes,
+    upload_ms: uploadMs,
+    upload_artifact_bytes_per_second: throughputBytesPerSecond({
+      bytes: artifactBytes,
+      ms: uploadMs,
+    }),
+    upload_source_bytes_per_second: throughputBytesPerSecond({
+      bytes: sourceBytes,
+      ms: uploadMs,
+    }),
+  };
+}
+
 async function loadProjectHostId(project_id: string): Promise<string> {
   try {
     return (await getAssignedProjectHostInfo(project_id)).host_id;
@@ -172,6 +275,40 @@ async function loadProjectHostId(project_id: string): Promise<string> {
     }
     throw err;
   }
+}
+
+async function loadRootfsPublishHostDiagnostics(
+  host_id: string,
+): Promise<RootfsPublishHostDiagnostics> {
+  const { rows } = await getPool(
+    "medium",
+  ).query<RootfsPublishHostDiagnosticsRow>(
+    `
+      SELECT id::text AS id, name, region, metadata
+      FROM project_hosts
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [host_id],
+  );
+  const row = rows[0];
+  const machine = (row?.metadata?.machine ?? {}) as Record<string, any>;
+  return {
+    host_id,
+    host: row
+      ? {
+          name: row.name,
+          cloud: machine.cloud ?? null,
+          region: row.region,
+          zone: machine.zone ?? null,
+          machine_type: machine.machine_type ?? null,
+          disk_type: machine.disk_type ?? null,
+          disk_gb: Number.isFinite(Number(machine.disk_gb))
+            ? Math.floor(Number(machine.disk_gb))
+            : null,
+        }
+      : undefined,
+  };
 }
 
 async function listFreshRunningRootfsPublishTopologyRows({
@@ -467,6 +604,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       detail: { project_id },
     });
     const host_id = await loadProjectHostId(project_id);
+    const hostDiagnostics = await loadRootfsPublishHostDiagnostics(host_id);
     const publishUpload = await issueRootfsReleaseArtifactUpload({
       host_id,
       artifact_kind: "full",
@@ -627,8 +765,19 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
     }
 
     const duration_ms = Date.now() - started;
+    const phase_timings_ms = {
+      ...timings.phase_timings_ms,
+      total: duration_ms,
+    };
+    const publish_diagnostics = computeRootfsPublishDiagnostics({
+      hostDiagnostics,
+      artifact,
+      uploadResult,
+      phase_timings_ms,
+    });
     const result = {
       project_id,
+      host_id,
       image_id: entry.id,
       release_id: release.release_id,
       image: artifact.image,
@@ -638,12 +787,10 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       created_snapshot: artifact.created_snapshot,
       switched_project,
       duration_ms,
-      phase_timings_ms: {
-        ...timings.phase_timings_ms,
-        total: duration_ms,
-      },
+      phase_timings_ms,
       publish_phase_timings_ms: artifact.phase_timings_ms,
       upload_phase_timings_ms: uploadResult?.phase_timings_ms,
+      publish_diagnostics,
     };
 
     const updated = await updateLro({
@@ -656,6 +803,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
         image: artifact.image,
         duration_ms,
         phase_timings_ms: result.phase_timings_ms,
+        publish_diagnostics,
       },
       error: null,
     });

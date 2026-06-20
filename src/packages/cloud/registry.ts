@@ -137,12 +137,6 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
             durability: "replicated",
             help_url: "https://cloud.google.com/compute/docs/disks",
           },
-          {
-            value: "standard",
-            label: "Standard persistent disk",
-            durability: "replicated",
-            help_url: "https://cloud.google.com/compute/docs/disks",
-          },
         ],
       },
       hasRegions: true,

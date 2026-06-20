@@ -21,7 +21,6 @@ type ScratchDiskType = NonNullable<HostMachine["shared_disk_type"]>;
 const GCP_SHARED_SCRATCH_DISK_TYPES = new Set<ScratchDiskType>([
   "balanced",
   "ssd",
-  "standard",
 ]);
 
 const NEBIUS_SHARED_SCRATCH_DISK_TYPES = new Set<ScratchDiskType>([
