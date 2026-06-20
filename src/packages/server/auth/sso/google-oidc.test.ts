@@ -8,6 +8,7 @@ import { createSign, generateKeyPairSync } from "crypto";
 
 import {
   exchangeGoogleOidcCode,
+  googleHostedDomainsForTokenVerification,
   googleOidcAuthorizationUrl,
   googleProfileFromClaims,
   verifyGoogleIdToken,
@@ -74,6 +75,21 @@ describe("googleOidcAuthorizationUrl", () => {
     expect(url.searchParams.get("scope")).toBe("openid email profile");
     expect(url.searchParams.get("state")).toBe("state");
     expect(url.searchParams.get("nonce")).toBe("nonce");
+  });
+});
+
+describe("googleHostedDomainsForTokenVerification", () => {
+  it("uses both allowed and exclusive Google domains", () => {
+    expect(
+      googleHostedDomainsForTokenVerification({
+        strategy: "google",
+        conf: { type: "oidc", clientID: "id", clientSecret: "secret" },
+        info: {
+          allowed_domains: ["Allowed.edu", "shared.edu"],
+          exclusive_domains: ["Exclusive.edu", "shared.edu"],
+        },
+      }),
+    ).toEqual(["allowed.edu", "exclusive.edu", "shared.edu"]);
   });
 });
 

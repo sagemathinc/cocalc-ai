@@ -6,6 +6,7 @@
 import axios from "axios";
 import { createPublicKey, createVerify } from "crypto";
 import type { Profile } from "passport";
+import type { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
 
 const GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -82,6 +83,22 @@ function domainMatches(domain: string, allowedDomain: string): boolean {
 function parseCacheMaxAge(cacheControl: unknown): number {
   const match = `${cacheControl ?? ""}`.match(/(?:^|,\s*)max-age=(\d+)/i);
   return match == null ? 3600 : Number(match[1]);
+}
+
+export function googleHostedDomainsForTokenVerification(
+  strategy: PassportStrategyDB,
+): string[] {
+  const domains = new Set<string>();
+  for (const domain of [
+    ...(strategy.info?.allowed_domains ?? []),
+    ...(strategy.info?.exclusive_domains ?? []),
+  ]) {
+    const normalized = normalizeDomain(domain);
+    if (normalized) {
+      domains.add(normalized);
+    }
+  }
+  return [...domains].sort();
 }
 
 async function getGoogleJwks(): Promise<GoogleJwks> {

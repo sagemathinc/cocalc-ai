@@ -78,6 +78,7 @@ import {
 import {
   exchangeGoogleOidcCode,
   googleOidcAuthorizationUrl,
+  googleHostedDomainsForTokenVerification,
   googleProfileFromClaims,
   verifyGoogleIdToken,
 } from "@cocalc/server/auth/sso/google-oidc";
@@ -860,6 +861,8 @@ export class PassportManager {
           throw new Error("Google OIDC browser state did not match.");
         }
 
+        const passports = await this.getLivePassports(strategy);
+        const googleStrategy = passports[GOOGLE_SSO_STRATEGY] ?? strategy;
         const tokens = await exchangeGoogleOidcCode({
           code: req.query.code,
           clientID,
@@ -869,12 +872,12 @@ export class PassportManager {
         const claims = await verifyGoogleIdToken({
           idToken: tokens.id_token,
           clientID,
-          hostedDomains: strategy.info?.allowed_domains,
+          hostedDomains:
+            googleHostedDomainsForTokenVerification(googleStrategy),
           nonce: savedState.nonce,
         });
         const profile = googleProfileFromClaims(claims);
         const emails = profile.emails?.map((email) => email.value) ?? [];
-        const passports = await this.getLivePassports(strategy);
         passportLogin = new PassportLogin({
           passports,
           database: this.database,
