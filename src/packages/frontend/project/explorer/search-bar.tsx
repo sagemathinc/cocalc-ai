@@ -6,7 +6,7 @@
 import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Alert, Flex } from "antd";
 import { useIntl } from "react-intl";
-import { Icon, SearchInput } from "@cocalc/frontend/components";
+import { Icon, SearchInput, Tooltip } from "@cocalc/frontend/components";
 import { ProjectActions } from "@cocalc/frontend/project_store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useProjectContext } from "../context";
@@ -32,6 +32,12 @@ const HelpStyle = {
   zIndex: 100,
   borderRadius: "15px",
 } as const;
+
+const SEARCH_TOOLTIP_PROPS = {
+  mouseEnterDelay: 0,
+  mouseLeaveDelay: 0,
+  placement: "bottom" as const,
+};
 
 type FindPrefill = {
   tab: "contents" | "files" | "snapshots" | "backups";
@@ -146,7 +152,7 @@ export const SearchBar = memo(
         })
       : intl.formatMessage({
           id: "project.explorer.search-bar.placeholder",
-          defaultMessage: 'Filter files or / for Terminal...',
+          defaultMessage: "Filter files or / for Terminal...",
         });
 
     // edit → run → edit
@@ -157,6 +163,7 @@ export const SearchBar = memo(
     const [stdout, set_stdout] = useState<string | undefined>(undefined);
     const [historyMode, setHistoryMode] = useState(false);
     const [historyIndex, setHistoryIndex] = useState(0);
+    const [inputFocused, setInputFocused] = useState(false);
     const inputFocusedRef = useRef(false);
     const previousSearchRef = useRef(file_search);
     const skipNextClearHistoryRef = useRef(false);
@@ -509,10 +516,12 @@ export const SearchBar = memo(
 
     function on_focus(): void {
       inputFocusedRef.current = true;
+      setInputFocused(true);
     }
 
     function on_blur(): void {
       inputFocusedRef.current = false;
+      setInputFocused(false);
       setHistoryMode(false);
       setHistoryIndex(0);
     }
@@ -545,29 +554,36 @@ export const SearchBar = memo(
 
     return (
       <Flex style={{ flex: "1 0 auto", position: "relative" }} vertical={true}>
-        <SearchInput
-          autoFocus
-          autoSelect
-          placeholder={placeholder}
-          value={file_search}
-          on_change={on_change}
-          on_submit={search_submit}
-          on_up={on_up_press}
-          on_down={on_down_press}
-          on_clear={on_clear}
-          on_escape={on_escape}
-          on_blur={on_blur}
-          on_focus={on_focus}
-          disabled={disabled || !!ext_selection}
-          status={
-            file_search.length > 0 &&
-            !isTerminalMode(file_search) &&
-            !isAgentMode(file_search)
-              ? "warning"
-              : undefined
-          }
-          focus={current_path}
-        />
+        <Tooltip
+          title={inputFocused ? undefined : "Filter files"}
+          {...SEARCH_TOOLTIP_PROPS}
+        >
+          <span style={{ display: "block" }}>
+            <SearchInput
+              autoFocus
+              autoSelect
+              placeholder={placeholder}
+              value={file_search}
+              on_change={on_change}
+              on_submit={search_submit}
+              on_up={on_up_press}
+              on_down={on_down_press}
+              on_clear={on_clear}
+              on_escape={on_escape}
+              on_blur={on_blur}
+              on_focus={on_focus}
+              disabled={disabled || !!ext_selection}
+              status={
+                file_search.length > 0 &&
+                !isTerminalMode(file_search) &&
+                !isAgentMode(file_search)
+                  ? "warning"
+                  : undefined
+              }
+              focus={current_path}
+            />
+          </span>
+        </Tooltip>
         {render_file_creation_error()}
         {render_history_dropdown()}
         {render_help_info()}

@@ -9,6 +9,7 @@ jest.mock("@cocalc/frontend/components", () => ({
   TimeAgo: ({ date }: { date: Date | string }) => (
     <span>{`ago:${date instanceof Date ? date.toISOString() : date}`}</span>
   ),
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/components/error", () => () => null);

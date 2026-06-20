@@ -5,9 +5,7 @@
 
 import { Alert, Button, Input, InputRef, Radio, Select, Space } from "antd";
 import immutable from "immutable";
-import { useIntl } from "react-intl";
 import { VirtuosoHandle } from "react-virtuoso";
-import { Button as BootstrapButton } from "@cocalc/frontend/antd-bootstrap";
 import {
   CSS,
   React,
@@ -21,14 +19,13 @@ import {
 } from "@cocalc/frontend/app-framework";
 import {
   DropdownMenu,
+  ErrorDisplay,
   Icon,
   Text,
   Tooltip,
   type MenuItems,
-  ErrorDisplay,
 } from "@cocalc/frontend/components";
 import { FileUploadWrapper } from "@cocalc/frontend/file-upload";
-import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { SearchHistoryDropdown } from "@cocalc/frontend/project/explorer/search-history-dropdown";
@@ -73,6 +70,26 @@ import { BACKUPS } from "@cocalc/util/consts/backups";
 import { lite } from "@cocalc/frontend/lite";
 import { dirname } from "path";
 import { submitNavigatorPromptToCurrentThread } from "@cocalc/frontend/project/new/navigator-intents";
+
+const FILE_HEADER_TOOLTIP_PROPS = {
+  mouseEnterDelay: 0,
+  mouseLeaveDelay: 0,
+  placement: "bottom" as const,
+};
+
+function FileHeaderTooltip({
+  children,
+  title,
+}: {
+  children: React.ReactNode;
+  title: React.ReactNode;
+}) {
+  return (
+    <Tooltip title={title} {...FILE_HEADER_TOOLTIP_PROPS}>
+      {children}
+    </Tooltip>
+  );
+}
 
 function searchToFilename(search: string): string {
   if (search.endsWith(" ")) {
@@ -166,8 +183,6 @@ export function FilesHeader({
   onRefreshListing,
   onTerminalCommand,
 }: Readonly<Props>): React.JSX.Element {
-  const intl = useIntl();
-
   const {
     isRunning: projectIsRunning,
     project_id,
@@ -800,26 +815,24 @@ export function FilesHeader({
               />
             </Space>
             <Space.Compact orientation="horizontal" size={"small"}>
-              <Tooltip
-                title={intl.formatMessage(labels.upload_tooltip)}
-                placement="bottom"
-              >
-                <Button
-                  className={uploadClassName}
-                  size="small"
-                  disabled={!projectIsRunning || disableUploads}
-                >
-                  <Icon name={"upload"} />
-                </Button>
-              </Tooltip>
-              <Tooltip
-                title={intl.formatMessage(labels.new_tooltip)}
-                placement="bottom"
-              >
-                <span>
+              <FileHeaderTooltip title="Upload files">
+                <span style={{ display: "inline-flex" }}>
+                  <Button
+                    aria-label="Upload files"
+                    className={uploadClassName}
+                    size="small"
+                    disabled={!projectIsRunning || disableUploads}
+                  >
+                    <Icon name={"upload"} />
+                  </Button>
+                </span>
+              </FileHeaderTooltip>
+              <FileHeaderTooltip title="Create file or folder">
+                <span style={{ display: "inline-flex" }}>
                   <QuickCreateDropdown
                     title={<Icon name={"plus-circle"} />}
                     size="small"
+                    showDown={false}
                     quickCreateIds={mergedLauncher.quickCreate}
                     availableFeatures={availableFeatures}
                     onCreateFile={createQuickFile}
@@ -827,7 +840,7 @@ export function FilesHeader({
                     onCustomize={() => setShowCustomizeModal(true)}
                   />
                 </span>
-              </Tooltip>
+              </FileHeaderTooltip>
             </Space.Compact>
           </div>,
         )}
@@ -860,7 +873,13 @@ export function FilesHeader({
               }}
               style={{ width: "100%" }}
               allowClear
-              prefix={<Icon name="search" />}
+              prefix={
+                <FileHeaderTooltip title="Filter files">
+                  <span style={{ display: "inline-flex" }}>
+                    <Icon name="search" />
+                  </span>
+                </FileHeaderTooltip>
+              }
             />
             {historyMode && history.length > 0 && (
               <SearchHistoryDropdown
@@ -873,22 +892,27 @@ export function FilesHeader({
             )}
           </div>
           <Space.Compact orientation="horizontal" size="small">
-            <BootstrapButton
-              title={intl.formatMessage(labels.hidden_files, { hidden })}
-              bsSize="xsmall"
-              style={{ flex: "0" }}
-              onClick={() => actions?.setState({ show_hidden: !hidden })}
+            <FileHeaderTooltip
+              title={hidden ? "Hide hidden files" : "Show hidden files"}
             >
-              <Icon name={hidden ? "eye" : "eye-slash"} />
-            </BootstrapButton>
+              <Button
+                aria-label={hidden ? "Hide hidden files" : "Show hidden files"}
+                size="small"
+                style={{ flex: "0" }}
+                onClick={() => actions?.setState({ show_hidden: !hidden })}
+              >
+                <Icon name={hidden ? "eye" : "eye-slash"} />
+              </Button>
+            </FileHeaderTooltip>
           </Space.Compact>
           <Space.Compact orientation="horizontal" size="small">
             {!lite ? (
-              <Tooltip title="Recovery" placement="bottom">
-                <span>
+              <FileHeaderTooltip title="Snapshots and backups">
+                <span style={{ display: "inline-flex" }}>
                   <DropdownMenu
                     button
                     size="small"
+                    showDown={false}
                     items={
                       [
                         {
@@ -953,7 +977,7 @@ export function FilesHeader({
                     title={<Icon name="disk-snapshot" />}
                   />
                 </span>
-              </Tooltip>
+              </FileHeaderTooltip>
             ) : null}
             {platformMode === PLATFORM_MODE_CLOUD ? (
               <CloneProject project_id={project_id} flyout />
