@@ -104,7 +104,7 @@ const BUTTON_STYLE: CSSProperties = {
 const SSO_BUTTON_STYLE: CSSProperties = {
   ...BUTTON_STYLE,
   background: "white",
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  border: "1px solid #ccc",
   color: COLORS.GRAY_D,
   display: "block",
   opacity: 1,

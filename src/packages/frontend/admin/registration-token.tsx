@@ -21,18 +21,11 @@ import {
   Typography,
 } from "antd";
 import dayjs from "dayjs";
-import { List } from "immutable";
 import { pick, sortBy } from "lodash";
 
 import { DeleteOutlined, EditOutlined } from "@ant-design/icons";
 import { Alert } from "@cocalc/frontend/antd-bootstrap";
-import {
-  React,
-  redux,
-  Rendered,
-  TypedMap,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   ErrorDisplay,
   Icon,
@@ -44,7 +37,6 @@ import { CancelText } from "@cocalc/frontend/i18n/components";
 import { RegistrationTokenSetFields } from "@cocalc/util/db-schema/types";
 import { cmp_dayjs, round1, secure_random_token } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 
 interface Token {
   key?: string; // used in the table, not for the database
@@ -615,15 +607,6 @@ export function RegistrationToken() {
     }
   }
 
-  function render_unsupported() {
-    // see https://github.com/sagemathinc/cocalc/issues/333
-    return (
-      <div style={{ color: COLORS.GRAY }}>
-        Not supported! At least one "public" passport strategy is enabled.
-      </div>
-    );
-  }
-
   function render_info(): Rendered {
     return (
       <div style={{ color: COLORS.GRAY, fontStyle: "italic" }}>
@@ -638,34 +621,13 @@ export function RegistrationToken() {
     );
   }
 
-  // disable token editing if any strategy besides email is public
-  function not_supported(strategies): boolean {
-    return strategies
-      .filterNot((s) => s.get("name") === "email")
-      .some((s) => s.get("public"));
-  }
-
-  const account_store: any = redux.getStore("account");
-  if (account_store == null) {
-    return <div>Account store not defined -- try again...</div>;
-  }
-  const strategies: List<TypedMap<PassportStrategyFrontend>> | undefined =
-    account_store.get("strategies");
-  if (strategies == null) {
-    // I hit this in production once and it crashed my browser.
-    return <div>strategies not loaded -- try again...</div>;
-  }
-  if (not_supported(strategies)) {
-    return render_unsupported();
-  } else {
-    return (
-      <div>
-        {render_signup_policy()}
-        {render_no_active_token_warning()}
-        {render_error()}
-        {render_control()}
-        {render_info()}
-      </div>
-    );
-  }
+  return (
+    <div>
+      {render_signup_policy()}
+      {render_no_active_token_warning()}
+      {render_error()}
+      {render_control()}
+      {render_info()}
+    </div>
+  );
 }
