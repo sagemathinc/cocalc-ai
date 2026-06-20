@@ -739,6 +739,27 @@ export class PassportManager {
     return `${this.auth_url}/google/return`;
   }
 
+  private googleOidcStartURL(req: express.Request): string {
+    if (this.auth_url == null) {
+      throw new Error("auth_url must be initialized before Google OIDC");
+    }
+    const target = new URL(`${this.auth_url}/google`);
+    target.search = new URL(
+      req.originalUrl ?? req.url ?? "",
+      "https://placeholder.invalid",
+    ).search;
+    return target.toString();
+  }
+
+  private isGoogleOidcStartOnCanonicalHost(req: express.Request): boolean {
+    if (this.auth_url == null) {
+      throw new Error("auth_url must be initialized before Google OIDC");
+    }
+    const currentHost = `${req.get("host") ?? ""}`.trim().toLowerCase();
+    if (!currentHost) return true;
+    return currentHost === new URL(this.auth_url).host.toLowerCase();
+  }
+
   private async getGoogleOidcStrategy(): Promise<PassportStrategyDB> {
     const { strategy } = await getGoogleSsoSettingsState();
     if (strategy == null) {
@@ -773,6 +794,10 @@ export class PassportManager {
       this.handle_get_api_key,
       async (req, res) => {
         try {
+          if (!this.isGoogleOidcStartOnCanonicalHost(req)) {
+            res.redirect(this.googleOidcStartURL(req));
+            return;
+          }
           const strategy = await this.getGoogleOidcStrategy();
           const clientID = strategy.conf.clientID;
           const state = uuidv4();
