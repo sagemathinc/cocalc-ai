@@ -2050,16 +2050,18 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               minWidth: 0,
             }}
           >
-            <Button
-              size="small"
-              type="text"
-              icon={<Icon name="chevron-left" />}
-              style={{ padding: "0 6px", flex: "0 0 auto" }}
-              onClick={closeInlineSession}
-              aria-label="Back to agents"
-            >
-              Agents
-            </Button>
+            <Tooltip title="Back to agent list">
+              <Button
+                size="small"
+                type="text"
+                icon={<Icon name="chevron-left" />}
+                style={{ padding: "0 6px", flex: "0 0 auto" }}
+                onClick={closeInlineSession}
+                aria-label="Back to agent list"
+              >
+                Back
+              </Button>
+            </Tooltip>
             <div style={{ minWidth: 0, flex: "1 1 auto" }}>
               <Typography.Text
                 strong
