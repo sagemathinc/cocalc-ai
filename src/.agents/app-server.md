@@ -627,9 +627,9 @@ Suggested catalog shape:
             "id": "ubuntu-apt-plus-pip",
             "match": { "os_family": ["debian", "ubuntu"] },
             "commands": [
-              "apt-get update",
-              "apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed jupyterlab"
+              "sudo apt-get update",
+              "sudo apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed jupyterlab"
             ],
             "notes": "Preferred on maintained Ubuntu launchpad images because Ubuntu 24.04 does not ship a top-level jupyterlab apt package."
           }
