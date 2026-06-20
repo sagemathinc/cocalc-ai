@@ -650,12 +650,6 @@ function interruptRequestFromRow({
 }) {
   const path = cleanText(row.path, 2048) ?? "";
   const threadId = cleanText(row.thread_id, 512) ?? undefined;
-  const messageDate = (
-    timestamp(row.started_at) ??
-    timestamp(row.queued_at) ??
-    timestamp(row.updated_at) ??
-    new Date()
-  ).toISOString();
   return {
     project_id: row.project_id,
     account_id,
@@ -670,7 +664,7 @@ function interruptRequestFromRow({
             message_id: cleanText(row.message_id, 512) ?? undefined,
             parent_message_id:
               cleanText(row.parent_message_id, 512) ?? undefined,
-            message_date: messageDate,
+            message_date: "",
             sender_id: "openai-codex-agent",
           }
         : undefined,

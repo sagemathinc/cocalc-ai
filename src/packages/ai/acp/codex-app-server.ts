@@ -327,6 +327,16 @@ type SpawnedCodexAppServer = {
   runtimeEnv?: Record<string, string>;
 };
 
+function authSourceForSpawned(
+  spawned: Pick<SpawnedCodexAppServer, "authSource" | "appServerLogin">,
+): string | undefined {
+  if (spawned.authSource) return spawned.authSource;
+  if (spawned.appServerLogin?.type === "chatgptAuthTokens") {
+    return "subscription";
+  }
+  return undefined;
+}
+
 export type CodexAppServerAccountStatus = {
   account?: any;
   rateLimits?: any;
@@ -1852,6 +1862,7 @@ export class CodexAppServerAgent implements AcpAgent {
       const resumeId = requestedSessionKey ? session.sessionId : undefined;
       const model = this.effectiveModel(config);
       const serviceTier = this.resolveAppServerServiceTier(config, model);
+      const authSource = authSourceForSpawned(spawned);
       const threadParams = {
         cwd,
         model,
@@ -1871,7 +1882,7 @@ export class CodexAppServerAgent implements AcpAgent {
           sessionMode,
           sandbox: threadParams.sandbox,
           workingDirectory: cwd,
-          authSource: spawned.authSource,
+          authSource,
         },
       });
       logger.debug("codex app-server: resolved service tier", {

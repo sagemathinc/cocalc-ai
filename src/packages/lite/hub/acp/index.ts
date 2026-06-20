@@ -2406,6 +2406,12 @@ export class ChatStreamWriter {
               automation_id: this.metadata.automation_id,
               send_mode: this.metadata.send_mode,
               auth_source: event.authSource,
+              reasoning: event.reasoning,
+              service_tier: event.serviceTier,
+              app_server_service_tier: event.appServerServiceTier,
+              session_mode: event.sessionMode,
+              sandbox: event.sandbox,
+              working_directory: event.workingDirectory,
             },
           });
         }
@@ -8499,6 +8505,32 @@ async function handleInterruptRequest(
       candidateIds,
     })
   ) {
+    if (conatClient && request.chat && project_id && path) {
+      try {
+        await repairInterruptedAcpTurn({
+          client: conatClient,
+          turn: {
+            project_id,
+            path,
+            message_date: request.chat.message_date,
+            sender_id: request.chat.sender_id,
+            message_id: request.chat.message_id,
+            thread_id: threadId || request.chat.thread_id,
+            account_id: request.account_id,
+          },
+          interruptedNotice: INTERRUPT_STATUS_TEXT,
+          interruptedReasonId: "interrupt",
+          recoveryReason: INTERRUPT_STATUS_TEXT,
+        });
+      } catch (err) {
+        logger.warn("failed to persist chat interrupt marker", {
+          project_id,
+          path,
+          threadId,
+          err,
+        });
+      }
+    }
     if (project_id && path && threadId) {
       markAcpInterruptsHandledForThread({
         project_id,
