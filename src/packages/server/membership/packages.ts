@@ -1617,8 +1617,30 @@ export async function updateMembershipPackage({
           `seat_count cannot be less than the ${activeSeatCount} active assigned seats`,
         );
       }
+      if (
+        pkg.kind !== "site" &&
+        normalizedSeatCount != null &&
+        normalizedSeatCount > pkg.seat_count
+      ) {
+        throw Error(
+          "seat_count increases must go through membership package purchase",
+        );
+      }
       const nextExpiresAt =
         expires_at === undefined ? undefined : asDate(expires_at);
+      if (pkg.kind !== "site" && expires_at !== undefined) {
+        if (nextExpiresAt == null) {
+          if (pkg.expires_at != null) {
+            throw Error(
+              "expires_at extensions must go through membership package purchase",
+            );
+          }
+        } else if (pkg.expires_at != null && nextExpiresAt > pkg.expires_at) {
+          throw Error(
+            "expires_at extensions must go through membership package purchase",
+          );
+        }
+      }
       if (allowed_domains !== undefined && pkg.kind !== "site") {
         throw Error("allowed_domains can only be updated for site packages");
       }

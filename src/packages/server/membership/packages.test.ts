@@ -830,6 +830,57 @@ describe("membership packages", () => {
     );
   });
 
+  it("does not allow direct entitlement expansion for non-site packages", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const expires_at = dayjs().add(30, "day").toDate();
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 2,
+      expires_at,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+
+    await expect(
+      updateMembershipPackage({
+        package_id,
+        seat_count: 3,
+      }),
+    ).rejects.toThrow(
+      "seat_count increases must go through membership package purchase",
+    );
+    await expect(
+      updateMembershipPackage({
+        package_id,
+        expires_at: dayjs(expires_at).add(1, "day").toDate(),
+      }),
+    ).rejects.toThrow(
+      "expires_at extensions must go through membership package purchase",
+    );
+    await expect(
+      updateMembershipPackage({
+        package_id,
+        expires_at: null,
+      }),
+    ).rejects.toThrow(
+      "expires_at extensions must go through membership package purchase",
+    );
+
+    const shortened = dayjs(expires_at).subtract(1, "day").toDate();
+    const updated = await updateMembershipPackage({
+      package_id,
+      seat_count: 1,
+      expires_at: shortened,
+    });
+    expect(updated.seat_count).toBe(1);
+    expect(updated.expires_at?.toISOString()).toBe(shortened.toISOString());
+  });
+
   it("updates site-license domains for future claims without revoking existing seats", async () => {
     const owner_account_id = uuid();
     const first_account_id = uuid();
