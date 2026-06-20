@@ -5,7 +5,9 @@ Date: 2026-06-17
 Status: implementation in progress. The backend registry, lifecycle publication,
 user-scoped listing, account-scoped interrupt/interrupt-all contract, and basic
 stale/host-stopped reconciliation helpers are implemented. UI, CLI, admin
-views, payment-source filtering, and scheduled reconciliation wiring remain.
+views, payment-source filtering, and scheduled reconciliation wiring remain. A
+minimal account AI settings panel now exposes current/recent Codex sessions and
+account-scoped stop-all.
 
 ## Objective
 
@@ -612,12 +614,13 @@ Add logs:
 
 ### Phase 1: Registry MVP
 
-- Add `acp_sessions` schema.
-- Write lifecycle rows for new Codex turns.
-- Add heartbeat updates.
-- Add terminal updates for normal completion, failure, and interrupt.
-- Add user RPC/CLI list for current account.
-- Add minimal account UI table.
+- [x] Add `acp_sessions` schema.
+- [x] Write lifecycle rows for new Codex turns.
+- [x] Add heartbeat updates.
+- [x] Add terminal updates for normal completion, failure, and interrupt.
+- [x] Add user RPC list for current account.
+- Add CLI list for current account.
+- [x] Add minimal account UI table.
 
 Success criteria:
 
@@ -629,6 +632,7 @@ Success criteria:
 - [x] Add interrupt by `session_id`, `session_key`, or `op_id`.
 - [x] Add stop-all active for user.
 - [x] Make interrupt results explicitly terminal vs uncertain.
+- [x] Add account UI stop-all that reports terminal vs uncertain outcomes.
 - Connect chat "Interrupt" and global "Stop all" to the same backend contract.
 
 Success criteria:

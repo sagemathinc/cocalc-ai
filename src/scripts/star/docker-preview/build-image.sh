@@ -326,7 +326,8 @@ RUN apt-get update \\
 EOF
 
   log "building RootFS cache source image $rootfs_tag"
-  docker_cli build --pull=always -t "$rootfs_tag" "$rootfs_context"
+  docker_cli pull "$ROOTFS_BASE_IMAGE" >/dev/null
+  docker_cli build -t "$rootfs_tag" "$rootfs_context"
   docker_cli create --name "$rootfs_container" "$rootfs_tag" >/dev/null
 
   local cache_key metadata_path inspect_path
