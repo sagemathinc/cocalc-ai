@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -209,100 +209,113 @@ function PresetSummaryCard({
   compact?: boolean;
 }) {
   const theme = getPresetTheme(preset);
-  const heroHeight = compact ? 88 : 110;
+  const kindLabel = preset.kind === "static" ? "static" : "service";
+
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (!onClick) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onClick();
+    }
+  }
+
   return (
     <Card
       size="small"
       hoverable={!!onClick}
       onClick={onClick}
+      onKeyDown={handleKeyDown}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       style={{
         cursor: onClick ? "pointer" : undefined,
-        borderColor: theme.accent,
-        background: `linear-gradient(135deg, ${theme.surface} 0%, white 78%)`,
-        minHeight: compact ? 196 : undefined,
+        borderColor: COLORS.GRAY_LL,
+        background: "white",
+        minHeight: compact ? 104 : undefined,
         overflow: "hidden",
       }}
+      styles={{
+        body: {
+          padding: compact ? "10px 12px" : "12px 14px",
+        },
+      }}
     >
-      <Space
-        orientation="vertical"
-        size={compact ? 8 : 6}
-        style={{ width: "100%" }}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: compact ? 10 : 12,
+          minWidth: 0,
+        }}
       >
         <div
           style={{
-            margin: "-12px -12px 0",
-            height: heroHeight,
-            borderBottom: `1px solid ${theme.accent}22`,
-            backgroundColor: theme.surface,
-            backgroundImage: preset.heroImage
-              ? `url("${preset.heroImage}")`
-              : `radial-gradient(circle at 82% 22%, ${theme.accent}22 0, ${theme.accent}22 18%, transparent 18%), linear-gradient(135deg, ${theme.surface} 0%, white 85%)`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            backgroundRepeat: "no-repeat",
-            position: "relative",
+            alignItems: "center",
+            background: COLORS.ANTD_BG_BLUE_L,
+            border: `1px solid ${COLORS.BLUE_LLL}`,
+            borderRadius: 8,
+            color: COLORS.ANTD_LINK_BLUE,
+            display: "flex",
+            flex: "0 0 auto",
+            height: compact ? 32 : 36,
+            justifyContent: "center",
+            width: compact ? 32 : 36,
           }}
         >
-          <div
-            style={{
-              position: "absolute",
-              left: 16,
-              bottom: -12,
-              width: compact ? 40 : 46,
-              height: compact ? 40 : 46,
-              borderRadius: compact ? 14 : 16,
-              background: theme.accent,
-              color: "white",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: `0 10px 24px ${theme.accent}44`,
-              border: "2px solid white",
-            }}
-          >
-            <Icon name={theme.icon} />
-          </div>
+          <Icon name={theme.icon} />
         </div>
-        <Space
-          align="start"
-          style={{ width: "100%", justifyContent: "space-between" }}
-        >
-          <div style={{ minWidth: 0, paddingTop: compact ? 12 : 16 }}>
-            <Typography.Text strong style={{ display: "block" }}>
-              {preset.label}
-            </Typography.Text>
-            {preset.description ? (
-              <Typography.Text
-                type="secondary"
-                style={{
-                  display: "block",
-                  marginTop: 2,
-                  lineHeight: 1.35,
-                }}
-              >
-                {preset.description}
-              </Typography.Text>
-            ) : null}
-          </div>
-          {preset.category ? (
-            <Tag
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <Typography.Text
+            strong
+            style={{
+              display: "block",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={preset.label}
+          >
+            {preset.label}
+          </Typography.Text>
+          {preset.description ? (
+            <Typography.Text
+              type="secondary"
               style={{
-                marginInlineEnd: 0,
-                borderColor: theme.accent,
-                color: theme.accent,
-                background: "white",
+                display: "block",
+                fontSize: 12,
+                lineHeight: 1.35,
+                marginTop: 3,
               }}
             >
-              {preset.category}
-            </Tag>
+              {preset.description}
+            </Typography.Text>
           ) : null}
-        </Space>
-        {!compact && preset.homepage ? (
-          <a href={preset.homepage} target="_blank" rel="noreferrer">
-            Learn more
-          </a>
-        ) : null}
-      </Space>
+          <Space size={4} wrap style={{ marginTop: 6 }}>
+            <Tag style={{ marginInlineEnd: 0 }}>{kindLabel}</Tag>
+            {preset.category ? (
+              <Tag
+                style={{
+                  color: COLORS.GRAY_D,
+                  marginInlineEnd: 0,
+                }}
+              >
+                {preset.category}
+              </Tag>
+            ) : null}
+          </Space>
+          {!compact && preset.homepage ? (
+            <a
+              href={preset.homepage}
+              target="_blank"
+              rel="noreferrer"
+              style={{ display: "inline-block", marginTop: 8 }}
+            >
+              Learn more
+            </a>
+          ) : null}
+        </div>
+      </div>
     </Card>
   );
 }
