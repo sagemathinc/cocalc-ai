@@ -4,15 +4,19 @@ name: r
 steps:
   - uses: cocalc/r
     timeout: 1800
+  - uses: cocalc/rstudio
+    timeout: 1800
 
 verify:
   - command -v R
+  - command -v rserver
   - Rscript --vanilla -e 'stopifnot(requireNamespace("IRkernel", quietly=TRUE))'
+  - Rscript --vanilla -e 'stopifnot(requireNamespace("shiny", quietly=TRUE))'
 
 publish:
   label: R
   slug: r
-  description: R with common development libraries and an IRkernel Jupyter kernel.
+  description: R with common development libraries, an IRkernel Jupyter kernel, RStudio Server, and a Shiny example app.
   family: r
   version: stable
   channel: stable
@@ -21,3 +25,5 @@ publish:
     - r
     - statistics
     - jupyter
+    - rstudio
+    - shiny

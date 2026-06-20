@@ -1340,7 +1340,7 @@ export async function launchRootfsProjectAppAction({
   const status =
     spec.kind === "service"
       ? await api.apps.ensureRunning(appId, {
-          timeout: 90_000,
+          timeout: rootfsProjectAppLaunchTimeoutMs(spec),
           interval: 1000,
         })
       : await api.apps.statusApp(appId);
@@ -1350,6 +1350,13 @@ export async function launchRootfsProjectAppAction({
     spec,
     status,
   });
+}
+
+function rootfsProjectAppLaunchTimeoutMs(spec: AppSpec): number {
+  if (spec.kind !== "service") return 90_000;
+  const startupMs = Math.max(0, spec.wake?.startup_timeout_s ?? 0) * 1000;
+  const readinessMs = Math.max(0, spec.proxy?.readiness_timeout_s ?? 0) * 1000;
+  return Math.max(90_000, startupMs + readinessMs + 10_000);
 }
 
 function rootfsActionErrorMessage(err: unknown): string {

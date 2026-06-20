@@ -1,0 +1,120 @@
+{
+  "id": "cocalc/rstudio",
+  "version": 1,
+  "description": "Install RStudio Server and add RStudio and Shiny app launchers.",
+  "inputs": {
+    "download_url": {
+      "type": "string",
+      "default": "https://rstudio.org/download/latest/stable/server/jammy/rstudio-server-latest-amd64.deb"
+    },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "r",
+      "tags": ["rstudio", "shiny"]
+    },
+    "theme": {
+      "icon": "bar-chart-3",
+      "color": "#ffffff",
+      "accent_color": "#75aadb"
+    },
+    "content": {
+      "version": 1,
+      "title": "R and RStudio",
+      "subtitle": "RStudio Server and a sample Shiny app.",
+      "highlights": ["RStudio", "Shiny", "R"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "RStudio Server documentation",
+          "url": "https://docs.posit.co/ide/server-pro/"
+        },
+        {
+          "kind": "copy-to-home",
+          "label": "Copy Shiny example",
+          "source_path": "/opt/cocalc-r/examples/shiny-hello",
+          "target_path": "shiny-hello"
+        },
+        {
+          "kind": "project-app",
+          "label": "Launch RStudio",
+          "description": "Start RStudio Server inside this project.",
+          "app_spec": {
+            "version": 1,
+            "id": "rstudio",
+            "title": "RStudio",
+            "kind": "service",
+            "command": {
+              "exec": "bash",
+              "args": ["-lc", "cocalc-rstudio-server"]
+            },
+            "lifecycle": {
+              "mode": "managed"
+            },
+            "network": {
+              "listen_host": "127.0.0.1",
+              "port": 6010,
+              "protocol": "http"
+            },
+            "proxy": {
+              "base_path": "/apps/rstudio",
+              "strip_prefix": true,
+              "websocket": true,
+              "open_mode": "proxy",
+              "health_path": "/",
+              "readiness_timeout_s": 120
+            },
+            "wake": {
+              "enabled": true,
+              "keep_warm_s": 1800,
+              "startup_timeout_s": 120
+            }
+          }
+        },
+        {
+          "kind": "project-app",
+          "label": "Launch Shiny Example",
+          "description": "Run a bundled hello-world Shiny app.",
+          "app_spec": {
+            "version": 1,
+            "id": "shiny-hello",
+            "title": "Shiny Hello",
+            "kind": "service",
+            "command": {
+              "exec": "bash",
+              "args": [
+                "-lc",
+                "Rscript -e 'shiny::runApp(\"/opt/cocalc-r/examples/shiny-hello\", host=Sys.getenv(\"HOST\", \"127.0.0.1\"), port=as.integer(Sys.getenv(\"PORT\", \"6011\")), launch.browser=FALSE)'"
+              ]
+            },
+            "lifecycle": {
+              "mode": "managed"
+            },
+            "network": {
+              "listen_host": "127.0.0.1",
+              "port": 6011,
+              "protocol": "http"
+            },
+            "proxy": {
+              "base_path": "/apps/shiny-hello",
+              "strip_prefix": true,
+              "websocket": true,
+              "open_mode": "proxy",
+              "health_path": "/",
+              "readiness_timeout_s": 60
+            },
+            "wake": {
+              "enabled": true,
+              "keep_warm_s": 1800,
+              "startup_timeout_s": 60
+            }
+          }
+        }
+      ]
+    }
+  }
+}

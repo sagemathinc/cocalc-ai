@@ -1,0 +1,81 @@
+{
+  "id": "cocalc/overleaf",
+  "version": 1,
+  "description": "Build the native sagemathinc/overleaf checkout and add an Overleaf app launcher.",
+  "inputs": {
+    "repo_url": {
+      "type": "string",
+      "default": "https://github.com/sagemathinc/overleaf"
+    },
+    "ref": { "type": "string", "default": "main" },
+    "prefix": { "type": "string", "default": "/opt/overleaf" },
+    "frontend_port": { "type": "string", "default": "6020" },
+    "web_port": { "type": "string", "default": "6021" },
+    "node_major": { "type": "string", "default": "22" },
+    "npm_version": { "type": "string", "default": "11.11.0" },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "overleaf",
+      "tags": ["overleaf", "latex", "editor"]
+    },
+    "theme": {
+      "icon": "file-tex",
+      "color": "#ffffff",
+      "accent_color": "#47a141"
+    },
+    "content": {
+      "version": 1,
+      "title": "Overleaf",
+      "subtitle": "Native Overleaf Community Edition with a CoCalc app launcher.",
+      "highlights": ["Overleaf", "LaTeX", "collaborative editor"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "Overleaf source",
+          "url": "https://github.com/sagemathinc/overleaf"
+        },
+        {
+          "kind": "project-app",
+          "label": "Launch Overleaf",
+          "description": "Start the bundled native Overleaf service stack.",
+          "app_spec": {
+            "version": 1,
+            "id": "overleaf",
+            "title": "Overleaf",
+            "kind": "service",
+            "command": {
+              "exec": "bash",
+              "args": ["-lc", "cocalc-overleaf"]
+            },
+            "lifecycle": {
+              "mode": "managed"
+            },
+            "network": {
+              "listen_host": "127.0.0.1",
+              "port": 6020,
+              "protocol": "http"
+            },
+            "proxy": {
+              "base_path": "/apps/overleaf",
+              "strip_prefix": true,
+              "websocket": true,
+              "open_mode": "proxy",
+              "health_path": "/status",
+              "readiness_timeout_s": 180
+            },
+            "wake": {
+              "enabled": true,
+              "keep_warm_s": 1800,
+              "startup_timeout_s": 180
+            }
+          }
+        }
+      ]
+    }
+  }
+}

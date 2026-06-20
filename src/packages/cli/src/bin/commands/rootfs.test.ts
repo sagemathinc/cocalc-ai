@@ -329,6 +329,11 @@ test("rootfs save accepts portable config json", async () => {
       "cocalc.local/rootfs/pluto",
       "--config-file",
       config.path,
+      "--arch",
+      "amd64",
+      "--size-gb",
+      "5.858",
+      "--gpu",
     ]);
   } finally {
     config.cleanup();
@@ -347,6 +352,9 @@ test("rootfs save accepts portable config json", async () => {
     supersedes_image_id: undefined,
     visibility: "collaborators",
     tags: ["julia", "pluto"],
+    arch: "amd64",
+    gpu: true,
+    size_gb: 5.858,
     theme: {
       title: "Pluto",
       description: undefined,
@@ -457,6 +465,9 @@ test("rootfs publish accepts config json and lets flags override it", async () =
     visibility: "public",
     tags: ["cli", "pluto"],
     theme: undefined,
+    arch: undefined,
+    gpu: undefined,
+    size_gb: undefined,
     content: {
       version: 1,
       title: "Config content",
@@ -542,6 +553,9 @@ test("rootfs publish uses saved project RootFS publish config", async () => {
     visibility: undefined,
     tags: ["saved"],
     theme: undefined,
+    arch: undefined,
+    gpu: undefined,
+    size_gb: undefined,
     content: {
       version: 1,
       title: "Saved content",
@@ -564,6 +578,57 @@ test("rootfs publish uses saved project RootFS publish config", async () => {
     hidden: undefined,
     switch_project: undefined,
   });
+});
+
+test("rootfs publish lets flags override saved project RootFS publish config", async () => {
+  let capturedArgs: any;
+  const harness = rootfsDeps({
+    resolveProjectFromArgOrContext: async () => ({ project_id: "project-1" }),
+    projects: {
+      getProjectRootfsPublishConfig: async () => ({
+        kind: "cocalc-project-rootfs-publish-config",
+        version: 1,
+        updated_at: "2026-06-19T00:00:00.000Z",
+        config: {
+          kind: "cocalc-rootfs-config",
+          version: 1,
+          exported_at: "2026-06-19T00:00:00.000Z",
+          metadata: {
+            label: "Saved label",
+            slug: "saved-label",
+            visibility: "private",
+            tags: ["saved"],
+          },
+        },
+      }),
+    },
+    system: {
+      publishProjectRootfsImage: async (opts: any) => {
+        capturedArgs = opts;
+        return { op_id: "op-1", scope_type: "project", scope_id: "project-1" };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "publish",
+    "--project",
+    "project-1",
+    "--slug",
+    "cli-label",
+    "--visibility",
+    "public",
+  ]);
+
+  assert.equal(capturedArgs.label, "Saved label");
+  assert.equal(capturedArgs.slug, "cli-label");
+  assert.equal(capturedArgs.visibility, "public");
+  assert.deepEqual(capturedArgs.tags, ["saved"]);
 });
 
 test("rootfs recipe explain resolves local modules", async () => {
@@ -857,6 +922,7 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
         publish: {
           label: "Demo image",
           slug: "demo-image",
+          family: "demo",
           tags: ["demo"],
         },
       }),
@@ -869,7 +935,7 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
         run: { script: "install.sh" },
         verify: { command: "command -v demo" },
         contributes: {
-          metadata: { tags: ["module"] },
+          metadata: { family: "module", tags: ["module"] },
           content: {
             version: 1,
             title: "Demo content",
@@ -951,7 +1017,7 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
       label: "Demo image",
       slug: "demo-image",
       description: undefined,
-      family: undefined,
+      family: "demo",
       version: undefined,
       channel: undefined,
       visibility: undefined,

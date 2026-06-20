@@ -7,6 +7,7 @@ import type {
   RootfsDeleteRequestResult,
   RootfsImageEntry,
   RootfsImageEvent,
+  RootfsImageArch,
   RootfsImageSection,
   RootfsImageTheme,
   RootfsImageVisibility,
@@ -158,6 +159,28 @@ function parseTags(value?: string): string[] | undefined {
   return tags.length ? tags : undefined;
 }
 
+function parseArch(value?: string): RootfsImageArch | undefined {
+  const trimmed = `${value ?? ""}`.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  if (trimmed === "amd64" || trimmed === "arm64" || trimmed === "any") {
+    return trimmed;
+  }
+  throw new Error(`invalid arch '${value}'; expected amd64, arm64, or any`);
+}
+
+function parseOptionalNumber(
+  value?: string,
+  label = "value",
+): number | undefined {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+  return n;
+}
+
 function parseThemeJson(value?: string): RootfsImageTheme | undefined {
   const trimmed = `${value ?? ""}`.trim();
   if (!trimmed) return undefined;
@@ -235,6 +258,9 @@ function rootfsCatalogConfigPayload(
     visibility?: string;
     tags?: string;
     themeJson?: string;
+    arch?: string;
+    gpu?: boolean;
+    sizeGb?: string;
   },
   config?: RootfsConfigExport,
 ) {
@@ -264,6 +290,9 @@ function rootfsCatalogConfigPayload(
     tags: opts.tags != null ? parseTags(opts.tags) : config?.metadata?.tags,
     theme:
       opts.themeJson != null ? parseThemeJson(opts.themeJson) : config?.theme,
+    arch: parseArch(opts.arch),
+    gpu: opts.gpu === true ? true : undefined,
+    size_gb: parseOptionalNumber(opts.sizeGb, "--size-gb"),
     ...content,
   };
 }
@@ -1550,6 +1579,12 @@ export function registerRootfsCommand(
     .option("--visibility <visibility>", "private, collaborators, or public")
     .option("--tags <csv>", "comma-separated tags")
     .option("--theme-json <json>", "theme metadata as a JSON object")
+    .option(
+      "--arch <arch>",
+      "image architecture metadata: amd64, arm64, or any",
+    )
+    .option("--gpu", "mark the image as requiring GPU support")
+    .option("--size-gb <n>", "image size metadata in decimal GB")
     .option("--official", "mark as official (admin only)")
     .option("--prepull", "mark for automatic prepull on new hosts (admin only)")
     .option("--hidden", "hide from normal catalog views")
@@ -1570,6 +1605,9 @@ export function registerRootfsCommand(
           visibility?: string;
           tags?: string;
           themeJson?: string;
+          arch?: string;
+          gpu?: boolean;
+          sizeGb?: string;
           official?: boolean;
           prepull?: boolean;
           hidden?: boolean;

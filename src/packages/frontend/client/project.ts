@@ -645,11 +645,19 @@ export class ProjectClient {
     start?: boolean;
     host_id?: string;
     region?: string;
+    timeout?: number;
     // make exact clone of the files from this project:
     src_project_id?: string;
   }): Promise<string> => {
+    const { timeout, ...createOpts } = opts;
     const project_id =
-      await this.client.conat_client.hub.projects.createProject(opts);
+      timeout == null
+        ? await this.client.conat_client.hub.projects.createProject(createOpts)
+        : await this.client.conat_client.callHubApi({
+            name: "projects.createProject",
+            args: [{ ...createOpts, account_id: this.client.account_id }],
+            timeout,
+          });
     return project_id;
   };
 

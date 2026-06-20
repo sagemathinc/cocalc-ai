@@ -5,6 +5,15 @@
   "inputs": {
     "prefix": { "type": "string", "default": "/opt/code-server" },
     "version": { "type": "string", "default": "latest" },
+    "extensions": { "type": "array", "default": [] },
+    "extensions_dir": {
+      "type": "string",
+      "default": "/opt/code-server/extensions"
+    },
+    "user_data_dir": {
+      "type": "string",
+      "default": "/opt/code-server/user-data"
+    },
     "owner_uid": { "type": "string", "default": "2001" },
     "owner_gid": { "type": "string", "default": "2001" }
   },
@@ -44,7 +53,7 @@
               "exec": "bash",
               "args": [
                 "-lc",
-                "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none"
+                "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none --extensions-dir=/opt/code-server/extensions --user-data-dir=/opt/code-server/user-data"
               ]
             },
             "lifecycle": {
