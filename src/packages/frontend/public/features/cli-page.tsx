@@ -8,17 +8,19 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import { ContextList, StartCard } from "./feature-visuals";
+import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 const CLI_DOCS_PATH = appPath("docs/cli/use-cocalc-cli");
 const CLI_HERO_IMAGE = "/public/features/cocalc-cli-browser-automation.png";
+const CLI_ACCENT = COLORS.GRAY_D;
 const PANEL_RADIUS = 8;
 
 function CliHeroImage() {
@@ -33,20 +35,31 @@ function CliHeroImage() {
         padding: 20,
       }}
     >
-      <img
-        src={CLI_HERO_IMAGE}
-        alt="CoCalc CLI browser automation example"
-        width={3024}
-        height={1722}
-        style={{
-          background: PUBLIC_COLORS.surfaceMuted,
-          border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: PANEL_RADIUS,
-          display: "block",
-          height: "auto",
-          width: "100%",
-        }}
-      />
+      <Flex vertical gap={14}>
+        <Flex align="center" gap={10} wrap>
+          <IconBadge accent={CLI_ACCENT} icon="terminal" />
+          <div>
+            <Text strong>CoCalc CLI</Text>
+            <div style={{ color: PUBLIC_COLORS.mutedText }}>
+              typed commands for project automation
+            </div>
+          </div>
+        </Flex>
+        <img
+          src={CLI_HERO_IMAGE}
+          alt="CoCalc CLI browser automation example"
+          width={3024}
+          height={1722}
+          style={{
+            background: PUBLIC_COLORS.surfaceMuted,
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            display: "block",
+            height: "auto",
+            width: "100%",
+          }}
+        />
+      </Flex>
     </div>
   );
 }
@@ -74,7 +87,7 @@ function CliFitSection() {
         </Col>
         <Col xs={24} lg={12}>
           <ContextList
-            accent="#4b5563"
+            accent={CLI_ACCENT}
             items={[
               {
                 icon: "folder" as IconName,

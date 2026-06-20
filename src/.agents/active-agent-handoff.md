@@ -314,6 +314,29 @@ Plus/Star/Launchpad`).
   on `/features/cli` and `/features` desktop/mobile `68` assertions, `0` failures
   (`/tmp/cocalc-public-qa-5dy63T`), and visual screenshot inspection confirmed the frame renders
   on desktop and mobile. No PR.
+- **START 2026-06-20 15:19 PDT:** Blaec asked to try the selected Jupyter screenshot as the hero
+  visual on `/features/jupyter-notebook` and rebuild the preview. Verified synthesis hub still
+  owns preview pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Existing unrelated dirt remains
+  the snapshot script and untracked `dedicated-compute-page.tsx`; leaving both untouched. Claiming
+  only the Jupyter feature page, selected screenshot asset, focused tests if needed, and this
+  ledger to replace the synthetic notebook mock with the real screenshot in the existing frame,
+  rebuild, QA, commit, and push. No PR.
+- **PAUSED 2026-06-20 15:20 PDT:** Newer Blaec request superseded the Jupyter screenshot trial
+  before any Jupyter page or asset edits were made. Leaving the Jupyter image decision unexecuted
+  for now. No PR.
+- **START 2026-06-20 15:20 PDT:** Blaec asked to add the CLI feature icon from the `/features`
+  index into the `/features/cli` screenshot frame, similar to the Jupyter page styling. Existing
+  unrelated dirt remains the snapshot script and untracked `dedicated-compute-page.tsx`; leaving
+  both untouched. Claiming only the CLI page and this ledger to add the terminal icon/accent header
+  above the existing screenshot, rebuild, QA, commit, and push. No PR.
+- **END 2026-06-20 15:22 PDT:** Added the `/features` CLI card's `terminal` icon treatment above
+  the `/features/cli` screenshot inside the existing framed panel, using the shared gray CLI accent
+  for the badge and context list. Validation: prettier passed, focused feature Jest `88/88`
+  passing (existing React/AntD jsdom warnings), `lint:frontend` passing, `git diff --check` clean,
+  `pnpm -C src/packages/static build:dev` passing, browser QA on `/features/cli` and `/features`
+  desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-97rQpM`), and visual
+  screenshot inspection confirmed the icon/header appears above the CLI screenshot on desktop and
+  mobile. No PR.
 
 ### Codex — platform-UI thread
 

@@ -1081,6 +1081,9 @@ describe("PublicFeaturesApp", () => {
         ).toBe("/docs/cli/use-cocalc-cli");
         expect(screen.queryByRole("link", { name: "CLI guide" })).toBeNull();
         expect(
+          screen.getByText("typed commands for project automation"),
+        ).not.toBeNull();
+        expect(
           screen
             .getByRole("img", {
               name: "CoCalc CLI browser automation example",
