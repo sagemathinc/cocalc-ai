@@ -367,114 +367,117 @@ describe("purchases Stripe fresh-auth routes", () => {
     });
   });
 
-  it("creates a setup intent without fresh auth", async () => {
-    mockGetParams.mockReturnValue({
-      description: "Add a new payment method.",
-    });
-    mockRequireFreshAuth.mockRejectedValue(
-      Object.assign(new Error("fresh auth is required"), {
+  const billingMutationRoutes = [
+    {
+      modulePath: "./purchases/stripe/create-setup-intent",
+      backendCall: mockCreateSetupIntent,
+      params: {
+        description: "Add a new payment method.",
+      },
+      expectedResponse: {
+        clientSecret: "seti_test_secret",
+      },
+      expectBackendCall: () =>
+        expect(mockCreateSetupIntent).toHaveBeenCalledWith({
+          account_id: "acct-1",
+          description: "Add a new payment method.",
+        }),
+    },
+    {
+      modulePath: "./purchases/stripe/get-customer-session",
+      backendCall: mockGetCustomerSession,
+      params: {},
+      expectedResponse: {
+        customerSessionClientSecret: "css_test",
+      },
+      expectBackendCall: () =>
+        expect(mockGetCustomerSession).toHaveBeenCalledWith("acct-1"),
+    },
+    {
+      modulePath: "./purchases/stripe/set-customer",
+      backendCall: mockSetCustomer,
+      params: {
+        changes: {
+          name: "Ada Lovelace",
+          email: "ada@example.com",
+          address: { country: "US" },
+        },
+      },
+      expectedResponse: { success: true },
+      expectBackendCall: () =>
+        expect(mockSetCustomer).toHaveBeenCalledWith("acct-1", {
+          name: "Ada Lovelace",
+          email: "ada@example.com",
+          address: { country: "US" },
+        }),
+    },
+    {
+      modulePath: "./purchases/stripe/delete-payment-method",
+      backendCall: mockDeletePaymentMethod,
+      params: { payment_method: "pm_123" },
+      expectedResponse: { success: true },
+      expectBackendCall: () =>
+        expect(mockDeletePaymentMethod).toHaveBeenCalledWith({
+          account_id: "acct-1",
+          payment_method: "pm_123",
+        }),
+    },
+    {
+      modulePath: "./purchases/stripe/set-default-payment-method",
+      backendCall: mockSetDefaultPaymentMethod,
+      params: { default_payment_method: "pm_123" },
+      expectedResponse: { success: true },
+      expectBackendCall: () =>
+        expect(mockSetDefaultPaymentMethod).toHaveBeenCalledWith({
+          account_id: "acct-1",
+          default_payment_method: "pm_123",
+        }),
+    },
+  ];
+
+  it.each(billingMutationRoutes)(
+    "requires fresh auth before Stripe billing mutation $modulePath",
+    async ({ modulePath, backendCall, params }) => {
+      mockGetParams.mockReturnValue(params);
+      mockRequireFreshAuth.mockRejectedValue(
+        Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        }),
+      );
+      const { req, res } = createMocks({ method: "POST" });
+
+      const { default: handler } = await import(modulePath);
+      await handler(req, res);
+
+      expect(res._getJSONData()).toEqual({
+        error: "fresh auth is required",
         code: "fresh_auth_required",
-      }),
-    );
-    const { req, res } = createMocks({ method: "POST" });
+      });
+      expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+        req,
+        account_id: "acct-1",
+        allow_actor_impersonation: true,
+      });
+      expect(backendCall).not.toHaveBeenCalled();
+    },
+  );
 
-    const { default: handler } =
-      await import("./purchases/stripe/create-setup-intent");
-    await handler(req, res);
+  it.each(billingMutationRoutes)(
+    "runs Stripe billing mutation $modulePath after fresh auth",
+    async ({ modulePath, params, expectedResponse, expectBackendCall }) => {
+      mockGetParams.mockReturnValue(params);
+      const { req, res } = createMocks({ method: "POST" });
 
-    expect(res._getJSONData()).toEqual({
-      clientSecret: "seti_test_secret",
-    });
-    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
-    expect(mockCreateSetupIntent).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      description: "Add a new payment method.",
-    });
-  });
+      const { default: handler } = await import(modulePath);
+      await handler(req, res);
 
-  it("creates a customer session without fresh auth", async () => {
-    mockRequireFreshAuth.mockRejectedValue(
-      Object.assign(new Error("fresh auth is required"), {
-        code: "fresh_auth_required",
-      }),
-    );
-    const { req, res } = createMocks({ method: "POST" });
-
-    const { default: handler } =
-      await import("./purchases/stripe/get-customer-session");
-    await handler(req, res);
-
-    expect(res._getJSONData()).toEqual({
-      customerSessionClientSecret: "css_test",
-    });
-    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
-    expect(mockGetCustomerSession).toHaveBeenCalledWith("acct-1");
-  });
-
-  it("updates a Stripe customer without fresh auth", async () => {
-    const changes = {
-      name: "Ada Lovelace",
-      email: "ada@example.com",
-      address: { country: "US" },
-    };
-    mockGetParams.mockReturnValue({
-      changes,
-    });
-    mockRequireFreshAuth.mockRejectedValue(
-      Object.assign(new Error("fresh auth is required"), {
-        code: "fresh_auth_required",
-      }),
-    );
-    const { req, res } = createMocks({ method: "POST" });
-
-    const { default: handler } =
-      await import("./purchases/stripe/set-customer");
-    await handler(req, res);
-
-    expect(res._getJSONData()).toEqual({ success: true });
-    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
-    expect(mockSetCustomer).toHaveBeenCalledWith("acct-1", changes);
-  });
-
-  it("deletes a payment method without fresh auth", async () => {
-    mockGetParams.mockReturnValue({ payment_method: "pm_123" });
-    mockRequireFreshAuth.mockRejectedValue(
-      Object.assign(new Error("fresh auth is required"), {
-        code: "fresh_auth_required",
-      }),
-    );
-    const { req, res } = createMocks({ method: "POST" });
-
-    const { default: handler } =
-      await import("./purchases/stripe/delete-payment-method");
-    await handler(req, res);
-
-    expect(res._getJSONData()).toEqual({ success: true });
-    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
-    expect(mockDeletePaymentMethod).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      payment_method: "pm_123",
-    });
-  });
-
-  it("sets a default payment method without fresh auth", async () => {
-    mockGetParams.mockReturnValue({ default_payment_method: "pm_123" });
-    mockRequireFreshAuth.mockRejectedValue(
-      Object.assign(new Error("fresh auth is required"), {
-        code: "fresh_auth_required",
-      }),
-    );
-    const { req, res } = createMocks({ method: "POST" });
-
-    const { default: handler } =
-      await import("./purchases/stripe/set-default-payment-method");
-    await handler(req, res);
-
-    expect(res._getJSONData()).toEqual({ success: true });
-    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
-    expect(mockSetDefaultPaymentMethod).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      default_payment_method: "pm_123",
-    });
-  });
+      expect(res._getJSONData()).toEqual(expectedResponse);
+      expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+        req,
+        account_id: "acct-1",
+        allow_actor_impersonation: true,
+      });
+      expectBackendCall();
+    },
+  );
 });

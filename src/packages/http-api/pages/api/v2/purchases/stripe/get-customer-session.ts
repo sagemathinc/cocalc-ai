@@ -1,5 +1,6 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getCustomerSession from "@cocalc/server/purchases/stripe/get-customer-session";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
@@ -23,5 +24,6 @@ async function get(req) {
     throw Error("must be signed in");
   }
   throttle({ account_id, endpoint: "purchases/stripe/get-customer-session" });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   return await getCustomerSession(account_id);
 }
