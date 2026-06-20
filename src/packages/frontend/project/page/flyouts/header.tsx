@@ -90,7 +90,8 @@ export function FlyoutHeader(_: Readonly<Props>) {
         <Tooltip
           title="Open as full page"
           placement="bottom"
-          mouseEnterDelay={0.2}
+          mouseEnterDelay={0}
+          mouseLeaveDelay={0}
         >
           <Icon
             name="expand"
