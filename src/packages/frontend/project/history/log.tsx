@@ -51,6 +51,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 
 interface Props {
   project_id: string;
+  isVisible?: boolean;
 }
 
 const LOG_WORKSPACE_ONLY_STORAGE_PREFIX = "project-log-workspace-only";
@@ -161,7 +162,10 @@ function isUserEvent(event: string | undefined): boolean {
   return event != null && USER_EVENTS.includes(event as any);
 }
 
-export const ProjectLog: React.FC<Props> = ({ project_id }) => {
+export const ProjectLog: React.FC<Props> = ({
+  project_id,
+  isVisible = true,
+}) => {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const { workspaces } = useProjectContext();
@@ -208,6 +212,8 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
     loading_table?: boolean;
     next_cursor_pos?: number;
   }>({ search_cache: {} });
+  const visibleRef = useRef(false);
+  const projectIdRef = useRef(project_id);
   const [cursor_index, set_cursor_index] = useState<number>(0);
   const [workspaceOnly, setWorkspaceOnly] = useState<boolean>(() =>
     loadWorkspaceOnly(project_id),
@@ -228,8 +234,18 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
   ]);
 
   useEffect(() => {
-    actions?.refresh_project_log();
-  }, [actions, project_id]);
+    if (projectIdRef.current !== project_id) {
+      projectIdRef.current = project_id;
+      visibleRef.current = false;
+    }
+    if (!isVisible) {
+      visibleRef.current = false;
+      return;
+    }
+    if (visibleRef.current || actions == null) return;
+    visibleRef.current = true;
+    actions.refresh_project_log();
+  }, [actions, isVisible, project_id]);
 
   useEffect(() => {
     setMode(getFlyoutLogMode(project_id));

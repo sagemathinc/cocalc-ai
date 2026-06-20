@@ -278,6 +278,7 @@ interface Props {
   max?: number;
   wrap: (list: React.JSX.Element, style?: CSS) => React.JSX.Element;
   flyoutWidth: number;
+  isVisible?: boolean;
 }
 
 export function LogFlyout({
@@ -285,6 +286,7 @@ export function LogFlyout({
   project_id,
   wrap,
   flyoutWidth,
+  isVisible = true,
 }: Props): React.JSX.Element {
   const { workspaces } = useProjectContext();
   const intl = useIntl();
@@ -323,6 +325,8 @@ export function LogFlyout({
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
   const dimFileExtensions = !!useAccountOtherSetting("dim_file_extensions");
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const visibleRef = useRef(false);
+  const projectIdRef = useRef(project_id);
 
   const search = useTypedRedux({ project_id }, "search") ?? "";
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -338,8 +342,18 @@ export function LogFlyout({
   }, [project_id, workspaceOnly]);
 
   useEffect(() => {
-    actions?.refresh_project_log();
-  }, [actions, project_id]);
+    if (projectIdRef.current !== project_id) {
+      projectIdRef.current = project_id;
+      visibleRef.current = false;
+    }
+    if (!isVisible) {
+      visibleRef.current = false;
+      return;
+    }
+    if (visibleRef.current || actions == null) return;
+    visibleRef.current = true;
+    actions.refresh_project_log();
+  }, [actions, isVisible, project_id]);
 
   const workspacePathMatches = useMemo(() => {
     if (!workspaceOnly || !workspaces.current) return undefined;
