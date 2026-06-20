@@ -52,6 +52,11 @@ describe("PublicFeaturesApp", () => {
       slug: "ai",
     },
     {
+      context: "feature-automations",
+      label: "Ask about project automations",
+      slug: "automations",
+    },
+    {
       context: "feature-jupyter-notebook",
       label: "Ask about Jupyter workflows",
       slug: "jupyter-notebook",
@@ -116,12 +121,21 @@ describe("PublicFeaturesApp", () => {
       label: "Ask about Octave workflows",
       slug: "octave",
     },
+    {
+      context: "feature-more-languages",
+      label: "Ask about language workflows",
+      slug: "more-languages",
+    },
   ] as const;
 
   const auditedFeaturePages = [
     {
       marker: "Codex where the work happens.",
       slug: "ai",
+    },
+    {
+      marker: "Turn recurring project workflows into repeatable runs.",
+      slug: "automations",
     },
     {
       marker: "Jupyter notebooks for work that needs to keep going",
@@ -161,7 +175,7 @@ describe("PublicFeaturesApp", () => {
       slug: "latex-editor",
     },
     {
-      marker: "A technical whiteboard for math, code, and collaboration.",
+      marker: "Whiteboards and slides for math, code, and collaboration.",
       slug: "whiteboard",
     },
     {
@@ -176,6 +190,10 @@ describe("PublicFeaturesApp", () => {
     {
       marker: "Run Octave in notebooks, scripts, and terminals.",
       slug: "octave",
+    },
+    {
+      marker: "Use many other languages from the same project.",
+      slug: "more-languages",
     },
   ] as const;
 
@@ -235,9 +253,23 @@ describe("PublicFeaturesApp", () => {
     ).toBe("/docs/cli/use-cocalc-cli");
     expect(
       screen
-        .getByRole("link", { name: /Dedicated compute hosts/i })
+        .getByRole("link", { name: /Project Automations/i })
+        .getAttribute("href"),
+    ).toBe("/features/automations");
+    expect(screen.queryByRole("link", { name: /^HTTP API$/ })).toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: /Dedicated Compute/i })
         .getAttribute("href"),
     ).toBe("/docs/hosts/project-hosts");
+    expect(
+      screen.getByRole("link", { name: /More/i }).getAttribute("href"),
+    ).toBe("/features/more-languages");
+    const languageLinks = Array.from(
+      container.querySelectorAll(".cocalc-feature-link-list a"),
+    ).map((link) => link.getAttribute("href"));
+    expect(languageLinks).toContain("/features/more-languages");
+    expect(languageLinks).not.toContain("/docs/terminal/use-terminal");
     expect(
       screen.queryByRole("link", { name: "Compare product paths" }),
     ).toBeNull();
@@ -266,10 +298,10 @@ describe("PublicFeaturesApp", () => {
       container.querySelectorAll(".cocalc-feature-group-label"),
     ).toHaveLength(4);
     expect(container.querySelectorAll(".cocalc-feature-link-card").length).toBe(
-      11,
+      10,
     );
     expect(container.querySelectorAll(".cocalc-feature-list-link").length).toBe(
-      5,
+      6,
     );
     expect(
       container.querySelectorAll(".cocalc-feature-link-card .ant-tag"),
@@ -763,7 +795,7 @@ describe("PublicFeaturesApp", () => {
     // Hero marker = page identity anchor.
     expect(
       screen.getByText(
-        "A technical whiteboard for math, code, and collaboration.",
+        "Whiteboards and slides for math, code, and collaboration.",
       ),
     ).not.toBeNull();
     // Route-specific section keyword (whiteboard runs Jupyter cells).
@@ -773,6 +805,12 @@ describe("PublicFeaturesApp", () => {
   });
 
   it.each([
+    {
+      contextLabels: ["Project context"],
+      slug: "automations",
+      title: "Turn recurring project workflows into repeatable runs.",
+      section: "Automate the work, not just the request.",
+    },
     {
       contextLabels: ["Course context", "Project context"],
       slug: "sage",
@@ -796,6 +834,12 @@ describe("PublicFeaturesApp", () => {
       slug: "octave",
       title: "Run Octave in notebooks, scripts, and terminals.",
       section: "Teach and run Octave without local setup drift.",
+    },
+    {
+      contextLabels: ["Project context"],
+      slug: "more-languages",
+      title: "Use many other languages from the same project.",
+      section: "Use the language that fits the project.",
     },
     {
       slug: "slides",
@@ -840,6 +884,10 @@ describe("PublicFeaturesApp", () => {
           "A sandbox for agent work, with humans nearby.",
         ],
         slug: "ai",
+      },
+      {
+        removedHeadings: ["Trigger", "Run", "Record", "Review"],
+        slug: "automations",
       },
       {
         removedHeadings: [
@@ -911,6 +959,10 @@ describe("PublicFeaturesApp", () => {
         removedHeadings: ["Notebooks", ".m files", "Teaching"],
         slug: "octave",
       },
+      {
+        removedHeadings: ["C / C++", "Fortran", "Bash", "JavaScript"],
+        slug: "more-languages",
+      },
     ] as const;
 
     for (const { removedHeadings, slug } of pages) {
@@ -930,11 +982,13 @@ describe("PublicFeaturesApp", () => {
 
   it.each([
     { finalCta: "Start using SageMath on CoCalc", slug: "sage" },
-    { finalCta: "Start using CoCalc whiteboards", slug: "whiteboard" },
+    { finalCta: "Create account", slug: "whiteboard" },
     { finalCta: "Start making slides", slug: "slides" },
     { finalCta: "Start using R", slug: "r-statistical-software" },
     { finalCta: "Start using Octave", slug: "octave" },
     { finalCta: "Start using Julia", slug: "julia" },
+    { finalCta: "Start a workflow", slug: "automations" },
+    { finalCta: "Start a project", slug: "more-languages" },
   ])(
     "uses projects as the $slug CTA for authenticated users",
     ({ finalCta, slug }) => {
@@ -962,6 +1016,7 @@ describe("PublicFeaturesApp", () => {
 
   it.each([
     "jupyter-notebook",
+    "automations",
     "terminal",
     "linux",
     "python",
@@ -971,6 +1026,7 @@ describe("PublicFeaturesApp", () => {
     "r-statistical-software",
     "julia",
     "octave",
+    "more-languages",
   ] as const)("keeps %s route-ending CTA panels light", (slug) => {
     const { container } = render(
       <PublicFeaturesApp
@@ -1148,6 +1204,34 @@ describe("PublicFeaturesApp", () => {
     expect(askLinks).toHaveLength(1);
     expect(askLinks[0].getAttribute("href")).toContain("/support/new?");
     expect(askLinks[0].getAttribute("href")).toContain("context=feature-api");
+  });
+
+  it("keeps the Automations page distinct from the HTTP API page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "automations", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Turn recurring project workflows into repeatable runs.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "API documentation" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "HTTP API" }).getAttribute("href"),
+    ).toBe("/features/api");
+    const askLinks = screen.getAllByRole("link", {
+      name: "Ask about project automations",
+    });
+    expect(askLinks).toHaveLength(1);
+    expect(askLinks[0].getAttribute("href")).toContain(
+      "context=feature-automations",
+    );
   });
 
   it("renders the compare feature page", () => {

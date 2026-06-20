@@ -24,6 +24,7 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
+import AutomationsFeaturePage from "./automations-page";
 import {
   getFeatureIndexPages,
   getFeaturePage,
@@ -34,6 +35,7 @@ import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
 import JuliaFeaturePage from "./julia-page";
 import LatexEditorFeaturePage from "./latex-editor-page";
 import LinuxFeaturePage from "./linux-page";
+import MoreLanguagesFeaturePage from "./more-languages-page";
 import OctaveFeaturePage from "./octave-page";
 import {
   FeatureImage,
@@ -62,11 +64,13 @@ interface PublicFeaturesAppProps {
 const FEATURE_DETAIL_COMPONENTS = {
   ai: AIFeaturePage,
   api: ApiFeaturePage,
+  automations: AutomationsFeaturePage,
   compare: CompareFeaturePage,
   "jupyter-notebook": JupyterNotebookFeaturePage,
   julia: JuliaFeaturePage,
   "latex-editor": LatexEditorFeaturePage,
   linux: LinuxFeaturePage,
+  "more-languages": MoreLanguagesFeaturePage,
   octave: OctaveFeaturePage,
   python: PythonFeaturePage,
   "r-statistical-software": RStatisticalSoftwareFeaturePage,
@@ -92,15 +96,16 @@ const FEATURE_GROUPS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     description:
-      "Use Codex inside CoCalc projects, or drive a project from your own code — create it and run notebooks from a script via the API.",
+      "Use Codex inside CoCalc projects, automate recurring project work, or drive CoCalc from scripts and pipelines.",
     icon: "robot",
-    slugs: ["ai", "api", "cli"],
+    slugs: ["ai", "automations", "cli"],
     title: "AI workflows",
     variant: "cards",
   },
   {
     accent: COLORS.BLUE_D,
-    description: "Find notebooks, papers, boards, slides, and project notes.",
+    description:
+      "Find notebooks, papers, boards, slide decks, and project notes.",
     icon: "jupyter",
     links: [
       {
@@ -108,7 +113,7 @@ const FEATURE_GROUPS = [
         label: "Project notes and Markdown",
       },
     ],
-    slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
+    slugs: ["jupyter-notebook", "latex-editor", "whiteboard"],
     title: "Notebooks and writing",
     variant: "cards",
   },
@@ -126,7 +131,14 @@ const FEATURE_GROUPS = [
     description:
       "Jump directly to the language or math environment you need for notebooks, scripts, courses, or research.",
     icon: "python",
-    slugs: ["python", "r-statistical-software", "julia", "sage", "octave"],
+    slugs: [
+      "python",
+      "r-statistical-software",
+      "julia",
+      "sage",
+      "octave",
+      "more-languages",
+    ],
     title: "Languages",
     variant: "list",
   },
@@ -135,6 +147,7 @@ const FEATURE_GROUPS = [
 const FEATURE_META = {
   ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot" },
   api: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "api" },
+  automations: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "sync" },
   cli: { accent: COLORS.GRAY_D, icon: "terminal" },
   compare: { accent: COLORS.BLUE_D, icon: "swap" },
   "jupyter-notebook": {
@@ -147,6 +160,7 @@ const FEATURE_META = {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     icon: "linux",
   },
+  "more-languages": { accent: COLORS.GRAY_D, icon: "code" },
   octave: { accent: COLORS.FG_RED, icon: "octave" },
   python: { accent: COLORS.BLUE_D, icon: "python" },
   "project-hosts": { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "server" },
@@ -164,7 +178,9 @@ const FEATURE_META = {
   whiteboard: { accent: COLORS.FG_RED, icon: "layout" },
 } satisfies Record<string, { accent: string; icon: IconName }>;
 
-const TECHNICAL_SURFACE_CARDS = {
+// Index-specific cards for entries whose public tile should differ from the
+// detail-page metadata, plus intentional docs-only surfaces.
+const FEATURE_INDEX_CARD_OVERRIDES = {
   cli: {
     href: appPath("docs/cli/use-cocalc-cli"),
     slug: "cli",
@@ -177,7 +193,14 @@ const TECHNICAL_SURFACE_CARDS = {
     slug: "project-hosts",
     summary:
       "Use dedicated hosted compute for projects that need isolated or larger capacity.",
-    title: "Dedicated compute hosts",
+    title: "Dedicated Compute",
+  },
+  "more-languages": {
+    href: featurePath("more-languages"),
+    slug: "more-languages",
+    summary:
+      "Use C, C++, Bash, Fortran, JavaScript, and many other tools through terminals, scripts, and project software.",
+    title: "More",
   },
 } satisfies Record<
   string,
@@ -407,10 +430,12 @@ function getFeatureIndexCard(
   slug: string,
   pages: FeaturePage[],
 ): FeatureIndexCard | undefined {
-  const technicalSurface =
-    TECHNICAL_SURFACE_CARDS[slug as keyof typeof TECHNICAL_SURFACE_CARDS];
-  if (technicalSurface != null) {
-    return technicalSurface;
+  const cardOverride =
+    FEATURE_INDEX_CARD_OVERRIDES[
+      slug as keyof typeof FEATURE_INDEX_CARD_OVERRIDES
+    ];
+  if (cardOverride != null) {
+    return cardOverride;
   }
   const page = pages.find((candidate) => candidate.slug === slug);
   if (!page) return undefined;
@@ -698,12 +723,14 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
   if (
     [
       "ai",
+      "automations",
       "compare",
       "jupyter-notebook",
       "api",
       "julia",
       "latex-editor",
       "linux",
+      "more-languages",
       "octave",
       "python",
       "r-statistical-software",
@@ -784,6 +811,14 @@ function FeatureDetailContent({
   if (slug === "ai") {
     return (
       <AIFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
+    );
+  }
+  if (slug === "automations") {
+    return (
+      <AutomationsFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
     );
   }
   if (slug === "jupyter-notebook") {
@@ -877,6 +912,14 @@ function FeatureDetailContent({
   if (slug === "julia") {
     return (
       <JuliaFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "more-languages") {
+    return (
+      <MoreLanguagesFeaturePage
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
       />

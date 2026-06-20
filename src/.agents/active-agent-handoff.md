@@ -49,6 +49,7 @@ Known risks:
 ## Current state (2026-06-18)
 
 ### Claude — now ASSISTANT / observer (role change 2026-06-20)
+
 - **Role:** Codex now drives BOTH platform UI and the landing page; Claude is the personal
   assistant — tracks Codex's work, reviews changes/images against the Brief on request, and
   does NOT edit platform / `/tmp` worktrees (read-only via `git -C`). Editable home = this
@@ -59,7 +60,7 @@ Known risks:
     228054**, `/home/user/cocalc-ai-synthesis/src`); cloudflared up, `blaec.cocalc.ai` 200,
     content canary 0 failures on / + /products. **CANONICAL landing-page branch =
     `blaec-synthesis-2026-06-18`** — the only branch carrying the operating system (Brief,
-    /site-* commands, Stop hook, C1/D1 tests) AND the latest content; the clean PR for William
+    /site-\* commands, Stop hook, C1/D1 tests) AND the latest content; the clean PR for William
     is re-sliced off `main` at the end. Re-verify owner each turn via `/proc` (NOT HTTP 200).
   - **Codex recovered + very active:** 9 worktrees; open PRs **#96 / #97 / #98**; a **24-file
     uncommitted pile** in `/home/user/cocalc-ai` that OVERLAPS files already on #96/#97/#98
@@ -81,6 +82,7 @@ Known risks:
   Codex it lives there so it isn't redone.
 
 ### Codex — public-site driver (START 2026-06-20 12:30 PDT)
+
 - **Task:** take over public landing-site work under the synthesis operating system; read the
   required guardrails/brief/workflow/skill files; verify preview ownership; do branch hygiene
   before any new page edits.
@@ -95,7 +97,7 @@ Known risks:
 - **Validation required:** housekeeping/status audit only; no page build needed unless a source
   edit follows.
 - **Last commit:** `fb87cbc1d1` (`frontend/public/products: drop the redundant closing section on
-  Plus/Star/Launchpad`).
+Plus/Star/Launchpad`).
 - **Open PRs:** `gh pr list --repo sagemathinc/cocalc-ai --state open` currently returns none from
   this environment; prior ledger references #96/#97/#98, so treat PR status as a coordination risk
   until re-confirmed with Blaec/Claude.
@@ -110,8 +112,22 @@ Known risks:
   public-site lane and likely belongs to the existing platform PR stack. Next public-site round
   should be chosen by Blaec; the most recent concrete landing-page issue is the `/features`
   Automations card being too close to HTTPS Automations.
+- **START 2026-06-20 12:38 PDT:** Blaec reports the updated preview is missing. Verified the hub
+  still serves `/home/user/cocalc-ai-synthesis/src`; found the missing feature-page edits in
+  `/tmp/public-site-refresh-wt`, not the canonical synthesis worktree. Claiming
+  `src/packages/frontend/public/features/{app.tsx,catalog.ts,automations-page.tsx,more-languages-page.tsx,__tests__/app.test.tsx,whiteboard-page.tsx}`
+  and `src/packages/util/public-site-metadata.ts` to port the relevant feature-index changes,
+  make Automations distinct from HTTPS Automations, rebuild, then release.
+- **END 2026-06-20 12:43 PDT:** restored the missing `/features` changes into synthesis: Project
+  Automations replaces the API tile on the index, More Languages is a real feature page instead of
+  a docs handoff, Dedicated Compute is shortened, and the index combines Whiteboard and Slides.
+  Rebuilt `packages/static` preview bundle (`public-bbb33e6f2b7553d4.js`), verified live preview
+  routes `/features`, `/features/automations`, `/features/more-languages` with 45 browser QA
+  assertions / 0 failures, focused Jest passed (`public/features/__tests__/app.test.tsx`, 86
+  tests), and `lint:frontend` passed. No PR created.
 
 ### Codex — platform-UI thread
+
 - **Task:** terminal/frame overflow menu cleanup — remove the repeated frame title
   from the `...` popover while preserving menu commands, toolbar actions, and
   frame controls.
@@ -119,7 +135,7 @@ Known risks:
 - **Preview owner:** platform still owns `blaec.cocalc.ai` (:9100; hub pids 294/333,
   cwd `/home/user/cocalc-ai/src`). Reclaim for synthesis before any live public-site preview.
 - **⚠️ Codex session lost (2026-06-19).** The interactive Codex conversation vanished. All
-  *committed* Codex work is intact on a long stack of pushed `frontend/*` branches (current
+  _committed_ Codex work is intact on a long stack of pushed `frontend/*` branches (current
   platform checkout `frontend/files-toolbar-tooltip-polish` @ `cf1cdfa654`, clean). The only
   at-risk work was ONE uncommitted edit in the platform worktree — a `PresetSummaryCard`
   redesign in `frontend/project/app-server-panel.tsx`.

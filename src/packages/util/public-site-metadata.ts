@@ -64,6 +64,13 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
     image: "/public/features/chatgpt-fix-code.png",
   },
   {
+    slug: "automations",
+    title: "Project Automations",
+    summary:
+      "Schedule recurring project work, rebuild reports, run notebooks or scripts, and keep outputs in the shared CoCalc project.",
+    image: "/public/features/terminal.png",
+  },
+  {
     slug: "slides",
     title: "Slides",
     summary:
@@ -72,9 +79,9 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
   },
   {
     slug: "whiteboard",
-    title: "Whiteboard",
+    title: "Whiteboard and Slides",
     summary:
-      "Use an infinite collaborative canvas with markdown, KaTeX, Jupyter cells, multiple pages, and a transparent JSONL document format.",
+      "Use a collaborative technical canvas for whiteboards, slide-sized pages, markdown, KaTeX math, Jupyter cells, diagrams, and project context.",
     image: "/public/features/whiteboard-sage.png",
   },
   {
@@ -97,6 +104,13 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
     summary:
       "Use GNU Octave for MATLAB-style numerical computing in collaborative projects with notebooks, .m files, terminals, plots, and teaching workflows.",
     image: "/public/features/cocalc-octave-jupyter-20200511.png",
+  },
+  {
+    slug: "more-languages",
+    title: "More Languages",
+    summary:
+      "Use C, C++, Fortran, Bash, JavaScript, TypeScript, and other tools through shared project files, terminals, notebooks, and scripts.",
+    image: "/public/features/terminal.png",
   },
   {
     slug: "python",

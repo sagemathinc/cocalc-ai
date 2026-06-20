@@ -86,6 +86,15 @@ export const FEATURE_PAGES: FeaturePage[] = [
     ],
   },
   {
+    slug: "automations",
+    title: "Project Automations",
+    tagline: "Turn recurring project workflows into repeatable runs.",
+    summary:
+      "Schedule recurring project work, rebuild reports, run notebooks or scripts, and keep outputs in the shared project.",
+    image: "/public/features/terminal.png",
+    index: true,
+  },
+  {
     slug: "slides",
     title: "Slides",
     tagline: "Present from slide-sized technical whiteboards.",
@@ -96,10 +105,11 @@ export const FEATURE_PAGES: FeaturePage[] = [
   },
   {
     slug: "whiteboard",
-    title: "Whiteboard",
-    tagline: "A collaborative technical canvas for math, code, and sketches.",
+    title: "Whiteboard and Slides",
+    tagline:
+      "A collaborative technical canvas for math, code, sketches, and presentations.",
     summary:
-      "Use an editable canvas for technical explanations that need math, diagrams, Jupyter cells, pages, and collaboration.",
+      "Use an editable canvas for technical explanations, slide-sized pages, diagrams, Jupyter cells, math, and collaboration.",
     image: "/public/features/whiteboard-sage.png",
     index: true,
   },
@@ -129,6 +139,15 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Use GNU Octave for numerical work with notebooks, .m files, terminals, plots, and teaching.",
     image: "/public/features/cocalc-octave-jupyter-20200511.png",
+    index: true,
+  },
+  {
+    slug: "more-languages",
+    title: "More Languages",
+    tagline: "Use many other languages from the same project.",
+    summary:
+      "Use C, C++, Fortran, Bash, JavaScript, TypeScript, and other tools through project files, terminals, notebooks, and scripts.",
+    image: "/public/features/terminal.png",
     index: true,
   },
   {
@@ -204,7 +223,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "A documented HTTP API to create projects and run notebooks, terminals, and computations from your own code — results land back in the project.",
     image: "/public/features/api-screenshot.png",
-    index: true,
+    index: false,
     sections: [
       {
         title: "Use cases",

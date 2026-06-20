@@ -238,13 +238,14 @@ export default function WhiteboardFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                A technical whiteboard for math, code, and collaboration.
+                Whiteboards and slides for math, code, and collaboration.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 CoCalc whiteboards cover the essential collaborative canvas
                 workflow, but are shaped around technical material: editable
                 explanations, KaTeX math, Jupyter cells, pages, frames, and
-                drawings.
+                drawings. The same canvas can also become slide-sized pages for
+                talks, lectures, demos, and walkthroughs.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 They suit research and engineering work as much as teaching,
@@ -280,18 +281,18 @@ export default function WhiteboardFeaturePage({
           <Col xs={24} lg={13}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                When a whiteboard belongs in CoCalc
+                When a board or deck belongs in CoCalc
               </Title>
               <BulletList
                 items={[
                   "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
                   "Review a collaborator's work in place — the code, output, and math are all on the board to inspect.",
                   "Run office hours or a live support session on a shared board everyone can edit.",
-                  "Move to slides when that same board becomes a talk, lecture, or demo.",
+                  "Move to slide-sized pages when that same board becomes a talk, lecture, or demo.",
                 ]}
               />
               <Flex wrap gap={12}>
-                <Button href={appPath("features/slides")}>Slides</Button>
+                <Button href={appPath("features/slides")}>Slide decks</Button>
                 <Button href={appPath("features/teaching")}>Teaching</Button>
                 <Button href={appPath("products")}>
                   Compare operating models
