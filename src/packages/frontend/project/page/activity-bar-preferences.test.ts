@@ -50,7 +50,6 @@ describe("activity-bar preferences", () => {
   it("hides specialist buttons in the default rail", () => {
     expect(getDefaultHiddenFixedTabs({ liteMode: true })).toEqual([
       "workspaces",
-      "rootfs",
       "active",
       "log",
       "servers",
@@ -111,8 +110,9 @@ describe("activity-bar preferences", () => {
         "search",
         "docs",
         "settings",
+        "rootfs",
       ],
-      overflow: ["workspaces", "rootfs", "active", "log", "servers", "info"],
+      overflow: ["workspaces", "active", "log", "servers", "info"],
     });
   });
 
@@ -120,7 +120,6 @@ describe("activity-bar preferences", () => {
     expect(normalizeHiddenFixedTabs([], { liteMode: true })).toEqual([]);
     expect(normalizeHiddenFixedTabs(undefined, { liteMode: true })).toEqual([
       "workspaces",
-      "rootfs",
       "active",
       "log",
       "servers",

@@ -22,7 +22,6 @@ const DEFAULT_ORDER: readonly FixedTab[] = [
 
 const DEFAULT_HIDDEN: readonly FixedTab[] = [
   "workspaces",
-  "rootfs",
   "active",
   "log",
   "servers",

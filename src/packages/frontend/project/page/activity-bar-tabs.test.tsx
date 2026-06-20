@@ -328,20 +328,18 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("menu-overflow:agents")).toBeNull();
   });
 
-  it("puts Workspaces and Software in More by default", () => {
+  it("puts Workspaces in More and Software on the rail by default", () => {
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
     expect(screen.queryByTestId("rail-workspaces")).toBeNull();
-    expect(screen.queryByTestId("rail-rootfs")).toBeNull();
+    expect(screen.getByTestId("rail-rootfs")).toBeTruthy();
     expect(screen.getByTestId("menu-overflow:workspaces")).toHaveTextContent(
       "Workspaces",
     );
-    expect(screen.getByTestId("menu-overflow:rootfs")).toHaveTextContent(
-      "Software",
-    );
+    expect(screen.queryByTestId("menu-overflow:rootfs")).toBeNull();
   });
 
-  it("uses the current Rootfs theme icon in the More menu", () => {
+  it("uses the current Rootfs theme icon on the rail", () => {
     mockRootfsImages = [
       {
         id: "rootfs-image-1",
@@ -353,9 +351,8 @@ describe("VerticalFixedTabs overflow actions", () => {
 
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
-    const rootfsMenu = screen.getByTestId("menu-overflow:rootfs");
-    expect(rootfsMenu).toHaveTextContent("python");
-    expect(rootfsMenu).toHaveTextContent("Software");
+    const rootfsRail = screen.getByTestId("rail-rootfs");
+    expect(rootfsRail).toHaveTextContent("python");
   });
 
   it("keeps rail controls available when every tab is visible", () => {

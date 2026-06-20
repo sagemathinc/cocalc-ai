@@ -113,7 +113,7 @@ describe("activity-bar storage", () => {
         "servers",
         "info",
       ],
-      hidden: ["workspaces", "rootfs", "active", "log", "servers", "info"],
+      hidden: ["workspaces", "active", "log", "servers", "info"],
     });
   });
 
