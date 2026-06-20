@@ -4,9 +4,15 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { conat } from "@cocalc/backend/conat";
+import { interruptAcp } from "@cocalc/conat/ai/acp/client";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import type {
+  AiSessionIdentity,
+  AiSessionInterruptAllOptions,
+  AiSessionInterruptAllResponse,
+  AiSessionInterruptResponse,
   AiSessionRecord,
   AiSessionsListOptions,
   AiSessionState,
@@ -169,6 +175,10 @@ function terminalFromRecord(record: AiSessionRecord): boolean {
     return record.terminal === 1;
   }
   return TERMINAL_STATES.has(record.state);
+}
+
+function isTerminalState(state: string | null | undefined): boolean {
+  return TERMINAL_STATES.has(`${state ?? ""}` as AiSessionState);
 }
 
 async function assertHostCanReportSession({
@@ -376,4 +386,351 @@ export async function listAiSessionsForAccount({
     terminal: !!row.terminal,
     metadata_json: JSON.stringify(row.metadata_json ?? {}),
   })) as AiSessionRecord[];
+}
+
+type AiSessionDbRow = AiSessionRecord & {
+  metadata_json?: string | null;
+};
+
+function identityWhere({
+  identity,
+  params,
+}: {
+  identity: AiSessionIdentity;
+  params: unknown[];
+}): string {
+  const clauses: string[] = [];
+  const sessionKey = cleanText(identity.session_key, 512);
+  if (sessionKey) {
+    params.push(sessionKey);
+    clauses.push(`session_key=$${params.length}`);
+  }
+  const sessionId = cleanText(identity.session_id, 512);
+  if (sessionId) {
+    params.push(sessionId);
+    clauses.push(`session_id=$${params.length}`);
+  }
+  const opId = cleanText(identity.op_id, 512);
+  if (opId) {
+    params.push(opId);
+    clauses.push(`op_id=$${params.length}`);
+  }
+  if (clauses.length === 0) {
+    throw Error("session_key, session_id, or op_id must be specified");
+  }
+  return `(${clauses.join(" OR ")})`;
+}
+
+async function getAiSessionForAccount({
+  account_id,
+  identity,
+}: {
+  account_id: string;
+  identity: AiSessionIdentity;
+}): Promise<AiSessionDbRow | undefined> {
+  const params: unknown[] = [cleanRequiredUuid(account_id, "account_id")];
+  const where = identityWhere({ identity, params });
+  await ensureAiSessionsSchema();
+  const { rows } = await getPool().query(
+    `
+      SELECT session_key, session_id, op_id, project_id::TEXT, account_id::TEXT,
+             approver_account_id::TEXT, host_id::TEXT, path, thread_id,
+             message_id, parent_message_id, state, terminal,
+             payment_source_kind, payment_source_id, payment_source_label,
+             payment_source_owner_account_id::TEXT, model, agent_kind, run_kind,
+             title, prompt_snippet, queued_at, started_at, updated_at,
+             last_heartbeat_at, finished_at, error, metadata AS metadata_json
+      FROM ${TABLE}
+      WHERE account_id=$1::UUID
+        AND ${where}
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `,
+    params,
+  );
+  const row = rows[0];
+  if (!row) return undefined;
+  return {
+    ...row,
+    terminal: !!row.terminal,
+    metadata_json: JSON.stringify(row.metadata_json ?? {}),
+  } as AiSessionDbRow;
+}
+
+async function updateAiSessionState({
+  session_key,
+  state,
+  terminal,
+  error,
+  metadata,
+}: {
+  session_key: string;
+  state: AiSessionState;
+  terminal: boolean;
+  error?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await ensureAiSessionsSchema();
+  await getPool().query(
+    `
+      UPDATE ${TABLE}
+      SET state=$2,
+          terminal=$3,
+          updated_at=NOW(),
+          finished_at=CASE WHEN $3::BOOLEAN THEN COALESCE(finished_at, NOW()) ELSE NULL END,
+          error=COALESCE($4, error),
+          metadata=COALESCE(metadata, '{}'::jsonb) || $5::jsonb
+      WHERE session_key=$1
+    `,
+    [
+      session_key,
+      state,
+      terminal,
+      cleanText(error, 2048),
+      JSON.stringify(metadata ?? {}),
+    ],
+  );
+}
+
+function interruptRequestFromRow({
+  row,
+  account_id,
+  note,
+}: {
+  row: AiSessionDbRow;
+  account_id: string;
+  note?: string | null;
+}) {
+  const path = cleanText(row.path, 2048) ?? "";
+  const threadId = cleanText(row.thread_id, 512) ?? undefined;
+  const messageDate = (
+    timestamp(row.started_at) ??
+    timestamp(row.queued_at) ??
+    timestamp(row.updated_at) ??
+    new Date()
+  ).toISOString();
+  return {
+    project_id: row.project_id,
+    account_id,
+    threadId,
+    note: cleanText(note, 512) ?? undefined,
+    chat:
+      path && (threadId || row.message_id)
+        ? {
+            project_id: row.project_id,
+            path,
+            thread_id: threadId,
+            message_id: cleanText(row.message_id, 512) ?? undefined,
+            parent_message_id:
+              cleanText(row.parent_message_id, 512) ?? undefined,
+            message_date: messageDate,
+            sender_id: "openai-codex-agent",
+          }
+        : undefined,
+  };
+}
+
+function baseInterruptResponse(
+  row: AiSessionDbRow | undefined,
+): Pick<
+  AiSessionInterruptResponse,
+  "session_key" | "session_id" | "op_id" | "project_id"
+> {
+  return {
+    session_key: row?.session_key ?? null,
+    session_id: row?.session_id ?? null,
+    op_id: row?.op_id ?? null,
+    project_id: row?.project_id ?? null,
+  };
+}
+
+export async function interruptAiSessionForAccount({
+  account_id,
+  session_key,
+  session_id,
+  op_id,
+  note,
+}: {
+  account_id: string;
+  session_key?: string;
+  session_id?: string;
+  op_id?: string;
+  note?: string;
+}): Promise<AiSessionInterruptResponse> {
+  const caller = cleanRequiredUuid(account_id, "account_id");
+  const row = await getAiSessionForAccount({
+    account_id: caller,
+    identity: { session_key, session_id, op_id },
+  });
+  if (!row) {
+    return {
+      ok: false,
+      state: "missing",
+      terminal: true,
+      message: "session not found",
+    };
+  }
+  if (row.terminal || isTerminalState(row.state)) {
+    return {
+      ok: true,
+      state: "already_terminal",
+      terminal: true,
+      ...baseInterruptResponse(row),
+    };
+  }
+  await updateAiSessionState({
+    session_key: row.session_key,
+    state: "interrupting",
+    terminal: false,
+    metadata: { interrupt_requested_at: new Date().toISOString() },
+  });
+  try {
+    const response = await interruptAcp(
+      interruptRequestFromRow({ row, account_id: caller, note }),
+      await conat(),
+    );
+    if (response.state === "interrupted" || response.state === "repaired") {
+      await updateAiSessionState({
+        session_key: row.session_key,
+        state: "interrupted",
+        terminal: true,
+        metadata: { interrupt_result: response.state },
+      });
+      return {
+        ok: true,
+        state: response.state,
+        terminal: true,
+        ...baseInterruptResponse(row),
+      };
+    }
+    if (response.state === "missing") {
+      await updateAiSessionState({
+        session_key: row.session_key,
+        state: "interrupted",
+        terminal: true,
+        error: "interrupt reported no live session",
+        metadata: { interrupt_result: "missing" },
+      });
+      return {
+        ok: true,
+        state: "missing",
+        terminal: true,
+        ...baseInterruptResponse(row),
+        message: "backend reported no live session",
+      };
+    }
+    return {
+      ok: true,
+      state: "queued",
+      terminal: false,
+      ...baseInterruptResponse(row),
+      message: "interrupt request queued",
+    };
+  } catch (err) {
+    await updateAiSessionState({
+      session_key: row.session_key,
+      state: "possibly_active",
+      terminal: false,
+      error: `interrupt transport failed: ${err}`,
+      metadata: { interrupt_result: "transport_failed" },
+    });
+    return {
+      ok: false,
+      state: "transport_failed",
+      terminal: false,
+      ...baseInterruptResponse(row),
+      message: `${err}`,
+    };
+  }
+}
+
+export async function interruptAllAiSessionsForAccount({
+  account_id,
+  limit,
+  note,
+}: AiSessionInterruptAllOptions & {
+  account_id: string;
+}): Promise<AiSessionInterruptAllResponse> {
+  const rows = await listAiSessionsForAccount({
+    account_id,
+    opts: { activeOnly: true, limit },
+  });
+  const results: AiSessionInterruptResponse[] = [];
+  for (const row of rows) {
+    results.push(
+      await interruptAiSessionForAccount({
+        account_id,
+        session_key: row.session_key,
+        note,
+      }),
+    );
+  }
+  return {
+    total: results.length,
+    terminal: results.filter((result) => result.terminal).length,
+    uncertain: results.filter((result) => !result.terminal).length,
+    results,
+  };
+}
+
+export async function markStaleAiSessionsPossiblyActive({
+  olderThanMs = 2 * 60 * 1000,
+  limit = 500,
+}: {
+  olderThanMs?: number;
+  limit?: number;
+} = {}): Promise<number> {
+  const max = Math.max(1, Math.min(MAX_LIMIT, Math.floor(Number(limit))));
+  const cutoff = new Date(Date.now() - Math.max(0, olderThanMs));
+  await ensureAiSessionsSchema();
+  const { rowCount } = await getPool().query(
+    `
+      WITH candidates AS (
+        SELECT session_key
+        FROM ${TABLE}
+        WHERE terminal IS NOT TRUE
+          AND state NOT IN ('possibly_active', 'orphaned')
+          AND COALESCE(last_heartbeat_at, updated_at) < $1::TIMESTAMPTZ
+        ORDER BY updated_at ASC
+        LIMIT $2
+      )
+      UPDATE ${TABLE} AS sessions
+      SET state='possibly_active',
+          terminal=FALSE,
+          updated_at=NOW(),
+          metadata=COALESCE(sessions.metadata, '{}'::jsonb) ||
+                   jsonb_build_object('reconciliation_reason', 'stale_heartbeat')
+      FROM candidates
+      WHERE sessions.session_key=candidates.session_key
+    `,
+    [cutoff, max],
+  );
+  return rowCount ?? 0;
+}
+
+export async function markHostStoppedAiSessions({
+  host_id,
+  reason = "host stopped",
+}: {
+  host_id: string;
+  reason?: string;
+}): Promise<number> {
+  const hostId = cleanRequiredUuid(host_id, "host_id");
+  await ensureAiSessionsSchema();
+  const { rowCount } = await getPool().query(
+    `
+      UPDATE ${TABLE}
+      SET state='host_stopped',
+          terminal=TRUE,
+          updated_at=NOW(),
+          finished_at=COALESCE(finished_at, NOW()),
+          error=COALESCE(error, $2),
+          metadata=COALESCE(metadata, '{}'::jsonb) ||
+                   jsonb_build_object('reconciliation_reason', 'host_stopped')
+      WHERE host_id=$1::UUID
+        AND terminal IS NOT TRUE
+    `,
+    [hostId, cleanText(reason, 2048) ?? "host stopped"],
+  );
+  return rowCount ?? 0;
 }

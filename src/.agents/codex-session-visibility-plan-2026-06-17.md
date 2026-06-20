@@ -2,7 +2,12 @@
 
 Date: 2026-06-17
 
-Status: implementation plan; do not treat this as implemented yet.
+Status: implementation in progress. The backend registry, lifecycle publication,
+user-scoped listing, account-scoped interrupt/interrupt-all contract, and basic
+stale/host-stopped reconciliation helpers are implemented. UI, CLI, admin
+views, payment-source filtering, and scheduled reconciliation wiring remain. A
+minimal account AI settings panel now exposes current/recent Codex sessions and
+account-scoped stop-all.
 
 ## Objective
 
@@ -609,12 +614,13 @@ Add logs:
 
 ### Phase 1: Registry MVP
 
-- Add `acp_sessions` schema.
-- Write lifecycle rows for new Codex turns.
-- Add heartbeat updates.
-- Add terminal updates for normal completion, failure, and interrupt.
-- Add user RPC/CLI list for current account.
-- Add minimal account UI table.
+- [x] Add `acp_sessions` schema.
+- [x] Write lifecycle rows for new Codex turns.
+- [x] Add heartbeat updates.
+- [x] Add terminal updates for normal completion, failure, and interrupt.
+- [x] Add user RPC list for current account.
+- Add CLI list for current account.
+- [x] Add minimal account UI table.
 
 Success criteria:
 
@@ -623,9 +629,10 @@ Success criteria:
 
 ### Phase 2: Interrupt From Registry
 
-- Add interrupt by `session_id`.
-- Add stop-all active for user.
-- Make interrupt results explicitly terminal vs uncertain.
+- [x] Add interrupt by `session_id`, `session_key`, or `op_id`.
+- [x] Add stop-all active for user.
+- [x] Make interrupt results explicitly terminal vs uncertain.
+- [x] Add account UI stop-all that reports terminal vs uncertain outcomes.
 - Connect chat "Interrupt" and global "Stop all" to the same backend contract.
 
 Success criteria:
@@ -647,7 +654,9 @@ Success criteria:
 
 ### Phase 4: Reconciliation
 
-- Add stale heartbeat detection.
+- [x] Add stale heartbeat detection helper.
+- [x] Add helper to mark active sessions terminal when authoritative host state
+      says the project host is stopped.
 - Add project-host startup reconciliation.
 - Add owning-bay periodic reconciliation.
 - Add admin mark-resolved with audit.
@@ -696,7 +705,7 @@ Manual tests:
 - Table name: `acp_sessions`, `codex_sessions`, or more generic
   `ai_sessions`.
   - Recommendation: `acp_sessions` internally because the execution primitive is
-    ACP; label it "Codex sessions" in the UI while Codex is the only paid agent.  (USER: yes)
+    ACP; label it "Codex sessions" in the UI while Codex is the only paid agent. (USER: yes)
 - Should project collaborators see all sessions in a project or only their own?
   - Recommendation: project owner/admin sees project-level rows; ordinary
     collaborators see their own rows plus rows using their payment source. (USER: agreed; only their own)
@@ -704,13 +713,13 @@ Manual tests:
   - Recommendation: 30 days for MVP, configurable later. (USER: sounds good)
 - Should prompt snippets be stored?
   - Recommendation: store only a short sanitized title/snippet, and make it
-    hidden unless the viewer has project access.  (USER: agreed; some minimal snippet to identify it)
+    hidden unless the viewer has project access. (USER: agreed; some minimal snippet to identify it)
 - Should estimated cost be computed at write time or display time?
   - Recommendation: store raw usage tokens and payment source/model; compute
-    display estimate dynamically until pricing configuration is stable. 
+    display estimate dynamically until pricing configuration is stable.
 - How should non-Codex ACP agents appear?
   - Recommendation: same registry with `agent_kind`, but only Codex sessions are
-    emphasized as money-risk initially.   (ANS: we don't support anything non-codex right now, so not too important)
+    emphasized as money-risk initially. (ANS: we don't support anything non-codex right now, so not too important)
 
 ## Non-Goals
 
@@ -720,4 +729,3 @@ Manual tests:
   MVP.
 - Do not expose full prompt/output contents in the global registry.
 - Do not use missing heartbeat alone as proof that spending stopped.
-
