@@ -10,6 +10,8 @@ import passwordStrength from "@cocalc/server/auth/password-strength";
 import { redeemReset } from "@cocalc/server/auth/password-reset";
 import { setClusterAccountPasswordFromReset } from "@cocalc/server/inter-bay/accounts";
 import { MIN_PASSWORD_LENGTH, MIN_PASSWORD_STRENGTH } from "@cocalc/util/auth";
+import getStrategies from "@cocalc/database/settings/get-sso-strategies";
+import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 
 export default async function redeemPasswordReset(
   password: string,
@@ -24,7 +26,16 @@ export default async function redeemPasswordReset(
     throw Error(help ? help : "password is too weak");
   }
 
-  const { account_id } = await redeemReset(passwordResetId);
+  const { account_id, email_address } = await redeemReset(passwordResetId);
+  const requiredSso = checkRequiredSSO({
+    email: email_address,
+    strategies: await getStrategies(),
+  });
+  if (requiredSso != null) {
+    throw Error(
+      `Use ${requiredSso.display ?? requiredSso.name} single sign-on to access this account.`,
+    );
+  }
   await setClusterAccountPasswordFromReset({
     account_id,
     password,

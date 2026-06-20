@@ -919,6 +919,13 @@ export class PassportLogin {
       account_id: locals.account_id,
       req,
       res,
+      session: {
+        authenticated_at: new Date(),
+        password_verified_at: null,
+        factor_verified_at: null,
+        factor_level: "none",
+        fresh_auth_until: null,
+      },
     });
   }
 }

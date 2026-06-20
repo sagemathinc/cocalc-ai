@@ -23,6 +23,8 @@ import sendPasswordResetEmail from "@cocalc/server/email/password-reset";
 import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
 import { getLogger } from "@cocalc/backend/logger";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import getStrategies from "@cocalc/database/settings/get-sso-strategies";
+import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 
 const logger = getLogger("auth:password-reset");
@@ -58,6 +60,19 @@ async function handle(
       return { success: GENERIC_RESET_MESSAGE };
     }
     return { error: `There is no account with email "${email}".` };
+  }
+  const requiredSso = checkRequiredSSO({
+    email,
+    strategies: await getStrategies(),
+  });
+  if (requiredSso != null) {
+    if (opts.hideAccountDetails) {
+      return { success: GENERIC_RESET_MESSAGE };
+    }
+    const name = requiredSso.display ?? requiredSso.name;
+    return {
+      error: `Use ${name} single sign-on to access this account.`,
+    };
   }
   // Check that user isn't spamming email.
 

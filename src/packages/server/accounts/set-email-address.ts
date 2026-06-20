@@ -107,19 +107,6 @@ export default async function setEmailAddress({
   const strategies = await getStrategies();
   const strategy = checkRequiredSSO({ strategies, email: old_email_address });
   if (strategy != null) {
-    // user has no password set, so we can set it – but not the email address
-    if (!password_hash) {
-      await withAccountRehomeWriteFence({
-        account_id,
-        action: "set password",
-        fn: async (db) => {
-          await db.query(
-            "UPDATE accounts SET password_hash=$1 WHERE account_id=$2",
-            [passwordHash(password), account_id],
-          );
-        },
-      });
-    }
     throw new Error(`You are not allowed to change your email address`);
   }
 

@@ -214,6 +214,37 @@ describe("freshAuthSession", () => {
       }),
     ).rejects.toThrow("current password is incorrect");
   });
+
+  it("does not fresh-authenticate passwordless accounts without a second factor", async () => {
+    const account_id = uuid();
+
+    await createAccount({
+      email: `${uuid()}@test.com`,
+      firstName: "SSO",
+      lastName: "Only",
+      account_id,
+    });
+
+    const remember = await createRememberMeCookie(account_id, 3600);
+    await recordNewAuthSession({
+      account_id,
+      session_hash: remember.hash,
+      expire: remember.expire,
+      authenticated_at: new Date(),
+      password_verified_at: null,
+      factor_level: "none",
+    });
+
+    await expect(
+      freshAuthSession({
+        req: createRequest(remember.value),
+        account_id,
+        current_password: "",
+      }),
+    ).rejects.toThrow(
+      "fresh authentication requires a password or second factor",
+    );
+  });
 });
 
 describe("sign-in second factor challenges", () => {

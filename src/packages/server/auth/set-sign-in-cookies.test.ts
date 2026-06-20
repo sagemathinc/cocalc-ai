@@ -101,6 +101,41 @@ describe("auth/set-sign-in-cookies", () => {
     });
     expectCookie("home_bay_id", "bay-1");
     expectCookie("home_bay_id", "bay-1", { domain: ".cocalc.ai" });
+    expect(mockRecordNewAuthSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        password_verified_at: undefined,
+        factor_verified_at: undefined,
+        fresh_auth_until: undefined,
+      }),
+    );
+  });
+
+  it("records password verification only when the caller supplies it", async () => {
+    const { default: setSignInCookies } = await import("./set-sign-in-cookies");
+    const authenticated_at = new Date("2026-06-20T12:00:00Z");
+
+    await setSignInCookies({
+      req: { protocol: "https", headers: { host: "bay-1-lite4b.cocalc.ai" } },
+      res: {},
+      account_id: "11111111-1111-4111-8111-111111111111",
+      session: {
+        authenticated_at,
+        password_verified_at: authenticated_at,
+        factor_verified_at: null,
+        factor_level: "none",
+        fresh_auth_until: null,
+      },
+    });
+
+    expect(mockRecordNewAuthSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authenticated_at,
+        password_verified_at: authenticated_at,
+        factor_verified_at: null,
+        factor_level: "none",
+        fresh_auth_until: null,
+      }),
+    );
   });
 });
 

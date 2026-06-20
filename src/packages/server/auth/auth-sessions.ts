@@ -151,7 +151,7 @@ export async function recordNewAuthSession({
   expire,
   req,
   authenticated_at = new Date(),
-  password_verified_at = authenticated_at,
+  password_verified_at,
   factor_verified_at,
   factor_level = "none",
   fresh_auth_until,
