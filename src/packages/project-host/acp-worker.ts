@@ -1,6 +1,7 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
+import callHub from "@cocalc/conat/hub/call-hub";
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { setConatClient } from "@cocalc/conat/client";
@@ -9,6 +10,7 @@ import {
   disposeAcpAgents,
   runDetachedAcpQueueWorker,
   setAcpAdmissionLimitsProvider,
+  setAcpSessionPublisherOverride,
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
@@ -30,7 +32,7 @@ import {
 } from "./hub/projects";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
-import { setMasterConatClient } from "./master-status";
+import { getMasterConatClient, setMasterConatClient } from "./master-status";
 import { initSqlite } from "./sqlite/init";
 import { getLocalHostId } from "./sqlite/hosts";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
@@ -82,6 +84,7 @@ function registerPidFile(
 
 function configureProjectHostAcpRuntime(): void {
   setPreferContainerExecutor(true);
+  configureProjectHostAcpSessionPublisher();
   wireSystemApi();
   wireHostsApi();
   wireNotificationsApi();
@@ -110,6 +113,35 @@ function configureProjectHostAcpRuntime(): void {
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
   initCodexGeneratedImageBlobWriter();
+}
+
+function configureProjectHostAcpSessionPublisher(): void {
+  setAcpSessionPublisherOverride(async (row) => {
+    const client = getMasterConatClient();
+    const host_id =
+      `${process.env.PROJECT_HOST_ID ?? ""}`.trim() || getLocalHostId();
+    if (!client || !host_id) {
+      logger.debug("skipping ACP session state publication", {
+        has_client: !!client,
+        has_host_id: !!host_id,
+        project_id: row.project_id,
+        state: row.state,
+      });
+      return;
+    }
+    await callHub({
+      client,
+      host_id,
+      name: "aiSessions.upsertProjectHostSession",
+      args: [
+        {
+          ...row,
+          terminal: row.terminal === 1,
+        },
+      ],
+      timeout: 5_000,
+    });
+  });
 }
 
 function connectMasterClient() {

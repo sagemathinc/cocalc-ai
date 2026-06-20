@@ -5054,12 +5054,24 @@ function initializeAcpRuntime(client: ConatClient): void {
 
 let acpSessionPublisherConfigured = false;
 let lastAcpSessionPublishWarning = 0;
+let acpSessionPublisherOverride:
+  | ((row: AcpSessionRow) => void | Promise<void>)
+  | undefined;
 
-function configureAcpSessionPublisher(): void {
+export function setAcpSessionPublisherOverride(
+  publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
+): void {
+  acpSessionPublisherOverride = publisher;
   if (acpSessionPublisherConfigured) {
+    installAcpSessionPublisher();
+  }
+}
+
+function installAcpSessionPublisher(): void {
+  if (acpSessionPublisherOverride != null) {
+    setAcpSessionPublisher(acpSessionPublisherOverride);
     return;
   }
-  acpSessionPublisherConfigured = true;
   if (!hasRemote) {
     setAcpSessionPublisher(undefined);
     return;
@@ -5073,6 +5085,14 @@ function configureAcpSessionPublisher(): void {
       }
     });
   });
+}
+
+function configureAcpSessionPublisher(): void {
+  if (acpSessionPublisherConfigured) {
+    return;
+  }
+  acpSessionPublisherConfigured = true;
+  installAcpSessionPublisher();
 }
 
 async function publishAcpSessionToRemoteHub(row: AcpSessionRow): Promise<void> {
