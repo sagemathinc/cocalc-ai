@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Divider,
+  Dropdown,
   Form,
   Input,
   Modal,
@@ -11,6 +12,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import type { MenuProps } from "antd";
 import {
   React,
   useEffect,
@@ -151,6 +153,20 @@ const sectionStyle: React.CSSProperties = {
   borderRadius: 12,
   background: "white",
   padding: 14,
+};
+const pillSegmentBaseStyle: React.CSSProperties = {
+  alignItems: "center",
+  background: "transparent",
+  border: 0,
+  borderRadius: 999,
+  color: COLORS.GRAY_M,
+  cursor: "pointer",
+  display: "inline-flex",
+  font: "inherit",
+  lineHeight: 1.2,
+  minWidth: 0,
+  padding: "2px 5px",
+  whiteSpace: "nowrap",
 };
 
 function readCodexControlsCollapsed(): boolean {
@@ -325,6 +341,9 @@ export function CodexConfigButton({
     CodexUsageStatusInfo | undefined
   >(undefined);
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
+  const [hoveredPillSegment, setHoveredPillSegment] = useState<
+    "model" | "mode" | "reasoning" | undefined
+  >(undefined);
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -494,11 +513,12 @@ export function CodexConfigButton({
     });
   };
 
-  const saveConfig = () => {
-    const values = form.getFieldsValue();
+  const normalizeConfigForSave = (
+    values: Partial<CodexThreadConfig>,
+  ): Partial<CodexThreadConfig> => {
     const sessionMode: CodexSessionMode =
       normalizeSessionMode(values) ?? defaultSessionMode;
-    const finalValues = {
+    return {
       ...values,
       sessionId: normalizeCodexSessionId(values?.sessionId),
       sessionMode,
@@ -508,6 +528,10 @@ export function CodexConfigButton({
       }),
       allowWrite: sessionMode !== "read-only",
     };
+  };
+
+  const saveConfig = () => {
+    const finalValues = normalizeConfigForSave(form.getFieldsValue());
     actions?.setCodexConfig?.(threadKey, finalValues);
     setTimeout(() => {
       setOpen(false);
@@ -516,12 +540,84 @@ export function CodexConfigButton({
 
   const onSave = () => saveConfig();
 
-  const summaryParts = [
-    selectedModelValue,
-    modeLabel,
-    reasoningLabel,
-    serviceTierLabel,
-  ].filter((part) => typeof part === "string" && part.trim().length > 0);
+  const applyQuickConfigPatch = (patch: Partial<CodexThreadConfig>) => {
+    const nextValues: Partial<CodexThreadConfig> = {
+      ...(value ?? {}),
+      ...form.getFieldsValue(),
+      ...patch,
+    };
+    if (patch.model != null) {
+      nextValues.reasoning = getReasoningForModel({
+        models,
+        modelValue: patch.model,
+        desired: nextValues.reasoning,
+      });
+      if (!codexModelSupportsFastMode(patch.model)) {
+        nextValues.serviceTier = "standard";
+      }
+    }
+    const finalValues = normalizeConfigForSave(nextValues);
+    form.setFieldsValue(finalValues);
+    setValue(finalValues);
+    actions?.setCodexConfig?.(threadKey, finalValues);
+  };
+
+  const modelMenu: MenuProps = {
+    selectedKeys: selectedModelValue ? [selectedModelValue] : [],
+    items: models.map((model) => ({
+      key: model.value,
+      label: model.label,
+      title: model.description,
+    })),
+    onClick: ({ key }) => {
+      applyQuickConfigPatch({ model: `${key}` });
+    },
+  };
+
+  const modeMenu: MenuProps = {
+    selectedKeys: currentSessionMode ? [currentSessionMode] : [],
+    items: modeOptions.map((option) => ({
+      key: option.value,
+      label: option.label,
+      danger: option.warning,
+      title: option.description,
+    })),
+    onClick: ({ key }) => {
+      applyQuickConfigPatch({ sessionMode: key as CodexSessionMode });
+    },
+  };
+
+  const reasoningMenu: MenuProps = {
+    selectedKeys: selectedReasoningValue ? [selectedReasoningValue] : [],
+    items: reasoningOptions.map((option) => ({
+      key: option.value,
+      label: option.label,
+      title: option.description,
+    })),
+    onClick: ({ key }) => {
+      applyQuickConfigPatch({ reasoning: key as CodexReasoningId });
+    },
+  };
+
+  const pillSegmentStyle = (
+    segment: "model" | "mode" | "reasoning",
+  ): React.CSSProperties => ({
+    ...pillSegmentBaseStyle,
+    background:
+      hoveredPillSegment === segment ? COLORS.ANTD_BG_BLUE_L : "transparent",
+    color: hoveredPillSegment === segment ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
+    maxWidth: segment === "model" ? 170 : 120,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  });
+
+  const pillSegmentHandlers = (segment: "model" | "mode" | "reasoning") => ({
+    onClick: (event: React.MouseEvent) => {
+      event.stopPropagation();
+    },
+    onMouseEnter: () => setHoveredPillSegment(segment),
+    onMouseLeave: () => setHoveredPillSegment(undefined),
+  });
 
   return (
     <>
@@ -550,20 +646,22 @@ export function CodexConfigButton({
           </Tooltip>
         ) : (
           <>
-            <Button
-              size="small"
+            <span
               onClick={() => setOpen(true)}
               style={{
                 alignItems: "center",
                 background: "white",
+                border: `1px solid ${COLORS.GRAY_L}`,
                 borderColor: COLORS.GRAY_L,
                 borderRadius: 999,
                 boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
                 display: "inline-flex",
                 fontWeight: 600,
                 gap: 6,
+                cursor: "pointer",
                 maxWidth: "min(520px, calc(100vw - 220px))",
                 overflow: "hidden",
+                padding: "2px 8px",
               }}
             >
               <span
@@ -576,19 +674,72 @@ export function CodexConfigButton({
                   flex: "0 0 auto",
                 }}
               />
-              <span>Codex</span>
-              <Text
-                type="secondary"
+              <button
+                type="button"
+                onClick={() => setOpen(true)}
                 style={{
-                  fontSize: 12,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  ...pillSegmentBaseStyle,
+                  color: COLORS.GRAY_D,
+                  fontWeight: 600,
+                  paddingLeft: 0,
                 }}
               >
-                {summaryParts.join(" · ")}
+                Codex
+              </button>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                ·
               </Text>
-            </Button>
+              <Dropdown menu={modelMenu} trigger={["click"]}>
+                <button
+                  type="button"
+                  title="Change Codex model"
+                  style={pillSegmentStyle("model")}
+                  {...pillSegmentHandlers("model")}
+                >
+                  {selectedModelValue}
+                </button>
+              </Dropdown>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                ·
+              </Text>
+              <Dropdown menu={modeMenu} trigger={["click"]}>
+                <button
+                  type="button"
+                  title="Change Codex access mode"
+                  style={pillSegmentStyle("mode")}
+                  {...pillSegmentHandlers("mode")}
+                >
+                  {modeLabel}
+                </button>
+              </Dropdown>
+              {reasoningLabel ? (
+                <>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    ·
+                  </Text>
+                  <Dropdown menu={reasoningMenu} trigger={["click"]}>
+                    <button
+                      type="button"
+                      title="Change Codex thinking level"
+                      style={pillSegmentStyle("reasoning")}
+                      {...pillSegmentHandlers("reasoning")}
+                    >
+                      {reasoningLabel}
+                    </button>
+                  </Dropdown>
+                </>
+              ) : null}
+              {serviceTierLabel ? (
+                <>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    ·
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {serviceTierLabel}
+                  </Text>
+                </>
+              ) : null}
+            </span>
             <Tooltip title="Hide Codex controls">
               <Button
                 size="small"

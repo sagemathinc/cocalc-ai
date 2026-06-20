@@ -11,6 +11,7 @@ const stableForm = {
 };
 
 jest.mock("antd", () => {
+  const React = require("react");
   const Radio = ({ children }: any) => <label>{children}</label>;
   Radio.Group = ({ children }: any) => <div>{children}</div>;
   return {
@@ -20,6 +21,32 @@ jest.mock("antd", () => {
       <button onClick={onClick}>{children}</button>
     ),
     Divider: () => <div />,
+    Dropdown: ({ children, menu }: any) => {
+      const [open, setOpen] = React.useState(false);
+      const child = React.Children.only(children);
+      return (
+        <span>
+          {React.cloneElement(child, {
+            onClick: (event: any) => {
+              child.props.onClick?.(event);
+              setOpen((value: boolean) => !value);
+            },
+          })}
+          {open ? (
+            <div role="menu">
+              {menu?.items?.map((item: any) => (
+                <button
+                  key={item.key}
+                  onClick={() => menu?.onClick?.({ key: item.key })}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </span>
+      );
+    },
     Input: () => <input />,
     Modal: ({ open, children }: any) => (open ? <div>{children}</div> : null),
     Radio,
@@ -244,6 +271,44 @@ describe("CodexConfigButton", () => {
         model: "gpt-5.4",
         reasoning: "high",
         sessionMode: "workspace-write",
+      }),
+    );
+  });
+
+  it("changes access mode from the compact pill without opening settings", async () => {
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace write")).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByTitle("Change Codex access mode"));
+    expect(screen.queryByText("Codex configuration for this chat")).toBeNull();
+    fireEvent.click(screen.getByText("Read only"));
+
+    expect(actions.setCodexConfig).toHaveBeenCalledWith(
+      "thread-1",
+      expect.objectContaining({
+        allowWrite: false,
+        model: "gpt-5.4",
+        reasoning: "medium",
+        sessionMode: "read-only",
       }),
     );
   });
