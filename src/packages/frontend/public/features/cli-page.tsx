@@ -13,79 +13,30 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import { ContextList, IconBadge, StartCard } from "./feature-visuals";
+import { ContextList, StartCard } from "./feature-visuals";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 const CLI_DOCS_PATH = appPath("docs/cli/use-cocalc-cli");
+const CLI_HERO_IMAGE = "/public/features/cocalc-cli-browser-automation.png";
 
-function CliCommandMock() {
-  const commands = [
-    ["docs", "cocalc docs search project-secrets"],
-    ["browser", "cocalc browser files --project-id ..."],
-    ["notebooks", "cocalc project jupyter exec --path analysis.ipynb"],
-    ["projects", "cocalc project exec -- make report"],
-  ] satisfies [string, string][];
-
+function CliHeroImage() {
   return (
-    <div
-      aria-label="CoCalc CLI command examples"
+    <img
+      src={CLI_HERO_IMAGE}
+      alt="CoCalc CLI browser automation example"
+      width={3024}
+      height={1722}
       style={{
-        background:
-          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
+        background: PUBLIC_COLORS.surfaceMuted,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
-        padding: 20,
+        display: "block",
+        height: "auto",
+        width: "100%",
       }}
-    >
-      <Flex vertical gap={16}>
-        <Flex align="center" gap={10} wrap>
-          <IconBadge accent="#4b5563" icon="terminal" />
-          <div>
-            <Text strong>cocalc</Text>
-            <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              typed commands for project automation
-            </div>
-          </div>
-        </Flex>
-        <Flex vertical gap={10}>
-          {commands.map(([label, command]) => (
-            <div
-              key={label}
-              style={{
-                background: "#0b1522",
-                borderRadius: 8,
-                color: "#dbeafe",
-                padding: "12px 14px",
-              }}
-            >
-              <Text
-                strong
-                style={{
-                  color: "#86efac",
-                  display: "block",
-                  fontSize: 12,
-                  marginBottom: 6,
-                  textTransform: "uppercase",
-                }}
-              >
-                {label}
-              </Text>
-              <Text
-                style={{
-                  color: "#bfdbfe",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                }}
-              >
-                {command}
-              </Text>
-            </div>
-          ))}
-        </Flex>
-      </Flex>
-    </div>
+    />
   );
 }
 
@@ -183,7 +134,7 @@ export default function CliFeaturePage({
             </Flex>
           </Col>
           <Col xs={24} lg={13}>
-            <CliCommandMock />
+            <CliHeroImage />
           </Col>
         </Row>
       </PublicSection>

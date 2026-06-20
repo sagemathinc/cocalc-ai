@@ -1080,6 +1080,13 @@ describe("PublicFeaturesApp", () => {
           screen.getByRole("link", { name: "CLI Docs" }).getAttribute("href"),
         ).toBe("/docs/cli/use-cocalc-cli");
         expect(screen.queryByRole("link", { name: "CLI guide" })).toBeNull();
+        expect(
+          screen
+            .getByRole("img", {
+              name: "CoCalc CLI browser automation example",
+            })
+            .getAttribute("src"),
+        ).toBe("/public/features/cocalc-cli-browser-automation.png");
       }
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
       expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);

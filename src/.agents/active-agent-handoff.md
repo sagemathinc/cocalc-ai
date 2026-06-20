@@ -286,6 +286,20 @@ Plus/Star/Launchpad`).
   on `/features/cli` and `/features` desktop/mobile `68` assertions, `0` failures
   (`/tmp/cocalc-public-qa-0lTWPQ`), and visual screenshot inspection confirmed the icon is no
   longer red. No PR.
+- **START 2026-06-20 14:51 PDT:** Blaec asked to use the attached screenshot as the top visual on
+  `/features/cli`. Verified synthesis hub still owns preview pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`). Existing unrelated dirt remains the snapshot script and
+  untracked `dedicated-compute-page.tsx`; leaving both untouched. Claiming only the CLI page,
+  attached image asset if recoverable, focused tests if needed, and this ledger to replace the
+  mock top visual with the requested screenshot, rebuild, QA, commit, and push. No PR.
+- **END 2026-06-20 14:56 PDT:** Replaced the synthetic `/features/cli` command mock with Blaec's
+  attached screenshot as the top hero visual, stored as
+  `/public/features/cocalc-cli-browser-automation.png` with intrinsic dimensions and a restrained
+  border/shadow. Validation: prettier passed, focused feature Jest `88/88` passing (existing
+  React/AntD jsdom warnings), `lint:frontend` passing, `git diff --check` clean,
+  `pnpm -C src/packages/static build:dev` passing, browser QA on `/features/cli` and `/features`
+  desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-nttgaC`), and visual
+  screenshot inspection confirmed the new top image appears on desktop and mobile. No PR.
 
 ### Codex — platform-UI thread
 
