@@ -2,6 +2,8 @@
 
 import dot from "dot-object";
 
+import { assertExclusiveDomainsUnique } from "./auth";
+
 describe("dot-object", () => {
   const o = {
     a: {
@@ -19,5 +21,26 @@ describe("dot-object", () => {
     const d = new dot("->");
     const v = d.pick("a->cd.1.2", o);
     expect(v).toEqual("bar");
+  });
+});
+
+describe("assertExclusiveDomainsUnique", () => {
+  it("rejects duplicate exclusive domains after normalization", () => {
+    expect(() =>
+      assertExclusiveDomainsUnique({
+        google: {
+          strategy: "google",
+          conf: { type: "oidc" },
+          info: { exclusive_domains: ["Example.edu"] },
+        },
+        saml: {
+          strategy: "saml",
+          conf: { type: "saml" },
+          info: { exclusive_domains: [" example.edu "] },
+        },
+      } as any),
+    ).toThrow(
+      "exclusive domain 'example.edu' defined by google and saml: they must be unique",
+    );
   });
 });

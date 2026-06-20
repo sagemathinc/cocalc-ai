@@ -193,6 +193,25 @@ function displayNameForPassport(name: string): string {
   return name === GOOGLE_SSO_STRATEGY ? "Google" : name;
 }
 
+export function assertExclusiveDomainsUnique(passports: {
+  [k: string]: PassportStrategyDB;
+}): void {
+  const seen: { [k: string]: string } = {};
+  for (const strategyName in passports) {
+    const strategy = passports[strategyName];
+    for (const rawDomain of strategy.info?.exclusive_domains ?? []) {
+      const domain = `${rawDomain ?? ""}`.trim().toLowerCase();
+      if (!domain) continue;
+      if (seen[domain] != null) {
+        throw new Error(
+          `exclusive domain '${domain}' defined by ${seen[domain]} and ${strategyName}: they must be unique`,
+        );
+      }
+      seen[domain] = strategyName;
+    }
+  }
+}
+
 function passportLoginErrorHtml({
   name,
   message,
@@ -458,18 +477,7 @@ export class PassportManager {
 
   // check if exclusive domains are unique
   private check_exclusive_domains_unique() {
-    const ret: { [k: string]: string } = {};
-    for (const k in this.passports) {
-      const v = this.passports[k];
-      for (const domain of v.info?.exclusive_domains ?? []) {
-        if (ret[domain] != null) {
-          throw new Error(
-            `exclusive domain '${domain}' defined by ${ret[domain]} and ${k}: they must be unique`,
-          );
-        }
-        ret[domain] = k;
-      }
-    }
+    assertExclusiveDomainsUnique(this.passports ?? {});
   }
 
   private init_strategies_endpoint(): void {
@@ -753,6 +761,7 @@ export class PassportManager {
     }
     const policies = await getEnabledSsoDomainPolicies();
     applyDomainPoliciesToPassports(passports, policies);
+    assertExclusiveDomainsUnique(passports);
     return passports;
   }
 
