@@ -12,6 +12,7 @@ const revokeAllAuthSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const withAccountRehomeWriteFenceMock = jest.fn();
 const cancelEverythingMock = jest.fn();
+const deleteClusterAccountDirectoryEntryMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -65,6 +66,12 @@ jest.mock("@cocalc/server/stripe/client", () => ({
   })),
 }));
 
+jest.mock("./cluster-directory", () => ({
+  __esModule: true,
+  deleteClusterAccountDirectoryEntry: (...args: any[]) =>
+    deleteClusterAccountDirectoryEntryMock(...args),
+}));
+
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("delete account", () => {
@@ -79,7 +86,9 @@ describe("delete account", () => {
     recordAccountRevocationMock.mockReset();
     withAccountRehomeWriteFenceMock.mockReset();
     cancelEverythingMock.mockReset();
+    deleteClusterAccountDirectoryEntryMock.mockReset();
     cancelEverythingMock.mockResolvedValue(undefined);
+    deleteClusterAccountDirectoryEntryMock.mockResolvedValue(undefined);
     deleteAllRememberMeMock.mockResolvedValue(undefined);
     revokeAllAuthSessionsMock.mockResolvedValue(undefined);
     recordAccountRevocationMock.mockResolvedValue(undefined);
@@ -116,6 +125,9 @@ describe("delete account", () => {
         query: jest.fn(async () => ({ rows: [], rowCount: 1 })),
       });
     });
+    deleteClusterAccountDirectoryEntryMock.mockImplementation(async () => {
+      calls.push("delete-directory-entry");
+    });
 
     const { default: deleteAccount } = await import("./delete");
     await deleteAccount(ACCOUNT_ID);
@@ -134,11 +146,15 @@ describe("delete account", () => {
       expect.any(Number),
       { banned: true },
     );
+    expect(deleteClusterAccountDirectoryEntryMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+    );
     expect(calls).toEqual([
       "dispose-projects",
       "delete-rootfs-images",
       "delete-blobs",
       "mark-deleted",
+      "delete-directory-entry",
     ]);
   });
 });

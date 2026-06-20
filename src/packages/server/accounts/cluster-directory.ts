@@ -37,6 +37,22 @@ function normalizedHomeBayId(value: string): string {
   return `${value ?? ""}`.trim() || getConfiguredBayId();
 }
 
+function activeDirectoryAccountSql(alias = TABLE): string {
+  return `NOT (
+    COALESCE(NULLIF(BTRIM(${alias}.home_bay_id), ''), $CURRENT_BAY$::TEXT) = $CURRENT_BAY$::TEXT
+    AND NOT EXISTS (
+      SELECT 1
+        FROM accounts active_account
+       WHERE active_account.account_id=${alias}.account_id
+         AND active_account.deleted IS NOT TRUE
+    )
+  )`;
+}
+
+function withCurrentBayParam(sql: string, param: string): string {
+  return sql.replace(/\$CURRENT_BAY\$/g, param);
+}
+
 type BanEmailEquivalenceRule = {
   canonical: string;
   domains: string[];
@@ -357,8 +373,9 @@ async function getDirectoryAccountById(
        FROM ${TABLE}
       WHERE account_id=$1
         AND provisioned=TRUE
+        AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$2")}
       LIMIT 1`,
-    [account_id],
+    [account_id, getConfiguredBayId()],
   );
   return rows[0] ? canonicalDirectoryEntry(rows[0]) : null;
 }
@@ -378,8 +395,9 @@ async function getDirectoryAccountByEmail(
        FROM ${TABLE}
       WHERE email_address=$1
         AND provisioned=TRUE
+        AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$2")}
       LIMIT 1`,
-    [email],
+    [email, getConfiguredBayId()],
   );
   return rows[0] ? canonicalDirectoryEntry(rows[0]) : null;
 }
@@ -436,11 +454,12 @@ async function searchDirectoryAccounts({
     const { rows } = await pool.query(
       `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
               created, last_active, banned
-         FROM ${TABLE}
-        WHERE provisioned=TRUE
-          AND email_address = ANY($1::TEXT[])
+        FROM ${TABLE}
+       WHERE provisioned=TRUE
+         AND email_address = ANY($1::TEXT[])
+          AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$3")}
         LIMIT $2`,
-      [email_queries, limit],
+      [email_queries, limit, getConfiguredBayId()],
     );
     for (const row of rows) {
       const entry = canonicalDirectoryEntry(row);
@@ -449,9 +468,12 @@ async function searchDirectoryAccounts({
   }
 
   if (!only_email) {
-    const params: Array<string | number | boolean> = [limit];
+    const params: Array<string | number | boolean> = [
+      limit,
+      getConfiguredBayId(),
+    ];
     const clauses: string[] = [];
-    let idx = 2;
+    let idx = 3;
     for (const terms of string_queries) {
       const termClauses: string[] = [];
       for (const term of terms) {
@@ -477,8 +499,9 @@ async function searchDirectoryAccounts({
       const { rows } = await pool.query(
         `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
                 created, last_active, banned
-           FROM ${TABLE}
+          FROM ${TABLE}
           WHERE provisioned=TRUE
+            AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$2")}
             AND (${clauses.join(" OR ")})
           ORDER BY last_active DESC NULLS LAST, created DESC NULLS LAST, account_id
           LIMIT $1`,
@@ -575,10 +598,11 @@ export async function getClusterAccountsByIdsDirect(
       return await pool.query(
         `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
                 created, last_active, banned
-           FROM ${TABLE}
-          WHERE account_id = ANY($1::UUID[])
-            AND provisioned=TRUE`,
-        [normalized],
+          FROM ${TABLE}
+         WHERE account_id = ANY($1::UUID[])
+            AND provisioned=TRUE
+            AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$2")}`,
+        [normalized, getConfiguredBayId()],
       );
     })(),
   ]);
@@ -586,6 +610,26 @@ export async function getClusterAccountsByIdsDirect(
     ...localRowsResult.rows.map(canonicalLocalEntry),
     ...directoryRowsResult.rows.map(canonicalDirectoryEntry),
   ]);
+}
+
+export async function deleteStaleLocalClusterAccountDirectoryEntryByEmail(
+  email_address: string,
+): Promise<void> {
+  const email = normalizedEmail(email_address);
+  if (!email) return;
+  await ensureClusterAccountDirectorySchema();
+  await getPool().query(
+    `DELETE FROM ${TABLE}
+      WHERE email_address=$1
+        AND COALESCE(NULLIF(BTRIM(home_bay_id), ''), $2::TEXT) = $2::TEXT
+        AND NOT EXISTS (
+          SELECT 1
+            FROM accounts active_account
+           WHERE active_account.account_id=${TABLE}.account_id
+             AND active_account.deleted IS NOT TRUE
+        )`,
+    [email, getConfiguredBayId()],
+  );
 }
 
 export async function searchClusterAccountsDirect({
@@ -682,11 +726,12 @@ export async function getClusterBanEquivalentEmailAccountsDirect({
       return await pool.query(
         `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
                 created, last_active, banned
-           FROM ${TABLE}
+          FROM ${TABLE}
           WHERE (${equivalentWhere})
             AND provisioned=TRUE
+            AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$4")}
           LIMIT $3`,
-        params,
+        [...params, getConfiguredBayId()],
       );
     })(),
   ]);

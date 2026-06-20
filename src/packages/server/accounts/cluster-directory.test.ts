@@ -52,6 +52,26 @@ describe("accounts.cluster-directory", () => {
           rowCount: 1,
         };
       }
+      if (sql.includes("DELETE FROM cluster_account_directory")) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("FROM cluster_account_directory")) {
+        return {
+          rows: [
+            {
+              account_id: "11111111-1111-4111-8111-111111111111",
+              email_address: "qa@example.com",
+              display_name: "QA Directory",
+              first_name: "QA",
+              last_name: "Directory",
+              home_bay_id: "bay-2",
+              created: null,
+              last_active: null,
+              banned: false,
+            },
+          ],
+        };
+      }
       if (sql.includes("FROM accounts")) {
         return {
           rows: [
@@ -67,23 +87,6 @@ describe("accounts.cluster-directory", () => {
               banned: false,
               email_address_verified: true,
               groups: ["admin"],
-            },
-          ],
-        };
-      }
-      if (sql.includes("FROM cluster_account_directory")) {
-        return {
-          rows: [
-            {
-              account_id: "11111111-1111-4111-8111-111111111111",
-              email_address: "qa@example.com",
-              display_name: "QA Directory",
-              first_name: "QA",
-              last_name: "Directory",
-              home_bay_id: "bay-2",
-              created: null,
-              last_active: null,
-              banned: false,
             },
           ],
         };
@@ -167,6 +170,7 @@ describe("accounts.cluster-directory", () => {
       "codex",
       ["gmail.com", "googlemail.com"],
       1000,
+      "bay-0",
     ]);
 
     await getClusterBanEquivalentEmailAccountsDirect({
@@ -176,6 +180,7 @@ describe("accounts.cluster-directory", () => {
       "co.dex",
       ["outlook.com"],
       1000,
+      "bay-0",
     ]);
 
     await getClusterBanEquivalentEmailAccountsDirect({
@@ -183,7 +188,7 @@ describe("accounts.cluster-directory", () => {
     });
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("position('-'"),
-      ["codex", ["yahoo.com"], 1000],
+      ["codex", ["yahoo.com"], 1000, "bay-0"],
     );
   });
 
@@ -198,6 +203,20 @@ describe("accounts.cluster-directory", () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("SET last_active=NOW()"),
       ["11111111-1111-4111-8111-111111111111"],
+    );
+  });
+
+  it("deletes stale local directory rows by email", async () => {
+    const { deleteStaleLocalClusterAccountDirectoryEntryByEmail } =
+      await import("./cluster-directory");
+
+    await deleteStaleLocalClusterAccountDirectoryEntryByEmail(
+      "STALE@example.com",
+    );
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM cluster_account_directory"),
+      ["stale@example.com", "bay-0"],
     );
   });
 });

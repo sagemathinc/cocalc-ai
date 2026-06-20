@@ -75,8 +75,14 @@ export async function account_exists(
   opts: AccountExistsOptions,
 ): Promise<string | undefined> {
   const { rows } = await callback2(db._query.bind(db), {
-    query: "SELECT account_id FROM accounts",
-    where: { "email_address = $::TEXT": opts.email_address },
+    query: `
+      SELECT account_id
+        FROM accounts
+       WHERE email_address=$1::TEXT
+         AND (deleted IS NULL OR deleted = FALSE)
+       LIMIT 1
+    `,
+    params: [opts.email_address],
   });
 
   if (rows.length === 0) {
