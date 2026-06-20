@@ -304,16 +304,6 @@ function PresetSummaryCard({
               </Tag>
             ) : null}
           </Space>
-          {!compact && preset.homepage ? (
-            <a
-              href={preset.homepage}
-              target="_blank"
-              rel="noreferrer"
-              style={{ display: "inline-block", marginTop: 8 }}
-            >
-              Learn more
-            </a>
-          ) : null}
         </div>
       </div>
     </Card>
