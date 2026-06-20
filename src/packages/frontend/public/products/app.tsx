@@ -173,9 +173,10 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
           Which path fits?
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Use this as a decision guide. The cards separate who operates CoCalc,
-          where it runs, and when to move into pricing, documentation, or a
-          support conversation for rollout details.
+          Use this as a decision guide. The five paths fall into three operating
+          models — hosted by CoCalc (CoCalc.ai), run it yourself (Plus or Star),
+          or a private deployment your organization operates (Launchpad or
+          Rocket) — so pick the model first, then the product.
         </Paragraph>
         <div
           aria-label="CoCalc product path chooser"
@@ -271,9 +272,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
           private path a commercial and support wrapper.
         </Paragraph>
         <Flex gap={12} wrap>
-          <LinkButton href={appPath("pricing")}>
-            See pricing and licensing
-          </LinkButton>
           <LinkButton
             href={supportContactPath({
               body: "I want to talk with CoCalc about operating model, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, procurement needs, data-location, privacy, or security questions, and support expectations.",
