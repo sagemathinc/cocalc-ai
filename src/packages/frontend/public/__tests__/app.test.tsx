@@ -168,6 +168,10 @@ describe("section route parsers", () => {
     expect(isPublicTarget("/docs/projects/project-secrets")).toBe(true);
     expect(isPublicTarget("/rootfs/minimal-jupyter")).toBe(true);
     expect(isPublicTarget("/invites/abc")).toBe(true);
+    expect(isPublicTarget("/auth/sign-in")).toBe(true);
+    expect(isPublicTarget("/base/auth/sign-up")).toBe(true);
+    expect(isPublicTarget("/auth/google")).toBe(false);
+    expect(isPublicTarget("/base/auth/google")).toBe(false);
   });
 
   it("uses an explicit not-found route for unknown public paths", () => {

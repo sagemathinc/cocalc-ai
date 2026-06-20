@@ -13,8 +13,9 @@ import {
   Space,
   Typography,
 } from "antd";
-import { List, Map } from "immutable";
+import { fromJS, List, Map } from "immutable";
 import { join } from "path";
+import { useEffect } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   Rendered,
@@ -30,6 +31,7 @@ import {
 } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import api from "@cocalc/frontend/client/api";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
@@ -51,6 +53,14 @@ import { TextSetting } from "./text-setting";
 import { lite } from "@cocalc/frontend/lite";
 
 type ImmutablePassportStrategy = TypedMap<PassportStrategyFrontend>;
+type PublicSsoStrategy = {
+  name?: string;
+  display: string;
+  icon?: string;
+  public?: boolean;
+  exclusiveDomains?: string[];
+  doNotHide?: boolean;
+};
 
 interface Props {
   account_id?: string;
@@ -76,9 +86,37 @@ export function AccountSettings(props: Readonly<Props>) {
   const [remove_strategy_button, set_remove_strategy_button] = useState<
     string | undefined
   >(undefined);
+  const [liveStrategies, setLiveStrategies] = useState<
+    List<ImmutablePassportStrategy> | undefined
+  >(undefined);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const strategies = mergeStrategies(props.strategies, liveStrategies);
 
   const actions = () => redux.getActions("account");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await api("auth/sso-strategies");
+        if (cancelled || !Array.isArray(result)) return;
+        setLiveStrategies(
+          List(
+            result
+              .map(ssoStrategyToPassportStrategy)
+              .filter((strategy) => strategy != null),
+          ) as List<ImmutablePassportStrategy>,
+        );
+      } catch {
+        if (!cancelled) {
+          setLiveStrategies(undefined);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handle_change(evt, field) {
     actions().setState({ [field]: evt.target.value });
@@ -90,8 +128,8 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function get_strategy(name: string): ImmutablePassportStrategy | undefined {
-    if (props.strategies == null) return undefined;
-    return props.strategies.find((val) => val.get("name") == name);
+    if (strategies == null) return undefined;
+    return strategies.find((val) => val.get("name") == name);
   }
 
   function render_add_strategy_link(): Rendered {
@@ -260,13 +298,13 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function render_linked_external_accounts(): Rendered {
-    if (props.strategies == null || props.strategies.size <= 1) {
+    if (!hasExternalStrategies(strategies)) {
       // not configured by server
       return;
     }
     const account_passports: string[] = get_account_passport_names();
 
-    const linked: List<ImmutablePassportStrategy> = props.strategies.filter(
+    const linked: List<ImmutablePassportStrategy> = strategies.filter(
       (strategy) => {
         const name = strategy?.get("name");
         return name !== "email" && account_passports.includes(name);
@@ -292,14 +330,14 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function render_available_to_link(): Rendered {
-    if (props.strategies == null || props.strategies.size <= 1) {
+    if (!hasExternalStrategies(strategies)) {
       // not configured by server yet, or nothing but email
       return;
     }
     const account_passports: string[] = get_account_passport_names();
 
     let any_hidden = false;
-    const not_linked: List<ImmutablePassportStrategy> = props.strategies.filter(
+    const not_linked: List<ImmutablePassportStrategy> = strategies.filter(
       (strategy) => {
         const name = strategy.get("name");
         // skip the email strategy, we don't use it
@@ -457,5 +495,49 @@ export function AccountSettings(props: Readonly<Props>) {
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />
     </SettingBox>
+  );
+}
+
+function ssoStrategyToPassportStrategy(
+  strategy: PublicSsoStrategy,
+): ImmutablePassportStrategy | undefined {
+  if (!strategy.name) return;
+  return fromJS({
+    name: strategy.name,
+    display: strategy.display,
+    icon: strategy.icon,
+    public: strategy.public,
+    exclusive_domains: strategy.exclusiveDomains,
+    do_not_hide: strategy.doNotHide,
+  }) as unknown as ImmutablePassportStrategy;
+}
+
+function mergeStrategies(
+  configured?: List<ImmutablePassportStrategy>,
+  live?: List<ImmutablePassportStrategy>,
+): List<ImmutablePassportStrategy> | undefined {
+  if (configured == null) {
+    return live;
+  }
+  if (live == null) {
+    return configured;
+  }
+  let merged = configured;
+  const configuredNames = new Set(
+    configured.map((strategy) => strategy.get("name")).toArray(),
+  );
+  for (const strategy of live.toArray()) {
+    if (!configuredNames.has(strategy.get("name"))) {
+      merged = merged.push(strategy);
+    }
+  }
+  return merged;
+}
+
+function hasExternalStrategies(
+  strategies?: List<ImmutablePassportStrategy>,
+): strategies is List<ImmutablePassportStrategy> {
+  return (
+    strategies?.some((strategy) => strategy.get("name") !== "email") ?? false
   );
 }

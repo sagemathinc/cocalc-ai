@@ -100,7 +100,32 @@ describe("PublicTopNav", () => {
 
     expect(screen.getByRole("link", { name: "Sign in" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Sign up" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Sign up" })).toHaveClass(
+      "ant-btn-primary",
+    );
     expect(screen.queryByRole("link", { name: "Projects" })).toBeNull();
+  });
+
+  it("highlights sign-in on the sign-in auth page", async () => {
+    await renderTopNav(<PublicTopNav active="auth-sign-in" />);
+
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveClass(
+      "ant-btn-primary",
+    );
+    expect(screen.getByRole("link", { name: "Sign up" })).not.toHaveClass(
+      "ant-btn-primary",
+    );
+  });
+
+  it("highlights sign-up on the sign-up auth page", async () => {
+    await renderTopNav(<PublicTopNav active="auth-sign-up" />);
+
+    expect(screen.getByRole("link", { name: "Sign up" })).toHaveClass(
+      "ant-btn-primary",
+    );
+    expect(screen.getByRole("link", { name: "Sign in" })).not.toHaveClass(
+      "ant-btn-primary",
+    );
   });
 
   it("renders logo and public page navigation with Support at the end", async () => {

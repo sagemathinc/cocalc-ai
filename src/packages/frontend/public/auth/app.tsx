@@ -9,6 +9,7 @@ import type { AuthView } from "@cocalc/frontend/auth/types";
 import { getControlPlaneAuthBootstrap } from "@cocalc/frontend/auth/api";
 import { enableForceConsent } from "@cocalc/frontend/cookie-consent";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
+import type { PublicTopNavActiveKey } from "@cocalc/frontend/public/layout/top-nav";
 import { getSiteName, type PublicConfig } from "../common";
 import { navigatePublic } from "../navigation";
 
@@ -132,6 +133,20 @@ function routeForcesCookieConsent(route: PublicAuthRoute): boolean {
   return route.kind === "auth-form" && route.view === "sign-up";
 }
 
+function topNavActiveForRoute(route: PublicAuthRoute): PublicTopNavActiveKey {
+  if (route.kind !== "auth-form") {
+    return "auth";
+  }
+  switch (route.view) {
+    case "sign-up":
+      return "auth-sign-up";
+    case "sign-in":
+    case "password-reset":
+    default:
+      return "auth-sign-in";
+  }
+}
+
 export { getPublicAuthRouteFromPath };
 
 export default function PublicAuthApp({
@@ -200,7 +215,11 @@ export default function PublicAuthApp({
   }
 
   return (
-    <PublicPage active="auth" config={resolvedConfig} title={title}>
+    <PublicPage
+      active={topNavActiveForRoute(route)}
+      config={resolvedConfig}
+      title={title}
+    >
       <PublicAuthPageShell
         cardWidth={cardWidthForRoute(route)}
         subtitle={subtitleForRoute(
