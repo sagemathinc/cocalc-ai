@@ -17,11 +17,47 @@ jest.mock("antd", () => ({
       {children}
     </button>
   ),
+  Input: ({ onChange, placeholder, value }: any) => (
+    <input
+      aria-label={placeholder}
+      onChange={onChange}
+      placeholder={placeholder}
+      value={value}
+    />
+  ),
+  Modal: ({ children, open, title }: any) =>
+    open ? (
+      <div role="dialog">
+        <h2>{title}</h2>
+        {children}
+      </div>
+    ) : null,
+  Segmented: ({ "aria-label": ariaLabel, onChange, options, value }: any) => (
+    <div aria-label={ariaLabel}>
+      {options.map((option: any) => {
+        const item =
+          typeof option === "string"
+            ? { label: option, value: option }
+            : option;
+        return (
+          <button
+            aria-pressed={value === item.value}
+            key={item.value}
+            onClick={() => onChange?.(item.value)}
+            type="button"
+          >
+            {item.label}
+          </button>
+        );
+      })}
+    </div>
+  ),
   Space: ({ children }: any) => <div>{children}</div>,
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: any) => <span data-icon={name} />,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/project/home-directory", () => ({
@@ -51,7 +87,7 @@ describe("NoFiles", () => {
     });
   });
 
-  it("shows a polished first-run empty-state with direct actions", () => {
+  it("shows a compact first-run empty-state with direct actions", () => {
     const openUploadFiles = jest.fn();
     render(
       <NoFiles
@@ -62,21 +98,30 @@ describe("NoFiles", () => {
       />,
     );
 
-    expect(screen.getByText("Welcome to your project")).not.toBeNull();
+    expect(screen.getByText("No files yet")).not.toBeNull();
     expect(screen.getByTestId("empty-directory-welcome")).toHaveStyle({
-      margin: "32px auto 28px auto",
-      width: "calc(100% - 56px)",
-      maxWidth: "1120px",
+      margin: "26px auto",
+      width: "calc(100% - 48px)",
+      maxWidth: "900px",
     });
-    expect(screen.getByText("Jupyter Notebook")).not.toBeNull();
-    expect(screen.getByText("Chat with AI")).not.toBeNull();
-    expect(screen.getByText("Upload Files")).not.toBeNull();
-    expect(screen.getByText("Browse file types")).not.toBeNull();
+    expect(screen.getByText("Notebook")).not.toBeNull();
+    expect(screen.getByText("Agents")).not.toBeNull();
+    expect(screen.getByText("Upload")).not.toBeNull();
+    expect(screen.getByText("Folder")).not.toBeNull();
+    expect(screen.getByText("More")).not.toBeNull();
+    expect(
+      screen.getByLabelText(
+        "Create a Jupyter notebook for code, text, plots, and results.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByLabelText("Start an AI agent thread in this project."),
+    ).not.toBeNull();
     expect(screen.queryByText("Empty project")).toBeNull();
-    expect(screen.getByText("Upload Files").closest("button")).toHaveClass(
+    expect(screen.getByText("Upload").closest("button")).toHaveClass(
       "upload-button",
     );
-    fireEvent.click(screen.getByText("Upload Files"));
+    fireEvent.click(screen.getByText("Upload"));
     expect(openUploadFiles).toHaveBeenCalled();
   });
 
@@ -91,7 +136,7 @@ describe("NoFiles", () => {
 
     expect(screen.getByText("This folder is empty.")).not.toBeNull();
     expect(screen.getByText("+New")).not.toBeNull();
-    expect(screen.queryByText("Welcome to your project")).toBeNull();
+    expect(screen.queryByText("No files yet")).toBeNull();
   });
 
   it("hides the AI chat action when project AI policy disables agents", () => {
@@ -107,8 +152,8 @@ describe("NoFiles", () => {
       />,
     );
 
-    expect(screen.queryByText("Chat with AI")).toBeNull();
-    expect(screen.getByText("Jupyter Notebook")).not.toBeNull();
+    expect(screen.queryByText("Agents")).toBeNull();
+    expect(screen.getByText("Notebook")).not.toBeNull();
   });
 
   it("shows a matching-files warning with a clear-filter button", () => {
@@ -127,13 +172,13 @@ describe("NoFiles", () => {
     expect(screen.getByText("+New")).not.toBeNull();
   });
 
-  it("opens the new page in the current folder", () => {
-    const setState = jest.fn();
+  it("opens more file types in a modal without changing pages", () => {
+    const askFilename = jest.fn();
     const setActiveTab = jest.fn();
     const setCurrentPath = jest.fn();
     getProjectActionsMock.mockReturnValue({
-      setState,
-      ask_filename: jest.fn(),
+      ask_filename: askFilename,
+      setState: jest.fn(),
       set_active_tab: setActiveTab,
       set_current_path: setCurrentPath,
       set_file_search: jest.fn(),
@@ -146,10 +191,39 @@ describe("NoFiles", () => {
         file_search=""
       />,
     );
-    fireEvent.click(screen.getByText("Browse file types"));
+    fireEvent.click(screen.getByText("More"));
+
+    expect(screen.getByRole("dialog")).not.toBeNull();
+    expect(screen.getByText("More file types")).not.toBeNull();
+    expect(screen.getByText("Python")).not.toBeNull();
+    expect(screen.getByText("Recommended")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText("Grid")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("more-file-types-list")).toHaveStyle({
+      gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+    });
+
+    fireEvent.click(screen.getByText("A-Z"));
+    expect(screen.getByText("A-Z")).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen
+        .getByText("CSV File")
+        .compareDocumentPosition(screen.getByText("Python")),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    fireEvent.click(screen.getByText("List"));
+    expect(screen.getByText("List")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("more-file-types-list")).toHaveStyle({
+      gridTemplateColumns: "1fr",
+    });
+    expect(setActiveTab).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Python"));
 
     expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
-    expect(setActiveTab).toHaveBeenCalledWith("new");
+    expect(askFilename).toHaveBeenCalledWith("py");
+    expect(setActiveTab).not.toHaveBeenCalled();
   });
 
   it("uses the existing filename prompt for first-run quick actions", () => {
@@ -170,10 +244,34 @@ describe("NoFiles", () => {
         file_search=""
       />,
     );
-    fireEvent.click(screen.getByText("Jupyter Notebook"));
+    fireEvent.click(screen.getByText("Notebook"));
 
     expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
     expect(askFilename).toHaveBeenCalledWith("ipynb");
+  });
+
+  it("uses the existing folder filename prompt from the first-run folder action", () => {
+    const askFilename = jest.fn();
+    const setCurrentPath = jest.fn();
+    getProjectActionsMock.mockReturnValue({
+      ask_filename: askFilename,
+      setState: jest.fn(),
+      set_active_tab: jest.fn(),
+      set_current_path: setCurrentPath,
+      set_file_search: jest.fn(),
+    });
+
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
+    );
+    fireEvent.click(screen.getByText("Folder"));
+
+    expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
+    expect(askFilename).toHaveBeenCalledWith("/");
   });
 
   it("prefills the new page filename from the current filter", () => {
