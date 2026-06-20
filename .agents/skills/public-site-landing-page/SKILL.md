@@ -30,8 +30,12 @@ Before editing public-site source, read:
    worktrees, or agent threads are active
 3. `docs/landing-page-brief.md` (FROZEN contract) + `docs/landing-page-issues-and-plans.md`
    (the finite queue)
-4. `docs/landing-page-design-system.md` (visual tokens) and `docs/landing-page-decisions.md`
-5. the route source and any route-specific tests
+4. `docs/landing-page-framing-system.md` and
+   `docs/landing-page-framing-research-register.md`
+5. the current `src/.agents/public-site-*-workplan*.md` when the work belongs to an active
+   researched queue
+6. `docs/landing-page-design-system.md` (visual tokens) and `docs/landing-page-decisions.md`
+7. the route source and any route-specific tests
 
 `docs/public-site-cohesion-audit.md` is RETIRED — do not append to it.
 
@@ -47,21 +51,23 @@ user approves that exact public wording.
 4. Classify the route: homepage, feature index, feature detail, product
    decision, pricing/compare, support/contact, guides/docs bridge, or
    trust/policy destination.
-5. Set a small change budget. If the task spans many routes, split it into
+5. Fill or update the route frame from `docs/landing-page-framing-system.md`.
+   If the frame cannot be filled in, research or ask before editing.
+6. Set a small change budget. If the task spans many routes, split it into
    inspect-first and edit-second phases.
-6. For each candidate component, choose one action: keep, omit, combine, move
+7. For each candidate component, choose one action: keep, omit, combine, move
    lower, move to disclosure/modal, or redesign.
-7. State the one hypothesis + its evidence before editing (the evidence gate). Do NOT log to
+8. State the one hypothesis + its evidence before editing (the evidence gate). Do NOT log to
    the retired cohesion audit.
-8. Make only high-confidence source/test changes.
-9. Run focused tests, lint/typecheck when relevant, refresh the preview (see
+9. Make only high-confidence source/test changes.
+10. Run focused tests, lint/typecheck when relevant, refresh the preview (see
    **Preview Loop** below), and run
    `src/packages/frontend/scripts/public-site-browser-qa.mjs` for the affected
    route group.
-10. Store browser QA artifacts only under `/tmp/cocalc-public-qa-*`.
-11. Append any durable decision to `docs/landing-page-decisions.md` and mark the punch-list
+11. Store browser QA artifacts only under `/tmp/cocalc-public-qa-*`.
+12. Append any durable decision to `docs/landing-page-decisions.md` and mark the punch-list
     item done; per-round mechanical detail belongs in the commit message.
-12. Commit completed work unless the user asked not to or the change is still
+13. Commit completed work unless the user asked not to or the change is still
     exploratory.
 
 ## Preview Loop

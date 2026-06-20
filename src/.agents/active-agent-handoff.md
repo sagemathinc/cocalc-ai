@@ -177,6 +177,32 @@ Plus/Star/Launchpad`).
   mobile (17 assertions each / 0 failures), and the desktop screenshot
   `/tmp/cocalc-public-qa-yZXkFz/features-whiteboard-desktop-full.png` was reviewed for reduced
   first-screen density. No PR created.
+- **START 2026-06-20 13:54 PDT:** Blaec flagged a `/features` card that goes directly to docs
+  unlike the other cards and asked to double-check for similar cases. Verified clean branch at
+  `16c0ee17c1`, synthesis hub still owns preview pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`), and no active build. Source audit found two docs-only
+  feature-index card overrides: `CoCalc CLI` and `Dedicated Compute`; the "Project notes and
+  Markdown" docs link is a non-card group text link. Claiming the feature index, catalog,
+  metadata, tests, browser-QA route rules, new local feature detail pages for CLI and dedicated
+  compute, and this ledger. No PR.
+- **PIVOT 2026-06-20 14:02 PDT:** Blaec raised a mission-critical framing/process request:
+  reread `/home/user/cocalc-ai/docs/pitch`, research adjacent product positioning externally,
+  and make the resulting product-framing discipline persistent so future public-site edits keep
+  learning instead of drifting. Pausing the docs-card route implementation with two uncommitted
+  draft pages still present (`cli-page.tsx`, `dedicated-compute-page.tsx`) until the framing
+  system decides whether they are the right fix. Verified synthesis hub still owns preview pid
+  `13303`; platform hub is stopped. Claiming public-site operating docs plus this ledger for the
+  framing-system update. No PR unless explicitly requested.
+- **END 2026-06-20 14:11 PDT:** created and wired the persistent public-site framing layer:
+  `docs/landing-page-framing-system.md`, `docs/landing-page-framing-research-register.md`, and
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`. Updated the website operating
+  system, public-site skill, root agent index, and decisions log so future rounds must consult
+  the route frame, dated research register, claim classes, and active burn-down plan. External
+  official-source scan covered Jupyter/JupyterHub, Colab, Codespaces, Overleaf, Replit Agent,
+  Posit Cloud, Deepnote, Hex, OpenAI Codex, and GitHub Copilot cloud agent. Validation:
+  `git diff --check` clean; new docs are ASCII-only; banned/category-collapse terms appear only
+  in internal "do not say" rows. The two draft feature pages remain uncommitted and should be
+  re-evaluated under FS-001 before being wired in. No PR.
 
 ### Codex — platform-UI thread
 

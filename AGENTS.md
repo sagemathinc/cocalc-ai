@@ -158,6 +158,7 @@ Any agent (Codex, Claude, Gemini) touching the public site — landing, feature,
 - Run work through the commands in `src/.claude/commands/`: `/site-round <route>` (the default solo round), `/site-audit`, `/site-verify`, `/site-judge`, `/pitch-challenge`. Codex/Gemini: these are plain prompts — read the matching `*.md`.
 - The edit standard for a single round: `.agents/skills/public-site-landing-page/SKILL.md`.
 - Durable docs (an index — do NOT inline): north-star Brief `docs/landing-page-brief.md` · finite queue `docs/landing-page-issues-and-plans.md` · copy craft `docs/landing-page-copy-playbook.md` · decisions log `docs/landing-page-decisions.md` (append ONE line per durable decision; mechanical detail goes in the commit, not here).
+- Framing discipline: `docs/landing-page-framing-system.md` · `docs/landing-page-framing-research-register.md` · active researched burn-down plans under `src/.agents/public-site-*-workplan*.md`.
 - Enforcement: **C1** structural tests `src/packages/frontend/public/__tests__/test-helpers.ts` (assert structure/canaries, not exact copy — copy edits should need no test edit) · **D1** design tokens `src/packages/frontend/public/theme.ts`.
 - RETIRED — do not read or append: `docs/public-site-cohesion-audit.md`, `src/.agents/landing-page-agent-operating-audit.md`.
 

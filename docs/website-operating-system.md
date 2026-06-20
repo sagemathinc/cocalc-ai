@@ -54,6 +54,14 @@ the harness, not agent memory. *(Wiring the hook is a per-environment opt-in —
 - **`docs/pitch/signals.md`** — every entry tagged by provenance: `ASSUMPTION` (internal
   belief) vs `EXTERNAL` (a real customer/prospect/use-case observation). Seed by mining our
   history (mostly `ASSUMPTION`); append `EXTERNAL` as real interactions happen.
+- **`docs/landing-page-framing-system.md`** — the per-route public-site framing discipline:
+  route question, claim class, evidence consulted, and the action chosen before editing.
+- **`docs/landing-page-framing-research-register.md`** — dated internal and official-source
+  market evidence used for public-site framing. It records implications; it does not approve
+  named-product comparison copy.
+- **`src/.agents/public-site-*-workplan*.md`** — live burn-down plans for current researched
+  queues. Update the relevant plan before and after execution so user feedback changes the
+  system, not just the chat transcript.
 - `/pitch-challenge` asks: which `ASSUMPTION`s are still unvalidated, and does accumulating
   `EXTERNAL` signal confirm or contradict the Brief? Unvalidated assumptions are flagged as
   risks, not treated as truth — this keeps the red-team adversarial, not circular.
@@ -74,7 +82,10 @@ the harness, not agent memory. *(Wiring the hook is a per-environment opt-in —
 - `docs/landing-page-issues-and-plans.md` — the finite ranked punch-list (the queue).
 - `docs/landing-page-design-system.md` — D1 direction (Tier A / Tier B).
 - `docs/landing-page-decisions.md` — append-only log of Brief/pitch/design decisions.
+- `docs/landing-page-framing-system.md` — route-level value framing and claim discipline.
+- `docs/landing-page-framing-research-register.md` — dated internal/external framing evidence.
 - `docs/pitch/signals.md` — provenance-tagged buyer signal.
+- `src/.agents/public-site-*-workplan*.md` — finite live plans for researched work queues.
 - `.agents/skills/public-site-landing-page/SKILL.md` — the operating standard agents inherit.
 - `public-site-turn-snapshot.sh` + the Stop hook — the per-turn guarantee.
 

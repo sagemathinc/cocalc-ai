@@ -30,3 +30,6 @@
   operating-model/procurement decision-maker (NOT university-IT/LMS); teaching = valued
   audience + MATLAB-style adoption pipeline; automation/CLI/API = proof surface only; home
   page protected. Supersedes the prior frozen version.
+- 2026-06-20 — **Framing system added**: public-site rounds now use a route frame, dated
+  research register, claim classes, and active burn-down workplans so external/pitch learning
+  changes the durable workflow instead of living only in chat.
