@@ -50,6 +50,7 @@ import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-pa
 import {
   deleteClusterAccountApiKeyDirectoryEntryDirect,
   deleteClusterAccountDirectoryEntry,
+  deleteStaleLocalClusterAccountDirectoryEntryByEmail,
   getClusterAccountApiKeyByKeyIdDirect,
   getClusterBanEquivalentEmailAccountsDirect,
   getClusterAccountByEmailDirect,
@@ -751,6 +752,7 @@ async function createClusterAccountDirect(
   const email_address = `${opts.email_address ?? ""}`.trim().toLowerCase();
   const home_bay_id = `${opts.home_bay_id ?? ""}`.trim() || currentBayId();
   const account_id = `${opts.account_id ?? ""}`.trim() || uuid();
+  await deleteStaleLocalClusterAccountDirectoryEntryByEmail(email_address);
   const existing = await getClusterAccountByEmailDirect(email_address);
   if (existing?.account_id) {
     throw new Error(`an account with email '${email_address}' already exists`);

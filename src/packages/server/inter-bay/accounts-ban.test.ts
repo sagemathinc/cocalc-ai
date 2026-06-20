@@ -9,6 +9,7 @@ const getClusterAccountByIdDirectMock = jest.fn();
 const getClusterAccountByEmailDirectMock = jest.fn();
 const getClusterBanEquivalentEmailAccountsDirectMock = jest.fn();
 const reserveClusterAccountDirectoryEntryMock = jest.fn();
+const deleteStaleLocalClusterAccountDirectoryEntryByEmailMock = jest.fn();
 const updateClusterAccountBannedDirectMock = jest.fn();
 const banUserMock = jest.fn();
 const removeUserBanMock = jest.fn();
@@ -46,6 +47,8 @@ jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
   canonicalEmailForBanEquivalence: (email: string | undefined) =>
     email ? "codex@gmail.com" : undefined,
   deleteClusterAccountDirectoryEntry: jest.fn(),
+  deleteStaleLocalClusterAccountDirectoryEntryByEmail: (...args: any[]) =>
+    deleteStaleLocalClusterAccountDirectoryEntryByEmailMock(...args),
   getClusterAccountByEmailDirect: (...args: any[]) =>
     getClusterAccountByEmailDirectMock(...args),
   getClusterAccountByIdDirect: (...args: any[]) =>
@@ -87,6 +90,9 @@ describe("inter-bay account ban routing", () => {
     getClusterBanEquivalentEmailAccountsDirectMock
       .mockReset()
       .mockResolvedValue([]);
+    deleteStaleLocalClusterAccountDirectoryEntryByEmailMock
+      .mockReset()
+      .mockResolvedValue(undefined);
     reserveClusterAccountDirectoryEntryMock.mockReset().mockResolvedValue(null);
     updateClusterAccountBannedDirectMock.mockReset().mockResolvedValue({
       account_id: "00000000-0000-4000-8000-000000000001",
@@ -244,6 +250,9 @@ describe("inter-bay account ban routing", () => {
       } as any),
     ).rejects.toThrow(/equivalent address is banned/);
 
+    expect(
+      deleteStaleLocalClusterAccountDirectoryEntryByEmailMock,
+    ).toHaveBeenCalledWith("cod.ex+new@gmail.com");
     expect(reserveClusterAccountDirectoryEntryMock).not.toHaveBeenCalled();
   });
 
@@ -265,6 +274,9 @@ describe("inter-bay account ban routing", () => {
     expect(assertSignupEmailDomainAllowedMock).toHaveBeenCalledWith({
       email_address: "codex@other.edu",
     });
+    expect(
+      deleteStaleLocalClusterAccountDirectoryEntryByEmailMock,
+    ).toHaveBeenCalledWith("codex@other.edu");
     expect(
       getClusterBanEquivalentEmailAccountsDirectMock,
     ).not.toHaveBeenCalled();

@@ -78,6 +78,15 @@ const GOOGLE_ACCOUNT_BUTTON_CONTENT_STYLE = {
   gap: "8px",
 } as const;
 
+export function getAccountPassportNames(
+  passports?: Map<string, any>,
+): string[] {
+  const obj = passports?.toJS() ?? {};
+  return keys(obj)
+    .filter((key) => obj[key] != null)
+    .map((key) => key.slice(0, key.indexOf("-")));
+}
+
 interface Props {
   account_id?: string;
   display_name?: string;
@@ -198,8 +207,8 @@ export function AccountSettings(props: Readonly<Props>) {
     const obj = props.passports?.toJS() ?? {};
     let id: string | undefined = undefined;
     for (const k in obj) {
-      if (startswith(k, strategy)) {
-        id = k.split("-")[1];
+      if (obj[k] != null && startswith(k, `${strategy}-`)) {
+        id = k.slice(strategy.length + 1);
         break;
       }
     }
@@ -210,7 +219,11 @@ export function AccountSettings(props: Readonly<Props>) {
       await runFreshAuthAction(async () => {
         await webapp_client.account_client.unlink_passport(strategy, id);
       });
-      set_account_table({ passports: { [`${strategy}-${id}`]: null } });
+      actions().setState({
+        passports: (props.passports ?? Map<string, any>()).delete(
+          `${strategy}-${id}`,
+        ),
+      });
     } catch (err) {
       ugly_error(err);
     }
@@ -313,9 +326,7 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function get_account_passport_names(): string[] {
-    return keys(props.passports?.toJS() ?? {}).map((x) =>
-      x.slice(0, x.indexOf("-")),
-    );
+    return getAccountPassportNames(props.passports);
   }
 
   function render_linked_external_accounts(): Rendered {

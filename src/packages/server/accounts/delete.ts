@@ -8,6 +8,7 @@ import { deleteBlobsForAccountDeletion } from "@cocalc/server/membership/blob-li
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
 import { deleteRootfsImagesForAccountDeletion } from "@cocalc/server/rootfs/catalog";
 import { StripeClient } from "@cocalc/server/stripe/client";
+import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
 export default async function deleteAccount(account_id: string): Promise<void> {
   if (!isValidUUID(account_id)) {
@@ -44,6 +45,7 @@ export default async function deleteAccount(account_id: string): Promise<void> {
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.
   await markAccountDeleted(account_id);
+  await deleteClusterAccountDirectoryEntry(account_id);
 }
 
 /*
