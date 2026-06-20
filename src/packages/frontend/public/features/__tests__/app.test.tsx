@@ -1075,6 +1075,12 @@ describe("PublicFeaturesApp", () => {
       );
 
       expect(screen.getByText(marker)).not.toBeNull();
+      if (slug === "cli") {
+        expect(
+          screen.getByRole("link", { name: "CLI Docs" }).getAttribute("href"),
+        ).toBe("/docs/cli/use-cocalc-cli");
+        expect(screen.queryByRole("link", { name: "CLI guide" })).toBeNull();
+      }
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
       expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
       expect(container.textContent ?? "").not.toMatch(

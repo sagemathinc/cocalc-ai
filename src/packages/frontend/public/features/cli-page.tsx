@@ -175,7 +175,7 @@ export default function CliFeaturePage({
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
                 </Button>
-                <Button href={CLI_DOCS_PATH}>CLI guide</Button>
+                <Button href={CLI_DOCS_PATH}>CLI Docs</Button>
                 <Button href={appPath("features/automations")}>
                   Project automations
                 </Button>

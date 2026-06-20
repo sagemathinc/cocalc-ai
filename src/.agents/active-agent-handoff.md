@@ -260,6 +260,19 @@ Plus/Star/Launchpad`).
   `pnpm -C src/packages/static build:dev` passing, and browser QA on `/features` and
   `/features/cli` desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-Lxic29`).
   No PR.
+- **START 2026-06-20 14:41 PDT:** Blaec flagged that `/features/cli` labels the docs CTA as
+  `CLI guide`, which implies a guide page instead of documentation; eventual guides belong under
+  `/guides` if/when created. Existing unrelated dirt remains the snapshot script and untracked
+  `dedicated-compute-page.tsx`; leaving both untouched. Claiming only the CLI page, focused
+  feature tests, and this ledger to rename the button to `CLI Docs`, rebuild, QA, commit, and
+  push. No PR.
+- **END 2026-06-20 14:43 PDT:** Renamed the `/features/cli` docs CTA from `CLI guide` to
+  `CLI Docs` and added a focused route assertion that the button points at
+  `/docs/cli/use-cocalc-cli` while `CLI guide` stays absent. Validation: prettier passed, focused
+  feature Jest `88/88` passing, `lint:frontend` passing, `git diff --check` clean,
+  `pnpm -C src/packages/static build:dev` passing, and browser QA on `/features/cli` and
+  `/features` desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-hIvO31`).
+  No PR.
 
 ### Codex — platform-UI thread
 
