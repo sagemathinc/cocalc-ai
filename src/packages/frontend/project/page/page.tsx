@@ -112,6 +112,7 @@ const PAGE_STYLE: React.CSSProperties = {
 const FULL_PAGE_FALLBACK_TAB: FixedTab = "files";
 const HIDDEN_RAIL_TOP_LEFT_WIDTH_PX = 84;
 const HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX = 44;
+const FLYOUT_RESIZE_GUTTER_WIDTH_PX = 5;
 const { Paragraph, Text, Title } = Typography;
 
 function fullPageProjectTab(tab?: string): string | undefined {
@@ -1634,15 +1635,33 @@ function FlyoutDragbar({
       className="cc-project-flyout-dragbar"
       style={{
         transform: transform ? `translate3d(${dx}px, 0, 0)` : undefined,
-        flex: "0 0 5px",
-        width: 5,
+        flex: `0 0 ${FLYOUT_RESIZE_GUTTER_WIDTH_PX}px`,
+        width: FLYOUT_RESIZE_GUTTER_WIDTH_PX,
         height: "100%",
         cursor: "col-resize",
-        ...(active ? { zIndex: 1000, backgroundColor: COLORS.GRAY } : {}),
+        display: "flex",
+        justifyContent: "flex-start",
+        backgroundColor: COLORS.GRAY_LL,
+        ...(active ? { zIndex: 1000, backgroundColor: COLORS.GRAY_L } : {}),
       }}
       {...listeners}
       {...attributes}
       onDoubleClick={resetFlyoutWidth}
+    >
+      <FlyoutGutterLine active={!!active} />
+    </div>
+  );
+}
+
+function FlyoutGutterLine({ active = false }: { active?: boolean }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: 1,
+        height: "100%",
+        backgroundColor: active ? COLORS.GRAY_M : COLORS.GRAY_L,
+      }}
     />
   );
 }

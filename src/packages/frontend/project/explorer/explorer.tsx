@@ -383,6 +383,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     fingerprint: fileListingFingerprint,
   });
   const visibleListing = displayListing ?? listing;
+  const visibleRef = useRef(false);
   const [activeUploadCount, setActiveUploadCount] = useState(0);
   const uploadInProgress = activeUploadCount > 0;
   const refreshAfterUploadActivity = useCallback(() => {
@@ -407,6 +408,19 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       }),
     );
   }, [allowListingUpdatesFor, refresh, registerUserFilesystemChangeHandler]);
+
+  useEffect(() => {
+    if (!isVisible) {
+      visibleRef.current = false;
+      return;
+    }
+    if (visibleRef.current) return;
+    visibleRef.current = true;
+    refreshListingAfterUserAction({
+      allowUpdatesFor: allowListingUpdatesFor,
+      refresh,
+    });
+  }, [allowListingUpdatesFor, isVisible, refresh]);
 
   const refreshSnapshotsAfterUserAction = useCallback(() => {
     refreshListingAfterUserAction({

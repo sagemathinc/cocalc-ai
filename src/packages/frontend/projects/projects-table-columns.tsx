@@ -263,7 +263,11 @@ export function getProjectTableColumns(
                     }}
                   />
                 )}
-                <Text strong={strong} disabled={deleting || deletionScheduled}>
+                <Text
+                  strong={strong}
+                  disabled={deleting || deletionScheduled}
+                  style={{ fontSize: "12pt" }}
+                >
                   {record.title || "Untitled"}
                 </Text>
                 {projectRoleTag(record.currentRole)}

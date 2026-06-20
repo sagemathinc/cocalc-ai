@@ -171,10 +171,10 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip && python3 -m pip install --break-system-packages --ignore-installed jupyterlab",
-        hint: "On CoCalc's usual Ubuntu/root images, do not try to apt-install a top-level jupyterlab package. Install the distro Jupyter stack first, then layer the JupyterLab Python package with pip.",
+          "sudo apt-get update && sudo apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed jupyterlab",
+        hint: "On CoCalc's usual Ubuntu images, do not try to apt-install a top-level jupyterlab package. Install the distro Jupyter stack first, then layer the JupyterLab Python package with pip.",
         agent_prompt:
-          "Install JupyterLab in the current project so the managed JupyterLab app can start. On maintained Ubuntu launchpad images, do not spend time searching for a top-level jupyterlab apt package. Install the distro Jupyter server/notebook packages, then layer the JupyterLab Python package with pip using --break-system-packages --ignore-installed. Verify the resulting 'jupyter lab --version' and explain any caveats.",
+          "Install JupyterLab in the current project so the managed JupyterLab app can start. On maintained Ubuntu launchpad images, do not spend time searching for a top-level jupyterlab apt package. Use sudo to install the distro Jupyter server/notebook packages, then use sudo to layer the JupyterLab Python package with pip using --break-system-packages --ignore-installed. Verify the resulting 'jupyter lab --version' and explain any caveats.",
         recipes: [
           {
             id: "ubuntu-apt-plus-pip",
@@ -182,9 +182,9 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
               os_family: ["debian", "ubuntu"],
             },
             commands: [
-              "apt-get update",
-              "apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed jupyterlab",
+              "sudo apt-get update",
+              "sudo apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed jupyterlab",
             ],
             notes:
               "Ubuntu 24.04 does not ship a top-level jupyterlab apt package, so install the distro Jupyter server stack first, then layer the JupyterLab application with pip.",
@@ -322,7 +322,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       category: "python-web",
       priority: 78,
       homepage: "https://streamlit.io/",
-      description: "Interactive Python dashboards and data apps.",
+      description: "Build data apps quickly from plain Python scripts.",
       theme: withTemplateTheme(
         "dashboard",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -335,18 +335,18 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed streamlit",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed streamlit",
         hint: "Installs Streamlit systemwide in the project and uses a small bootstrap streamlit_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Streamlit in the current project so the managed Streamlit app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m streamlit version', and mention that the managed template bootstraps streamlit_app.py if missing.",
+          "Install Streamlit in the current project so the managed Streamlit app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m streamlit version', and mention that the managed template bootstraps streamlit_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-streamlit",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed streamlit",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed streamlit",
             ],
             notes:
               "The managed Streamlit template can create a default streamlit_app.py automatically if the project is empty.",
@@ -382,7 +382,7 @@ exec python3 -m streamlit run "$app" --server.address="\${HOST:-127.0.0.1}" --se
       category: "python-web",
       priority: 74,
       homepage: "https://fastapi.tiangolo.com/",
-      description: "Fast Python APIs served with Uvicorn.",
+      description: "Serve Python APIs with FastAPI and Uvicorn.",
       theme: withTemplateTheme(
         "rocket",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -397,18 +397,18 @@ exec python3 -m streamlit run "$app" --server.address="\${HOST:-127.0.0.1}" --se
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed fastapi uvicorn[standard]",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed fastapi uvicorn[standard]",
         hint: "Installs FastAPI plus Uvicorn and bootstraps main.py if the project does not already have one.",
         agent_prompt:
-          "Install FastAPI and uvicorn in the current project so the managed FastAPI app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify imports for both fastapi and uvicorn, and mention that the managed template bootstraps main.py if missing.",
+          "Install FastAPI and uvicorn in the current project so the managed FastAPI app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify imports for both fastapi and uvicorn, and mention that the managed template bootstraps main.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-fastapi",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed fastapi uvicorn[standard]",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed fastapi uvicorn[standard]",
             ],
             notes:
               "The managed FastAPI template expects main:app by default and will create main.py automatically if it is missing.",
@@ -460,18 +460,18 @@ exec python3 -m uvicorn "\${APP_MODULE:-main:app}" --host "\${HOST:-127.0.0.1}" 
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed flask",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed flask",
         hint: "Installs Flask and bootstraps flask_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Flask in the current project so the managed Flask app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps flask_app.py if missing.",
+          "Install Flask in the current project so the managed Flask app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps flask_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-flask",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed flask",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed flask",
             ],
           },
         ],
@@ -507,7 +507,7 @@ exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
       category: "python-web",
       priority: 70,
       homepage: "https://www.gradio.app/",
-      description: "Quick browser UIs for Python functions and ML demos.",
+      description: "Turn Python functions or ML models into browser demos.",
       theme: withTemplateTheme(
         "robot",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -520,18 +520,18 @@ exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed gradio",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed gradio",
         hint: "Installs Gradio and bootstraps gradio_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Gradio in the current project so the managed Gradio app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps gradio_app.py if missing.",
+          "Install Gradio in the current project so the managed Gradio app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps gradio_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-gradio",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed gradio",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed gradio",
             ],
           },
         ],
@@ -581,7 +581,8 @@ exec python3 "$app"`,
       category: "python-web",
       priority: 68,
       homepage: "https://dash.plotly.com/",
-      description: "Interactive analytic dashboards with Plotly Dash.",
+      description:
+        "Create Plotly dashboards with callbacks and custom layouts.",
       theme: withTemplateTheme(
         "line-chart",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -594,18 +595,18 @@ exec python3 "$app"`,
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed dash",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed dash",
         hint: "Installs Dash and bootstraps dash_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Plotly Dash in the current project so the managed Dash app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps dash_app.py if missing.",
+          "Install Plotly Dash in the current project so the managed Dash app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps dash_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-dash",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed dash",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed dash",
             ],
           },
         ],
@@ -676,18 +677,18 @@ exec python3 "$app"`,
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed mkdocs mkdocs-material",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed mkdocs mkdocs-material",
         hint: "Installs MkDocs plus the Material theme and bootstraps mkdocs.yml and docs/index.md if the project does not already have them.",
         agent_prompt:
-          "Install MkDocs in the current project so the managed MkDocs app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m mkdocs --version', and mention that the managed template bootstraps mkdocs.yml and docs/index.md if missing.",
+          "Install MkDocs in the current project so the managed MkDocs app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m mkdocs --version', and mention that the managed template bootstraps mkdocs.yml and docs/index.md if missing.",
         recipes: [
           {
             id: "ubuntu-pip-mkdocs",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed mkdocs mkdocs-material",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed mkdocs mkdocs-material",
             ],
           },
         ],
@@ -728,8 +729,7 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
       category: "python-notebooks",
       priority: 76,
       homepage: "https://marimo.io/",
-      description:
-        "Reactive Python notebooks and apps in a lightweight editor.",
+      description: "Create reactive Python notebooks that run like apps.",
       theme: withTemplateTheme(
         "edit",
         PYTHON_NOTEBOOK_TEMPLATE_THEME,
@@ -742,18 +742,18 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed marimo",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed marimo",
         hint: "Installs marimo and bootstraps marimo_app.py if the project does not already have one.",
         agent_prompt:
-          "Install marimo in the current project so the managed marimo app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m marimo --version', and mention that the managed template bootstraps marimo_app.py if missing.",
+          "Install marimo in the current project so the managed marimo app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m marimo --version', and mention that the managed template bootstraps marimo_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-marimo",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed marimo",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed marimo",
             ],
             notes:
               "The managed marimo template creates marimo_app.py automatically if the project is empty.",
@@ -805,10 +805,9 @@ exec python3 -m marimo edit --headless --no-token --base-url "\${base_url}" --ho
       category: "python-notebooks",
       priority: 67,
       homepage: "https://voila.readthedocs.io/",
-      description:
-        "Turn Jupyter notebooks into standalone dashboards and apps.",
+      description: "Publish existing notebooks as standalone web apps.",
       theme: withTemplateTheme(
-        "project",
+        "bug",
         PYTHON_NOTEBOOK_TEMPLATE_THEME,
         "Voila",
         "Notebook-powered apps",
@@ -819,18 +818,18 @@ exec python3 -m marimo edit --headless --no-token --base-url "\${base_url}" --ho
       install: {
         strategy: "curated",
         command:
-          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed voila ipywidgets",
+          "sudo apt-get update && sudo apt-get install -y python3-pip && sudo python3 -m pip install --break-system-packages --ignore-installed voila ipywidgets",
         hint: "Installs Voilà plus ipywidgets and bootstraps voila_app.ipynb if the project does not already have one.",
         agent_prompt:
-          "Install Voilà in the current project so the managed Voilà app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m voila --version', and mention that the managed template bootstraps voila_app.ipynb if missing.",
+          "Install Voilà in the current project so the managed Voilà app can start. Use sudo for apt-get and python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m voila --version', and mention that the managed template bootstraps voila_app.ipynb if missing.",
         recipes: [
           {
             id: "ubuntu-pip-voila",
             match: { os_family: ["debian", "ubuntu"] },
             commands: [
-              "apt-get update",
-              "apt-get install -y python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed voila ipywidgets",
+              "sudo apt-get update",
+              "sudo apt-get install -y python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed voila ipywidgets",
             ],
             notes:
               "The managed Voilà template creates voila_app.ipynb automatically if the project is empty.",
@@ -1004,7 +1003,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "publishing",
       priority: 76,
       description:
-        "Share notebooks, markdown, slides, and boards from a directory with the read-only CoCalc public viewer.",
+        "Share notebooks, Markdown, slides, and boards as read-only public pages.",
       theme: withTemplateTheme(
         "book",
         PUBLISHING_TEMPLATE_THEME,
@@ -1042,7 +1041,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "publishing",
       priority: 75,
       description:
-        "Share markdown and Jupyter notebooks from a directory with a generated public listing.",
+        "Turn Markdown and notebooks into a lightweight notes collection.",
       theme: withTemplateTheme(
         "ipynb",
         PUBLISHING_TEMPLATE_THEME,
@@ -1080,7 +1079,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "publishing",
       priority: 74,
       description:
-        "Share slides, whiteboards, and supporting markdown from a directory with the read-only CoCalc viewer.",
+        "Share slides and boards as a public presentation directory.",
       theme: withTemplateTheme(
         "layout",
         PUBLISHING_TEMPLATE_THEME,

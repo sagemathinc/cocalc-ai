@@ -146,14 +146,21 @@ describe("FilesSelectedControls", () => {
     expect(currentActions.open_file).toHaveBeenCalledTimes(2);
     expect(currentActions.open_file).toHaveBeenNthCalledWith(1, {
       explicit: true,
-      foreground: false,
+      foreground: true,
       path: "/work/a.ipynb",
     });
     expect(currentActions.open_file).toHaveBeenNthCalledWith(2, {
       explicit: true,
-      foreground: false,
+      foreground: true,
       path: "/work/b.py",
     });
+    expect(mockFileActionsDropdown.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        label: "Actions",
+        showEllipsis: false,
+        showDown: false,
+      }),
+    );
   });
 
   it("ignores stale backup metadata when the project changes", async () => {

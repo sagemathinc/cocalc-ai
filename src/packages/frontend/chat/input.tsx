@@ -20,6 +20,7 @@ import { Popover } from "antd";
 import { useIntl } from "react-intl";
 import { useDebouncedCallback } from "use-debounce";
 import { CSS } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components/icon";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { lite } from "@cocalc/frontend/lite";
@@ -401,12 +402,11 @@ export default function ChatInput({
                 justifyContent: "center",
                 color: "#777",
                 cursor: "pointer",
-                fontSize: "13px",
+                fontSize: "14px",
                 lineHeight: 1,
-                fontWeight: 600,
               }}
             >
-              ?
+              <Icon name="info-circle" />
             </span>
           </Popover>
         ) : null

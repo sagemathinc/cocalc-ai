@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Divider,
+  Dropdown,
   Form,
   Input,
   Modal,
@@ -11,6 +12,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import type { MenuProps } from "antd";
 import {
   React,
   useEffect,
@@ -28,6 +30,8 @@ import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
   getLiveCodexUsageStatus,
+  readCachedCodexUsageStatus,
+  writeCachedCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -151,6 +155,25 @@ const sectionStyle: React.CSSProperties = {
   borderRadius: 12,
   background: "white",
   padding: 14,
+};
+type PillSegment = "codex" | "expand" | "model" | "mode" | "reasoning";
+
+const pillSegmentBaseStyle: React.CSSProperties = {
+  alignItems: "center",
+  background: "transparent",
+  border: 0,
+  borderRadius: 999,
+  color: COLORS.GRAY_M,
+  cursor: "pointer",
+  display: "inline-flex",
+  font: "inherit",
+  lineHeight: 1.2,
+  minWidth: 0,
+  paddingBottom: 2,
+  paddingLeft: 5,
+  paddingRight: 5,
+  paddingTop: 2,
+  whiteSpace: "nowrap",
 };
 
 function readCodexControlsCollapsed(): boolean {
@@ -325,6 +348,10 @@ export function CodexConfigButton({
     CodexUsageStatusInfo | undefined
   >(undefined);
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
+  const [codexUsageStale, setCodexUsageStale] = useState(false);
+  const [hoveredPillSegment, setHoveredPillSegment] = useState<
+    PillSegment | undefined
+  >(undefined);
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -450,16 +477,32 @@ export function CodexConfigButton({
     if (!open || paymentSource?.source !== "subscription") {
       setCodexUsageStatus(undefined);
       setCodexUsageLoading(false);
+      setCodexUsageStale(false);
       return;
     }
     let cancelled = false;
+    const cached = readCachedCodexUsageStatus({ projectId });
+    if (cached) {
+      setCodexUsageStatus(cached.status);
+      setCodexUsageStale(true);
+    } else {
+      setCodexUsageStatus(undefined);
+      setCodexUsageStale(false);
+    }
     setCodexUsageLoading(true);
     void getLiveCodexUsageStatus({ projectId })
       .then((status: CodexUsageStatusInfo) => {
-        if (!cancelled) setCodexUsageStatus(status);
+        if (cancelled) return;
+        setCodexUsageStatus(status);
+        setCodexUsageStale(false);
+        writeCachedCodexUsageStatus({ projectId, status });
       })
       .catch(() => {
-        if (!cancelled) setCodexUsageStatus(undefined);
+        if (cancelled) return;
+        if (!cached) {
+          setCodexUsageStatus(undefined);
+          setCodexUsageStale(false);
+        }
       })
       .finally(() => {
         if (!cancelled) setCodexUsageLoading(false);
@@ -494,11 +537,12 @@ export function CodexConfigButton({
     });
   };
 
-  const saveConfig = () => {
-    const values = form.getFieldsValue();
+  const normalizeConfigForSave = (
+    values: Partial<CodexThreadConfig>,
+  ): Partial<CodexThreadConfig> => {
     const sessionMode: CodexSessionMode =
       normalizeSessionMode(values) ?? defaultSessionMode;
-    const finalValues = {
+    return {
       ...values,
       sessionId: normalizeCodexSessionId(values?.sessionId),
       sessionMode,
@@ -508,6 +552,10 @@ export function CodexConfigButton({
       }),
       allowWrite: sessionMode !== "read-only",
     };
+  };
+
+  const saveConfig = () => {
+    const finalValues = normalizeConfigForSave(form.getFieldsValue());
     actions?.setCodexConfig?.(threadKey, finalValues);
     setTimeout(() => {
       setOpen(false);
@@ -516,12 +564,85 @@ export function CodexConfigButton({
 
   const onSave = () => saveConfig();
 
-  const summaryParts = [
-    selectedModelValue,
-    modeLabel,
-    reasoningLabel,
-    serviceTierLabel,
-  ].filter((part) => typeof part === "string" && part.trim().length > 0);
+  const applyQuickConfigPatch = (patch: Partial<CodexThreadConfig>) => {
+    const nextValues: Partial<CodexThreadConfig> = {
+      ...(value ?? {}),
+      ...form.getFieldsValue(),
+      ...patch,
+    };
+    if (patch.model != null) {
+      nextValues.reasoning = getReasoningForModel({
+        models,
+        modelValue: patch.model,
+        desired: nextValues.reasoning,
+      });
+      if (!codexModelSupportsFastMode(patch.model)) {
+        nextValues.serviceTier = "standard";
+      }
+    }
+    const finalValues = normalizeConfigForSave(nextValues);
+    form.setFieldsValue(finalValues);
+    setValue(finalValues);
+    actions?.setCodexConfig?.(threadKey, finalValues);
+  };
+
+  const modelMenu: MenuProps = {
+    selectedKeys: selectedModelValue ? [selectedModelValue] : [],
+    items: models.map((model) => ({
+      key: model.value,
+      label: model.label,
+      title: model.description,
+    })),
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
+      applyQuickConfigPatch({ model: `${key}` });
+    },
+  };
+
+  const modeMenu: MenuProps = {
+    selectedKeys: currentSessionMode ? [currentSessionMode] : [],
+    items: modeOptions.map((option) => ({
+      key: option.value,
+      label: option.label,
+      danger: option.warning,
+      title: option.description,
+    })),
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
+      applyQuickConfigPatch({ sessionMode: key as CodexSessionMode });
+    },
+  };
+
+  const reasoningMenu: MenuProps = {
+    selectedKeys: selectedReasoningValue ? [selectedReasoningValue] : [],
+    items: reasoningOptions.map((option) => ({
+      key: option.value,
+      label: option.label,
+      title: option.description,
+    })),
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
+      applyQuickConfigPatch({ reasoning: key as CodexReasoningId });
+    },
+  };
+
+  const pillSegmentStyle = (segment: PillSegment): React.CSSProperties => ({
+    ...pillSegmentBaseStyle,
+    background:
+      hoveredPillSegment === segment ? COLORS.ANTD_BG_BLUE_L : "transparent",
+    color: hoveredPillSegment === segment ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
+    maxWidth: segment === "model" ? 170 : 120,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  });
+
+  const pillSegmentHandlers = (segment: PillSegment) => ({
+    onClick: (event: React.MouseEvent) => {
+      event.stopPropagation();
+    },
+    onMouseEnter: () => setHoveredPillSegment(segment),
+    onMouseLeave: () => setHoveredPillSegment(undefined),
+  });
 
   return (
     <>
@@ -534,36 +655,75 @@ export function CodexConfigButton({
         }}
       >
         {controlsCollapsed ? (
-          <Tooltip title="Show Codex controls">
-            <Button
-              size="small"
-              onClick={toggleControlsCollapsed}
-              icon={<Icon name="chevron-right" />}
+          <span
+            style={{
+              alignItems: "center",
+              background: "white",
+              border: `1px solid ${COLORS.GRAY_L}`,
+              borderRadius: 999,
+              boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+              display: "inline-flex",
+              fontWeight: 600,
+              gap: 2,
+              overflow: "hidden",
+              padding: "2px 6px",
+            }}
+          >
+            <Tooltip title="Show Codex controls">
+              <button
+                type="button"
+                aria-label="Expand Codex controls"
+                onClick={toggleControlsCollapsed}
+                onMouseEnter={() => setHoveredPillSegment("expand")}
+                onMouseLeave={() => setHoveredPillSegment(undefined)}
+                style={{
+                  ...pillSegmentStyle("expand"),
+                  color:
+                    hoveredPillSegment === "expand"
+                      ? COLORS.BS_BLUE_TEXT
+                      : COLORS.GRAY_D,
+                  fontWeight: 600,
+                  paddingLeft: 3,
+                  paddingRight: 3,
+                }}
+              >
+                <Icon name="chevron-right" />
+              </button>
+            </Tooltip>
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              onMouseEnter={() => setHoveredPillSegment("codex")}
+              onMouseLeave={() => setHoveredPillSegment(undefined)}
               style={{
-                borderRadius: 999,
-                boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+                ...pillSegmentStyle("codex"),
+                color:
+                  hoveredPillSegment === "codex"
+                    ? COLORS.BS_BLUE_TEXT
+                    : COLORS.GRAY_D,
                 fontWeight: 600,
               }}
             >
               Codex
-            </Button>
-          </Tooltip>
+            </button>
+          </span>
         ) : (
           <>
-            <Button
-              size="small"
+            <span
               onClick={() => setOpen(true)}
               style={{
                 alignItems: "center",
                 background: "white",
-                borderColor: COLORS.GRAY_L,
+                border: `1px solid ${COLORS.GRAY_L}`,
                 borderRadius: 999,
                 boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
                 display: "inline-flex",
                 fontWeight: 600,
                 gap: 6,
+                cursor: "pointer",
                 maxWidth: "min(520px, calc(100vw - 220px))",
                 overflow: "hidden",
+                padding: "2px 8px",
               }}
             >
               <span
@@ -576,28 +736,96 @@ export function CodexConfigButton({
                   flex: "0 0 auto",
                 }}
               />
-              <span>Codex</span>
-              <Text
-                type="secondary"
+              <button
+                type="button"
+                onClick={() => setOpen(true)}
                 style={{
-                  fontSize: 12,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  ...pillSegmentBaseStyle,
+                  color: COLORS.GRAY_D,
+                  fontWeight: 600,
+                  paddingLeft: 0,
                 }}
               >
-                {summaryParts.join(" · ")}
+                Codex
+              </button>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                ·
               </Text>
-            </Button>
-            <Tooltip title="Hide Codex controls">
-              <Button
-                size="small"
-                aria-label="Hide Codex controls"
-                icon={<Icon name="chevron-left" />}
-                onClick={toggleControlsCollapsed}
-                style={{ background: "white" }}
-              />
-            </Tooltip>
+              <Dropdown menu={modelMenu} trigger={["click"]}>
+                <button
+                  type="button"
+                  title="Change Codex model"
+                  style={pillSegmentStyle("model")}
+                  {...pillSegmentHandlers("model")}
+                >
+                  {selectedModelValue}
+                </button>
+              </Dropdown>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                ·
+              </Text>
+              <Dropdown menu={modeMenu} trigger={["click"]}>
+                <button
+                  type="button"
+                  title="Change Codex access mode"
+                  style={pillSegmentStyle("mode")}
+                  {...pillSegmentHandlers("mode")}
+                >
+                  {modeLabel}
+                </button>
+              </Dropdown>
+              {reasoningLabel ? (
+                <>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    ·
+                  </Text>
+                  <Dropdown menu={reasoningMenu} trigger={["click"]}>
+                    <button
+                      type="button"
+                      title="Change Codex thinking level"
+                      style={pillSegmentStyle("reasoning")}
+                      {...pillSegmentHandlers("reasoning")}
+                    >
+                      {reasoningLabel}
+                    </button>
+                  </Dropdown>
+                </>
+              ) : null}
+              {serviceTierLabel ? (
+                <>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    ·
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {serviceTierLabel}
+                  </Text>
+                </>
+              ) : null}
+              <Tooltip title="Hide Codex controls">
+                <button
+                  type="button"
+                  aria-label="Hide Codex controls"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleControlsCollapsed();
+                  }}
+                  onMouseEnter={() => setHoveredPillSegment("expand")}
+                  onMouseLeave={() => setHoveredPillSegment(undefined)}
+                  style={{
+                    ...pillSegmentStyle("expand"),
+                    color:
+                      hoveredPillSegment === "expand"
+                        ? COLORS.BS_BLUE_TEXT
+                        : COLORS.GRAY_D,
+                    fontWeight: 600,
+                    paddingLeft: 3,
+                    paddingRight: 3,
+                  }}
+                >
+                  <Icon name="chevron-left" />
+                </button>
+              </Tooltip>
+            </span>
             {paymentNeedsAttention ? (
               <Tooltip title={sourceTooltip}>
                 <Button
@@ -669,7 +897,12 @@ export function CodexConfigButton({
                     Checking ChatGPT Codex usage...
                   </Text>
                 ) : null}
-                <CodexUsageMeters status={codexUsageStatus} compact />
+                <CodexUsageMeters
+                  status={codexUsageStatus}
+                  compact
+                  stale={codexUsageStale}
+                  updating={codexUsageLoading && codexUsageStale}
+                />
               </div>
             ) : null}
             <Space

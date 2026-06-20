@@ -16,6 +16,7 @@ interface Props {
   increment_cursor: () => void;
   decrement_cursor: () => void;
   reset_cursor: () => void;
+  onSubmit?: (value: string, info: any) => void;
 }
 
 export const LogSearch: React.FC<Props> = ({
@@ -25,9 +26,14 @@ export const LogSearch: React.FC<Props> = ({
   reset_cursor,
   increment_cursor,
   decrement_cursor,
+  onSubmit,
 }) => {
   const open_selected = React.useCallback(
     (_value, info: any): void => {
+      if (onSubmit != null) {
+        onSubmit(_value, info);
+        return;
+      }
       const e = selected?.get("event");
       if (e == undefined || typeof e === "string") {
         return;
@@ -47,7 +53,7 @@ export const LogSearch: React.FC<Props> = ({
           actions.set_active_tab("settings");
       }
     },
-    [selected, actions],
+    [selected, actions, onSubmit],
   );
 
   const on_change = useDebounce(

@@ -199,6 +199,13 @@ describe("ActionBar", () => {
 
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText(/2 of 2 .* selected/)).toBeInTheDocument();
+    expect(mockFileActionsDropdown.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        label: "Actions",
+        showEllipsis: false,
+        showDown: false,
+      }),
+    );
   });
 
   it("shows pending listing refresh when automatic updates are disabled", () => {

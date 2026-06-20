@@ -26,6 +26,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import imageExtensions from "image-extensions";
 import videoExtensions from "video-extensions";
 import audioExtensions from "audio-extensions";
+import { OUCH_FORMATS } from "@cocalc/conat/files/fs";
 import { filename_extension } from "@cocalc/util/misc";
 
 export function filenameMode(path: string, fallback = "text"): string {
@@ -539,24 +540,29 @@ file_associations[""] = {
   name: "",
 };
 
-const archive_extensions = [
-  "bz2",
-  "gz",
-  "lz",
-  "lzip",
-  "lzma",
-  "taz",
-  "tb2",
-  "tbz",
-  "tbz2",
-  "tgz",
-  "tlz",
-  "txz",
-  "tz",
-  "xz",
-  "z",
-  "zip",
-] as const;
+const archive_extensions = Array.from(
+  new Set([
+    ...OUCH_FORMATS.flatMap((format) => format.split(".")),
+    "tar",
+    // Legacy single-file compression formats and aliases.
+    "bz2",
+    "gz",
+    "lz",
+    "lzip",
+    "lzma",
+    "taz",
+    "tb2",
+    "tbz",
+    "tbz2",
+    "tgz",
+    "tlz",
+    "txz",
+    "tz",
+    "xz",
+    "z",
+    "zip",
+  ]),
+);
 
 for (const ext of archive_extensions) {
   file_associations[ext] = archive_association;

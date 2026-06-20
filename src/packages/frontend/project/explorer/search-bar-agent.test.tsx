@@ -44,6 +44,7 @@ jest.mock("@cocalc/frontend/components", () => ({
       </button>
     </div>
   ),
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/project/context", () => ({

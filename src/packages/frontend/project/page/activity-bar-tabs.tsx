@@ -41,7 +41,12 @@ import { confirmRemoveMyselfFromProject } from "@cocalc/frontend/projects/remove
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { ACTIVITY_BAR_TOGGLE_LABELS } from "./activity-bar-consts";
-import { FileTab, FIXED_PROJECT_TABS, FixedTab } from "./file-tab";
+import {
+  FileTab,
+  FixedProjectTabIcon,
+  FIXED_PROJECT_TABS,
+  FixedTab,
+} from "./file-tab";
 import FileTabs from "./file-tabs";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
@@ -505,7 +510,7 @@ export function VerticalFixedTabs({
           <Dropdown
             menu={{ items }}
             trigger={["click"]}
-            placement="topLeft"
+            placement="bottomLeft"
             transitionName=""
             onOpenChange={(next) => setMoreOpen(next)}
           >
@@ -809,8 +814,9 @@ function createRailMenuItems(opts: {
   const items: NonNullable<MenuProps["items"]> = names.map((name) => ({
     key: `${sectionKeyPrefix}:${name}`,
     label: renderMenuLabel(
-      <Icon
-        name={tabIcons?.[name] ?? FIXED_PROJECT_TABS[name].icon}
+      <FixedProjectTabIcon
+        name={name}
+        iconName={tabIcons?.[name]}
         style={tabIconStyles?.[name]}
       />,
       renderFixedTabLabel(name, intl),
@@ -1022,7 +1028,7 @@ export function CustomizeRailButtonsModal({
                   checked={visible}
                   onChange={(e) => setTabVisible(name, e.target.checked)}
                 />
-                <Icon name={FIXED_PROJECT_TABS[name].icon} />
+                <FixedProjectTabIcon name={name} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {renderFixedTabLabel(name, intl)}
                 </div>

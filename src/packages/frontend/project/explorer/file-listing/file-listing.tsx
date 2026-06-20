@@ -1427,6 +1427,7 @@ export function FileListing({
             current_path={current_path}
             file_search={file_search}
             project_id={project_id}
+            canCreateFiles={!readOnly}
             openUploadFiles={openUploadFiles}
           />
         )}
@@ -1503,6 +1504,7 @@ export function FileListing({
             current_path={current_path}
             file_search={file_search}
             project_id={project_id}
+            canCreateFiles={!readOnly}
             openUploadFiles={openUploadFiles}
           />
         )

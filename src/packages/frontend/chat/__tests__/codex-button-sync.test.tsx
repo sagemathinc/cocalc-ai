@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { writeCachedCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
 import { CodexConfigButton, codexThreadConfigKey } from "../codex";
 
 const getCodexUsageStatus = jest.fn();
@@ -11,6 +12,7 @@ const stableForm = {
 };
 
 jest.mock("antd", () => {
+  const React = require("react");
   const Radio = ({ children }: any) => <label>{children}</label>;
   Radio.Group = ({ children }: any) => <div>{children}</div>;
   return {
@@ -20,6 +22,34 @@ jest.mock("antd", () => {
       <button onClick={onClick}>{children}</button>
     ),
     Divider: () => <div />,
+    Dropdown: ({ children, menu }: any) => {
+      const [open, setOpen] = React.useState(false);
+      const child = React.Children.only(children);
+      return (
+        <span>
+          {React.cloneElement(child, {
+            onClick: (event: any) => {
+              child.props.onClick?.(event);
+              setOpen((value: boolean) => !value);
+            },
+          })}
+          {open ? (
+            <div role="menu">
+              {menu?.items?.map((item: any) => (
+                <button
+                  key={item.key}
+                  onClick={(event) =>
+                    menu?.onClick?.({ domEvent: event, key: item.key })
+                  }
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </span>
+      );
+    },
     Input: () => <input />,
     Modal: ({ open, children }: any) => (open ? <div>{children}</div> : null),
     Radio,
@@ -59,10 +89,12 @@ jest.mock("@cocalc/frontend/lite", () => ({
 
 jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
   CodexCredentialsPanel: () => null,
-  CodexUsageMeters: ({ compact, status }: any) => (
+  CodexUsageMeters: ({ compact, status, stale, updating }: any) => (
     <div>
       {compact ? "compact usage meters" : "usage meters"}
       {status?.available ? " usage loaded" : ""}
+      {stale ? " stale" : ""}
+      {updating ? " updating" : ""}
     </div>
   ),
 }));
@@ -97,6 +129,7 @@ describe("CodexConfigButton", () => {
     stableForm.getFieldsValue.mockReturnValue({});
     getCodexUsageStatus.mockReset();
     getCodexUsageStatus.mockResolvedValue({ available: true });
+    window.localStorage.clear();
   });
 
   it("updates the closed top bar when thread config arrives after mount", async () => {
@@ -248,6 +281,120 @@ describe("CodexConfigButton", () => {
     );
   });
 
+  it("changes access mode from the compact pill without opening settings", async () => {
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace write")).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByTitle("Change Codex access mode"));
+    expect(screen.queryByText("Codex configuration for this chat")).toBeNull();
+    fireEvent.click(screen.getByText("Read only"));
+
+    expect(actions.setCodexConfig).toHaveBeenCalledWith(
+      "thread-1",
+      expect.objectContaining({
+        allowWrite: false,
+        model: "gpt-5.4",
+        reasoning: "medium",
+        sessionMode: "read-only",
+      }),
+    );
+    expect(screen.queryByText("Codex configuration for this chat")).toBeNull();
+  });
+
+  it("uses separate compact-mode targets for settings and expanding controls", async () => {
+    window.localStorage.setItem("cocalc.chat.codexControlsCollapsed", "1");
+
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+
+    const { unmount } = render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    expect(screen.getByText("Codex configuration for this chat")).toBeTruthy();
+    unmount();
+    window.localStorage.setItem("cocalc.chat.codexControlsCollapsed", "1");
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-2"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Expand Codex controls"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace write")).toBeTruthy();
+    });
+  });
+
+  it("collapses expanded controls from the in-pill chevron without opening settings", async () => {
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace write")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText("Hide Codex controls"));
+
+    expect(screen.queryByText("Codex configuration for this chat")).toBeNull();
+    expect(screen.getByLabelText("Expand Codex controls")).toBeTruthy();
+  });
+
   it("shows the ChatGPT Codex usage link in payment settings", async () => {
     render(
       <CodexConfigButton
@@ -313,5 +460,75 @@ describe("CodexConfigButton", () => {
     expect(text.indexOf("compact usage meters usage loaded")).toBeLessThan(
       text.indexOf("Payment & Credentials"),
     );
+  });
+
+  it("shows cached compact ChatGPT usage while refreshing live usage", async () => {
+    let resolveLiveUsage: (status: unknown) => void = () => {};
+    const liveUsagePromise = new Promise((resolve) => {
+      resolveLiveUsage = resolve;
+    });
+    getCodexUsageStatus.mockReturnValue(liveUsagePromise);
+    writeCachedCodexUsageStatus({
+      projectId: "project-1",
+      status: {
+        available: true,
+        checkedAt: "2026-06-20T00:00:00.000Z",
+        paymentSource: {
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        },
+        rateLimits: {
+          rateLimits: {
+            primary: {
+              usedPercent: 42,
+              windowDurationMins: 300,
+            },
+          },
+        },
+      } as any,
+    });
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("compact usage meters usage loaded stale updating"),
+      ).toBeTruthy();
+    });
+
+    resolveLiveUsage({ available: true, fresh: true });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("compact usage meters usage loaded"),
+      ).toBeTruthy();
+    });
   });
 });

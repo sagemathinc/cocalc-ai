@@ -205,7 +205,7 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     case "new":
       return <ProjectNew project_id={project_id} isVisible={is_visible} />;
     case "log":
-      return <ProjectLog project_id={project_id} />;
+      return <ProjectLog project_id={project_id} isVisible={is_visible} />;
     case "search":
       return <ProjectSearch />;
     case "servers":

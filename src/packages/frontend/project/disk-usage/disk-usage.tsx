@@ -18,7 +18,7 @@ import {
   Typography,
 } from "antd";
 import ShowError from "@cocalc/frontend/components/error";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import type {
   ProjectStorageHistory,
   ProjectStorageHistoryPoint,
@@ -34,7 +34,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Icon } from "@cocalc/frontend/components";
 import {
   redux,
   useAsyncEffect,
@@ -46,6 +45,11 @@ import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { indexedBackupState } from "@cocalc/frontend/projects/host-operational";
 
 const { Text } = Typography;
+const DISK_USAGE_TOOLTIP_PROPS = {
+  mouseEnterDelay: 0,
+  mouseLeaveDelay: 0,
+  placement: "bottom" as const,
+};
 type VisibleBucketKey = StorageVisibleSummary["key"];
 type DrillSelection = { bucketKey: VisibleBucketKey; path: string };
 type StorageAnnotation = {
@@ -1040,7 +1044,9 @@ export default function DiskUsage({
 
   return (
     <>
-      {summary}
+      <Tooltip title="Open disk usage" {...DISK_USAGE_TOOLTIP_PROPS}>
+        {summary}
+      </Tooltip>
       {expand && (
         <Modal
           closable={false}

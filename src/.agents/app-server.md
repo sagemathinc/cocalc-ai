@@ -19,6 +19,88 @@ Recent product note (April 1, 2026):
 13. Running-HTTP detection can now adopt a discovered listener as an explicit `unmanaged` app so users can open/expose/inspect a server they started themselves without asking CoCalc to own the process lifecycle.
 14. Public Viewer/static frontend entrypoints were slimmed down substantially in the static build pipeline, but this needs broader browser-level validation before we should consider that optimization fully baked.
 
+Recent preview note (June 19, 2026):
+
+1. Active branch/worktree for Apps preset-card polish:
+   - canonical branch: `frontend/app-server-preset-card-compact`
+   - canonical worktree: `/tmp/recover-wt`
+   - active preview mirror: `/home/user/cocalc-ai`
+2. The Apps preset cards were changed from large hero/gradient cards to compact
+   horizontal cards with a small icon chip, title, description, and tags.
+3. The collapsed "Create a managed application" card no longer repeats an
+   explanatory sentence above the quick presets.
+4. Raw `service` / `static` tags were replaced with user-facing
+   `Run app` / `Publish files` labels.
+5. Preset card accent colors were standardized to CoCalc blue; category
+   distinctions remain textual (`Python app`, `Notebook app`, `Publishing`, etc.).
+6. Overlapping template descriptions were tightened for the Python app and
+   public-viewer presets so cards are easier to distinguish at a glance.
+7. Important preview/runtime finding: the Apps page initially renders the
+   frontend fallback catalog, then `api.apps.listAppTemplates()` replaces it
+   with templates from the project API. If the frontend bundle is rebuilt but
+   the project bundle is stale, new descriptions can flash briefly and then
+   revert to old descriptions.
+8. Broad `dev:hub:build` failed during this preview because of unrelated
+   frontend TypeScript errors in `project/history/log.tsx`,
+   `project/page/flyouts/agents.tsx`, and `project/page/page.tsx`; use a
+   narrower project-bundle rebuild path when only the project API catalog needs
+   refreshing.
+9. For this preview, the working rebuild path was:
+   - `pnpm -C src lint:frontend`
+   - `pnpm -C src/packages/static build:dev`
+   - `pnpm --dir src/packages/util build`
+   - `pnpm --dir src/packages/project build:bundle`
+10. The local hub was initially redirecting `/software/project/latest-linux.json`
+    to `software.cocalc.ai`, so `cocalc host upgrade --hub-source` installed the
+    public latest project bundle instead of the freshly built local project
+    bundle. Restart the dev hub with
+    `COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE=local` before upgrading local
+    artifacts for preview-only project-bundle changes.
+11. After forcing the local software endpoint, upgrading the project artifact,
+    and restarting project `7ec86309-8da8-48d5-9a83-b0c5f72e9886`,
+    `cocalc project app templates` verified the live API returns the tightened
+    Streamlit/Public Viewer/Public Notes/Public Slides descriptions.
+12. Follow-up preset browser pass:
+    - `Expand` was renamed to `Advanced setup`.
+    - Opening advanced setup no longer automatically opens the preset dropdown.
+    - `More presets` now expands the collapsed creator into a searchable tile
+      browser for the full preset catalog.
+    - Selecting any preset tile applies the preset and opens advanced setup with
+      the dropdown closed.
+    - The top toolbar no longer has a duplicate `New app` button; creation is
+      anchored in the always-visible `Create a managed application` card.
+    - The default quick tiles are ranked for likely CoCalc-AI usage:
+      JupyterLab, code-server, Streamlit, Public Viewer, Public Notes, Gradio,
+      FastAPI, then marimo. Test/demo templates now stay behind `More presets`.
+    - Fixed an automatic installed-template detection loop: if no templates were
+      detected, the effect retried forever and made the detection button flash.
+      The automatic check now runs once per project; manual recheck still works.
+    - Preset category color coding was restored only on the category tag chips;
+      card borders and icon chips remain blue/neutral.
+    - The security button label was changed from `Security?` to `Security`.
+    - Category tag colors now use restrained Ant Design tag palettes instead of
+      raw preset theme colors, avoiding the red/orange flash on Voilà while the
+      project API catalog replaces the frontend fallback catalog.
+    - The category tag labels were shortened (`Python`, `Notebook`, `Publish`)
+      and the notebook tag was moved from purple to a quieter CoCalc-blue style.
+    - The remaining red Voilà marker was traced to an invalid `project` icon
+      name. Voilà now uses the valid `bug` icon, and preset cards guard against
+      invalid catalog icon names by falling back to the category icon.
+    - The Apps page header now carries the only page-level description:
+      "Launch services, publish project files, and manage app access." The
+      nested `Applications` intro was removed, and the lower table card was
+      renamed to `Managed apps` to avoid stacked duplicate headings.
+    - A clickable/hoverable `info-circle` icon was added next to the top-level
+      `Apps` heading for optional context. The popover now uses practical
+      "What Apps do" copy and a slightly wider body instead of implementation
+      language.
+    - `More presets` now preserves the first eight quick tiles in the exact
+      collapsed order, then appends the remaining presets in a ranked practical
+      order. Search still filters the full ordered preset list.
+    - The `Publish` and `Notebook` category tags were separated visually while
+      keeping the light palette: publishing uses a soft teal treatment and
+      notebook presets use a muted lavender treatment.
+
 ## 1. Purpose
 
 Define a single, extensible app/proxy system for CoCalc Lite and Launchpad that supports:
@@ -545,9 +627,9 @@ Suggested catalog shape:
             "id": "ubuntu-apt-plus-pip",
             "match": { "os_family": ["debian", "ubuntu"] },
             "commands": [
-              "apt-get update",
-              "apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
-              "python3 -m pip install --break-system-packages --ignore-installed jupyterlab"
+              "sudo apt-get update",
+              "sudo apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
+              "sudo python3 -m pip install --break-system-packages --ignore-installed jupyterlab"
             ],
             "notes": "Preferred on maintained Ubuntu launchpad images because Ubuntu 24.04 does not ship a top-level jupyterlab apt package."
           }
