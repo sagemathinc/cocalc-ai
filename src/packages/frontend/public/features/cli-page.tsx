@@ -19,24 +19,35 @@ const { Paragraph, Title } = Typography;
 
 const CLI_DOCS_PATH = appPath("docs/cli/use-cocalc-cli");
 const CLI_HERO_IMAGE = "/public/features/cocalc-cli-browser-automation.png";
+const PANEL_RADIUS = 8;
 
 function CliHeroImage() {
   return (
-    <img
-      src={CLI_HERO_IMAGE}
-      alt="CoCalc CLI browser automation example"
-      width={3024}
-      height={1722}
+    <div
       style={{
-        background: PUBLIC_COLORS.surfaceMuted,
+        background:
+          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PANEL_RADIUS,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
-        display: "block",
-        height: "auto",
-        width: "100%",
+        padding: 20,
       }}
-    />
+    >
+      <img
+        src={CLI_HERO_IMAGE}
+        alt="CoCalc CLI browser automation example"
+        width={3024}
+        height={1722}
+        style={{
+          background: PUBLIC_COLORS.surfaceMuted,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          display: "block",
+          height: "auto",
+          width: "100%",
+        }}
+      />
+    </div>
   );
 }
 
