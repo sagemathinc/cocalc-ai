@@ -74,14 +74,14 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
     slug: "slides",
     title: "Slides",
     summary:
-      "Build presentation decks from slide-sized whiteboard pages with markdown, math, diagrams, Jupyter cells, collaboration, and project context.",
+      "Build presentation decks as a focused part of CoCalc's whiteboards and slides workflow, with markdown, math, diagrams, Jupyter cells, collaboration, and project context.",
     image: "/public/features/whiteboard-sage.png",
   },
   {
     slug: "whiteboard",
-    title: "Whiteboard and Slides",
+    title: "Whiteboards and Slides",
     summary:
-      "Use a collaborative technical canvas for whiteboards, slide-sized pages, markdown, KaTeX math, Jupyter cells, diagrams, and project context.",
+      "Use collaborative whiteboards and slide-sized pages for markdown, KaTeX math, Jupyter cells, diagrams, presentations, and project context.",
     image: "/public/features/whiteboard-sage.png",
   },
   {

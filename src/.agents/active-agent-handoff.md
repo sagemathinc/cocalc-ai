@@ -142,6 +142,29 @@ Plus/Star/Launchpad`).
   `lint:frontend` passed, `packages/static build:dev` passed, browser QA passed on `/features`
   and `/features/more-languages` (34 assertions / 0 failures total), and a live Playwright text
   assertion confirmed the new `/features/more-languages` content. No PR created.
+- **START 2026-06-20 13:35 PDT:** Blaec approved the recommendation to resolve the
+  `/features/whiteboard` vs `/features/slides` confusion, but asked for deeper research, stored
+  per-action plans, and dynamic burn-down tracking before implementation. Verified branch clean at
+  `def217aacd`, preview still owned by synthesis hub pid `228054`
+  (`/home/user/cocalc-ai-synthesis/src`), and no active build. Claiming
+  `src/packages/frontend/public/features/{whiteboard-page.tsx,slides-page.tsx,app.tsx,catalog.ts,__tests__/app.test.tsx}`,
+  `src/packages/util/public-site-metadata.ts`, a new route plan under `src/.agents/`, and this
+  ledger. No PR.
+- **END 2026-06-20 13:49 PDT:** resolved the whiteboard/slides IA confusion by making
+  `/features/whiteboard` the canonical "Whiteboards and Slides" discovery route and keeping
+  `/features/slides` as a focused slide-deck detail route. Stored the researched burn-down plan at
+  `src/.agents/public-site-whiteboards-slides-plan-2026-06-20.md`, removed `slides` from the
+  feature-index discovery cards, added a slide-deck section to the canonical page, changed the
+  canonical hero "Slide decks" action to scroll within the overview, updated direct `/features/slides`
+  CTAs to point back to "Whiteboards and slides overview", and updated route metadata/tests/QA
+  canaries. Preview ownership briefly regressed to the platform hub again; stopped the platform hub
+  and restarted synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Validation:
+  focused feature Jest passed (86 tests; existing React/AntD jsdom warnings), `lint:frontend`
+  passed, `packages/static build:dev` passed, desktop browser QA passed on `/features`,
+  `/features/whiteboard`, and `/features/slides` (56 assertions / 0 failures), mobile browser QA
+  passed on `/features/whiteboard` and `/features/slides` (33 assertions / 0 failures), and
+  desktop and mobile screenshots were reviewed from `/tmp/cocalc-public-qa-r2IXlu` and
+  `/tmp/cocalc-public-qa-Z13Ovs`. No PR created.
 
 ### Codex — platform-UI thread
 

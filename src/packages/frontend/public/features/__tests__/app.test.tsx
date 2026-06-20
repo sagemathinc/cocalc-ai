@@ -265,6 +265,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("link", { name: /More/i }).getAttribute("href"),
     ).toBe("/features/more-languages");
+    const featureIndexLinks = Array.from(container.querySelectorAll("a")).map(
+      (link) => link.getAttribute("href"),
+    );
+    expect(featureIndexLinks).toContain("/features/whiteboard");
+    expect(featureIndexLinks).not.toContain("/features/slides");
     const languageLinks = Array.from(
       container.querySelectorAll(".cocalc-feature-link-list a"),
     ).map((link) => link.getAttribute("href"));
@@ -801,6 +806,9 @@ describe("PublicFeaturesApp", () => {
     // Route-specific section keyword (whiteboard runs Jupyter cells).
     expect(
       screen.getByText("Put Jupyter cells in a directed graph."),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Slide decks stay close to the project."),
     ).not.toBeNull();
   });
 

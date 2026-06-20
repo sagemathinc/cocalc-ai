@@ -409,7 +409,8 @@ const ROUTE_RULES = {
   "/features/whiteboard": {
     requireText: [
       "Whiteboards and slides for math, code, and collaboration.",
-      "Start with a board",
+      "Slide decks stay close to the project.",
+      "Start with a board or deck",
     ],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],

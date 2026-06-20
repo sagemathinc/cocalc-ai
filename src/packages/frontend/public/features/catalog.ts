@@ -97,19 +97,19 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "slides",
     title: "Slides",
-    tagline: "Present from slide-sized technical whiteboards.",
+    tagline: "A focused slide-deck detail for Whiteboards and Slides.",
     summary:
       "Build decks from slide-sized whiteboard pages with text, math, diagrams, Jupyter cells, and collaboration.",
     image: "/public/features/whiteboard-sage.png",
-    index: true,
+    index: false,
   },
   {
     slug: "whiteboard",
-    title: "Whiteboard and Slides",
+    title: "Whiteboards and Slides",
     tagline:
       "A collaborative technical canvas for math, code, sketches, and presentations.",
     summary:
-      "Use an editable canvas for technical explanations, slide-sized pages, diagrams, Jupyter cells, math, and collaboration.",
+      "Use editable boards and slide-sized pages for technical explanations, presentations, diagrams, Jupyter cells, math, and collaboration.",
     image: "/public/features/whiteboard-sage.png",
     index: true,
   },

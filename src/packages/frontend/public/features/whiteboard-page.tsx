@@ -14,6 +14,7 @@ import {
   featureSupportPath,
 } from "./page-components";
 import { IconBadge, StartCard } from "./feature-visuals";
+import { SlideDeckMock } from "./slides-page";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -220,6 +221,44 @@ function ExecutionGraph() {
   );
 }
 
+function SlideDeckSection() {
+  return (
+    <PublicSection ariaLabel="Slide deck workflows">
+      <Row gutter={[24, 24]} align="middle">
+        <Col xs={24} lg={12}>
+          <SlideDeckMock />
+        </Col>
+        <Col xs={24} lg={12}>
+          <Flex vertical gap={12}>
+            <Title level={3} style={{ margin: 0 }}>
+              Slide decks stay close to the project.
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              Use slide-sized pages when a board becomes a lecture, research
+              talk, demo, or walkthrough. The deck can still include markdown,
+              math, diagrams, drawings, and notebook-backed material alongside
+              the files and context behind the presentation.
+            </Paragraph>
+            <BulletList
+              items={[
+                "Move from exploratory board work into an ordered presentation without leaving the project.",
+                "Keep slides near the notebooks, data, files, and terminal work that support the talk.",
+                "Collaborate on presentation material with the same project history around it.",
+              ]}
+            />
+            <Flex wrap gap={12}>
+              <Button href={appPath("features/slides")}>
+                More about slide decks
+              </Button>
+              <Button href={appPath("features/teaching")}>Teaching</Button>
+            </Flex>
+          </Flex>
+        </Col>
+      </Row>
+    </PublicSection>
+  );
+}
+
 export default function WhiteboardFeaturePage({
   isAuthenticated,
 }: {
@@ -261,7 +300,7 @@ export default function WhiteboardFeaturePage({
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
                 </Button>
-                <Button href={appPath("features/slides")}>Slides</Button>
+                <Button href="#slide-decks">Slide decks</Button>
                 <Button href={appPath("features/jupyter-notebook")}>
                   Jupyter notebooks
                 </Button>
@@ -275,6 +314,10 @@ export default function WhiteboardFeaturePage({
       </PublicSection>
 
       <ExecutionGraph />
+
+      <div id="slide-decks">
+        <SlideDeckSection />
+      </div>
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
@@ -292,7 +335,6 @@ export default function WhiteboardFeaturePage({
                 ]}
               />
               <Flex wrap gap={12}>
-                <Button href={appPath("features/slides")}>Slide decks</Button>
                 <Button href={appPath("features/teaching")}>Teaching</Button>
                 <Button href={appPath("products")}>
                   Compare operating models
@@ -312,10 +354,10 @@ export default function WhiteboardFeaturePage({
           </Col>
           <Col xs={24} lg={11}>
             <StartCard
-              body="Open a project and create a board for technical diagrams, lecture notes, research sketches, or computational workflows."
+              body="Open a project and create a board or slide deck for technical diagrams, lecture notes, research sketches, presentations, or computational workflows."
               href={primaryHref}
               label={primaryLabel}
-              title="Start with a board"
+              title="Start with a board or deck"
             />
           </Col>
         </Row>

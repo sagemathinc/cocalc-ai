@@ -17,7 +17,7 @@ import { IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
-function SlideDeckMock() {
+export function SlideDeckMock() {
   const slides = [
     ["1", "Problem", "markdown + math"],
     ["2", "Computation", "Jupyter cell"],
@@ -196,7 +196,7 @@ export default function SlidesFeaturePage({
                   {primaryLabel}
                 </Button>
                 <Button href={appPath("features/whiteboard")}>
-                  Whiteboard
+                  Whiteboards and slides overview
                 </Button>
                 <Button href={appPath("features/jupyter-notebook")}>
                   Jupyter notebooks
@@ -229,7 +229,7 @@ export default function SlidesFeaturePage({
               />
               <Flex wrap gap={12}>
                 <Button href={appPath("features/whiteboard")}>
-                  Whiteboard
+                  Whiteboards and slides overview
                 </Button>
                 <Button href={appPath("features/teaching")}>Teaching</Button>
                 <Button href={appPath("products")}>
