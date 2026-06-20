@@ -1340,31 +1340,13 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
     expect(screen.getAllByText("CoCalc.ai").length).toBeGreaterThan(0);
-    expect(screen.getByText("Start with who operates CoCalc")).not.toBeNull();
     expect(
       screen.getByText(
         /Files, notebooks, terminals, chats, and agent context stay with the project/i,
       ),
     ).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Most groups can narrow the decision quickly by separating managed hosted use, self-operated use, and customer-operated private deployment.",
-      ),
-    ).not.toBeNull();
     expect(screen.getByText(/Use this as a decision guide/i)).not.toBeNull();
     expect(screen.queryByText(/buyer map/i)).toBeNull();
-    const routeFamilies = screen.getByRole("group", {
-      name: "CoCalc product route families",
-    });
-    for (const label of [
-      "Hosted by CoCalc",
-      "Run it yourself",
-      "Private deployment",
-      "CoCalc Plus or Star",
-      "CoCalc Launchpad or Rocket",
-    ]) {
-      expect(within(routeFamilies).getByText(label)).not.toBeNull();
-    }
     const pathChooser = screen.getByRole("group", {
       name: "CoCalc product path chooser",
     });

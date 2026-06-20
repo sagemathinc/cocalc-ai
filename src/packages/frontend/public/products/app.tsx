@@ -92,31 +92,6 @@ function titleForRoute(route: PublicProductsRoute): string {
 function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
   const privacyHref = builtinPolicyPath(config, "privacy");
   const trustHref = builtinPolicyPath(config, "trust");
-  const routeFamilies = [
-    {
-      detail: "CoCalc operates the hosted service for you.",
-      icon: "cloud",
-      label: "Hosted by CoCalc",
-      products: "CoCalc.ai",
-    },
-    {
-      detail: "You run CoCalc on a laptop, desktop, or one VM.",
-      icon: "laptop",
-      label: "Run it yourself",
-      products: "CoCalc Plus or Star",
-    },
-    {
-      detail: "Your organization operates the private environment.",
-      icon: "servers",
-      label: "Private deployment",
-      products: "CoCalc Launchpad or Rocket",
-    },
-  ] satisfies {
-    detail: string;
-    icon: IconName;
-    label: string;
-    products: string;
-  }[];
   const paths = [
     {
       bestFit:
@@ -198,66 +173,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
             Pricing and licensing
           </LinkButton>
         </Flex>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Start with who operates CoCalc
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Most groups can narrow the decision quickly by separating managed
-          hosted use, self-operated use, and customer-operated private
-          deployment.
-        </Paragraph>
-        <div
-          aria-label="CoCalc product route families"
-          role="group"
-          style={{
-            display: "grid",
-            gap: 12,
-            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-          }}
-        >
-          {routeFamilies.map((family) => (
-            <div
-              key={family.label}
-              style={{
-                background: PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
-                display: "grid",
-                gap: 10,
-                gridTemplateColumns: "42px minmax(0, 1fr)",
-                minHeight: 116,
-                padding: 16,
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  alignItems: "center",
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 8,
-                  color: PUBLIC_COLORS.brand,
-                  display: "flex",
-                  fontSize: 20,
-                  height: 42,
-                  justifyContent: "center",
-                  width: 42,
-                }}
-              >
-                <Icon name={family.icon} />
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <Text strong style={{ display: "block" }}>
-                  {family.label}
-                </Text>
-                <Text style={{ display: "block" }}>{family.products}</Text>
-                <Text type="secondary">{family.detail}</Text>
-              </span>
-            </div>
-          ))}
-        </div>
       </PublicSection>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
