@@ -28,6 +28,7 @@ OUT_NAME="$(basename "$OUT")"
 LOCKFILE="$OUT_PARENT/.${OUT_NAME}.build.lock"
 TMP_ROOT=""
 TMP_TARBALL=""
+LOCKDIR_HELD=0
 
 cleanup() {
   if [ -n "$TMP_TARBALL" ]; then
@@ -36,6 +37,9 @@ cleanup() {
   if [ -n "$TMP_ROOT" ]; then
     rm -rf "$TMP_ROOT" || true
   fi
+  if [ "$LOCKDIR_HELD" = "1" ]; then
+    rmdir "$LOCKFILE" 2>/dev/null || true
+  fi
 }
 
 echo "Building CoCalc Project bundle..."
@@ -43,14 +47,21 @@ echo "  root: $ROOT"
 echo "  out : $OUT"
 
 mkdir -p "$OUT_PARENT"
-if [ -d "$LOCKFILE" ]; then
-  rmdir "$LOCKFILE" 2>/dev/null || {
-    echo "ERROR: stale bundle lock directory exists at $LOCKFILE" >&2
-    exit 1
-  }
+if command -v flock >/dev/null 2>&1; then
+  if [ -d "$LOCKFILE" ]; then
+    rmdir "$LOCKFILE" 2>/dev/null || {
+      echo "ERROR: stale bundle lock directory exists at $LOCKFILE" >&2
+      exit 1
+    }
+  fi
+  exec 9>"$LOCKFILE"
+  flock 9
+elif mkdir "$LOCKFILE" 2>/dev/null; then
+  LOCKDIR_HELD=1
+else
+  echo "ERROR: bundle lock exists at $LOCKFILE" >&2
+  exit 1
 fi
-exec 9>"$LOCKFILE"
-flock 9
 trap cleanup EXIT
 TMP_ROOT="$(mktemp -d "$OUT_PARENT/.${OUT_NAME}.tmp.XXXXXX")"
 OUT="$TMP_ROOT/$OUT_NAME"
