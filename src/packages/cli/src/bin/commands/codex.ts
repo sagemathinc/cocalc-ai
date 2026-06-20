@@ -66,7 +66,128 @@ function serializeSession(
     finished_at: toIso(row.finished_at),
     title: row.title ?? null,
     error: row.error ?? null,
+    metadata: parseSessionMetadata(row),
   };
+}
+
+function isJsonOutput(ctx: any): boolean {
+  return !!ctx.globals?.json || ctx.globals?.output === "json";
+}
+
+function parseSessionMetadata(row: AiSessionRecord): Record<string, unknown> {
+  if (row.metadata && typeof row.metadata === "object") {
+    return row.metadata;
+  }
+  if (!row.metadata_json) return {};
+  try {
+    const parsed = JSON.parse(row.metadata_json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function compactValue(value: unknown): string | undefined {
+  const text = `${value ?? ""}`.trim();
+  return text || undefined;
+}
+
+function modelLabel(row: AiSessionRecord): string {
+  const metadata = parseSessionMetadata(row);
+  return (
+    [
+      compactValue(row.model),
+      compactValue(metadata.reasoning),
+      compactValue(metadata.service_tier),
+      compactValue(metadata.session_mode),
+    ]
+      .filter(Boolean)
+      .join(" / ") || "-"
+  );
+}
+
+function paymentSourceLabel(row: AiSessionRecord): string {
+  const metadata = parseSessionMetadata(row);
+  const authSource =
+    typeof metadata.auth_source === "string" ? metadata.auth_source : "";
+  if (
+    !row.payment_source_label &&
+    (!row.payment_source_kind || row.payment_source_kind === "unknown")
+  ) {
+    if (authSource === "subscription") return "ChatGPT Plan";
+    if (authSource === "account-api-key") return "OpenAI account API key";
+    if (authSource === "project-api-key") return "Project OpenAI API key";
+    if (authSource === "site-api-key") return "Site OpenAI API key";
+    if (authSource === "shared-home") return "Local Codex auth";
+  }
+  return (
+    row.payment_source_label ||
+    row.payment_source_kind ||
+    row.payment_source_id ||
+    "Unknown payment source"
+  );
+}
+
+function timeMs(value: AiSessionRecord["updated_at"]): number {
+  if (!value) return 0;
+  const date = value instanceof Date ? value : new Date(value);
+  const ms = date.getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function sessionGroupKey(row: AiSessionRecord): string {
+  return (
+    row.session_id ||
+    row.thread_id ||
+    `${row.project_id}:${row.path ?? ""}` ||
+    row.session_key
+  );
+}
+
+function titleForSession(row: AiSessionRecord): string {
+  return row.title || row.prompt_snippet || row.path || row.session_key;
+}
+
+function shortId(value: string | null | undefined): string {
+  const text = `${value ?? ""}`.trim();
+  return text.length > 12 ? text.slice(0, 12) : text;
+}
+
+function compactSessionRows(
+  rows: AiSessionRecord[],
+  toIso: CodexCommandDeps["toIso"],
+): Record<string, unknown>[] {
+  const groups = new Map<string, AiSessionRecord[]>();
+  for (const row of rows) {
+    const key = sessionGroupKey(row);
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  return Array.from(groups.entries())
+    .map(([key, turns]) => {
+      const sorted = turns
+        .slice()
+        .sort((a, b) => timeMs(b.updated_at) - timeMs(a.updated_at));
+      const latest = sorted[0]!;
+      return {
+        updatedMs: timeMs(latest.updated_at),
+        state: latest.state,
+        active: !latest.terminal,
+        turns: sorted.length,
+        updated: toIso(latest.updated_at),
+        model: modelLabel(latest),
+        payment: paymentSourceLabel(latest),
+        chat: titleForSession(latest),
+        project: shortId(latest.project_id),
+        session: shortId(key),
+      };
+    })
+    .sort((a, b) => b.updatedMs - a.updatedMs)
+    .map((row) => {
+      delete (row as Partial<typeof row>).updatedMs;
+      return row;
+    });
 }
 
 function serializeInterruptResponse(
@@ -154,6 +275,9 @@ export function registerCodexCommand(
             opts.paymentSourceOwner?.trim() || undefined,
           limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
         });
+        if (!isJsonOutput(ctx)) {
+          return compactSessionRows(rows, toIso);
+        }
         return rows.map((row: AiSessionRecord) => serializeSession(row, toIso));
       });
     },
@@ -228,6 +352,9 @@ export function registerCodexCommand(
             opts.paymentSourceOwner?.trim() || undefined,
           limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
         });
+        if (!isJsonOutput(ctx)) {
+          return compactSessionRows(rows, toIso);
+        }
         return rows.map((row: AiSessionRecord) => serializeSession(row, toIso));
       });
     },

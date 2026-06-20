@@ -11,8 +11,9 @@ import type {
 } from "@cocalc/conat/hub/api/ai-sessions";
 import { Button, Card, Space, Table, Tag, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { redux } from "@cocalc/frontend/app-framework";
 import {
   buildProjectFilesTarget,
   getProjectUrlPath,
@@ -35,6 +36,13 @@ const UNCERTAIN_STATES = new Set<AiSessionState>([
   "orphaned",
   "unknown",
 ]);
+
+type CodexSessionGroup = {
+  key: string;
+  latest: AiSessionRecord;
+  turns: AiSessionRecord[];
+  interruptTarget?: AiSessionRecord;
+};
 
 function isMoneyRiskSession(session: AiSessionRecord): boolean {
   return !session.terminal;
@@ -63,11 +71,59 @@ function stateColor(state: AiSessionState): string {
 }
 
 function paymentSource(session: AiSessionRecord): string {
+  const metadata = sessionMetadata(session);
+  const authSource =
+    typeof metadata.auth_source === "string" ? metadata.auth_source : "";
+  if (
+    !session.payment_source_label &&
+    (!session.payment_source_kind || session.payment_source_kind === "unknown")
+  ) {
+    if (authSource === "subscription") return "ChatGPT Plan";
+    if (authSource === "account-api-key") return "OpenAI account API key";
+    if (authSource === "project-api-key") return "Project OpenAI API key";
+    if (authSource === "site-api-key") return "Site OpenAI API key";
+    if (authSource === "shared-home") return "Local Codex auth";
+  }
   return (
     session.payment_source_label ||
     session.payment_source_kind ||
     session.payment_source_id ||
-    "unknown"
+    "Unknown payment source"
+  );
+}
+
+function sessionMetadata(session: AiSessionRecord): Record<string, unknown> {
+  if (session.metadata && typeof session.metadata === "object") {
+    return session.metadata;
+  }
+  const raw = session.metadata_json;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function compactValue(value: unknown): string | undefined {
+  const text = `${value ?? ""}`.trim();
+  return text || undefined;
+}
+
+function modelLabel(session: AiSessionRecord): string {
+  const metadata = sessionMetadata(session);
+  return (
+    [
+      compactValue(session.model),
+      compactValue(metadata.reasoning),
+      compactValue(metadata.service_tier),
+      compactValue(metadata.session_mode),
+    ]
+      .filter(Boolean)
+      .join(" / ") || "-"
   );
 }
 
@@ -86,8 +142,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 function encodeProjectRelativePath(path: string): string {
-  const relativePath = path.replace(/^\/+/, "");
+  const relativePath = projectRelativePath(path);
   return relativePath ? encode_path(relativePath) : "";
+}
+
+function projectRelativePath(path: string): string {
+  return `${path ?? ""}`
+    .trim()
+    .replace(/^\/home\/user\/?/, "")
+    .replace(/^\/+/, "");
 }
 
 function chatHref(session: AiSessionRecord): string | undefined {
@@ -102,6 +165,44 @@ function chatHref(session: AiSessionRecord): string | undefined {
 
 function sessionId(session: AiSessionRecord): string {
   return session.session_key || session.session_id || session.op_id || "";
+}
+
+function sessionGroupKey(session: AiSessionRecord): string {
+  return (
+    session.session_id ||
+    session.thread_id ||
+    `${session.project_id}:${session.path ?? ""}` ||
+    sessionId(session)
+  );
+}
+
+function timeMs(value: AiSessionRecord["updated_at"]): number {
+  if (!value) return 0;
+  const date = value instanceof Date ? value : new Date(value);
+  const ms = date.getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function groupSessions(sessions: AiSessionRecord[]): CodexSessionGroup[] {
+  const groups = new Map<string, AiSessionRecord[]>();
+  for (const session of sessions) {
+    const key = sessionGroupKey(session);
+    groups.set(key, [...(groups.get(key) ?? []), session]);
+  }
+  return Array.from(groups.entries())
+    .map(([key, turns]) => {
+      const sorted = turns
+        .slice()
+        .sort((a, b) => timeMs(b.updated_at) - timeMs(a.updated_at));
+      const latest = sorted[0]!;
+      return {
+        key,
+        latest,
+        turns: sorted,
+        interruptTarget: sorted.find(isMoneyRiskSession),
+      };
+    })
+    .sort((a, b) => timeMs(b.latest.updated_at) - timeMs(a.latest.updated_at));
 }
 
 function hasMoneyRiskSession(
@@ -222,68 +323,95 @@ export default function CodexSessionsPanel() {
   const uncertain = sessions.filter((session) =>
     UNCERTAIN_STATES.has(session.state),
   );
+  const groupedSessions = useMemo(() => groupSessions(sessions), [sessions]);
 
-  const columns: ColumnsType<AiSessionRecord> = [
+  const openChat = async (session: AiSessionRecord) => {
+    if (!session.project_id || !session.path) return;
+    const path = projectRelativePath(session.path);
+    try {
+      const actions = redux.getProjectActions(session.project_id);
+      await actions.ensureProjectIsOpen(true);
+      await actions.open_file({ path, foreground: true });
+    } catch (err) {
+      const href = chatHref(session);
+      if (href) {
+        window.location.href = href;
+        return;
+      }
+      setError(`${err}`);
+    }
+  };
+
+  const columns: ColumnsType<CodexSessionGroup> = [
     {
       title: "State",
-      dataIndex: "state",
       key: "state",
-      render: (state: AiSessionState) => (
-        <Tag color={stateColor(state)}>{state}</Tag>
+      render: (_, group) => (
+        <Tag color={stateColor(group.latest.state)}>{group.latest.state}</Tag>
       ),
       width: 140,
     },
     {
       title: "Session",
       key: "session",
-      render: (_, session) => {
-        const href = chatHref(session);
+      render: (_, group) => {
+        const session = group.latest;
         return (
           <Space direction="vertical" size={0}>
             <Text strong>{titleForSession(session)}</Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
               {session.path || session.project_id}
             </Text>
-            {href ? (
-              <a href={href} target="_blank" rel="noopener noreferrer">
+            {session.project_id && session.path ? (
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => void openChat(session)}
+              >
                 Open chat
-              </a>
+              </Button>
             ) : null}
           </Space>
         );
       },
     },
     {
+      title: "Turns",
+      key: "turns",
+      render: (_, group) => group.turns.length,
+      width: 80,
+    },
+    {
       title: "Model",
-      dataIndex: "model",
       key: "model",
-      render: (model: string | null) => model || "-",
-      width: 140,
+      render: (_, group) => modelLabel(group.latest),
+      width: 190,
     },
     {
       title: "Payment",
       key: "payment",
-      render: (_, session) => paymentSource(session),
+      render: (_, group) => paymentSource(group.latest),
       width: 180,
     },
     {
       title: "Updated",
-      dataIndex: "updated_at",
       key: "updated_at",
-      render: formatTime,
+      render: (_, group) => formatTime(group.latest.updated_at),
       width: 150,
     },
     {
       title: "Actions",
       key: "actions",
-      render: (_, session) => {
-        const key = sessionId(session);
+      render: (_, group) => {
+        const session = group.interruptTarget;
+        const key = session ? sessionId(session) : "";
         return (
           <Button
             danger
-            disabled={!isMoneyRiskSession(session) || !key}
+            disabled={!session || !key}
             loading={key ? interrupting.has(key) : false}
-            onClick={() => void interruptSession(session)}
+            onClick={() => session && void interruptSession(session)}
             size="small"
           >
             Interrupt
@@ -315,8 +443,9 @@ export default function CodexSessionsPanel() {
       style={{ marginTop: 24 }}
     >
       <Paragraph type="secondary">
-        This shows your current and recent Codex sessions. Sessions remain
-        visible here until the backend has written a terminal state, so a failed
+        This shows one row per Codex session, using the latest turn for the
+        state, model, and payment source. Sessions remain visible here until the
+        backend has written terminal states for their turns, so a failed
         interrupt or stale heartbeat stays visible as possible AI resource use.
       </Paragraph>
       {error ? (
@@ -341,10 +470,10 @@ export default function CodexSessionsPanel() {
       </Space>
       <Table
         columns={columns}
-        dataSource={sessions}
+        dataSource={groupedSessions}
         loading={loading}
         pagination={{ pageSize: 10 }}
-        rowKey="session_key"
+        rowKey="key"
         size="small"
       />
     </Card>

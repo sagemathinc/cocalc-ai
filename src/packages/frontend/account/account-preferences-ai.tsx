@@ -4,7 +4,8 @@
  */
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Alert, Typography } from "antd";
+import { Alert, Button, Modal, Typography } from "antd";
+import { useState } from "react";
 import { defineMessage } from "react-intl";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { labels } from "@cocalc/frontend/i18n";
@@ -36,6 +37,26 @@ export const ACCOUNT_PREFERENCES_AI_PAGE = {
 export function AccountPreferencesAI() {
   const other_settings = useTypedRedux("account", "other_settings");
   const stripe_customer = useTypedRedux("account", "stripe_customer");
+  const [codexSessionsOpen, setCodexSessionsOpen] = useState(false);
+  const codexSessionsButton = (
+    <>
+      <Button
+        style={{ marginTop: 12 }}
+        onClick={() => setCodexSessionsOpen(true)}
+      >
+        View Codex sessions
+      </Button>
+      <Modal
+        title="Codex sessions"
+        open={codexSessionsOpen}
+        onCancel={() => setCodexSessionsOpen(false)}
+        footer={null}
+        width={1200}
+      >
+        <CodexSessionsPanel />
+      </Modal>
+    </>
+  );
 
   if (lite) {
     return (
@@ -55,7 +76,7 @@ export function AccountPreferencesAI() {
         <CodexCredentialsPanel />
         <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
-        <CodexSessionsPanel />
+        {codexSessionsButton}
       </>
     );
   }
@@ -79,7 +100,7 @@ export function AccountPreferencesAI() {
       <AIUsageStatus variant="full" showHelp />
       <CodexCredentialsPanel />
       <CodexDefaultsPanel other_settings={other_settings} />
-      <CodexSessionsPanel />
+      {codexSessionsButton}
     </>
   );
 }

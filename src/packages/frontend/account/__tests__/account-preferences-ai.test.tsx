@@ -9,6 +9,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("antd", () => ({
   Alert: ({ children }: any) => <div>{children}</div>,
+  Button: ({ children, onClick }: any) => (
+    <button onClick={onClick}>{children}</button>
+  ),
+  Modal: ({ children, open }: any) => (open ? <div>{children}</div> : null),
   Typography: {
     Title: ({ children }: any) => <div>{children}</div>,
     Paragraph: ({ children }: any) => <div>{children}</div>,
