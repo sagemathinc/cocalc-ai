@@ -4,20 +4,41 @@ name: lean
 steps:
   - uses: cocalc/lean
     timeout: 1200
+  - uses: cocalc/code-server
+    timeout: 900
+    with:
+      extensions:
+        - leanprover.lean4
 
 verify:
   - command -v lean
+  - command -v code-server
   - lean --version
+  - code-server --extensions-dir=/opt/code-server/extensions --list-extensions | grep -Fx leanprover.lean4
 
 publish:
   label: Lean
   slug: lean
-  description: Lean 4 theorem prover installed with elan.
+  description: Lean 4 theorem prover installed with elan, plus code-server with the Lean 4 VS Code extension.
   family: lean
   version: stable
   channel: stable
   visibility: public
+  theme:
+    icon: check-square
+    color: "#ffffff"
+    accent_color: "#64748b"
+  content:
+    version: 1
+    title: Lean + VS Code
+    subtitle: Lean 4 with elan, lake, code-server, and the Lean 4 VS Code extension.
+    highlights:
+      - Lean 4
+      - VS Code extension
+      - theorem proving
   tags:
     - lean
     - theorem-proving
     - lake
+    - code-server
+    - vscode

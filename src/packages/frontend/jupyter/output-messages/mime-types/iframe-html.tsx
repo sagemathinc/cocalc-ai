@@ -14,6 +14,8 @@ import { useEffect, useRef } from "react";
 import register from "./register";
 import useIsMountedRef from "@cocalc/frontend/app-framework/is-mounted-hook";
 
+const DEFAULT_IFRAME_HEIGHT = 80;
+
 const IframeHtml = ({ value }) => {
   const iframeRef = useRef<any>(null);
   const isMountedRef = useIsMountedRef();
@@ -29,7 +31,7 @@ const IframeHtml = ({ value }) => {
         try {
           iframeRef.current.height = `${
             iframeRef.current.contentWindow.document.documentElement
-              ?.offsetHeight ?? 600
+              ?.offsetHeight ?? DEFAULT_IFRAME_HEIGHT
           }px`;
         } catch (_err) {
           // this fails on the share server for security reasons, which is good.
@@ -57,7 +59,7 @@ const IframeHtml = ({ value }) => {
       ref={iframeRef}
       width="100%"
       height={
-        "600px" /* Kind of arbitrary -- but overflow auto below, so scrollable */
+        `${DEFAULT_IFRAME_HEIGHT}px` /* Resized after load when same-origin. */
       }
       style={{ overflow: "auto", border: 0 }}
       src={src}

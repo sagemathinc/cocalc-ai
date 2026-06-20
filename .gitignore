@@ -176,6 +176,8 @@ src/.local/
 
 sea-prep.blob
 cocalc
+!src/packages/rootfs-recipes/cocalc/
+!src/packages/rootfs-recipes/cocalc/**
 cocalc-lite.tar.*
 *.egg-info
 .python-version

@@ -2,22 +2,43 @@ version: 1
 name: quarto
 
 steps:
+  - uses: cocalc/r
+    timeout: 1800
   - uses: cocalc/quarto
     timeout: 900
+  - uses: cocalc/rstudio
+    timeout: 1800
 
 verify:
+  - command -v R
   - command -v quarto
+  - command -v rserver
   - quarto --version
+  - Rscript --vanilla -e 'stopifnot(requireNamespace("IRkernel", quietly=TRUE))'
 
 publish:
   label: Quarto
   slug: quarto
-  description: Quarto CLI for scientific and technical publishing.
+  description: Quarto CLI for scientific and technical publishing, with R, IRkernel, and RStudio Server.
   family: quarto
   version: latest
   channel: stable
   visibility: public
+  theme:
+    icon: file-text
+    color: "#ffffff"
+    accent_color: "#39729e"
+  content:
+    version: 1
+    title: Quarto + RStudio
+    subtitle: Quarto CLI with R, IRkernel, RStudio Server, and a Shiny example.
+    highlights:
+      - Quarto
+      - RStudio
+      - IRkernel
   tags:
     - quarto
     - markdown
     - publishing
+    - r
+    - rstudio

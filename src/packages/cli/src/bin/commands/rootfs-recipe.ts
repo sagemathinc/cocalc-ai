@@ -487,6 +487,7 @@ export async function runRootfsRecipe({
           resultContribution(step, moduleDir),
         );
       }
+      mergeRecipeConfig(contributionConfig, emptyRecipeConfig(recipe));
     }
 
     const verifyResults: RootfsRecipeStepResult[] = [];

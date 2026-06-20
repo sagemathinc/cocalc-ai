@@ -1,0 +1,27 @@
+version: 1
+name: overleaf
+
+builder:
+  run_quota:
+    disk_quota: 80000
+
+steps:
+  - uses: cocalc/overleaf
+    timeout: 7200
+
+verify:
+  - command -v cocalc-overleaf
+  - test -x /opt/overleaf/native/start-overleaf.sh
+
+publish:
+  label: Overleaf
+  slug: overleaf
+  description: Native Overleaf Community Edition with a CoCalc app launcher.
+  family: overleaf
+  version: native
+  channel: stable
+  visibility: public
+  tags:
+    - overleaf
+    - latex
+    - editor
