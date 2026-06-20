@@ -3,18 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { ReactNode } from "react";
+
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import type { IconName } from "@cocalc/frontend/components/icon";
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
-  BulletList,
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import { ContextList, IconBadge, StartCard } from "./feature-visuals";
+import { IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -22,6 +23,22 @@ const CLI_DOCS_PATH = appPath("docs/cli/use-cocalc-cli");
 const CLI_HERO_IMAGE = "/public/features/cocalc-cli-browser-automation.png";
 const CLI_ACCENT = COLORS.GRAY_D;
 const PANEL_RADIUS = 8;
+
+function HeroPoint({ children }: { children: ReactNode }) {
+  return (
+    <Flex align="center" gap={8}>
+      <Icon
+        name="check"
+        style={{
+          color: CLI_ACCENT,
+          flex: "0 0 auto",
+          fontSize: 14,
+        }}
+      />
+      <Text strong>{children}</Text>
+    </Flex>
+  );
+}
 
 function CliHeroImage() {
   return (
@@ -65,52 +82,123 @@ function CliHeroImage() {
 }
 
 function CliFitSection() {
+  const signals = [
+    {
+      body: "Let a script or AI assistant ask what is open, what files exist, and what state matters.",
+      icon: "terminal" as IconName,
+      title: "Expose project context",
+    },
+    {
+      body: "Run a command, notebook action, or browser check without asking the external tool to drive the UI.",
+      icon: "jupyter" as IconName,
+      title: "Run concrete actions",
+    },
+    {
+      body: "Check open files, tabs, and workspace state when a live CoCalc session matters.",
+      icon: "bug" as IconName,
+      title: "Inspect browser state",
+    },
+    {
+      body: "Keep the exact operation visible so people can review what an external tool did.",
+      icon: "gears" as IconName,
+      title: "Hand work back for review",
+    },
+  ];
+
   return (
     <PublicSection>
-      <Row gutter={[24, 24]} align="middle">
-        <Col xs={24} lg={12}>
+      <Row gutter={[28, 28]} align="top">
+        <Col xs={24} lg={10}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              A stable control surface for people and agents.
+              A practical bridge for external tools.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Use the CLI when the work should be repeatable, inspectable, and
-              easy to run from a terminal or agent thread. It is a better fit
-              than browser clicks for recurring project operations.
+              External assistants and scripts should not have to drive the
+              CoCalc interface by hand. The CLI gives them a clear way to act on
+              project files, notebooks, browser state, and documentation.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              The HTTP API is still useful for narrow integrations. The CLI is
-              the practical starting point for project, browser, documentation,
-              notebook, and command workflows.
+              That matters for agent workflows: the work stays in CoCalc, while
+              the external system gets a typed surface it can run and report.
             </Paragraph>
           </Flex>
         </Col>
-        <Col xs={24} lg={12}>
-          <ContextList
-            accent={CLI_ACCENT}
-            items={[
-              {
-                icon: "folder" as IconName,
-                label: "Run project commands from a repeatable shell surface",
-              },
-              {
-                icon: "jupyter" as IconName,
-                label: "Execute notebooks through the live notebook API",
-              },
-              {
-                icon: "bug" as IconName,
-                label: "Inspect browser tabs and workspace state when needed",
-              },
-              {
-                icon: "gears" as IconName,
-                label: "Give agents typed actions they can run and report",
-              },
-            ]}
-            title="CLI context"
-          />
+        <Col xs={24} lg={14}>
+          <div
+            style={{
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              boxShadow: "0 14px 42px rgba(33, 49, 57, 0.07)",
+              padding: 22,
+            }}
+          >
+            <Row gutter={[16, 16]}>
+              {signals.map(({ body, icon, title }) => (
+                <Col key={title} xs={24} md={12}>
+                  <Flex align="flex-start" gap={12} style={{ height: "100%" }}>
+                    <IconBadge accent={CLI_ACCENT} icon={icon} size="sm" />
+                    <div>
+                      <Text strong>{title}</Text>
+                      <Paragraph
+                        style={{
+                          color: PUBLIC_COLORS.mutedText,
+                          margin: "4px 0 0",
+                        }}
+                      >
+                        {body}
+                      </Paragraph>
+                    </div>
+                  </Flex>
+                </Col>
+              ))}
+            </Row>
+          </div>
         </Col>
       </Row>
     </PublicSection>
+  );
+}
+
+function CliSurfaceChoice({
+  body,
+  href,
+  icon,
+  label,
+  title,
+}: {
+  body: ReactNode;
+  href: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}) {
+  return (
+    <Col xs={24} md={8}>
+      <Flex
+        vertical
+        gap={12}
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          height: "100%",
+          padding: 18,
+        }}
+      >
+        <Flex align="center" gap={10}>
+          <IconBadge accent={CLI_ACCENT} icon={icon} size="sm" />
+          <Text strong>{title}</Text>
+        </Flex>
+        <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+          {body}
+        </Paragraph>
+        <Button href={href} style={{ alignSelf: "flex-start" }}>
+          {label}
+        </Button>
+      </Flex>
+    </Col>
   );
 }
 
@@ -124,7 +212,6 @@ export default function CliFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalLabel = isAuthenticated ? "Open projects" : "Start with the CLI";
   const supportHref = featureSupportPath({
     body: "I want to discuss CoCalc CLI automation. Helpful context: what should run, whether it starts from a project, browser session, notebook, or external script, and who needs to review the result.",
     context: "cli",
@@ -139,13 +226,22 @@ export default function CliFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                CoCalc CLI for project automation.
+                Connect external tools and agents to CoCalc projects.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Use typed commands for projects, browser sessions, docs,
-                notebooks, and recurring operational checks instead of clicking
-                through the UI.
+                Give scripts and AI assistants a typed way to inspect project
+                context, run notebook or browser checks, and return work that
+                people can review.
               </Paragraph>
+              <Flex vertical gap={8}>
+                <HeroPoint>
+                  Connect external assistants without moving work out of CoCalc.
+                </HeroPoint>
+                <HeroPoint>
+                  Act on project files, notebooks, browser state, and docs.
+                </HeroPoint>
+                <HeroPoint>Keep actions explicit and reviewable.</HeroPoint>
+              </Flex>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
@@ -166,34 +262,47 @@ export default function CliFeaturePage({
       <CliFitSection />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>When the CLI belongs in CoCalc</Title>
-            <BulletList
-              items={[
-                "A project command, notebook run, or browser check needs to be repeatable.",
-                "A human or agent should be able to inspect the exact operation that ran.",
-                "The work starts from the same project files and context collaborators use.",
-                "A narrow HTTP integration is too low-level for the job you actually need.",
-              ]}
+        <Flex vertical gap={16}>
+          <Flex vertical gap={8} style={{ maxWidth: 780 }}>
+            <Title level={3} style={{ margin: 0 }}>
+              Choose the right way to connect.
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              The CLI fits best when an external tool needs to work with an
+              existing project. Automations and the API solve different parts of
+              the same system.
+            </Paragraph>
+          </Flex>
+          <Row gutter={[16, 16]}>
+            <CliSurfaceChoice
+              body="Best when a person, script, or external assistant needs an explicit project command."
+              href={CLI_DOCS_PATH}
+              icon="terminal"
+              label="Read docs"
+              title="CLI"
             />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/api")}>HTTP API</Button>
-              <Button href={appPath("features/terminal")}>
-                Terminal workflows
-              </Button>
-              <Button href={supportHref}>Ask about CLI automation</Button>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project, identify the recurring action, and use the CLI when that action should be scripted, reviewed, or handed to an agent."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start from a project"
+            <CliSurfaceChoice
+              body="Best when the same notebook, script, or report should run on a schedule or project event."
+              href={appPath("features/automations")}
+              icon="sync"
+              label="Project automations"
+              title="Automations"
             />
-          </Col>
-        </Row>
+            <CliSurfaceChoice
+              body="Best when another product or service needs a deeper programmatic integration with CoCalc."
+              href={appPath("features/api")}
+              icon="code"
+              label="HTTP API"
+              title="API"
+            />
+          </Row>
+          <Flex wrap gap={12}>
+            <Button href={appPath("features/terminal")}>
+              Terminal workflows
+            </Button>
+            <Button href={supportHref}>Ask about CLI automation</Button>
+          </Flex>
+        </Flex>
       </PublicSection>
     </Flex>
   );

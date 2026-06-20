@@ -337,6 +337,25 @@ Plus/Star/Launchpad`).
   desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-97rQpM`), and visual
   screenshot inspection confirmed the icon/header appears above the CLI screenshot on desktop and
   mobile. No PR.
+- **START 2026-06-20 15:30 PDT:** Blaec flagged that `/features/cli` now has the right asset
+  ingredients but the overall page shape/components are not visually appealing or production-grade
+  for decision-makers. Verified synthesis hub still owns preview pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`). Existing unrelated dirt remains the snapshot script and
+  untracked `dedicated-compute-page.tsx`; leaving both untouched. Read the public-site guardrails,
+  operating system, brief, framing system/register, and external design sources on scanability,
+  visual hierarchy, and card hierarchy. Claiming only the CLI page, focused tests, and this ledger
+  to simplify the route into a clearer hero, use-case section, and CLI/API/Automations decision
+  section, then rebuild, QA, commit, and push. The paused Jupyter screenshot trial remains
+  unexecuted. No PR.
+- **END 2026-06-20 15:39 PDT:** Reframed `/features/cli` as the external-tool/agent bridge into
+  CoCalc project context instead of a minor automation side utility. Replaced the old context-list
+  and final `StartCard` stack with hero proof points, a compact use-case panel, and a
+  CLI/Automations/API choice section; kept Blaec's screenshot and the approved neutral terminal
+  icon/frame. Validation: prettier passed, focused feature Jest passed (`88/88`; existing
+  React/AntD jsdom warnings), `lint:frontend` passed, `git diff --check` clean,
+  `packages/static build:dev` passed, and browser QA passed on `/features/cli` and `/features`
+  desktop/mobile (`68` assertions, `0` failures; screenshots in
+  `/tmp/cocalc-public-qa-DD9BA7`). No PR. The paused Jupyter screenshot trial remains unexecuted.
 
 ### Codex — platform-UI thread
 

@@ -143,7 +143,7 @@ describe("PublicFeaturesApp", () => {
       slug: "automations",
     },
     {
-      marker: "CoCalc CLI for project automation.",
+      marker: "Connect external tools and agents to CoCalc projects.",
       slug: "cli",
     },
     {
