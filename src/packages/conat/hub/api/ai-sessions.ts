@@ -50,6 +50,9 @@ export interface AiSessionsListOptions {
   account_id?: string;
   project_id?: string;
   host_id?: string;
+  payment_source_kind?: string;
+  payment_source_id?: string;
+  payment_source_owner_account_id?: string;
   activeOnly?: boolean;
   limit?: number;
 }

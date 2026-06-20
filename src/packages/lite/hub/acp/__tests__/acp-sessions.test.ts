@@ -17,6 +17,7 @@ import {
   listAcpSessions,
   publishActiveAcpSessions,
   setAcpSessionPublisher,
+  upsertAcpSession,
   upsertAcpSessionFromRequest,
 } from "../../sqlite/acp-sessions";
 
@@ -211,5 +212,38 @@ describe("acp session registry", () => {
     expect(publishActiveAcpSessions()).toBe(1);
     await Promise.resolve();
     expect(published).toEqual(["assistant-4:running:0"]);
+  });
+
+  it("does not let unknown payment source updates clobber known payment source state", () => {
+    const request = makeRequest({
+      userMessageId: "user-6",
+      assistantMessageId: "assistant-6",
+    });
+    upsertAcpSession({
+      session_id: request.session_id,
+      op_id: request.chat.message_id,
+      project_id: request.project_id,
+      account_id: request.account_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id,
+      message_id: request.chat.message_id,
+      state: "running",
+      payment_source_kind: "account_plan",
+      payment_source_id: request.account_id,
+      payment_source_label: "ChatGPT Plan",
+      payment_source_owner_account_id: request.account_id,
+    });
+
+    upsertAcpSessionFromRequest({
+      request,
+      state: "completed",
+      op_id: request.chat.message_id,
+      session_id: request.session_id,
+    });
+
+    const row = getAcpSessionByOpId(request.chat.message_id);
+    expect(row?.state).toBe("completed");
+    expect(row?.payment_source_kind).toBe("account_plan");
+    expect(row?.payment_source_label).toBe("ChatGPT Plan");
   });
 });

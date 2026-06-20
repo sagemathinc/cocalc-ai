@@ -55,6 +55,11 @@ function serializeSession(
     thread_id: row.thread_id ?? null,
     model: row.model ?? null,
     payment_source: row.payment_source_label ?? row.payment_source_kind ?? null,
+    payment_source_kind: row.payment_source_kind ?? null,
+    payment_source_id: row.payment_source_id ?? null,
+    payment_source_label: row.payment_source_label ?? null,
+    payment_source_owner_account_id:
+      row.payment_source_owner_account_id ?? null,
     updated_at: toIso(row.updated_at),
     last_heartbeat_at: toIso(row.last_heartbeat_at),
     started_at: toIso(row.started_at),
@@ -96,6 +101,15 @@ function addListOptions(command: Command): Command {
     .option("--recent", "show recent sessions, including terminal sessions")
     .option("--project <project_id>", "filter by project id")
     .option("--host <host_id>", "filter by project-host id")
+    .option(
+      "--payment-source <kind>",
+      "filter by payment source kind, e.g. account_plan|user_api_key|site_api_key",
+    )
+    .option("--payment-source-id <id>", "filter by opaque payment source id")
+    .option(
+      "--payment-source-owner <account_id>",
+      "filter by payment source owner account id",
+    )
     .option("--limit <n>", "max rows", "50");
 }
 
@@ -122,6 +136,9 @@ export function registerCodexCommand(
         recent?: boolean;
         project?: string;
         host?: string;
+        paymentSource?: string;
+        paymentSourceId?: string;
+        paymentSourceOwner?: string;
         limit?: string;
       },
       command: Command,
@@ -131,6 +148,10 @@ export function registerCodexCommand(
           activeOnly: opts.active ? true : undefined,
           project_id: opts.project?.trim() || undefined,
           host_id: opts.host?.trim() || undefined,
+          payment_source_kind: opts.paymentSource?.trim() || undefined,
+          payment_source_id: opts.paymentSourceId?.trim() || undefined,
+          payment_source_owner_account_id:
+            opts.paymentSourceOwner?.trim() || undefined,
           limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
         });
         return rows.map((row: AiSessionRecord) => serializeSession(row, toIso));
@@ -188,6 +209,9 @@ export function registerCodexCommand(
         project?: string;
         host?: string;
         account?: string;
+        paymentSource?: string;
+        paymentSourceId?: string;
+        paymentSourceOwner?: string;
         limit?: string;
       },
       command: Command,
@@ -198,6 +222,10 @@ export function registerCodexCommand(
           target_account_id: opts.account?.trim() || undefined,
           project_id: opts.project?.trim() || undefined,
           host_id: opts.host?.trim() || undefined,
+          payment_source_kind: opts.paymentSource?.trim() || undefined,
+          payment_source_id: opts.paymentSourceId?.trim() || undefined,
+          payment_source_owner_account_id:
+            opts.paymentSourceOwner?.trim() || undefined,
           limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
         });
         return rows.map((row: AiSessionRecord) => serializeSession(row, toIso));

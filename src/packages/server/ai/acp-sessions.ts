@@ -288,7 +288,12 @@ export async function upsertProjectHostAiSession({
         parent_message_id = COALESCE(EXCLUDED.parent_message_id, ${TABLE}.parent_message_id),
         state = EXCLUDED.state,
         terminal = EXCLUDED.terminal,
-        payment_source_kind = COALESCE(EXCLUDED.payment_source_kind, ${TABLE}.payment_source_kind),
+        payment_source_kind = CASE
+          WHEN EXCLUDED.payment_source_kind IS NOT NULL
+               AND EXCLUDED.payment_source_kind != 'unknown'
+          THEN EXCLUDED.payment_source_kind
+          ELSE ${TABLE}.payment_source_kind
+        END,
         payment_source_id = COALESCE(EXCLUDED.payment_source_id, ${TABLE}.payment_source_id),
         payment_source_label = COALESCE(EXCLUDED.payment_source_label, ${TABLE}.payment_source_label),
         payment_source_owner_account_id = COALESCE(EXCLUDED.payment_source_owner_account_id, ${TABLE}.payment_source_owner_account_id),
@@ -359,7 +364,9 @@ export async function listAiSessionsForAccount({
     1,
     Math.min(MAX_LIMIT, Math.floor(Number(opts?.limit ?? DEFAULT_LIMIT))),
   );
-  const conditions = ["account_id=$1::UUID"];
+  const conditions = [
+    "(account_id=$1::UUID OR payment_source_owner_account_id=$1::UUID)",
+  ];
   const params: unknown[] = [caller];
   if (opts?.activeOnly) {
     conditions.push("terminal IS NOT TRUE");
@@ -375,6 +382,23 @@ export async function listAiSessionsForAccount({
   if (opts?.host_id) {
     params.push(cleanRequiredUuid(opts.host_id, "host_id"));
     conditions.push(`host_id=$${params.length}::UUID`);
+  }
+  if (opts?.payment_source_kind) {
+    params.push(cleanText(opts.payment_source_kind, 80));
+    conditions.push(`payment_source_kind=$${params.length}`);
+  }
+  if (opts?.payment_source_id) {
+    params.push(cleanText(opts.payment_source_id, 256));
+    conditions.push(`payment_source_id=$${params.length}`);
+  }
+  if (opts?.payment_source_owner_account_id) {
+    params.push(
+      cleanRequiredUuid(
+        opts.payment_source_owner_account_id,
+        "payment_source_owner_account_id",
+      ),
+    );
+    conditions.push(`payment_source_owner_account_id=$${params.length}::UUID`);
   }
   params.push(limit);
   await ensureAiSessionsSchema();
@@ -394,11 +418,20 @@ export async function listAiSessionsForAccount({
     `,
     params,
   );
-  return rows.map((row) => ({
-    ...row,
-    terminal: !!row.terminal,
-    metadata_json: JSON.stringify(row.metadata_json ?? {}),
-  })) as AiSessionRecord[];
+  return rows.map((row) => {
+    const ownSession = row.account_id === caller;
+    return {
+      ...row,
+      terminal: !!row.terminal,
+      path: ownSession ? row.path : null,
+      thread_id: ownSession ? row.thread_id : null,
+      message_id: ownSession ? row.message_id : null,
+      parent_message_id: ownSession ? row.parent_message_id : null,
+      title: ownSession ? row.title : null,
+      prompt_snippet: ownSession ? row.prompt_snippet : null,
+      metadata_json: JSON.stringify(row.metadata_json ?? {}),
+    };
+  }) as AiSessionRecord[];
 }
 
 export async function listAiSessionsForAdmin({
@@ -426,6 +459,23 @@ export async function listAiSessionsForAdmin({
   if (opts?.host_id) {
     params.push(cleanRequiredUuid(opts.host_id, "host_id"));
     conditions.push(`host_id=$${params.length}::UUID`);
+  }
+  if (opts?.payment_source_kind) {
+    params.push(cleanText(opts.payment_source_kind, 80));
+    conditions.push(`payment_source_kind=$${params.length}`);
+  }
+  if (opts?.payment_source_id) {
+    params.push(cleanText(opts.payment_source_id, 256));
+    conditions.push(`payment_source_id=$${params.length}`);
+  }
+  if (opts?.payment_source_owner_account_id) {
+    params.push(
+      cleanRequiredUuid(
+        opts.payment_source_owner_account_id,
+        "payment_source_owner_account_id",
+      ),
+    );
+    conditions.push(`payment_source_owner_account_id=$${params.length}::UUID`);
   }
   params.push(limit);
   await ensureAiSessionsSchema();

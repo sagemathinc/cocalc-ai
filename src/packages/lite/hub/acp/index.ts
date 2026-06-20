@@ -2371,7 +2371,46 @@ export class ChatStreamWriter {
     this.publishLiveLog(payload);
     this.publishLivePreview(payload);
     if (payload.type === "event") {
-      this.handleAgentEvent(payload.event);
+      const { event } = payload;
+      if (event.type === "config") {
+        const paymentSource = paymentSourceFromAuthSource({
+          authSource: event.authSource,
+          accountId: this.approverAccountId,
+          projectId: this.metadata.project_id,
+        });
+        if (paymentSource) {
+          upsertAcpSession({
+            session_id: this.threadId ?? this.sessionKey,
+            op_id: this.metadata.message_id,
+            project_id: this.metadata.project_id,
+            account_id: this.approverAccountId,
+            approver_account_id: this.approverAccountId,
+            path: this.metadata.path,
+            thread_id: this.metadata.thread_id,
+            message_id: this.metadata.message_id,
+            parent_message_id: this.metadata.parent_message_id,
+            state: "running",
+            payment_source_kind: paymentSource.kind,
+            payment_source_id: paymentSource.id,
+            payment_source_label: paymentSource.label,
+            payment_source_owner_account_id: paymentSource.owner_account_id,
+            model: event.model,
+            agent_kind: "codex",
+            run_kind: this.metadata.automation_id
+              ? "automation"
+              : "interactive",
+            title: this.metadata.automation_title,
+            prompt_snippet: this.metadata.user_message_content,
+            last_heartbeat_at: Date.now(),
+            metadata: {
+              automation_id: this.metadata.automation_id,
+              send_mode: this.metadata.send_mode,
+              auth_source: event.authSource,
+            },
+          });
+        }
+      }
+      this.handleAgentEvent(event);
       if (this.finished) {
         // Late text events can arrive after the authoritative summary, e.g.
         // from a steer acknowledgement racing with turn completion. Keep the
@@ -5515,6 +5554,56 @@ async function ensureAgent(
 type AcpExecutionResult = {
   terminalState: "completed" | "error" | "interrupted";
 };
+
+function paymentSourceFromAuthSource({
+  authSource,
+  accountId,
+  projectId,
+}: {
+  authSource?: string | null;
+  accountId?: string | null;
+  projectId?: string | null;
+}): {
+  kind: string;
+  id?: string | null;
+  label: string;
+  owner_account_id?: string | null;
+} | null {
+  switch (`${authSource ?? ""}`.trim()) {
+    case "subscription":
+      return {
+        kind: "account_plan",
+        id: accountId ?? null,
+        label: "ChatGPT Plan",
+        owner_account_id: accountId ?? null,
+      };
+    case "account-api-key":
+      return {
+        kind: "user_api_key",
+        id: accountId ?? null,
+        label: "OpenAI account API key",
+        owner_account_id: accountId ?? null,
+      };
+    case "project-api-key":
+      return {
+        kind: "project_secret",
+        id: projectId ?? null,
+        label: "Project OpenAI API key",
+      };
+    case "site-api-key":
+      return {
+        kind: "site_api_key",
+        label: "Site OpenAI API key",
+      };
+    case "shared-home":
+      return {
+        kind: "shared_home",
+        label: "Shared Codex home",
+      };
+    default:
+      return null;
+  }
+}
 
 async function executeAcpRequest({
   stream,

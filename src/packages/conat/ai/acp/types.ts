@@ -247,6 +247,7 @@ export type AcpStreamEvent =
       sessionMode?: string;
       sandbox?: string;
       workingDirectory?: string;
+      authSource?: string;
     }
   | {
       type: "thinking";

@@ -31,6 +31,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_ACCOUNT_ID = "55555555-5555-4555-8555-555555555555";
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 const HOST_ID = "33333333-3333-4333-8333-333333333333";
 
@@ -38,10 +39,20 @@ async function seedSession({
   session_key = "session-key",
   state = "running",
   terminal = false,
+  account_id = ACCOUNT_ID,
+  payment_source_kind = "account",
+  payment_source_id = ACCOUNT_ID,
+  payment_source_label = "User account",
+  payment_source_owner_account_id,
 }: {
   session_key?: string;
   state?: "queued" | "running" | "completed" | "failed" | "interrupted";
   terminal?: boolean;
+  account_id?: string;
+  payment_source_kind?: string;
+  payment_source_id?: string;
+  payment_source_label?: string;
+  payment_source_owner_account_id?: string | null;
 } = {}) {
   await upsertProjectHostAiSession({
     authenticated_project_id: PROJECT_ID,
@@ -50,7 +61,7 @@ async function seedSession({
       session_id: `session-id-${session_key}`,
       op_id: `op-id-${session_key}`,
       project_id: PROJECT_ID,
-      account_id: ACCOUNT_ID,
+      account_id,
       host_id: HOST_ID,
       path: "work/test.chat",
       thread_id: `thread-${session_key}`,
@@ -58,9 +69,10 @@ async function seedSession({
       parent_message_id: `parent-${session_key}`,
       state,
       terminal,
-      payment_source_kind: "account",
-      payment_source_id: ACCOUNT_ID,
-      payment_source_label: "User account",
+      payment_source_kind,
+      payment_source_id,
+      payment_source_label,
+      payment_source_owner_account_id,
       model: "codex-test",
       agent_kind: "codex",
       run_kind: "chat",
@@ -276,6 +288,59 @@ describe("AI ACP session registry interrupts", () => {
       expect.objectContaining({
         session_key: "session-key",
         account_id: ACCOUNT_ID,
+      }),
+    ]);
+  });
+
+  it("shows payment-source-owned sessions to the owner with chat metadata redacted", async () => {
+    await seedSession({
+      account_id: OTHER_ACCOUNT_ID,
+      payment_source_kind: "user_api_key",
+      payment_source_id: ACCOUNT_ID,
+      payment_source_label: "OpenAI account API key",
+      payment_source_owner_account_id: ACCOUNT_ID,
+    });
+
+    await expect(
+      listAiSessionsForAccount({
+        account_id: ACCOUNT_ID,
+        opts: { activeOnly: true, payment_source_kind: "user_api_key" },
+      }),
+    ).resolves.toMatchObject([
+      expect.objectContaining({
+        session_key: "session-key",
+        account_id: OTHER_ACCOUNT_ID,
+        payment_source_owner_account_id: ACCOUNT_ID,
+        path: null,
+        title: null,
+        prompt_snippet: null,
+      }),
+    ]);
+  });
+
+  it("lets admins filter sessions by payment source", async () => {
+    await seedSession({
+      session_key: "site-key-session",
+      payment_source_kind: "site_api_key",
+      payment_source_id: "site",
+      payment_source_label: "Site OpenAI API key",
+    });
+    await seedSession({
+      session_key: "account-plan-session",
+      payment_source_kind: "account_plan",
+      payment_source_id: ACCOUNT_ID,
+      payment_source_label: "ChatGPT Plan",
+      payment_source_owner_account_id: ACCOUNT_ID,
+    });
+
+    await expect(
+      listAiSessionsForAdmin({
+        opts: { payment_source_kind: "site_api_key" },
+      }),
+    ).resolves.toMatchObject([
+      expect.objectContaining({
+        session_key: "site-key-session",
+        payment_source_kind: "site_api_key",
       }),
     ]);
   });

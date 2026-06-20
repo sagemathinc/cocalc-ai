@@ -317,7 +317,12 @@ export function upsertAcpSession(opts: UpsertAcpSessionOptions): AcpSessionRow {
         parent_message_id = COALESCE(excluded.parent_message_id, ${TABLE}.parent_message_id),
         state = excluded.state,
         terminal = excluded.terminal,
-        payment_source_kind = COALESCE(excluded.payment_source_kind, ${TABLE}.payment_source_kind),
+        payment_source_kind = CASE
+          WHEN excluded.payment_source_kind IS NOT NULL
+               AND excluded.payment_source_kind != 'unknown'
+          THEN excluded.payment_source_kind
+          ELSE ${TABLE}.payment_source_kind
+        END,
         payment_source_id = COALESCE(excluded.payment_source_id, ${TABLE}.payment_source_id),
         payment_source_label = COALESCE(excluded.payment_source_label, ${TABLE}.payment_source_label),
         payment_source_owner_account_id = COALESCE(excluded.payment_source_owner_account_id, ${TABLE}.payment_source_owner_account_id),
