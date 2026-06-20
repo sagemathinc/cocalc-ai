@@ -37,7 +37,9 @@ jest.mock("antd", () => {
               {menu?.items?.map((item: any) => (
                 <button
                   key={item.key}
-                  onClick={() => menu?.onClick?.({ key: item.key })}
+                  onClick={(event) =>
+                    menu?.onClick?.({ domEvent: event, key: item.key })
+                  }
                 >
                   {item.label}
                 </button>
@@ -124,6 +126,7 @@ describe("CodexConfigButton", () => {
     stableForm.getFieldsValue.mockReturnValue({});
     getCodexUsageStatus.mockReset();
     getCodexUsageStatus.mockResolvedValue({ available: true });
+    window.localStorage.removeItem("cocalc.chat.codexControlsCollapsed");
   });
 
   it("updates the closed top bar when thread config arrives after mount", async () => {
@@ -311,6 +314,53 @@ describe("CodexConfigButton", () => {
         sessionMode: "read-only",
       }),
     );
+    expect(screen.queryByText("Codex configuration for this chat")).toBeNull();
+  });
+
+  it("uses separate compact-mode targets for settings and expanding controls", async () => {
+    window.localStorage.setItem("cocalc.chat.codexControlsCollapsed", "1");
+
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+
+    const { unmount } = render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    expect(screen.getByText("Codex configuration for this chat")).toBeTruthy();
+    unmount();
+    window.localStorage.setItem("cocalc.chat.codexControlsCollapsed", "1");
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-2"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "medium",
+          sessionMode: "workspace-write",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Expand Codex controls"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace write")).toBeTruthy();
+    });
   });
 
   it("shows the ChatGPT Codex usage link in payment settings", async () => {

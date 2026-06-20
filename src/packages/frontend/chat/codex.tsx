@@ -154,6 +154,8 @@ const sectionStyle: React.CSSProperties = {
   background: "white",
   padding: 14,
 };
+type PillSegment = "codex" | "expand" | "model" | "mode" | "reasoning";
+
 const pillSegmentBaseStyle: React.CSSProperties = {
   alignItems: "center",
   background: "transparent",
@@ -342,7 +344,7 @@ export function CodexConfigButton({
   >(undefined);
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
   const [hoveredPillSegment, setHoveredPillSegment] = useState<
-    "model" | "mode" | "reasoning" | undefined
+    PillSegment | undefined
   >(undefined);
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
 
@@ -569,7 +571,8 @@ export function CodexConfigButton({
       label: model.label,
       title: model.description,
     })),
-    onClick: ({ key }) => {
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
       applyQuickConfigPatch({ model: `${key}` });
     },
   };
@@ -582,7 +585,8 @@ export function CodexConfigButton({
       danger: option.warning,
       title: option.description,
     })),
-    onClick: ({ key }) => {
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
       applyQuickConfigPatch({ sessionMode: key as CodexSessionMode });
     },
   };
@@ -594,14 +598,13 @@ export function CodexConfigButton({
       label: option.label,
       title: option.description,
     })),
-    onClick: ({ key }) => {
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
       applyQuickConfigPatch({ reasoning: key as CodexReasoningId });
     },
   };
 
-  const pillSegmentStyle = (
-    segment: "model" | "mode" | "reasoning",
-  ): React.CSSProperties => ({
+  const pillSegmentStyle = (segment: PillSegment): React.CSSProperties => ({
     ...pillSegmentBaseStyle,
     background:
       hoveredPillSegment === segment ? COLORS.ANTD_BG_BLUE_L : "transparent",
@@ -611,7 +614,7 @@ export function CodexConfigButton({
     textOverflow: "ellipsis",
   });
 
-  const pillSegmentHandlers = (segment: "model" | "mode" | "reasoning") => ({
+  const pillSegmentHandlers = (segment: PillSegment) => ({
     onClick: (event: React.MouseEvent) => {
       event.stopPropagation();
     },
@@ -630,20 +633,58 @@ export function CodexConfigButton({
         }}
       >
         {controlsCollapsed ? (
-          <Tooltip title="Show Codex controls">
-            <Button
-              size="small"
-              onClick={toggleControlsCollapsed}
-              icon={<Icon name="chevron-right" />}
+          <span
+            style={{
+              alignItems: "center",
+              background: "white",
+              border: `1px solid ${COLORS.GRAY_L}`,
+              borderRadius: 999,
+              boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+              display: "inline-flex",
+              fontWeight: 600,
+              gap: 2,
+              overflow: "hidden",
+              padding: "2px 6px",
+            }}
+          >
+            <Tooltip title="Show Codex controls">
+              <button
+                type="button"
+                aria-label="Expand Codex controls"
+                onClick={toggleControlsCollapsed}
+                onMouseEnter={() => setHoveredPillSegment("expand")}
+                onMouseLeave={() => setHoveredPillSegment(undefined)}
+                style={{
+                  ...pillSegmentStyle("expand"),
+                  color:
+                    hoveredPillSegment === "expand"
+                      ? COLORS.BS_BLUE_TEXT
+                      : COLORS.GRAY_D,
+                  fontWeight: 600,
+                  paddingLeft: 3,
+                  paddingRight: 3,
+                }}
+              >
+                <Icon name="chevron-right" />
+              </button>
+            </Tooltip>
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              onMouseEnter={() => setHoveredPillSegment("codex")}
+              onMouseLeave={() => setHoveredPillSegment(undefined)}
               style={{
-                borderRadius: 999,
-                boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+                ...pillSegmentStyle("codex"),
+                color:
+                  hoveredPillSegment === "codex"
+                    ? COLORS.BS_BLUE_TEXT
+                    : COLORS.GRAY_D,
                 fontWeight: 600,
               }}
             >
               Codex
-            </Button>
-          </Tooltip>
+            </button>
+          </span>
         ) : (
           <>
             <span
