@@ -273,6 +273,19 @@ Plus/Star/Launchpad`).
   `pnpm -C src/packages/static build:dev` passing, and browser QA on `/features/cli` and
   `/features` desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-hIvO31`).
   No PR.
+- **START 2026-06-20 14:45 PDT:** Blaec flagged that the `/features/cli` context row "Inspect
+  browser tabs and workspace state when needed" still shows a red icon. Existing unrelated dirt
+  remains the snapshot script and untracked `dedicated-compute-page.tsx`; leaving both untouched.
+  Claiming only the CLI page and this ledger to replace the custom `browser` icon with the
+  regular `bug` icon so it inherits the same neutral color as the other context icons, rebuild,
+  QA, commit, and push. No PR.
+- **END 2026-06-20 14:48 PDT:** Replaced the CLI context row's custom `browser` icon with the
+  regular `bug` icon, which renders in the same neutral context-list color as the surrounding
+  icons. Validation: prettier passed, focused feature Jest `88/88` passing, `lint:frontend`
+  passing, `git diff --check` clean, `pnpm -C src/packages/static build:dev` passing, browser QA
+  on `/features/cli` and `/features` desktop/mobile `68` assertions, `0` failures
+  (`/tmp/cocalc-public-qa-0lTWPQ`), and visual screenshot inspection confirmed the icon is no
+  longer red. No PR.
 
 ### Codex — platform-UI thread
 

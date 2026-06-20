@@ -123,7 +123,7 @@ function CliFitSection() {
                 label: "Execute notebooks through the live notebook API",
               },
               {
-                icon: "browser" as IconName,
+                icon: "bug" as IconName,
                 label: "Inspect browser tabs and workspace state when needed",
               },
               {
