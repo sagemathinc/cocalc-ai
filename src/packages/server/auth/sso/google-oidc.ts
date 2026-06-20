@@ -10,6 +10,7 @@ import type { Profile } from "passport";
 const GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
+const GOOGLE_OIDC_HTTP_TIMEOUT_MS = 10_000;
 const GOOGLE_ISSUERS = new Set([
   "accounts.google.com",
   "https://accounts.google.com",
@@ -89,6 +90,7 @@ async function getGoogleJwks(): Promise<GoogleJwks> {
   }
   const response = await axios.get<GoogleJwks>(GOOGLE_JWKS_URL, {
     responseType: "json",
+    timeout: GOOGLE_OIDC_HTTP_TIMEOUT_MS,
   });
   const maxAgeSeconds = parseCacheMaxAge(response.headers["cache-control"]);
   cachedJwks = {
@@ -207,6 +209,7 @@ export async function exchangeGoogleOidcCode({
         "content-type": "application/x-www-form-urlencoded",
       },
       responseType: "json",
+      timeout: GOOGLE_OIDC_HTTP_TIMEOUT_MS,
     },
   );
   if (!response.data.id_token) {
