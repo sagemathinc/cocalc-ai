@@ -7,14 +7,22 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   filename_extension,
   filename_extension_notilde,
-  keys,
   path_split,
   split,
 } from "@cocalc/util/misc";
 import { Actions, redux_name } from "../../app-framework";
 import { register_file_editor } from "../../project-file";
 import { Archive } from "./component";
-import { COMMANDS, DOUBLE_EXT } from "./misc";
+import { ARCHIVE_EXTENSIONS, COMMANDS, DOUBLE_EXT } from "./misc";
+
+function isTarArchiveType(type: string): boolean {
+  return (
+    type === "tar" ||
+    type === "tgz" ||
+    type.startsWith("tar.") ||
+    type.startsWith("tb")
+  );
+}
 
 function init_redux(path: string, redux, project_id: string): string {
   const name = redux_name(project_id, path);
@@ -162,13 +170,17 @@ export class ArchiveActions extends Actions<State> {
         if (contents.indexOf(base + "/") === -1) {
           extra_args = ["-d", base];
         }
-      } else if (["tar", "tar.gz", "tar.bz2"].includes(type)) {
+      } else if (isTarArchiveType(type)) {
         // special case for tar files: if heuristically it looks like not everything is contained
         // in a subdirectory with name the tar file, then create that subdirectory.
         const i = path_parts.tail.lastIndexOf(".t"); // hopefully that's good enough.
         base = path_parts.tail.slice(0, i);
         if (contents.indexOf(base + "/") === -1) {
-          post_args = ["-C", base];
+          if (command === "ouch") {
+            extra_args = ["-d", base];
+          } else {
+            post_args = ["-C", base];
+          }
           await this.exec({
             path: path_parts.head,
             command: "mkdir",
@@ -212,7 +224,7 @@ export class ArchiveActions extends Actions<State> {
 // sure to delete it from the list below.
 const TODO_TYPES = split("z lz lzma tbz tb2 taz tz tlz txz");
 register_file_editor({
-  ext: keys(COMMANDS).concat(TODO_TYPES),
+  ext: Array.from(new Set(ARCHIVE_EXTENSIONS.concat(TODO_TYPES))),
   icon: "file-archive",
   init: init_redux,
   remove: remove_redux,
