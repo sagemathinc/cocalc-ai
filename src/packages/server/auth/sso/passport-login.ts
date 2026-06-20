@@ -198,6 +198,10 @@ export class PassportLogin {
       action: undefined,
       api_key: undefined,
     };
+    if (this.opts.authenticated_account_id != null) {
+      locals.account_id = this.opts.authenticated_account_id;
+      locals.has_valid_remember_me = true;
+    }
 
     // L( {remember_me_cookie : locals.remember_me_cookie})  // DANGER -- do not uncomment except for debugging due to SECURITY
     L(`remember_me_cookie is set: ${locals.remember_me_cookie?.length > 0}`);
@@ -217,7 +221,9 @@ export class PassportLogin {
 
     try {
       // do we have a valid remember me cookie for a given account_id already?
-      await this.checkRememberMeCookie(locals);
+      if (!locals.has_valid_remember_me) {
+        await this.checkRememberMeCookie(locals);
+      }
       // do we already have a passport?
       await this.checkPassportExists(this.opts, locals);
       // there might be accounts already with that email address
