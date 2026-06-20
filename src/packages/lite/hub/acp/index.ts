@@ -175,6 +175,7 @@ import {
 } from "../sqlite/acp-jobs";
 import {
   heartbeatAcpSession,
+  publishActiveAcpSessions,
   setAcpSessionPublisher,
   upsertAcpSession,
   type AcpSessionRow,
@@ -5080,6 +5081,8 @@ function configureAcpSessionPublisher(): void {
   acpSessionPublisherConfigured = true;
   installAcpSessionPublisher();
 }
+
+export { publishActiveAcpSessions };
 
 export function configureAcpDetachedWorkerRunning(
   ensureRunning: typeof ensureAcpWorkerRunning | undefined,

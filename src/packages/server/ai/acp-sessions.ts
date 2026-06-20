@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import { interruptAcp } from "@cocalc/conat/ai/acp/client";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -23,6 +24,15 @@ const TABLE = "ai_sessions";
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 100;
 const MAX_TEXT_BYTES = 8192;
+const logger = getLogger("server:ai:acp-sessions");
+const RECONCILIATION_ENABLED =
+  `${process.env.COCALC_AI_SESSION_RECONCILIATION_ENABLED ?? "true"}`
+    .trim()
+    .toLowerCase() !== "false";
+const RECONCILIATION_INTERVAL_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_AI_SESSION_RECONCILIATION_INTERVAL_MS ?? 60_000),
+);
 
 const TERMINAL_STATES = new Set<AiSessionState>([
   "completed",
@@ -33,6 +43,8 @@ const TERMINAL_STATES = new Set<AiSessionState>([
 ]);
 
 let schemaReady: Promise<void> | undefined;
+let reconciliationTimer: NodeJS.Timeout | undefined;
+let reconciliationRunning = false;
 
 export async function ensureAiSessionsSchema(): Promise<void> {
   schemaReady ??= (async () => {
@@ -733,4 +745,52 @@ export async function markHostStoppedAiSessions({
     [hostId, cleanText(reason, 2048) ?? "host stopped"],
   );
   return rowCount ?? 0;
+}
+
+export async function runAiSessionReconciliationMaintenanceTick(): Promise<
+  number | null
+> {
+  if (reconciliationRunning) return null;
+  reconciliationRunning = true;
+  try {
+    const count = await markStaleAiSessionsPossiblyActive();
+    if (count > 0) {
+      logger.info("AI session reconciliation marked stale sessions", {
+        count,
+      });
+    }
+    return count;
+  } catch (err) {
+    logger.warn("AI session reconciliation failed", { err: `${err}` });
+    throw err;
+  } finally {
+    reconciliationRunning = false;
+  }
+}
+
+export function startAiSessionReconciliationMaintenance(): void {
+  if (!RECONCILIATION_ENABLED) {
+    logger.info("AI session reconciliation maintenance disabled");
+    return;
+  }
+  if (reconciliationTimer) return;
+  reconciliationTimer = setInterval(() => {
+    void runAiSessionReconciliationMaintenanceTick();
+  }, RECONCILIATION_INTERVAL_MS);
+  reconciliationTimer.unref?.();
+  void runAiSessionReconciliationMaintenanceTick();
+  logger.info("AI session reconciliation maintenance started", {
+    interval_ms: RECONCILIATION_INTERVAL_MS,
+  });
+}
+
+export function stopAiSessionReconciliationMaintenance(): void {
+  if (!reconciliationTimer) return;
+  clearInterval(reconciliationTimer);
+  reconciliationTimer = undefined;
+}
+
+export function resetAiSessionReconciliationMaintenanceStateForTests(): void {
+  stopAiSessionReconciliationMaintenance();
+  reconciliationRunning = false;
 }

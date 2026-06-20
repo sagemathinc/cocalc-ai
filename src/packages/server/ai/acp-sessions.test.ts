@@ -9,6 +9,7 @@ import {
   listAiSessionsForAccount,
   markHostStoppedAiSessions,
   markStaleAiSessionsPossiblyActive,
+  runAiSessionReconciliationMaintenanceTick,
   upsertProjectHostAiSession,
 } from "./acp-sessions";
 
@@ -238,5 +239,31 @@ describe("AI ACP session registry interrupts", () => {
         opts: { activeOnly: true },
       }),
     ).resolves.toEqual([]);
+  });
+
+  it("runs stale heartbeat reconciliation as a maintenance tick", async () => {
+    await seedSession();
+    await getPool().query(
+      `UPDATE ai_sessions
+          SET updated_at=NOW() - INTERVAL '10 minutes',
+              last_heartbeat_at=NOW() - INTERVAL '10 minutes'
+        WHERE session_key=$1`,
+      ["session-key"],
+    );
+
+    await expect(runAiSessionReconciliationMaintenanceTick()).resolves.toBe(1);
+
+    await expect(
+      listAiSessionsForAccount({
+        account_id: ACCOUNT_ID,
+        opts: { activeOnly: true },
+      }),
+    ).resolves.toMatchObject([
+      expect.objectContaining({
+        session_key: "session-key",
+        state: "possibly_active",
+        terminal: false,
+      }),
+    ]);
   });
 });

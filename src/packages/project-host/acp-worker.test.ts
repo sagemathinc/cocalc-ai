@@ -10,6 +10,7 @@ const disposeAcpAgentsMock = jest.fn(async () => {});
 const runDetachedAcpQueueWorkerMock = jest.fn(async () => {});
 const setAcpAdmissionLimitsProviderMock = jest.fn();
 const setAcpSessionPublisherOverrideMock = jest.fn();
+const publishActiveAcpSessionsMock = jest.fn(() => 0);
 const acpAdmissionLimitsFromEffectiveLimitsMock = jest.fn((limits) => ({
   converted: limits,
 }));
@@ -96,6 +97,8 @@ jest.mock("@cocalc/lite/hub/acp", () => ({
     setAcpAdmissionLimitsProviderMock(...args),
   setAcpSessionPublisherOverride: (...args: any[]) =>
     setAcpSessionPublisherOverrideMock(...args),
+  publishActiveAcpSessions: (...args: any[]) =>
+    publishActiveAcpSessionsMock(...args),
 }));
 
 jest.mock("@cocalc/lite/hub/acp/executor/container", () => ({
@@ -223,6 +226,7 @@ describe("project-host ACP worker runtime wiring", () => {
     expect(setAcpAdmissionLimitsProviderMock).toHaveBeenCalledTimes(1);
     expect(setAcpAdmissionDenialRecorderMock).toHaveBeenCalledTimes(1);
     expect(wireProjectsApiMock).toHaveBeenCalledTimes(1);
+    expect(publishActiveAcpSessionsMock).toHaveBeenCalledTimes(1);
     expect(runDetachedAcpQueueWorkerMock).toHaveBeenCalledTimes(1);
   });
 

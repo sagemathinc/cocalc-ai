@@ -15,6 +15,7 @@ import {
   getAcpSessionByOpId,
   heartbeatAcpSession,
   listAcpSessions,
+  publishActiveAcpSessions,
   setAcpSessionPublisher,
   upsertAcpSessionFromRequest,
 } from "../../sqlite/acp-sessions";
@@ -177,5 +178,38 @@ describe("acp session registry", () => {
       "assistant-3:running:0",
       "assistant-3:running:0",
     ]);
+  });
+
+  it("republishes active local sessions during startup reconciliation", async () => {
+    const published: string[] = [];
+    setAcpSessionPublisher((row) => {
+      published.push(`${row.op_id}:${row.state}:${row.terminal}`);
+    });
+    const runningRequest = makeRequest({
+      userMessageId: "user-4",
+      assistantMessageId: "assistant-4",
+    });
+    const completedRequest = makeRequest({
+      userMessageId: "user-5",
+      assistantMessageId: "assistant-5",
+    });
+
+    upsertAcpSessionFromRequest({
+      request: runningRequest,
+      state: "running",
+      op_id: runningRequest.chat.message_id,
+      session_id: runningRequest.session_id,
+    });
+    upsertAcpSessionFromRequest({
+      request: completedRequest,
+      state: "completed",
+      op_id: completedRequest.chat.message_id,
+      session_id: completedRequest.session_id,
+    });
+    published.length = 0;
+
+    expect(publishActiveAcpSessions()).toBe(1);
+    await Promise.resolve();
+    expect(published).toEqual(["assistant-4:running:0"]);
   });
 });

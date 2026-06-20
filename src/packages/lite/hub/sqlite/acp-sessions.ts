@@ -177,6 +177,18 @@ function publishAcpSession(row: AcpSessionRow | undefined): void {
   });
 }
 
+export function publishActiveAcpSessions({
+  limit = 500,
+}: {
+  limit?: number;
+} = {}): number {
+  const rows = listAcpSessions({ activeOnly: true, limit });
+  for (const row of rows) {
+    publishAcpSession(row);
+  }
+  return rows.length;
+}
+
 function ensureInit(): void {
   if (!initialized) {
     init();

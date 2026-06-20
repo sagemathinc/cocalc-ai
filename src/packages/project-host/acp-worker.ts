@@ -11,6 +11,7 @@ import {
   runDetachedAcpQueueWorker,
   setAcpAdmissionLimitsProvider,
   setAcpSessionPublisherOverride,
+  publishActiveAcpSessions,
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
@@ -243,6 +244,12 @@ export async function main(): Promise<void> {
   );
   initProjectRunnerFilesystem({ client });
   const masterClient = connectMasterClient();
+  const republishedSessions = publishActiveAcpSessions();
+  if (republishedSessions > 0) {
+    logger.info("republished active ACP sessions to master hub", {
+      count: republishedSessions,
+    });
+  }
   registerPidFile(pidFile, async () => {
     stopEventLoopStallMonitor();
     await disposeAcpAgents();
