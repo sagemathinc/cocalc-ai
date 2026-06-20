@@ -72,12 +72,8 @@ overrides:
   tar@<=7.5.15: '>=7.5.16'
 
 patchedDependencies:
-  '@rc-component/portal@2.2.0':
-    hash: b6f877518e590497afc1bc08045e7388a098c2d276d59c861683811ebfb8da04
-    path: patches/@rc-component__portal@2.2.0.patch
-  fs-ext@2.1.1:
-    hash: 8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b
-    path: patches/fs-ext@2.1.1.patch
+  '@rc-component/portal@2.2.0': b6f877518e590497afc1bc08045e7388a098c2d276d59c861683811ebfb8da04
+  fs-ext@2.1.1: 8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b
 
 importers:
 
@@ -1288,9 +1284,6 @@ importers:
       formidable:
         specifier: ^3.5.4
         version: 3.5.4
-      http-proxy-3:
-        specifier: ^1.23.2
-        version: 1.23.2
       lodash:
         specifier: ^4.18.1
         version: 4.18.1

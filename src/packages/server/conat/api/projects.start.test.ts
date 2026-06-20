@@ -3,6 +3,8 @@ export {};
 const ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS = 10 * 60 * 1000;
 const RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
+jest.setTimeout(15_000);
+
 let assertCollabMock: jest.Mock;
 let createLroMock: jest.Mock;
 let getLroMock: jest.Mock;

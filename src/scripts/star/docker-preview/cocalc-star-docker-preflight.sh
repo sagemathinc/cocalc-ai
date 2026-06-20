@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ALLOW_DEGRADED="${COCALC_STAR_DOCKER_ALLOW_DEGRADED:-0}"
+# Consumer Docker runs should fail on hard incompatibilities, but warnings such
+# as a small data volume should not prevent first boot by default.
+ALLOW_DEGRADED="${COCALC_STAR_DOCKER_ALLOW_DEGRADED:-1}"
 STATUS_DIR="${COCALC_STAR_DOCKER_PREFLIGHT_DIR:-/run/cocalc-star-docker}"
 failures=0
 warnings=0

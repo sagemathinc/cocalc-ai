@@ -41,6 +41,7 @@ import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 import { startHostAvailabilityMaintenance } from "@cocalc/server/hosts/availability";
 import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-config-mirror-maintenance";
 import { startUxLatencyAlertMaintenance } from "@cocalc/server/monitoring/ux-latency";
+import { startAiSessionReconciliationMaintenance } from "@cocalc/server/ai/acp-sessions";
 
 export { loadConatConfiguration };
 
@@ -113,6 +114,7 @@ export async function initConatApi() {
   startSiteLicenseAffiliationReleaseMaintenance();
   startGlobalConfigMirrorRepairMaintenance();
   startUxLatencyAlertMaintenance();
+  startAiSessionReconciliationMaintenance();
   startBayBackupMaintenance();
   startBayWalArchiveMaintenance();
   initInterBayServices().catch((err) => {

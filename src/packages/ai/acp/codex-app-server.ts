@@ -1871,6 +1871,7 @@ export class CodexAppServerAgent implements AcpAgent {
           sessionMode,
           sandbox: threadParams.sandbox,
           workingDirectory: cwd,
+          authSource: spawned.authSource,
         },
       });
       logger.debug("codex app-server: resolved service tier", {
