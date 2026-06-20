@@ -125,7 +125,17 @@ describe("NoFiles", () => {
     expect(openUploadFiles).toHaveBeenCalled();
   });
 
-  it("uses a compact empty-folder state away from project home", () => {
+  it("uses quick-create actions away from project home", () => {
+    const askFilename = jest.fn();
+    const setCurrentPath = jest.fn();
+    getProjectActionsMock.mockReturnValue({
+      ask_filename: askFilename,
+      setState: jest.fn(),
+      set_active_tab: jest.fn(),
+      set_current_path: setCurrentPath,
+      set_file_search: jest.fn(),
+    });
+
     render(
       <NoFiles
         project_id="project-1"
@@ -134,9 +144,22 @@ describe("NoFiles", () => {
       />,
     );
 
-    expect(screen.getByText("This folder is empty.")).not.toBeNull();
-    expect(screen.getByText("+New")).not.toBeNull();
+    expect(screen.getByText("This folder is empty")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Create a notebook, terminal, folder, or upload files here.",
+      ),
+    ).not.toBeNull();
+    expect(screen.getByText("Notebook")).not.toBeNull();
+    expect(screen.getByText("Upload")).not.toBeNull();
+    expect(screen.getByText("Folder")).not.toBeNull();
     expect(screen.queryByText("No files yet")).toBeNull();
+    expect(screen.queryByText("+New")).toBeNull();
+
+    fireEvent.click(screen.getByText("Notebook"));
+
+    expect(setCurrentPath).toHaveBeenCalledWith("/home/user/subfolder");
+    expect(askFilename).toHaveBeenCalledWith("ipynb");
   });
 
   it("hides the AI chat action when project AI policy disables agents", () => {
