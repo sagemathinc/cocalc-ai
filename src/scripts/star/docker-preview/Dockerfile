@@ -54,13 +54,16 @@ RUN systemctl mask \
   || true
 
 COPY cocalc-star-release.tar.gz /usr/local/share/cocalc-star-docker/cocalc-star-release.tar.gz
+COPY cocalc-star-rootfs-cache.tar.gz /usr/local/share/cocalc-star-docker/cocalc-star-rootfs-cache.tar.gz
 COPY cocalc-star-docker-preflight.sh /usr/local/sbin/cocalc-star-docker-preflight
 COPY cocalc-star-docker-init.sh /usr/local/sbin/cocalc-star-docker-init
+COPY cocalc-star-docker-entrypoint.sh /usr/local/sbin/cocalc-star-docker-entrypoint
 COPY cocalc-star-docker-init.service /etc/systemd/system/cocalc-star-docker-init.service
 
 RUN chmod 0755 \
     /usr/local/sbin/cocalc-star-docker-preflight \
     /usr/local/sbin/cocalc-star-docker-init \
+    /usr/local/sbin/cocalc-star-docker-entrypoint \
   && mkdir -p /var/lib/cocalc /opt/cocalc-star /mnt/cocalc /run/systemd \
   && systemctl enable cocalc-star-docker-init.service
 
@@ -68,4 +71,4 @@ VOLUME ["/var/lib/cocalc"]
 
 EXPOSE 80 9100
 
-CMD ["/sbin/init"]
+CMD ["/usr/local/sbin/cocalc-star-docker-entrypoint"]

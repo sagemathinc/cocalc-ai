@@ -97,6 +97,10 @@ const STOP_RM_TIMEOUT_S = 10;
 const STOP_RM_PODMAN_TERM_S = 5;
 const STOP_INSPECT_TIMEOUT_S = 10;
 const STOP_FORCE_KILL_SETTLE_MS = 250;
+const START_RUNNING_CHECK_TIMEOUT_MS = 5000;
+const START_RUNNING_CHECK_INTERVAL_MS = 250;
+const START_FAILURE_LOG_LINES = 80;
+const START_FAILURE_DETAIL_MAX_BYTES = 12_000;
 
 const DEFAULT_PROJECT_SCRIPT = join(
   COCALC_SRC,
@@ -653,6 +657,97 @@ function isLikelyMissingContainerError(err: unknown): boolean {
     text.includes("does not exist") ||
     text.includes("unable to find")
   );
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForStartedContainer(name: string): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < START_RUNNING_CHECK_TIMEOUT_MS) {
+    if (await podmanReportsRunningContainer(name)) {
+      return true;
+    }
+    if (!(await hasLiveConmonContainer(name))) {
+      return false;
+    }
+    await wait(START_RUNNING_CHECK_INTERVAL_MS);
+  }
+  return await podmanReportsRunningContainer(name);
+}
+
+function truncateStartFailureDetail(text: string): string {
+  if (text.length <= START_FAILURE_DETAIL_MAX_BYTES) return text;
+  return `${text.slice(0, START_FAILURE_DETAIL_MAX_BYTES)}\n... truncated ...`;
+}
+
+async function collectStartFailureDetail(name: string): Promise<string> {
+  const detail: string[] = [];
+  try {
+    const { stdout } = await podman(
+      ["inspect", "--format", "{{json .State}}", name],
+      { timeout: 10 },
+    );
+    const state = `${stdout ?? ""}`.trim();
+    if (state) {
+      detail.push(`podman inspect state: ${state}`);
+    }
+  } catch (err) {
+    if (!isLikelyMissingContainerError(err)) {
+      detail.push(`podman inspect failed: ${err}`);
+    }
+  }
+
+  try {
+    const { stdout } = await podman(
+      ["inspect", "--format", "{{json .}}", name],
+      { timeout: 10 },
+    );
+    const inspected = JSON.parse(`${stdout ?? "{}"}`);
+    const config = inspected?.Config ?? {};
+    const hostConfig = inspected?.HostConfig ?? {};
+    const env = Array.isArray(config.Env)
+      ? config.Env.filter((value) =>
+          /^(COCALC_PROJECT|COCALC_ROOT|DATA=|TMPDIR=|PATH=|NODE_PATH=)/.test(
+            `${value}`,
+          ),
+        )
+      : undefined;
+    const commandDetail = {
+      Path: inspected?.Path,
+      Args: inspected?.Args,
+      Entrypoint: config.Entrypoint,
+      Cmd: config.Cmd,
+      Env: env,
+      Mounts: inspected?.Mounts,
+      HostConfigMounts: hostConfig.Mounts,
+    };
+    detail.push(
+      `podman inspect command: ${JSON.stringify(commandDetail, null, 2)}`,
+    );
+  } catch (err) {
+    if (!isLikelyMissingContainerError(err)) {
+      detail.push(`podman inspect command failed: ${err}`);
+    }
+  }
+
+  try {
+    const { stdout, stderr } = await podman(
+      ["logs", "--tail", `${START_FAILURE_LOG_LINES}`, name],
+      { timeout: 10 },
+    );
+    const logs = `${stdout ?? ""}${stderr ? `\n${stderr}` : ""}`.trim();
+    if (logs) {
+      detail.push(`podman logs tail:\n${logs}`);
+    }
+  } catch (err) {
+    if (!isLikelyMissingContainerError(err)) {
+      detail.push(`podman logs failed: ${err}`);
+    }
+  }
+
+  return truncateStartFailureDetail(detail.join("\n\n"));
 }
 
 async function inspectContainerPids(name: string): Promise<number[]> {
@@ -1523,7 +1618,6 @@ export async function start({
     args.push("--user", "0:0");
     args.push("--detach");
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
-    args.push("--rm");
     args.push("--replace");
     const originalConatServer = env.CONAT_SERVER;
     const selectedNetwork = networkArgument();
@@ -1680,6 +1774,27 @@ export async function start({
 
     logger.debug("start: launching container - ", name);
     await timings.measure("podman_run", async () => await podman(args));
+    const started = await timings.measure(
+      "verify_container_running",
+      async () => await waitForStartedContainer(name),
+    );
+    if (!started) {
+      const detail = await collectStartFailureDetail(name);
+      await podman(["rm", "-f", "-t", "0", name], { timeout: 10 }).catch(
+        (err) => {
+          if (!isLikelyMissingContainerError(err)) {
+            logger.warn("start: failed to remove early-exited container", {
+              project_id,
+              name,
+              err: `${err}`,
+            });
+          }
+        },
+      );
+      throw Error(
+        `project container ${name} exited before reporting a running state${detail ? `\n${detail}` : ""}`,
+      );
+    }
 
     report({
       type: "start-project",

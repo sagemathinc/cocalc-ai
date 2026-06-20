@@ -437,6 +437,22 @@ extract_tarball_if_needed() {
   run tar -C "$parent" -Jxf "$tarball"
 }
 
+install_project_tools_node() {
+  local tools_bin="$1" node_bin
+  node_bin="$(command -v node || true)"
+  if [ -z "$node_bin" ] && [ -n "${STAR_HOME:-}" ]; then
+    node_bin="$(find "${STAR_HOME}/.nvm/versions/node" -path '*/bin/node' -type f -perm -111 2>/dev/null | sort -V | tail -1 || true)"
+  fi
+  [ -n "$node_bin" ] || die "node is required to prepare Star project tools"
+  [ -x "$node_bin" ] || die "node is not executable: $node_bin"
+  mkdir -p "$tools_bin"
+  # Copy instead of symlinking so the path is valid inside the project rootfs.
+  if [ ! -x "$tools_bin/node" ] || ! "$tools_bin/node" --version >/dev/null 2>&1; then
+    run cp "$node_bin" "$tools_bin/node"
+    run chmod 0755 "$tools_bin/node"
+  fi
+}
+
 prepare_runtime_artifacts() {
   if [ -f "$SRC_ROOT/packages/launchpad/build/bundle.tar.xz" ]; then
     extract_tarball_if_needed \
@@ -469,10 +485,12 @@ prepare_runtime_artifacts() {
       mkdir -p "$tools_release"
       run tar -C "$tools_release" -Jxf "$tools_tarball"
     fi
+    install_project_tools_node "$tools_release/bin"
     ln -sfn "$tools_release/bin" "$tools_current"
   else
     fallback_tools="$SRC_ROOT/packages/backend/node_modules/.bin"
     if [ -x "$fallback_tools/rustic" ]; then
+      install_project_tools_node "$fallback_tools"
       mkdir -p "$(dirname "$tools_current")"
       ln -sfn "$fallback_tools" "$tools_current"
     fi
@@ -670,8 +688,10 @@ RUN apt-get update \\
     /scratch \\
     /run/secrets/cocalc \\
     /opt/cocalc/bin \\
+    /opt/cocalc/bin2 \\
     /opt/cocalc/lib \\
     /opt/cocalc/runtime-lib \\
+    /opt/cocalc/src \\
     /opt/cocalc/project-bundle \\
     /opt/cocalc/project-bundles \\
   && chmod 0755 /home/user /scratch /run/secrets /run/secrets/cocalc /opt/cocalc \\
@@ -679,6 +699,23 @@ RUN apt-get update \\
 EOF
   chown "$STAR_USER:$STAR_USER" "$containerfile"
   as_star_user "existing_version=\"\$(podman image inspect '$build_image' --format '{{ index .Config.Labels \"com.cocalc.star.default_rootfs_version\" }}' 2>/dev/null || true)\"; if [ \"\$existing_version\" = '$STAR_DEFAULT_ROOTFS_VERSION' ]; then exit 0; fi; if [ -n \"\$existing_version\" ]; then podman rmi -f '$build_image' >/dev/null 2>&1 || true; fi; podman build --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
+}
+
+unpack_prebuilt_rootfs_cache() {
+  local tarball="${STAR_PREBUILT_ROOTFS_CACHE_TARBALL:-}"
+  if [ -z "$tarball" ]; then
+    return
+  fi
+  if [ ! -s "$tarball" ]; then
+    die "prebuilt RootFS cache tarball does not exist or is empty: $tarball"
+  fi
+
+  log "unpacking prebuilt RootFS cache from $tarball"
+  mkdir -p "$STAR_PROJECT_HOST_DATA/cache/images"
+  tar --numeric-owner -C "$STAR_PROJECT_HOST_DATA/cache/images" -xzf "$tarball"
+  chown "$STAR_USER:$STAR_USER" "$STAR_PROJECT_HOST_DATA/cache/images"
+  find "$STAR_PROJECT_HOST_DATA/cache/images" -maxdepth 1 -type f -name '.*.json' \
+    -exec chown "$STAR_USER:$STAR_USER" {} +
 }
 
 ensure_default_rootfs_cache() {
@@ -791,6 +828,7 @@ COCALC_FILE_SERVER_MOUNTPOINT=/mnt/cocalc
 COCALC_SHARED_SCRATCH_ENABLED=1
 COCALC_SHARED_SCRATCH_HOST_MOUNT=$(shared_scratch_host_mount)
 COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe
+COCALC_PROJECT_RUNNER_ROOTFS_MODE=${STAR_PROJECT_ROOTFS_MODE:-overlay}
 COCALC_PROJECT_TOOLS=$([ -d "${SRC_ROOT}/packages/project/build/tools/current" ] && printf '%s' "${SRC_ROOT}/packages/project/build/tools/current" || printf '%s' "${SRC_ROOT}/packages/backend/node_modules/.bin")
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
 COCALC_PROJECT_HOST_BUNDLE_ROOT=${SRC_ROOT}/packages/project-host/build/bundle
@@ -1121,6 +1159,7 @@ install_wrappers
 configure_sudoers
 configure_users_and_dirs
 star_web_onboarding_write_status "rootfs" "Building and publishing the default Jupyter and LaTeX RootFS." ""
+unpack_prebuilt_rootfs_cache
 build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache

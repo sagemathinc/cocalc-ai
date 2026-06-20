@@ -179,6 +179,7 @@ doctor() {
     fi
     check "project-host tools bundle exists" test -d "${COCALC_PROJECT_TOOLS:-}"
     check "project-host tools bundle has dropbear" test -x "${COCALC_PROJECT_TOOLS:-}/dropbear"
+    check "project-host tools bundle has node" test -x "${COCALC_PROJECT_TOOLS:-}/node"
     local conat_health_host="${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}"
     if [ "$conat_health_host" = "0.0.0.0" ] || [ "$conat_health_host" = "::" ]; then
       conat_health_host="127.0.0.1"
@@ -207,12 +208,14 @@ doctor() {
   local project_host_data="${COCALC_DATA:-${DATA:-/mnt/cocalc/data}}"
   local rootfs_cache_dir="${COCALC_IMAGE_CACHE:-${project_host_data}/cache/images}"
   local rootfs_path
-  rootfs_path="$(find "$rootfs_cache_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | head -1 || true)"
+  rootfs_path="$(find "$rootfs_cache_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | sort | head -1 || true)"
   if [ -n "$rootfs_path" ]; then
     ok "cached rootfs exists"
     check "cached rootfs has /home/user" test -d "${rootfs_path}/home/user"
     check "cached rootfs has /scratch" test -d "${rootfs_path}/scratch"
     check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
+    check "cached rootfs has project tools mountpoint" test -d "${rootfs_path}/opt/cocalc/bin2"
+    check "cached rootfs has project source mountpoint" test -d "${rootfs_path}/opt/cocalc/src"
     check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
     check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test -z "$(find /etc/sudoers.d -mindepth 1 -maxdepth 1 ! -uid 0 -print -quit)" && test "$(stat -Lc %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
   else
@@ -314,7 +317,7 @@ smoke() {
       SRC_ROOT="$SRC_ROOT" \
       STAR_SMOKE_STATE="$smoke_state" \
       STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
-      STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-$STAR_DEFAULT_ROOTFS_IMAGE}" \
+      STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-}" \
       STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}" \
       "${SCRIPT_DIR}/smoke-star-poc.sh"
   fi
@@ -325,7 +328,7 @@ smoke() {
     SRC_ROOT="$SRC_ROOT" \
     STAR_SMOKE_STATE="$smoke_state" \
     STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
-    STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-$STAR_DEFAULT_ROOTFS_IMAGE}" \
+    STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-}" \
     STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}" \
     "${SCRIPT_DIR}/smoke-star-poc.sh"
 }
