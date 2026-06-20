@@ -101,7 +101,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
       icon: "cloud",
       runs: "Hosted service operated by CoCalc",
       title: "CoCalc.ai",
-      verify: "Hosted plans and the site-licensing path.",
     },
     {
       bestFit:
@@ -111,7 +110,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
       icon: "laptop",
       runs: "Local runtime operated by the user",
       title: "CoCalc Plus",
-      verify: "Local install command and self-serve ownership boundary.",
     },
     {
       bestFit:
@@ -121,7 +119,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
       icon: "star",
       runs: "Single-VM appliance operated by the user or customer",
       title: "CoCalc Star",
-      verify: "Public-VM setup guide and one-VM boundary.",
     },
     {
       bestFit:
@@ -131,7 +128,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
       icon: "servers",
       runs: "Lightweight private deployment operated by the customer",
       title: "CoCalc Launchpad",
-      verify: "Installer, supported target, and customer-operated boundary.",
     },
     {
       bestFit:
@@ -141,7 +137,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
       icon: "rocket",
       runs: "Enterprise private-cloud path operated by the customer",
       title: "CoCalc Rocket",
-      verify: "Planning context, operator boundary, and support expectations.",
     },
   ] satisfies {
     actionLabel: string;
@@ -150,7 +145,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
     icon: IconName;
     runs: string;
     title: string;
-    verify: string;
   }[];
 
   return (
@@ -203,7 +197,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                 display: "flex",
                 flexDirection: "column",
                 gap: 12,
-                minHeight: 340,
+                minHeight: 280,
                 padding: 16,
               }}
             >
@@ -259,20 +253,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                   Best fit
                 </Text>
                 <Text>{path.bestFit}</Text>
-              </div>
-              <div>
-                <Text
-                  style={{
-                    color: PUBLIC_COLORS.brand,
-                    display: "block",
-                    fontSize: PUBLIC_TYPE.caption,
-                    fontWeight: 700,
-                    marginBottom: 4,
-                  }}
-                >
-                  What to verify
-                </Text>
-                <Text>{path.verify}</Text>
               </div>
               <LinkButton href={path.href}>{path.actionLabel}</LinkButton>
             </div>

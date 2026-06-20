@@ -1353,7 +1353,6 @@ describe("PublicApp", () => {
     expect(pathChooser).not.toBeNull();
     expect(within(pathChooser).getAllByText("Where it runs")).toHaveLength(5);
     expect(within(pathChooser).getAllByText("Best fit")).toHaveLength(5);
-    expect(within(pathChooser).getAllByText("What to verify")).toHaveLength(5);
     // Structure + ordered identity instead of pinning each card's body copy.
     expectProductPathChooserCards();
     // Cheap cross-surface canary: the products overview is verified clean of the
