@@ -105,10 +105,13 @@ if [ -n "$INODE" ]; then
 fi
 OWNER_CWD="$(readlink "/proc/${OWNER_PID:-0}/cwd" 2>/dev/null || true)"
 case "$OWNER_CWD" in
-  "$REPO"/*|"$REPO"|"") : ;;  # this worktree owns it, or owner unresolved → proceed (don't mask real failures)
+  "$REPO"/*|"$REPO") : ;;  # POSITIVELY this worktree owns :9100 → validate (may block)
   *)
+    # foreign worktree OR unresolvable owner → do NOT assert: would test the wrong
+    # worktree's pages, or a transient resolution glitch would false-fail. Only a
+    # positive self-ownership match runs the canary + can block.
     printf '%s' "$HEAD_NOW" > "$MARKER"
-    emit_context "preview-snapshot: canary SKIPPED — blaec.cocalc.ai (:9100) is served by another worktree ($OWNER_CWD), not this one ($REPO/src). Testing it would assert the wrong pages, so the canary was not run this turn. This is the documented multi-agent preview handoff, NOT a regression. The dist here was rebuilt; reclaim :9100 to validate these pages live."
+    emit_context "preview-snapshot: canary SKIPPED — :9100 is not positively owned by this worktree ($REPO/src); owner=${OWNER_CWD:-unresolved}. Skipping so this turn does not assert another worktree's pages (the documented preview handoff). The dist here was rebuilt; reclaim :9100 to validate live."
     exit 0 ;;
 esac
 
