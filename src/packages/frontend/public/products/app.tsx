@@ -617,27 +617,6 @@ function CocalcStarPage() {
           />
         </ProductDetailCard>
       </PublicGrid>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Install Star when one VM is enough
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Install Star if you already have a fresh public Ubuntu VM. Compare
-          paths first if the organization needs private deployment or broader
-          operational planning.
-        </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href="#install-cocalc-star">
-            Install CoCalc Star
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-launchpad")}>
-            Compare with Launchpad
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-rocket")}>
-            Compare with Rocket
-          </LinkButton>
-        </Flex>
-      </PublicSection>
     </Flex>
   );
 }
@@ -721,35 +700,6 @@ function CocalcLaunchpadPage() {
           />
         </ProductDetailCard>
       </PublicGrid>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Plan a bounded private deployment
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Start with Launchpad when your team is ready to operate a bounded
-          private CoCalc environment. Use pricing and support for deployment
-          rights, rollout planning, licensing, and upgrade questions while your
-          team remains the operator.
-        </Paragraph>
-        <ProductActions
-          actions={[
-            {
-              href: supportProductPath("Launchpad"),
-              label: "Discuss Launchpad requirements",
-              primary: true,
-            },
-            { href: appPath("pricing"), label: "Pricing and licensing" },
-            {
-              href: publicPath("products/cocalc-star"),
-              label: "Compare with Star",
-            },
-            {
-              href: publicPath("products/cocalc-rocket"),
-              label: "Compare with Rocket",
-            },
-          ]}
-        />
-      </PublicSection>
     </Flex>
   );
 }
@@ -826,30 +776,6 @@ function CocalcPlusPage() {
           />
         </ProductDetailCard>
       </PublicGrid>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Choose a shared path after local evaluation
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Install Plus to evaluate locally. Use hosted plans when CoCalc should
-          be operated by CoCalc, or compare operating models when the group
-          needs one VM or a customer-operated path.
-        </Paragraph>
-        <ProductActions
-          actions={[
-            {
-              href: "#install-cocalc-plus",
-              label: "Install CoCalc Plus",
-              primary: true,
-            },
-            { href: appPath("pricing"), label: "Review hosted plans" },
-            {
-              href: publicPath("products"),
-              label: "Compare operating models",
-            },
-          ]}
-        />
-      </PublicSection>
     </Flex>
   );
 }

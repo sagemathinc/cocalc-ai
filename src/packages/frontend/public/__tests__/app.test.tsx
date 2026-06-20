@@ -1298,14 +1298,6 @@ describe("PublicApp", () => {
       4,
       /self-serve local software|user operates the runtime|one-user/i,
     );
-    expect(
-      screen.getByRole("heading", {
-        name: "Choose a shared path after local evaluation",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(/Install Plus to evaluate locally/i),
-    ).not.toBeNull();
     expect(screen.getAllByText(/operated by CoCalc/i).length).toBeGreaterThan(
       0,
     );
@@ -1315,9 +1307,6 @@ describe("PublicApp", () => {
         .getAllByRole("link", { name: "Review hosted plans" })
         .every((link) => link.getAttribute("href") === "/pricing"),
     ).toBe(true);
-    expect(
-      screen.getByRole("link", { name: "Compare operating models" }),
-    ).toHaveAttribute("href", "/products");
     expect(
       screen.queryByRole("link", { name: "Use hosted CoCalc.ai" }),
     ).toBeNull();
@@ -1490,11 +1479,6 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Install CoCalc Launchpad" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("heading", {
-        name: "Plan a bounded private deployment",
-      }),
-    ).not.toBeNull();
-    expect(
       screen.getByText(/customer-operated CoCalc environment/),
     ).not.toBeNull();
     // Boundary card: structure (li count) + a Launchpad identity token.
@@ -1503,9 +1487,6 @@ describe("PublicApp", () => {
       4,
       /customer or administrator owns infrastructure|customer-operated/i,
     );
-    expect(
-      screen.getByText(/deployment rights, rollout planning, licensing/i),
-    ).not.toBeNull();
     expect(
       screen.queryByText(/Support can cover install guidance/i),
     ).toBeNull();
@@ -1535,21 +1516,6 @@ describe("PublicApp", () => {
       screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
     ).toHaveAttribute("href", expect.stringContaining("ongoing+operations"));
     expect(
-      screen.getByRole("link", { name: "Compare with Rocket" }),
-    ).toHaveAttribute("href", "/products/cocalc-rocket");
-    expect(
-      screen.getByRole("link", { name: "Discuss Launchpad requirements" }),
-    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
-    expect(
-      screen.getByRole("link", { name: "Discuss Launchpad requirements" }),
-    ).toHaveAttribute(
-      "href",
-      expect.stringContaining("context=product-cocalc-launchpad"),
-    );
-    expect(
-      screen.getByRole("link", { name: "Discuss Launchpad requirements" }),
-    ).toHaveAttribute("href", expect.stringContaining("ongoing+operations"));
-    expect(
       screen.queryByRole("link", { name: "Compare with CoCalc Plus" }),
     ).toBeNull();
     expectNoProductDetailStalePhrasing();
@@ -1575,16 +1541,6 @@ describe("PublicApp", () => {
     }
     expect(
       screen.getByRole("heading", { name: "Install CoCalc Star" }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Install Star when one VM is enough",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(
-        /Compare paths first if the organization needs private deployment/i,
-      ),
     ).not.toBeNull();
     // Star identity token kept at page level; boundary asserted structurally.
     expect(screen.getAllByText(/public Ubuntu VM/).length).toBeGreaterThan(0);
