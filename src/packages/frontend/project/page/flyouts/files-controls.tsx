@@ -263,7 +263,7 @@ export function FilesSelectedControls({
           for (const file of selectedOpenablePaths) {
             actions.open_file({
               explicit: true,
-              foreground: false,
+              foreground: true,
               path: file,
             });
           }
@@ -517,6 +517,8 @@ export function FilesSelectedControls({
           selectedPaths={checked_files.toArray()}
           label="Actions"
           size="small"
+          showEllipsis={false}
+          showDown={false}
           hideFlyout
           activateFilesTab
         />

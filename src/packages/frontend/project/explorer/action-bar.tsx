@@ -541,6 +541,8 @@ function ActionBarEnabled({
         extraItems={openSelectedMenuItems}
         selectedPaths={checked_files.toArray()}
         label="Actions"
+        showEllipsis={false}
+        showDown={false}
       />
     );
   }
