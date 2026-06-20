@@ -322,7 +322,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       category: "python-web",
       priority: 78,
       homepage: "https://streamlit.io/",
-      description: "Interactive Python dashboards and data apps.",
+      description: "Build data apps quickly from plain Python scripts.",
       theme: withTemplateTheme(
         "dashboard",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -382,7 +382,7 @@ exec python3 -m streamlit run "$app" --server.address="\${HOST:-127.0.0.1}" --se
       category: "python-web",
       priority: 74,
       homepage: "https://fastapi.tiangolo.com/",
-      description: "Fast Python APIs served with Uvicorn.",
+      description: "Serve Python APIs with FastAPI and Uvicorn.",
       theme: withTemplateTheme(
         "rocket",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -507,7 +507,7 @@ exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
       category: "python-web",
       priority: 70,
       homepage: "https://www.gradio.app/",
-      description: "Quick browser UIs for Python functions and ML demos.",
+      description: "Turn Python functions or ML models into browser demos.",
       theme: withTemplateTheme(
         "robot",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -581,7 +581,8 @@ exec python3 "$app"`,
       category: "python-web",
       priority: 68,
       homepage: "https://dash.plotly.com/",
-      description: "Interactive analytic dashboards with Plotly Dash.",
+      description:
+        "Create Plotly dashboards with callbacks and custom layouts.",
       theme: withTemplateTheme(
         "line-chart",
         PYTHON_WEB_TEMPLATE_THEME,
@@ -728,8 +729,7 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
       category: "python-notebooks",
       priority: 76,
       homepage: "https://marimo.io/",
-      description:
-        "Reactive Python notebooks and apps in a lightweight editor.",
+      description: "Create reactive Python notebooks that run like apps.",
       theme: withTemplateTheme(
         "edit",
         PYTHON_NOTEBOOK_TEMPLATE_THEME,
@@ -805,10 +805,9 @@ exec python3 -m marimo edit --headless --no-token --base-url "\${base_url}" --ho
       category: "python-notebooks",
       priority: 67,
       homepage: "https://voila.readthedocs.io/",
-      description:
-        "Turn Jupyter notebooks into standalone dashboards and apps.",
+      description: "Publish existing notebooks as standalone web apps.",
       theme: withTemplateTheme(
-        "project",
+        "bug",
         PYTHON_NOTEBOOK_TEMPLATE_THEME,
         "Voila",
         "Notebook-powered apps",
@@ -1004,7 +1003,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "publishing",
       priority: 76,
       description:
-        "Share notebooks, markdown, slides, and boards from a directory with the read-only CoCalc public viewer.",
+        "Share notebooks, Markdown, slides, and boards as read-only public pages.",
       theme: withTemplateTheme(
         "book",
         PUBLISHING_TEMPLATE_THEME,
@@ -1042,7 +1041,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "publishing",
       priority: 75,
       description:
-        "Share markdown and Jupyter notebooks from a directory with a generated public listing.",
+        "Turn Markdown and notebooks into a lightweight notes collection.",
       theme: withTemplateTheme(
         "ipynb",
         PUBLISHING_TEMPLATE_THEME,
@@ -1080,7 +1079,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "publishing",
       priority: 74,
       description:
-        "Share slides, whiteboards, and supporting markdown from a directory with the read-only CoCalc viewer.",
+        "Share slides and boards as a public presentation directory.",
       theme: withTemplateTheme(
         "layout",
         PUBLISHING_TEMPLATE_THEME,
