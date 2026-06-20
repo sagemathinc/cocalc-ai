@@ -233,6 +233,21 @@ describe("account basic methods", () => {
       expect(result).toBeUndefined();
     });
 
+    it("ignores deleted accounts", async () => {
+      const pool = getPool();
+      const accountId = uuid();
+      const email = `deleted-${accountId}@test.com`;
+
+      await pool.query(
+        "INSERT INTO accounts (account_id, email_address, created, deleted) VALUES ($1, $2, NOW(), TRUE)",
+        [accountId, email],
+      );
+
+      const result = await account_exists_wrapper({ email_address: email });
+
+      expect(result).toBeUndefined();
+    });
+
     it("finds account with exact case match", async () => {
       const pool = getPool();
       const accountId = uuid();
