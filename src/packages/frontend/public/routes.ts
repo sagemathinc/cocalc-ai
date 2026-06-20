@@ -7,7 +7,10 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { PublicAboutRoute } from "./about/routes";
 import { getAboutRouteFromPath } from "./about/routes";
 import type { PublicAuthRoute } from "./auth/routes";
-import { getPublicAuthRouteFromPath } from "./auth/routes";
+import {
+  getPublicAuthRouteFromPath,
+  isPublicAuthRoutePath,
+} from "./auth/routes";
 import type { PublicDocsRoute } from "./docs/routes";
 import { getDocsRouteFromPath } from "./docs/routes";
 import type { PublicFeaturesRoute } from "./features/routes";
@@ -136,6 +139,15 @@ export function isPublicTarget(target?: string | null): target is string {
     target === `${appBasePath}/`
   ) {
     return true;
+  }
+  let url: URL;
+  try {
+    url = new URL(target, "https://example.invalid");
+  } catch {
+    return false;
+  }
+  if (url.pathname.split("/").filter(Boolean).includes("auth")) {
+    return isPublicAuthRoutePath(url.pathname, url.search);
   }
   return /\/(about|auth|invites|sso|redeem|docs|features|guides|lang|news|policies|pricing|products|rootfs|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
     target,
