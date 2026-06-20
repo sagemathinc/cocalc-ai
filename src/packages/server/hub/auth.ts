@@ -139,12 +139,15 @@ interface HandleReturnOpts {
 
 interface GoogleOidcState {
   nonce: string;
+  browserBinding: string;
   target?: string;
   authenticatedAccountId?: string;
   termsAccepted?: boolean;
   marketingConsent?: boolean;
   registrationToken?: string;
 }
+
+const GOOGLE_OIDC_BROWSER_STATE_COOKIE = `${base_path}google_oidc_state`;
 
 function safeAuthTarget(value: unknown): string | undefined {
   const target = `${value ?? ""}`.trim();
@@ -764,8 +767,10 @@ export class PassportManager {
           const clientID = strategy.conf.clientID;
           const state = uuidv4();
           const nonce = uuidv4();
+          const browserBinding = uuidv4();
           const savedState: GoogleOidcState = {
             nonce,
+            browserBinding,
             target: safeAuthTarget(req.query.target),
             authenticatedAccountId: await getAccountId(req),
             termsAccepted: booleanQueryFlag(req.query.terms),
@@ -773,6 +778,17 @@ export class PassportManager {
             registrationToken: stringQueryValue(req.query.registration_token),
           };
           await stateCache.saveAsync(state, JSON.stringify(savedState));
+          new Cookies(req, res).set(
+            GOOGLE_OIDC_BROWSER_STATE_COOKIE,
+            browserBinding,
+            {
+              httpOnly: true,
+              maxAge: 60 * 60 * 1000,
+              overwrite: true,
+              sameSite: "lax",
+              secure: req.protocol === "https",
+            },
+          );
           res.redirect(
             googleOidcAuthorizationUrl({
               clientID: clientID!,
@@ -796,6 +812,14 @@ export class PassportManager {
     this.router.get(`${AUTH_BASE}/google/return`, async (req, res) => {
       let passportLogin: PassportLogin | undefined;
       try {
+        const cookies = new Cookies(req, res);
+        const browserBinding = cookies.get(GOOGLE_OIDC_BROWSER_STATE_COOKIE);
+        cookies.set(GOOGLE_OIDC_BROWSER_STATE_COOKIE, undefined, {
+          httpOnly: true,
+          overwrite: true,
+          sameSite: "lax",
+          secure: req.protocol === "https",
+        });
         const strategy = await this.getGoogleOidcStrategy();
         const clientID = strategy.conf.clientID!;
         const clientSecret = strategy.conf.clientSecret!;
@@ -818,6 +842,13 @@ export class PassportManager {
         const savedState = JSON.parse(savedStateRaw) as GoogleOidcState;
         if (!savedState.nonce) {
           throw new Error("Google OIDC state did not include a nonce.");
+        }
+        if (
+          !browserBinding ||
+          !savedState.browserBinding ||
+          browserBinding !== savedState.browserBinding
+        ) {
+          throw new Error("Google OIDC browser state did not match.");
         }
 
         const tokens = await exchangeGoogleOidcCode({
