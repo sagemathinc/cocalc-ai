@@ -1,6 +1,10 @@
 version: 1
 name: ml-tensorflow-gpu
 
+builder:
+  run_quota:
+    disk_quota: 60000
+
 steps:
   - uses: cocalc/apt
     with:
@@ -22,9 +26,31 @@ steps:
         - vim
         - tmux
 
+  - name: Install Python 3.12 with uv
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      tmp="$(mktemp -d)"
+      trap 'rm -rf "$tmp"' EXIT
+      curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$tmp/uv-bin" sh
+      $SUDO install -m 755 "$tmp/uv-bin/uv" /usr/local/bin/uv
+      $SUDO mkdir -p /opt/cocalc-python
+      $SUDO chown -R "$(id -u):$(id -g)" /opt/cocalc-python
+      uv python install 3.12 --install-dir /opt/cocalc-python
+      python312="$(find /opt/cocalc-python -mindepth 3 -maxdepth 3 -path '*/bin/python3.12' | head -n 1)"
+      test -x "$python312"
+      $SUDO mkdir -p /opt/cocalc-python/bin
+      $SUDO ln -sf "$python312" /opt/cocalc-python/bin/python3.12
+      $SUDO chmod -R go+rX /opt/cocalc-python
+
   - uses: cocalc/jupyter-python
     with:
       prefix: /opt/cocalc-jupyter
+      python: /opt/cocalc-python/bin/python3.12
       install_bash_kernel: true
 
   - uses: cocalc/tensorflow-gpu

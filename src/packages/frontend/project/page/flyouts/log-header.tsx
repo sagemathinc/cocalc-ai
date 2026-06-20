@@ -17,6 +17,18 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { FIXED_PROJECT_TABS } from "../file-tab";
 import { FlyoutLogMode, getFlyoutLogMode, isFlyoutLogMode } from "./state";
 
+const MODE_TOGGLE_STYLE = {
+  alignItems: "center",
+  display: "inline-flex",
+  fontSize: 13,
+  fontWeight: 500,
+  lineHeight: "22px",
+} as const;
+
+const MODE_TOGGLE_BUTTON_STYLE = {
+  lineHeight: "22px",
+} as const;
+
 export function LogHeader(): React.JSX.Element {
   const intl = useIntl();
   const { project_id } = useProjectContext();
@@ -43,11 +55,12 @@ export function LogHeader(): React.JSX.Element {
         value={mode}
         onChange={(val) => setMode(val.target.value)}
         size="small"
+        style={MODE_TOGGLE_STYLE}
       >
-        <Radio.Button value="files">
+        <Radio.Button value="files" style={MODE_TOGGLE_BUTTON_STYLE}>
           {intl.formatMessage(labels.files)}
         </Radio.Button>
-        <Radio.Button value="history">
+        <Radio.Button value="history" style={MODE_TOGGLE_BUTTON_STYLE}>
           {intl.formatMessage(labels.activity)}
         </Radio.Button>
       </Radio.Group>
@@ -60,7 +73,6 @@ export function LogHeader(): React.JSX.Element {
         alignItems: "center",
         display: "flex",
         flex: "1 1 0",
-        fontWeight: "bold",
         gap: 8,
         minWidth: 0,
         overflow: "hidden",
@@ -69,6 +81,7 @@ export function LogHeader(): React.JSX.Element {
       <span
         style={{
           flex: "1 1 0",
+          fontWeight: "bold",
           minWidth: 0,
           overflow: "hidden",
           textOverflow: "ellipsis",

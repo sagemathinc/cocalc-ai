@@ -31,8 +31,10 @@ export interface PublicSSOStrategy {
   descr?: string;
   display: string;
   domains?: string[];
+  exclusiveDomains?: string[];
   icon?: string;
-  id: string;
+  id?: string;
+  name?: string;
 }
 
 const ICON_BOX_STYLE: CSSProperties = {
@@ -48,6 +50,14 @@ const ICON_BOX_STYLE: CSSProperties = {
 
 function strategyHref(id: string): string {
   return joinUrlPath(appBasePath, "auth", id);
+}
+
+function normalizeStrategy(strategy: PublicSSOStrategy): PublicSSOStrategy {
+  return {
+    ...strategy,
+    domains: strategy.domains ?? strategy.exclusiveDomains ?? [],
+    id: strategy.id ?? strategy.name,
+  };
 }
 
 function StrategyIcon({ strategy }: { strategy: PublicSSOStrategy }) {
@@ -90,7 +100,9 @@ function useStrategies(initialStrategies?: PublicSSOStrategy[]): {
   loading: boolean;
   strategies: PublicSSOStrategy[];
 } {
-  const [strategies, setStrategies] = useState(initialStrategies ?? []);
+  const [strategies, setStrategies] = useState(
+    initialStrategies?.map(normalizeStrategy) ?? [],
+  );
   const [loading, setLoading] = useState(initialStrategies == null);
   const [error, setError] = useState("");
 
@@ -103,7 +115,9 @@ function useStrategies(initialStrategies?: PublicSSOStrategy[]): {
       try {
         const result = await api("auth/sso-strategies");
         if (!cancelled) {
-          setStrategies(Array.isArray(result) ? result : []);
+          setStrategies(
+            Array.isArray(result) ? result.map(normalizeStrategy) : [],
+          );
         }
       } catch (err) {
         if (!cancelled) {
@@ -178,7 +192,7 @@ export function PublicSSOIndexView({
       </Paragraph>
       <Row gutter={[16, 16]}>
         {strategies.map((strategy) => (
-          <Col key={strategy.id} xs={24} md={12}>
+          <Col key={strategy.id ?? strategy.name} xs={24} md={12}>
             <Card
               styles={{
                 body: {
@@ -199,13 +213,15 @@ export function PublicSSOIndexView({
               </Flex>
               <Flex wrap gap={12}>
                 <Button
-                  href={strategyHref(strategy.id)}
+                  href={strategyHref((strategy.id ?? strategy.name)!)}
                   type="primary"
                   onClick={requireConsent}
                 >
                   Continue
                 </Button>
-                <Button href={pathForSSO(strategy.id)}>More</Button>
+                <Button href={pathForSSO(strategy.id ?? strategy.name)}>
+                  More
+                </Button>
               </Flex>
             </Card>
           </Col>
@@ -226,7 +242,7 @@ export function PublicSSODetailView({
 }) {
   const { error, loading, strategies } = useStrategies(initialStrategies);
   const strategy = useMemo(
-    () => strategies.find((item) => item.id === id),
+    () => strategies.find((item) => item.id === id || item.name === id),
     [id, strategies],
   );
 
@@ -295,7 +311,7 @@ export function PublicSSODetailView({
       ) : null}
       <Flex wrap gap={12}>
         <Button
-          href={strategyHref(strategy.id)}
+          href={strategyHref((strategy.id ?? strategy.name)!)}
           size="large"
           type="primary"
           onClick={requireConsent}

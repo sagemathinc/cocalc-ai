@@ -242,6 +242,208 @@ describe("ConatClient routed project-host reconnect", () => {
     );
   });
 
+  it("keeps local-proxy project-scoped routed clients separate for the same host", async () => {
+    jest.resetModules();
+
+    const project1 = "00000000-0000-4000-8000-000000000001";
+    const project2 = "00000000-0000-4000-8000-000000000002";
+    const connectCalls: any[] = [];
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(),
+    };
+    const routedClient1 = {
+      conn: {
+        connected: true,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      request: jest.fn(async () => ({ data: { ok: true } })),
+    };
+    const routedClient2 = {
+      conn: {
+        connected: true,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      request: jest.fn(async () => ({ data: { ok: true } })),
+    };
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            open_projects: immutable.List([project1, project2]),
+            project_map: immutable.Map({
+              [project1]: immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+              [project2]: immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: immutable.Map({
+              "host-1": immutable.Map({
+                bay_id: "bay-1",
+                local_proxy: true,
+                host_session_id: "session-1",
+                updated_at: Date.now(),
+              }),
+            }),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: jest.fn(),
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) => {
+        connectCalls.push(opts);
+        if (opts?.address === "http://hub") {
+          return hubClient;
+        }
+        if (opts?.address?.endsWith(`/${project1}`)) {
+          return routedClient1;
+        }
+        return routedClient2;
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.conat();
+    const routeSubject = connectCalls[0]?.routeSubject;
+
+    const routed1 = routeSubject(`project.${project1}.api`);
+    const routed2 = routeSubject(`project.${project2}.api`);
+
+    expect(routed1?.client).toBe(routedClient1);
+    expect(routed2?.client).toBe(routedClient2);
+    expect(connectCalls.map((call) => call?.address)).toEqual([
+      "http://hub",
+      `http://localhost/${project1}`,
+      `http://localhost/${project2}`,
+    ]);
+    expect(client.routedHubClients[`host-1:${project1}`]?.client).toBe(
+      routedClient1,
+    );
+    expect(client.routedHubClients[`host-1:${project2}`]?.client).toBe(
+      routedClient2,
+    );
+
+    const targets = client.getConnectionTargets();
+    expect(targets.map((target) => target.id)).toEqual([
+      "hub",
+      `project-host:host-1:${project1}`,
+      `project-host:host-1:${project2}`,
+    ]);
+  });
+
   it("routes filesystem subjects directly to the project-host even when the project bay differs from the host bay", async () => {
     jest.resetModules();
 

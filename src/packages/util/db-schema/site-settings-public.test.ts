@@ -45,6 +45,26 @@ describe("buildPublicSiteSettings", () => {
     ).toBe(false);
   });
 
+  it("exposes only the public RootFS scan feature flag", () => {
+    expect(
+      buildPublicSiteSettings({
+        rootfs_scan_enabled: "yes",
+        rootfs_scan_container_image: "registry.example/trivy@sha256:secret",
+        rootfs_scan_trivy_cache_dir: "/private/cache",
+      }).configuration,
+    ).toEqual(
+      expect.objectContaining({
+        rootfs_scan_enabled: true,
+      }),
+    );
+    const disabled = buildPublicSiteSettings({
+      rootfs_scan_enabled: "no",
+    }).configuration;
+    expect(disabled.rootfs_scan_enabled).toBe(false);
+    expect(disabled.rootfs_scan_container_image).toBeUndefined();
+    expect(disabled.rootfs_scan_trivy_cache_dir).toBeUndefined();
+  });
+
   it("does not expose the removed legacy policy visibility flag", () => {
     expect(
       buildPublicSiteSettings({

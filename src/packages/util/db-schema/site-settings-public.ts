@@ -3,6 +3,7 @@ Helpers for producing the public subset of site settings (used by /customize).
 */
 
 import { site_settings_conf, type SiteSettingsKeys } from "./site-defaults";
+import { to_bool } from "./site-defaults";
 import {
   publicSignupEmailDomainPolicy,
   SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
@@ -85,6 +86,10 @@ export function buildPublicSiteSettings(all: Record<string, any>): {
 
   configuration.signup_email_domain_public_policy =
     publicSignupEmailDomainPolicy(all);
+
+  // Expose only the coarse feature flag. Scanner image/cache settings remain
+  // admin-only, but the browser needs this to hide scan affordances.
+  configuration.rootfs_scan_enabled = to_bool(all.rootfs_scan_enabled);
 
   return { configuration, version };
 }

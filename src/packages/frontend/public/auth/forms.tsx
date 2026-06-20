@@ -161,6 +161,13 @@ type SignInMethod = {
   reason?: "domain_sso_required";
 };
 
+type PublicSsoStrategy = {
+  name?: string;
+  display: string;
+  public?: boolean;
+  do_not_hide?: boolean;
+};
+
 function Alert({
   children,
   kind,
@@ -260,8 +267,20 @@ function NavLink(props: { children: ReactNode; onClick: () => void }) {
   );
 }
 
-function ssoLoginHref(strategyName: string): string {
-  return joinUrlPath(appBasePath, "auth", strategyName);
+function ssoLoginHref(
+  strategyName: string,
+  query?: Record<string, string | boolean | undefined>,
+): string {
+  const href = joinUrlPath(appBasePath, "auth", strategyName);
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value === undefined || value === false || value === "") {
+      continue;
+    }
+    params.set(key, value === true ? "1" : value);
+  }
+  const search = params.toString();
+  return search ? `${href}?${search}` : href;
 }
 
 function termsOfServiceHref(): string {
@@ -306,15 +325,100 @@ export function resolveAuthRedirectPath(
   return target;
 }
 
+function usePublicSsoStrategies(
+  initialStrategies?: PublicSsoStrategy[],
+): PublicSsoStrategy[] {
+  const [strategies, setStrategies] = useState<PublicSsoStrategy[]>(
+    initialStrategies ?? [],
+  );
+
+  useEffect(() => {
+    if (initialStrategies != null) {
+      setStrategies(initialStrategies);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await api("auth/sso-strategies");
+        if (!cancelled) {
+          setStrategies(Array.isArray(result) ? result : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setStrategies([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialStrategies]);
+
+  return strategies;
+}
+
+function googleStrategyFrom(strategies: PublicSsoStrategy[]) {
+  return strategies.find((strategy) => strategy.name === "google");
+}
+
+function SsoButton({
+  children,
+  disabled,
+  href,
+  cookieBannerEnabled,
+  cookieConsentReady,
+}: {
+  children: ReactNode;
+  disabled?: boolean;
+  href: string;
+  cookieBannerEnabled: boolean;
+  cookieConsentReady: boolean;
+}) {
+  return (
+    <a
+      href={href}
+      style={{
+        ...BUTTON_STYLE,
+        background: "white",
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        color: COLORS.GRAY_D,
+        display: "block",
+        opacity: disabled ? 0.65 : 1,
+        textAlign: "center",
+        textDecoration: "none",
+      }}
+      aria-disabled={disabled}
+      onClick={(event) => {
+        if (disabled) {
+          event.preventDefault();
+          return;
+        }
+        if (
+          cookieBannerEnabled &&
+          !cookieConsentReady &&
+          !requireEssentialConsent()
+        ) {
+          event.preventDefault();
+        }
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
 export function PublicSignInForm({
   initialChallengeId,
   initialInfo,
+  initialSSOStrategies,
   cookieBannerEnabled = false,
   onNavigate,
   redirectToPath,
 }: {
   initialChallengeId?: string;
   initialInfo?: string;
+  initialSSOStrategies?: PublicSsoStrategy[];
   cookieBannerEnabled?: boolean;
   onNavigate: (view: AuthView) => void;
   redirectToPath?: string | (() => string);
@@ -331,6 +435,8 @@ export function PublicSignInForm({
   const [checkingSignInMethod, setCheckingSignInMethod] = useState(false);
   const [signInMethod, setSignInMethod] = useState<SignInMethod>();
   const [error, setError] = useState("");
+  const strategies = usePublicSsoStrategies(initialSSOStrategies);
+  const googleStrategy = googleStrategyFrom(strategies);
   const publicConfig = usePublicConfig();
   const codeFactorMethod = inferSecondFactorInputMethod(factorCode);
   const consentReady = useEssentialConsent();
@@ -494,6 +600,17 @@ export function PublicSignInForm({
       {initialInfo && challengeId && <Alert kind="info">{initialInfo}</Alert>}
       {!challengeId ? (
         <>
+          {googleStrategy != null ? (
+            <SsoButton
+              cookieBannerEnabled={cookieBannerEnabled}
+              cookieConsentReady={cookieConsentReady}
+              href={ssoLoginHref("google", {
+                target: resolveAuthRedirectPath(redirectToPath),
+              })}
+            >
+              Continue with {googleStrategy.display}
+            </SsoButton>
+          ) : null}
           <div style={FIELD_STYLE}>
             <div style={LABEL_STYLE}>Email address</div>
             <TextInput
@@ -543,7 +660,15 @@ export function PublicSignInForm({
                 </label>
               ) : null}
               <a
-                href={ssoLoginHref(ssoStrategy.name)}
+                href={ssoLoginHref(
+                  ssoStrategy.name,
+                  acceptedRequiredSsoTerms
+                    ? {
+                        target: resolveAuthRedirectPath(redirectToPath),
+                        terms: policiesVisible ? acceptedSsoTerms : true,
+                      }
+                    : undefined,
+                )}
                 style={{
                   ...BUTTON_STYLE,
                   opacity: acceptedRequiredSsoTerms ? 1 : 0.65,
@@ -754,11 +879,13 @@ export function PublicPasswordResetForm({
 
 export function PublicSignUpForm({
   cookieBannerEnabled = false,
+  initialSSOStrategies,
   onNavigate,
   redirectToPath,
   signupEmailDomainPolicy,
 }: {
   cookieBannerEnabled?: boolean;
+  initialSSOStrategies?: PublicSsoStrategy[];
   onNavigate: (view: AuthView) => void;
   redirectToPath?: string | (() => string);
   signupEmailDomainPolicy?: SignupEmailDomainPublicPolicy;
@@ -776,6 +903,8 @@ export function PublicSignUpForm({
   const [signingUp, setSigningUp] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const strategies = usePublicSsoStrategies(initialSSOStrategies);
+  const googleStrategy = googleStrategyFrom(strategies);
   const registrationTokenInputRef = useRef<HTMLInputElement | null>(null);
   const emailInputRef = useRef<HTMLInputElement | null>(null);
   const passwordInputRef = useRef<HTMLInputElement | null>(null);
@@ -935,6 +1064,12 @@ export function PublicSignUpForm({
   }
 
   const issueList = Object.values(issues).filter(Boolean);
+  const canGoogleSignUp =
+    googleStrategy != null &&
+    (requiresToken === false ||
+      (requiresToken === true && !!registrationToken.trim())) &&
+    (!policiesVisible || acceptedTerms) &&
+    cookieConsentReady;
 
   return (
     <div
@@ -973,6 +1108,26 @@ export function PublicSignUpForm({
           />
         </div>
       )}
+      {googleStrategy != null ? (
+        <>
+          <SsoButton
+            disabled={!canGoogleSignUp}
+            cookieBannerEnabled={cookieBannerEnabled}
+            cookieConsentReady={cookieConsentReady}
+            href={ssoLoginHref("google", {
+              target: resolveAuthRedirectPath(redirectToPath),
+              terms: policiesVisible ? acceptedTerms : true,
+              marketing_consent: marketingConsent,
+              registration_token: registrationToken.trim(),
+            })}
+          >
+            Sign up with {googleStrategy.display}
+          </SsoButton>
+          <div style={TERMS_NOTICE_STYLE}>
+            Or create an account with an email address and password.
+          </div>
+        </>
+      ) : null}
       <div style={FIELD_STYLE}>
         <div style={LABEL_STYLE}>Email address</div>
         <TextInput

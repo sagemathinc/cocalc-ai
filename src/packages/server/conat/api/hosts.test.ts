@@ -2684,6 +2684,103 @@ describe("hosts browser fresh auth gating", () => {
     );
   });
 
+  it("allows admins to delete validation hosts owned by another account", async () => {
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: "local-validation",
+              name: "local-validation",
+              status: "deprovisioned",
+              metadata: {
+                owner: "validation-owner",
+                machine: {
+                  cloud: "local",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { deleteHost } = await import("./hosts");
+    const result = await deleteHost({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      id: "local-validation",
+    });
+
+    expect(result.kind).toBe("host-delete");
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-delete",
+        scope_id: "local-validation",
+        input: expect.objectContaining({ id: "local-validation" }),
+      }),
+    );
+  });
+
+  it("does not allow host managers to delete hosts", async () => {
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              status: "deprovisioned",
+              metadata: {
+                owner: "other-owner",
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_host_access")) {
+        return { rows: [{ role: "manager" }] };
+      }
+      if (sql.includes("SELECT id, metadata")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              metadata: {
+                owner: "other-owner",
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { deleteHost } = await import("./hosts");
+    await expect(
+      deleteHost({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        id: HOST_ID,
+      }),
+    ).rejects.toThrow("not authorized");
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("rejects protected hosts before queueing host delete", async () => {
     getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
     queryMock = jest.fn(async (sql: string) => {
@@ -5864,6 +5961,90 @@ describe("hosts.listHosts bootstrap normalization", () => {
 
     expect(hosts).toHaveLength(1);
     expect(hosts[0].id).toBe(HOST_ID);
+  });
+
+  it("keeps machine and pricing fields for cross-owner admin host lists", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_host_runtime_deployments",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_host_runtime_deployments_host_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "other-owner-host",
+              region: "us-central1",
+              status: "running",
+              deleted: null,
+              metadata: {
+                owner: "other-owner",
+                pricing_model: "spot",
+                desired_pricing_model: "spot",
+                effective_pricing_model: "on_demand",
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "n2-standard-4",
+                  disk_type: "pd-balanced",
+                  disk_gb: 128,
+                  metadata: {
+                    cpu: 4,
+                    ram_gb: 16,
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_host_runtime_deployments") ||
+        sql.includes("COUNT(*) AS total")
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+    });
+
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toEqual(
+      expect.objectContaining({
+        id: HOST_ID,
+        access_role: "admin",
+        billing_owner_account_id: "other-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "on_demand",
+        machine: expect.objectContaining({
+          cloud: "gcp",
+          machine_type: "n2-standard-4",
+          disk_type: "pd-balanced",
+          disk_gb: 128,
+          metadata: expect.objectContaining({
+            cpu: 4,
+            ram_gb: 16,
+          }),
+        }),
+      }),
+    );
   });
 
   it("prefers deleted duplicate host rows over stale live rows", async () => {

@@ -1,6 +1,7 @@
 import { CSS } from "@cocalc/frontend/app-framework";
 import { redux, useEditorRedux } from "@cocalc/frontend/app-framework";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import type { ReactNode } from "react";
 import type { ChatActions } from "./actions";
 import { ChatPanel } from "./chatroom";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
@@ -36,6 +37,9 @@ interface Props {
   ) => void;
   onIncreaseFontSize?: () => void;
   onDecreaseFontSize?: () => void;
+  threadPanelTopRightControlsPrefix?: ReactNode;
+  threadPanelCompactTopRightControls?: boolean;
+  threadPanelTopRightControlsPortal?: HTMLElement | null;
 }
 
 export default function SideChat({
@@ -51,6 +55,9 @@ export default function SideChat({
   onComposerReady,
   onIncreaseFontSize,
   onDecreaseFontSize,
+  threadPanelTopRightControlsPrefix,
+  threadPanelCompactTopRightControls,
+  threadPanelTopRightControlsPortal,
 }: Props) {
   const actionsViaContext = redux.getEditorActions(project_id, path);
   const propActions = isLiveChatActions(actions0) ? actions0 : undefined;
@@ -92,6 +99,11 @@ export default function SideChat({
           onComposerReady={onComposerReady}
           onIncreaseFontSize={onIncreaseFontSize}
           onDecreaseFontSize={onDecreaseFontSize}
+          threadPanelTopRightControlsPrefix={threadPanelTopRightControlsPrefix}
+          threadPanelCompactTopRightControls={
+            threadPanelCompactTopRightControls
+          }
+          threadPanelTopRightControlsPortal={threadPanelTopRightControlsPortal}
         />
       </KeyboardBoundary>
     </ChatDocProvider>
@@ -117,6 +129,15 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       onComposerReady={props.onComposerReady}
       onIncreaseFontSize={props.onIncreaseFontSize}
       onDecreaseFontSize={props.onDecreaseFontSize}
+      threadPanelTopRightControlsPrefix={
+        props.threadPanelTopRightControlsPrefix
+      }
+      threadPanelCompactTopRightControls={
+        props.threadPanelCompactTopRightControls
+      }
+      threadPanelTopRightControlsPortal={
+        props.threadPanelTopRightControlsPortal
+      }
     />
   );
 }

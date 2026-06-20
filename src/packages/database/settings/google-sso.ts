@@ -94,7 +94,6 @@ export function googleSsoStateFromSettings(
         icon: "google",
         allowed_domains: allowedDomains,
         exclusive_domains: allowedDomains,
-        account_creation: signupMode,
       },
     },
   };

@@ -111,6 +111,20 @@ import {
   writeProjectSecretsHostPath,
 } from "./podman";
 
+function mockProjectStartPodman(project_id: string) {
+  const name = `project-${project_id}`;
+  mockPodman.mockImplementation(async (args: string[]) => {
+    if (
+      args[0] === "ps" &&
+      args.includes(`name=${name}`) &&
+      args.includes("{{.Names}} {{.State}}")
+    ) {
+      return { stdout: `${name} running\n` };
+    }
+    return { stdout: "" };
+  });
+}
+
 describe("project-runner podman orphan fallback", () => {
   const project1 = "11111111-1111-4111-8111-111111111111";
   const project2 = "22222222-2222-4222-8222-222222222222";
@@ -426,7 +440,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("uses caller-provided host ports when starting a project", async () => {
-    mockPodman.mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     const libatomic = `/tmp/cocalc-test-libatomic-${project1}`;
     const compatLibs = `/tmp/cocalc-test-runtime-libs-${project1}`;
     await writeFile(libatomic, "test-libatomic");
@@ -477,7 +491,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("does not set project quota twice when localPath already applied it", async () => {
-    mockPodman.mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     const { setQuota } = jest.requireMock("./filesystem");
 
     await start({
@@ -498,7 +512,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("resets scratch before launching a fresh project container", async () => {
-    mockPodman.mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     const localPath = jest.fn(async () => ({
       home: `/tmp/project-${project1}`,
       scratch: `/tmp/project-${project1}-scratch`,
@@ -551,11 +565,7 @@ describe("project-runner podman orphan fallback", () => {
         ],
       ]),
     );
-    mockPodman
-      .mockResolvedValueOnce({
-        stdout: `project-${project1} running\n`,
-      })
-      .mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     const localPath = jest.fn(async () => ({
       home: `/tmp/project-${project1}`,
       scratch: `/tmp/project-${project1}-scratch`,
@@ -583,7 +593,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("bind mounts host shared scratch into started project containers", async () => {
-    mockPodman.mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
     process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT = "/";
     process.env.COCALC_SHARED_SCRATCH_PROJECT_MOUNT = "/scratch";
@@ -607,7 +617,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("fails project start when configured shared scratch is not mounted", async () => {
-    mockPodman.mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
     process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT = `/tmp/missing-scratch-${project1}`;
 
@@ -748,7 +758,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("falls back to indexed backups when full rustic backup listing is truncated", async () => {
-    mockPodman.mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     const getBackups = jest
       .fn()
       .mockRejectedValueOnce(
@@ -807,7 +817,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("restores an explicit backup id without listing backups", async () => {
-    mockPodman.mockResolvedValue({ stdout: "" });
+    mockProjectStartPodman(project1);
     const getBackups = jest.fn();
     const restoreBackup = jest.fn(async () => undefined);
     mockFileServerClient.mockReturnValue({

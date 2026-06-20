@@ -73,14 +73,20 @@ async function loadScanMaintenanceConfig(): Promise<{
   batchLimit: number;
 }> {
   const settings = await getServerSettings();
+  const scanEnabled = settingsBoolean(
+    firstConfiguredValue((settings as any).rootfs_scan_enabled),
+    false,
+  );
   return {
-    enabled: settingsBoolean(
-      firstConfiguredValue(
-        (settings as any).rootfs_scan_scheduled_enabled,
-        process.env.COCALC_ROOTFS_SCAN_SCHEDULED_ENABLED,
+    enabled:
+      scanEnabled &&
+      settingsBoolean(
+        firstConfiguredValue(
+          (settings as any).rootfs_scan_scheduled_enabled,
+          process.env.COCALC_ROOTFS_SCAN_SCHEDULED_ENABLED,
+        ),
+        true,
       ),
-      true,
-    ),
     rescanPeriodDays:
       optionalPositiveInteger(
         (settings as any).rootfs_scan_rescan_period_days ??

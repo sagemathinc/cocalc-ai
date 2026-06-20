@@ -28,20 +28,26 @@ import {
   useRedux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { Icon, Paragraph, Text, Tooltip } from "@cocalc/frontend/components";
+import {
+  AIAvatar,
+  Icon,
+  Paragraph,
+  Text,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
-import {
-  submitNavigatorPromptInWorkspaceChat,
-  submitNavigatorPromptToCurrentThread,
-} from "@cocalc/frontend/project/new/navigator-intents";
+import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
+import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
+import { useAgentAutoSubmit } from "@cocalc/frontend/frame-editors/ai/agent-auto-submit";
 import {
   AgentSessionError,
   AgentSessionSelect,
+  isNewAgentThreadSelection,
   usePersistentAgentSessionSelection,
 } from "@cocalc/frontend/frame-editors/ai/agent-session-selector";
 
@@ -73,6 +79,8 @@ const ALL_LANGS_LABEL_STYLE: CSS = {
   color: COLORS.GRAY_D,
 } as const;
 
+const DEFAULT_JUPYTER_KERNEL_AGENT_MODEL = "gpt-5.4-mini";
+
 interface KernelSelectorProps {
   actions: JupyterActions;
   embedded?: boolean;
@@ -82,6 +90,57 @@ interface KernelSelectorProps {
 interface KernelAgentInstallRequest {
   requestedKernel?: string;
   spec?: JupyterKernelInstallSpec;
+}
+
+function kernelAgentTargetKey(opts?: KernelAgentInstallRequest): string {
+  const requested =
+    `${opts?.spec?.requestedKernel ?? opts?.requestedKernel ?? ""}`.trim();
+  return opts?.spec != null
+    ? `popular:${opts.spec.key}`
+    : requested || "generic";
+}
+
+function kernelInstallTagSuffix(opts: KernelAgentInstallRequest): string {
+  const raw = `${opts.spec?.key ?? opts.requestedKernel ?? "generic"}`
+    .trim()
+    .toLowerCase();
+  return raw.replace(/[^a-z0-9_.-]+/g, "-") || "generic";
+}
+
+function kernelInstallKernelLabel(opts: KernelAgentInstallRequest): string {
+  return `${opts.spec?.label ?? opts.requestedKernel ?? ""}`.trim();
+}
+
+function kernelInstallVisiblePrompt(opts: KernelAgentInstallRequest): string {
+  const label = kernelInstallKernelLabel(opts);
+  return label
+    ? `Install the ${label} Jupyter kernel.`
+    : "Install a Jupyter kernel.";
+}
+
+function kernelInstallTitle(opts: KernelAgentInstallRequest): string {
+  const label = kernelInstallKernelLabel(opts);
+  return label ? `Install ${label} Jupyter kernel` : "Install Jupyter kernel";
+}
+
+function buildKernelInstallAgentPrompt({
+  opts,
+  notebookPath,
+  userRequest,
+}: {
+  opts: KernelAgentInstallRequest;
+  notebookPath: string;
+  userRequest: string;
+}): string {
+  const requested =
+    `${opts.spec?.requestedKernel ?? opts.requestedKernel ?? ""}`.trim();
+  const prompt = buildJupyterKernelAgentPrompt({
+    notebookPath,
+    requestedKernel: requested,
+    spec: opts.spec,
+  });
+  const request = userRequest.trim();
+  return request ? `${prompt}\n\nUser request:\n${request}` : prompt;
 }
 
 export function KernelSelector({
@@ -143,11 +202,12 @@ export function KernelSelector({
     studentProjectFunctionality.disableAI,
     studentProjectFunctionality.disableSomeAI,
   ]);
-  const [sendingAgentTarget, setSendingAgentTarget] = useState<string | null>(
-    null,
-  );
+  const [sendingAgentInstall, setSendingAgentInstall] =
+    useState<boolean>(false);
   const [pendingAgentInstall, setPendingAgentInstall] =
     useState<KernelAgentInstallRequest | null>(null);
+  const [agentInstallPrompt, setAgentInstallPrompt] = useState<string>("");
+  const [autoSubmit, setAutoSubmit] = useAgentAutoSubmit();
   const agentSessionSelection = usePersistentAgentSessionSelection({
     project_id: project_id ?? "",
     path: actions.path,
@@ -155,59 +215,34 @@ export function KernelSelector({
     enabled: pendingAgentInstall != null,
   });
 
-  function kernelAgentTargetKey(opts?: KernelAgentInstallRequest): string {
-    const requested =
-      `${opts?.spec?.requestedKernel ?? opts?.requestedKernel ?? ""}`.trim();
-    return opts?.spec != null
-      ? `popular:${opts.spec.key}`
-      : requested || "generic";
-  }
-
-  function kernelInstallTagSuffix(opts: KernelAgentInstallRequest): string {
-    const raw = `${opts.spec?.key ?? opts.requestedKernel ?? "generic"}`
-      .trim()
-      .toLowerCase();
-    return raw.replace(/[^a-z0-9_.-]+/g, "-") || "generic";
-  }
-
-  function kernelInstallVisiblePrompt(opts: KernelAgentInstallRequest): string {
-    if (opts.spec != null) {
-      return `Install ${opts.spec.label}`;
+  useEffect(() => {
+    if (pendingAgentInstall == null) {
+      setAgentInstallPrompt("");
+      return;
     }
-    const requested = `${opts.requestedKernel ?? ""}`.trim();
-    return requested
-      ? `Install Jupyter kernel ${requested}`
-      : "Install a Jupyter kernel";
-  }
+    setAgentInstallPrompt(kernelInstallVisiblePrompt(pendingAgentInstall));
+  }, [pendingAgentInstall]);
 
-  function kernelInstallTitle(opts: KernelAgentInstallRequest): string {
-    if (opts.spec != null) {
-      return `Install ${opts.spec.label}`;
-    }
-    const requested = `${opts.requestedKernel ?? ""}`.trim();
-    return requested
-      ? `Install Jupyter kernel ${requested}`
-      : "Install Jupyter kernel";
-  }
-
-  async function askAgentToInstallKernel(opts?: KernelAgentInstallRequest) {
+  async function askAgentToInstallKernel(nextPrompt?: string) {
     if (!project_id || !canAskAgentForKernel) return;
+    const opts = pendingAgentInstall ?? {};
+    const visiblePrompt = `${nextPrompt ?? agentInstallPrompt}`.trim();
+    if (!visiblePrompt || sendingAgentInstall) return;
     try {
+      setSendingAgentInstall(true);
       const requested =
-        `${opts?.spec?.requestedKernel ?? opts?.requestedKernel ?? ""}`.trim();
-      const targetKey = kernelAgentTargetKey(opts);
-      setSendingAgentTarget(targetKey);
-      const prompt = buildJupyterKernelAgentPrompt({
+        `${opts.spec?.requestedKernel ?? opts.requestedKernel ?? ""}`.trim();
+      const prompt = buildKernelInstallAgentPrompt({
         notebookPath: actions.path,
-        requestedKernel: requested,
-        spec: opts?.spec,
+        opts,
+        userRequest: visiblePrompt,
       });
-      const visiblePrompt = kernelInstallVisiblePrompt(opts ?? {});
-      const title = kernelInstallTitle(opts ?? {});
+      const title = kernelInstallTitle(opts);
       const tag = requested
-        ? `intent:jupyter-install-kernel:${kernelInstallTagSuffix(opts ?? {})}`
+        ? `intent:jupyter-install-kernel:${kernelInstallTagSuffix(opts)}`
         : "intent:jupyter-install-kernel";
-      let sent = await submitNavigatorPromptInWorkspaceChat({
+      const createNewThread = isNewAgentThreadSelection(agentSessionSelection);
+      const sent = await submitNavigatorPromptInWorkspaceChat({
         project_id,
         path: actions.path,
         prompt,
@@ -215,47 +250,38 @@ export function KernelSelector({
         title,
         tag,
         forceCodex: true,
+        codexConfig: { model: DEFAULT_JUPYTER_KERNEL_AGENT_MODEL },
         openFloating: true,
         waitForAgent: false,
-        agentSession: agentSessionSelection.selectedAgentSession,
+        agentSession: createNewThread
+          ? undefined
+          : agentSessionSelection.selectedAgentSession,
+        createNewThread,
+        submitToAgent: autoSubmit,
       });
       agentSessionSelection.saveSelectedAgentSession();
-      if (!sent) {
-        sent = await submitNavigatorPromptToCurrentThread({
-          project_id,
-          path: actions.path,
-          prompt,
-          visiblePrompt,
-          title,
-          tag,
-          forceCodex: true,
-          openFloating: true,
-          createNewThread: true,
-        });
-      }
       if (!sent) {
         throw new Error("Unable to submit request to Agent.");
       }
       setPendingAgentInstall(null);
+      if (!embedded) {
+        actions.hide_select_kernel();
+      }
     } catch (err) {
       alert_message({
         type: "error",
         message: `Unable to ask Agent for help: ${err}`,
       });
     } finally {
-      setSendingAgentTarget((current) =>
-        current === kernelAgentTargetKey(opts) ? null : current,
-      );
+      setSendingAgentInstall(false);
     }
   }
 
   function renderAskAgentButton(requestedKernel?: string): Rendered {
     if (!project_id || !canAskAgentForKernel) return;
-    const targetKey = `${requestedKernel ?? ""}`.trim() || "generic";
     return (
       <Button
         size="small"
-        loading={sendingAgentTarget === targetKey}
         onClick={() => setPendingAgentInstall({ requestedKernel })}
       >
         Agent
@@ -268,11 +294,7 @@ export function KernelSelector({
   ): Rendered {
     if (!project_id || !canAskAgentForKernel) return;
     return (
-      <Button
-        size="small"
-        loading={sendingAgentTarget === `popular:${spec.key}`}
-        onClick={() => setPendingAgentInstall({ spec })}
-      >
+      <Button size="small" onClick={() => setPendingAgentInstall({ spec })}>
         Agent
       </Button>
     );
@@ -442,7 +464,7 @@ export function KernelSelector({
   function render_no_kernels(): Rendered[] {
     return [
       <Descriptions.Item key="no_kernels" label={<Icon name="ban" />}>
-        <Space direction="vertical" size={8}>
+        <Space orientation="vertical" size={8}>
           <Paragraph style={{ marginBottom: 0 }}>
             There are no kernels available. <SiteName /> searches the standard
             paths of Jupyter{" "}
@@ -834,50 +856,90 @@ export function KernelSelector({
     if (!canAskAgentForKernel) return;
     const opts = pendingAgentInstall ?? {};
     const title = kernelInstallTitle(opts);
-    const targetKey = kernelAgentTargetKey(opts);
+    const createNewThread = isNewAgentThreadSelection(agentSessionSelection);
+    const helperText = createNewThread
+      ? "The agent will start a new workspace thread with fresh context."
+      : agentSessionSelection.selectedAgentSession
+        ? "The agent will continue in the selected session."
+        : "The agent will continue in the workspace agent thread.";
     return (
       <Modal
-        title="Ask Agent to install a kernel"
+        title={
+          <Space size="small">
+            <AIAvatar size={18} />
+            <span>Install Jupyter Kernel with Agent</span>
+          </Space>
+        }
         open={pendingAgentInstall != null}
         onCancel={() => {
-          if (sendingAgentTarget == null) {
+          if (!sendingAgentInstall) {
             setPendingAgentInstall(null);
           }
         }}
         destroyOnHidden
-        mask={{ closable: sendingAgentTarget == null }}
-        footer={[
-          <Button
-            key="cancel"
-            disabled={sendingAgentTarget != null}
-            onClick={() => setPendingAgentInstall(null)}
-          >
-            Cancel
-          </Button>,
-          <Button
-            key="submit"
-            type="primary"
-            loading={sendingAgentTarget === targetKey}
-            onClick={() => void askAgentToInstallKernel(opts)}
-          >
-            Ask Agent
-          </Button>,
-        ]}
+        footer={null}
+        width={560}
+        mask={{ closable: !sendingAgentInstall }}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <div>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <div style={{ color: COLORS.GRAY_D }}>
             Agent will inspect this project environment, install the requested
             Jupyter kernel, and register its kernelspec when it can do so
-            safely.
+            safely. You can edit the request before sending.
           </div>
           <div>
             Request: <Text strong>{title}</Text>
           </div>
           <AgentSessionSelect
             selection={agentSessionSelection}
-            disabled={sendingAgentTarget != null}
+            disabled={sendingAgentInstall}
+            includeNewThreadOption
           />
           <AgentSessionError selection={agentSessionSelection} />
+          <PopupAgentComposer
+            value={agentInstallPrompt}
+            onChange={setAgentInstallPrompt}
+            onSubmit={(value) => void askAgentToInstallKernel(value)}
+            placeholder="Describe the Jupyter kernel Agent should install..."
+            cacheId={`popup-agent:jupyter-install-kernel:${project_id}:${actions.path}:${kernelAgentTargetKey(opts)}`}
+            autoFocus
+          />
+          <div style={{ color: COLORS.GRAY_D }}>{helperText}</div>
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <Checkbox
+              checked={autoSubmit}
+              disabled={sendingAgentInstall}
+              onChange={(event) => setAutoSubmit(event.target.checked)}
+            >
+              Automatically submit to Agent
+            </Checkbox>
+            <Space>
+              <Button
+                disabled={sendingAgentInstall}
+                onClick={() => setPendingAgentInstall(null)}
+              >
+                {intl.formatMessage(labels.cancel)}
+              </Button>
+              <Button
+                type="primary"
+                disabled={sendingAgentInstall || !agentInstallPrompt.trim()}
+                onClick={() => void askAgentToInstallKernel()}
+              >
+                <Icon
+                  name={sendingAgentInstall ? "spinner" : "paper-plane"}
+                  spin={sendingAgentInstall}
+                />{" "}
+                Send
+              </Button>
+            </Space>
+          </div>
         </Space>
       </Modal>
     );

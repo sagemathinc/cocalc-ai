@@ -11,13 +11,13 @@ prefix="${INSTALL_PREFIX:-/opt/julia}"
 major_minor="$(printf '%s\n' "$version" | awk -F. '{print $1 "." $2}')"
 machine="$(uname -m)"
 case "$machine" in
-  x86_64|amd64) julia_arch="x86_64" ;;
-  aarch64|arm64) julia_arch="aarch64" ;;
+  x86_64|amd64) julia_path_arch="x64"; julia_archive_arch="x86_64" ;;
+  aarch64|arm64) julia_path_arch="aarch64"; julia_archive_arch="aarch64" ;;
   *) echo "unsupported architecture: $machine" >&2; exit 1 ;;
 esac
 
-archive="julia-${version}-linux-${julia_arch}.tar.gz"
-url="https://julialang-s3.julialang.org/bin/linux/${julia_arch}/${major_minor}/${archive}"
+archive="julia-${version}-linux-${julia_archive_arch}.tar.gz"
+url="https://julialang-s3.julialang.org/bin/linux/${julia_path_arch}/${major_minor}/${archive}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

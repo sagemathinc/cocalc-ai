@@ -19,6 +19,7 @@ const mockInitChat = jest.fn();
 const mockRemoveChatWithInstance = jest.fn();
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockEnsureWorkspaceChatDirectory = jest.fn();
+const mockSaveNavigatorSelectedThreadKey = jest.fn();
 const mockModalConfirm = jest.fn();
 const mockAntdMessageSuccess = jest.fn();
 const mockOpenAppearanceModal = jest.fn();
@@ -363,6 +364,11 @@ jest.mock("@cocalc/frontend/project/workspaces/runtime", () => ({
     mockEnsureWorkspaceChatDirectory(...args),
 }));
 
+jest.mock("@cocalc/frontend/project/new/navigator-state", () => ({
+  saveNavigatorSelectedThreadKey: (...args: any[]) =>
+    mockSaveNavigatorSelectedThreadKey(...args),
+}));
+
 jest.mock("@cocalc/frontend/project/context", () => ({
   useProjectContext: () => ({
     active_project_tab: mockActiveProjectTab,
@@ -400,6 +406,7 @@ describe("AgentsPanel session cards", () => {
     mockAntdMessageError.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
     mockEnsureWorkspaceChatDirectory.mockReset();
+    mockSaveNavigatorSelectedThreadKey.mockReset();
     mockOpenAppearanceModal.mockClear();
     mockOpenBehaviorModal.mockClear();
     mockOpenExportModal.mockClear();
@@ -669,7 +676,9 @@ describe("AgentsPanel session cards", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    });
 
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
   });
@@ -687,13 +696,58 @@ describe("AgentsPanel session cards", () => {
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
   });
 
+  it("shows the full chat thread menu from session cards", async () => {
+    mockSessions[0] = {
+      ...mockSessions[0],
+      entrypoint: "global",
+    };
+
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText("Open Chat File")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Go to Chat")).toBeNull();
+    expect(screen.getByText("Appearance...")).toBeTruthy();
+    expect(screen.getByText("Behavior...")).toBeTruthy();
+    expect(screen.getByText("Pin chat")).toBeTruthy();
+    expect(screen.getByText("Archive chat")).toBeTruthy();
+    expect(screen.getByText("Automation settings…")).toBeTruthy();
+    expect(screen.getByText("Git browser")).toBeTruthy();
+    expect(screen.getByText("Export...")).toBeTruthy();
+    expect(screen.getByText("Import...")).toBeTruthy();
+    expect(screen.getByText("Fork chat…")).toBeTruthy();
+    expect(screen.getByText("Clear thread")).toBeTruthy();
+    expect(screen.getByText("Delete chat")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Open Chat File"));
+    expect(mockSaveNavigatorSelectedThreadKey).toHaveBeenCalledWith(
+      "thread-1",
+      "/home/user/agent.chat",
+    );
+    expect(mockOpenFile).toHaveBeenCalledWith({
+      path: "/home/user/agent.chat",
+    });
+  });
+
   it("clears a session from the flyout menu into a fresh codex thread", async () => {
     render(<AgentsPanel project_id="project-1" layout="page" />);
 
     await waitFor(() =>
       expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByText("Clear Thread"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("agent-session-menu-session-1"));
+    });
+    await waitFor(() => expect(screen.getByText("Clear thread")).toBeTruthy());
+    fireEvent.click(screen.getByText("Clear thread"));
 
     expect(mockModalConfirm).toHaveBeenCalledWith(
       expect.objectContaining({

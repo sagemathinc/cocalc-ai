@@ -33,13 +33,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
-import {
-  Icon,
-  isIconName,
-  Paragraph,
-  ThemeEditorModal,
-  type IconName,
-} from "@cocalc/frontend/components";
+import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
@@ -63,7 +57,7 @@ import {
 import {
   latestRootfsVersionEntries,
   latestRootfsUpgradeEntry,
-  rootfsThemeImageUrl,
+  RootfsThemePreview,
   sectionLabel,
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
@@ -71,6 +65,7 @@ import { rootfsPath } from "@cocalc/frontend/public/rootfs/routes";
 import {
   RootfsScanDetailsButton,
   RootfsScanStatus,
+  useRootfsScanEnabled,
 } from "@cocalc/frontend/rootfs/scan-status";
 import {
   ROOTFS_PROJECT_PRESET_LABELS,
@@ -78,11 +73,7 @@ import {
   type RootfsProjectPreset,
 } from "@cocalc/frontend/rootfs/project-presets";
 import { queueRootfsChangeRestart } from "./rootfs-restart";
-import {
-  themeDraftFromTheme,
-  themeFromDraft,
-  type ThemeEditorDraft,
-} from "@cocalc/frontend/theme/types";
+import { themeDraftFromTheme } from "@cocalc/frontend/theme/types";
 import { docsPath } from "@cocalc/docs";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
@@ -131,7 +122,7 @@ type RootfsConfigImportOptions = {
   content: boolean;
 };
 
-type RootFilesystemImageMode = "inline" | "modal" | "page";
+type RootFilesystemImageMode = "inline" | "flyout" | "modal" | "page";
 
 interface RootFilesystemImageProps {
   mode?: RootFilesystemImageMode;
@@ -145,6 +136,7 @@ interface RootFilesystemImageModalProps {
 export default function RootFilesystemImage({
   mode = "inline",
 }: RootFilesystemImageProps = {}) {
+  const isFlyout = mode === "flyout";
   const isModal = mode === "modal";
   const isPage = mode === "page";
   const { actions, project, project_id } = useProjectContext();
@@ -228,6 +220,7 @@ export default function RootFilesystemImage({
   );
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const canUseCustomRootfs = isAdmin;
+  const rootfsScanEnabled = useRootfsScanEnabled();
   const rootfsPublishOps = useTypedRedux({ project_id }, "rootfs_publish_ops");
   const seenCompletedPublishOpsRef = useRef<Set<string>>(new Set());
 
@@ -961,6 +954,10 @@ export default function RootFilesystemImage({
   }
 
   async function scanCurrentProjectRootfs() {
+    if (!rootfsScanEnabled) {
+      setError("RootFS vulnerability scanning is disabled for this site.");
+      return;
+    }
     try {
       setError("");
       setScanningLiveRootfs(true);
@@ -1130,13 +1127,19 @@ export default function RootFilesystemImage({
   return (
     <div
       style={
-        isModal || isPage
+        isFlyout || isModal || isPage
           ? undefined
           : { marginTop: "-4px", marginLeft: "-10px" }
       }
     >
       <FreshAuthModal {...freshAuthModalProps} />
-      <div style={isModal || isPage ? undefined : { marginLeft: "15px" }}>
+      <div
+        style={
+          isFlyout || isModal || isPage
+            ? { boxSizing: "border-box", minWidth: 0, width: "100%" }
+            : { marginLeft: "15px" }
+        }
+      >
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <div
             style={{
@@ -1145,7 +1148,15 @@ export default function RootFilesystemImage({
               padding: isPage ? 24 : undefined,
             }}
           >
-            <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+            <div
+              style={{
+                alignItems: "flex-start",
+                display: "flex",
+                flexWrap: isFlyout ? "wrap" : undefined,
+                gap: 16,
+                minWidth: 0,
+              }}
+            >
               {renderRootfsThemePreview(activeDisplayEntry, isPage ? 112 : 56)}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <Space
@@ -1261,7 +1272,7 @@ export default function RootFilesystemImage({
             />
           ) : null}
 
-          {liveRootfsScan ? (
+          {rootfsScanEnabled && liveRootfsScan ? (
             <Alert
               type={
                 Number(liveRootfsScan.summary.severity_counts?.critical ?? 0) >
@@ -1302,8 +1313,12 @@ export default function RootFilesystemImage({
               title="Actions"
               subtitle={
                 isCustomRootfs
-                  ? "Change, scan, or publish this custom image."
-                  : "Change, publish, scan, or manage the catalog entry."
+                  ? rootfsScanEnabled
+                    ? "Change, scan, or publish this custom image."
+                    : "Change or publish this custom image."
+                  : rootfsScanEnabled
+                    ? "Change, publish, scan, or manage the catalog entry."
+                    : "Change, publish, or manage the catalog entry."
               }
             >
               <Space direction="vertical" size={10} style={{ width: "100%" }}>
@@ -1373,19 +1388,21 @@ export default function RootFilesystemImage({
                     }
                   />
                 ) : null}
-                <RuntimeAction
-                  title="Scan current RootFS"
-                  description="Run a vulnerability preflight against the live project RootFS before publishing or continuing to use it."
-                  action={
-                    <Button
-                      disabled={open || scanningLiveRootfs}
-                      loading={scanningLiveRootfs}
-                      onClick={scanCurrentProjectRootfs}
-                    >
-                      Scan
-                    </Button>
-                  }
-                />
+                {rootfsScanEnabled ? (
+                  <RuntimeAction
+                    title="Scan current RootFS"
+                    description="Run a vulnerability preflight against the live project RootFS before publishing or continuing to use it."
+                    action={
+                      <Button
+                        disabled={open || scanningLiveRootfs}
+                        loading={scanningLiveRootfs}
+                        onClick={scanCurrentProjectRootfs}
+                      >
+                        Scan
+                      </Button>
+                    }
+                  />
+                ) : null}
               </Space>
             </RuntimePanel>
 
@@ -2072,61 +2089,71 @@ export default function RootFilesystemImage({
                     </Space>
                   ),
                 },
-                {
-                  key: "scan",
-                  label: "Scan",
-                  children:
-                    publishMode === "copy" && publishCopyMode === "project" ? (
-                      <Alert
-                        type={
-                          liveRootfsScan
-                            ? Number(
-                                liveRootfsScan.summary.severity_counts
-                                  ?.critical ?? 0,
-                              ) > 0
-                              ? "warning"
-                              : "success"
-                            : "info"
-                        }
-                        showIcon
-                        title="Preflight scan the live project RootFS before publishing"
-                        description={
-                          <Space
-                            direction="vertical"
-                            size="small"
-                            style={{ width: "100%" }}
-                          >
-                            <div>
-                              This scans the currently mounted project RootFS.
-                              Published images are scanned again after
-                              publication, but this check catches obvious
-                              vulnerabilities before creating the image.
-                            </div>
-                            {liveRootfsScan ? (
-                              <>
-                                {renderLiveRootfsScanSummary(liveRootfsScan)}
-                                {renderLiveRootfsScanActions(liveRootfsScan)}
-                              </>
-                            ) : null}
-                            <Button
-                              size="small"
-                              loading={scanningLiveRootfs}
-                              onClick={scanCurrentProjectRootfs}
-                            >
-                              Scan current RootFS now
-                            </Button>
-                          </Space>
-                        }
-                      />
-                    ) : (
-                      <Alert
-                        type="info"
-                        showIcon
-                        message="Preflight scan is only for publishing a live project RootFS."
-                        description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live RootFS to scan in this dialog."
-                      />
-                    ),
-                },
+                ...(rootfsScanEnabled
+                  ? [
+                      {
+                        key: "scan",
+                        label: "Scan",
+                        children:
+                          publishMode === "copy" &&
+                          publishCopyMode === "project" ? (
+                            <Alert
+                              type={
+                                liveRootfsScan
+                                  ? Number(
+                                      liveRootfsScan.summary.severity_counts
+                                        ?.critical ?? 0,
+                                    ) > 0
+                                    ? "warning"
+                                    : "success"
+                                  : "info"
+                              }
+                              showIcon
+                              title="Preflight scan the live project RootFS before publishing"
+                              description={
+                                <Space
+                                  direction="vertical"
+                                  size="small"
+                                  style={{ width: "100%" }}
+                                >
+                                  <div>
+                                    This scans the currently mounted project
+                                    RootFS. Published images are scanned again
+                                    after publication, but this check catches
+                                    obvious vulnerabilities before creating the
+                                    image.
+                                  </div>
+                                  {liveRootfsScan ? (
+                                    <>
+                                      {renderLiveRootfsScanSummary(
+                                        liveRootfsScan,
+                                      )}
+                                      {renderLiveRootfsScanActions(
+                                        liveRootfsScan,
+                                      )}
+                                    </>
+                                  ) : null}
+                                  <Button
+                                    size="small"
+                                    loading={scanningLiveRootfs}
+                                    onClick={scanCurrentProjectRootfs}
+                                  >
+                                    Scan current RootFS now
+                                  </Button>
+                                </Space>
+                              }
+                            />
+                          ) : (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="Preflight scan is only for publishing a live project RootFS."
+                              description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live RootFS to scan in this dialog."
+                            />
+                          ),
+                      },
+                    ]
+                  : []),
                 {
                   key: "metadata",
                   label: "Metadata",
@@ -2909,10 +2936,24 @@ function renderRootfsStateLifecycleDetail({
   const updated = formatRootfsDateTime(state.updated_at);
   const setBy = state.set_by_name || state.set_by_account_id;
   return (
-    <span>
-      {setBy ? `Set by ${setBy}. ` : ""}
-      {updated ? `Updated ${updated}. ` : ""}
-      <code>{state.image}</code>
+    <span style={{ display: "block", maxWidth: "100%", minWidth: 0 }}>
+      <span>
+        {setBy ? `Set by ${setBy}. ` : ""}
+        {updated ? `Updated ${updated}.` : ""}
+      </span>
+      <code
+        style={{
+          display: "block",
+          lineHeight: 1.35,
+          marginTop: 2,
+          maxWidth: "100%",
+          overflowWrap: "anywhere",
+          whiteSpace: "normal",
+          wordBreak: "break-all",
+        }}
+      >
+        {state.image}
+      </code>
     </span>
   );
 }
@@ -3148,9 +3189,12 @@ function rootfsSummaryCardStyle(entry?: {
   return {
     border: `1px solid ${themeColor}`,
     borderRadius: 12,
+    boxSizing: "border-box",
     padding: "12px 14px",
     background: accentColor ? `${accentColor}18` : "rgba(0, 0, 0, 0.02)",
     maxWidth: "760px",
+    minWidth: 0,
+    width: "100%",
   };
 }
 
@@ -3162,42 +3206,7 @@ function renderRootfsThemePreview(
   },
   size = 56,
 ): React.JSX.Element {
-  const imageUrl = rootfsThemeImageUrl(entry?.theme);
-  const accentColor = entry?.theme?.accent_color?.trim();
-  const color = entry?.theme?.color?.trim();
-  const requestedIconName = entry?.theme?.icon?.trim();
-  const iconName: IconName = isIconName(requestedIconName)
-    ? requestedIconName
-    : "docker";
-  return imageUrl ? (
-    <img
-      src={imageUrl}
-      alt={`${entry?.label || entry?.image || "RootFS"} theme`}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: 12,
-        objectFit: "cover",
-        flex: "0 0 auto",
-      }}
-    />
-  ) : (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: 12,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: accentColor || "#f5f5f5",
-        color: color || undefined,
-        flex: "0 0 auto",
-      }}
-    >
-      <Icon name={iconName as any} style={{ fontSize: size <= 56 ? 24 : 56 }} />
-    </div>
-  );
+  return <RootfsThemePreview entry={entry} size={size} />;
 }
 
 function rootfsHeroCardStyle(entry?: {
@@ -3316,7 +3325,9 @@ function RootfsCatalogCard({
         display: "flex",
         font: "inherit",
         gap: 12,
+        boxSizing: "border-box",
         minHeight: 150,
+        minWidth: 0,
         padding: 12,
         textAlign: "left",
         width: "100%",
@@ -3488,9 +3499,12 @@ function LifecycleRow({
     <div
       style={{
         alignItems: "start",
+        boxSizing: "border-box",
         display: "grid",
         gap: 8,
         gridTemplateColumns: "88px minmax(0, 1fr)",
+        minWidth: 0,
+        width: "100%",
       }}
     >
       <Tag style={{ marginInlineEnd: 0, textAlign: "center" }}>{label}</Tag>
@@ -3506,7 +3520,16 @@ function LifecycleRow({
         >
           {value}
         </div>
-        <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{detail}</div>
+        <div
+          style={{
+            color: COLORS.GRAY_M,
+            fontSize: 12,
+            minWidth: 0,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {detail}
+        </div>
         {action ? <div style={{ marginTop: 8 }}>{action}</div> : null}
       </div>
     </div>
@@ -3690,7 +3713,10 @@ function TechnicalGroup({
       style={{
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 10,
+        boxSizing: "border-box",
+        minWidth: 0,
         padding: "10px 12px",
+        width: "100%",
       }}
     >
       <div style={{ fontWeight: 700, marginBottom: 8 }}>{title}</div>
@@ -3698,7 +3724,9 @@ function TechnicalGroup({
         style={{
           display: "grid",
           gap: 8,
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
+          minWidth: 0,
         }}
       >
         {children}

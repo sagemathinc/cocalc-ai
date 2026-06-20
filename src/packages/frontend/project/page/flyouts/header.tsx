@@ -29,6 +29,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
   const intl = useIntl();
   const { actions, project_id } = useProjectContext();
   const flyoutNavigation = useFlyoutNavigation(project_id);
+  const compactHeader = flyout === "log";
 
   function renderDefaultTitle() {
     const title =
@@ -157,11 +158,12 @@ export function FlyoutHeader(_: Readonly<Props>) {
   return (
     <div
       style={{
-        height: "40px",
+        boxSizing: "border-box",
+        height: compactHeader ? "36px" : "40px",
         overflow: "hidden",
         display: "flex",
         flexDirection: "row",
-        alignItems: "flex-start",
+        alignItems: compactHeader ? "center" : "flex-start",
         gap: FLYOUT_PADDING,
         borderRight: FIX_BORDER,
         borderTop: FIX_BORDER,
@@ -170,7 +172,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
         borderRadius: "5px 5px 0 0",
         width: `${flyoutWidth - narrowerPX}px`,
         paddingLeft: FLYOUT_PADDING,
-        paddingTop: "10px",
+        paddingTop: compactHeader ? 0 : "10px",
         fontSize: "1.2em",
         marginRight: FLYOUT_PADDING,
       }}

@@ -53,6 +53,7 @@ import {
   GOOGLE_SSO_STRATEGY,
   getGoogleSsoSettingsState,
 } from "@cocalc/database/settings/google-sso";
+import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import {
   applyDomainPoliciesToPassports,
   getEnabledSsoDomainPolicies,
@@ -67,6 +68,7 @@ import {
   PassportStrategyDB,
   PassportTypes,
 } from "@cocalc/database/settings/auth-sso-types";
+import type { Strategy as PublicSsoStrategy } from "@cocalc/util/types/sso";
 import { signInUsingImpersonateToken } from "@cocalc/server/auth/impersonate";
 import {
   BLACKLISTED_STRATEGIES,
@@ -136,6 +138,41 @@ interface HandleReturnOpts {
 
 interface GoogleOidcState {
   nonce: string;
+  target?: string;
+  termsAccepted?: boolean;
+  marketingConsent?: boolean;
+  registrationToken?: string;
+}
+
+function safeAuthTarget(value: unknown): string | undefined {
+  const target = `${value ?? ""}`.trim();
+  if (!target || !target.startsWith("/") || target.startsWith("//")) {
+    return undefined;
+  }
+  return target;
+}
+
+function booleanQueryFlag(value: unknown): boolean {
+  return value === true || value === "true" || value === "1";
+}
+
+function stringQueryValue(value: unknown): string | undefined {
+  if (Array.isArray(value)) return stringQueryValue(value[0]);
+  const str = `${value ?? ""}`.trim();
+  return str || undefined;
+}
+
+function strategyToPassportFrontend(
+  strategy: PublicSsoStrategy,
+): PassportStrategyFrontend {
+  return {
+    name: strategy.name,
+    display: strategy.display,
+    icon: strategy.icon,
+    public: strategy.public,
+    exclusive_domains: strategy.exclusiveDomains,
+    do_not_hide: strategy.doNotHide,
+  };
 }
 
 export class PassportManager {
@@ -231,47 +268,22 @@ export class PassportManager {
 
   // this is for pure backwards compatibility. at some point remove this!
   // it only returns a string[] array of the legacy authentication strategies
-  private strategies_v1(res): void {
-    const data: string[] = [];
+  private async strategies_v1(res): Promise<void> {
     const known = ["email", ...SUPPORTED_PUBLIC_SSO];
-    for (const name in this.passports) {
-      if (name === "site_conf") continue;
-      if (known.indexOf(name) >= 0) {
-        data.push(name);
-      }
-    }
+    const data = (await this.get_strategies_v2())
+      .map(({ name }) => name)
+      .filter((name) => known.includes(name as any));
     res.json(data);
   }
 
-  public get_strategies_v2(): PassportStrategyFrontend[] {
-    const data: PassportStrategyFrontend[] = [];
-    // we cast the result of _.pick to get more type saftey
-    const keys = [
-      "display",
-      "type",
-      "icon",
-      "public",
-      "exclusive_domains",
-      "do_not_hide",
-    ] as const;
-    for (const name in this.passports) {
-      if (name === "site_conf") continue;
-      // this is sent to the web client → do not include any secret info!
-      const info: PassportStrategyFrontend = {
-        name,
-        ...(_.pick(this.passports[name].info, keys) as {
-          [key in (typeof keys)[number]]: any;
-        }),
-      };
-      data.push(info);
-    }
-    return data;
+  public async get_strategies_v2(): Promise<PassportStrategyFrontend[]> {
+    return (await getStrategies()).map(strategyToPassportFrontend);
   }
 
   // version 2 tells the web client a little bit more.
   // the additional info is used to render customizeable SSO icons.
-  private strategies_v2(res): void {
-    res.json(this.get_strategies_v2());
+  private async strategies_v2(res): Promise<void> {
+    res.json(await this.get_strategies_v2());
   }
 
   async init(): Promise<void> {
@@ -330,11 +342,11 @@ export class PassportManager {
 
   private init_strategies_endpoint(): void {
     // Return the configured and supported authentication strategies.
-    this.router.get(`${AUTH_BASE}/strategies`, (req, res) => {
+    this.router.get(`${AUTH_BASE}/strategies`, async (req, res) => {
       if (req.query.v === "2") {
-        this.strategies_v2(res);
+        await this.strategies_v2(res);
       } else {
-        this.strategies_v1(res);
+        await this.strategies_v1(res);
       }
     });
   }
@@ -577,33 +589,54 @@ export class PassportManager {
     return `${this.auth_url}/google/return`;
   }
 
-  private async initGoogleOidc(): Promise<void> {
-    if (this.passports == null) throw Error("strategies not initalized!");
-    const strategy = this.passports[GOOGLE_SSO_STRATEGY];
+  private async getGoogleOidcStrategy(): Promise<PassportStrategyDB> {
+    const { strategy } = await getGoogleSsoSettingsState();
     if (strategy == null) {
-      logger.debug("Google OIDC is not configured; skipping /auth/google");
-      return;
+      throw new Error("Google sign-in is not configured.");
     }
     const clientID = strategy.conf.clientID;
     const clientSecret = strategy.conf.clientSecret;
     if (!clientID || !clientSecret) {
-      logger.warn("Google OIDC is enabled but missing client ID or secret");
-      return;
+      throw new Error("Google sign-in is missing a client ID or secret.");
     }
+    return strategy;
+  }
 
+  private async getLivePassports(
+    googleStrategy?: PassportStrategyDB,
+  ): Promise<{ [k: string]: PassportStrategyDB }> {
+    if (this.passports == null) throw Error("strategies not initalized!");
+    const passports = { ...this.passports };
+    if (googleStrategy != null) {
+      passports[GOOGLE_SSO_STRATEGY] = googleStrategy;
+    }
+    const policies = await getEnabledSsoDomainPolicies();
+    applyDomainPoliciesToPassports(passports, policies);
+    return passports;
+  }
+
+  private async initGoogleOidc(): Promise<void> {
     const stateCache = getOauthCache(GOOGLE_SSO_STRATEGY);
     this.router.get(
       `${AUTH_BASE}/google`,
       this.handle_get_api_key,
-      async (_req, res) => {
+      async (req, res) => {
         try {
+          const strategy = await this.getGoogleOidcStrategy();
+          const clientID = strategy.conf.clientID;
           const state = uuidv4();
           const nonce = uuidv4();
-          const savedState: GoogleOidcState = { nonce };
+          const savedState: GoogleOidcState = {
+            nonce,
+            target: safeAuthTarget(req.query.target),
+            termsAccepted: booleanQueryFlag(req.query.terms),
+            marketingConsent: booleanQueryFlag(req.query.marketing_consent),
+            registrationToken: stringQueryValue(req.query.registration_token),
+          };
           await stateCache.saveAsync(state, JSON.stringify(savedState));
           res.redirect(
             googleOidcAuthorizationUrl({
-              clientID,
+              clientID: clientID!,
               redirectURI: this.googleOidcRedirectURI(),
               state,
               nonce,
@@ -624,6 +657,9 @@ export class PassportManager {
     this.router.get(`${AUTH_BASE}/google/return`, async (req, res) => {
       let passportLogin: PassportLogin | undefined;
       try {
+        const strategy = await this.getGoogleOidcStrategy();
+        const clientID = strategy.conf.clientID!;
+        const clientSecret = strategy.conf.clientSecret!;
         if (typeof req.query.error === "string") {
           throw new Error(
             `Google returned an authentication error: ${req.query.error}`,
@@ -658,8 +694,9 @@ export class PassportManager {
         });
         const profile = googleProfileFromClaims(claims);
         const emails = profile.emails?.map((email) => email.value) ?? [];
+        const passports = await this.getLivePassports(strategy);
         passportLogin = new PassportLogin({
-          passports: this.passports ?? {},
+          passports,
           database: this.database,
           host: this.host,
           id: profile.id,
@@ -670,6 +707,10 @@ export class PassportManager {
           emails,
           update_on_login: strategy.info?.update_on_login ?? false,
           cookie_ttl_s: strategy.info?.cookie_ttl_s,
+          target: savedState.target,
+          terms_accepted: savedState.termsAccepted,
+          marketing_consent: savedState.marketingConsent,
+          registration_token: savedState.registrationToken,
           req,
           res,
           site_url: this.site_url,

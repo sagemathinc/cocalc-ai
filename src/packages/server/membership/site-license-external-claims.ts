@@ -716,46 +716,53 @@ export async function addSiteLicenseExternalClaimKey(
   const normalizedAlg = normalizeAlg(alg);
   const normalizedJwk = normalizeMetadata(public_key_jwk);
   const normalizedPem = normalizeOptionalString(public_key_pem);
-  if (normalizedJwk == null && normalizedPem == null) {
-    throw Error("public_key_jwk or public_key_pem is required");
-  }
   if (normalizedJwk != null && normalizedPem != null) {
     throw Error("only one public key representation may be set");
   }
-  const { rows } = await getQueryClient(client).query<RawExternalClaimKey>(
+  const db = getQueryClient(client);
+  const values = [
+    normalizedPoolId,
+    normalizedKid,
+    normalizedAlg,
+    normalizedJwk,
+    normalizedPem,
+    asDate(starts_at),
+    asDate(expires_at),
+    asDate(revoked_at),
+    normalizeOptionalString(created_by_account_id),
+    normalizeMetadata(metadata),
+  ];
+  const updated = await db.query<RawExternalClaimKey>(
+    `UPDATE site_license_external_claim_keys
+        SET pool_id=$1,
+            alg=$3,
+            public_key_jwk=$4::jsonb,
+            public_key_pem=$5,
+            starts_at=$6,
+            expires_at=$7,
+            revoked_at=$8,
+            created_by_account_id=$9,
+            metadata=$10::jsonb,
+            updated=NOW()
+      WHERE pool_id=$1
+        AND kid=$2
+      RETURNING *`,
+    values,
+  );
+  if (updated.rows[0]) {
+    return normalizeKeyRow(updated.rows[0]);
+  }
+  const inserted = await db.query<RawExternalClaimKey>(
     `INSERT INTO site_license_external_claim_keys
        (id, pool_id, kid, alg, public_key_jwk, public_key_pem, starts_at,
         expires_at, revoked_at, created_by_account_id, metadata, created,
         updated)
      VALUES
        ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
-     ON CONFLICT (kid) DO UPDATE SET
-       pool_id=EXCLUDED.pool_id,
-       alg=EXCLUDED.alg,
-       public_key_jwk=EXCLUDED.public_key_jwk,
-       public_key_pem=EXCLUDED.public_key_pem,
-       starts_at=EXCLUDED.starts_at,
-       expires_at=EXCLUDED.expires_at,
-       revoked_at=EXCLUDED.revoked_at,
-       created_by_account_id=EXCLUDED.created_by_account_id,
-       metadata=EXCLUDED.metadata,
-       updated=NOW()
      RETURNING *`,
-    [
-      normalizeUUID(id, "id"),
-      normalizedPoolId,
-      normalizedKid,
-      normalizedAlg,
-      normalizedJwk,
-      normalizedPem,
-      asDate(starts_at),
-      asDate(expires_at),
-      asDate(revoked_at),
-      normalizeOptionalString(created_by_account_id),
-      normalizeMetadata(metadata),
-    ],
+    [normalizeUUID(id, "id"), ...values],
   );
-  return normalizeKeyRow(rows[0]!);
+  return normalizeKeyRow(inserted.rows[0]!);
 }
 
 export async function listSiteLicenseExternalClaimPools({
@@ -978,6 +985,9 @@ async function loadClaimPool(
 function getPublicKeyForVerification(key: SiteLicenseExternalClaimKey) {
   if (key.public_key_jwk != null) {
     return createPublicKey({ key: key.public_key_jwk as any, format: "jwk" });
+  }
+  if (key.public_key_pem == null) {
+    throw Error("external claim public key is pending");
   }
   return createPublicKey(normalizeString(key.public_key_pem, "public_key_pem"));
 }

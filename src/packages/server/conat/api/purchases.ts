@@ -48,6 +48,7 @@ import {
   addSiteLicensePool as addSiteLicensePool0,
   adminProvisionSiteLicense as adminProvisionSiteLicense0,
   archiveSiteLicensePool as archiveSiteLicensePool0,
+  assignSiteLicensePoolSeat as assignSiteLicensePoolSeat0,
   cancelSiteLicensePoolRequest as cancelSiteLicensePoolRequest0,
   getVerifiedEmailAddressesForAccount,
   listSiteLicenseOverviews as listSiteLicenseOverviews0,
@@ -105,6 +106,7 @@ import type {
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
+  MembershipPackageAssignment,
 } from "@cocalc/conat/hub/api/purchases";
 
 export { getBalance };
@@ -908,6 +910,46 @@ export async function revokeMembershipPackageSeat({
       email_address: target_email_address,
     }),
   };
+}
+
+export async function assignSiteLicensePoolSeat({
+  account_id,
+  browser_id,
+  session_hash,
+  package_id,
+  target_account_id,
+  grant_expires_at,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  package_id?: string;
+  target_account_id?: string;
+  grant_expires_at?: Date | string | null;
+} = {}): Promise<MembershipPackageAssignment> {
+  const actorId = requireAccount(account_id);
+  if (!package_id) {
+    throw Error("package_id required");
+  }
+  if (!target_account_id) {
+    throw Error("target_account_id required");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    package_id,
+    target_account_id,
+    grant_expires_at,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().assignSiteLicensePoolSeat(opts);
+  }
+  return await assignSiteLicensePoolSeat0(opts);
 }
 
 export async function getClaimableMembershipPackages({

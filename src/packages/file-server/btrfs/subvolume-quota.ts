@@ -3,6 +3,10 @@ import { btrfs } from "./util";
 import { queueSetSubvolumeQuota } from "./quota-queue";
 import getLogger from "@cocalc/backend/logger";
 import { btrfsQuotasDisabled } from "./config";
+import {
+  cachedBtrfsQgroupShowRaw,
+  invalidateBtrfsQgroupShowRaw,
+} from "./operation-cache";
 
 const logger = getLogger("file-server:btrfs:subvolume-quota");
 
@@ -117,10 +121,7 @@ export class SubvolumeQuota {
     const id = await this.subvolume.getSubvolumeId();
     let groups: QgroupShowRow[];
     const path = this.subvolume.filesystem.opts.mount;
-    const result = await btrfs({
-      verbose: false,
-      args: ["qgroup", "show", "-prc", "--raw", path],
-    });
+    const result = await cachedBtrfsQgroupShowRaw(path);
     groups = parsePlainQgroupShow(result.stdout);
     const warning = quotaWarning(result.stderr);
     const match = selectQgroup(groups, id);
@@ -144,15 +145,22 @@ export class SubvolumeQuota {
       warning,
     } = await this.qgroup();
     let size = rawSize;
+    const warnings: string[] = [];
+    if (warning) {
+      warnings.push(warning);
+    }
     if (size == "none") {
       size = 0;
+      warnings.push(
+        "No btrfs quota limit is currently enforced on this subvolume.",
+      );
     }
     return {
       used,
       size,
       qgroupid,
       scope: "subvolume",
-      warning,
+      warning: warnings.length > 0 ? warnings.join(" ") : undefined,
     };
   };
 
@@ -174,6 +182,7 @@ export class SubvolumeQuota {
       size,
       wait: true,
     });
+    invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
   };
 
   du = async () => {

@@ -434,10 +434,11 @@ export function VerticalFixedTabs({
   }
 
   function renderOverflowMenu(): ReactNode {
-    if (!accountStoreReady || overflowTabs.length === 0) return null;
+    if (!accountStoreReady) return null;
     const isActive =
       moreOpen ||
       (active_flyout != null && overflowTabs.includes(active_flyout));
+    const hasOverflowTabs = overflowTabs.length > 0;
     const items = createRailMenuItems({
       intl,
       names: overflowTabs,
@@ -487,7 +488,10 @@ export function VerticalFixedTabs({
       },
     });
     return (
-      <Tooltip title="More" placement="rightTop">
+      <Tooltip
+        title={hasOverflowTabs ? "More" : "Rail options"}
+        placement="rightTop"
+      >
         <div
           style={{
             width: "100%",
@@ -545,7 +549,9 @@ export function VerticalFixedTabs({
                   rotate="90"
                   style={{ fontSize: condensed ? "18px" : "24px" }}
                 />
-                {showActBarLabels ? <span>More</span> : null}
+                {showActBarLabels ? (
+                  <span>{hasOverflowTabs ? "More" : "Rail"}</span>
+                ) : null}
               </div>
             </button>
           </Dropdown>

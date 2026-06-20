@@ -15,7 +15,9 @@ if [ -z "$index_url" ]; then
 fi
 
 if [ -x "$prefix/bin/uv" ]; then
+  export UV_CACHE_DIR="$prefix/.uv-cache"
   "$prefix/bin/uv" pip install --python "$python_bin" --index-url "$index_url" $packages
+  rm -rf "$UV_CACHE_DIR"
 else
   "$python_bin" -m pip install --no-cache-dir --index-url "$index_url" $packages
 fi

@@ -318,6 +318,64 @@ describe("site license external claim tokens", () => {
     expect(consumption.external_subject).toBe("reader-456");
   });
 
+  it("allows pending key reservations and rejects tokens until public key is added", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool({
+      default_membership_duration_days: 30,
+    });
+    const kid = `kid-${uuid()}`;
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const pending = await addSiteLicenseExternalClaimKey({
+      pool_id: claimPool.id,
+      kid,
+      alg: "EdDSA",
+    });
+    expect(pending.public_key_jwk ?? null).toBeNull();
+    expect(pending.public_key_pem ?? null).toBeNull();
+
+    const pendingToken = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        jti: uuid(),
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+      },
+    });
+    await expect(
+      consumeSiteLicenseExternalClaimToken({
+        token: pendingToken,
+        account_id,
+      }),
+    ).rejects.toThrow("external claim public key is pending");
+
+    const completed = await addSiteLicenseExternalClaimKey({
+      pool_id: claimPool.id,
+      kid,
+      alg: "EdDSA",
+      public_key_jwk: publicKey.export({ format: "jwk" }) as Record<
+        string,
+        unknown
+      >,
+    });
+    expect(completed.id).toBe(pending.id);
+    expect(completed.public_key_jwk).not.toBeNull();
+
+    const token = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        jti: uuid(),
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+      },
+    });
+    const consumption = await consumeSiteLicenseExternalClaimToken({
+      token,
+      account_id,
+    });
+    expect(consumption.status).toBe("granted");
+  });
+
   it("rejects expired and tampered compact claim tokens before consumption", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);

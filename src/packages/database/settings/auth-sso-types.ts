@@ -21,6 +21,10 @@ export interface PassportLoginOpts {
   cookie_ttl_s?: number; // how long the remember_me cookied lasts (default is a month or so)
   host: string;
   site_url: string;
+  target?: string;
+  terms_accepted?: boolean;
+  marketing_consent?: boolean;
+  registration_token?: string;
   cb?: (err) => void;
 }
 

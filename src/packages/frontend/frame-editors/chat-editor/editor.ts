@@ -68,10 +68,6 @@ export const chatroom: EditorDescription = {
   buttons: set([
     "undo",
     "redo",
-    "decrease_font_size",
-    "increase_font_size",
-    "scrollToTop",
-    "scrollToBottom",
     "show_search",
   ]),
 } as const;

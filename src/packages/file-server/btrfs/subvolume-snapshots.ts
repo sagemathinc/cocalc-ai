@@ -7,14 +7,17 @@ import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
 import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { getSubvolumeField } from "./subvolume";
+import { getSubvolumeField, invalidateSubvolumeMetadata } from "./subvolume";
 import { parsePlainQgroupShow } from "./subvolume-quota";
 import { btrfsQuotasDisabled } from "./config";
+import {
+  invalidateBtrfsQgroupShowRaw,
+  withBtrfsMutationLock,
+} from "./operation-cache";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
 
 const DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES = 1024 ** 3;
-const cleanupQuotaLocks = new Map<string, Promise<void>>();
 
 function cleanupQuotaReliefBytes(): number {
   const value = Number.parseInt(
@@ -84,7 +87,15 @@ export class SubvolumeSnapshots {
     const snapshotPath = join(this.snapshotsDir, name);
     args.push(this.subvolume.path, snapshotPath);
 
-    await btrfs({ args });
+    await withBtrfsMutationLock({
+      mount: this.subvolume.filesystem.opts.mount,
+      operation: "snapshot-create",
+      run: async () => {
+        await btrfs({ args });
+        invalidateSubvolumeMetadata(snapshotPath);
+        invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
+      },
+    });
 
     if (quotaMode === "skip") {
       return;
@@ -156,9 +167,12 @@ export class SubvolumeSnapshots {
     await this.withCleanupQuotaRelief({
       operation: "delete-snapshot",
       run: async () => {
+        const snapshotPath = join(this.snapshotsDir, name);
         await btrfs({
-          args: ["subvolume", "delete", join(this.snapshotsDir, name)],
+          args: ["subvolume", "delete", snapshotPath],
         });
+        invalidateSubvolumeMetadata(snapshotPath);
+        invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
       },
     });
   };
@@ -170,26 +184,12 @@ export class SubvolumeSnapshots {
     operation: string;
     run: () => Promise<T>;
   }): Promise<T> => {
-    const key = this.subvolume.path;
-    const previous = cleanupQuotaLocks.get(key) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
+    return await withBtrfsMutationLock({
+      mount: this.subvolume.filesystem.opts.mount,
+      operation,
+      run: async () =>
+        await this.withCleanupQuotaReliefUnlocked({ operation, run }),
     });
-    const chained = previous.then(
-      () => current,
-      () => current,
-    );
-    cleanupQuotaLocks.set(key, chained);
-    await previous.catch(() => undefined);
-    try {
-      return await this.withCleanupQuotaReliefUnlocked({ operation, run });
-    } finally {
-      release();
-      if (cleanupQuotaLocks.get(key) === chained) {
-        cleanupQuotaLocks.delete(key);
-      }
-    }
   };
 
   private withCleanupQuotaReliefUnlocked = async <T>({
@@ -246,16 +246,18 @@ export class SubvolumeSnapshots {
   };
 
   private setReadOnly = async (name: string, readOnly: boolean) => {
+    const snapshotPath = join(this.snapshotsDir, name);
     await btrfs({
       args: [
         "property",
         "set",
         "-ts",
-        join(this.snapshotsDir, name),
+        snapshotPath,
         "ro",
         readOnly ? "true" : "false",
       ],
     });
+    invalidateSubvolumeMetadata(snapshotPath);
   };
 
   private safePruneTargetPath = async (name: string, path: string) => {
@@ -316,6 +318,7 @@ export class SubvolumeSnapshots {
             await this.setReadOnly(name, true);
           }
         }
+        invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
       },
     });
     return { path, snapshots: names };

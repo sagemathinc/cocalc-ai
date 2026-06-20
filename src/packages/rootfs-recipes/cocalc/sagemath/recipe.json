@@ -1,0 +1,43 @@
+{
+  "id": "cocalc/sagemath",
+  "version": 1,
+  "description": "Install SageMath from Ubuntu packages when available.",
+  "inputs": {
+    "method": { "type": "string", "default": "auto" },
+    "packages": {
+      "type": "array",
+      "default": ["sagemath", "sagemath-jupyter"]
+    },
+    "prefix": { "type": "string", "default": "/opt/sagemath" },
+    "micromamba_prefix": { "type": "string", "default": "/opt/micromamba" },
+    "conda_packages": { "type": "array", "default": ["sage"] },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "sagemath",
+      "tags": ["sagemath", "math", "jupyter"]
+    },
+    "theme": {
+      "icon": "calculator",
+      "color": "#ffffff",
+      "accent_color": "#0f766e"
+    },
+    "content": {
+      "version": 1,
+      "title": "SageMath",
+      "subtitle": "Open-source mathematics software with Jupyter integration.",
+      "highlights": ["SageMath", "Python", "Jupyter"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "SageMath documentation",
+          "url": "https://doc.sagemath.org/"
+        }
+      ]
+    }
+  }
+}

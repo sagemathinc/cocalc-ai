@@ -1,0 +1,50 @@
+{
+  "id": "cocalc/content-actions",
+  "version": 1,
+  "description": "Create small example files and contribute the core non-app RootFS discovery action types.",
+  "inputs": {
+    "prefix": { "type": "string", "default": "/opt/cocalc-content-actions" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "content-actions",
+      "tags": ["rootfs-actions", "examples"]
+    },
+    "theme": {
+      "icon": "list-checks",
+      "color": "#ffffff",
+      "accent_color": "#16a34a"
+    },
+    "content": {
+      "version": 1,
+      "title": "RootFS content actions",
+      "subtitle": "A fixture image with external-link, open, browse, and copy discovery actions.",
+      "highlights": ["External link", "Open", "Browse", "Copy"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "CoCalc RootFS docs",
+          "url": "https://doc.cocalc.com/"
+        },
+        {
+          "kind": "open",
+          "label": "Open hello.txt",
+          "path": "/opt/cocalc-content-actions/examples/hello.txt"
+        },
+        {
+          "kind": "browse",
+          "label": "Browse examples",
+          "path": "/opt/cocalc-content-actions/examples"
+        },
+        {
+          "kind": "copy-to-home",
+          "label": "Copy examples",
+          "source_path": "/opt/cocalc-content-actions/examples",
+          "target_path": "rootfs-content-actions"
+        }
+      ]
+    }
+  }
+}

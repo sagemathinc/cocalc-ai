@@ -61,6 +61,7 @@ describe("RootFS scan maintenance", () => {
   it("uses a running cached host for scheduled scans when available", async () => {
     const { runScheduledOfficialRootfsScans } =
       await import("./scan-maintenance");
+    getServerSettingsMock.mockResolvedValue({ rootfs_scan_enabled: true });
     const now = new Date();
     queryMock.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM rootfs_images AS img")) {
@@ -113,5 +114,17 @@ describe("RootFS scan maintenance", () => {
       host_id: "host-cached",
       requested_by: null,
     });
+  });
+
+  it("skips scheduled scans when RootFS scanning is disabled", async () => {
+    const { runScheduledOfficialRootfsScans } =
+      await import("./scan-maintenance");
+    getServerSettingsMock.mockResolvedValue({ rootfs_scan_enabled: false });
+
+    const result = await runScheduledOfficialRootfsScans();
+
+    expect(result).toEqual({ scanned: 0, skipped_no_host: 0, failed: 0 });
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(runRootfsReleaseScanMock).not.toHaveBeenCalled();
   });
 });

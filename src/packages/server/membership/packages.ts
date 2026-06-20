@@ -101,6 +101,7 @@ interface RawMembershipPackageAssignment {
   metadata?: Record<string, unknown> | null;
   grant_id?: string | null;
   grant_source?: string | null;
+  grant_expires_at?: Date | string | null;
   grant_purchase_id?: number | null;
 }
 
@@ -260,6 +261,7 @@ function normalizeAssignmentRecord(
     metadata,
     grant_id: row.grant_id ?? metadataGrantId,
     grant_source: row.grant_source ?? metadataGrantSource,
+    grant_expires_at: asDate(row.grant_expires_at),
     grant_purchase_id: row.grant_purchase_id ?? metadataGrantPurchaseId,
   };
 }
@@ -274,6 +276,11 @@ function grantSourceForKind(kind: MembershipPackageKind): string {
       return "site-license";
   }
 }
+
+const SITE_LICENSE_GRANT_OVERRIDE_SOURCES = new Set([
+  "site-license-external-claim",
+  "site-license-manual-assignment",
+]);
 
 function grantSourceForAssignment(
   pkg: MembershipPackageRecord,
@@ -291,10 +298,16 @@ function grantSourceForAssignment(
   ) {
     return "site-license-external-claim";
   }
+  if (
+    pkg.kind === "site" &&
+    metadata?.grant_source === "site-license-manual-assignment"
+  ) {
+    return "site-license-manual-assignment";
+  }
   return grantSourceForKind(pkg.kind);
 }
 
-function externalClaimGrantOverride<T extends string | Date | null>({
+function siteLicenseGrantOverride<T extends string | Date | null>({
   pkg,
   metadata,
   key,
@@ -307,11 +320,12 @@ function externalClaimGrantOverride<T extends string | Date | null>({
 }): T {
   if (
     pkg.kind !== "site" ||
-    metadata?.grant_source !== "site-license-external-claim"
+    !SITE_LICENSE_GRANT_OVERRIDE_SOURCES.has(`${metadata?.grant_source ?? ""}`)
   ) {
     return fallback;
   }
-  const value = metadata[key];
+  const sourceMetadata = metadata ?? {};
+  const value = sourceMetadata[key];
   if (value == null || value === "") {
     return fallback;
   }
@@ -869,13 +883,13 @@ async function prepareGrantForAssignment({
   }
   const grant_id = uuid();
   const grant_source = grantSourceForAssignment(pkg, metadata);
-  const membership_class = externalClaimGrantOverride({
+  const membership_class = siteLicenseGrantOverride({
     pkg,
     metadata,
     key: "grant_membership_class",
     fallback: pkg.membership_class,
   });
-  const expires_at = externalClaimGrantOverride({
+  const expires_at = siteLicenseGrantOverride({
     pkg,
     metadata,
     key: "grant_expires_at",
@@ -1825,6 +1839,7 @@ export async function listMembershipPackageAssignments({
         a.metadata,
         g.id AS grant_id,
         g.source AS grant_source,
+        g.expires_at AS grant_expires_at,
         g.purchase_id AS grant_purchase_id
       FROM membership_package_assignments a
       LEFT JOIN accounts

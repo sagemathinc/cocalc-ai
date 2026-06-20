@@ -52,10 +52,28 @@ export default async function unlinkStrategy(opts: Options): Promise<void> {
     account_id,
     action: "unlink SSO strategy",
     fn: async (db) => {
-      await db.query(
-        "UPDATE accounts SET passports = passports - $2 WHERE account_id=$1",
+      const { rowCount } = await db.query(
+        `UPDATE accounts
+            SET passports = COALESCE(passports, '{}'::JSONB) - $2
+          WHERE account_id=$1
+            AND (
+              password_hash IS NOT NULL
+              OR jsonb_object_length(COALESCE(passports, '{}'::JSONB) - $2) > 0
+            )`,
         [account_id, name],
       );
+      if (rowCount === 0) {
+        await logPassportUnlink({
+          account_id,
+          name,
+          strategyName,
+          blocked: true,
+          reason: "last_login_method",
+        });
+        throw new Error(
+          "Set a password before unlinking your only SSO sign-in method.",
+        );
+      }
     },
   });
   await logPassportUnlink({ account_id, name, strategyName, blocked: false });

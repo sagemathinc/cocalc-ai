@@ -272,6 +272,7 @@ export interface MembershipPackageAssignment {
   metadata?: Record<string, unknown> | null;
   grant_id?: string | null;
   grant_source?: string | null;
+  grant_expires_at?: Date | string | null;
   grant_purchase_id?: number | null;
 }
 
@@ -492,6 +493,7 @@ export type SiteLicenseAuditAction =
   | "external-claim-consumed"
   | "external-claim-granted"
   | "external-claim-side-effect-failed"
+  | "seat-manually-assigned"
   | "seat-released-by-user"
   | "seat-released-for-upgrade"
   | "seat-affiliation-reverified"
@@ -1200,6 +1202,14 @@ export interface Purchases {
     target_account_id?: string;
     target_email_address?: string;
   }) => Promise<{ revoked: boolean }>;
+  assignSiteLicensePoolSeat: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    package_id?: string;
+    target_account_id?: string;
+    grant_expires_at?: Date | string | null;
+  }) => Promise<MembershipPackageAssignment>;
   getClaimableMembershipPackages: (opts?: {
     account_id?: string;
     include_claimed_site_license_pools?: boolean;
@@ -1440,6 +1450,7 @@ export const purchases = {
   getMembershipPackages: authFirst,
   assignMembershipPackageSeat: authFirst,
   revokeMembershipPackageSeat: authFirst,
+  assignSiteLicensePoolSeat: authFirst,
   getClaimableMembershipPackages: authFirst,
   claimMembershipPackageSeat: authFirst,
   adminProvisionSiteLicense: authFirst,

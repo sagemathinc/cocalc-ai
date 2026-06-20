@@ -1,0 +1,65 @@
+{
+  "id": "cocalc/app-launcher",
+  "version": 1,
+  "description": "Install a tiny HTTP app and contribute a CoCalc project-app launcher.",
+  "inputs": {
+    "prefix": { "type": "string", "default": "/opt/cocalc-app-launcher" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "app-launcher",
+      "tags": ["rootfs-actions", "app-launcher"]
+    },
+    "theme": {
+      "icon": "rocket",
+      "color": "#ffffff",
+      "accent_color": "#dc2626"
+    },
+    "content": {
+      "version": 1,
+      "title": "RootFS app launcher",
+      "subtitle": "A tiny Python HTTP app exposed through a CoCalc app launcher.",
+      "highlights": ["Project app", "HTTP service"],
+      "actions": [
+        {
+          "kind": "project-app",
+          "label": "Launch Hello App",
+          "description": "Start a tiny HTTP server included in this RootFS.",
+          "app_spec": {
+            "version": 1,
+            "id": "rootfs-hello",
+            "title": "RootFS Hello",
+            "kind": "service",
+            "command": {
+              "exec": "python3",
+              "args": ["/opt/cocalc-app-launcher/hello-server.py"]
+            },
+            "lifecycle": {
+              "mode": "managed"
+            },
+            "network": {
+              "listen_host": "127.0.0.1",
+              "port": 6007,
+              "protocol": "http"
+            },
+            "proxy": {
+              "base_path": "/apps/rootfs-hello",
+              "strip_prefix": true,
+              "websocket": false,
+              "open_mode": "proxy",
+              "health_path": "/",
+              "readiness_timeout_s": 30
+            },
+            "wake": {
+              "enabled": true,
+              "keep_warm_s": 600,
+              "startup_timeout_s": 30
+            }
+          }
+        }
+      ]
+    }
+  }
+}

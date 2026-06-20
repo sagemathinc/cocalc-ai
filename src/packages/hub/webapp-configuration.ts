@@ -284,16 +284,10 @@ export class WebappConfiguration {
   }
 
   private async get_strategies(): Promise<object> {
-    const key = "strategies";
-    let strategies = CACHE.get(key);
-    if (strategies == null) {
-      // wait until this.passport_manager is initialized.
-      // this could happen right at the start of the server
-      const passport_manager = await get_passport_manager_async();
-      strategies = passport_manager.get_strategies_v2();
-      CACHE.set(key, strategies);
-    }
-    return strategies as object;
+    // Authentication strategies can change via admin settings without a hub
+    // restart, so do not cache this independently of the underlying settings.
+    const passport_manager = await get_passport_manager_async();
+    return await passport_manager.get_strategies_v2();
   }
 
   // derives the public ollama model configuration from the private one

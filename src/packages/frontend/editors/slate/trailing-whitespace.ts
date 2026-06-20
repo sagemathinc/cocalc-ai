@@ -17,3 +17,15 @@ export function differsOnlyByTrailingMarkdownBlankWhitespace(
       removeTrailingMarkdownBlankWhitespace(after)
   );
 }
+
+export function preserveSourceForTrailingBlankWhitespaceOnly({
+  source,
+  normalized,
+}: {
+  source: string;
+  normalized: string;
+}): string {
+  return differsOnlyByTrailingMarkdownBlankWhitespace(source, normalized)
+    ? source
+    : normalized;
+}

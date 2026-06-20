@@ -1,0 +1,36 @@
+{
+  "id": "cocalc/r",
+  "version": 1,
+  "description": "Install R, common development libraries, and an R Jupyter kernel.",
+  "inputs": {
+    "cran": { "type": "string", "default": "https://cloud.r-project.org" },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "r",
+      "tags": ["r", "statistics", "jupyter"]
+    },
+    "theme": {
+      "icon": "bar-chart-3",
+      "color": "#ffffff",
+      "accent_color": "#276dc3"
+    },
+    "content": {
+      "version": 1,
+      "title": "R",
+      "subtitle": "R with an IRkernel Jupyter kernel.",
+      "highlights": ["R", "IRkernel", "Jupyter"],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "R Project",
+          "url": "https://www.r-project.org/"
+        }
+      ]
+    }
+  }
+}

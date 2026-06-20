@@ -1,0 +1,37 @@
+[Unit]
+Description=CoCalc Star Docker preview first-boot installer
+After=local-fs.target systemd-journald.service
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/cocalc/star-docker.env
+PassEnvironment=COCALC_STAR_ACCESS_URL
+PassEnvironment=COCALC_STAR_BTRFS_IMAGE
+PassEnvironment=COCALC_STAR_BTRFS_SIZE
+PassEnvironment=COCALC_STAR_BUILD
+PassEnvironment=COCALC_STAR_BUILD_DEFAULT_ROOTFS
+PassEnvironment=COCALC_STAR_DEFAULT_ROOTFS_BASE_IMAGE
+PassEnvironment=COCALC_STAR_DEFAULT_ROOTFS_IMAGE
+PassEnvironment=COCALC_STAR_DOCKER_ALLOW_DEGRADED
+PassEnvironment=COCALC_STAR_DOCKER_LOG_FILE
+PassEnvironment=COCALC_STAR_DOCKER_PREFLIGHT_DIR
+PassEnvironment=COCALC_STAR_DOCKER_PREBUILT_ROOTFS_CACHE
+PassEnvironment=COCALC_STAR_DOCKER_RELEASE_ARTIFACT
+PassEnvironment=COCALC_STAR_DOCKER_STATE_DIR
+PassEnvironment=COCALC_STAR_DOCKER_TEE_STDOUT
+PassEnvironment=COCALC_STAR_HOSTNAME
+PassEnvironment=COCALC_STAR_HTTP_PORT
+PassEnvironment=COCALC_STAR_PROJECT_HOST_REGION
+PassEnvironment=COCALC_STAR_PROJECT_ROOTFS_MODE
+PassEnvironment=COCALC_STAR_SSH_TARGET
+PassEnvironment=COCALC_STAR_USER
+PassEnvironment=COCALC_STAR_WEB_ONBOARDING
+ExecStart=/usr/local/sbin/cocalc-star-docker-init
+TimeoutStartSec=0
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

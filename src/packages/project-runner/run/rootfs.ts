@@ -3,10 +3,10 @@ Privileges: This uses sudo with the root-owned runtime wrapper for overlayfs
 mount lifecycle operations only.
 */
 
-import { join } from "path";
+import { dirname, join } from "path";
 import { data } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
-import { mkdir, rm, writeFile, readFile } from "fs/promises";
+import { mkdir, rm, stat, writeFile, readFile } from "fs/promises";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import { getImage } from "./podman";
@@ -31,6 +31,10 @@ const RECOVERABLE_OVERLAY_MOUNT_PATTERNS = [
   "Stale file handle",
   "failed to verify upper root origin",
 ] as const;
+const ROOTFS_MOUNT_MODE =
+  `${process.env.COCALC_PROJECT_RUNNER_ROOTFS_MODE ?? "overlay"}`
+    .trim()
+    .toLowerCase();
 
 const PROJECT_ROOTS =
   process.env.COCALC_PROJECT_ROOTS ?? join(data, "cache", "project-roots");
@@ -109,6 +113,9 @@ function addRelease(
 }
 
 async function disposeMount(project_id: string): Promise<void> {
+  if (ROOTFS_MOUNT_MODE === "copy") {
+    return;
+  }
   const mountpoint = getMergedPath(project_id);
   try {
     await executeCode({
@@ -219,6 +226,31 @@ export async function mount({
       image,
       project_id,
     });
+
+    if (ROOTFS_MOUNT_MODE === "copy") {
+      const currentImage = await readFile(imageName, "utf8").catch(() => "");
+      if (
+        currentImage.trim() === image &&
+        (await stat(join(merged, "bin"))
+          .then((info) => info.isDirectory() || info.isSymbolicLink())
+          .catch(() => false))
+      ) {
+        addRelease(project_id, release);
+        return merged;
+      }
+      await rm(merged, { recursive: true, force: true });
+      await mkdir(merged, { recursive: true });
+      await executeCode({
+        verbose: true,
+        err_on_exit: true,
+        command: "sudo",
+        args: ["-n", STORAGE_WRAPPER, "copy-tree-reflink", lowerdir, merged],
+      });
+      await mkdir(dirname(imageName), { recursive: true });
+      await writeFile(imageName, image);
+      addRelease(project_id, release);
+      return merged;
+    }
 
     // If a delayed unmount was pending, cancel it because we're reusing the mount.
     // (handled by RefcountLeaseManager internally)

@@ -103,7 +103,10 @@ export function AccountSettings(props: Readonly<Props>) {
     if (strategy == null) return;
     const strategy_js = strategy.toJS();
     const name = strategy2display(strategy_js);
-    const href = join(appBasePath, "auth", add_strategy_link);
+    const params = new URLSearchParams({
+      target: `${window.location.pathname}${window.location.search}`,
+    });
+    const href = `${join(appBasePath, "auth", add_strategy_link)}?${params}`;
     return (
       <Card size="small">
         <Flex vertical gap="middle">
@@ -257,7 +260,7 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function render_linked_external_accounts(): Rendered {
-    if (props.strategies == null || props.strategies.size <= 1 || lite) {
+    if (props.strategies == null || props.strategies.size <= 1) {
       // not configured by server
       return;
     }
@@ -289,7 +292,7 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   function render_available_to_link(): Rendered {
-    if (props.strategies == null || props.strategies.size <= 1 || lite) {
+    if (props.strategies == null || props.strategies.size <= 1) {
       // not configured by server yet, or nothing but email
       return;
     }

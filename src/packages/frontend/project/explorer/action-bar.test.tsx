@@ -10,6 +10,7 @@ import { ActionBar } from "./action-bar";
 import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
 
 const getBackups = jest.fn();
+const setOtherSettings = jest.fn();
 const mockFileActionsDropdown = jest.fn(({ extraItems }: any) => (
   <div>
     {(extraItems ?? []).map((item: any) => (
@@ -35,6 +36,7 @@ jest.mock("antd", () => {
   return {
     Button,
     Modal: Object.assign(Div, { confirm: jest.fn() }),
+    Popover: Div,
     Radio: Object.assign(({ children }: any) => <div>{children}</div>, {
       Group: Div,
     }),
@@ -63,6 +65,15 @@ jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
     <button {...props}>{children}</button>
   ),
   ButtonToolbar: ({ children }: any) => <div>{children}</div>,
+}));
+
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: {
+    getActions: () => ({
+      set_other_settings: setOtherSettings,
+    }),
+  },
+  useAccountOtherSetting: () => false,
 }));
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
@@ -188,6 +199,30 @@ describe("ActionBar", () => {
 
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText(/2 of 2 .* selected/)).toBeInTheDocument();
+  });
+
+  it("shows pending listing refresh when automatic updates are disabled", () => {
+    const actions = {
+      project_id: "project-1",
+    } as any;
+    const refresh = jest.fn();
+
+    render(
+      <ActionBar
+        project_id="project-1"
+        checked_files={immutable.Set()}
+        listing={[{ isDir: false, name: "a.txt" }] as any}
+        current_path="/work"
+        actions={actions}
+        hasPendingUpdate
+        onRefreshListing={refresh}
+        autoUpdateListing={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Refresh"));
+
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("ignores stale backup metadata when the project changes", async () => {

@@ -738,6 +738,27 @@ async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   return row;
 }
 
+async function loadHostForDestructiveAction(
+  id: string,
+  account_id?: string,
+): Promise<any> {
+  const actor = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  await requireLoadedHostPermission({
+    row,
+    account_id: actor,
+    permission: "destructive",
+  });
+  return row;
+}
+
 async function loadHostForRootfsManagement(
   id: string,
   account_id?: string,
@@ -7762,7 +7783,7 @@ export async function deleteHost({
         skip_backups,
       });
   }
-  const row = await loadOwnedHost(id, account_id);
+  const row = await loadHostForDestructiveAction(id, account_id);
   if (row.deletion_protection === true) {
     throw Object.assign(
       new Error(

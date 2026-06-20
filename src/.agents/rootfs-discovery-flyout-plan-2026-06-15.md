@@ -643,6 +643,86 @@ security and content subsystems.
 - Document how external sites can copy the recipe files and rebuild comparable
   images on their own CoCalc clusters.
 
+### Recipe Module Backlog
+
+Create and test these recipe modules and example build recipes. Each completed
+module should include install, verify, cleanup/permissions where appropriate,
+and RootFS config metadata contributions such as app launchers, docs links, and
+example copy/open/browse actions.
+
+High-priority platform recipes:
+
+- [ ] `cocalc/code-server`: install code-server, verify `code-server --version`,
+  and contribute a VS Code app launcher.
+- [ ] `cocalc/r`: install R, IRkernel, common R packages, and an RStudio app
+  launcher. RStudio should be one-click available from RootFS content/app
+  metadata when this recipe is used.
+- [ ] `cocalc/rstudio`: if cleaner than bundling into `cocalc/r`, split RStudio
+  Server installation and app-launch metadata into a dedicated module.
+- [ ] `cocalc/overleaf`: use the maintained easy-install Overleaf work from
+  `https://github.com/sagemathinc/overleaf`, verify the service/app path, and
+  contribute an Overleaf app launcher.
+- [ ] `cocalc/uv-python`: install a standard CoCalc Python/Jupyter stack using
+  `uv`, register kernels, and provide a reusable base for ML/science recipes.
+- [ ] `cocalc/jupyterlab`: install and verify JupyterLab, then contribute a
+  known-good CoCalc app launcher.
+- [ ] `cocalc/quarto`: install Quarto with Python/R/Jupyter integration, useful
+  for publishing and computational books.
+- [ ] `cocalc/latex`: install a practical LaTeX stack, `latexmk`, fonts, and
+  publishing tools such as `pandoc` when requested.
+
+Mathematics and formal-methods recipes:
+
+- [ ] `cocalc/sagemath`: create a SageMath recipe despite the hard build
+  constraints. Initial version may build from source and require large disk/time
+  budgets; track possible future migration to `sagelite` once a pip-installable
+  version is viable.
+- [ ] `cocalc/lean`: install `elan`, Lean, and Mathlib cache support; contribute
+  starter examples and verification commands.
+- [ ] `cocalc/octave`: install GNU Octave and a Jupyter kernel.
+- [ ] `cocalc/gap`: install GAP and optional Jupyter integration.
+- [ ] `cocalc/pari-gp`: install PARI/GP and simple examples.
+- [ ] `cocalc/magma`: midterm commercial recipe. Requires a license-server or
+  copy-protection model before practical deployment; John Voight's interest in
+  CoCalc as a Magma reseller makes this strategically important.
+
+Data science, ML, and scientific computing recipes:
+
+- [ ] `cocalc/scipy-stack`: NumPy, SciPy, Pandas, Matplotlib, SymPy,
+  scikit-learn, Statsmodels, Seaborn/Plotly, and example notebooks.
+- [ ] `cocalc/pytorch-gpu`: continue hardening NVIDIA GPU PyTorch install,
+  CUDA visibility verification, and Jupyter kernel examples.
+- [ ] `cocalc/tensorflow-gpu`: continue hardening NVIDIA GPU TensorFlow install,
+  CUDA visibility verification, and long-running build robustness.
+- [ ] `cocalc/huggingface`: transformers, datasets, accelerate, and cache
+  conventions for model-heavy projects.
+- [ ] `cocalc/geospatial`: GDAL, GeoPandas, rasterio, shapely, pyproj, folium,
+  and geospatial example notebooks.
+- [ ] `cocalc/chemistry`: RDKit/Open Babel/PySCF-style stack, with examples if
+  binary availability is reasonable.
+- [ ] `cocalc/mpi`: OpenMPI/MPICH plus `mpi4py` and a small verification
+  example.
+- [ ] `cocalc/fortran`: gfortran, BLAS/LAPACK development libraries, CMake, and
+  examples for numerical computing courses.
+- [ ] `cocalc/julia-scicomp`: Julia packages beyond Pluto, such as IJulia,
+  DataFrames, Plots, DifferentialEquations, and scientific examples.
+
+Web/dev and reusable metadata recipes:
+
+- [ ] `cocalc/nodejs`: Node LTS, pnpm/yarn/npm, TypeScript tooling, and example
+  web preview actions.
+- [ ] `cocalc/rust`: rustup/cargo with common build dependencies.
+- [ ] `cocalc/go`: Go toolchain and simple verification.
+- [ ] `cocalc/postgres-client`: psql, pgcli, and common database client tools.
+- [ ] `cocalc/app-launcher`: reusable metadata-only module for adding a
+  normalized CoCalc `AppSpec` to a RootFS publish config.
+- [ ] `cocalc/content-actions`: reusable metadata-only module for open, browse,
+  copy, external-link, and app-launch RootFS actions.
+- [ ] `cocalc/permissions`: normalize ownership and modes for `/opt/...`
+  installs so project users can read/execute them.
+- [ ] `cocalc/cleanup`: apt/pip/uv/Julia/R cache cleanup policies for smaller
+  published images.
+
 ## Acceptance Criteria
 
 - A rootfs catalog entry can advertise publisher content without starting a

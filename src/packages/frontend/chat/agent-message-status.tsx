@@ -223,7 +223,7 @@ export function describeLastActivity({
   }
   const ageMs = Math.max(0, now - lastActivityAtMs);
   return {
-    label: `Last activity ${formatElapsed(ageMs)} ago`,
+    label: `${formatElapsed(ageMs)} ago`,
     ageMs,
     stale: ageMs >= STALE_ACTIVITY_MS,
   };
@@ -351,11 +351,12 @@ export function AgentActivityChip({
         }
       }}
       title={liveStatusTitle || "View Codex activity log"}
+      aria-label="Open Codex activity details"
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 8,
-        padding: "6px 12px",
+        gap: 6,
+        padding: "4px 9px",
         borderRadius: 999,
         background: palette.background,
         border: `1px solid ${palette.border}`,
@@ -367,15 +368,15 @@ export function AgentActivityChip({
     >
       <span
         style={{
-          width: 8,
-          height: 8,
+          width: 7,
+          height: 7,
           borderRadius: "50%",
           background: palette.accent,
           flex: "0 0 auto",
         }}
       />
       {generating ? (
-        <LoadingOutlined spin style={{ fontSize: 12, color: palette.accent }} />
+        <LoadingOutlined spin style={{ fontSize: 11, color: palette.accent }} />
       ) : null}
       <span
         style={{
@@ -408,6 +409,7 @@ export function AgentActivityChip({
               color: generating ? palette.text : lastActivityColor,
               fontSize: 12,
               fontWeight: generating ? 500 : undefined,
+              opacity: 0.82,
             }}
           >
             {lastActivityInfo.label}
@@ -431,21 +433,11 @@ export function AgentActivityChip({
             }}
           >
             {liveStatus === "error"
-              ? "Activity disconnected"
-              : "Activity reconnecting"}
+              ? "Stream disconnected"
+              : "Stream reconnecting"}
           </span>
         </Tooltip>
       ) : null}
-      <span
-        style={{
-          color: palette.text,
-          fontSize: 12,
-          textDecoration: "underline",
-          fontWeight: generating ? 500 : undefined,
-        }}
-      >
-        Activity
-      </span>
     </div>
   );
 }

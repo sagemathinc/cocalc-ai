@@ -95,6 +95,8 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     { project_id },
     "project_log_loading",
   );
+  const userMap = useTypedRedux("users", "user_map");
+  const currentAccountId = useTypedRedux("account", "account_id");
   const [mode, setMode] = useState<FileTabsMode>(getStoredFileTabsMode);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
@@ -166,6 +168,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       generatedWorkspaceChatLabel(
         path,
         workspaces.resolveWorkspaceForPath(path),
+        { currentAccountId, userMap },
       ),
     ),
   );
@@ -184,6 +187,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       generatedWorkspaceChatLabel(
         path,
         workspaces.resolveWorkspaceForPath(path),
+        { currentAccountId, userMap },
       ),
     ),
   );

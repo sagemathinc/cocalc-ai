@@ -516,6 +516,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.setProjectRootfsPublishConfig": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized RootFS publish metadata defaults for the project",
+  },
   "projects.setLocalProjectManageUsersOwnerOnly": {
     decision: "internal-auth-only",
     reason: "owning-bay internal project policy mutation",
@@ -592,6 +597,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.assignMembershipPackageSeat": {
     decision: "fresh-auth-required",
     reason: "paid membership seat assignment",
+  },
+  "purchases.assignSiteLicensePoolSeat": {
+    decision: "fresh-auth-required",
+    reason: "site-license pool seat assignment",
   },
   "purchases.cancelSiteLicensePoolRequest": {
     decision: "fresh-auth-not-required",
