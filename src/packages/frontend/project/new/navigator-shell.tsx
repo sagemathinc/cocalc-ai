@@ -1,4 +1,4 @@
-import { Alert, Button, Modal, Select, Space, Typography } from "antd";
+import { Alert, Button, Modal, Select, Space } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   redux,
@@ -13,6 +13,7 @@ import {
   type AgentSessionStatus,
 } from "@cocalc/frontend/chat/agent-session-index";
 import type { CodexThreadConfig } from "@cocalc/chat";
+import { ChatFontSizeControls } from "@cocalc/frontend/chat/chat-font-size-controls";
 import { ChatRoomModals } from "@cocalc/frontend/chat/chatroom-modals";
 import type { ChatRoomModalHandlers } from "@cocalc/frontend/chat/chatroom-modals";
 import {
@@ -1215,51 +1216,15 @@ export function NavigatorShell({
   }
 
   const fontControls = (
-    <div
-      aria-label="Agent chat text size"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 2,
-        height: 28,
-        padding: "0 3px",
-        border: "1px solid #d9d9d9",
-        borderRadius: 7,
-        background: "#fff",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <Tooltip title="Decrease chat font size">
-        <Button
-          size="small"
-          type="text"
-          disabled={!canDecreaseFontSize}
-          onClick={decreaseFontSize}
-          style={{ minWidth: 24, height: 22, padding: "0 4px" }}
-        >
-          <Icon name="minus" />
-        </Button>
-      </Tooltip>
-      <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-        <Typography.Text
-          type="secondary"
-          style={{ fontSize: 12, padding: "0 4px" }}
-        >
-          Text {fontSize}
-        </Typography.Text>
-      </Tooltip>
-      <Tooltip title="Increase chat font size">
-        <Button
-          size="small"
-          type="text"
-          disabled={!canIncreaseFontSize}
-          onClick={increaseFontSize}
-          style={{ minWidth: 24, height: 22, padding: "0 4px" }}
-        >
-          <Icon name="plus" />
-        </Button>
-      </Tooltip>
-    </div>
+    <ChatFontSizeControls
+      fontSize={fontSize}
+      onDecreaseFontSize={decreaseFontSize}
+      onIncreaseFontSize={increaseFontSize}
+      canDecreaseFontSize={canDecreaseFontSize}
+      canIncreaseFontSize={canIncreaseFontSize}
+      label="Agent chat text size"
+      tooltipLabel="Agent chat"
+    />
   );
   const selectedThreadModel =
     selectedThreadMetadata?.agent_model?.trim() ||

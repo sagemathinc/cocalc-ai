@@ -12,7 +12,7 @@ import { getFileTemplate } from "../templates";
 
 const BAD_FILENAME_CHARACTERS = "\\";
 const BAD_LATEX_FILENAME_CHARACTERS = '\'"()"~%$';
-const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
+export const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 
 type LogProjectEvent = (event: any) => string | undefined;
 

@@ -33,6 +33,7 @@ import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
+import { ChatFontSizeControls } from "./chat-font-size-controls";
 import {
   getDefaultNewThreadSetup,
   type NewThreadSetup,
@@ -520,6 +521,9 @@ export interface ChatPanelProps {
   ) => void;
   onIncreaseFontSize?: () => void;
   onDecreaseFontSize?: () => void;
+  threadPanelTopRightControlsPrefix?: React.ReactNode;
+  threadPanelCompactTopRightControls?: boolean;
+  threadPanelTopRightControlsPortal?: HTMLElement | null;
   readOnly?: boolean;
 }
 
@@ -568,6 +572,9 @@ export function ChatPanel({
   onComposerReady,
   onIncreaseFontSize,
   onDecreaseFontSize,
+  threadPanelTopRightControlsPrefix,
+  threadPanelCompactTopRightControls,
+  threadPanelTopRightControlsPortal,
   readOnly = false,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -635,6 +642,18 @@ export function ChatPanel({
   );
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(false);
   const isCompact = variant === "compact";
+  const effectiveThreadPanelTopRightControlsPrefix =
+    threadPanelTopRightControlsPrefix ??
+    (variant === "default" ? (
+      <ChatFontSizeControls
+        fontSize={fontSize}
+        onIncreaseFontSize={onIncreaseFontSize}
+        onDecreaseFontSize={onDecreaseFontSize}
+        embedded
+      />
+    ) : undefined);
+  const effectiveThreadPanelCompactTopRightControls =
+    threadPanelCompactTopRightControls ?? variant === "default";
   const storedThreadFromDesc =
     getDescValue(desc, "data-selectedThreadKey") ?? null;
   const [modalHandlers, setModalHandlers] =
@@ -2401,6 +2420,9 @@ export function ChatPanel({
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
+        topRightControlsPrefix={effectiveThreadPanelTopRightControlsPrefix}
+        compactTopRightControls={effectiveThreadPanelCompactTopRightControls}
+        topRightControlsPortal={threadPanelTopRightControlsPortal}
         readOnly={readOnly}
       />
       {automationBanner}

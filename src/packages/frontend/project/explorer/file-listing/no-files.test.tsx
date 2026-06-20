@@ -22,6 +22,7 @@ jest.mock("antd", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: any) => <span data-icon={name} />,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/project/home-directory", () => ({
@@ -66,17 +67,31 @@ describe("NoFiles", () => {
     expect(screen.getByTestId("empty-directory-welcome")).toHaveStyle({
       margin: "32px auto 28px auto",
       width: "calc(100% - 56px)",
-      maxWidth: "1120px",
+      maxWidth: "960px",
     });
-    expect(screen.getByText("Jupyter Notebook")).not.toBeNull();
-    expect(screen.getByText("Chat with AI")).not.toBeNull();
-    expect(screen.getByText("Upload Files")).not.toBeNull();
-    expect(screen.getByText("Browse file types")).not.toBeNull();
+    expect(screen.getByText("Jupyter")).not.toBeNull();
+    expect(screen.getByText("Agents")).not.toBeNull();
+    expect(screen.getByText("Upload")).not.toBeNull();
+    expect(screen.getByText("Folder")).not.toBeNull();
+    expect(screen.getByText("Other")).not.toBeNull();
+    expect(
+      screen.getByLabelText(
+        "Create a notebook for code, text, plots, and results.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByLabelText("Start an AI agent thread in this project."),
+    ).not.toBeNull();
+    expect(
+      screen.getByLabelText(
+        "Create a folder to organize files in this project.",
+      ),
+    ).not.toBeNull();
     expect(screen.queryByText("Empty project")).toBeNull();
-    expect(screen.getByText("Upload Files").closest("button")).toHaveClass(
+    expect(screen.getByText("Upload").closest("button")).toHaveClass(
       "upload-button",
     );
-    fireEvent.click(screen.getByText("Upload Files"));
+    fireEvent.click(screen.getByText("Upload"));
     expect(openUploadFiles).toHaveBeenCalled();
   });
 
@@ -107,8 +122,8 @@ describe("NoFiles", () => {
       />,
     );
 
-    expect(screen.queryByText("Chat with AI")).toBeNull();
-    expect(screen.getByText("Jupyter Notebook")).not.toBeNull();
+    expect(screen.queryByText("Agents")).toBeNull();
+    expect(screen.getByText("Jupyter")).not.toBeNull();
   });
 
   it("shows a matching-files warning with a clear-filter button", () => {
@@ -146,7 +161,7 @@ describe("NoFiles", () => {
         file_search=""
       />,
     );
-    fireEvent.click(screen.getByText("Browse file types"));
+    fireEvent.click(screen.getByText("Other"));
 
     expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
     expect(setActiveTab).toHaveBeenCalledWith("new");
@@ -170,10 +185,34 @@ describe("NoFiles", () => {
         file_search=""
       />,
     );
-    fireEvent.click(screen.getByText("Jupyter Notebook"));
+    fireEvent.click(screen.getByText("Jupyter"));
 
     expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
     expect(askFilename).toHaveBeenCalledWith("ipynb");
+  });
+
+  it("uses the existing folder filename prompt from the first-run folder action", () => {
+    const askFilename = jest.fn();
+    const setCurrentPath = jest.fn();
+    getProjectActionsMock.mockReturnValue({
+      ask_filename: askFilename,
+      setState: jest.fn(),
+      set_active_tab: jest.fn(),
+      set_current_path: setCurrentPath,
+      set_file_search: jest.fn(),
+    });
+
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
+    );
+    fireEvent.click(screen.getByText("Folder"));
+
+    expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
+    expect(askFilename).toHaveBeenCalledWith("/");
   });
 
   it("prefills the new page filename from the current filter", () => {

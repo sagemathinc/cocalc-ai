@@ -55,6 +55,7 @@ import {
   updateAccountLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
+import { buildMoreFileTypeMenuItems } from "@cocalc/frontend/project/new/more-file-types";
 import { QuickCreateDropdown } from "@cocalc/frontend/project/new/quick-create-dropdown";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -218,6 +219,15 @@ export function FilesHeader({
     accountPrefs: accountLauncherPrefs,
     siteDefaults: siteLauncherDefaults,
   });
+  const moreFileTypeMenuItems = React.useMemo(
+    () =>
+      buildMoreFileTypeMenuItems({
+        quickCreateIds: mergedLauncher.quickCreate,
+        availableFeatures,
+        onCreateFile: createQuickFile,
+      }),
+    [availableFeatures, createQuickFile, mergedLauncher.quickCreate],
+  );
 
   useEffect(() => {
     if (!highlighNothingFound) return;
@@ -825,6 +835,7 @@ export function FilesHeader({
                     onCreateFile={createQuickFile}
                     onCreateFolder={createQuickFolder}
                     onCustomize={() => setShowCustomizeModal(true)}
+                    moreFileTypeItems={moreFileTypeMenuItems}
                   />
                 </span>
               </Tooltip>

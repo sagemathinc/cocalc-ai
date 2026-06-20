@@ -4,9 +4,11 @@
  */
 
 import {
+  createContext,
   Suspense,
   lazy,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useState,
@@ -21,6 +23,7 @@ import {
   SearchOutlined,
   ToolOutlined,
   ArrowLeftOutlined,
+  UnorderedListOutlined,
   PrinterOutlined,
 } from "@ant-design/icons";
 import {
@@ -45,6 +48,7 @@ import {
   type DocsAction,
   type DocsEntry,
 } from "@cocalc/docs";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
@@ -63,6 +67,45 @@ type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
 const DOCS_BROWSER_CARD_STYLE = { fontSize: "inherit" };
 const DOCS_BROWSER_CARD_BODY_STYLE = { fontSize: "inherit" };
+const DOCS_FONT_SIZE_CONTROL_BUTTON_STYLE: CSSProperties = {
+  height: 22,
+  minWidth: 24,
+  padding: "0 4px",
+};
+function docsFontSizeControlStyle(framed: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    background: framed ? COLORS.TOP_BAR.ACTIVE : "transparent",
+    border: framed ? `1px solid ${COLORS.GRAY_L0}` : 0,
+    borderRadius: 7,
+    display: "inline-flex",
+    gap: 2,
+    height: 28,
+    padding: framed ? "0 3px" : 0,
+    whiteSpace: "nowrap",
+  };
+}
+
+const DOCS_TOOLBAR_GROUP_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: COLORS.TOP_BAR.ACTIVE,
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 8,
+  boxShadow: "0 1px 4px rgba(15, 23, 42, 0.08)",
+  display: "inline-flex",
+  flexWrap: "wrap",
+  gap: 4,
+  minHeight: 34,
+  padding: "3px 5px",
+};
+const DOCS_TOOLBAR_DIVIDER_STYLE: CSSProperties = {
+  alignSelf: "center",
+  background: COLORS.GRAY_LL,
+  flexShrink: 0,
+  height: 18,
+  margin: "0 2px",
+  width: 1,
+};
 const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
@@ -106,6 +149,7 @@ export type DocsPrivateIndexState = {
 export type DocsPrivateDetailState = {
   renderPanel: (entry: DocsEntry) => React.ReactNode;
   renderLearnedControl?: (entry: DocsEntry) => React.ReactNode;
+  renderToolbarActions?: (entry: DocsEntry) => React.ReactNode;
 };
 
 type DocsLinearNavigationState = {
@@ -196,6 +240,65 @@ export function useDocsFontSize(defaultFontSize = 14) {
   };
 }
 
+type DocsFontSizeContextValue = ReturnType<typeof useDocsFontSize>;
+
+const DocsFontSizeContext = createContext<DocsFontSizeContextValue | undefined>(
+  undefined,
+);
+
+function DocsFontSizeControl({ framed = true }: { framed?: boolean }) {
+  const fontSizeControl = useContext(DocsFontSizeContext);
+  if (fontSizeControl == null) return null;
+  const {
+    canDecreaseFontSize,
+    canIncreaseFontSize,
+    decreaseFontSize,
+    fontSize,
+    increaseFontSize,
+  } = fontSizeControl;
+
+  return (
+    <div style={docsFontSizeControlStyle(framed)}>
+      <Tooltip title={`Decrease docs font size (${fontSize}px)`}>
+        <Button
+          aria-label="Decrease docs font size"
+          disabled={!canDecreaseFontSize}
+          onClick={decreaseFontSize}
+          size="small"
+          type="text"
+          style={DOCS_FONT_SIZE_CONTROL_BUTTON_STYLE}
+        >
+          <Icon name="minus" />
+        </Button>
+      </Tooltip>
+      <Tooltip title={`Docs font size: ${fontSize}px`}>
+        <span
+          aria-hidden="true"
+          style={{
+            background: COLORS.GRAY_LL,
+            display: "inline-block",
+            flexShrink: 0,
+            height: 16,
+            width: 1,
+          }}
+        />
+      </Tooltip>
+      <Tooltip title={`Increase docs font size (${fontSize}px)`}>
+        <Button
+          aria-label="Increase docs font size"
+          disabled={!canIncreaseFontSize}
+          onClick={increaseFontSize}
+          size="small"
+          type="text"
+          style={DOCS_FONT_SIZE_CONTROL_BUTTON_STYLE}
+        >
+          <Icon name="plus" />
+        </Button>
+      </Tooltip>
+    </div>
+  );
+}
+
 export function DocsFontSizeFrame({
   children,
   defaultFontSize = 14,
@@ -207,68 +310,32 @@ export function DocsFontSizeFrame({
   layout?: DocsBrowserLayout;
   showControls?: boolean;
 }) {
-  const {
-    canDecreaseFontSize,
-    canIncreaseFontSize,
-    decreaseFontSize,
-    fontSize,
-    increaseFontSize,
-    resetFontSize,
-  } = useDocsFontSize(defaultFontSize);
+  const fontSizeControl = useDocsFontSize(defaultFontSize);
 
   return (
-    <div style={{ position: "relative" }}>
-      {showControls ? (
-        <Flex
-          justify="end"
-          style={{
-            marginBottom: layout === "flyout" ? 8 : 12,
-            position: "relative",
-            zIndex: 1,
-          }}
-        >
-          <Space.Compact
-            size="small"
+    <DocsFontSizeContext.Provider value={fontSizeControl}>
+      <div style={{ position: "relative" }}>
+        {showControls ? (
+          <Flex
+            justify="end"
             style={{
-              background: "white",
-              borderRadius: 6,
-              boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+              marginBottom: layout === "flyout" ? 8 : 12,
+              position: "relative",
+              zIndex: 1,
             }}
           >
-            <Button
-              aria-label="Decrease docs font size"
-              disabled={!canDecreaseFontSize}
-              onClick={decreaseFontSize}
-              title="Decrease docs font size"
-            >
-              A-
-            </Button>
-            <Button
-              aria-label="Reset docs font size"
-              onClick={resetFontSize}
-              title="Reset docs font size"
-            >
-              {fontSize}px
-            </Button>
-            <Button
-              aria-label="Increase docs font size"
-              disabled={!canIncreaseFontSize}
-              onClick={increaseFontSize}
-              title="Increase docs font size"
-            >
-              A+
-            </Button>
-          </Space.Compact>
-        </Flex>
-      ) : null}
-      <div
-        className="cocalc-docs-font-scope"
-        data-testid="docs-font-scope"
-        style={{ fontSize }}
-      >
-        {children}
+            <DocsFontSizeControl />
+          </Flex>
+        ) : null}
+        <div
+          className="cocalc-docs-font-scope"
+          data-testid="docs-font-scope"
+          style={{ fontSize: fontSizeControl.fontSize }}
+        >
+          {children}
+        </div>
       </div>
-    </div>
+    </DocsFontSizeContext.Provider>
   );
 }
 
@@ -770,6 +837,7 @@ export function DocsIndexContent({
 
   return (
     <Flex gap={layout === "flyout" ? "middle" : "large"} vertical>
+      <DocsIndexToolbar layout={layout} />
       <Input
         allowClear
         aria-label="Search documentation"
@@ -1265,6 +1333,147 @@ function DocsLinearNavigation({
   );
 }
 
+function DocsIndexToolbar({ layout = "page" }: { layout?: DocsBrowserLayout }) {
+  const fontSizeControl = useContext(DocsFontSizeContext);
+  if (fontSizeControl == null) return null;
+  return (
+    <div
+      style={{
+        ...docsDetailToolbarStyle(layout),
+        justifyContent: "flex-end",
+      }}
+    >
+      <div style={DOCS_TOOLBAR_GROUP_STYLE}>
+        <DocsFontSizeControl framed={false} />
+      </div>
+    </div>
+  );
+}
+
+function docsDetailToolbarStyle(layout: DocsBrowserLayout): CSSProperties {
+  const isFlyout = layout === "flyout";
+  return {
+    alignItems: "center",
+    background: "transparent",
+    border: 0,
+    borderRadius: 0,
+    boxShadow: "none",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "space-between",
+    marginTop: isFlyout ? -2 : 0,
+    padding: isFlyout ? "2px 0" : "0",
+    position: "sticky",
+    top: isFlyout ? 0 : 8,
+    zIndex: 3,
+  };
+}
+
+function DocsDetailToolbar({
+  entry,
+  layout = "page",
+  linearNavigation,
+  onBack,
+  privateState,
+}: {
+  entry: DocsEntry;
+  layout?: DocsBrowserLayout;
+  linearNavigation?: DocsLinearNavigationState;
+  onBack?: () => void;
+  privateState?: DocsPrivateDetailState;
+}) {
+  const isFlyout = layout === "flyout";
+  const previousEntry =
+    linearNavigation?.previous ?? linearNavigation?.previousChapter;
+  const previousLabel = linearNavigation?.previous
+    ? "Previous"
+    : "Previous Chapter";
+  const nextEntry = linearNavigation?.next ?? linearNavigation?.nextChapter;
+  const nextLabel = linearNavigation?.next ? "Next" : "Next Chapter";
+
+  return (
+    <div style={docsDetailToolbarStyle(layout)}>
+      <div style={DOCS_TOOLBAR_GROUP_STYLE}>
+        {onBack != null ? (
+          <Tooltip title="Back to all docs">
+            <Button
+              aria-label="All docs index"
+              icon={<UnorderedListOutlined />}
+              onClick={onBack}
+              size="small"
+            >
+              {isFlyout ? null : "All docs"}
+            </Button>
+          </Tooltip>
+        ) : null}
+        {onBack != null &&
+        linearNavigation != null &&
+        linearNavigation.count > 1 ? (
+          <span aria-hidden="true" style={DOCS_TOOLBAR_DIVIDER_STYLE} />
+        ) : null}
+        {linearNavigation != null && linearNavigation.count > 1 ? (
+          <>
+            <Space.Compact>
+              <Tooltip
+                title={
+                  previousEntry != null
+                    ? `${previousLabel}: ${previousEntry.title}`
+                    : "This is the first page in this section"
+                }
+              >
+                <Button
+                  aria-label={previousLabel}
+                  disabled={previousEntry == null}
+                  icon={<ArrowLeftOutlined />}
+                  onClick={() => {
+                    if (previousEntry != null) {
+                      linearNavigation.onSelectEntry(previousEntry);
+                    }
+                  }}
+                  size="small"
+                />
+              </Tooltip>
+              <Tooltip
+                title={
+                  nextEntry != null
+                    ? `${nextLabel}: ${nextEntry.title}`
+                    : "This is the last page"
+                }
+              >
+                <Button
+                  aria-label={nextLabel}
+                  disabled={nextEntry == null}
+                  icon={<ArrowRightOutlined />}
+                  onClick={() => {
+                    if (nextEntry != null) {
+                      linearNavigation.onSelectEntry(nextEntry);
+                    }
+                  }}
+                  size="small"
+                />
+              </Tooltip>
+            </Space.Compact>
+            {!isFlyout ? (
+              <Tooltip
+                title={`Page ${linearNavigation.currentIndex + 1} of ${linearNavigation.count} in ${linearNavigation.entry.category}`}
+              >
+                <Text type="secondary">
+                  {linearNavigation.currentIndex + 1}/{linearNavigation.count}
+                </Text>
+              </Tooltip>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+      <div style={DOCS_TOOLBAR_GROUP_STYLE}>
+        <DocsFontSizeControl framed={false} />
+        {privateState?.renderToolbarActions?.(entry)}
+      </div>
+    </div>
+  );
+}
+
 export function DocsDetailContent({
   actionAvailability,
   defaultActionParameters,
@@ -1295,16 +1504,13 @@ export function DocsDetailContent({
   if (layout === "flyout") {
     return (
       <Flex gap="middle" vertical>
-        {onBack != null ? (
-          <Button
-            icon={<ArrowLeftOutlined />}
-            onClick={onBack}
-            size="small"
-            style={{ width: "fit-content" }}
-          >
-            All docs
-          </Button>
-        ) : null}
+        <DocsDetailToolbar
+          entry={entry}
+          layout={layout}
+          linearNavigation={linearNavigation}
+          onBack={onBack}
+          privateState={privateState}
+        />
         <Flex gap="small" vertical>
           <Space size={[4, 4]} wrap>
             <Tag color="blue">{entry.category}</Tag>
@@ -1337,15 +1543,13 @@ export function DocsDetailContent({
 
   return (
     <Flex gap="large" vertical>
-      {onBack != null ? (
-        <Button
-          icon={<ArrowLeftOutlined />}
-          onClick={onBack}
-          style={{ width: "fit-content" }}
-        >
-          All docs
-        </Button>
-      ) : null}
+      <DocsDetailToolbar
+        entry={entry}
+        layout={layout}
+        linearNavigation={linearNavigation}
+        onBack={onBack}
+        privateState={privateState}
+      />
       <Card
         style={DOCS_BROWSER_CARD_STYLE}
         styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}

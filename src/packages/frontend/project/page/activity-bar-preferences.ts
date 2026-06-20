@@ -44,6 +44,15 @@ function toTabNames(value: any): string[] {
   return [];
 }
 
+function hasTabListShape(value: any): boolean {
+  return (
+    Array.isArray(value) ||
+    typeof value?.valueSeq === "function" ||
+    typeof value?.toArray === "function" ||
+    (value != null && typeof value === "object")
+  );
+}
+
 function filterAvailable(
   tabs: readonly FixedTab[],
   liteMode: boolean,
@@ -89,9 +98,12 @@ export function normalizeHiddenFixedTabs(
   value: any,
   opts?: { liteMode?: boolean },
 ): FixedTab[] {
+  if (value == null) {
+    return getDefaultHiddenFixedTabs(opts);
+  }
   const available = new Set(getDefaultFixedTabOrder(opts));
   const raw = toTabNames(value);
-  if (raw.length === 0) {
+  if (raw.length === 0 && !hasTabListShape(value)) {
     return getDefaultHiddenFixedTabs(opts);
   }
   const hidden: FixedTab[] = [];

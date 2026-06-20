@@ -6,7 +6,6 @@
 import {
   Alert,
   Button,
-  Dropdown,
   Empty,
   Modal,
   Popconfirm,
@@ -15,7 +14,6 @@ import {
   Tag,
   Typography,
   message as antdMessage,
-  type MenuProps,
 } from "antd";
 import {
   useEffect,
@@ -28,7 +26,7 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type {
   AgentSessionRecord,
@@ -66,6 +64,7 @@ import {
   ChatRoomModals,
   type ChatRoomModalHandlers,
 } from "@cocalc/frontend/chat/chatroom-modals";
+import { ChatFontSizeControls } from "@cocalc/frontend/chat/chat-font-size-controls";
 import { GitCommitDrawer } from "@cocalc/frontend/chat/git-commit-drawer";
 import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
 import CodexConfigButton from "@cocalc/frontend/chat/codex";
@@ -286,7 +285,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   );
   const [error, setError] = useState<string>("");
   const [creatingAgent, setCreatingAgent] = useState(false);
-  const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
   const [automationControlBusyKey, setAutomationControlBusyKey] =
     useState<string>("");
   const [openedSelection, setOpenedSelection] =
@@ -308,6 +306,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     AcpAutomationConfig | undefined
   >(undefined);
   const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationActions, setAutomationActions] =
+    useState<ChatActions | null>(null);
   const [gitBrowserOpen, setGitBrowserOpen] = useState(false);
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
     undefined,
@@ -315,7 +315,23 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
     string | undefined
   >(undefined);
+  const [gitBrowserActions, setGitBrowserActions] =
+    useState<ChatActions | null>(null);
+  const [gitBrowserSourcePath, setGitBrowserSourcePath] = useState<
+    string | undefined
+  >(undefined);
+  const [sessionMenuRecord, setSessionMenuRecord] =
+    useState<AgentSessionRecord | null>(null);
+  const [sessionMenuActions, setSessionMenuActions] =
+    useState<ChatActions | null>(null);
+  const [sessionMenuModalHandlers, setSessionMenuModalHandlers] =
+    useState<ChatRoomModalHandlers | null>(null);
+  const [sessionMenuOpenId, setSessionMenuOpenId] = useState<string>("");
+  const [sessionMenuBusyId, setSessionMenuBusyId] = useState<string>("");
+  const sessionMenuCleanupRef = useRef<(() => void) | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const [inlineToolbarPortal, setInlineToolbarPortal] =
+    useState<HTMLDivElement | null>(null);
   const [panelWidth, setPanelWidth] = useState<number>(0);
   const isFlyout = layout === "flyout";
   const {
@@ -601,6 +617,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [layout, openedSelection, project_id]);
 
   useEffect(() => {
+    return () => {
+      sessionMenuCleanupRef.current?.();
+      sessionMenuCleanupRef.current = undefined;
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const onReveal = (evt: Event) => {
       const detail = (evt as CustomEvent<AgentPanelRevealDetail>).detail;
@@ -837,14 +860,18 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     };
   }, [inlineMarkdownLinkBasePath, inlineSession?.chat_path, project_id]);
 
+  const automationActionSource = automationActions ?? inlineActions;
   const automationModalMetadata = useMemo(
     () =>
       automationModalThreadKey
-        ? inlineActions?.getThreadMetadata?.(automationModalThreadKey, {
-            threadId: automationModalThreadKey,
-          })
+        ? automationActionSource?.getThreadMetadata?.(
+            automationModalThreadKey,
+            {
+              threadId: automationModalThreadKey,
+            },
+          )
         : undefined,
-    [automationModalThreadKey, inlineActions],
+    [automationActionSource, automationModalThreadKey],
   );
 
   const automationModalConfig = useMemo(
@@ -905,22 +932,72 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     }
   }
 
+  function clearSessionMenuActions(): void {
+    sessionMenuCleanupRef.current?.();
+    sessionMenuCleanupRef.current = undefined;
+    setSessionMenuActions(null);
+    setSessionMenuRecord(null);
+    setSessionMenuModalHandlers(null);
+    setSessionMenuOpenId("");
+  }
+
+  async function openSessionActionMenu(
+    record: AgentSessionRecord,
+  ): Promise<void> {
+    setSessionMenuBusyId(record.session_id);
+    setError("");
+    try {
+      if (sessionMenuRecord?.session_id !== record.session_id) {
+        sessionMenuCleanupRef.current?.();
+        sessionMenuCleanupRef.current = undefined;
+        setSessionMenuActions(null);
+        setSessionMenuModalHandlers(null);
+      }
+      const { chatActions, cleanup } =
+        await resolveChatActionsForRecord(record);
+      sessionMenuCleanupRef.current = cleanup;
+      setSessionMenuRecord(record);
+      setSessionMenuActions(chatActions);
+      setSessionMenuOpenId(record.session_id);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSessionMenuBusyId("");
+    }
+  }
+
   function openAutomation(record: AcpAutomationRecord): void {
     saveNavigatorSelectedThreadKey(record.thread_id, record.path);
     actions?.open_file({ path: record.path });
   }
 
-  function openAutomationModal(threadKey: string): void {
+  function openAutomationModal(
+    threadKey: string,
+    sourceActions?: ChatActions | null,
+  ): void {
     const key = `${threadKey ?? ""}`.trim();
     if (!key) return;
+    setAutomationActions(sourceActions ?? inlineActions ?? null);
     setAutomationModalThreadKey(key);
   }
 
-  function openGitBrowserForThread(threadKey: string): void {
+  function closeAutomationModal(): void {
+    setAutomationModalThreadKey(null);
+    setAutomationActions(null);
+  }
+
+  function openGitBrowserForThread(
+    threadKey: string,
+    sourceActions?: ChatActions | null,
+    sourcePath?: string,
+  ): void {
     const key = `${threadKey ?? ""}`.trim();
     if (!key) return;
-    const metadata = inlineActions?.getThreadMetadata?.(key, { threadId: key });
-    const codexConfig = inlineActions?.getCodexConfig?.(key);
+    const actionsForThread = sourceActions ?? inlineActions;
+    const metadata = actionsForThread?.getThreadMetadata?.(key, {
+      threadId: key,
+    });
+    const codexConfig = actionsForThread?.getCodexConfig?.(key);
     const workingDirectory =
       typeof codexConfig?.workingDirectory === "string" &&
       codexConfig.workingDirectory.trim()
@@ -931,11 +1008,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           : undefined;
     setGitBrowserCwd(workingDirectory);
     setGitBrowserThreadKey(key);
+    setGitBrowserActions(actionsForThread ?? null);
+    setGitBrowserSourcePath(sourcePath);
     setGitBrowserOpen(true);
   }
 
   async function saveAutomationModal(): Promise<void> {
-    if (!inlineActions || !automationModalThreadKey) return;
+    if (!automationActionSource || !automationModalThreadKey) return;
     const config = normalizeAutomationConfigForSave({
       draft: automationDraft,
       automationId: automationModalConfig?.automation_id,
@@ -950,12 +1029,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     setAutomationSaving(true);
     try {
       const response = await upsertThreadAutomation({
-        actions: inlineActions,
+        actions: automationActionSource,
         threadId: automationModalThreadKey,
         config,
       });
       showActiveAutomationLimitModal({ project_id, response });
-      setAutomationModalThreadKey(null);
+      closeAutomationModal();
     } finally {
       setAutomationSaving(false);
     }
@@ -996,75 +1075,104 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function renderSessionMenu(record: AgentSessionRecord): React.JSX.Element {
-    const resumeLabel = "Go to Chat";
-    const items: MenuProps["items"] = [
-      {
-        key: "resume",
-        label: resumeLabel,
-      },
-      {
-        key: "open-file",
-        label: "Open Chat File",
-      },
-      {
-        key: "clear",
-        label: "Clear Thread",
-        disabled: updatingSessionId === record.session_id,
-      },
-      {
-        type: "divider",
-      },
-      {
-        key: "pin",
-        label: record.thread_pin ? "Unpin" : "Pin",
-        disabled: updatingSessionId === record.session_id,
-      },
-      {
-        key: "archive",
-        label: record.status === "archived" ? "Unarchive" : "Archive",
-        disabled: updatingSessionId === record.session_id,
-        danger: record.status !== "archived",
-      },
-    ];
+    const isOpen = sessionMenuOpenId === record.session_id;
+    const isBusy = sessionMenuBusyId === record.session_id;
+    const threadKey = `${record.thread_key ?? ""}`.trim();
+    const menuActions =
+      sessionMenuRecord?.session_id === record.session_id
+        ? sessionMenuActions
+        : null;
+    const metadata =
+      menuActions && threadKey
+        ? menuActions.getThreadMetadata?.(threadKey, { threadId: threadKey })
+        : undefined;
+    const label = normalizedTitle(record);
+    const model =
+      metadata?.agent_model?.trim() ||
+      metadata?.acp_config?.model?.trim() ||
+      record.model?.trim();
+    const isAI = Boolean(
+      metadata?.agent_kind === "acp" ||
+      metadata?.acp_config != null ||
+      isCodexModelName(`${model ?? ""}`),
+    );
+    const isPinned = metadata?.pin ?? record.thread_pin ?? false;
+    const threadColor = metadata?.thread_color ?? record.thread_color;
+    const threadIcon = metadata?.thread_icon ?? record.thread_icon;
+    const buttonProps = {
+      size: "small" as const,
+      type: "text" as const,
+      icon: <Icon name="ellipsis" />,
+      "aria-label": "Session actions",
+      "data-testid": `agent-session-menu-${record.session_id}`,
+    };
     return (
       <div
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
       >
-        <Dropdown
-          trigger={["click"]}
-          menu={{
-            items,
-            onClick: ({ key }) => {
-              switch (key) {
-                case "resume":
-                  openNavigatorSession(record);
-                  return;
-                case "open-file":
-                  actions?.open_file({ path: record.chat_path });
-                  return;
-                case "clear":
-                  confirmClearThread(record);
-                  return;
-                case "pin":
-                  void togglePin(record);
-                  return;
-                case "archive":
-                  void toggleArchive(record);
-                  return;
-              }
-            },
-          }}
-        >
-          <Button
-            size="small"
-            type="text"
-            icon={<Icon name="ellipsis" />}
-            aria-label="Session actions"
-            data-testid={`agent-session-menu-${record.session_id}`}
+        {menuActions && threadKey ? (
+          <ChatRoomThreadMenu
+            actions={menuActions}
+            threadKey={threadKey}
+            plainLabel={label}
+            hasCustomName={Boolean(metadata?.name?.trim())}
+            isPinned={isPinned}
+            isAI={isAI}
+            isCodexThread={isCodexModelName(`${model ?? ""}`)}
+            threadColor={threadColor}
+            threadIcon={threadIcon}
+            openAppearanceModal={
+              sessionMenuModalHandlers?.openAppearanceModal ?? (() => undefined)
+            }
+            openBehaviorModal={
+              sessionMenuModalHandlers?.openBehaviorModal ?? (() => undefined)
+            }
+            openExportModal={
+              sessionMenuModalHandlers?.openExportModal ?? (() => undefined)
+            }
+            openImportModal={
+              sessionMenuModalHandlers?.openImportModal ?? (() => undefined)
+            }
+            openForkModal={
+              sessionMenuModalHandlers?.openForkModal ?? (() => undefined)
+            }
+            confirmResetThread={() => confirmClearThread(record)}
+            confirmDeleteThread={() =>
+              confirmDeleteInlineThread(record, menuActions)
+            }
+            openChatFile={() => openNavigatorSession(record)}
+            openAutomationModal={(key) => openAutomationModal(key, menuActions)}
+            openGitBrowser={(key) =>
+              openGitBrowserForThread(key, menuActions, record.chat_path)
+            }
+            archiveLabel={
+              record.status === "archived" ? "Unarchive chat" : "Archive chat"
+            }
+            onArchive={() => toggleArchive(record)}
+            onPinChange={(pinned) => togglePin(record, pinned)}
+            buttonType="text"
+            buttonAriaLabel="Session actions"
+            buttonTestId={`agent-session-menu-${record.session_id}`}
+            open={isOpen}
+            onOpenChange={(open) => {
+              setSessionMenuOpenId(open ? record.session_id : "");
+            }}
+            onButtonClick={(event) => {
+              event.stopPropagation();
+            }}
           />
-        </Dropdown>
+        ) : (
+          <Button
+            {...buttonProps}
+            loading={isBusy}
+            onClick={(event) => {
+              event.stopPropagation();
+              void openSessionActionMenu(record);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -1118,8 +1226,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         confirmResetThread={() => confirmClearThread(record)}
         confirmDeleteThread={() => confirmDeleteInlineThread(record)}
         openChatFile={() => actions?.open_file({ path: record.chat_path })}
-        openAutomationModal={openAutomationModal}
-        openGitBrowser={openGitBrowserForThread}
+        openAutomationModal={(key) => openAutomationModal(key, inlineActions)}
+        openGitBrowser={(key) =>
+          openGitBrowserForThread(key, inlineActions, record.chat_path)
+        }
         buttonType="text"
         buttonAriaLabel="Chat thread actions"
         buttonTestId="agents-inline-thread-menu"
@@ -1127,53 +1237,100 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  function renderFontSizeControls(): React.JSX.Element {
+  function renderSessionMenuSupport(): React.JSX.Element | null {
+    if (!sessionMenuActions || !sessionMenuRecord) return null;
     return (
-      <div
-        aria-label="Agent chat text size"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 2,
-          height: 28,
-          padding: "0 3px",
-          border: "1px solid #d9d9d9",
-          borderRadius: 7,
-          background: "#fff",
-          whiteSpace: "nowrap",
+      <ChatRoomModals
+        actions={sessionMenuActions}
+        project_id={project_id}
+        path={sessionMenuRecord.chat_path}
+        selectedThreadKey={sessionMenuRecord.thread_key}
+        selectedThreadLabel={normalizedTitle(sessionMenuRecord)}
+        onHandlers={setSessionMenuModalHandlers}
+      />
+    );
+  }
+
+  function renderAutomationModal(): React.JSX.Element {
+    return (
+      <Modal
+        title="Thread automation"
+        open={automationModalThreadKey != null}
+        destroyOnHidden
+        onCancel={closeAutomationModal}
+        onOk={() => {
+          void saveAutomationModal();
         }}
+        okText="Save"
+        confirmLoading={automationSaving}
       >
-        <Tooltip title="Decrease chat font size">
-          <Button
-            size="small"
-            type="text"
-            disabled={!canDecreaseFontSize}
-            onClick={decreaseFontSize}
-            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
-          >
-            <Icon name="minus" />
-          </Button>
-        </Tooltip>
-        <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-          <Typography.Text
-            type="secondary"
-            style={{ fontSize: 12, padding: "0 4px" }}
-          >
-            Text {fontSize}
-          </Typography.Text>
-        </Tooltip>
-        <Tooltip title="Increase chat font size">
-          <Button
-            size="small"
-            type="text"
-            disabled={!canIncreaseFontSize}
-            onClick={increaseFontSize}
-            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
-          >
-            <Icon name="plus" />
-          </Button>
-        </Tooltip>
-      </div>
+        <AutomationConfigFields
+          draft={automationDraft}
+          allowCodexRunKind={automationModalAllowsCodex}
+          onChange={(patch) =>
+            setAutomationDraft((prev) => ({
+              ...buildAutomationDraft({
+                config: prev,
+                allowCodexRunKind: automationModalAllowsCodex,
+              }),
+              ...patch,
+            }))
+          }
+        />
+      </Modal>
+    );
+  }
+
+  function renderGitBrowserDrawer(): React.JSX.Element | null {
+    const actionsForGit = gitBrowserActions ?? inlineActions;
+    const sourcePath = gitBrowserSourcePath ?? inlineSession?.chat_path;
+    if (!actionsForGit || !sourcePath) return null;
+    return (
+      <GitCommitDrawer
+        projectId={project_id}
+        sourcePath={sourcePath}
+        cwdOverride={gitBrowserCwd}
+        open={gitBrowserOpen}
+        onClose={() => {
+          setGitBrowserOpen(false);
+          setGitBrowserThreadKey(undefined);
+          setGitBrowserActions(null);
+          setGitBrowserSourcePath(undefined);
+        }}
+        fontSize={fontSize}
+        onIncreaseFontSize={increaseFontSize}
+        onDecreaseFontSize={decreaseFontSize}
+        onRequestAgentTurn={(prompt) => {
+          const trimmed = `${prompt ?? ""}`.trim();
+          const threadId = `${gitBrowserThreadKey ?? ""}`.trim();
+          if (!trimmed || !threadId) return;
+          actionsForGit.sendChat({
+            extraInput: trimmed,
+            reply_thread_id: threadId,
+            parent_message_id:
+              `${(actionsForGit.getMessagesInThread(threadId)?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||
+              undefined,
+            preserveSelectedThread: true,
+          });
+        }}
+      />
+    );
+  }
+
+  function renderFontSizeControls({
+    embedded = false,
+  }: { embedded?: boolean } = {}): React.JSX.Element {
+    return (
+      <ChatFontSizeControls
+        fontSize={fontSize}
+        onDecreaseFontSize={decreaseFontSize}
+        onIncreaseFontSize={increaseFontSize}
+        canDecreaseFontSize={canDecreaseFontSize}
+        canIncreaseFontSize={canIncreaseFontSize}
+        embedded={embedded}
+        label="Agent chat text size"
+        tooltipLabel="Agent chat"
+      />
     );
   }
 
@@ -1235,9 +1392,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     };
   }
 
-  async function togglePin(record: AgentSessionRecord): Promise<void> {
-    setUpdatingSessionId(record.session_id);
-    const nextPinned = record.thread_pin !== true;
+  async function togglePin(
+    record: AgentSessionRecord,
+    nextPinned = record.thread_pin !== true,
+  ): Promise<void> {
     let cleanup: (() => void) | undefined;
     try {
       const { chatActions, cleanup: removeTemp } =
@@ -1256,12 +1414,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       setError(`${err}`);
     } finally {
       cleanup?.();
-      setUpdatingSessionId("");
     }
   }
 
   async function clearThread(record: AgentSessionRecord): Promise<void> {
-    setUpdatingSessionId(record.session_id);
     let cleanup: (() => void) | undefined;
     try {
       const { chatActions, cleanup: removeTemp } =
@@ -1311,7 +1467,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       setError(`${err}`);
     } finally {
       cleanup?.();
-      setUpdatingSessionId("");
     }
   }
 
@@ -1327,32 +1482,35 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     });
   }
 
-  async function deleteInlineThread(record: AgentSessionRecord): Promise<void> {
+  async function deleteInlineThread(
+    record: AgentSessionRecord,
+    sourceActions?: ChatActions | null,
+  ): Promise<void> {
     const threadKey = `${record.thread_key ?? ""}`.trim();
     if (!threadKey) return;
-    setUpdatingSessionId(record.session_id);
+    const actionsForThread = sourceActions ?? inlineActions;
     try {
-      if (!inlineActions?.deleteThread) {
+      if (!actionsForThread?.deleteThread) {
         antdMessage.error("Deleting chats is not available.");
         return;
       }
-      const metadata = inlineActions.getThreadMetadata?.(threadKey, {
+      const metadata = actionsForThread.getThreadMetadata?.(threadKey, {
         threadId: threadKey,
       });
       const maybeSessionId = resolvePersistedOrLiveAcpSessionIdForThread({
-        actions: inlineActions,
+        actions: actionsForThread,
         threadId: threadKey,
         persistedSessionId: normalizeCodexSessionId(
           metadata?.acp_config?.sessionId,
         ),
       });
-      const deleted = inlineActions.deleteThread(threadKey);
+      const deleted = actionsForThread.deleteThread(threadKey);
       if (deleted === 0) {
         antdMessage.info("This chat has no messages to delete.");
       }
       if (maybeSessionId) {
         void truncateAcpSession({
-          actions: inlineActions,
+          actions: actionsForThread,
           sessionId: maybeSessionId,
           force: true,
         }).catch(() => {});
@@ -1367,15 +1525,19 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       ) {
         closeInlineSession();
       }
+      if (sessionMenuRecord?.session_id === record.session_id) {
+        clearSessionMenuActions();
+      }
       antdMessage.success("Chat deleted.");
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setUpdatingSessionId("");
     }
   }
 
-  function confirmDeleteInlineThread(record: AgentSessionRecord): void {
+  function confirmDeleteInlineThread(
+    record: AgentSessionRecord,
+    sourceActions?: ChatActions | null,
+  ): void {
     const label = displayThreadLabel(normalizedTitle(record));
     Modal.confirm({
       title: label ? `Delete chat "${label}"?` : "Delete chat?",
@@ -1384,12 +1546,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       okText: "Delete",
       okType: "danger",
       cancelText: "Cancel",
-      onOk: () => deleteInlineThread(record),
+      onOk: () => deleteInlineThread(record, sourceActions),
     });
   }
 
   async function toggleArchive(record: AgentSessionRecord): Promise<void> {
-    setUpdatingSessionId(record.session_id);
     try {
       const nextStatus: AgentSessionStatus =
         record.status === "archived" ? "active" : "archived";
@@ -1400,8 +1561,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       });
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setUpdatingSessionId("");
     }
   }
 
@@ -1440,6 +1599,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           }}
           style={{
             width: "100%",
+            boxSizing: "border-box",
             border: "1px solid #e8e8e8",
             borderRadius: 8,
             padding: isFlyout ? 8 : 10,
@@ -1865,6 +2025,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             : {
                 width: "100%",
                 maxWidth: AGENT_CHAT_MAX_WIDTH_PX,
+                boxSizing: "border-box",
                 margin: "0 auto",
                 padding: "12px 16px 24px",
               }
@@ -1918,35 +2079,45 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               {renderInlineSessionMenu(inlineSession)}
             </div>
           </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              width: "100%",
-              minWidth: 0,
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-            }}
-          >
-            {showInlineCodexConfig ? (
-              <div style={{ minWidth: 0, flex: "1 1 260px" }}>
-                <CodexConfigButton
-                  threadKey={inlineThreadKey}
-                  chatPath={inlineSession.chat_path}
-                  projectId={project_id}
-                  actions={inlineActions ?? undefined}
-                  threadConfig={inlineThreadMetadata?.acp_config ?? null}
-                  paymentSource={codexPaymentSource}
-                  paymentSourceLoading={codexPaymentSourceLoading}
-                  refreshPaymentSource={refreshCodexPaymentSource}
-                />
-              </div>
-            ) : (
-              <span />
-            )}
-            {renderFontSizeControls()}
-          </div>
+          {showInlineCodexConfig || inlineActions ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                width: "100%",
+                minWidth: 0,
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+              }}
+            >
+              {showInlineCodexConfig ? (
+                <div style={{ minWidth: 0, flex: "1 1 320px" }}>
+                  <CodexConfigButton
+                    threadKey={inlineThreadKey}
+                    chatPath={inlineSession.chat_path}
+                    projectId={project_id}
+                    actions={inlineActions ?? undefined}
+                    threadConfig={inlineThreadMetadata?.acp_config ?? null}
+                    paymentSource={codexPaymentSource}
+                    paymentSourceLoading={codexPaymentSourceLoading}
+                    refreshPaymentSource={refreshCodexPaymentSource}
+                  />
+                </div>
+              ) : (
+                <span style={{ flex: "1 1 auto" }} />
+              )}
+              <div
+                ref={setInlineToolbarPortal}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  flex: "0 0 auto",
+                  minHeight: 28,
+                }}
+              />
+            </div>
+          ) : null}
         </div>
         {error ? (
           <Alert
@@ -1984,6 +2155,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 fontSize={fontSize}
                 onIncreaseFontSize={increaseFontSize}
                 onDecreaseFontSize={decreaseFontSize}
+                threadPanelTopRightControlsPrefix={renderFontSizeControls({
+                  embedded: true,
+                })}
+                threadPanelCompactTopRightControls
+                threadPanelTopRightControlsPortal={inlineToolbarPortal}
                 hideSidebar
                 desc={inlineDesc}
               />
@@ -2002,58 +2178,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               selectedThreadLabel={inlineTitle}
               onHandlers={setModalHandlers}
             />
-            <Modal
-              title="Thread automation"
-              open={automationModalThreadKey != null}
-              destroyOnHidden
-              onCancel={() => setAutomationModalThreadKey(null)}
-              onOk={() => {
-                void saveAutomationModal();
-              }}
-              okText="Save"
-              confirmLoading={automationSaving}
-            >
-              <AutomationConfigFields
-                draft={automationDraft}
-                allowCodexRunKind={automationModalAllowsCodex}
-                onChange={(patch) =>
-                  setAutomationDraft((prev) => ({
-                    ...buildAutomationDraft({
-                      config: prev,
-                      allowCodexRunKind: automationModalAllowsCodex,
-                    }),
-                    ...patch,
-                  }))
-                }
-              />
-            </Modal>
-            <GitCommitDrawer
-              projectId={project_id}
-              sourcePath={inlineSession.chat_path}
-              cwdOverride={gitBrowserCwd}
-              open={gitBrowserOpen}
-              onClose={() => {
-                setGitBrowserOpen(false);
-                setGitBrowserThreadKey(undefined);
-              }}
-              fontSize={fontSize}
-              onIncreaseFontSize={increaseFontSize}
-              onDecreaseFontSize={decreaseFontSize}
-              onRequestAgentTurn={(prompt) => {
-                const trimmed = `${prompt ?? ""}`.trim();
-                const threadId =
-                  gitBrowserThreadKey ?? inlineSession.thread_key;
-                if (!trimmed || !threadId) return;
-                inlineActions.sendChat({
-                  extraInput: trimmed,
-                  reply_thread_id: threadId,
-                  parent_message_id:
-                    `${(inlineActions.getMessagesInThread(threadId)?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||
-                    undefined,
-                  preserveSelectedThread: true,
-                });
-              }}
-            />
+            {renderAutomationModal()}
+            {renderGitBrowserDrawer()}
           </>
         ) : null}
       </div>
@@ -2071,6 +2197,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             }
           : {
               width: "100%",
+              boxSizing: "border-box",
               padding: "12px 16px 24px",
             }
       }
@@ -2204,6 +2331,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         </Space>
       )}
       {renderAutomationsSection()}
+      {renderSessionMenuSupport()}
+      {renderAutomationModal()}
+      {renderGitBrowserDrawer()}
     </div>
   );
 }

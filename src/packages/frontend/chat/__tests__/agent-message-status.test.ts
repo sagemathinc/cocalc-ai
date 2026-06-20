@@ -55,7 +55,7 @@ describe("describeLastActivity", () => {
         now: 9000,
       }),
     ).toEqual({
-      label: "Last activity 0:05 ago",
+      label: "0:05 ago",
       ageMs: 5000,
       stale: false,
     });
@@ -65,7 +65,7 @@ describe("describeLastActivity", () => {
       lastActivityAtMs: 1000,
       now: 1000 + STALE_ACTIVITY_MS,
     });
-    expect(stale.label).toBe("Last activity 2:00 ago");
+    expect(stale.label).toBe("2:00 ago");
     expect(stale.ageMs).toBe(STALE_ACTIVITY_MS);
     expect(stale.stale).toBe(true);
   });
@@ -92,8 +92,9 @@ describe("AgentMessageStatus", () => {
     fireEvent.click(screen.getByRole("button"));
 
     expect(screen.getByText(/Running 0:10/)).toBeTruthy();
-    expect(screen.getByText(/Last activity/)).toBeTruthy();
-    expect(screen.getByText("Activity")).toBeTruthy();
+    expect(screen.getByText(/ago$/)).toBeTruthy();
+    expect(screen.queryByText(/Last activity/)).toBeNull();
+    expect(screen.queryByText("Activity")).toBeNull();
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
@@ -112,7 +113,7 @@ describe("AgentMessageStatus", () => {
       }),
     );
 
-    expect(screen.getByText("Last activity 0:01 ago")).toBeTruthy();
+    expect(screen.getByText("0:01 ago")).toBeTruthy();
 
     jest.setSystemTime(new Date(8_000));
     rerender(
@@ -126,7 +127,7 @@ describe("AgentMessageStatus", () => {
       }),
     );
 
-    expect(screen.getByText("Last activity 0:04 ago")).toBeTruthy();
+    expect(screen.getByText("0:04 ago")).toBeTruthy();
   });
 
   it("shows the notify toggle next to a running Codex status row", () => {
