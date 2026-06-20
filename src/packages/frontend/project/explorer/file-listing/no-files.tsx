@@ -118,48 +118,42 @@ export default function NoFiles({
       />
     );
   }
-  if (
-    normalizeAbsolutePath(current_path) !==
-    normalizeAbsolutePath(getProjectHomeDirectory(project_id))
-  ) {
-    return (
-      <Alert
-        type="info"
-        showIcon
-        style={{ margin: "16px 16px 16px 0" }}
-        title="This folder is empty."
-        description={
-          <Space wrap style={{ marginTop: 8 }}>
-            <Button size="small" type="primary" onClick={openNewPage}>
-              +New
-            </Button>
-          </Space>
-        }
-      />
-    );
-  }
+  const isProjectHome =
+    normalizeAbsolutePath(current_path) ===
+    normalizeAbsolutePath(getProjectHomeDirectory(project_id));
+
   return (
     <EmptyDirectoryWelcome
       openNewPage={openNewPage}
       createFile={createFile}
       aiAllowed={aiAllowed}
       openUploadFiles={openUploadFiles}
+      context={isProjectHome ? "project" : "folder"}
     />
   );
 }
+
+type EmptyDirectoryContext = "project" | "folder";
 
 function EmptyDirectoryWelcome({
   createFile,
   openNewPage,
   aiAllowed,
   openUploadFiles,
+  context,
 }: {
   createFile: (ext: string) => void;
   openNewPage: () => void;
   aiAllowed: boolean;
   openUploadFiles?: () => void;
+  context: EmptyDirectoryContext;
 }) {
   const [showMoreFileTypes, setShowMoreFileTypes] = useState(false);
+  const heading = context === "project" ? "No files yet" : "This folder is empty";
+  const description =
+    context === "project"
+      ? "Create a notebook, terminal, folder, or upload files to get started."
+      : "Create a notebook, terminal, folder, or upload files here.";
   const actions: {
     title: string;
     description: string;
@@ -255,7 +249,7 @@ function EmptyDirectoryWelcome({
               fontWeight: 600,
             }}
           >
-            No files yet
+            {heading}
           </h2>
           <div
             style={{
@@ -265,7 +259,7 @@ function EmptyDirectoryWelcome({
               margin: "0 auto",
             }}
           >
-            Create a notebook, terminal, folder, or upload files to get started.
+            {description}
           </div>
         </div>
 
