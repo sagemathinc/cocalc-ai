@@ -247,6 +247,19 @@ Plus/Star/Launchpad`).
   `pnpm -C src/packages/static build:dev` passing, and browser QA on `/features/cli` and
   `/features` desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-C6sGUU`).
   No PR.
+- **START 2026-06-20 14:37 PDT:** Blaec flagged that the `/features` "Notebooks and writing" row
+  is the only index row with extra docs links underneath, making it busier than the other groups.
+  Existing unrelated dirt remains the snapshot script and untracked `dedicated-compute-page.tsx`;
+  leaving both untouched. Claiming only the features index/group tests and this ledger to remove
+  the extra `Project notes and Markdown` docs link, rebuild, QA `/features`, commit, and push.
+  No PR.
+- **END 2026-06-20 14:39 PDT:** Removed the `Project notes and Markdown` docs link from the
+  `/features` "Notebooks and writing" group so the feature index rows use consistent card-only
+  presentation. Updated index tests to assert the extra link is absent. Validation: prettier
+  passed, focused feature Jest `88/88` passing, `lint:frontend` passing, `git diff --check` clean,
+  `pnpm -C src/packages/static build:dev` passing, and browser QA on `/features` and
+  `/features/cli` desktop/mobile `68` assertions, `0` failures (`/tmp/cocalc-public-qa-Lxic29`).
+  No PR.
 
 ### Codex — platform-UI thread
 

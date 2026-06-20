@@ -110,12 +110,6 @@ const FEATURE_GROUPS = [
     description:
       "Find notebooks, papers, boards, slide decks, and project notes.",
     icon: "jupyter",
-    links: [
-      {
-        href: appPath("docs/files/markdown"),
-        label: "Project notes and Markdown",
-      },
-    ],
     slugs: ["jupyter-notebook", "latex-editor", "whiteboard"],
     title: "Notebooks and writing",
     variant: "cards",

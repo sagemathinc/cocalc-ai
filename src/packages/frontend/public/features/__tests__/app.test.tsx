@@ -229,10 +229,8 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("Notebooks and writing")).not.toBeNull();
     expect(
-      screen
-        .getByRole("link", { name: "Project notes and Markdown" })
-        .getAttribute("href"),
-    ).toBe("/docs/files/markdown");
+      screen.queryByRole("link", { name: "Project notes and Markdown" }),
+    ).toBeNull();
     expect(screen.getByText("AI workflows")).not.toBeNull();
     expect(screen.getByText("Runtime")).not.toBeNull();
     expect(screen.getByText("Languages")).not.toBeNull();
@@ -348,9 +346,7 @@ describe("PublicFeaturesApp", () => {
     }
     expect(screen.queryByText(/^Documents$/)).toBeNull();
     expect(
-      screen
-        .getByRole("link", { name: "Project notes and Markdown" })
-        .closest(".cocalc-feature-link-card"),
+      screen.queryByRole("link", { name: "Project notes and Markdown" }),
     ).toBeNull();
     const css = Array.from(container.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
