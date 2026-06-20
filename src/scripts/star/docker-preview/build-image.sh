@@ -196,6 +196,23 @@ build_image() {
   docker_cli build -t "$tag" "$context"
 }
 
+dump_builder_diagnostics() {
+  local container="$1"
+  log "RootFS cache builder diagnostics for $container"
+  log "--- docker logs: $container ---"
+  docker_cli logs "$container" 2>&1 || true
+  log "--- cocalc-star-docker-init log ---"
+  docker_cli exec "$container" tail -n 400 /var/log/cocalc-star-docker-init.log 2>&1 || true
+  log "--- systemd unit status ---"
+  docker_cli exec "$container" systemctl status cocalc-star-docker-init.service --no-pager 2>&1 || true
+  log "--- systemd unit journal ---"
+  docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 400 --no-pager 2>&1 || true
+  log "--- rootfs build containerfile ---"
+  docker_cli exec "$container" sed -n '1,220p' /var/lib/cocalc/star/default-rootfs.Containerfile 2>&1 || true
+  log "--- podman state ---"
+  docker_cli exec "$container" sudo -u cocalc-star bash -lc 'podman ps -a && podman images' 2>&1 || true
+}
+
 wait_for_builder_container() {
   local container="$1"
   local deadline=$((SECONDS + 2400))
@@ -208,7 +225,7 @@ wait_for_builder_container() {
       return 0
     fi
     if [[ -n "$result" && "$result" != "success" ]]; then
-      docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+      dump_builder_diagnostics "$container"
       die "RootFS cache builder failed: systemd result=$result"
     fi
     if ((SECONDS - last_log >= 30)); then
@@ -217,7 +234,7 @@ wait_for_builder_container() {
     fi
     sleep 5
   done
-  docker_cli exec "$container" journalctl -u cocalc-star-docker-init.service -n 240 --no-pager || true
+  dump_builder_diagnostics "$container"
   die "RootFS cache builder timed out"
 }
 
