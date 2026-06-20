@@ -210,7 +210,7 @@ export function AccountSettings(props: Readonly<Props>) {
       await runFreshAuthAction(async () => {
         await webapp_client.account_client.unlink_passport(strategy, id);
       });
-      // console.log("ret:", x);
+      set_account_table({ passports: { [`${strategy}-${id}`]: null } });
     } catch (err) {
       ugly_error(err);
     }
