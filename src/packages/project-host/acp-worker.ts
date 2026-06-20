@@ -1,6 +1,7 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
+import callHub from "@cocalc/conat/hub/call-hub";
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { setConatClient } from "@cocalc/conat/client";
@@ -9,6 +10,7 @@ import {
   disposeAcpAgents,
   runDetachedAcpQueueWorker,
   setAcpAdmissionLimitsProvider,
+  setAcpSessionPublisherOverride,
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
@@ -30,13 +32,16 @@ import {
 } from "./hub/projects";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
-import { setMasterConatClient } from "./master-status";
+import { getMasterConatClient, setMasterConatClient } from "./master-status";
 import { initSqlite } from "./sqlite/init";
 import { getLocalHostId } from "./sqlite/hosts";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
 import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admission-denials";
 
 const logger = getLogger("project-host:acp-worker");
+const ACP_SESSION_PUBLISH_WARNING_THROTTLE_MS = 60_000;
+
+let lastAcpSessionPublishWarningAt = 0;
 
 function readRequiredEnv(name: string): string {
   const value = `${process.env[name] ?? ""}`.trim();
@@ -82,6 +87,7 @@ function registerPidFile(
 
 function configureProjectHostAcpRuntime(): void {
   setPreferContainerExecutor(true);
+  configureProjectHostAcpSessionPublisher();
   wireSystemApi();
   wireHostsApi();
   wireNotificationsApi();
@@ -110,6 +116,56 @@ function configureProjectHostAcpRuntime(): void {
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
   initCodexGeneratedImageBlobWriter();
+}
+
+function configureProjectHostAcpSessionPublisher(): void {
+  setAcpSessionPublisherOverride(async (row) => {
+    const client = getMasterConatClient();
+    const host_id =
+      `${process.env.PROJECT_HOST_ID ?? ""}`.trim() || getLocalHostId();
+    if (!client || !host_id) {
+      logger.debug("skipping ACP session state publication", {
+        has_client: !!client,
+        has_host_id: !!host_id,
+        project_id: row.project_id,
+        state: row.state,
+      });
+      return;
+    }
+    try {
+      await callHub({
+        client,
+        host_id,
+        name: "aiSessions.upsertProjectHostSession",
+        args: [
+          {
+            ...row,
+            terminal: row.terminal === 1,
+          },
+        ],
+        timeout: 5_000,
+      });
+    } catch (err) {
+      const now = Date.now();
+      if (
+        now - lastAcpSessionPublishWarningAt >=
+        ACP_SESSION_PUBLISH_WARNING_THROTTLE_MS
+      ) {
+        lastAcpSessionPublishWarningAt = now;
+        logger.warn("failed to publish ACP session state to master hub", {
+          err: `${err}`,
+          host_id,
+          project_id: row.project_id,
+          account_id: row.account_id,
+          session_key: row.session_key,
+          session_id: row.session_id,
+          state: row.state,
+          terminal: row.terminal,
+        });
+      }
+      throw err;
+    }
+  });
 }
 
 function connectMasterClient() {

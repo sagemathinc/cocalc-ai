@@ -22,32 +22,18 @@ import type {
 } from "@cocalc/conat/hub/api/agent";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
-import {
-  callRemoteHub,
-  hasRemote,
-  project_id as REMOTE_PROJECT_ID,
-} from "../remote";
 import { getLiteConatClient } from "./runtime-client";
 
 function getProjectId(): string {
-  return REMOTE_PROJECT_ID || LOCAL_PROJECT_ID;
+  return LOCAL_PROJECT_ID;
 }
 
-async function getCustomize(fields?: string[]) {
-  if (!hasRemote) {
-    return {};
-  }
-  return await callRemoteHub({
-    name: "system.getCustomize",
-    args: fields == null ? [] : [fields],
-  });
+async function getCustomize(_fields?: string[]) {
+  return {};
 }
 
 async function ping() {
-  if (!hasRemote) {
-    return { now: Date.now() };
-  }
-  return await callRemoteHub({ name: "system.ping", args: [] });
+  return { now: Date.now() };
 }
 
 function createBridge({

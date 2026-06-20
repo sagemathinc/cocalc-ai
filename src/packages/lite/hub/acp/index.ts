@@ -82,7 +82,6 @@ import {
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
 import { getBlobstore } from "../blobs/download";
-import { callRemoteHub, hasRemote } from "../../remote";
 import {
   buildChatMessage,
   buildThreadStateRecord,
@@ -5053,39 +5052,33 @@ function initializeAcpRuntime(client: ConatClient): void {
 }
 
 let acpSessionPublisherConfigured = false;
-let lastAcpSessionPublishWarning = 0;
+let acpSessionPublisherOverride:
+  | ((row: AcpSessionRow) => void | Promise<void>)
+  | undefined;
+
+export function setAcpSessionPublisherOverride(
+  publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
+): void {
+  acpSessionPublisherOverride = publisher;
+  if (acpSessionPublisherConfigured) {
+    installAcpSessionPublisher();
+  }
+}
+
+function installAcpSessionPublisher(): void {
+  if (acpSessionPublisherOverride != null) {
+    setAcpSessionPublisher(acpSessionPublisherOverride);
+    return;
+  }
+  setAcpSessionPublisher(undefined);
+}
 
 function configureAcpSessionPublisher(): void {
   if (acpSessionPublisherConfigured) {
     return;
   }
   acpSessionPublisherConfigured = true;
-  if (!hasRemote) {
-    setAcpSessionPublisher(undefined);
-    return;
-  }
-  setAcpSessionPublisher((row) => {
-    void publishAcpSessionToRemoteHub(row).catch((err) => {
-      const now = Date.now();
-      if (now - lastAcpSessionPublishWarning > 60_000) {
-        lastAcpSessionPublishWarning = now;
-        logger.warn("failed to publish ACP session state to remote hub", err);
-      }
-    });
-  });
-}
-
-async function publishAcpSessionToRemoteHub(row: AcpSessionRow): Promise<void> {
-  await callRemoteHub({
-    name: "aiSessions.upsertProjectHostSession",
-    args: [
-      {
-        ...row,
-        terminal: row.terminal === 1,
-      },
-    ],
-    timeout: 5000,
-  });
+  installAcpSessionPublisher();
 }
 
 export function configureAcpDetachedWorkerRunning(
@@ -7553,7 +7546,7 @@ async function trySteerCandidateIds({
   return { state: "missing" };
 }
 
-function hasRemoteRunningAcpTurn({
+function hasOtherWorkerRunningAcpTurn({
   project_id,
   path,
   thread_id,
@@ -7911,7 +7904,7 @@ async function attemptAcpSteerRequest(
   if (
     liteUseDetachedAcpWorker() &&
     !acpExecutionOwnedByCurrentProcess &&
-    hasRemoteRunningAcpTurn({
+    hasOtherWorkerRunningAcpTurn({
       project_id: projectId,
       path: request.chat.path,
       thread_id: threadId,
@@ -8339,7 +8332,7 @@ async function uploadGeneratedImageBlob(opts: {
   threadId?: string;
   turnId?: string;
 }): Promise<{ uuid: string; filename: string; url: string } | undefined> {
-  if (!hasRemote && !blobStore) {
+  if (!blobStore && !generatedImageBlobWriter) {
     logger.warn(
       "generated image upload skipped because blob store is not ready",
     );
@@ -8365,18 +8358,10 @@ async function uploadGeneratedImageBlob(opts: {
   }
   const blob = await fs.readFile(realFile);
   const uuid = uuidsha1(blob);
-  let storage: "custom" | "remote-hub" | "local" = "local";
+  let storage: "custom" | "local" = "local";
   if (generatedImageBlobWriter) {
     storage = "custom";
     await generatedImageBlobWriter({
-      uuid,
-      blob,
-      accountId: opts.accountId,
-      projectId: opts.projectId,
-    });
-  } else if (hasRemote) {
-    storage = "remote-hub";
-    await uploadGeneratedImageBlobToRemoteHub({
       uuid,
       blob,
       accountId: opts.accountId,
@@ -8399,34 +8384,6 @@ async function uploadGeneratedImageBlob(opts: {
     threadId: opts.threadId,
   });
   return { uuid, filename, url };
-}
-
-async function uploadGeneratedImageBlobToRemoteHub({
-  uuid,
-  blob,
-  accountId,
-  projectId,
-}: {
-  uuid: string;
-  blob: Buffer;
-  accountId?: string;
-  projectId?: string;
-}): Promise<void> {
-  if (!projectId) {
-    throw Error("project_id must be set to upload a generated image blob");
-  }
-  await callRemoteHub({
-    name: "db.saveBlob",
-    args: [
-      {
-        account_id: accountId,
-        project_id: projectId,
-        uuid,
-        blob: blob.toString("base64"),
-      },
-    ],
-    timeout: 60_000,
-  });
 }
 
 async function handleInterruptRequest(

@@ -22,7 +22,7 @@ import {
   NotificationFilter,
 } from "./types";
 import type { DStream } from "@cocalc/conat/sync/dstream";
-import { lite, remote_sync } from "@cocalc/frontend/lite";
+import { lite } from "@cocalc/frontend/lite";
 import { MAX_NOTIFICATION_INBOX_LIST_LIMIT } from "@cocalc/util/security-limits";
 import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
 import {
@@ -269,7 +269,7 @@ export class MentionsActions extends Actions<MentionsState> {
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
       return;
     }
-    if (lite && !remote_sync) {
+    if (lite) {
       this.closeRealtimeFeed();
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
       return;

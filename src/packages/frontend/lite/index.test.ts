@@ -1,6 +1,5 @@
 const removeCookie = jest.fn();
 const recreate_account_table = jest.fn();
-const initSyncDoc = jest.fn();
 let mockTarget = "projects";
 
 jest.mock("js-cookie", () => ({
@@ -25,10 +24,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 
 jest.mock("@cocalc/frontend/account/table-bootstrap", () => ({
   recreate_account_table: (...args) => recreate_account_table(...args),
-}));
-
-jest.mock("./sync", () => ({
-  init: (...args) => initSyncDoc(...args),
 }));
 
 describe("lite init", () => {
@@ -84,7 +79,6 @@ describe("lite init", () => {
       switch_to: true,
       restore_session: false,
     });
-    expect(lite.remote_sync).toBe(false);
   });
 
   it("does not recreate the account table when the client id is already correct", async () => {
@@ -189,34 +183,5 @@ describe("lite init", () => {
       switch_to: true,
       restore_session: false,
     });
-  });
-
-  it("tracks whether lite remote sync is enabled", async () => {
-    const redux = {
-      getActions: (name: string) => {
-        if (name === "account") {
-          return { setState: jest.fn() };
-        }
-        if (name === "projects") {
-          return {
-            setState: jest.fn(),
-            open_project: jest.fn(async () => {}),
-          };
-        }
-        throw Error(`unexpected actions store ${name}`);
-      },
-    };
-
-    const lite = await import("./index");
-    lite.init(
-      redux as any,
-      {
-        account_id: "00000000-1000-4000-8000-000000000001",
-        project_id: "00000000-1000-4000-8000-000000000000",
-        remote_sync: true,
-      } as any,
-    );
-
-    expect(lite.remote_sync).toBe(true);
   });
 });
