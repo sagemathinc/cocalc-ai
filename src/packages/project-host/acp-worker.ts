@@ -39,6 +39,9 @@ import { startEventLoopStallMonitor } from "./event-loop-stalls";
 import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admission-denials";
 
 const logger = getLogger("project-host:acp-worker");
+const ACP_SESSION_PUBLISH_WARNING_THROTTLE_MS = 60_000;
+
+let lastAcpSessionPublishWarningAt = 0;
 
 function readRequiredEnv(name: string): string {
   const value = `${process.env[name] ?? ""}`.trim();
@@ -129,18 +132,39 @@ function configureProjectHostAcpSessionPublisher(): void {
       });
       return;
     }
-    await callHub({
-      client,
-      host_id,
-      name: "aiSessions.upsertProjectHostSession",
-      args: [
-        {
-          ...row,
-          terminal: row.terminal === 1,
-        },
-      ],
-      timeout: 5_000,
-    });
+    try {
+      await callHub({
+        client,
+        host_id,
+        name: "aiSessions.upsertProjectHostSession",
+        args: [
+          {
+            ...row,
+            terminal: row.terminal === 1,
+          },
+        ],
+        timeout: 5_000,
+      });
+    } catch (err) {
+      const now = Date.now();
+      if (
+        now - lastAcpSessionPublishWarningAt >=
+        ACP_SESSION_PUBLISH_WARNING_THROTTLE_MS
+      ) {
+        lastAcpSessionPublishWarningAt = now;
+        logger.warn("failed to publish ACP session state to master hub", {
+          err: `${err}`,
+          host_id,
+          project_id: row.project_id,
+          account_id: row.account_id,
+          session_key: row.session_key,
+          session_id: row.session_id,
+          state: row.state,
+          terminal: row.terminal,
+        });
+      }
+      throw err;
+    }
   });
 }
 

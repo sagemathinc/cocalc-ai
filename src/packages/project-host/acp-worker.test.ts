@@ -16,6 +16,9 @@ const acpAdmissionLimitsFromEffectiveLimitsMock = jest.fn((limits) => ({
 const setAcpAdmissionDenialRecorderMock = jest.fn();
 const setContainerExecMock = jest.fn();
 const setPreferContainerExecutorMock = jest.fn();
+const loggerDebugMock = jest.fn();
+const loggerInfoMock = jest.fn();
+const loggerWarnMock = jest.fn();
 const projectRunnerClientMock = jest.fn(() => ({ kind: "runner-client" }));
 const initProjectRunnerFilesystemMock = jest.fn();
 const sandboxExecMock = jest.fn();
@@ -67,9 +70,9 @@ jest.mock("@cocalc/conat/hub/call-hub", () => ({
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: () => ({
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
+    debug: loggerDebugMock,
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
   }),
 }));
 
@@ -307,5 +310,38 @@ describe("project-host ACP worker runtime wiring", () => {
       ],
       timeout: 5_000,
     });
+  });
+
+  it("logs failed ACP session state publication to the master hub", async () => {
+    callHubMock.mockRejectedValueOnce(new Error("hub unavailable"));
+    const { main } = await import("./acp-worker");
+
+    await main();
+
+    const publisher = setAcpSessionPublisherOverrideMock.mock.calls[0][0];
+    await expect(
+      publisher({
+        account_id: "11111111-1111-4111-8111-111111111111",
+        project_id: "00000000-0000-4000-8000-000000000123",
+        session_key: "session-key",
+        session_id: "session-1",
+        state: "running",
+        terminal: 0,
+        updated_at: 2,
+      }),
+    ).rejects.toThrow("hub unavailable");
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "failed to publish ACP session state to master hub",
+      expect.objectContaining({
+        err: "Error: hub unavailable",
+        host_id: "00000000-1000-4000-8000-000000000123",
+        project_id: "00000000-0000-4000-8000-000000000123",
+        session_key: "session-key",
+        session_id: "session-1",
+        state: "running",
+        terminal: 0,
+      }),
+    );
   });
 });
