@@ -1,6 +1,9 @@
 import getLogger from "@cocalc/backend/logger";
 import { getStripeCustomerId } from "./util";
-import getPool, { getTransactionClient } from "@cocalc/database/pool";
+import getPool, {
+  getTransactionClient,
+  type PoolClient,
+} from "@cocalc/database/pool";
 import { SUBSCRIPTION_RENEWAL } from "@cocalc/util/db-schema/purchases";
 import {
   moneyRound2Down,
@@ -201,7 +204,7 @@ export async function processSubscriptionRenewal({
   account_id: string;
   paymentIntent: { metadata: { subscription_id: number | string } };
   amount: number;
-  client?;
+  client?: PoolClient;
 }) {
   const { subscription_id } = paymentIntent?.metadata ?? {};
   logger.debug("processSubscriptionRenewal", {
@@ -210,98 +213,117 @@ export async function processSubscriptionRenewal({
     subscription_id,
   });
   const amountValue = toDecimal(amount);
-  client = client ?? getPool();
-  const { rows: subscriptions } = await client.query(
-    "SELECT payment, cost, metadata, interval FROM subscriptions WHERE account_id=$1 AND id=$2",
-    [
-      account_id,
-      typeof subscription_id != "number"
-        ? parseInt(subscription_id)
-        : subscription_id,
-    ],
-  );
-  if (subscriptions.length == 0) {
-    throw Error(`You do not have a subscription with id ${subscription_id}.`);
-  }
-  const { cost, metadata, interval } = subscriptions[0];
-  const costValue = toDecimal(cost);
-  let { payment } = subscriptions[0];
-  logger.debug("processSubscriptionRenewal", {
-    payment,
-    cost,
-    metadata,
-    interval,
-  });
-  if (metadata?.type != "membership") {
-    throw Error("subscription must be for a membership");
-  }
-  if (amountValue.add(SUBSCRIPTION_PAYMENT_SLACK).lt(costValue)) {
-    logger.debug("processSubscriptionRenewal: SUSPICIOUS! -- not doing it.");
-    throw Error(
-      `subscription costs a lot more than payment -- contact support.`,
+  const subscriptionId =
+    typeof subscription_id != "number"
+      ? parseInt(subscription_id)
+      : subscription_id;
+  const transaction = client ?? (await getTransactionClient());
+  const useTransaction = client == null;
+  try {
+    const { rows: subscriptions } = await transaction.query(
+      "SELECT payment, cost, metadata, interval FROM subscriptions WHERE account_id=$1 AND id=$2 FOR UPDATE",
+      [account_id, subscriptionId],
     );
-  }
-
-  if (payment == null || (payment?.new_expires_ms ?? 0) < Date.now()) {
-    // I've read through all the code and this "is" impossible, given
-    // postgresql semantics, etc.  I also can't reproduce it by putting
-    // in delays.   However, payment==null *did* happen in production
-    // once, so we just do it manually in this case :-(
-    // We also ensure new_expires_ms is in the future so the period update
-    // happens for sure.
-    // this code is same as resumeSubscriptionSetPaymentIntent below:
-    const new_expires_ms = addInterval(
-      new Date(),
-      subscriptions[0].interval,
-    ).valueOf();
-    payment = { new_expires_ms };
-  }
-
-  const end = new Date(payment.new_expires_ms);
-
-  const purchase_id = await createPurchase({
-    account_id,
-    service: "membership",
-    description: {
-      type: "membership",
-      subscription_id:
-        typeof subscription_id != "number"
-          ? parseInt(subscription_id)
-          : subscription_id,
-      class: metadata.class,
+    if (subscriptions.length == 0) {
+      throw Error(`You do not have a subscription with id ${subscription_id}.`);
+    }
+    const { cost, metadata, interval } = subscriptions[0];
+    const costValue = toDecimal(cost);
+    let { payment } = subscriptions[0];
+    logger.debug("processSubscriptionRenewal", {
+      payment,
+      cost,
+      metadata,
       interval,
-    },
-    client,
-    cost: costValue,
-    period_start: subtractInterval(end, interval),
-    period_end: end,
-  });
+    });
+    if (metadata?.type != "membership") {
+      throw Error("subscription must be for a membership");
+    }
+    if (payment?.status == "paid") {
+      if (useTransaction) {
+        await transaction.query("COMMIT");
+      }
+      return;
+    }
+    if (amountValue.add(SUBSCRIPTION_PAYMENT_SLACK).lt(costValue)) {
+      logger.debug("processSubscriptionRenewal: SUSPICIOUS! -- not doing it.");
+      throw Error(
+        `subscription costs a lot more than payment -- contact support.`,
+      );
+    }
 
-  logger.debug(
-    "processSubscriptionRenewal: mark payment done, and update period",
-  );
-  payment.status = "paid";
-  logger.debug(
-    "UPDATE subscriptions SET payment=$5, status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3 WHERE id=$4",
-    [
-      subtractInterval(end, interval),
-      end,
-      purchase_id,
-      subscription_id,
-      payment,
-    ],
-  );
+    if (payment == null || (payment?.new_expires_ms ?? 0) < Date.now()) {
+      // I've read through all the code and this "is" impossible, given
+      // postgresql semantics, etc.  I also can't reproduce it by putting
+      // in delays.   However, payment==null *did* happen in production
+      // once, so we just do it manually in this case :-(
+      // We also ensure new_expires_ms is in the future so the period update
+      // happens for sure.
+      // this code is same as resumeSubscriptionSetPaymentIntent below:
+      const new_expires_ms = addInterval(new Date(), interval).valueOf();
+      payment = { new_expires_ms };
+    }
 
-  await client.query(
-    "UPDATE subscriptions SET payment=$5, status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3 WHERE id=$4",
-    [
-      subtractInterval(end, interval),
-      end,
-      purchase_id,
-      subscription_id,
-      payment,
-    ],
-  );
+    const end = new Date(payment.new_expires_ms);
+
+    const purchase_id = await createPurchase({
+      account_id,
+      service: "membership",
+      description: {
+        type: "membership",
+        subscription_id: subscriptionId,
+        class: metadata.class,
+        interval,
+      },
+      client: transaction,
+      cost: costValue,
+      period_start: subtractInterval(end, interval),
+      period_end: end,
+    });
+
+    logger.debug(
+      "processSubscriptionRenewal: mark payment done, and update period",
+    );
+    payment.status = "paid";
+    logger.debug(
+      "UPDATE subscriptions SET payment=$5, status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3 WHERE id=$4 AND account_id=$6",
+      [
+        subtractInterval(end, interval),
+        end,
+        purchase_id,
+        subscriptionId,
+        payment,
+        account_id,
+      ],
+    );
+
+    const update = await transaction.query(
+      "UPDATE subscriptions SET payment=$5, status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3 WHERE id=$4 AND account_id=$6",
+      [
+        subtractInterval(end, interval),
+        end,
+        purchase_id,
+        subscriptionId,
+        payment,
+        account_id,
+      ],
+    );
+    if (update.rowCount != 1) {
+      throw Error(`You do not have a subscription with id ${subscription_id}.`);
+    }
+    if (useTransaction) {
+      await transaction.query("COMMIT");
+    }
+  } catch (err) {
+    if (useTransaction) {
+      await transaction.query("ROLLBACK");
+    }
+    throw err;
+  } finally {
+    if (useTransaction) {
+      transaction.release();
+    }
+  }
 }
 
 // add the interval to the date.  The day of the month (and time) should be unchanged
