@@ -17,6 +17,7 @@ import {
   getSecondFactorPlaceholder,
   inferSecondFactorInputMethod,
 } from "@cocalc/frontend/auth/second-factor-input";
+import GoogleLogo from "@cocalc/frontend/components/google-logo";
 import { COLORS } from "@cocalc/util/theme";
 
 type FreshAuthStatus = {
@@ -41,6 +42,20 @@ type PendingFreshAuthAction = {
 };
 
 const FRESH_AUTH_MODAL_Z_INDEX = 3000;
+
+const GOOGLE_FRESH_AUTH_BUTTON_STYLE = {
+  background: "white",
+  borderColor: "#ccc",
+  boxShadow: "none",
+  color: COLORS.GRAY_D,
+  fontWeight: 600,
+} as const;
+
+const GOOGLE_FRESH_AUTH_BUTTON_CONTENT_STYLE = {
+  alignItems: "center",
+  display: "inline-flex",
+  gap: "8px",
+} as const;
 
 function normalizeFreshAuthEmail(email: string): string {
   return `${email ?? ""}`.trim().toLowerCase();
@@ -312,9 +327,13 @@ export function FreshAuthModal({
           <Button
             block
             disabled={saving || factorEnabled == null || emailMismatch}
+            style={GOOGLE_FRESH_AUTH_BUTTON_STYLE}
             onClick={verifyWithGoogle}
           >
-            Verify with {googleFreshAuth?.display ?? "Google"}
+            <span style={GOOGLE_FRESH_AUTH_BUTTON_CONTENT_STYLE}>
+              <GoogleLogo size={18} />
+              <span>Verify with {googleFreshAuth?.display ?? "Google"}</span>
+            </span>
           </Button>
         ) : undefined}
         {showPassword ? (

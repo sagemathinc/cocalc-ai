@@ -93,7 +93,6 @@ import {
   setCurrentSessionFreshAuth,
   type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
-import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   directSamlConfig,
   passportProfileFromSamlProfile,
@@ -859,11 +858,10 @@ export class PassportManager {
           if (!account_id) {
             throw new Error("must be signed in");
           }
-          const sessionHash = getRememberMeHash(req);
-          if (!sessionHash) {
+          const authSession = await getCurrentAuthSession({ req, account_id });
+          if (!authSession.session_hash) {
             throw new Error("browser sign-in is required");
           }
-          await getCurrentAuthSession({ req, account_id });
           if (!(await this.hasLinkedGoogleOidcPassport(account_id))) {
             throw new Error("this account is not linked to Google");
           }
@@ -886,7 +884,7 @@ export class PassportManager {
             browserBinding,
             createdAt: Date.now(),
             freshAuthAccountId: account_id,
-            freshAuthSessionHash: sessionHash,
+            freshAuthSessionHash: authSession.session_hash,
             freshAuthDuration: duration,
           };
           await stateCache.saveAsync(state, JSON.stringify(savedState));
@@ -1206,15 +1204,14 @@ export class PassportManager {
     if (!account_id) {
       throw new Error("Google fresh-auth state is missing the account.");
     }
-    const sessionHash = getRememberMeHash(req);
+    const authSession = await getCurrentAuthSession({ req, account_id });
     if (
-      !sessionHash ||
+      !authSession.session_hash ||
       !savedState.freshAuthSessionHash ||
-      sessionHash !== savedState.freshAuthSessionHash
+      authSession.session_hash !== savedState.freshAuthSessionHash
     ) {
       throw new Error("Google fresh-auth browser session changed.");
     }
-    await getCurrentAuthSession({ req, account_id });
     const googleFreshAuthTimeSource = this.assertRecentGoogleAuthTime({
       claims,
       savedState,
