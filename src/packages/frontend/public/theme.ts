@@ -93,6 +93,12 @@ export const PUBLIC_ELEVATION = {
   md: `0 18px 44px ${alpha(ELEVATION_INK, 0.07)}`,
   lg: `0 24px 70px ${alpha(ELEVATION_INK, 0.12)}`,
   hover: `0 18px 44px ${alpha(ELEVATION_INK, 0.1)}`,
+  compact: `0 10px 24px ${alpha(ELEVATION_INK, 0.07)}`,
+  card: `0 12px 30px ${alpha(ELEVATION_INK, 0.08)}`,
+  code: `0 12px 34px ${alpha(ELEVATION_INK, 0.07)}`,
+  media: `0 14px 40px ${alpha(ELEVATION_INK, 0.07)}`,
+  panel: `0 18px 52px ${alpha(ELEVATION_INK, 0.08)}`,
+  panelStrong: `0 18px 52px ${alpha(ELEVATION_INK, 0.12)}`,
 } as const;
 
 // Dark is reserved EXCLUSIVELY for terminal/code/editor/notebook mock chrome.

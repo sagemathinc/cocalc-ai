@@ -626,6 +626,34 @@ Plus/Star/Launchpad`).
   build:dev` passed including `tsc --build`; post-change rendered QA passed the same routes/viewports
   with 336 assertions / 0 failures (`/tmp/cocalc-public-qa-nkH0wr`); all 16 before/after screenshot
   PNGs were byte-identical by `cmp`. No public copy or product claims changed. No PR.
+- **START 2026-06-20 21:11 PDT:** Starting Slice 2c only: `PUBLIC_ELEVATION` consumption for
+  tracked public feature-page shadow literals. Read Claude status plus the run plan, audit
+  burndown, and slice-2 handoff; Claude remains read-only on synthesis and owns only
+  `/home/user/cocalc-ai/docs/pitch`. Verified preview owner remains synthesis hub pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`). Scope is the 36 tracked
+  `rgba(33, 49, 57, …)` feature-page shadow literals; preserve each existing shadow geometry
+  where possible by tokenizing the recurring feature elevation levels, so the rendered change is
+  limited to the intended slate-to-brand elevation ink convergence. Explicitly out of scope:
+  untracked `dedicated-compute-page.tsx`, protected home/Brief, PUBLIC_TYPE, palette/accent
+  collapse, copy/product claims, pricing, compliance/policy, and Claude's pitch-doc lane. Because
+  this is a visual-risk slice, validation requires before/after rendered QA and surfacing tone
+  changes if they read too different. No PR.
+- **END 2026-06-20 21:19 PDT:** Slice 2c complete locally: the 36 tracked feature-page
+  `rgba(33, 49, 57, …)` shadow literals now consume `PUBLIC_ELEVATION`; recurring feature shadow
+  geometries were preserved as named elevation tokens, so the rendered change is limited to the
+  intended slate-to-brand shadow ink convergence. Added a source guard preventing tracked
+  `public/features/*.tsx` files from reintroducing the legacy feature shadow literal. The only
+  remaining legacy feature shadow is in the untracked `dedicated-compute-page.tsx` draft, which
+  remains out of scope and unstaged. Validation: pre-change rendered QA passed `/features` plus
+  15 affected feature detail routes across desktop/mobile with 596 assertions / 0 failures
+  (`/tmp/cocalc-public-qa-wLA7nU`); focused feature Jest passed 91 tests; public browser-QA script
+  Jest passed 5 tests; tracked-source grep found no legacy feature shadows; `git diff --check`
+  passed; `pnpm lint:frontend` passed from `src`; `pnpm -C src/packages/static build:dev` passed
+  including `tsc --build`; post-change rendered QA passed the same routes/viewports with 596
+  assertions / 0 failures (`/tmp/cocalc-public-qa-bylD5l`). Screenshot deltas are expected for this
+  visual slice: 30/32 images changed, but only in shadow pixels (max RGB delta 3-4, RMS <= 0.704);
+  side-by-side review of the highest-delta pages read as visually equivalent/no layout shift. No
+  public copy or product claims changed. No PR.
 
 ### Codex — platform-UI thread
 

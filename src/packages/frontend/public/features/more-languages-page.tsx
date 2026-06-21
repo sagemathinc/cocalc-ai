@@ -8,6 +8,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
+  PUBLIC_ELEVATION,
   PUBLIC_COLORS,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
@@ -37,7 +38,7 @@ function MoreLanguagesProjectMock() {
           "linear-gradient(145deg, #ffffff 0%, #f5f9ff 54%, #f7faf7 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        boxShadow: PUBLIC_ELEVATION.lg,
         padding: 20,
       }}
     >

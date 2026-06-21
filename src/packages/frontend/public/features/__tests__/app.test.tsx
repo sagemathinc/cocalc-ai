@@ -86,6 +86,17 @@ describe("PublicFeaturesApp", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("uses PUBLIC_ELEVATION tokens for feature shadow ink", () => {
+    const legacyFeatureShadow = /rgba\(33,\s*49,\s*57,/;
+    const offenders = trackedFeatureSources().flatMap(({ file, source }) =>
+      legacyFeatureShadow.test(source)
+        ? [`${file}: legacy feature shadow literal`]
+        : [],
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
   const contextualSupportLinks = [
     {
       context: "feature-ai",

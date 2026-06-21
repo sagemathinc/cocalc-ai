@@ -9,6 +9,7 @@ import { Button, Flex, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
+  PUBLIC_ELEVATION,
   PUBLIC_COLORS,
   PUBLIC_DARK,
   PUBLIC_RADIUS,
@@ -68,7 +69,7 @@ export function StoryCard({
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
+        boxShadow: PUBLIC_ELEVATION.media,
         height: "100%",
         padding: 22,
       }}
@@ -209,7 +210,7 @@ export function StartCard({
         background: PUBLIC_COLORS.surfaceMuted,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
+        boxShadow: PUBLIC_ELEVATION.panelStrong,
         color: PUBLIC_COLORS.heading,
         padding: 26,
       }}

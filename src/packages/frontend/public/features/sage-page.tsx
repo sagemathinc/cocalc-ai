@@ -8,6 +8,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
+  PUBLIC_ELEVATION,
   PUBLIC_COLORS,
   PUBLIC_DARK,
   PUBLIC_RADIUS,
@@ -64,7 +65,7 @@ function SageWorkspaceMock() {
           "linear-gradient(145deg, #ffffff 0%, #f3fbf3 52%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        boxShadow: PUBLIC_ELEVATION.lg,
         padding: 20,
       }}
     >
@@ -344,7 +345,7 @@ export default function SageFeaturePage({
                 background: PUBLIC_COLORS.surfaceMuted,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: PUBLIC_RADIUS.panel,
-                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
+                boxShadow: PUBLIC_ELEVATION.panelStrong,
                 color: PUBLIC_COLORS.heading,
                 padding: 26,
               }}
