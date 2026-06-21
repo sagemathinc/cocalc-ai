@@ -14,17 +14,11 @@ import {
   Space,
   Tag,
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
-import {
-  Icon,
-  MarkdownInput,
-  Text,
-  TimeAgo,
-  Tip,
-  Tooltip,
-} from "@cocalc/frontend/components";
+import { Icon, Text, TimeAgo, Tip, Tooltip } from "@cocalc/frontend/components";
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import {
   assignMembershipPackageSeat,
   revokeMembershipPackageSeat,
@@ -133,6 +127,8 @@ export function Student({
     useState<boolean>(false);
   const [inviteStatusLoading, setInviteStatusLoading] =
     useState<boolean>(false);
+  const [noteDraft, setNoteDraft] = useState<string>(student.get("note") ?? "");
+  const noteValueRef = useRef<() => string>(() => noteDraft);
   const [courseInvite, setCourseInvite] = useState<
     ProjectCollabInviteRow | undefined
   >();
@@ -170,6 +166,9 @@ export function Student({
   useEffect(() => {
     set_edited_email_address(student.get("email_address") ?? "");
   }, [student.get("email_address")]);
+  useEffect(() => {
+    setNoteDraft(student.get("note") ?? "");
+  }, [student.get("note")]);
 
   async function refreshCourseInviteStatus(): Promise<void> {
     if (hasAccount || !studentProjectId || !student.get("email_address")) {
@@ -529,6 +528,48 @@ export function Student({
     }
   }
 
+  function valid_date(value: unknown): Date | undefined {
+    if (value == null) return;
+    const date = new Date(value as any);
+    return Number.isFinite(date.valueOf()) ? date : undefined;
+  }
+
+  function render_timeago(value: unknown): React.JSX.Element | undefined {
+    const date = valid_date(value);
+    return date == null ? undefined : <TimeAgo date={date} />;
+  }
+
+  async function copyInviteLink() {
+    setCopyInviteLoading(true);
+    try {
+      const inviteUrl =
+        await actions.student_projects.copy_pending_student_invite_link({
+          student_id,
+        });
+      await navigator.clipboard.writeText(inviteUrl);
+      void antdMessage.success("Invite link copied.");
+    } catch (err) {
+      void antdMessage.error(`${err}`);
+    } finally {
+      setCopyInviteLoading(false);
+    }
+  }
+
+  async function revokeInviteLink() {
+    setRevokeInviteLoading(true);
+    try {
+      await actions.student_projects.revoke_pending_student_invite_link({
+        student_id,
+      });
+      await refreshCourseInviteStatus();
+      void antdMessage.success("Invite link revoked.");
+    } catch (err) {
+      void antdMessage.error(`${err}`);
+    } finally {
+      setRevokeInviteLoading(false);
+    }
+  }
+
   function render_course_invite_status() {
     if (hasAccount) return;
     if (inviteStatusLoading) {
@@ -541,19 +582,23 @@ export function Student({
     if (courseInvite == null) {
       const last_email_invite = student.get("last_email_invite");
       if (last_email_invite == null) return;
+      const lastEmailInvite = render_timeago(last_email_invite);
       return (
         <Space size={6} wrap>
           <Tag>Invite attempted</Tag>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            <TimeAgo date={last_email_invite} />
-          </Text>
+          {lastEmailInvite && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {lastEmailInvite}
+            </Text>
+          )}
         </Space>
       );
     }
+    const expiresDate = valid_date(courseInvite.expires);
     const isExpiredPendingInvite =
       courseInvite.status === "pending" &&
-      courseInvite.expires != null &&
-      new Date(courseInvite.expires).valueOf() <= Date.now();
+      expiresDate != null &&
+      expiresDate.valueOf() <= Date.now();
     const status = isExpiredPendingInvite ? "expired" : courseInvite.status;
     const color =
       status === "pending"
@@ -564,18 +609,19 @@ export function Student({
             ? "default"
             : "warning";
     const label = status === "canceled" ? "revoked" : status;
+    const lastSent = render_timeago(courseInvite.last_sent);
     return (
       <Space size={6} wrap>
         <Tag color={color}>Invite {label}</Tag>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {courseInvite.last_sent ? (
-            <>
-              emailed <TimeAgo date={courseInvite.last_sent} />
-            </>
-          ) : (
-            <>email not sent</>
-          )}
-        </Text>
+        {lastSent ? (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            emailed {lastSent}
+          </Text>
+        ) : (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            email not sent
+          </Text>
+        )}
         <Button
           size="small"
           type="link"
@@ -590,11 +636,18 @@ export function Student({
 
   function render_course_invite_details_modal() {
     if (!courseInvite) return;
+    const expiresDate = valid_date(courseInvite.expires);
     const isExpiredPendingInvite =
       courseInvite.status === "pending" &&
-      courseInvite.expires != null &&
-      new Date(courseInvite.expires).valueOf() <= Date.now();
+      expiresDate != null &&
+      expiresDate.valueOf() <= Date.now();
     const status = isExpiredPendingInvite ? "expired" : courseInvite.status;
+    const created = render_timeago(courseInvite.created);
+    const lastSent = render_timeago(courseInvite.last_sent);
+    const expires = render_timeago(courseInvite.expires);
+    const canCopyInvite =
+      courseInvite.status === "pending" && !isExpiredPendingInvite;
+    const canRevokeInvite = courseInvite.status === "pending";
     return (
       <Modal
         open={inviteDetailsOpen}
@@ -611,22 +664,17 @@ export function Student({
               <b>Email:</b> {courseInvite.target_email}
             </div>
           )}
-          <div>
-            <b>Created:</b> <TimeAgo date={courseInvite.created} />
-          </div>
-          <div>
-            <b>Email:</b>{" "}
-            {courseInvite.last_sent ? (
-              <>
-                sent <TimeAgo date={courseInvite.last_sent} />
-              </>
-            ) : (
-              "not sent"
-            )}
-          </div>
-          {courseInvite.status === "pending" && courseInvite.expires ? (
+          {created && (
             <div>
-              <b>Expires:</b> <TimeAgo date={courseInvite.expires} />
+              <b>Created:</b> {created}
+            </div>
+          )}
+          <div>
+            <b>Email:</b> {lastSent ? <>sent {lastSent}</> : "not sent"}
+          </div>
+          {courseInvite.status === "pending" && expires ? (
+            <div>
+              <b>Expires:</b> {expires}
             </div>
           ) : undefined}
           {courseInvite.status === "pending" && !courseInvite.last_sent ? (
@@ -634,6 +682,30 @@ export function Student({
               Copy the invite link and send it to the student manually.
             </Text>
           ) : undefined}
+          {(canCopyInvite || canRevokeInvite) && (
+            <Space size={8} wrap>
+              {canCopyInvite && (
+                <Button
+                  size={size}
+                  loading={copyInviteLoading}
+                  onClick={() => void copyInviteLink()}
+                >
+                  <Icon name="copy" /> Copy invite link
+                </Button>
+              )}
+              {canRevokeInvite && (
+                <Popconfirm
+                  title="Revoke this pending course invite link?"
+                  description="Anyone with the old link will no longer be able to use it."
+                  onConfirm={() => void revokeInviteLink()}
+                >
+                  <Button size={size} loading={revokeInviteLoading}>
+                    Revoke link
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          )}
         </Space>
       </Modal>
     );
@@ -643,18 +715,12 @@ export function Student({
     // don't invite student if there is already an account
     if (hasAccount) return;
     const last_email_invite = student.get("last_email_invite");
+    const lastEmailInviteDate = valid_date(last_email_invite);
     const hasInvite = courseInvite != null || last_email_invite != null;
-    const isExpiredPendingInvite =
-      courseInvite?.status === "pending" &&
-      courseInvite.expires != null &&
-      new Date(courseInvite.expires).valueOf() <= Date.now();
-    const canCopyInvite =
-      courseInvite?.status === "pending" && !isExpiredPendingInvite;
-    const canRevokeInvite = courseInvite?.status === "pending";
     const canCreateInvite =
       courseInvite?.status !== "accepted" && courseInvite?.status !== "blocked";
     const allowResending =
-      !last_email_invite || new Date(last_email_invite) < RESEND_INVITE_BEFORE;
+      lastEmailInviteDate == null || lastEmailInviteDate < RESEND_INVITE_BEFORE;
 
     const msg = hasInvite
       ? intl.formatMessage(
@@ -666,42 +732,9 @@ export function Student({
         )
       : "Send invitation";
     const when =
-      last_email_invite != null
-        ? `Last invite attempt on ${new Date(
-            last_email_invite,
-          ).toLocaleString()}`
+      lastEmailInviteDate != null
+        ? `Last invite attempt on ${lastEmailInviteDate.toLocaleString()}`
         : "never";
-
-    async function copyInviteLink() {
-      setCopyInviteLoading(true);
-      try {
-        const inviteUrl =
-          await actions.student_projects.copy_pending_student_invite_link({
-            student_id,
-          });
-        await navigator.clipboard.writeText(inviteUrl);
-        void antdMessage.success("Invite link copied.");
-      } catch (err) {
-        void antdMessage.error(`${err}`);
-      } finally {
-        setCopyInviteLoading(false);
-      }
-    }
-
-    async function revokeInviteLink() {
-      setRevokeInviteLoading(true);
-      try {
-        await actions.student_projects.revoke_pending_student_invite_link({
-          student_id,
-        });
-        await refreshCourseInviteStatus();
-        void antdMessage.success("Invite link revoked.");
-      } catch (err) {
-        void antdMessage.error(`${err}`);
-      } finally {
-        setRevokeInviteLoading(false);
-      }
-    }
 
     return (
       <Space direction="vertical" size={4}>
@@ -751,28 +784,6 @@ export function Student({
             <Icon name="mail" /> {msg}
           </Button>
         </Tooltip>
-        {canRevokeInvite && (
-          <Space size={4} wrap>
-            {canCopyInvite && (
-              <Button
-                size={size}
-                loading={copyInviteLoading}
-                onClick={() => void copyInviteLink()}
-              >
-                <Icon name="copy" /> Copy invite link
-              </Button>
-            )}
-            <Popconfirm
-              title="Revoke this pending course invite link?"
-              description="Anyone with the old link will no longer be able to use it."
-              onConfirm={() => void revokeInviteLink()}
-            >
-              <Button size={size} loading={revokeInviteLoading}>
-                Revoke link
-              </Button>
-            </Popconfirm>
-          </Space>
-        )}
       </Space>
     );
   }
@@ -880,27 +891,62 @@ export function Student({
       defaultMessage: "Notes about student (not visible to student)",
       description: "About a student in an online course",
     });
+    const courseProjectId = store.get("course_project_id");
+    const coursePath = store.get("course_filename");
+    const noteEditorPath =
+      coursePath != null
+        ? `${coursePath}.student-notes/${student.get("student_id")}.md`
+        : undefined;
+    const saveNote = (value = noteValueRef.current?.() ?? noteDraft): void => {
+      actions.students.set_student_note(student.get("student_id"), value);
+    };
     return (
-      <Row key="note" style={styles.note}>
-        <Col xs={4}>
-          <Tip title={tooltipTitle} tip={tooltip}>
-            {title}
-          </Tip>
-        </Col>
-        <Col xs={20}>
-          <MarkdownInput
-            persist_id={student.get("student_id") + "note"}
-            attach_to={name}
-            rows={6}
-            placeholder={placeholder}
-            default_value={student.get("note")}
-            on_save={(value) =>
-              actions.students.set_student_note(
-                student.get("student_id"),
-                value,
-              )
-            }
-          />
+      <Row key="note" style={{ ...styles.note, marginTop: "14px" }}>
+        <Col xs={24}>
+          <div
+            style={{
+              background: COLORS.GRAY_LLL,
+              border: `1px solid ${COLORS.GRAY_DDD}`,
+              borderRadius: "6px",
+              padding: "12px",
+            }}
+          >
+            <div
+              style={{
+                alignItems: "center",
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "8px",
+              }}
+            >
+              <Tip title={tooltipTitle} tip={tooltip}>
+                <b>{title}</b>
+              </Tip>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Only visible to instructors
+              </Text>
+            </div>
+            <MarkdownInput
+              autoGrow
+              autoGrowMaxHeight={420}
+              autoGrowMinHeight={140}
+              cacheId={`course-student-note-${name}-${student.get("student_id")}`}
+              defaultMode="markdown"
+              enableUpload={courseProjectId != null}
+              getValueRef={noteValueRef}
+              height="auto"
+              modeSwitchPlacement="toolbar"
+              onBlur={() => saveNote()}
+              onChange={setNoteDraft}
+              onSave={() => saveNote()}
+              onShiftEnter={(value) => saveNote(value)}
+              path={noteEditorPath}
+              placeholder={placeholder}
+              project_id={courseProjectId}
+              value={noteDraft}
+            />
+          </div>
         </Col>
       </Row>
     );
