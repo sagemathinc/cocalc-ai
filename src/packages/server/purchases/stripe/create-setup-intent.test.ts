@@ -7,6 +7,7 @@ const mockAssertPaymentCheckoutAllowed = jest.fn();
 const mockGetConn = jest.fn();
 const mockGetStripeCustomerId = jest.fn();
 const mockHasBillingDetails = jest.fn();
+const mockSetCustomer = jest.fn();
 
 jest.mock("@cocalc/server/launch/kill-switches", () => ({
   assertPaymentCheckoutAllowed: (...args: any[]) =>
@@ -24,6 +25,7 @@ jest.mock("./util", () => ({
 
 jest.mock("./customer", () => ({
   hasBillingDetails: (...args: any[]) => mockHasBillingDetails(...args),
+  setCustomer: (...args: any[]) => mockSetCustomer(...args),
 }));
 
 import createSetupIntent from "./create-setup-intent";
@@ -41,6 +43,7 @@ describe("createSetupIntent", () => {
     mockGetConn.mockResolvedValue(stripe);
     mockGetStripeCustomerId.mockResolvedValue("cus_123");
     mockHasBillingDetails.mockResolvedValue(true);
+    mockSetCustomer.mockResolvedValue(undefined);
     stripe.setupIntents.create.mockResolvedValue({
       client_secret: "seti_secret",
     });
@@ -74,5 +77,21 @@ describe("createSetupIntent", () => {
       metadata: { account_id: "acct-1" },
       use_stripe_sdk: true,
     });
+  });
+
+  it("applies supplied billing details before checking readiness", async () => {
+    const billing_details = {
+      name: "Ada Lovelace",
+      address: { country: "US", postal_code: "94105" },
+    };
+
+    await createSetupIntent({
+      account_id: "acct-1",
+      description: "Add payment method",
+      billing_details,
+    });
+
+    expect(mockSetCustomer).toHaveBeenCalledWith("acct-1", billing_details);
+    expect(mockHasBillingDetails).toHaveBeenCalledWith("acct-1");
   });
 });

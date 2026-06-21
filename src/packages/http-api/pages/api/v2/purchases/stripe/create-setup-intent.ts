@@ -26,9 +26,10 @@ async function get(req) {
   }
   throttle({ account_id, endpoint: "purchases/stripe/create-setup-intent" });
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
-  const { description } = getParams(req);
+  const { description, billing_details } = getParams(req);
   return await createSetupIntent({
     account_id,
     description,
+    billing_details,
   });
 }

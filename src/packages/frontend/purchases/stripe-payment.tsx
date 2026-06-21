@@ -853,6 +853,7 @@ export function BillingSetupModal({
   title?: ReactNode;
 }) {
   const [addressSaved, setAddressSaved] = useState<boolean>(false);
+  const [billingDetails, setBillingDetails] = useState<any>(null);
   const [checkingAddress, setCheckingAddress] =
     useState<boolean>(requirePaymentMethod);
   const [addressCheckError, setAddressCheckError] = useState<string>("");
@@ -892,8 +893,9 @@ export function BillingSetupModal({
     };
   }, [requirePaymentMethod, stripeEnabled]);
 
-  const finishAddress = () => {
+  const finishAddress = (details?: any) => {
     if (requirePaymentMethod) {
+      setBillingDetails(details ?? null);
       setAddressSaved(true);
     } else {
       onFinished?.();
@@ -923,13 +925,20 @@ export function BillingSetupModal({
           <StripeAddressElement onFinished={finishAddress} showCancel={false} />
         </Space>
       ) : (
-        <CollectPaymentMethod onFinished={onFinished} />
+        <CollectPaymentMethod
+          billingDetails={billingDetails}
+          onFinished={onFinished}
+        />
       )}
     </Modal>
   );
 }
 
-function CollectPaymentMethod(props: { style?; onFinished? }) {
+function CollectPaymentMethod(props: {
+  billingDetails?: any;
+  style?;
+  onFinished?;
+}) {
   const emailVerificationRequired = useEmailVerificationRequired();
   if (emailVerificationRequired) {
     return (
@@ -945,9 +954,11 @@ function CollectPaymentMethod(props: { style?; onFinished? }) {
 }
 
 function CollectPaymentMethodInner({
+  billingDetails,
   style,
   onFinished,
 }: {
+  billingDetails?: any;
   style?;
   onFinished?;
 }) {
@@ -962,6 +973,7 @@ function CollectPaymentMethodInner({
       setError("");
       const intent = await createSetupIntent({
         description: "Add a new payment method.",
+        ...(billingDetails ? { billing_details: billingDetails } : {}),
       });
       setSecret(intent);
     } catch (err) {

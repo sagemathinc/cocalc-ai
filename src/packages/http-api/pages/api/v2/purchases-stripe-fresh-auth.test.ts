@@ -373,6 +373,10 @@ describe("purchases Stripe fresh-auth routes", () => {
       backendCall: mockCreateSetupIntent,
       params: {
         description: "Add a new payment method.",
+        billing_details: {
+          name: "Ada Lovelace",
+          address: { country: "US", postal_code: "94105" },
+        },
       },
       expectedResponse: {
         clientSecret: "seti_test_secret",
@@ -381,6 +385,10 @@ describe("purchases Stripe fresh-auth routes", () => {
         expect(mockCreateSetupIntent).toHaveBeenCalledWith({
           account_id: "acct-1",
           description: "Add a new payment method.",
+          billing_details: {
+            name: "Ada Lovelace",
+            address: { country: "US", postal_code: "94105" },
+          },
         }),
     },
     {

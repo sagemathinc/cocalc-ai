@@ -295,6 +295,11 @@ export async function processPaymentIntents(
 
 export async function createSetupIntent(opts: {
   description: string;
+  billing_details?: {
+    name?: string;
+    address?: any;
+    email?: string;
+  };
 }): Promise<{ clientSecret: string }> {
   return await api("purchases/stripe/create-setup-intent", opts);
 }

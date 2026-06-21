@@ -386,6 +386,16 @@ describe("StripePayment", () => {
     });
     expect(createSetupIntent).toHaveBeenCalledWith({
       description: "Add a new payment method.",
+      billing_details: {
+        address: {
+          city: "San Francisco",
+          country: "US",
+          line1: "1 Main St",
+          postal_code: "94105",
+          state: "CA",
+        },
+        name: "Ada Lovelace",
+      },
     });
     expect(getCustomerSession).not.toHaveBeenCalled();
     expect(screen.queryByText("Confirm security action")).toBeNull();
@@ -428,6 +438,16 @@ describe("StripePayment", () => {
     });
     expect(createSetupIntent).toHaveBeenCalledWith({
       description: "Add a new payment method.",
+      billing_details: {
+        address: {
+          city: "San Francisco",
+          country: "US",
+          line1: "1 Main St",
+          postal_code: "94105",
+          state: "CA",
+        },
+        name: "Ada Lovelace",
+      },
     });
   });
 
