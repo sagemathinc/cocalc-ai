@@ -440,10 +440,16 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Compare Memberships" }),
     ).not.toBeNull();
-    expect(screen.getByText("Project Limits")).not.toBeNull();
-    expect(screen.getByText("Global Limits")).not.toBeNull();
+    expect(screen.getByText("Limits Per Project")).not.toBeNull();
+    expect(
+      screen.getByText("Global Limits Across All Projects"),
+    ).not.toBeNull();
     expect(screen.getByText("Functionality")).not.toBeNull();
-    expect(screen.getByText("Postpaid dedicated-host billing")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Pay at the end of the month for dedicated project host",
+      ),
+    ).not.toBeNull();
     expect(screen.getByText("CPU priority")).not.toBeNull();
     expect(screen.getByText("Low")).not.toBeNull();
     expect(screen.getByText("Medium")).not.toBeNull();
