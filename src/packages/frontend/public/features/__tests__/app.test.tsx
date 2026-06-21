@@ -249,7 +249,7 @@ describe("PublicFeaturesApp", () => {
       slug: "api",
     },
     {
-      marker: "Run GNU Octave with notebooks, scripts, and shared project files.",
+      marker: "GNU Octave for notebooks, scripts, and shared project files.",
       slug: "octave",
     },
     {
@@ -904,7 +904,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "octave",
-      title: "Run GNU Octave with notebooks, scripts, and shared project files.",
+      title: "GNU Octave for notebooks, scripts, and shared project files.",
       section: "Teach and run Octave without local setup drift.",
     },
     {

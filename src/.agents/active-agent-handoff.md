@@ -731,6 +731,25 @@ Plus/Star/Launchpad`).
   Star install-command overflow noted but left out of this copy slice. No protected home, pitch docs,
   docs route/content, pricing dollars, compliance/policy, type/palette visual, Slice 4c/4d, or
   dedicated-compute draft edits. No PR.
+- **START 2026-06-21 15:13 PDT:** Blaec flagged `/features/octave` as visually busy. Claiming a
+  bounded Octave visual-density cleanup only:
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Intent: reduce first-screen text and boxed visual
+  density while preserving concrete tool names (`GNU Octave`, notebooks, scripts, `.m` files,
+  terminals) and source-grounded collaboration/reproducibility claims. Out of scope: protected home,
+  pitch docs, docs routes/content, pricing/compliance, Slice 4c/4d, broader feature-index copy,
+  type/palette visual work, and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-21 15:19 PDT:** Octave visual-density cleanup complete locally. Shortened the
+  Octave hero to one lead paragraph, reduced the mock visual from four icon-heavy cards to three
+  compact proof rows, and trimmed the adjacent project-context proof list from five items to three.
+  Preserved the concrete technical transition proof (`GNU Octave`, notebooks, scripts, `.m` files,
+  terminals, plots/output, TimeTravel, and real-time notebook collaboration). Validation:
+  `git diff --check` clean; focused feature Jest passed 91/91; `pnpm lint:frontend` clean;
+  `pnpm -C src/packages/static build:dev` passed; live browser QA passed 36 assertions on
+  `/features/octave` desktop/mobile; screenshots reviewed from `/tmp/cocalc-public-qa-p9FdGW`.
+  No protected home, pitch-doc, docs route/content, pricing/compliance, Slice 4c/4d, broader
+  feature-index, type/palette visual, or dedicated-compute draft edits. No PR.
 
 ### Codex — platform-UI thread
 

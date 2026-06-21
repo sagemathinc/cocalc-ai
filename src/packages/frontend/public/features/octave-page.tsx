@@ -5,7 +5,6 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_ELEVATION,
@@ -23,6 +22,12 @@ import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 const { Paragraph, Text, Title } = Typography;
 
 function OctaveProjectMock() {
+  const projectItems = [
+    ["solver.m", "source file"],
+    ["analysis.ipynb", "interactive notebook"],
+    ["terminal run", "plots and output"],
+  ] as const;
+
   return (
     <div
       aria-label="Illustration of Octave scripts, notebooks, and terminal workflows in CoCalc"
@@ -48,34 +53,23 @@ function OctaveProjectMock() {
           </Flex>
         </Flex>
 
-        <Row gutter={[12, 12]}>
-          {[
-            ["file", "solver.m", "source file"],
-            ["jupyter", "analysis.ipynb", "interactive notebook"],
-            ["line-chart", "figure.png", "plot output"],
-            ["graduation-cap", "assignment", "course project"],
-          ].map(([icon, title, body]) => (
-            <Col key={title} xs={24} sm={12}>
-              <div
-                style={{
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: PUBLIC_RADIUS.panel,
-                  height: "100%",
-                  padding: 14,
-                }}
-              >
-                <Flex align="center" gap={12}>
-                  <IconBadge accent="#d4380d" icon={icon as IconName} />
-                  <div>
-                    <Text strong>{title}</Text>
-                    <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
-                  </div>
-                </Flex>
-              </div>
-            </Col>
+        <Flex wrap gap={10}>
+          {projectItems.map(([title, body]) => (
+            <div
+              key={title}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PUBLIC_RADIUS.control,
+                flex: "1 1 160px",
+                padding: "10px 12px",
+              }}
+            >
+              <Text strong>{title}</Text>
+              <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
+            </div>
           ))}
-        </Row>
+        </Flex>
       </Flex>
     </div>
   );
@@ -91,15 +85,9 @@ function OctaveFlow() {
               Teach and run Octave without local setup drift.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Everyone opens the same project, so an Octave script that runs for
-              one person runs the same way for the next. The environment,
-              packages, and data stay with the work, not on a laptop that drifts
-              out of sync.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              TimeTravel keeps earlier file and notebook states close, so a
-              collaborator — or you, weeks later — can reopen a result, see how
-              it was produced, and continue from it.
+              Everyone opens the same project: notebooks, <code>.m</code> files,
+              plots, data, packages, and TimeTravel history stay with the work
+              instead of drifting across laptops.
             </Paragraph>
           </Flex>
         </Col>
@@ -118,14 +106,6 @@ function OctaveFlow() {
               {
                 icon: "jupyter",
                 label: "Use notebooks with real-time collaboration",
-              },
-              {
-                icon: "sync",
-                label: "Setup, packages, and data stay together",
-              },
-              {
-                icon: "share-square",
-                label: "Hand off the project without rebuilding it",
               },
             ]}
             title="Project context"
@@ -161,17 +141,12 @@ export default function OctaveFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Run GNU Octave with notebooks, scripts, and shared project files.
+                GNU Octave for notebooks, scripts, and shared project files.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Edit <code>.m</code> files, run Octave in terminals, use
-                notebook workflows, and teach or review numerical work from one
-                setup instead of every collaborator maintaining a local install.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                The project keeps notebooks, <code>.m</code> files, plots, data,
-                and course context together, so the same workspace works for
-                courses, research, and prototyping.
+                notebook workflows, and review numerical work without every
+                collaborator maintaining a local install.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
