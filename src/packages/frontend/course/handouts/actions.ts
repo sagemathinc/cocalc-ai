@@ -408,6 +408,13 @@ export class HandoutsActions {
   };
 
   open_handout = (handout_id: string, student_id: string): void => {
+    void this.open_handout_async(handout_id, student_id);
+  };
+
+  private open_handout_async = async (
+    handout_id: string,
+    student_id: string,
+  ): Promise<void> => {
     const { handout, student } = this.course_actions.resolve({
       handout_id,
       student_id,
@@ -426,8 +433,17 @@ export class HandoutsActions {
       this.course_actions.set_error("no such project");
       return;
     }
-    // Now open it
-    redux.getProjectActions(proj).open_directory(path);
+    try {
+      await redux.getActions("projects").open_project({
+        project_id: proj,
+        target: "files",
+        switch_to: true,
+        restore_session: false,
+      });
+      await redux.getProjectActions(proj).open_directory(path);
+    } catch (err) {
+      this.course_actions.set_error(`Error opening handout: ${err}`);
+    }
   };
 
   export_file_use_times = async (

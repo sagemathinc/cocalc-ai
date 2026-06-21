@@ -1936,6 +1936,14 @@ ${details}
     assignment_id: string,
     student_id: string,
   ): void => {
+    void this.open_assignment_async(type, assignment_id, student_id);
+  };
+
+  private open_assignment_async = async (
+    type: AssignmentCopyType,
+    assignment_id: string,
+    student_id: string,
+  ): Promise<void> => {
     const { store, assignment, student } = this.course_actions.resolve({
       assignment_id,
       student_id,
@@ -1983,8 +1991,24 @@ ${details}
       this.course_actions.set_error("no such project");
       return;
     }
-    // Now open it
-    redux.getProjectActions(proj).open_directory(path);
+    await this.open_project_directory(proj, path);
+  };
+
+  private open_project_directory = async (
+    project_id: string,
+    path: string,
+  ): Promise<void> => {
+    try {
+      await redux.getActions("projects").open_project({
+        project_id,
+        target: "files",
+        switch_to: true,
+        restore_session: false,
+      });
+      await redux.getProjectActions(project_id).open_directory(path);
+    } catch (err) {
+      this.course_actions.set_error(`Error opening assignment: ${err}`);
+    }
   };
 
   private write_text_file_to_course_project = async (opts: {

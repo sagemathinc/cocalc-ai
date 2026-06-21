@@ -354,10 +354,10 @@ export function StudentAssignmentInfo({
     );
   }
 
-  function render_last_time(time: string | number | Date) {
+  function render_last_time(time?: string | number | Date) {
     return (
       <div key="time" style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
-        <BigTime date={time} />
+        {time != null ? <BigTime date={time} /> : <span>&nbsp;</span>}
       </div>
     );
   }
@@ -618,12 +618,6 @@ export function StudentAssignmentInfo({
         v.push(render_copy(step, do_copy, copy_tip as string));
       }
     }
-    if (data.time) {
-      v.push(render_last_time(data.time));
-    }
-    if (data.error && !omit_errors) {
-      v.push(render_error(step, data.error));
-    }
     return (
       <div style={stage_card_style(state)}>
         <div
@@ -642,11 +636,17 @@ export function StudentAssignmentInfo({
         {v.length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {v}
+            {render_last_time(data.time)}
+            {data.error && !omit_errors ? render_error(step, data.error) : null}
           </div>
         ) : (
-          <span style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
-            Waiting for the previous stage.
-          </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+              Waiting for the previous stage.
+            </span>
+            {render_last_time(data.time)}
+            {data.error && !omit_errors ? render_error(step, data.error) : null}
+          </div>
         )}
       </div>
     );
