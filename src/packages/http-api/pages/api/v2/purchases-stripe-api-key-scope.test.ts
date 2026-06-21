@@ -19,6 +19,8 @@ const mockGetInvoiceUrl = jest.fn();
 const mockThrottle = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockCancelPaymentIntent = jest.fn();
+const mockCreatePaymentIntent = jest.fn();
+const mockGetCheckoutSession = jest.fn();
 const mockGetPaymentIntentAccountId = jest.fn();
 const mockProcessPaymentIntents = jest.fn();
 const mockCreateSetupIntent = jest.fn();
@@ -58,6 +60,10 @@ jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
     mockRequireDangerousSessionAuth(...args),
 }));
 
+jest.mock("@cocalc/server/launch/kill-switches", () => ({
+  assertPaymentCheckoutAllowed: jest.fn(async () => undefined),
+}));
+
 jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
   __esModule: true,
   default: (...args) => mockGetPaymentMethods(...args),
@@ -81,9 +87,16 @@ jest.mock("@cocalc/server/purchases/stripe/invoices", () => ({
 }));
 
 jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
+  __esModule: true,
+  default: (...args) => mockCreatePaymentIntent(...args),
   cancelPaymentIntent: (...args) => mockCancelPaymentIntent(...args),
   getPaymentIntentAccountId: (...args) =>
     mockGetPaymentIntentAccountId(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/get-checkout-session", () => ({
+  __esModule: true,
+  default: (...args) => mockGetCheckoutSession(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe/process-payment-intents", () => ({
@@ -134,6 +147,14 @@ describe("Stripe billing read routes API-key scope", () => {
       .mockResolvedValue("https://stripe.example/in");
     mockUserIsInGroup.mockReset().mockResolvedValue(false);
     mockCancelPaymentIntent.mockReset().mockResolvedValue(undefined);
+    mockCreatePaymentIntent.mockReset().mockResolvedValue({
+      payment_intent: "pi_123",
+      hosted_invoice_url: "https://stripe.example/in",
+    });
+    mockGetCheckoutSession.mockReset().mockResolvedValue({
+      clientSecret: "cs_test",
+      sessionId: "cs_123",
+    });
     mockGetPaymentIntentAccountId.mockReset().mockResolvedValue("acct-1");
     mockProcessPaymentIntents.mockReset().mockResolvedValue(0);
     mockCreateSetupIntent.mockReset().mockResolvedValue({
@@ -211,6 +232,8 @@ describe("Stripe billing read routes API-key scope", () => {
   });
 
   it.each([
+    ["./purchases/stripe/create-payment-intent", mockCreatePaymentIntent],
+    ["./purchases/stripe/get-checkout-session", mockGetCheckoutSession],
     ["./purchases/stripe/create-setup-intent", mockCreateSetupIntent],
     ["./purchases/stripe/get-customer-session", mockGetCustomerSession],
     ["./purchases/stripe/set-customer", mockSetCustomer],
