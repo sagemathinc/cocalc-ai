@@ -500,18 +500,28 @@ export function paymentSuccessBody({
 }): string {
   return `Your payment of ${moneyToCurrency(amount)} was successful.
 
+
 It was used to ${reason}.
 
+
 Receipt details:
+
 - Amount: ${moneyToCurrency(amount)}
+
 - CoCalc credit id: ${credit_id}
+
 - Account balance after payment: ${moneyToCurrency(balance)}
 
+
 Account pages:
+
 - Payments: ${paymentsUrl}
+
 - Purchases: ${purchasesUrl}
 
+
 If you have questions, reply to this message or contact support:
+
 ${supportUrl}
 `;
 }

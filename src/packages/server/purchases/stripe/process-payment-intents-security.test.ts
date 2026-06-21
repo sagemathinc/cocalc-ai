@@ -65,6 +65,10 @@ describe("Stripe statement payment-intent fulfillment checks", () => {
     expect(subject).not.toContain("Credit id");
     expect(body).toContain("CoCalc credit id: 5");
     expect(body).toContain("purchase a course membership package");
+    expect(body).toContain("Receipt details:\n\n- Amount: $18.00");
+    expect(body).toContain(
+      "Account pages:\n\n- Payments: https://lite1b.cocalc.ai/settings/payments",
+    );
     expect(body).toContain(
       "Payments: https://lite1b.cocalc.ai/settings/payments",
     );
