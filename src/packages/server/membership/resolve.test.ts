@@ -6,6 +6,7 @@
 import { before, after } from "@cocalc/server/test";
 import getPool from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
+import { TIER_TEMPLATES } from "@cocalc/util/membership-tier-templates";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
@@ -441,22 +442,33 @@ describe("resolveMembershipForAccount", () => {
 
   it("resolves built-in site-license tier grants even without a database tier row", async () => {
     const account_id = uuid();
+    const tier = TIER_TEMPLATES.pro;
     await createTestAccount(account_id);
     await createTestMembershipGrant(account_id, {
-      membership_class: "researcher",
+      membership_class: tier.id,
       source: "site-license",
     });
 
     const result = await resolveMembershipForAccount(account_id);
 
-    expect(result.class).toBe("researcher");
+    expect(result.class).toBe(tier.id);
     expect(result.source).toBe("grant");
     expect(result.grant_source).toBe("site-license");
-    expect(result.entitlements.features?.create_hosts).toBe(true);
-    expect(result.entitlements.project_defaults?.disk_quota).toBe(100000);
-    expect(result.effective_limits.max_projects).toBe(150);
-    expect(result.effective_limits.rootfs_count).toBe(100);
-    expect(result.effective_limits.rootfs_oci_images).toBe(true);
+    expect(result.entitlements.features?.create_hosts).toBe(
+      tier.features.create_hosts,
+    );
+    expect(result.entitlements.project_defaults?.disk_quota).toBe(
+      tier.project_defaults.disk_quota,
+    );
+    expect(result.effective_limits.max_projects).toBe(
+      tier.usage_limits.max_projects,
+    );
+    expect(result.effective_limits.rootfs_count).toBe(
+      tier.usage_limits.rootfs_count,
+    );
+    expect(result.effective_limits.rootfs_oci_images).toBe(
+      tier.usage_limits.rootfs_oci_images,
+    );
   });
 
   it("applies active admin entitlement overrides to the selected membership", async () => {
