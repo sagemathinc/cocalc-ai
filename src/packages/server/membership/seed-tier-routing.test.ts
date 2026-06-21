@@ -56,7 +56,7 @@ describe("seed membership tier routing", () => {
     });
 
     expect(tiers.map((tier) => tier.id)).toEqual(["pro"]);
-    expect(getPoolMock).toHaveBeenCalledWith("medium");
+    expect(getPoolMock).toHaveBeenCalledWith();
     expect(getInterBayBridgeMock).not.toHaveBeenCalled();
   });
 
