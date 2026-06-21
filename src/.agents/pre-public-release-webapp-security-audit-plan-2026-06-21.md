@@ -2,7 +2,7 @@
 
 Date: 2026-06-21
 
-Status: In progress. Phases 1, 2, and 3 are done except manual
+Status: In progress. Phases 1, 2, 3, and 4 are done except manual
 smoke/adversarial testing.
 This follows the completed purchasing/security code audit and focuses on the
 remaining highest-risk web-app surfaces before the first public release.
@@ -404,6 +404,8 @@ Manual follow-up:
 
 ## Phase 4: Resource Abuse and Free-User Enforcement
 
+Status: Done except manual follow-up, 2026-06-21.
+
 Goal: ensure free, trial, unpaid, or downgraded users cannot create unbounded
 infrastructure cost or bypass membership usage limits through direct APIs,
 stale state, or alternate entry points.
@@ -448,6 +450,104 @@ Execution:
 - Test membership upgrade, downgrade, cancellation, failed payment, package seat
   assignment/removal, and site-license assignment/removal.
 - Add regression tests for any bypass that is fixed.
+
+Completed audit notes:
+
+- Project creation is server-gated by the launch project-creation kill switch,
+  account product trust, project-count membership limits, cached storage
+  pressure, and rootfs image selection policy. The reviewed direct create path
+  does not rely on frontend state.
+- Project starts route through owning-bay admission. Both the public start
+  request path and the owning-bay start handler check current project
+  ownership, project hard-delete state, free-start kill switch, runtime sponsor
+  authorization, runtime slot limits, and managed CPU start policy before
+  starting work.
+- Project-host local start helpers call `projects.startFromHost`, not the
+  low-level local host start directly. The project-host admission helper
+  requires a local host id and hub connection and uses host-authenticated Conat
+  routing.
+- Low-level project-host start still rechecks managed CPU policy and provisioned
+  restore storage limits immediately before asking the project host to start the
+  container.
+- Runtime slot accounting is centralized on the runtime sponsor's home bay.
+  Reviewed direct start, create-and-start, restore start, project move,
+  host restart-projects, and host restart recovery paths reserve/release slots
+  through the shared runtime-slot code rather than local counters.
+- Dedicated host creation is server-gated by the host-creation kill switch,
+  membership `create_hosts` entitlement, fresh auth for non-local/non-self-host
+  providers, host funding-mode limits, and dedicated-host admission checks.
+  Site-funded host creation remains admin-only.
+- Host stop/restart-projects actions require host start/stop permission and
+  fresh auth. They intentionally act on all selected projects assigned to that
+  host, and restart reserves runtime slots before restarting projects.
+- Stripe checkout/setup/payment-session paths are guarded by the payment
+  checkout kill switch; detailed payment authorization was covered by the
+  completed purchasing audit.
+- AI/Codex launch has a server-side AI kill switch. Site OpenAI keys and Codex
+  site usage checks are host-authenticated, verify project access for the
+  project-host credential, and consult the AI usage windows before allowing
+  site-funded use.
+- Managed egress and CPU usage windows are account-owned shared 5-hour and
+  7-day windows. Existing policy/read paths consume those shared windows for
+  user-visible usage and start/admission decisions.
+- File download, proxy, websocket, SSH, raw network, interactive Conat, and
+  backup upload egress metering is implemented at project-host or project
+  service boundaries, with focused tests for the project-host metering paths.
+- Backup creation preflights managed egress policy unless using the internal
+  admin host-drain override. Snapshot and backup restore/copy paths check
+  collaborator/destructive-storage authority and destination storage pressure.
+- Blob writes enforce max blob size plus account/project blob count and storage
+  membership quotas before saving. User cleanup APIs only delete caller-owned
+  account blobs or collaborator-authorized project blobs.
+- Rootfs save, publish, and project-image selection paths apply membership
+  rootfs count/storage/remote-OCI policy and project collaborator checks where
+  project state is mutated.
+- Fixed high-severity quota poisoning risk: account-authenticated clients could
+  call managed CPU/egress metering RPCs by supplying spoofed identity fields.
+  Commit `c70eef2fd1` restricts those metering RPC transforms to authenticated
+  project-host or project principals only.
+- Fixed medium-severity collaborator quota poisoning risk: project-authenticated
+  metering calls could carry a caller-supplied `account_id` and write usage
+  against any collaborator. Commit `36539b21cf` strips `account_id` from
+  project-authenticated metering calls so the server resolves the project usage
+  account. Host-authenticated metering still supports trusted per-user download
+  attribution.
+
+Validation:
+
+- `cd src/packages/conat && pnpm exec jest ./hub/api/index.test.ts`
+- `cd src/packages/conat && pnpm tsc --build`
+- `cd src/packages/server && pnpm exec jest ./launch/kill-switches.test.ts ./membership/project-limits.test.ts ./membership/blob-limits.test.ts ./membership/rootfs-limits.test.ts ./membership/managed-egress-policy.test.ts ./membership/managed-cpu.test.ts ./inter-bay/project-control.start-policy.test.ts ./project-host/control.start.test.ts`
+- `cd src/packages/server && pnpm exec jest ./conat/api/project-backups.test.ts ./conat/api/project-snapshots.test.ts ./conat/api/projects.copy-path-between-projects.test.ts ./conat/api/system.rootfs-catalog-auth.test.ts ./conat/api/agent.kill-switch.test.ts`
+- `cd src/packages/server && pnpm tsc --build`
+- `cd src/packages/project-host && pnpm exec jest ./project-start-admission.test.ts ./raw-network-egress.test.ts ./backup-egress.test.ts ./cpu-usage.test.ts ./managed-egress-residual.test.ts`
+- `cd src/packages/project-host && pnpm tsc --build`
+
+Validation notes:
+
+- The focused server Jest run for backup/snapshot/rootfs/agent tests reported
+  all test suites passing, but also emitted a local PostgreSQL socket
+  `ENOENT /home/user/.cache/cocalc/project/postgres/socket/.s.PGSQL.5432`
+  warning after the pass summary. The command exited successfully, but this
+  should be ignored only as a local environment artifact, not as a substitute
+  for live manual testing.
+
+Manual follow-up:
+
+- As a free/trial account, directly exercise API/CLI attempts for project
+  create, project start, restart after over-CPU, managed file download after
+  over-egress, blob upload after blob quota, rootfs save/select, AI/Codex, and
+  dedicated host creation.
+- Repeat the same attempts immediately after membership downgrade, failed
+  payment/cancellation, package seat removal, course/site-license removal, and
+  payment checkout kill switch enablement.
+- In a browser, verify user-visible over-limit consequences for disk, CPU,
+  egress, and AI match the release UX: Usage & Limits updates promptly,
+  project-start denial is clear, and active-project warnings/pills appear where
+  expected.
+- In a two-account project, verify host-authenticated per-user download
+  attribution still records against the downloader, while project-internal
+  metering calls without host principal resolve to the project usage account.
 
 ## Recommended Execution Order
 
