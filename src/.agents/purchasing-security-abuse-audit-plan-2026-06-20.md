@@ -2,7 +2,40 @@
 
 Date: 2026-06-20
 
-Status: draft execution plan for the final pre-public-release purchasing audit.
+Status: Done, except manual follow up. The release-blocking code audit was
+completed and the findings were fixed in separate commits. The remaining work is
+the manual Stripe test-mode release checklist below.
+
+## Completion Summary
+
+The code audit found and fixed release-blocking purchasing/security issues in
+fresh-auth/API-key handling, package and site-license claim replay/races, refund
+idempotency, Stripe fulfillment idempotency, and public membership tier
+visibility.
+
+Important fix commits:
+
+- `fb7c4c62e8` server/membership: block unpaid package entitlement expansion
+- `5e149f6b89` server/purchases: require fresh auth for purchase RPCs
+- `6ddac21bd8` server/purchases: require funding for subscription renewal
+- `fb9ff76413` server/membership: enforce package tier visibility
+- `347a4c649f` http-api/purchases: require fresh auth for billing mutations
+- `24a496f2a2` server/purchases: verify subscription cancellation ownership
+- `706f842ee0` server/purchases: make credit refunds idempotent
+- `b4f7664d00` http-api/purchases: restrict public membership tier visibility
+- `43cf4d5924` server/membership: serialize package seat assignments
+- `945a568e02` server/membership: require bound external claim tokens
+- `086d7738e3` http-api/stripe: reject API keys for checkout creation
+- `71460fd875` server/stripe: make subscription payment fulfillment idempotent
+- `173e4ec8f2` server/team-license: make Stripe renewal fulfillment idempotent
+- `845ab71357` server/membership: make package payment fulfillment idempotent
+- `f96b05b582` http-api/stripe: reject API keys for subscription payment
+  creation
+
+Validation included focused server and HTTP API tests for the fixed surfaces plus
+package builds/typechecks. Manual UI/Stripe test-mode validation remains
+required before release because it covers end-to-end payment-provider behavior,
+browser UX, and operational expectations that static analysis cannot prove.
 
 ## Context
 
