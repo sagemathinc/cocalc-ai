@@ -3,12 +3,15 @@ We import and export from here, so we can put some wrapping around these.
 */
 
 export { z } from "zod";
+import type { Request, Response } from "express";
 import {
   apiRoute as apiRoute0,
   apiRouteOperation as apiRouteOperation0,
 } from "next-rest-framework";
 
-export function apiRoute(obj) {
+type ApiHandler = (req: Request, res: Response) => any;
+
+export function apiRoute(obj): ApiHandler {
   if (
     process.env.NODE_ENV != "production" &&
     process.env.COCALC_DISABLE_API_VALIDATION != "yes"
@@ -17,18 +20,38 @@ export function apiRoute(obj) {
     return apiRoute0(obj);
   } else {
     // this IGNORES all validation etc and just uses the original handler,
-    // thus completely skipping next-rest-framework.
+    // thus completely skipping next-rest-framework validation.
     // NOTE: We are assuming there is at most one handler defined per route!
     // That is the case in the current codebase.  I.e., our current handler
     // function internally handles all of POST, GET, etc. in one function,
     // and apiRoute is only called with one distinct handler.
     for (const k in obj) {
-      return obj[k].handler;
+      return methodCheckedHandler(obj[k]);
     }
   }
+  throw new Error("apiRoute requires at least one operation");
 }
 
 export { apiRouteOperation0 as apiRouteOperation };
+
+function methodCheckedHandler(operation: {
+  method?: string;
+  handler: ApiHandler;
+}): ApiHandler {
+  const expected = operation.method?.toUpperCase();
+  const handler = operation.handler;
+  if (!expected) {
+    return handler;
+  }
+  return (req: Request, res: Response) => {
+    if (`${req.method ?? ""}`.toUpperCase() !== expected) {
+      res.setHeader("Allow", expected);
+      res.status(405).json({ error: "method_not_allowed" });
+      return;
+    }
+    return handler(req, res);
+  };
+}
 
 /*
 // When we want to check validation in production and log
