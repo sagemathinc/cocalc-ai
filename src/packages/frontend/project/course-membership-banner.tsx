@@ -261,7 +261,7 @@ export function CourseMembershipBanner({ project_id }: { project_id: string }) {
                     .
                   </>
                 )}{" "}
-                Purchase the course membership to keep using {courseTitle}.
+                Purchase the course membership to keep using this course.
               </span>
               <Space wrap>
                 <Tag color={access.status === "blocked" ? "red" : "gold"}>

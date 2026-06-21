@@ -1,4 +1,16 @@
-import { Alert, Card, Radio, Select, Space, Spin, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  DatePicker,
+  Popover,
+  Radio,
+  Select,
+  Space,
+  Spin,
+  Typography,
+} from "antd";
+import dayjs, { type Dayjs } from "dayjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -106,6 +118,15 @@ export default function StudentPay({ actions, settings, project_id }) {
   const selectedTierId = `${settings?.get("required_membership_class") ?? ""}`;
   const selectedTier =
     courseTiers.find((tier) => tier.id === selectedTierId) ?? null;
+  const courseStartDateString = `${
+    settings?.get("student_membership_required_at") ?? ""
+  }`;
+  const courseStartDate = dayjs(courseStartDateString);
+  const selectedGraceDays = Number(
+    settings?.get("student_membership_grace_days") ??
+      selectedTier?.course_grace_days ??
+      DEFAULT_GRACE_DAYS,
+  );
   const tierById = useMemo(() => {
     return new Map(tiers.map((tier) => [tier.id, tier]));
   }, [tiers]);
@@ -189,6 +210,18 @@ export default function StudentPay({ actions, settings, project_id }) {
     });
   }
 
+  function setCourseStartDate(value: Dayjs | null) {
+    actions.configuration.set_course_membership({
+      required_membership_class: selectedTierId,
+      student_membership_required_at: value
+        ? value.startOf("day").toISOString()
+        : "",
+      student_membership_grace_days: Number.isFinite(selectedGraceDays)
+        ? selectedGraceDays
+        : DEFAULT_GRACE_DAYS,
+    });
+  }
+
   function setPayChoice(value: CoursePayChoice) {
     actions.configuration.set_pay_choice(value, true);
     actions.configuration.configure_all_projects();
@@ -248,12 +281,36 @@ export default function StudentPay({ actions, settings, project_id }) {
               <Text type="secondary">
                 {currency(Number(selectedTier.course_price ?? 0))} for{" "}
                 {Number(selectedTier.course_duration_days ?? 0)} days per
-                student. The payment deadline and any free-trial period come
-                from this membership tier.
+                student.
+              </Text>
+              <Text type="secondary">
+                Grace period:{" "}
+                <Text strong>
+                  {Number.isFinite(selectedGraceDays)
+                    ? selectedGraceDays
+                    : DEFAULT_GRACE_DAYS}{" "}
+                  days after the course start date
+                </Text>
+                .
               </Text>
               <MembershipTierBenefits compact tier={selectedTier} />
             </Space>
           )}
+          <div>
+            <div style={{ marginBottom: "6px", fontWeight: 600 }}>
+              Course start date
+            </div>
+            <DatePicker
+              disabled={!selectedTier}
+              style={{ width: "100%" }}
+              value={courseStartDate.isValid() ? courseStartDate : null}
+              onChange={setCourseStartDate}
+            />
+            <Text type="secondary">
+              Student-pay grace days are counted from this date. Set this to the
+              first day students should have full course access.
+            </Text>
+          </div>
           <div>
             <div style={{ marginBottom: "6px", fontWeight: 600 }}>
               Who pays?
@@ -273,12 +330,33 @@ export default function StudentPay({ actions, settings, project_id }) {
                 <Radio value="institute" disabled={!selectedTier}>
                   Institute or instructor pays directly
                 </Radio>
-                <Radio
-                  value="site_license"
-                  disabled={!selectedTier || !matchingSiteLicense}
-                >
-                  Site license
-                </Radio>
+                <Space size="small">
+                  <Radio
+                    value="site_license"
+                    disabled={!selectedTier || !matchingSiteLicense}
+                  >
+                    Site license
+                  </Radio>
+                  {selectedTier && !matchingSiteLicense ? (
+                    <Popover
+                      title="No matching site license found"
+                      content={
+                        <div style={{ maxWidth: 360 }}>
+                          A site license is an institution-managed membership
+                          pool that can cover students automatically. Students
+                          can still pay directly, or the instructor can buy
+                          course seats. If a site license is expected, verify
+                          the instructor email domain and confirm the license
+                          has available seats.
+                        </div>
+                      }
+                    >
+                      <Button type="link" size="small" style={{ padding: 0 }}>
+                        <strong>No matching site license found</strong>
+                      </Button>
+                    </Popover>
+                  ) : null}
+                </Space>
               </Space>
             </Radio.Group>
           </div>
@@ -297,13 +375,6 @@ export default function StudentPay({ actions, settings, project_id }) {
                   other course payment mode has been chosen.
                 </>
               }
-            />
-          ) : selectedTier ? (
-            <Alert
-              type="info"
-              showIcon
-              title="No matching site license found"
-              description="Students can still pay directly or the instructor can buy course seats. If a site license is expected, verify the instructor email domain and confirm the site license has available seats."
             />
           ) : null}
           <InstitutePaySection

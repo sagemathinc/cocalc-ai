@@ -110,10 +110,12 @@ export class ConfigurationActions {
   // student project so project-level access checks see the current course state.
   set_course_membership = async ({
     required_membership_class,
+    student_membership_required_at,
     student_membership_grace_days,
     course_ends_at,
   }: {
     required_membership_class?: string;
+    student_membership_required_at?: Date | string | null;
     student_membership_grace_days?: number;
     course_ends_at?: Date | string | null;
   }) => {
@@ -126,7 +128,10 @@ export class ConfigurationActions {
       required_membership_class: required_membership_class?.trim() || "",
       student_membership_grace_days,
       student_membership_required_at:
-        existingRequiredAt || new Date().toISOString(),
+        student_membership_required_at instanceof Date
+          ? student_membership_required_at.toISOString()
+          : (student_membership_required_at ?? existingRequiredAt) ||
+            new Date().toISOString(),
       ...(course_ends_at !== undefined
         ? {
             course_ends_at:
