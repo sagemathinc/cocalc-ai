@@ -123,7 +123,7 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     startEntryId: "teaching.course-workflow",
     summary:
       "Run courses with assignments, student projects, notebooks, and grading workflows.",
-    workflows: ["Courses", "Assignments", "Grading"],
+    workflows: ["Courses", "Student pay", "Assignments", "Grading"],
   },
   {
     category: "Docs",

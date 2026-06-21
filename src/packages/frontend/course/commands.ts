@@ -220,13 +220,16 @@ export const COMMANDS: { [name: string]: Command } = {
     icon: "gears",
     label: defineMessage({
       id: "course.commands.upgrades.label",
-      defaultMessage: "Configure Upgrades (Student or Instructor Pay)",
+      defaultMessage: "Course Payment Options",
     }),
-    button: labels.upgrades,
+    button: defineMessage({
+      id: "course.commands.upgrades.button",
+      defaultMessage: "Payment",
+    }),
     title: defineMessage({
       id: "course.commands.upgrades.tooltip",
       defaultMessage:
-        "Use a license to upgrade all projects, or require your students to purchase a specific license.",
+        "Configure student pay, instructor-paid seats, or site license payment for this course.",
     }),
     onClick: ({ props }) => {
       const { actions } = props;

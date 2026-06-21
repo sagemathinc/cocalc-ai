@@ -101,6 +101,7 @@ const DOCS_ENTRY_IDS = [
   "files.timetravel",
   "files.git",
   "teaching.course-workflow",
+  "teaching.student-pay",
   "teaching.create-assignment",
   "teaching.nbgrader",
   "ai.codex-chat",

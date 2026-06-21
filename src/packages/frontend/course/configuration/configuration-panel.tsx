@@ -116,23 +116,7 @@ export function ConfigurationPanel({
 
 export function UpgradeConfiguration({ settings, actions, project_id }) {
   return (
-    <Card
-      title={
-        <>
-          <Icon name="gears" />{" "}
-          <FormattedMessage
-            id="course.configuration.configure_upgrades.title"
-            defaultMessage={"Configure Upgrades"}
-          />
-        </>
-      }
-    >
-      <StudentPay
-        actions={actions}
-        settings={settings}
-        project_id={project_id}
-      />
-    </Card>
+    <StudentPay actions={actions} settings={settings} project_id={project_id} />
   );
 }
 

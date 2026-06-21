@@ -21,7 +21,7 @@ import {
   MembershipTierBenefits,
   type MembershipTierWithPresentation,
 } from "@cocalc/frontend/account/membership-tier-benefits";
-import { Icon } from "@cocalc/frontend/components";
+import { A, Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
 import { currency } from "@cocalc/util/misc";
@@ -235,7 +235,8 @@ export default function StudentPay({ actions, settings, project_id }) {
           <FormattedMessage
             id="course.student-pay.title"
             defaultMessage={"Course Payment Options"}
-          />
+          />{" "}
+          (<A href="/app-docs/teaching/student-pay">Docs</A>)
         </>
       }
     >

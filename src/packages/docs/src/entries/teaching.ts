@@ -7,6 +7,7 @@ import type { DocsEntry } from "../types";
 import { docsIcon } from "../helpers";
 import {
   COURSE_ASSIGNMENT_BODY,
+  COURSE_STUDENT_PAY_BODY,
   COURSE_WORKFLOW_BODY,
   NBGRADER_BODY,
 } from "../content";
@@ -29,6 +30,26 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
     summary:
       "Run computational courses with student projects, assignments, collection, grading, and feedback.",
     title: "Teach a course",
+  },
+  {
+    audiences: ["agents", "instructors"],
+    body: COURSE_STUDENT_PAY_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.student-pay",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-06-21",
+    noActionReason:
+      "Student pay is configured inside a selected .course file and depends on course-specific membership settings.",
+    searchKeywords:
+      "student pay course payment options grace period course start date site license instructor pays course membership",
+    slug: "teaching/student-pay",
+    status: "ready",
+    summary:
+      "Configure student pay, instructor-paid seats, site licenses, course start dates, and grace periods.",
+    title: "Configure course student pay",
   },
   {
     audiences: ["agents", "instructors"],
