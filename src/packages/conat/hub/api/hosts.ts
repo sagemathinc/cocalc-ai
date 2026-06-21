@@ -138,6 +138,7 @@ export interface HostSpotRecoveryPolicy {
 export interface HostSpotRecoveryState {
   phase: HostSpotRecoveryPhase;
   outage_started_at?: string;
+  last_recovered_at?: string;
   attempt?: number;
   next_retry_at?: string;
   fallback_started_at?: string;

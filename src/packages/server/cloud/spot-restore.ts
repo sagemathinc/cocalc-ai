@@ -213,6 +213,13 @@ export function normalizeSpotRecoveryState(
           ),
         }
       : {}),
+    ...(normalizeIsoTimestamp((value as any).last_recovered_at)
+      ? {
+          last_recovered_at: normalizeIsoTimestamp(
+            (value as any).last_recovered_at,
+          ),
+        }
+      : {}),
     ...(attempt != null ? { attempt } : {}),
     ...(normalizeIsoTimestamp((value as any).next_retry_at)
       ? { next_retry_at: normalizeIsoTimestamp((value as any).next_retry_at) }

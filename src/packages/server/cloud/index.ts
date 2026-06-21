@@ -27,6 +27,7 @@ export {
   shouldAutoRestoreInterruptedSpotHost,
   type ReconcileRunResult,
   classifyCloudOrphanInstances,
+  hasPendingRestoreBlockingWork,
   listCloudOrphanInstances,
   type CloudOrphanInstance,
   bumpReconcile,

@@ -1,5 +1,6 @@
 import {
   classifyCloudOrphanInstances,
+  hasPendingRestoreBlockingWork,
   runReconcileOnce,
 } from "@cocalc/server/cloud";
 import { before, after, getPool } from "@cocalc/server/test";
@@ -12,6 +13,7 @@ afterAll(after);
 
 beforeEach(async () => {
   await getPool().query("DELETE FROM cloud_reconcile_state");
+  await getPool().query("DELETE FROM cloud_vm_work");
 });
 
 describe("cloud reconcile state gating", () => {
@@ -137,6 +139,37 @@ describe("cloud reconcile state gating", () => {
     expect(new Date(rows[0].next_run_at).getTime()).toBe(
       now.getTime() + intervals.idle_ms,
     );
+  });
+});
+
+describe("restore-blocking cloud work", () => {
+  it("does not let auxiliary work block spot restore", async () => {
+    const hostId = "7f79055e-bd4d-4c6e-af83-93cfd8d97d3c";
+    await getPool().query(
+      `
+        INSERT INTO cloud_vm_work (id, vm_id, action, payload, state, locked_at, created_at, updated_at)
+        VALUES
+          ('b0e08d76-f315-4d80-a154-f3e8b86e74bf', $1, 'prepull_rootfs', '{}', 'in_progress', NOW(), NOW(), NOW()),
+          ('d258a2d5-f630-47d8-b211-2615bad7b3a7', $1, 'verify_host_ready', '{}', 'queued', NULL, NOW(), NOW()),
+          ('f0b1a011-205d-469d-89ec-c69c20ebf3e3', $1, 'refresh_runtime', '{}', 'queued', NULL, NOW(), NOW())
+      `,
+      [hostId],
+    );
+
+    await expect(hasPendingRestoreBlockingWork(hostId)).resolves.toBe(false);
+  });
+
+  it("blocks restore while provider lifecycle work is pending", async () => {
+    const hostId = "82efad1f-9dca-4ca7-b431-f28a3f0f8f7b";
+    await getPool().query(
+      `
+        INSERT INTO cloud_vm_work (id, vm_id, action, payload, state, created_at, updated_at)
+        VALUES ('b0a6f3ff-bf15-4396-8068-9216b3fedca5', $1, 'start', '{}', 'queued', NOW(), NOW())
+      `,
+      [hostId],
+    );
+
+    await expect(hasPendingRestoreBlockingWork(hostId)).resolves.toBe(true);
   });
 });
 

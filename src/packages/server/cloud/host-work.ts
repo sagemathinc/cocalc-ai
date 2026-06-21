@@ -56,6 +56,7 @@ const HOST_READY_VERIFY_DELAY_MS = 10_000;
 const HOST_READY_VERIFY_DEADLINE_MS = 10 * 60 * 1000;
 const SPOT_PROBE_STABLE_MS = 5 * 60 * 1000;
 const HOST_ROOTFS_PREPULL_RPC_TIMEOUT_MS = 30 * 60 * 1000;
+const MIN_SPOT_RECOVERY_IDLE_HISTORY_MS = 5 * 60 * 1000;
 
 type ProviderReadyObservation = {
   mapped_status?: "running" | "starting" | "off" | "stopped" | "error";
@@ -573,6 +574,57 @@ function clearVerificationFields(
   const next = { ...state };
   delete next.verification_started_at;
   delete next.verification_deadline_at;
+  return next;
+}
+
+function compactIdleSpotRecoveryState(
+  state: HostSpotRecoveryState | undefined,
+): HostSpotRecoveryState | undefined {
+  if (!state) return state;
+  const next: HostSpotRecoveryState = { phase: "idle" };
+  if (state.last_probe_at) next.last_probe_at = state.last_probe_at;
+  if (state.last_probe_result) next.last_probe_result = state.last_probe_result;
+  if (state.last_probe_error) next.last_probe_error = state.last_probe_error;
+  return next;
+}
+
+function idleRecoveryHistoryIsFresh(
+  state: HostSpotRecoveryState,
+  policy: Required<HostSpotRecoveryPolicy> | undefined,
+  now = new Date(),
+): boolean {
+  if (state.phase !== "idle") return true;
+  if (!state.outage_started_at || !state.last_recovered_at) return false;
+  const recoveredAt = new Date(state.last_recovered_at);
+  if (Number.isNaN(recoveredAt.getTime())) return false;
+  const retentionMs = Math.max(
+    MIN_SPOT_RECOVERY_IDLE_HISTORY_MS,
+    policy ? spotRetryWindowMs(policy) : 0,
+  );
+  return now.getTime() - recoveredAt.getTime() <= retentionMs;
+}
+
+function recoveryStateForStart(
+  state: HostSpotRecoveryState | undefined,
+  policy: Required<HostSpotRecoveryPolicy> | undefined,
+): HostSpotRecoveryState | undefined {
+  if (!state) return state;
+  if (state.phase !== "idle") return state;
+  if (idleRecoveryHistoryIsFresh(state, policy)) return state;
+  return compactIdleSpotRecoveryState(state);
+}
+
+function idleStateAfterSpotRecoverySuccess(
+  state: HostSpotRecoveryState | undefined,
+): HostSpotRecoveryState {
+  const next = compactIdleSpotRecoveryState(state) ?? { phase: "idle" };
+  if (state?.outage_started_at) {
+    next.outage_started_at = state.outage_started_at;
+    next.last_recovered_at = new Date().toISOString();
+  }
+  if (state?.attempt != null) {
+    next.attempt = state.attempt;
+  }
   return next;
 }
 
@@ -1140,7 +1192,10 @@ async function handleStart(row: any) {
   const currentEffectivePricing = effectivePricingModel(row);
   const managedSpotRecovery = isSpotRecoveryManagedHost(row);
   const recoveryPolicy = spotRecoveryPolicy(row);
-  const currentRecoveryState = spotRecoveryState(row);
+  const currentRecoveryState = recoveryStateForStart(
+    spotRecoveryState(row),
+    recoveryPolicy,
+  );
   logger.debug("handleStart: begin", {
     host_id: row.id,
     provider: providerId ?? machine.cloud,
@@ -2297,18 +2352,7 @@ async function handleVerifyHostReady(row: any) {
           });
         }
       } else {
-        const idleState: HostSpotRecoveryState = {
-          phase: "idle",
-          ...(state?.last_probe_at
-            ? { last_probe_at: state.last_probe_at }
-            : {}),
-          ...(state?.last_probe_result
-            ? { last_probe_result: state.last_probe_result }
-            : {}),
-          ...(state?.last_probe_error
-            ? { last_probe_error: state.last_probe_error }
-            : {}),
-        };
+        const idleState = idleStateAfterSpotRecoverySuccess(state);
         const nextMetadata = withPricingAndRecoveryMetadata(
           clearHostLastErrorMetadata(host.metadata),
           {

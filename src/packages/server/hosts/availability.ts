@@ -20,6 +20,11 @@ const MAX_WINDOW_DAYS = 370;
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAINTENANCE_INTERVAL_MS = 60 * 1000;
+const RECONCILE_NUDGE_CATEGORIES = new Set<HostAvailabilityCategory>([
+  "host_stale",
+  "provider_offline",
+  "spot_interruption",
+]);
 
 const logger = getLogger("server:hosts:availability");
 
@@ -255,6 +260,46 @@ export async function recordHostAvailabilityObservation(
   );
 }
 
+function cloudProviderForAvailabilityNudge(
+  row: ProjectHostAvailabilitySnapshot,
+): string | undefined {
+  const provider = `${row.metadata?.machine?.cloud ?? ""}`.trim();
+  if (!provider || provider === "local" || provider === "self-host") {
+    return undefined;
+  }
+  return provider;
+}
+
+function shouldNudgeCloudReconcile(
+  observation: HostAvailabilityObservation,
+): boolean {
+  if (observation.planned) return false;
+  if (!observation.category) return false;
+  return RECONCILE_NUDGE_CATEGORIES.has(observation.category);
+}
+
+async function nudgeCloudReconcile(providers: Set<string>): Promise<void> {
+  const values = Array.from(providers).filter(Boolean);
+  if (!values.length) return;
+  await pool().query(
+    `
+      INSERT INTO cloud_reconcile_state
+        (provider, next_run_at, last_error, updated_at)
+      SELECT provider, NOW(), NULL, NOW()
+      FROM unnest($1::text[]) AS provider
+      ON CONFLICT (provider)
+      DO UPDATE SET
+        next_run_at = LEAST(
+          COALESCE(cloud_reconcile_state.next_run_at, NOW()),
+          NOW()
+        ),
+        last_error = NULL,
+        updated_at = NOW()
+    `,
+    [values],
+  );
+}
+
 export function classifyHostAvailabilitySnapshot(
   row: ProjectHostAvailabilitySnapshot,
   source = "host_snapshot",
@@ -418,9 +463,19 @@ export async function reconcileCurrentHostAvailability({
       LIMIT $1`,
     [Math.max(1, Math.floor(limit))],
   );
+  const nudgeProviders = new Set<string>();
   for (const row of rows) {
-    await recordHostAvailabilityFromSnapshot(row, "availability_maintenance");
+    const observation = classifyHostAvailabilitySnapshot(
+      row,
+      "availability_maintenance",
+    );
+    await recordHostAvailabilityObservation(observation);
+    if (shouldNudgeCloudReconcile(observation)) {
+      const provider = cloudProviderForAvailabilityNudge(row);
+      if (provider) nudgeProviders.add(provider);
+    }
   }
+  await nudgeCloudReconcile(nudgeProviders);
   return rows.length;
 }
 
