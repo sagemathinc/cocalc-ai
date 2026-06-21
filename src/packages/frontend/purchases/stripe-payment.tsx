@@ -966,16 +966,19 @@ function CollectPaymentMethodInner({
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = async () => {
     try {
       setLoading(true);
       setError("");
-      const intent = await createSetupIntent({
-        description: "Add a new payment method.",
-        ...(billingDetails ? { billing_details: billingDetails } : {}),
+      await runFreshAuthAction(async () => {
+        const intent = await createSetupIntent({
+          description: "Add a new payment method.",
+          ...(billingDetails ? { billing_details: billingDetails } : {}),
+        });
+        setSecret(intent);
       });
-      setSecret(intent);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -1002,7 +1005,12 @@ function CollectPaymentMethodInner({
   }
 
   if (loading) {
-    return <BigSpin style={style} tip="Loading payment form..." />;
+    return (
+      <>
+        <BigSpin style={style} tip="Loading payment form..." />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   if (error) {
@@ -1019,7 +1027,12 @@ function CollectPaymentMethodInner({
   }
 
   if (secret == null) {
-    return <BigSpin style={style} tip="Loading payment form..." />;
+    return (
+      <>
+        <BigSpin style={style} tip="Loading payment form..." />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   return (
@@ -1040,6 +1053,7 @@ function CollectPaymentMethodInner({
           setError={setError}
         />
       </Elements>
+      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }
