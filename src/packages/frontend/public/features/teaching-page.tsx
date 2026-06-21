@@ -349,8 +349,9 @@ export default function TeachingFeaturePage({
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Students run real assignments in a shared computing environment
-                that instructors can see into, give feedback on, and recover —
-                with notebooks, code, and data in the same project.
+                that instructors can see into, give feedback on, and recover
+                with TimeTravel, while notebooks, code, and data stay in the
+                same project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 It works beside your existing LMS, so course coordination stays
@@ -411,7 +412,7 @@ export default function TeachingFeaturePage({
                   "Hand out notebooks, scripts, data, LaTeX, and folders.",
                   "Collect and return work with feedback in the same project structure.",
                   "Use nbgrader, manual review, or peer grading when that fits the course.",
-                  "Use project history when instructors or TAs need to understand how work evolved.",
+                  "Use TimeTravel when instructors or TAs need to understand how student work evolved.",
                 ]}
               />
             </Flex>

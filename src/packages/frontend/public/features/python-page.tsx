@@ -403,7 +403,7 @@ function PythonUseCases() {
               accent="#389e0d"
               icon="graduation-cap"
               title="Teaching and teams"
-              body="Shared notebooks, side chat, and TimeTravel let a class or team work from the same Python stack."
+              body="Shared notebooks, visible cursors, side chat, and TimeTravel let a class or team work from the same Python stack."
             />
           </Col>
         </Row>

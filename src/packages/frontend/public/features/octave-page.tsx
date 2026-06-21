@@ -97,9 +97,9 @@ function OctaveFlow() {
               out of sync.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              Project history keeps earlier states close, so a collaborator — or
-              you, weeks later — can reopen a result, see how it was produced,
-              and continue from it.
+              TimeTravel keeps earlier file and notebook states close, so a
+              collaborator — or you, weeks later — can reopen a result, see how
+              it was produced, and continue from it.
             </Paragraph>
           </Flex>
         </Col>
@@ -113,7 +113,11 @@ function OctaveFlow() {
               },
               {
                 icon: "history",
-                label: "Reopen earlier versions from project history",
+                label: "Reopen earlier versions with TimeTravel",
+              },
+              {
+                icon: "jupyter",
+                label: "Use notebooks with real-time collaboration",
               },
               {
                 icon: "sync",

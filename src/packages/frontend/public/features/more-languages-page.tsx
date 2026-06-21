@@ -99,7 +99,10 @@ function MoreLanguagesFit() {
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               Keep the source, generated output, notes, and review context
-              together so collaborators can see how the work was run.
+              together so collaborators can see how the work was run; when the
+              work moves into notebooks or project documents, visible cursors
+              and, for notebooks, shared kernel sessions keep review in the
+              same place.
             </Paragraph>
           </Flex>
         </Col>
@@ -121,7 +124,8 @@ function MoreLanguagesFit() {
               },
               {
                 icon: "users",
-                label: "Share the same project environment with collaborators",
+                label:
+                  "Share live notebooks and project files with collaborators",
               },
             ]}
             title="Project context"

@@ -311,12 +311,14 @@ export default function AIFeaturePage({
                 Because the thread lives in the project, a collaborator or
                 reviewer can open it later, read the exact diff and discussion,
                 and decide what to keep — without rebuilding the context the
-                agent had.
+                agent had. When notebooks are involved, that review can happen
+                in the same collaborative notebook state, with visible cursors
+                and shared kernel sessions.
               </Paragraph>
               <BulletList
                 items={[
                   "A teammate picks up a long-running computation and continues it from where the agent stopped.",
-                  "A reviewer checks notebook results and the diff before the change is handed on.",
+                  "A reviewer checks notebook results, TimeTravel history, and the diff before the change is handed on.",
                   "Mixed work — code, notebooks, and shell steps — stays together for the next person.",
                 ]}
               />

@@ -246,7 +246,7 @@ export default function SageFeaturePage({
               <Paragraph style={{ margin: 0 }}>
                 Use SageMath for computational mathematics while keeping the
                 surrounding work close enough for collaborators, reviewers, and
-                students to follow.
+                students to follow in real time.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -285,6 +285,7 @@ export default function SageFeaturePage({
               <BulletList
                 items={[
                   "Keep Sage notebooks, source files, logs, and notes together in one project.",
+                  "Use visible cursors and shared kernel sessions when several people review the same computation in a notebook.",
                   "Run package tools, scripts, and generated outputs from the project terminal.",
                   "Continue a long-running computation later — its output and history stay with the work.",
                   "Let a collaborator or Codex inspect an error with the surrounding context.",

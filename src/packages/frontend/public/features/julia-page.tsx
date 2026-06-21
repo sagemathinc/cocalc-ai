@@ -97,12 +97,14 @@ function JuliaProjectFit() {
               Julia's own editors and notebook tools are the right choice when
               the work is mainly Julia. CoCalc earns its place when Julia is one
               part of a larger research or engineering project, so collaborators
-              and reviewers work from the same files, environment, and history.
+              and reviewers work from the same files, environment, TimeTravel
+              history, and live notebook state.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               That fits shared package environments, models that mix Julia with
-              Python or R, and team review — with teaching courses a natural
-              extension, not the only use.
+              Python or R, and team review with real-time editing and visible
+              cursors — with teaching courses a natural extension, not the only
+              use.
             </Paragraph>
           </Flex>
         </Col>
@@ -112,6 +114,10 @@ function JuliaProjectFit() {
             items={[
               { icon: "jupyter", label: "Collaborative Jupyter notebooks" },
               { icon: "layout", label: "Pluto for reactive notebooks" },
+              {
+                icon: "history",
+                label: "TimeTravel for source and notebook history",
+              },
               {
                 icon: "terminal",
                 label: "Julia packages and scripts in a shell",

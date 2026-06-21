@@ -156,8 +156,9 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
         <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
           CoCalc has one project workspace model across hosted, local, single-VM
           appliance, and private deployment options. Files, notebooks,
-          terminals, chats, and agent context stay with the project; the first
-          decision is where that workspace should run and who will operate it.
+          terminals, chats, TimeTravel history, and agent context stay with the
+          project; the first decision is where that workspace should run and who
+          will operate it.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("features/compare")}>
@@ -364,7 +365,7 @@ function ProductSharedProjectNote() {
       <Text style={{ color: PUBLIC_COLORS.mutedText }}>
         The product path changes where CoCalc runs and who operates it; the
         project remains the working context for files, notebooks, terminals,
-        chats, and agent context.
+        chats, TimeTravel recovery, real-time collaboration, and agent context.
       </Text>
     </div>
   );

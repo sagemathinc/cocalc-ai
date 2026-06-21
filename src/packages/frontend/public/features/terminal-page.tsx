@@ -373,13 +373,16 @@ export default function TerminalFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 That file anchor makes terminal work part of the project context
-                instead of a private browser tab that vanishes from view.
+                instead of a private browser tab that vanishes from view; the
+                scripts, notes, and other project files around it stay available
+                for TimeTravel review.
               </Paragraph>
               <BulletList
                 items={[
                   "The terminal path gives humans and agents a stable target.",
                   "The working directory follows the file location.",
                   "Terminal history is tied to the path where the session starts.",
+                  "Project files created from the shell can be reviewed with TimeTravel.",
                 ]}
               />
             </Flex>

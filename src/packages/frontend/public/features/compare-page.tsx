@@ -24,7 +24,7 @@ const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
 const DECISION_ROWS = [
   {
     cocalc:
-      "Files, notebooks, terminals, documents, output, discussion, and recovery should stay with the project.",
+      "Files, notebooks, terminals, documents, output, discussion, and TimeTravel recovery should stay with the project.",
     other:
       "Fine to keep separate when those artifacts already live somewhere stable.",
     question: "What needs to stay together?",
@@ -289,8 +289,8 @@ export default function CompareFeaturePage({
             >
               CoCalc is worth evaluating when the work is larger than one
               notebook, dashboard, or editor. It helps when people need to
-              review active work, recover context, and choose where the
-              workspace runs.
+              review active work, recover context with TimeTravel, and choose
+              where the workspace runs.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -304,7 +304,10 @@ export default function CompareFeaturePage({
               Quick read
             </Text>
             <ul className="cocalc-compare-list">
-              <li>Best fit: work that needs review, handoff, and recovery.</li>
+              <li>
+                Best fit: work that needs review, handoff, and TimeTravel
+                recovery.
+              </li>
               <li>Better elsewhere: one-off notebooks or isolated reports.</li>
               <li>Next question: who operates the workspace?</li>
             </ul>

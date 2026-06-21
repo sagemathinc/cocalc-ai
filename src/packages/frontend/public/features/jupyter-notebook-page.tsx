@@ -298,9 +298,9 @@ export default function JupyterNotebookFeaturePage({
         </Col>
         <Col xs={24} md={8}>
           <StoryCard accent="#389e0d" icon="users" title="Work together live">
-            Multiple people can edit, discuss, and inspect the same notebook.
-            Collaboration stays in the document instead of becoming a
-            screen-share workaround.
+            Multiple people can edit with visible cursors, discuss the work, and
+            share kernel sessions in the same notebook. Collaboration stays in
+            the document instead of becoming a screen-share workaround.
           </StoryCard>
         </Col>
         <Col xs={24} md={8}>
@@ -309,8 +309,9 @@ export default function JupyterNotebookFeaturePage({
             icon="history"
             title="Review and recover changes"
           >
-            Notebook edits are recorded with authorship, so teams can recover
-            work, review results, and understand how an analysis evolved.
+            TimeTravel records notebook edits with authorship, so teams can
+            recover work, review results, and understand how an analysis
+            evolved.
           </StoryCard>
         </Col>
       </Row>
@@ -329,7 +330,7 @@ export default function JupyterNotebookFeaturePage({
             items={[
               "Use terminal and Linux tools without moving the notebook elsewhere.",
               "Keep data files, scripts, figures, and paper drafts near the computation.",
-              "Bring collaborators or instructors into the same working state.",
+              "Bring collaborators or instructors into the same working state, with visible cursors and shared kernel sessions.",
             ]}
           />
           <Flex wrap gap={12}>

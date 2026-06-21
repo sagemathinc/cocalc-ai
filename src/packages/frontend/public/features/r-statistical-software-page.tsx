@@ -98,12 +98,14 @@ function RProjectFitBand() {
               mainly R editing. CoCalc earns its place when R is one part of a
               larger research or engineering project — notebooks, Python, LaTeX,
               data, and shared files in one place, so collaborators and
-              reviewers work from the same state.
+              reviewers work from the same state with visible cursors in
+              collaborative documents.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               That fits reproducible research reports, statistical work that
-              mixes R with Python or shell tools, and team review — with
-              teaching courses a natural extension, not the only use.
+              mixes R with Python or shell tools, shared notebook review, and
+              team handoff — with teaching courses a natural extension, not the
+              only use.
             </Paragraph>
           </Flex>
         </Col>
@@ -120,6 +122,10 @@ function RProjectFitBand() {
               {
                 icon: "graduation-cap",
                 label: "Teach in shared project environments",
+              },
+              {
+                icon: "jupyter",
+                label: "Review notebooks with shared kernel sessions",
               },
             ]}
             title="Project context"

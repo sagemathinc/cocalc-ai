@@ -654,6 +654,30 @@ Plus/Star/Launchpad`).
   visual slice: 30/32 images changed, but only in shadow pixels (max RGB delta 3-4, RMS <= 0.704);
   side-by-side review of the highest-delta pages read as visually equivalent/no layout shift. No
   public copy or product claims changed. No PR.
+- **START 2026-06-20 22:25 PDT:** Starting Slice 3 only: name under-claimed differentiators
+  TimeTravel and real-time collaboration in public copy. Read Claude status and the systematic
+  audit; Claude says 2a/2b/2c are clean and 2d/2e are deferred. Verified preview owner remains
+  synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Source grounding checked before
+  edits: `src/packages/docs/src/content/files.ts` documents TimeTravel recovery/review; Jupyter docs
+  name realtime collaboration and detailed notebook TimeTravel; `docs/sync.md` documents
+  presence/cursors; `src/packages/jupyter/redux/sync.ts` has `cursors: true`; the existing feature
+  catalog already says shared kernel sessions and visible cursors for Jupyter. Scope: jupyter,
+  teaching, terminal, julia, octave, products shared project note, compare, pricing lead, and AI
+  review copy. Out of scope: protected home, metrics/performance/scale claims, pricing dollars,
+  compliance/policy, token work, palette/type visual pass, pitch docs, and the untracked
+  dedicated-compute draft. No PR.
+- **END 2026-06-20 22:45 PDT:** Slice 3 copy pass complete. Touched only public feature/product/
+  pricing copy plus this ledger. Named TimeTravel in recovery/history/review contexts and made
+  notebook collaboration more concrete with visible cursors/shared kernel sessions where source-
+  grounded. Kept terminal TimeTravel wording bounded to surrounding project files, not terminal
+  scrollback. Validation: `public/features/__tests__/app.test.tsx` 91/91 passed;
+  `public/__tests__/public-site-browser-qa-script.test.ts` 5/5 passed; `git diff --check` clean;
+  `pnpm lint:frontend` clean; `pnpm -C src/packages/static build:dev` passed; live browser QA on
+  `/features/ai`, `/features/compare`, `/features/julia`, `/features/jupyter-notebook`,
+  `/features/more-languages`, `/features/octave`, `/features/python`,
+  `/features/r-statistical-software`, `/features/sage`, `/features/teaching`,
+  `/features/terminal`, `/pricing`, and `/products` passed 484 assertions across desktop/mobile.
+  No metrics/performance/pricing/compliance claims added; no protected home edits; no PR.
 
 ### Codex — platform-UI thread
 
