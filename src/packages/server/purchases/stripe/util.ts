@@ -50,6 +50,40 @@ async function createStripeCustomer(account_id: string): Promise<string> {
   return id;
 }
 
+function stripeSearchString(value: string): string {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+async function findStripeCustomerIdByAccountMetadata(
+  account_id: string,
+): Promise<string | undefined> {
+  const stripe = await getConn();
+  try {
+    const result = await stripe.customers.search({
+      query: `metadata['account_id']:${stripeSearchString(account_id)}`,
+      limit: 1,
+    });
+    const customer = result.data.find((customer) => !customer.deleted);
+    const id = `${customer?.id ?? ""}`.trim();
+    if (!id) {
+      return;
+    }
+    logger.debug(
+      "getStripeCustomerId",
+      "recovered customer from Stripe metadata",
+      { account_id, id },
+    );
+    await setStripeCustomerId(account_id, id);
+    return id;
+  } catch (err) {
+    logger.warn("unable to search Stripe customers by account metadata", {
+      account_id,
+      err,
+    });
+    return;
+  }
+}
+
 export async function getStripeCustomerId({
   account_id,
   create,
@@ -70,6 +104,11 @@ export async function getStripeCustomerId({
       stripe_customer_id,
     );
     return stripe_customer_id;
+  }
+  const recovered_customer_id =
+    await findStripeCustomerIdByAccountMetadata(account_id);
+  if (recovered_customer_id) {
+    return recovered_customer_id;
   }
   if (create) {
     return await createStripeCustomer(account_id);

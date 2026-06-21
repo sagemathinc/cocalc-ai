@@ -63,8 +63,6 @@ function hasUsableBillingDetails(customer: any): boolean {
   const address = customer?.address ?? {};
   return (
     !!`${customer?.name ?? ""}`.trim() &&
-    !!`${address.line1 ?? ""}`.trim() &&
-    !!`${address.city ?? ""}`.trim() &&
     !!`${address.country ?? ""}`.trim() &&
     !!`${address.postal_code ?? ""}`.trim()
   );
