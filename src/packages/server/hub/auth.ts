@@ -202,6 +202,9 @@ function googleOidcFreshAuthPopupHtml({
     ok,
     error: ok ? undefined : `${error instanceof Error ? error.message : error}`,
   };
+  const message = ok
+    ? "Google verification complete. You may close this window."
+    : `Google verification failed: ${payload.error}`;
   return `<!doctype html>
 <html>
   <head><meta charset="utf-8"><title>Google verification</title></head>
@@ -216,7 +219,7 @@ function googleOidcFreshAuthPopupHtml({
         window.close();
       })();
     </script>
-    ${ok ? "Google verification complete. You may close this window." : "Google verification failed. You may close this window."}
+    ${escapeHtml(message)}
   </body>
 </html>`;
 }
@@ -1167,19 +1170,25 @@ export class PassportManager {
   }: {
     claims: GoogleIdTokenClaims;
     savedState: GoogleOidcState;
-  }): void {
+  }): "auth_time" | "iat_fallback" {
     const authTime = claims.auth_time;
-    if (typeof authTime !== "number") {
-      throw new Error("Google did not return a fresh authentication time.");
+    const checkedTime =
+      typeof authTime === "number" ? authTime : (claims.iat ?? 0);
+    const source = typeof authTime === "number" ? "auth_time" : "iat_fallback";
+    if (source === "iat_fallback") {
+      logger.warn(
+        "Google OIDC fresh-auth ID token did not include auth_time; using recent iat fallback",
+      );
     }
     const startedAtSeconds = Math.floor((savedState.createdAt ?? 0) / 1000);
     const nowSeconds = Math.floor(Date.now() / 1000);
-    if (authTime < startedAtSeconds - GOOGLE_OIDC_CLOCK_SKEW_SECONDS) {
+    if (checkedTime < startedAtSeconds - GOOGLE_OIDC_CLOCK_SKEW_SECONDS) {
       throw new Error("Google authentication is older than this request.");
     }
-    if (authTime > nowSeconds + GOOGLE_OIDC_CLOCK_SKEW_SECONDS) {
+    if (checkedTime > nowSeconds + GOOGLE_OIDC_CLOCK_SKEW_SECONDS) {
       throw new Error("Google authentication time is in the future.");
     }
+    return source;
   }
 
   private async finishGoogleOidcFreshAuth({
@@ -1206,7 +1215,10 @@ export class PassportManager {
       throw new Error("Google fresh-auth browser session changed.");
     }
     await getCurrentAuthSession({ req, account_id });
-    this.assertRecentGoogleAuthTime({ claims, savedState });
+    const googleFreshAuthTimeSource = this.assertRecentGoogleAuthTime({
+      claims,
+      savedState,
+    });
     await this.assertGoogleOidcPassportBelongsToAccount({
       account_id,
       googleSub: claims.sub,
@@ -1227,6 +1239,9 @@ export class PassportManager {
         google_oidc_fresh_auth: {
           email: claims.email,
           hd: claims.hd ?? null,
+          auth_time: claims.auth_time ?? null,
+          iat: claims.iat ?? null,
+          time_source: googleFreshAuthTimeSource,
           verified_at: new Date().toISOString(),
         },
       },
