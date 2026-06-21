@@ -11,6 +11,7 @@ import {
   type SecondFactorMethod,
 } from "@cocalc/frontend/auth/api";
 import { freshAuthWithPasskey } from "@cocalc/frontend/auth/passkeys";
+import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import {
   getSecondFactorPlaceholder,
   inferSecondFactorInputMethod,
@@ -77,6 +78,7 @@ export function FreshAuthModal({
   const [status, setStatus] = useState<FreshAuthStatus | null>(null);
   const inferredMethod = inferSecondFactorInputMethod(code);
   const expectedEmailAddress = getFreshAuthEmail(status);
+  const authOrigin = origin ?? getControlPlaneOrigin();
   const emailMismatch =
     expectedEmailAddress.length > 0 &&
     normalizeFreshAuthEmail(emailAddress) !==
@@ -95,7 +97,7 @@ export function FreshAuthModal({
       try {
         const next = await postAuthApi<FreshAuthStatus>({
           endpoint: "auth/fresh-auth-status",
-          origin,
+          origin: authOrigin,
           body: {},
         });
         if (!cancelled) {
@@ -116,7 +118,7 @@ export function FreshAuthModal({
     return () => {
       cancelled = true;
     };
-  }, [open, origin]);
+  }, [authOrigin, open]);
 
   useEffect(() => {
     if (factorEnabled !== true || (!usePasskey && inferredMethod !== "totp")) {
@@ -138,12 +140,12 @@ export function FreshAuthModal({
       if (requireSecondFactor && usePasskey) {
         await freshAuthWithPasskey({
           duration: extended ? "extended" : "default",
-          origin,
+          origin: authOrigin,
         });
       } else {
         await postAuthApi({
           endpoint: "auth/fresh-auth",
-          origin,
+          origin: authOrigin,
           body: {
             current_password: currentPassword,
             ...(requireSecondFactor

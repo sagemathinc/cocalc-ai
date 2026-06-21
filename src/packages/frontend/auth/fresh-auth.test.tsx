@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { postAuthApi } from "@cocalc/frontend/auth/api";
+import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 
 import { FreshAuthModal, useFreshAuthAction } from "./fresh-auth";
 
@@ -80,6 +81,10 @@ jest.mock("@cocalc/frontend/auth/api", () => ({
   postAuthApi: jest.fn(),
 }));
 
+jest.mock("@cocalc/frontend/control-plane-origin", () => ({
+  getControlPlaneOrigin: jest.fn(),
+}));
+
 jest.mock("@cocalc/frontend/auth/passkeys", () => ({
   freshAuthWithPasskey: jest.fn(),
 }));
@@ -87,6 +92,8 @@ jest.mock("@cocalc/frontend/auth/passkeys", () => ({
 describe("FreshAuthModal", () => {
   beforeEach(() => {
     jest.mocked(postAuthApi).mockReset();
+    jest.mocked(getControlPlaneOrigin).mockReset();
+    jest.mocked(getControlPlaneOrigin).mockReturnValue(undefined);
   });
 
   it("does not call onCancel after successful verification", async () => {
@@ -120,6 +127,56 @@ describe("FreshAuthModal", () => {
       expect(onSuccess).toHaveBeenCalledTimes(1);
     });
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("uses the control-plane origin for fresh-auth calls by default", async () => {
+    jest
+      .mocked(getControlPlaneOrigin)
+      .mockReturnValue("https://bay-2-lite.example.com");
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return {
+          mode: "account",
+          enabled: false,
+          email_address: "user@example.com",
+        };
+      }
+      if (endpoint === "auth/fresh-auth") {
+        return {};
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    });
+
+    render(
+      <FreshAuthModal
+        open
+        onCancel={jest.fn()}
+        onSuccess={jest.fn(async () => undefined)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() => {
+      expect(postAuthApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "auth/fresh-auth",
+          origin: "https://bay-2-lite.example.com",
+        }),
+      );
+    });
+    expect(postAuthApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "auth/fresh-auth-status",
+        origin: "https://bay-2-lite.example.com",
+      }),
+    );
   });
 
   it("renders above ordinary confirmation modals", async () => {
@@ -174,6 +231,8 @@ function FreshAuthActionHarness({ action }: { action: () => Promise<void> }) {
 describe("useFreshAuthAction", () => {
   beforeEach(() => {
     jest.mocked(postAuthApi).mockReset();
+    jest.mocked(getControlPlaneOrigin).mockReset();
+    jest.mocked(getControlPlaneOrigin).mockReturnValue(undefined);
   });
 
   it("keeps the action promise pending through fresh auth and retry failure", async () => {
