@@ -1,6 +1,6 @@
 import { before, after, fs } from "./setup";
 import { isValidUUID } from "@cocalc/util/misc";
-import { RUSTIC } from "@cocalc/file-server/btrfs/subvolume-rustic";
+import { RUSTIC } from "../subvolume-rustic";
 
 beforeAll(before);
 

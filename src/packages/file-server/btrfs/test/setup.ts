@@ -1,7 +1,4 @@
-import {
-  filesystem,
-  type Filesystem,
-} from "@cocalc/file-server/btrfs/filesystem";
+import { filesystem, type Filesystem } from "../filesystem";
 import { chmod, mkdtemp, mkdir, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "path";

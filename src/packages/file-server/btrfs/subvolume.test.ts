@@ -62,4 +62,27 @@ project-1
 
     expect(btrfsMock).toHaveBeenCalledTimes(2);
   });
+
+  it("can bypass the subvolume show cache for freshness-sensitive fields", async () => {
+    btrfsMock
+      .mockResolvedValueOnce({
+        stdout: "  Generation: 10\n",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: "  Generation: 11\n",
+        stderr: "",
+      });
+
+    await expect(
+      getSubvolumeField("/mnt/test/project-1", "Generation"),
+    ).resolves.toBe("10");
+    await expect(
+      getSubvolumeField("/mnt/test/project-1", "Generation", {
+        cache: false,
+      }),
+    ).resolves.toBe("11");
+
+    expect(btrfsMock).toHaveBeenCalledTimes(2);
+  });
 });
