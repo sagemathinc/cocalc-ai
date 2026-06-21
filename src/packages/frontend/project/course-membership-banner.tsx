@@ -81,6 +81,18 @@ function toTime(value?: Date | string | null): number {
   return Number.isFinite(time) ? time : 0;
 }
 
+function formatExpirationDate(value?: Date | string | null): string {
+  const time = toTime(value);
+  if (!time) {
+    return "";
+  }
+  return new Date(time).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function makeProduct({
   access,
   project_id,
@@ -143,7 +155,6 @@ function latestMatchingDirectStudentPackage({
     .filter((membershipPackage) =>
       isMatchingDirectStudentPackage({ membershipPackage, product }),
     )
-    .filter((membershipPackage) => membershipPackage.available_seat_count > 0)
     .sort(
       (left, right) =>
         toTime(right.updated) - toTime(left.updated) ||
@@ -354,6 +365,9 @@ function StudentCoursePurchaseModal({
   const [place, setPlace] = useState<"checkout" | "processing" | "done">(
     "checkout",
   );
+  const [successExpiresAt, setSuccessExpiresAt] = useState<
+    Date | string | null
+  >(null);
   const numPaymentsRef = useRef<number | null>(null);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
@@ -365,6 +379,7 @@ function StudentCoursePurchaseModal({
     setQuote(null);
     setActionError("");
     setQuoteError("");
+    setSuccessExpiresAt(null);
   }, [open]);
 
   useEffect(() => {
@@ -437,7 +452,7 @@ function StudentCoursePurchaseModal({
     });
   }
 
-  async function assignLatestPurchasedPackage() {
+  async function assignLatestPurchasedPackage(): Promise<MembershipPackageDetails> {
     if (product == null) {
       throw Error("course membership purchase is not available");
     }
@@ -450,6 +465,15 @@ function StudentCoursePurchaseModal({
       throw Error("purchased course membership package not found yet");
     }
     await assignSelf(membershipPackage.id);
+    return membershipPackage;
+  }
+
+  async function finishAssignedCourseMembership(
+    expiresAt?: Date | string | null,
+  ) {
+    await onPurchased();
+    setSuccessExpiresAt(expiresAt ?? quote?.expires_at ?? null);
+    setPlace("done");
   }
 
   async function completePurchase() {
@@ -462,8 +486,7 @@ function StudentCoursePurchaseModal({
       const completed = await runFreshAuthAction(async () => {
         const { package_id } = await purchaseMembershipPackage(product);
         await assignSelf(package_id);
-        await onPurchased();
-        setPlace("done");
+        await finishAssignedCourseMembership(quote?.expires_at);
       });
       if (!completed) {
         return;
@@ -479,14 +502,11 @@ function StudentCoursePurchaseModal({
     setActionError("");
     setDisabled(true);
     try {
-      const { count } = await processPaymentIntents();
-      if (count > 0) {
-        await runFreshAuthAction(async () => {
-          await assignLatestPurchasedPackage();
-          await onPurchased();
-          setPlace("done");
-        });
-      }
+      await processPaymentIntents();
+      await runFreshAuthAction(async () => {
+        const membershipPackage = await assignLatestPurchasedPackage();
+        await finishAssignedCourseMembership(membershipPackage.expires_at);
+      });
     } catch (err) {
       setActionError(`${err}`);
     } finally {
@@ -602,8 +622,27 @@ function StudentCoursePurchaseModal({
             <Alert
               type="success"
               showIcon
-              title="Course membership active"
-              description="This course project is now covered by your purchased course membership."
+              title="Thank you - your course membership is active"
+              description={
+                <Space direction="vertical" size="small">
+                  <Text>
+                    Your payment is complete, and this course is now covered by
+                    your {getRequiredMembershipLabel(access)} membership.
+                  </Text>
+                  {successExpiresAt ? (
+                    <Text>
+                      This membership lasts until{" "}
+                      <Text strong>
+                        {formatExpirationDate(successExpiresAt)}
+                      </Text>
+                      .
+                    </Text>
+                  ) : null}
+                  <Text>
+                    You can close this dialog and continue the course.
+                  </Text>
+                </Space>
+              }
             />
           )}
           <Paragraph style={{ color: COLORS.GRAY, marginBottom: 0 }}>
