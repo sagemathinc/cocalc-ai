@@ -140,6 +140,7 @@ describe("hub API argument transforms", () => {
           {
             project_id: "spoofed-project",
             host_id: "spoofed-host",
+            account_id: "account-for-download-attribution",
             category: "file-download",
             bytes: 1,
             cpu_seconds: 1,
@@ -149,6 +150,7 @@ describe("hub API argument transforms", () => {
       });
       expect(hostArgs[0].host_id).toBe("host-1");
       expect(hostArgs[0].project_id).toBeUndefined();
+      expect(hostArgs[0].account_id).toBe("account-for-download-attribution");
 
       const projectArgs = await transformArgs({
         name,
@@ -156,6 +158,7 @@ describe("hub API argument transforms", () => {
           {
             project_id: "spoofed-project",
             host_id: "spoofed-host",
+            account_id: "spoofed-account",
             category: "file-download",
             bytes: 1,
             cpu_seconds: 1,
@@ -165,6 +168,7 @@ describe("hub API argument transforms", () => {
       });
       expect(projectArgs[0].project_id).toBe("project-1");
       expect(projectArgs[0].host_id).toBeUndefined();
+      expect(projectArgs[0].account_id).toBeUndefined();
 
       await expect(
         transformArgs({
