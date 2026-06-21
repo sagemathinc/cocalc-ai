@@ -45,6 +45,8 @@ import {
   purchaseTeamLicenseChange,
 } from "@cocalc/server/purchases/team-license";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
+import sendEmail from "@cocalc/server/email/send-email";
+import { getUser } from "@cocalc/server/purchases/statements/email-statement";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
 
@@ -526,6 +528,103 @@ ${supportUrl}
 `;
 }
 
+function escapeHtml(value: unknown): string {
+  return `${value ?? ""}`
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function htmlLink(label: string, href: string): string {
+  const safeHref = escapeHtml(href);
+  return `<a href="${safeHref}" style="color:#0E2B59; text-decoration:none; font-weight:600;">${escapeHtml(label)}</a>`;
+}
+
+export function paymentSuccessHtmlBody({
+  amount,
+  reason,
+  credit_id,
+  balance,
+  paymentsUrl,
+  purchasesUrl,
+  supportUrl,
+}: {
+  amount: MoneyValue;
+  reason: string;
+  credit_id: number;
+  balance: MoneyValue;
+  paymentsUrl: string;
+  purchasesUrl: string;
+  supportUrl: string;
+}): string {
+  const rowStyle =
+    "padding:8px 0; border-bottom:1px solid #edf1f7; vertical-align:top;";
+  const labelStyle = `${rowStyle} color:#5f6b7a; width:42%;`;
+  const valueStyle = `${rowStyle} font-weight:600;`;
+  return `
+<div style="font-family:Verdana,Geneva,sans-serif; font-size:14px; line-height:1.65; color:#1f2937;">
+  <p style="margin:0 0 18px 0;">Your payment of <strong>${escapeHtml(
+    moneyToCurrency(amount),
+  )}</strong> was successful.</p>
+
+  <p style="margin:0 0 26px 0;">It was used to ${escapeHtml(reason)}.</p>
+
+  <h2 style="font-size:18px; line-height:1.3; margin:0 0 12px 0;">Receipt details</h2>
+  <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse; width:100%; max-width:560px; margin:0 0 28px 0;">
+    <tr>
+      <td style="${labelStyle}">Amount</td>
+      <td style="${valueStyle}">${escapeHtml(moneyToCurrency(amount))}</td>
+    </tr>
+    <tr>
+      <td style="${labelStyle}">CoCalc credit id</td>
+      <td style="${valueStyle}">${escapeHtml(credit_id)}</td>
+    </tr>
+    <tr>
+      <td style="${labelStyle}">Account balance after payment</td>
+      <td style="${valueStyle}">${escapeHtml(moneyToCurrency(balance))}</td>
+    </tr>
+  </table>
+
+  <h2 style="font-size:18px; line-height:1.3; margin:0 0 12px 0;">Account pages</h2>
+  <p style="margin:0 0 8px 0;">${htmlLink("Payments", paymentsUrl)}</p>
+  <p style="margin:0 0 26px 0;">${htmlLink("Purchases", purchasesUrl)}</p>
+
+  <p style="margin:0 0 8px 0;">If you have questions, reply to this message or contact support:</p>
+  <p style="margin:0;">${htmlLink("Contact support", supportUrl)}</p>
+</div>
+`;
+}
+
+async function sendPaymentSuccessEmail({
+  account_id,
+  subject,
+  text,
+  html,
+}: {
+  account_id: string;
+  subject: string;
+  text: string;
+  html: string;
+}): Promise<void> {
+  const { email_address } = await getUser(account_id);
+  if (!email_address) {
+    throw Error("account does not have an email address");
+  }
+  await sendEmail(
+    {
+      to: email_address,
+      subject,
+      text,
+      html,
+      categories: ["payment-receipt"],
+    },
+    account_id,
+    "transactional",
+  );
+}
+
 async function setMetadataRecorded(paymentIntent) {
   const stripe = await getConn();
   paymentIntent.metadata.recorded = "true";
@@ -904,18 +1003,20 @@ ${await support()}
     });
 
     try {
-      await send({
-        to_ids: [account_id],
+      const receipt = {
+        amount,
+        reason,
+        credit_id,
+        balance: moneyRound2Down(toDecimal(await getBalance({ account_id }))),
+        paymentsUrl: await url("settings", "payments"),
+        purchasesUrl: await url("settings", "purchases"),
+        supportUrl: await url("support", "new"),
+      };
+      await sendPaymentSuccessEmail({
+        account_id,
         subject: paymentSuccessSubject({ amount }),
-        body: paymentSuccessBody({
-          amount,
-          reason,
-          credit_id,
-          balance: moneyRound2Down(toDecimal(await getBalance({ account_id }))),
-          paymentsUrl: await url("settings", "payments"),
-          purchasesUrl: await url("settings", "purchases"),
-          supportUrl: await url("support", "new"),
-        }),
+        text: paymentSuccessBody(receipt),
+        html: paymentSuccessHtmlBody(receipt),
       });
     } catch (err) {
       logger.debug(

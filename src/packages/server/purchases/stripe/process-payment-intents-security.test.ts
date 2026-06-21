@@ -10,6 +10,7 @@ import {
   assertInvoiceAccountBinding,
   assertPaymentIntentAccountBinding,
   paymentSuccessBody,
+  paymentSuccessHtmlBody,
   paymentSuccessSubject,
   markStatementPaidByPurchase,
 } from "./process-payment-intents";
@@ -78,6 +79,23 @@ describe("Stripe statement payment-intent fulfillment checks", () => {
     expect(body).not.toContain("Payment id:");
     expect(body).not.toContain("pi_");
     expect(body).not.toContain("](");
+
+    const html = paymentSuccessHtmlBody({
+      amount: 18,
+      reason: "purchase a course membership package",
+      credit_id: 5,
+      balance: 0,
+      paymentsUrl: "https://lite1b.cocalc.ai/settings/payments",
+      purchasesUrl: "https://lite1b.cocalc.ai/settings/purchases",
+      supportUrl: "https://lite1b.cocalc.ai/support/new",
+    });
+    expect(html).toContain("<h2");
+    expect(html).toContain("Receipt details");
+    expect(html).toContain("<table");
+    expect(html).toContain("CoCalc credit id");
+    expect(html).toContain("Contact support");
+    expect(html).not.toContain("pi_");
+    expect(html).not.toContain("](");
   });
 
   it("rejects payment intents whose metadata account does not match the payer", () => {
