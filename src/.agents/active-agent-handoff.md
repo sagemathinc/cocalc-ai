@@ -437,6 +437,12 @@ Plus/Star/Launchpad`).
   `/features` on desktop/mobile passed with 114 assertions and 0 failures, artifacts in
   `/tmp/cocalc-public-qa-RDVlKQ`. Desktop and mobile screenshots inspected. Dedicated-compute draft
   untouched. No PR.
+- **FOLLOW-UP 2026-06-20 17:58 PDT:** Blaec flagged the mobile first viewport as still visually
+  problematic. Corrected the CLI hero H1 from the clunky `shell-capable agents` qualifier to
+  `Run project work from the command line.`, while preserving the required claim boundary in a
+  hero bullet (`scripts or agents that can run shell commands`). Rebuilt preview and re-ran browser
+  QA for `/features/cli` + `/features` desktop/mobile: 116 assertions, 0 failures, artifacts in
+  `/tmp/cocalc-public-qa-J3ESvT`; desktop and mobile screenshots inspected. No PR.
 
 ### Codex — platform-UI thread
 

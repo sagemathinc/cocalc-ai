@@ -143,8 +143,7 @@ describe("PublicFeaturesApp", () => {
       slug: "automations",
     },
     {
-      marker:
-        "Run project-aware commands from scripts and shell-capable agents.",
+      marker: "Run project work from the command line.",
       slug: "cli",
     },
     {

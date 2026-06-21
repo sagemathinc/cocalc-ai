@@ -256,8 +256,7 @@ export default function CliFeaturePage({}: {
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Run project-aware commands from scripts and shell-capable
-                agents.
+                Run project work from the command line.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Use the CoCalc CLI to inspect project context, run notebook
@@ -265,10 +264,10 @@ export default function CliFeaturePage({}: {
               </Paragraph>
               <Flex vertical gap={8}>
                 <HeroPoint>
-                  Inspect files, notebooks, open tabs, and project state.
+                  Call it from scripts or agents that can run shell commands.
                 </HeroPoint>
                 <HeroPoint>
-                  Run documented commands without driving the UI by hand.
+                  Inspect files, notebooks, open tabs, and project state.
                 </HeroPoint>
                 <HeroPoint>
                   Leave outputs where collaborators can review them.

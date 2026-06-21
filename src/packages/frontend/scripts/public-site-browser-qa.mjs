@@ -280,7 +280,8 @@ const ROUTE_RULES = {
   },
   "/features/cli": {
     requireText: [
-      "Run project-aware commands from scripts and shell-capable agents.",
+      "Run project work from the command line.",
+      "Call it from scripts or agents that can run shell commands.",
       "reviewable notebook workflow",
       "$ cocalc browser files --project-id PROJECT_ID",
       "$ cocalc project jupyter exec --path analysis.ipynb --stdin",
