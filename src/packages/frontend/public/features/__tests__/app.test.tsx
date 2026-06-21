@@ -216,7 +216,7 @@ describe("PublicFeaturesApp", () => {
     },
     {
       marker:
-        "Julia for reproducible modeling your team can pick up and continue.",
+        "Julia for Pluto, Jupyter, and shared modeling projects.",
       slug: "julia",
     },
     {
@@ -249,7 +249,7 @@ describe("PublicFeaturesApp", () => {
       slug: "api",
     },
     {
-      marker: "Octave for shared numerical work — no local install to maintain.",
+      marker: "GNU Octave for .m files, notebooks, and shared numerical work.",
       slug: "octave",
     },
     {
@@ -892,8 +892,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "julia",
-      title:
-        "Julia for reproducible modeling your team can pick up and continue.",
+      title: "Julia for Pluto, Jupyter, and shared modeling projects.",
       section: "Keep Julia close to the rest of the research.",
     },
     {
@@ -905,7 +904,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "octave",
-      title: "Octave for shared numerical work — no local install to maintain.",
+      title: "GNU Octave for .m files, notebooks, and shared numerical work.",
       section: "Teach and run Octave without local setup drift.",
     },
     {

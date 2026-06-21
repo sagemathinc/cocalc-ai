@@ -772,6 +772,26 @@ Plus/Star/Launchpad`).
   `/tmp/cocalc-public-qa-CVSew9`. No protected home, pitch-doc, docs route/content,
   pricing/compliance, Slice 4c/4d, broader feature-index copy, type/palette visual work, or
   dedicated-compute draft edits. No PR.
+- **START 2026-06-21:** Correcting the rejected Slice 4b H2s after Blaec rejected the abstract
+  Julia/Octave versions. Approved direction: make the H2s tool-visible and workflow-specific while
+  leaving continuity/reproducibility in supporting copy. Claimed files:
+  `src/packages/frontend/public/features/julia-page.tsx`,
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: protected home, pitch docs,
+  docs route/content, pricing/compliance, Slice 4c/4d, broader feature-index copy, type/palette
+  visual work, and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-21 15:44 PDT:** Replaced the rejected H2s with tool-visible approved versions:
+  "Julia for Pluto, Jupyter, and shared modeling projects." and "GNU Octave for .m files,
+  notebooks, and shared numerical work." Updated only the matching feature-page Jest markers.
+  Supporting copy and visuals still carry reproducibility, TimeTravel, real-time collaboration,
+  `.m` files, notebooks, terminals, plots, and shared project context. Validation: `git diff
+  --check` clean; `public/features/__tests__/app.test.tsx` 91/91 passed; `pnpm lint:frontend`
+  clean from `src`; `pnpm -C src/packages/static build:dev` passed; live browser QA for
+  `/features/julia` and `/features/octave` desktop/mobile passed 72/72 assertions; screenshots
+  reviewed from `/tmp/cocalc-public-qa-mUespd`. No protected home, pitch-doc, docs route/content,
+  pricing/compliance, Slice 4c/4d, broader feature-index copy, type/palette visual work, or
+  dedicated-compute draft edits. No PR.
 
 ### Codex — platform-UI thread
 
