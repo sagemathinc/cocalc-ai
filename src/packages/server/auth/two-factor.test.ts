@@ -213,6 +213,16 @@ describe("freshAuthSession", () => {
         current_password: "wrong-password",
       }),
     ).rejects.toThrow("current password is incorrect");
+
+    await expect(
+      freshAuthSession({
+        req,
+        account_id,
+        current_password: password,
+      }),
+    ).resolves.toMatchObject({
+      factor_level: "none",
+    });
   });
 
   it("does not fresh-authenticate passwordless accounts without a second factor", async () => {

@@ -18,13 +18,11 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
-import hasPassword from "@cocalc/server/auth/has-password";
 import {
   getImpersonationBootstrapInfo,
   getCurrentImpersonationSession,
   setImpersonationActorFreshAuth,
 } from "@cocalc/server/auth/impersonation";
-import isPasswordCorrect from "@cocalc/server/auth/is-password-correct";
 import {
   getCurrentAuthSession,
   requireFreshAuth,
@@ -192,6 +190,23 @@ async function getActiveRecoveryCodeFactor(
     db: getPool(),
     account_id,
   });
+}
+
+async function getPasswordHashWithDb({
+  db,
+  account_id,
+}: {
+  db: Queryable;
+  account_id: string;
+}): Promise<string | null> {
+  const { rows } = await db.query<{ password_hash: string | null }>(
+    "SELECT password_hash FROM accounts WHERE account_id=$1::UUID",
+    [account_id],
+  );
+  if (rows.length === 0) {
+    throw Error("no such account");
+  }
+  return rows[0].password_hash ?? null;
 }
 
 async function getTotpAccountLabel(account_id: string): Promise<string> {
@@ -437,20 +452,21 @@ async function verifyFreshAuthInputs({
   db: Queryable;
 }): Promise<AuthSessionFactorLevel> {
   const hasSecondFactor = await hasActiveSecondFactor(account_id);
-  if (!hasSecondFactor && (await hasPassword(account_id))) {
-    const ok = await isPasswordCorrect({
-      account_id,
-      password: current_password,
-    });
-    if (!ok) {
-      throw new Error("current password is incorrect");
-    }
-  }
-
   if (!hasSecondFactor) {
-    throw new Error(
-      "fresh authentication requires a password or second factor",
-    );
+    const password_hash = await getPasswordHashWithDb({
+      db,
+      account_id,
+    });
+    const ok =
+      !!password_hash && verifyPassword(current_password, password_hash);
+    if (!ok) {
+      throw new Error(
+        password_hash
+          ? "current password is incorrect"
+          : "fresh authentication requires a password or second factor",
+      );
+    }
+    return "none";
   }
 
   const resolvedMethod = ensureFreshAuthCodeMethod(`${method ?? ""}`);

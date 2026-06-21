@@ -180,6 +180,7 @@ export function FreshAuthModal({
           saving ||
           factorEnabled == null ||
           emailMismatch ||
+          (factorEnabled === false && currentPassword.length === 0) ||
           (factorEnabled === true && !usePasskey && code.trim().length === 0),
       }}
     >

@@ -89,6 +89,13 @@ jest.mock("@cocalc/frontend/auth/passkeys", () => ({
   freshAuthWithPasskey: jest.fn(),
 }));
 
+function enterCurrentPassword() {
+  fireEvent.change(
+    screen.getByPlaceholderText("Leave blank if this account has no password"),
+    { target: { value: "current-password" } },
+  );
+}
+
 describe("FreshAuthModal", () => {
   beforeEach(() => {
     jest.mocked(postAuthApi).mockReset();
@@ -115,6 +122,14 @@ describe("FreshAuthModal", () => {
 
     render(<FreshAuthModal open onCancel={onCancel} onSuccess={onSuccess} />);
 
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(
+          "Leave blank if this account has no password",
+        ),
+      ).toBeTruthy();
+    });
+    enterCurrentPassword();
     await waitFor(() => {
       expect(
         (screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement)
@@ -155,6 +170,14 @@ describe("FreshAuthModal", () => {
       />,
     );
 
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(
+          "Leave blank if this account has no password",
+        ),
+      ).toBeTruthy();
+    });
+    enterCurrentPassword();
     await waitFor(() => {
       expect(
         (screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement)
@@ -268,6 +291,14 @@ describe("useFreshAuthAction", () => {
     fireEvent.click(screen.getByText("Run protected action"));
 
     expect(screen.getByText("Protected action running")).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(
+          "Leave blank if this account has no password",
+        ),
+      ).toBeTruthy();
+    });
+    enterCurrentPassword();
     await waitFor(() => {
       expect(
         (screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement)
