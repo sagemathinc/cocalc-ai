@@ -640,7 +640,7 @@ function StudentCoursePurchaseModal({
                 }),
               }}
               onFinished={async (total) => {
-                if (!total) {
+                if (total === 0) {
                   await completePurchase();
                   return;
                 }
