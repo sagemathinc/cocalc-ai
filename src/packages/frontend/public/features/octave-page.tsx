@@ -15,7 +15,6 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
-  featureSupportPath,
 } from "./page-components";
 import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
@@ -127,12 +126,6 @@ export default function OctaveFeaturePage({
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalLabel = isAuthenticated ? "Open projects" : "Start using Octave";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss Octave workflows in CoCalc. Helpful context: notebooks, scripts, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
-    context: "octave",
-    subject: "CoCalc Octave workflows",
-    title: "Ask CoCalc about Octave workflows",
-  });
 
   return (
     <Flex vertical gap={22}>
@@ -190,7 +183,6 @@ export default function OctaveFeaturePage({
               <Button href={appPath("products")}>
                 Compare operating models
               </Button>
-              <Button href={supportHref}>Ask about Octave workflows</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

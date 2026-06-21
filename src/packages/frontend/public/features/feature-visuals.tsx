@@ -240,7 +240,7 @@ export function FeatureFinalBand({
   action,
   children,
   relatedLinks,
-  relatedTitle = "Related workflows",
+  relatedTitle = "Related",
   title,
 }: {
   action: {
@@ -261,7 +261,6 @@ export function FeatureFinalBand({
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: PUBLIC_ELEVATION.panel,
         padding: 24,
       }}
     >
@@ -272,25 +271,6 @@ export function FeatureFinalBand({
               {title}
             </Title>
             {children}
-            {relatedLinks?.length ? (
-              <Flex vertical gap={8}>
-                <Text strong style={{ color: PUBLIC_COLORS.mutedText }}>
-                  {relatedTitle}
-                </Text>
-                <Flex wrap gap={12}>
-                  {relatedLinks.map(({ href, label }) => (
-                    <Button
-                      href={href}
-                      key={href}
-                      style={{ minHeight: 24, paddingInline: 0 }}
-                      type="link"
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </Flex>
-              </Flex>
-            ) : null}
           </Flex>
         </Col>
         <Col xs={24} lg={9}>
@@ -326,6 +306,27 @@ export function FeatureFinalBand({
             </Flex>
           </div>
         </Col>
+        {relatedLinks?.length ? (
+          <Col xs={24}>
+            <Flex vertical gap={8}>
+              <Text strong style={{ color: PUBLIC_COLORS.mutedText }}>
+                {relatedTitle}
+              </Text>
+              <Flex wrap gap={12}>
+                {relatedLinks.map(({ href, label }) => (
+                  <Button
+                    href={href}
+                    key={href}
+                    style={{ minHeight: 24, paddingInline: 0 }}
+                    type="link"
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </Flex>
+            </Flex>
+          </Col>
+        ) : null}
       </Row>
     </div>
   );
