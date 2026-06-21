@@ -27,6 +27,11 @@ export default async function resumeSubscription({
   account_id,
   subscription_id,
 }: Options): Promise<number | null | undefined> {
+  // Verify ownership before opening a transaction or creating side effects.
+  await getSubscriptionRenewalData({
+    account_id,
+    subscription_id,
+  });
   const client = await getTransactionClient();
   let purchase_id: number | undefined = undefined;
   let subscriptionType = "membership";
