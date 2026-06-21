@@ -78,12 +78,12 @@ const REMOVED_PROJECT_DEFAULT_KEYS = [
 const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
 const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
 const TEMPLATE_KEYS = [
+  "admin",
   "free",
   "basic",
+  "member",
   "student",
-  "standard",
   "instructor",
-  "researcher",
   "pro",
 ] as const;
 
@@ -809,8 +809,13 @@ function useMembershipTiers() {
     if (data[trimmedId] != null) {
       throw Error(`membership tier "${trimmedId}" already exists`);
     }
+    const templateTier = TIER_TEMPLATES[template];
     const tier = applyMembershipTierTemplateFallbacks({
-      ...TIER_TEMPLATES[template],
+      ...templateTier,
+      store_description: templateTier.store_description ?? undefined,
+      site_license_pool_description:
+        templateTier.site_license_pool_description ?? undefined,
+      notes: templateTier.notes ?? undefined,
       id: trimmedId,
       label: trimmedLabel,
       store_visible: false,
@@ -818,7 +823,7 @@ function useMembershipTiers() {
       course_store_visible: false,
       course_allowed_domains: [],
       disabled: false,
-    });
+    } as Partial<Tier> & { id: string });
     const values = tierToFormValues(tier);
     const payload = buildMembershipTierPayload(values);
     set_saving(true);
@@ -3210,7 +3215,7 @@ export function MembershipTiers() {
   function openCreateTierModal() {
     setCreateTierOpen(true);
     createTierForm.setFieldsValue({
-      template: "standard",
+      template: "member",
       id: "",
       label: "",
     });
@@ -3362,7 +3367,7 @@ export function MembershipTiers() {
         <Form
           layout="vertical"
           form={createTierForm}
-          initialValues={{ template: "standard" }}
+          initialValues={{ template: "member" }}
         >
           <Form.Item
             name="template"
