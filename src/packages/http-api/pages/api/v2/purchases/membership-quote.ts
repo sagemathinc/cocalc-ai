@@ -3,7 +3,10 @@ Membership pricing + eligibility for in-app membership changes.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { computeMembershipChange } from "@cocalc/server/membership/tiers";
+import {
+  computeMembershipChange,
+  getSeedMembershipTierMap,
+} from "@cocalc/server/membership/tiers";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import { getBillingReadiness } from "@cocalc/server/purchases/stripe/billing-readiness";
 
@@ -48,12 +51,14 @@ async function get(req) {
     throw Error("interval must be 'month' or 'year'");
   }
 
+  const tierMap = await getSeedMembershipTierMap({ includeDisabled: true });
   const pricing = await computeMembershipChange({
     account_id,
     targetClass,
     interval,
     allowDowngrade: !!allow_downgrade,
     storeVisibleOnly: true,
+    tierMap,
   });
 
   if (pricing.trial_available && pricing.trial_days) {

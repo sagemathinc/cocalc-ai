@@ -8,6 +8,9 @@ import {
   applyMembershipTierTemplateFallbacks,
   TIER_TEMPLATES,
 } from "@cocalc/util/membership-tier-templates";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getMembershipTrialCandidate } from "./trials";
 
 export interface MembershipTierPricing {
@@ -113,10 +116,59 @@ export async function getMembershipTierMap({
   client?: PoolClient;
 } = {}): Promise<Record<string, MembershipTierRecord>> {
   const tiers = await getMembershipTiers({ includeDisabled, client });
+  return membershipTierMapFromTiers(tiers, { includeDisabled });
+}
+
+export async function getSeedMembershipTiers({
+  includeDisabled = true,
+  storeVisibleOnly = false,
+  courseStoreVisibleOnly = false,
+}: {
+  includeDisabled?: boolean;
+  storeVisibleOnly?: boolean;
+  courseStoreVisibleOnly?: boolean;
+} = {}): Promise<MembershipTierRecord[]> {
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (getConfiguredBayId() === seedBayId) {
+    return await getMembershipTiers({
+      includeDisabled,
+      storeVisibleOnly,
+      courseStoreVisibleOnly,
+    });
+  }
+  return (await getInterBayBridge()
+    .bayOps(seedBayId, { timeout_ms: 15_000 })
+    .getMembershipTiers({
+      includeDisabled,
+      storeVisibleOnly,
+      courseStoreVisibleOnly,
+    })) as MembershipTierRecord[];
+}
+
+export async function getSeedMembershipTierMap({
+  includeDisabled = true,
+}: {
+  includeDisabled?: boolean;
+} = {}): Promise<Record<string, MembershipTierRecord>> {
+  const tiers = await getSeedMembershipTiers({ includeDisabled });
+  return membershipTierMapFromTiers(tiers, { includeDisabled });
+}
+
+export function membershipTierMapFromTiers(
+  tiers: readonly MembershipTierRecord[],
+  {
+    includeDisabled = true,
+  }: {
+    includeDisabled?: boolean;
+  } = {},
+): Record<string, MembershipTierRecord> {
   const builtInTiers = Object.values(TIER_TEMPLATES).filter(
     (tier) => includeDisabled || !(tier as MembershipTierRecord).disabled,
   ) as MembershipTierRecord[];
-  return [...builtInTiers, ...tiers].reduce(
+  const configuredTiers = includeDisabled
+    ? tiers
+    : tiers.filter((tier) => !tier.disabled);
+  return [...builtInTiers, ...configuredTiers].reduce(
     (acc, tier) => {
       acc[tier.id] = tier;
       return acc;
@@ -286,18 +338,22 @@ export async function computeMembershipPricing({
   targetClass,
   interval,
   client,
+  tierMap,
 }: {
   account_id: string;
   targetClass: MembershipClass;
   interval: "month" | "year";
   client?: PoolClient;
+  tierMap?: Record<string, MembershipTierRecord>;
 }): Promise<MembershipPricingResult> {
-  const tierMap = await getMembershipTierMap({
-    includeDisabled: true,
-    client,
-  });
-  let targetTier: MembershipTierRecord | undefined = tierMap[targetClass];
-  if (!targetTier) {
+  const tiers =
+    tierMap ??
+    (await getMembershipTierMap({
+      includeDisabled: true,
+      client,
+    }));
+  let targetTier: MembershipTierRecord | undefined = tiers[targetClass];
+  if (!targetTier && tierMap == null) {
     targetTier = await getMembershipTierById({
       id: targetClass,
       client,
@@ -311,11 +367,11 @@ export async function computeMembershipPricing({
   const existing = await getActiveMembershipSubscription({
     account_id,
     client,
-    tierMap,
+    tierMap: tiers,
   });
 
   const existingClass = existing?.metadata?.class;
-  const existingTier = existingClass ? tierMap[existingClass] : undefined;
+  const existingTier = existingClass ? tiers[existingClass] : undefined;
   const existingPriority = existingTier?.priority ?? 0;
   const targetPriority = targetTier?.priority ?? 0;
   if (existingClass) {
@@ -362,6 +418,7 @@ export async function computeMembershipChange({
   allowDowngrade = false,
   storeVisibleOnly = false,
   client,
+  tierMap,
 }: {
   account_id: string;
   targetClass: MembershipClass;
@@ -369,12 +426,15 @@ export async function computeMembershipChange({
   allowDowngrade?: boolean;
   storeVisibleOnly?: boolean;
   client?: PoolClient;
+  tierMap?: Record<string, MembershipTierRecord>;
 }): Promise<MembershipChangeResult> {
-  const tierMap = await getMembershipTierMap({
-    includeDisabled: true,
-    client,
-  });
-  const targetTier = tierMap[targetClass];
+  const tiers =
+    tierMap ??
+    (await getMembershipTierMap({
+      includeDisabled: true,
+      client,
+    }));
+  const targetTier = tiers[targetClass];
   if (!targetTier || targetTier.disabled) {
     throw Error(`membership tier "${targetClass}" is not available`);
   }
@@ -387,14 +447,14 @@ export async function computeMembershipChange({
   const existing = await getActiveMembershipSubscription({
     account_id,
     client,
-    tierMap,
+    tierMap: tiers,
   });
   const existingClass = existing?.metadata?.class;
   if (existingClass && existingClass == targetClass) {
     throw Error(`already subscribed to ${targetClass}`);
   }
 
-  const existingTier = existingClass ? tierMap[existingClass] : undefined;
+  const existingTier = existingClass ? tiers[existingClass] : undefined;
   const existingPriority = existingTier?.priority ?? 0;
   const targetPriority = targetTier?.priority ?? 0;
 

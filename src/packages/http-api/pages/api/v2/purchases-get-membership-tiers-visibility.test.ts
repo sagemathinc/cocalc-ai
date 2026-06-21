@@ -22,7 +22,7 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
 }));
 
 jest.mock("@cocalc/server/membership/tiers", () => ({
-  getMembershipTiers: (...args: any[]) => mockGetMembershipTiers(...args),
+  getSeedMembershipTiers: (...args: any[]) => mockGetMembershipTiers(...args),
 }));
 
 jest.mock("@cocalc/util/membership-tier-presentation", () => ({

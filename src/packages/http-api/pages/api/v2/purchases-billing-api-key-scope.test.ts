@@ -23,6 +23,7 @@ const mockResolveMembershipForAccount = jest.fn();
 const mockGetMinBalance = jest.fn();
 const mockIsPurchaseAllowed = jest.fn();
 const mockComputeMembershipChange = jest.fn();
+const mockGetSeedMembershipTierMap = jest.fn();
 const mockGetBillingReadiness = jest.fn();
 const mockCostToResumeSubscription = jest.fn();
 const mockThrottle = jest.fn();
@@ -112,6 +113,7 @@ jest.mock("@cocalc/server/purchases/is-purchase-allowed", () => ({
 
 jest.mock("@cocalc/server/membership/tiers", () => ({
   computeMembershipChange: (...args) => mockComputeMembershipChange(...args),
+  getSeedMembershipTierMap: (...args) => mockGetSeedMembershipTierMap(...args),
 }));
 
 jest.mock(
@@ -155,6 +157,7 @@ describe("billing account read routes API-key scope", () => {
     mockComputeMembershipChange.mockReset().mockResolvedValue({
       charge: 0,
     });
+    mockGetSeedMembershipTierMap.mockReset().mockResolvedValue({});
     mockGetBillingReadiness.mockReset().mockResolvedValue({
       hasBillingDetails: true,
       hasPaymentMethod: true,

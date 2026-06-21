@@ -133,6 +133,7 @@ import {
   createMembershipGrant,
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
+import { getMembershipTiers } from "@cocalc/server/membership/tiers";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
@@ -515,6 +516,12 @@ async function startBayOpsService(): Promise<void> {
       await getProjectRuntimeSlotReport({
         ...opts,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getMembershipTiers: async (opts = {}) =>
+      await getMembershipTiers({
+        includeDisabled: opts.includeDisabled,
+        storeVisibleOnly: opts.storeVisibleOnly,
+        courseStoreVisibleOnly: opts.courseStoreVisibleOnly,
       }),
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);

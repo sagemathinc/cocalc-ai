@@ -4,7 +4,9 @@ import { getTransactionClient, PoolClient } from "@cocalc/database/pool";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import {
   computeMembershipChange,
+  getSeedMembershipTierMap,
   MembershipChangeResult,
+  type MembershipTierRecord,
 } from "@cocalc/server/membership/tiers";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import createSubscription from "@cocalc/server/purchases/create-subscription";
@@ -23,6 +25,7 @@ interface MembershipChangeOptions {
   requireNoPayment?: boolean;
   paymentAmount?: MoneyValue;
   client?: PoolClient;
+  tierMap?: Record<string, MembershipTierRecord>;
 }
 
 export async function applyMembershipChange({
@@ -34,9 +37,15 @@ export async function applyMembershipChange({
   requireNoPayment = false,
   paymentAmount,
   client,
+  tierMap,
 }: MembershipChangeOptions): Promise<
   MembershipChangeResult & { subscription_id?: number; purchase_id?: number }
 > {
+  const catalogTierMap =
+    tierMap ??
+    (client == null
+      ? await getSeedMembershipTierMap({ includeDisabled: true })
+      : undefined);
   const transaction = client ?? (await getTransactionClient());
   const useTransaction = client == null;
   try {
@@ -47,6 +56,7 @@ export async function applyMembershipChange({
       allowDowngrade,
       storeVisibleOnly,
       client: transaction,
+      tierMap: catalogTierMap,
     });
     const chargeValue = toDecimal(change.charge);
 

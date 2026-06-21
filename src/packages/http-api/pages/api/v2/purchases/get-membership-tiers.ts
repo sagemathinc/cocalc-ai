@@ -4,7 +4,7 @@ Return membership tier configuration for the store UI.
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import { getMembershipTiers } from "@cocalc/server/membership/tiers";
+import { getSeedMembershipTiers } from "@cocalc/server/membership/tiers";
 import { buildMembershipTierPresentation } from "@cocalc/util/membership-tier-presentation";
 
 export default async function handle(req, res) {
@@ -20,7 +20,7 @@ async function get(req) {
   const account_id = await getAccountId(req);
   const isAdmin =
     account_id != null ? await userIsInGroup(account_id, "admin") : false;
-  const tiers = await getMembershipTiers({ includeDisabled: isAdmin });
+  const tiers = await getSeedMembershipTiers({ includeDisabled: isAdmin });
   const visibleTiers =
     account_id != null
       ? tiers

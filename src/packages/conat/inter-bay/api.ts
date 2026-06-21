@@ -29,6 +29,7 @@ import type {
   MembershipClass,
   MembershipDetails,
   MembershipEffectiveLimits,
+  MembershipUsageLimits,
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipResolution,
@@ -1491,6 +1492,36 @@ export interface BayOpsProjectRuntimeSlotReportRequest {
   limit?: number;
 }
 
+export interface MembershipTierCatalogRecord {
+  id: MembershipClass;
+  label?: string;
+  store_visible?: boolean;
+  store_description?: string;
+  store_highlights?: readonly string[];
+  site_license_pool_description?: string;
+  team_visible?: boolean;
+  course_store_visible?: boolean;
+  course_allowed_domains?: readonly string[] | null;
+  priority?: number;
+  price_monthly?: number;
+  price_yearly?: number;
+  trial_days?: number;
+  course_price?: number;
+  course_duration_days?: number;
+  course_grace_days?: number;
+  project_defaults?: Record<string, unknown>;
+  ai_limits?: Record<string, unknown>;
+  features?: Record<string, unknown>;
+  usage_limits?: MembershipUsageLimits;
+  disabled?: boolean;
+}
+
+export interface BayOpsMembershipTiersRequest {
+  includeDisabled?: boolean;
+  storeVisibleOnly?: boolean;
+  courseStoreVisibleOnly?: boolean;
+}
+
 export interface BayOpsSetServerSettingRequest {
   name: string;
   value: string;
@@ -2011,6 +2042,7 @@ export type BayOpsMethod =
   | "get-acp-admission-denial-report"
   | "get-service-admission-denial-report"
   | "get-project-runtime-slot-report"
+  | "get-membership-tiers"
   | "set-server-setting"
   | "set-site-settings"
   | "sync-site-settings"
@@ -3139,6 +3171,9 @@ export interface InterBayBayOpsApi {
   getProjectRuntimeSlotReport: (
     opts: BayOpsProjectRuntimeSlotReportRequest,
   ) => Promise<ProjectRuntimeSlotReport>;
+  getMembershipTiers: (
+    opts: BayOpsMembershipTiersRequest,
+  ) => Promise<MembershipTierCatalogRecord[]>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
   setSiteSettings: (
     opts: BayOpsSetSiteSettingsRequest,
@@ -6910,6 +6945,15 @@ export function createInterBayBayOpsClient({
       method: "get-project-runtime-slot-report",
     }),
   });
+  const membershipTiersClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getMembershipTiers">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-membership-tiers",
+    }),
+  });
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
@@ -6927,6 +6971,8 @@ export function createInterBayBayOpsClient({
       ),
     getProjectRuntimeSlotReport: async (opts) =>
       await projectRuntimeSlotReportClient.getProjectRuntimeSlotReport(opts),
+    getMembershipTiers: async (opts) =>
+      await membershipTiersClient.getMembershipTiers(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
     setSiteSettings: async (opts) =>
@@ -7047,6 +7093,17 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getGlobalConfigPropagationStatus: async (opts) =>
           await impl.getGlobalConfigPropagationStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getMembershipTiers">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-membership-tiers",
+      }),
+      impl: {
+        getMembershipTiers: async (opts) => await impl.getMembershipTiers(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({
