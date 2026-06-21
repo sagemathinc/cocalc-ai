@@ -12,6 +12,10 @@ import ShowError from "@cocalc/frontend/components/error";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
 import { BigSpin, ConfirmButton } from "./stripe-payment";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 function Title() {
   return (
@@ -118,6 +122,7 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
   const stripe = useStripe();
   const elements = useElements();
   const [ready, setReady] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -137,7 +142,12 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
       }
       const { complete, value } = await addressElement.getValue();
       if (complete) {
-        await setStripeCustomer(value);
+        const completed = await runFreshAuthAction(async () => {
+          await setStripeCustomer(value);
+        });
+        if (!completed) {
+          return;
+        }
         setSuccess(true);
         onFinished?.();
         return;
@@ -182,6 +192,7 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
         style={{ marginTop: "15px" }}
         setError={setError}
       />
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

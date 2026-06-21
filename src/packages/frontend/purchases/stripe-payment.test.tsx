@@ -23,6 +23,12 @@ import {
 let mockStripeEnabled = false;
 let mockEmailVerificationRequired = false;
 
+function freshAuthRequiredError() {
+  const err: any = new Error("fresh auth is required");
+  err.code = "fresh_auth_required";
+  return err;
+}
+
 jest.mock("antd", () => {
   const Box = ({
     children,
@@ -242,9 +248,9 @@ describe("StripePayment", () => {
 
   it("keeps one-click purchase disabled while fresh-auth workflow is pending", async () => {
     mockStripeEnabled = true;
-    const freshAuthError: any = new Error("fresh auth is required");
-    freshAuthError.code = "fresh_auth_required";
-    jest.mocked(createPaymentIntent).mockRejectedValueOnce(freshAuthError);
+    jest
+      .mocked(createPaymentIntent)
+      .mockRejectedValueOnce(freshAuthRequiredError());
     jest.mocked(getPaymentMethods).mockResolvedValue({ data: [{}] } as any);
     render(
       <StripePayment
@@ -334,6 +340,46 @@ describe("StripePayment", () => {
     });
     expect(getCustomerSession).not.toHaveBeenCalled();
     expect(screen.queryByText("Confirm security action")).toBeNull();
+  });
+
+  it("uses fresh auth when saving billing details before adding a payment method", async () => {
+    mockStripeEnabled = true;
+    jest
+      .mocked(setStripeCustomer)
+      .mockRejectedValueOnce(freshAuthRequiredError())
+      .mockResolvedValueOnce(undefined);
+    render(<AddPaymentMethodButton />);
+
+    fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    fireEvent.click(await screen.findByText("Save Address"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Confirm security action")).toBeTruthy();
+    });
+    expect(screen.queryByText("Stripe payment element")).toBeNull();
+
+    fireEvent.click(screen.getByText("Verify fresh auth"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Stripe payment element")).toBeTruthy();
+    });
+    expect(setStripeCustomer).toHaveBeenCalledTimes(2);
+    expect(setStripeCustomer).toHaveBeenLastCalledWith({
+      address: {
+        city: "San Francisco",
+        country: "US",
+        line1: "1 Main St",
+        postal_code: "94105",
+        state: "CA",
+      },
+      name: "Ada Lovelace",
+    });
+    expect(createSetupIntent).toHaveBeenCalledWith({
+      description: "Add a new payment method.",
+    });
   });
 
   it("skips billing details when adding a payment method with saved address", async () => {
