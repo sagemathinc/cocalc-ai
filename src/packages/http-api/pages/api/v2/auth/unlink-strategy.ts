@@ -12,8 +12,13 @@ import { OkStatus } from "@cocalc/http-api/lib/api/status";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function handle(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     if (req.header("Authorization")) {
       throw Error("API keys are not allowed to unlink sign-in methods");

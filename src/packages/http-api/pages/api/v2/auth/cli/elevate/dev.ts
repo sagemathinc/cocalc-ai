@@ -6,6 +6,7 @@
 import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { approveDevCliElevate } from "@cocalc/server/auth/cli-auth";
 
@@ -26,6 +27,10 @@ function getCookie(req: any, name: string): string {
 }
 
 export default async function cliElevateDev(req: any, res: any) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const account_id = await getAccountId(req);
     const session_hash = getRememberMeHash(req);

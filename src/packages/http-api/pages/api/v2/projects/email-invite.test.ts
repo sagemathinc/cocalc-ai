@@ -40,6 +40,22 @@ describe("/api/v2/projects email invite handlers", () => {
     });
   });
 
+  it("rejects non-POST invite preview before token lookup", async () => {
+    const { req, res } = createMocks({
+      method: "GET",
+      body: { token: "token-1" },
+    });
+
+    const { default: handler } = await import("./preview-email-invite");
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(405);
+    expect(res.getHeader("Allow")).toBe("POST");
+    expect(res._getJSONData()).toEqual({ error: "method_not_allowed" });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockPreviewEmailProjectInvite).not.toHaveBeenCalled();
+  });
+
   it("previews token-only invite links through the central directory", async () => {
     const { req, res } = createMocks({
       method: "POST",

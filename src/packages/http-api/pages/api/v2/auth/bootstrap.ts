@@ -9,8 +9,13 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { getImpersonationBootstrapInfo } from "@cocalc/server/auth/impersonation";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function bootstrap(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   if (req.header("Authorization")) {
     res.json({ error: "API keys are not allowed to use browser bootstrap" });
     return;

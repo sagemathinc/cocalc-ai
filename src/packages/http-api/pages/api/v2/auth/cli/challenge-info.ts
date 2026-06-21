@@ -4,11 +4,16 @@
  */
 
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getCliAuthApprovalInfo } from "@cocalc/server/auth/cli-auth";
 import getAccountId from "@cocalc/server/auth/get-account";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 
 export default async function cliChallengeInfo(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     if (req.header("Authorization")) {
       throw Error("API keys are not allowed to use CLI auth challenge context");

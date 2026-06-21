@@ -5,12 +5,17 @@
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { confirmTwoFactorSetup } from "@cocalc/server/auth/two-factor";
 
 export default async function confirmTwoFactorSetupApi(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const account_id = await getAccountId(req);
     if (!account_id) {

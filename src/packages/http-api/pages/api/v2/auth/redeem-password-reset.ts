@@ -15,8 +15,13 @@ Redeeming a password reset works as follows:
 
 import redeemPasswordReset from "@cocalc/server/auth/redeem-password-reset";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function redeemPasswordResetAPIEndPoint(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   const { password, passwordResetId } = getParams(req);
   try {
     await redeemPasswordReset(password, passwordResetId);

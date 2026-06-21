@@ -39,8 +39,13 @@ import {
   verifyClusterAccountSignInPassword,
 } from "@cocalc/server/inter-bay/accounts";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function signIn(req: Request, res: Response) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   let { email, password, retry_token } = getParams(req);
 
   email = `${email ?? ""}`.toLowerCase().trim();

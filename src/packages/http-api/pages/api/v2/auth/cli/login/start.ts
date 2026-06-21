@@ -4,9 +4,14 @@
  */
 
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { startCliLoginChallenge } from "@cocalc/server/auth/cli-auth";
 
 export default async function cliLoginStart(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const { email } = getParams(req);
     res.json(

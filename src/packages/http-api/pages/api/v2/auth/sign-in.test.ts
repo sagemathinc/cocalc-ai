@@ -86,9 +86,24 @@ describe("/api/v2/auth/sign-in", () => {
     mockEmailRequiresCocalc2fa.mockReset().mockResolvedValue(false);
   });
 
-  it("returns a normal auth error when email and password are missing", async () => {
+  it("rejects non-POST sign-in attempts before auth checks", async () => {
     const { req, res } = createMocks({
       method: "GET",
+      url: "/api/v2/auth/sign-in",
+    });
+
+    const { default: handler } = await import("./sign-in");
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(405);
+    expect(res.getHeader("Allow")).toBe("POST");
+    expect(res._getJSONData()).toEqual({ error: "method_not_allowed" });
+    expect(mockSignInCheck).not.toHaveBeenCalled();
+  });
+
+  it("returns a normal auth error when email and password are missing", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
       url: "/api/v2/auth/sign-in",
     });
 
@@ -105,7 +120,7 @@ describe("/api/v2/auth/sign-in", () => {
   it("uses the generic invalid-credentials message on token-gated deployments", async () => {
     mockGetRequiresToken.mockResolvedValue(true);
     const { req, res } = createMocks({
-      method: "GET",
+      method: "POST",
       url: "/api/v2/auth/sign-in",
     });
 

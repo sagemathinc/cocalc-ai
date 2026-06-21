@@ -8,8 +8,13 @@ import { verifySignInSecondFactorChallenge } from "@cocalc/server/auth/two-facto
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { signUserIn } from "./sign-in";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function verifySecondFactor(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   const { challenge_id, method, code } = getParams(req);
   try {
     const result = await verifySignInSecondFactorChallenge({

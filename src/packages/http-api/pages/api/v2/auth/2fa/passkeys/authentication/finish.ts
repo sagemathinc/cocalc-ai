@@ -4,12 +4,17 @@
  */
 
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { finishSignInPasskeyAuthentication } from "@cocalc/server/auth/passkeys";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { signUserIn } from "../../../sign-in";
 
 export default async function finishPasskeyAuthenticationApi(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   const { challenge_id, response } = getParams(req);
   try {
     const result = await finishSignInPasskeyAuthentication({

@@ -67,6 +67,19 @@ describe("news edit fresh auth", () => {
     mockClearNewsCache.mockReset();
   });
 
+  it("rejects non-POST news edits before auth lookup", async () => {
+    const { req, res } = createMocks({ method: "GET" });
+
+    const { default: handler } = await import("./news/edit");
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(405);
+    expect(res.getHeader("Allow")).toBe("POST");
+    expect(res._getJSONData()).toEqual({ error: "method_not_allowed" });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockEditNews).not.toHaveBeenCalled();
+  });
+
   it("requires direct dangerous auth before editing news", async () => {
     mockRequireDangerousSessionAuth.mockRejectedValue(
       Object.assign(new Error("recent two-factor verification is required"), {

@@ -26,12 +26,17 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 const logger = getLogger("auth:password-reset");
 const GENERIC_RESET_MESSAGE =
   "If an account with that email exists, a password reset email has been sent.";
 
 export default async function passwordReset(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   const { email } = getParams(req);
   const requiresToken = await getRequiresToken();
   let result;

@@ -58,6 +58,23 @@ describe("/api/v2/auth/password-reset", () => {
     mockGetStrategies.mockReset().mockResolvedValue([]);
   });
 
+  it("rejects non-POST password reset requests", async () => {
+    const { req, res } = createMocks({
+      method: "GET",
+      url: "/api/v2/auth/password-reset",
+      body: { email: "user@example.com" },
+    });
+
+    const { default: passwordReset } = await import("./password-reset");
+    await passwordReset(req, res);
+
+    expect(res.statusCode).toBe(405);
+    expect(res.getHeader("Allow")).toBe("POST");
+    expect(res._getJSONData()).toEqual({ error: "method_not_allowed" });
+    expect(mockCreateReset).not.toHaveBeenCalled();
+    expect(mockSendPasswordResetEmail).not.toHaveBeenCalled();
+  });
+
   it("does not issue password resets for SSO-required domains", async () => {
     mockGetStrategies.mockResolvedValue([
       {
@@ -92,6 +109,26 @@ describe("/api/v2/auth/redeem-password-reset", () => {
     mockRedeemPasswordReset
       .mockReset()
       .mockResolvedValue("00000000-0000-4000-8000-000000000001");
+  });
+
+  it("rejects non-POST password reset redemption", async () => {
+    const { req, res } = createMocks({
+      method: "GET",
+      url: "/api/v2/auth/redeem-password-reset",
+      body: {
+        password: "correct horse battery staple 12345!",
+        passwordResetId: "reset-id",
+      },
+    });
+
+    const { default: redeemPasswordReset } =
+      await import("./redeem-password-reset");
+    await redeemPasswordReset(req, res);
+
+    expect(res.statusCode).toBe(405);
+    expect(res.getHeader("Allow")).toBe("POST");
+    expect(res._getJSONData()).toEqual({ error: "method_not_allowed" });
+    expect(mockRedeemPasswordReset).not.toHaveBeenCalled();
   });
 
   it("resets the password without signing the browser in", async () => {

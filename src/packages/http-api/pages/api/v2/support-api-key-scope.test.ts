@@ -99,6 +99,28 @@ describe("/api/v2/support API-key scope", () => {
     expect(mockCreateSupportTicket).not.toHaveBeenCalled();
   });
 
+  it("rejects non-POST support ticket creation before account lookup", async () => {
+    const { req, res } = createMocks({
+      method: "GET",
+      body: {
+        options: {
+          email: "user@example.com",
+          subject: "Private support issue",
+          body: "This is private support context.",
+        },
+      },
+    });
+
+    const { default: handler } = await import("./support/create-ticket");
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(405);
+    expect(res.getHeader("Allow")).toBe("POST");
+    expect(res._getJSONData()).toEqual({ error: "method_not_allowed" });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockCreateSupportTicket).not.toHaveBeenCalled();
+  });
+
   it("keeps browser-session support ticket creation", async () => {
     const options = {
       email: "user@example.com",
