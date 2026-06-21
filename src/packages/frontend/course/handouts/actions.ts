@@ -12,7 +12,6 @@ import type { CourseStore, HandoutRecord } from "../store";
 import { webapp_client } from "../../webapp-client";
 import { redux } from "../../app-framework";
 import { uuid } from "@cocalc/util/misc";
-import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type { SyncDBRecordHandout } from "../types";
 import { exec } from "../../frame-editors/generic/client";
 import { export_student_file_use_times } from "../export/file-use-times";
@@ -437,20 +436,16 @@ export class HandoutsActions {
     try {
       await redux.getActions("projects").open_project({
         project_id: proj,
-        target: this.open_directory_target(path),
+        target: "",
         switch_to: true,
         restore_session: false,
       });
+      const actions = redux.getProjectActions(proj);
+      await actions.init_configuration("main");
+      await actions.open_directory(path);
     } catch (err) {
       this.course_actions.set_error(`Error opening handout: ${err}`);
     }
-  };
-
-  private open_directory_target = (path: string): string => {
-    const relativePath = (projectRuntimeHomeRelativePath(path) ?? path)
-      .replace(/^\/+/, "")
-      .replace(/\/+$/, "");
-    return relativePath.length === 0 ? "files/" : `files/${relativePath}/`;
   };
 
   export_file_use_times = async (

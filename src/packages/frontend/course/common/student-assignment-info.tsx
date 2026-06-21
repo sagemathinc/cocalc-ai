@@ -8,7 +8,7 @@ import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions } from "@cocalc/frontend/app-framework";
-import { Icon, Markdown, Tip } from "@cocalc/frontend/components";
+import { Icon, Tip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { labels } from "@cocalc/frontend/i18n";
@@ -215,23 +215,29 @@ export function StudentAssignmentInfo({
 
   function render_comments() {
     if (!is_editing) {
-      if (!comments?.trim()) return;
+      const preview = comments?.replace(/\s+/g, " ").trim();
+      if (!preview) return;
       return (
         <div style={{ width: "100%", paddingRight: "5px" }}>
-          <Markdown
-            value={comments}
+          <div
+            title={comments}
             style={{
-              width: "100%",
-              maxHeight: "4em",
-              overflowY: "auto",
-              padding: "5px",
               border: `1px solid ${COLORS.GRAY_L}`,
               borderRadius: 4,
               cursor: "pointer",
-              display: "inline-block",
+              fontSize: 12,
+              lineHeight: "22px",
+              maxWidth: "100%",
+              overflow: "hidden",
+              padding: "0 6px",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
             }}
             onClick={() => set_edited_feedback()}
-          />
+          >
+            {preview}
+          </div>
         </div>
       );
     } else {

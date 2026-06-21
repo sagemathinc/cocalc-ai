@@ -38,7 +38,6 @@ import {
   trunc,
   uuid,
 } from "@cocalc/util/misc";
-import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { CourseActions } from "../actions";
 import { export_assignment } from "../export/export-assignment";
 import { export_student_file_use_times } from "../export/file-use-times";
@@ -2002,20 +2001,16 @@ ${details}
     try {
       await redux.getActions("projects").open_project({
         project_id,
-        target: this.open_directory_target(path),
+        target: "",
         switch_to: true,
         restore_session: false,
       });
+      const actions = redux.getProjectActions(project_id);
+      await actions.init_configuration("main");
+      await actions.open_directory(path);
     } catch (err) {
       this.course_actions.set_error(`Error opening assignment: ${err}`);
     }
-  };
-
-  private open_directory_target = (path: string): string => {
-    const relativePath = (projectRuntimeHomeRelativePath(path) ?? path)
-      .replace(/^\/+/, "")
-      .replace(/\/+$/, "");
-    return relativePath.length === 0 ? "files/" : `files/${relativePath}/`;
   };
 
   private write_text_file_to_course_project = async (opts: {
