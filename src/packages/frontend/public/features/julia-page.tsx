@@ -16,7 +16,6 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
-  featureSupportPath,
 } from "./page-components";
 import { FEATURE_ACCENTS } from "./feature-accents";
 import { ContextList, IconBadge, StartCard } from "./feature-visuals";
@@ -145,12 +144,6 @@ export default function JuliaFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss Julia workflows in CoCalc. Helpful context: notebooks, Pluto, source files, package environments, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
-    context: "julia",
-    subject: "CoCalc Julia workflows",
-    title: "Ask CoCalc about Julia workflows",
-  });
 
   return (
     <Flex vertical gap={22}>
@@ -212,7 +205,6 @@ export default function JuliaFeaturePage({
               <Button href={appPath("products")}>
                 Compare operating models
               </Button>
-              <Button href={supportHref}>Ask about Julia workflows</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

@@ -792,6 +792,20 @@ Plus/Star/Launchpad`).
   reviewed from `/tmp/cocalc-public-qa-mUespd`. No protected home, pitch-doc, docs route/content,
   pricing/compliance, Slice 4c/4d, broader feature-index copy, type/palette visual work, or
   dedicated-compute draft edits. No PR.
+- **START 2026-06-21:** Removing the bottom "Ask about Julia workflows" button from
+  `/features/julia` after Blaec's visual review. Claimed files:
+  `src/packages/frontend/public/features/julia-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: Slice 4c proposal implementation,
+  protected home, pitch docs, docs route/content, pricing/compliance, type/palette visual work,
+  and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-21:** Removed the bottom "Ask about Julia workflows" button from `/features/julia`
+  and removed the now-unused Julia support-link fixture. Added an explicit Jest canary that the
+  Julia page does not render that support link. Validation: `git diff --check`,
+  `pnpm lint:frontend`, `pnpm --dir src/packages/frontend exec jest
+  public/features/__tests__/app.test.tsx --runInBand --silent` (90/90), `pnpm -C
+  src/packages/static build:dev`, and browser QA for `/features/julia` desktop/mobile (36/36).
+  Screenshots reviewed from `/tmp/cocalc-public-qa-MAi0Rc`; no PR.
 
 ### Codex — platform-UI thread
 

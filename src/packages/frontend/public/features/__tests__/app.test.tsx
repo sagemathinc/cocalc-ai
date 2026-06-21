@@ -169,11 +169,6 @@ describe("PublicFeaturesApp", () => {
       slug: "r-statistical-software",
     },
     {
-      context: "feature-julia",
-      label: "Ask about Julia workflows",
-      slug: "julia",
-    },
-    {
       context: "feature-octave",
       label: "Ask about Octave workflows",
       slug: "octave",
@@ -942,6 +937,11 @@ describe("PublicFeaturesApp", () => {
       expect(screen.getByText(section)).not.toBeNull();
       for (const label of contextLabels ?? []) {
         expect(screen.getByText(label)).not.toBeNull();
+      }
+      if (slug === "julia") {
+        expect(
+          screen.queryByRole("link", { name: "Ask about Julia workflows" }),
+        ).toBeNull();
       }
     },
   );
