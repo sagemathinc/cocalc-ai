@@ -595,6 +595,7 @@ export function StudentAssignmentInfo({
       border: `1px solid ${borderColor}`,
       borderRadius: 6,
       minHeight: 72,
+      overflowX: "hidden",
       padding: 8,
       display: "flex",
       flexDirection: "column",
@@ -830,6 +831,7 @@ export function StudentAssignmentInfo({
               flexDirection: "column",
               gap: 6,
               minHeight: 72,
+              overflowX: "hidden",
               padding: 8,
               width: "100%",
             }}
