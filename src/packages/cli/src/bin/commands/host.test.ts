@@ -2777,24 +2777,14 @@ test("host deploy resume-default removes one host-scoped override", async () => 
       scope_type: "host",
       id: "host-1",
       replace: true,
-      deployments: [
-        {
-          target_type: "component",
-          target: "acp-worker",
-          desired_version: "bundle-v1",
-          rollout_policy: "drain_then_replace",
-          drain_deadline_seconds: undefined,
-          rollout_reason: undefined,
-          metadata: undefined,
-        },
-      ],
+      deployments: [],
     },
   ]);
   assert.equal(capture.data.removed, true);
   assert.equal(capture.data.target, "project-host");
 });
 
-test("host deploy resume-default removes a project-host component pin when resuming the artifact default", async () => {
+test("host deploy resume-default removes project-host stack component pins when resuming the artifact default", async () => {
   const capture: Capture = {
     upgrades: [],
     reconciles: [],
@@ -2860,17 +2850,7 @@ test("host deploy resume-default removes a project-host component pin when resum
       scope_type: "host",
       id: "host-1",
       replace: true,
-      deployments: [
-        {
-          target_type: "component",
-          target: "acp-worker",
-          desired_version: "bundle-v1",
-          rollout_policy: undefined,
-          drain_deadline_seconds: undefined,
-          rollout_reason: undefined,
-          metadata: undefined,
-        },
-      ],
+      deployments: [],
     },
   ]);
   assert.equal(capture.data.removed, true);

@@ -38,6 +38,9 @@ const MANAGED_COMPONENT_KINDS = [
   "conat-persist",
   "acp-worker",
 ] as const;
+const PROJECT_HOST_RUNTIME_STACK_COMPONENTS = new Set<string>(
+  MANAGED_COMPONENT_KINDS,
+);
 
 const HOST_PROJECT_STATE_FILTERS = [
   "all",
@@ -3441,7 +3444,9 @@ automatic reconcile or artifact upgrade work.
                     (parsedTarget.target_type === "artifact" &&
                       parsedTarget.target === "project-host" &&
                       deployment.target_type === "component" &&
-                      deployment.target === "project-host")
+                      PROJECT_HOST_RUNTIME_STACK_COMPONENTS.has(
+                        `${deployment.target}`,
+                      ))
                   ),
               )
               .map(deploymentUpsertFromRecord);
