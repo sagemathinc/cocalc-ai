@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+const CODE_TICK = "`";
+
 export const COURSE_ASSIGNMENT_BODY = String.raw`
 ## What CoCalc assignments are for
 
@@ -187,9 +189,9 @@ export const COURSE_RESTRICT_STUDENT_PROJECTS_BODY = String.raw`
 ## What this panel controls
 
 **Restrict Student Projects** writes a
-\`student_project_functionality\` policy into each student project's course
-metadata. The CoCalc frontend reads that policy and hides or disables matching
-UI features inside student projects.
+${CODE_TICK}student_project_functionality${CODE_TICK} policy into each student
+project's course metadata. The CoCalc frontend reads that policy and hides or
+disables matching UI features inside student projects.
 
 These options are useful for exams, guided labs, and courses where students
 should focus on a narrow set of tools. They are not a hard security boundary:
@@ -220,8 +222,6 @@ They do not rewrite assignments or make files cryptographically immutable.
 - **Disable toggling whether cells are editable or deletable** disables
   notebook UI that lets students change Jupyter cell editability/deletability.
   It also disables the raw JSON editor and Jupyter command-list dialog.
-- **Disable Jupyter Classic notebook server** hides the Jupyter Classic server
-  launcher for student projects.
 - **Disable JupyterLab notebook server** hides the JupyterLab launcher.
 - **Disable VS Code IDE Server** hides the VS Code server launcher.
 - **Disable Pluto Julia notebook server** hides the Pluto launcher.
@@ -284,9 +284,10 @@ are not course staff or students.
 
 ## What gets synchronized
 
-The shared project receives course metadata of type \`shared\`. Course datastore
-configuration and environment variables are pushed to it so shared-project
-software can see the same course-level settings that student projects see.
+The shared project receives course metadata of type ${CODE_TICK}shared${CODE_TICK}.
+Course datastore configuration and environment variables are pushed to it so
+shared-project software can see the same course-level settings that student
+projects see.
 
 Student-project restrictions do not apply to the shared project. The shared
 project is intentionally collaborative and writable by everyone in the course.
@@ -315,9 +316,9 @@ export const COURSE_STUDENT_PROJECT_ROOTFS_BODY = String.raw`
 ## What this setting controls
 
 **Student Project RootFS Image** controls the base software image used by
-student projects. The RootFS image is the visible \`/\` filesystem and provides
-system packages, language runtimes, command line tools, and other managed
-software.
+student projects. The RootFS image is the visible ${CODE_TICK}/${CODE_TICK}
+filesystem and provides system packages, language runtimes, command line tools,
+and other managed software.
 
 By default, new student projects follow the RootFS image configured on the
 instructor project that contains the course file. Set an override only when the
@@ -352,8 +353,9 @@ Changing the RootFS changes the managed base filesystem. It is appropriate for
 course software, installed packages, system libraries, and base image updates.
 
 Important student data should live in persistent project storage such as
-\`/root\`. Treat \`/tmp\` as temporary workspace storage. Do not ask students to
-store important work only in paths that belong to the base RootFS image.
+${CODE_TICK}/root${CODE_TICK}. Treat ${CODE_TICK}/tmp${CODE_TICK} as temporary
+workspace storage. Do not ask students to store important work only in paths
+that belong to the base RootFS image.
 
 ## Image selection
 
