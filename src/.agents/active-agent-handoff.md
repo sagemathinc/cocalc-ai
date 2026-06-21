@@ -415,6 +415,28 @@ Plus/Star/Launchpad`).
   `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA for `/features/cli` and
   `/features` on desktop/mobile passed with 102 assertions and 0 failures, artifacts in
   `/tmp/cocalc-public-qa-DDGlvr`. Pre-existing untracked dedicated-compute draft untouched. No PR.
+- **START 2026-06-20 18:08 PDT:** Blaec approved the bounded `/features/cli` copy/design pass from
+  `cli-page-copy-adversarial-audit-2026-06-20.md`: keep the safe framed workflow visual, make the
+  page docs-first instead of sign-up-first, replace "bridge / typed surface / run and report" with
+  workspace-first review language, and reduce repeated explanatory copy. Read Claude status first;
+  Claude remains read-only with an auto-watch armed for the next commit. Verified preview owner
+  remains synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Claiming
+  `src/packages/frontend/public/features/cli-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, browser QA artifacts, and this ledger.
+  Pre-existing untracked dedicated-compute draft remains out of scope. No PR.
+- **END 2026-06-20 18:22 PDT:** `/features/cli` copy/design pass implemented and preview rebuilt.
+  Made the hero docs-first (`CLI Docs` primary, no hero sign-up CTA), replaced "bridge / typed
+  surface / run and report" copy with workspace-first review language, reduced the middle section
+  to three compact proof cards, and bounded the agent-compatibility language to scripts and
+  shell-capable agents per Claude's review. Validation: `pnpm prettier:write -- packages/frontend/public/features/cli-page.tsx
+  packages/frontend/public/features/__tests__/app.test.tsx packages/frontend/scripts/public-site-browser-qa.mjs`;
+  `pnpm jest public/features/__tests__/app.test.tsx --runInBand`; `pnpm jest
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand`; `pnpm lint:frontend`;
+  `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA for `/features/cli` and
+  `/features` on desktop/mobile passed with 114 assertions and 0 failures, artifacts in
+  `/tmp/cocalc-public-qa-RDVlKQ`. Desktop and mobile screenshots inspected. Dedicated-compute draft
+  untouched. No PR.
 
 ### Codex — platform-UI thread
 

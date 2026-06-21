@@ -35,7 +35,7 @@ const CLI_WORKFLOW_LINES = [
   },
   { kind: "output", text: "run_id: report-refresh" },
   { kind: "output", text: "status: finished" },
-  { kind: "output", text: "updated: figures/summary.png" },
+  { kind: "output", text: "output: figures/summary.png" },
 ] as const;
 
 function HeroPoint({ children }: { children: ReactNode }) {
@@ -72,7 +72,7 @@ function CliHeroWorkflow() {
           <div>
             <Text strong>CoCalc CLI</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              typed commands for project automation
+              documented commands for project workflows
             </div>
           </div>
         </Flex>
@@ -103,7 +103,7 @@ function CliHeroWorkflow() {
             }}
           >
             <Icon name="terminal" style={{ color: "#f7c948", fontSize: 14 }} />
-            <span>project review workflow</span>
+            <span>reviewable notebook workflow</span>
           </Flex>
           <div style={{ padding: "16px 18px" }}>
             {CLI_WORKFLOW_LINES.map((line, index) =>
@@ -132,79 +132,67 @@ function CliHeroWorkflow() {
 function CliFitSection() {
   const signals = [
     {
-      body: "Let a script or AI assistant ask what is open, what files exist, and what state matters.",
+      body: "List open files, tabs, and notebook state before an automated step changes anything.",
       icon: "terminal" as IconName,
-      title: "Expose project context",
+      title: "Read project context",
     },
     {
-      body: "Run a command, notebook action, or browser check without asking the external tool to drive the UI.",
+      body: "Execute notebook or browser checks through documented commands instead of UI scripting.",
       icon: "jupyter" as IconName,
-      title: "Run concrete actions",
+      title: "Run bounded actions",
     },
     {
-      body: "Check open files, tabs, and workspace state when a live CoCalc session matters.",
-      icon: "bug" as IconName,
-      title: "Inspect browser state",
-    },
-    {
-      body: "Keep the exact operation visible so people can review what an external tool did.",
+      body: "Leave run IDs, files, and generated outputs in the project where collaborators can inspect them.",
       icon: "gears" as IconName,
-      title: "Hand work back for review",
+      title: "Return reviewable output",
     },
   ];
 
   return (
     <PublicSection>
-      <Row gutter={[28, 28]} align="top">
-        <Col xs={24} lg={10}>
-          <Flex vertical gap={12}>
-            <Title level={3} style={{ margin: 0 }}>
-              A practical bridge for external tools.
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              External assistants and scripts should not have to drive the
-              CoCalc interface by hand. The CLI gives them a clear way to act on
-              project files, notebooks, browser state, and documentation.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              That matters for agent workflows: the work stays in CoCalc, while
-              the external system gets a typed surface it can run and report.
-            </Paragraph>
-          </Flex>
-        </Col>
-        <Col xs={24} lg={14}>
-          <div
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: "0 14px 42px rgba(33, 49, 57, 0.07)",
-              padding: 22,
-            }}
-          >
-            <Row gutter={[16, 16]}>
-              {signals.map(({ body, icon, title }) => (
-                <Col key={title} xs={24} md={12}>
-                  <Flex align="flex-start" gap={12} style={{ height: "100%" }}>
-                    <IconBadge accent={CLI_ACCENT} icon={icon} size="sm" />
-                    <div>
-                      <Text strong>{title}</Text>
-                      <Paragraph
-                        style={{
-                          color: PUBLIC_COLORS.mutedText,
-                          margin: "4px 0 0",
-                        }}
-                      >
-                        {body}
-                      </Paragraph>
-                    </div>
-                  </Flex>
-                </Col>
-              ))}
-            </Row>
-          </div>
-        </Col>
-      </Row>
+      <Flex vertical gap={16}>
+        <Flex vertical gap={8} style={{ maxWidth: 780 }}>
+          <Title level={3} style={{ margin: 0 }}>
+            Keep automated work attached to the project.
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            When a script or shell-capable agent needs project context, the CLI
+            gives it a documented command path. Results stay in CoCalc alongside
+            the notebooks, files, and terminal evidence people need to review.
+          </Paragraph>
+        </Flex>
+        <Row gutter={[16, 16]}>
+          {signals.map(({ body, icon, title }) => (
+            <Col key={title} xs={24} md={8}>
+              <Flex
+                align="flex-start"
+                gap={12}
+                style={{
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: "0 14px 42px rgba(33, 49, 57, 0.07)",
+                  height: "100%",
+                  padding: 18,
+                }}
+              >
+                <IconBadge accent={CLI_ACCENT} icon={icon} size="sm" />
+                <div>
+                  <Text strong>{title}</Text>
+                  <Paragraph
+                    style={{
+                      color: PUBLIC_COLORS.mutedText,
+                      margin: "4px 0 0",
+                    }}
+                  >
+                    {body}
+                  </Paragraph>
+                </div>
+              </Flex>
+            </Col>
+          ))}
+        </Row>
+      </Flex>
     </PublicSection>
   );
 }
@@ -250,18 +238,12 @@ function CliSurfaceChoice({
   );
 }
 
-export default function CliFeaturePage({
-  isAuthenticated,
-}: {
+export default function CliFeaturePage({}: {
   helpEmail?: string;
   isAuthenticated?: boolean;
 }) {
-  const primaryHref = isAuthenticated
-    ? appPath("projects")
-    : appPath("auth/sign-up");
-  const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const supportHref = featureSupportPath({
-    body: "I want to discuss CoCalc CLI automation. Helpful context: what should run, whether it starts from a project, browser session, notebook, or external script, and who needs to review the result.",
+    body: "I want to discuss using the CoCalc CLI for project-aware automation. Helpful context: what should run, whether it starts from a project, browser session, notebook, or external script, and who needs to review the result.",
     context: "cli",
     subject: "CoCalc CLI automation",
     title: "Ask CoCalc about CLI automation",
@@ -274,27 +256,28 @@ export default function CliFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Connect external tools and agents to CoCalc projects.
+                Run project-aware commands from scripts and shell-capable
+                agents.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Give scripts and AI assistants a typed way to inspect project
-                context, run notebook or browser checks, and return work that
-                people can review.
+                Use the CoCalc CLI to inspect project context, run notebook
+                actions, and leave outputs in the same workspace for review.
               </Paragraph>
               <Flex vertical gap={8}>
                 <HeroPoint>
-                  Connect external assistants without moving work out of CoCalc.
+                  Inspect files, notebooks, open tabs, and project state.
                 </HeroPoint>
                 <HeroPoint>
-                  Act on project files, notebooks, browser state, and docs.
+                  Run documented commands without driving the UI by hand.
                 </HeroPoint>
-                <HeroPoint>Keep actions explicit and reviewable.</HeroPoint>
+                <HeroPoint>
+                  Leave outputs where collaborators can review them.
+                </HeroPoint>
               </Flex>
               <Flex wrap gap={12}>
-                <Button type="primary" href={primaryHref}>
-                  {primaryLabel}
+                <Button type="primary" href={CLI_DOCS_PATH}>
+                  CLI Docs
                 </Button>
-                <Button href={CLI_DOCS_PATH}>CLI Docs</Button>
                 <Button href={appPath("features/automations")}>
                   Project automations
                 </Button>
@@ -313,31 +296,30 @@ export default function CliFeaturePage({
         <Flex vertical gap={16}>
           <Flex vertical gap={8} style={{ maxWidth: 780 }}>
             <Title level={3} style={{ margin: 0 }}>
-              Choose the right way to connect.
+              Choose the right connection surface.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              The CLI fits best when an external tool needs to work with an
-              existing project. Automations and the API solve different parts of
-              the same system.
+              Use the CLI for explicit project commands, automations for
+              repeatable runs, and the API for product integrations.
             </Paragraph>
           </Flex>
           <Row gutter={[16, 16]}>
             <CliSurfaceChoice
-              body="Best when a person, script, or external assistant needs an explicit project command."
+              body="For people, scripts, or shell-capable agents that need a documented command against a project."
               href={CLI_DOCS_PATH}
               icon="terminal"
-              label="Read docs"
+              label="CLI Docs"
               title="CLI"
             />
             <CliSurfaceChoice
-              body="Best when the same notebook, script, or report should run on a schedule or project event."
+              body="For notebooks, scripts, or reports that should run on a schedule or project event."
               href={appPath("features/automations")}
               icon="sync"
               label="Project automations"
               title="Automations"
             />
             <CliSurfaceChoice
-              body="Best when another product or service needs a deeper programmatic integration with CoCalc."
+              body="For services that need a programmatic integration with CoCalc."
               href={appPath("features/api")}
               icon="code"
               label="HTTP API"

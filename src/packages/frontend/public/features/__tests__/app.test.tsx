@@ -143,7 +143,8 @@ describe("PublicFeaturesApp", () => {
       slug: "automations",
     },
     {
-      marker: "Connect external tools and agents to CoCalc projects.",
+      marker:
+        "Run project-aware commands from scripts and shell-capable agents.",
       slug: "cli",
     },
     {
@@ -1077,12 +1078,21 @@ describe("PublicFeaturesApp", () => {
       expect(screen.getByText(marker)).not.toBeNull();
       if (slug === "cli") {
         expect(
-          screen.getByRole("link", { name: "CLI Docs" }).getAttribute("href"),
-        ).toBe("/docs/cli/use-cocalc-cli");
+          screen
+            .getAllByRole("link", { name: "CLI Docs" })
+            .map((link) => link.getAttribute("href")),
+        ).toContain("/docs/cli/use-cocalc-cli");
+        expect(
+          screen.queryByRole("link", { name: "Create account" }),
+        ).toBeNull();
         expect(screen.queryByRole("link", { name: "CLI guide" })).toBeNull();
         expect(
-          screen.getByText("typed commands for project automation"),
+          screen.getByText("documented commands for project workflows"),
         ).not.toBeNull();
+        expect(screen.getByText("reviewable notebook workflow")).not.toBeNull();
+        expect(screen.getByText("Read project context")).not.toBeNull();
+        expect(screen.getByText("Run bounded actions")).not.toBeNull();
+        expect(screen.getByText("Return reviewable output")).not.toBeNull();
         expect(
           screen.getByRole("img", {
             name: "CoCalc CLI project workflow example",
@@ -1096,7 +1106,11 @@ describe("PublicFeaturesApp", () => {
             "$ cocalc project jupyter exec --path analysis.ipynb --stdin",
           ),
         ).not.toBeNull();
-        expect(screen.queryByText(/Phase 0|RootFS|Conat|bay/i)).toBeNull();
+        expect(
+          screen.queryByText(
+            /Phase 0|RootFS|Conat|bay|practical bridge|typed surface|run and report/i,
+          ),
+        ).toBeNull();
       }
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
       expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
