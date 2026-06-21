@@ -99,6 +99,15 @@ function paymentIntentInvoiceId(paymentIntent): string | undefined {
   return invoiceId || undefined;
 }
 
+function isMissingStripeInvoiceError(err): boolean {
+  const message = `${err}`.toLowerCase();
+  return (
+    message.includes("no such invoice") ||
+    ((err as any)?.code === "resource_missing" &&
+      `${(err as any)?.param ?? ""}`.includes("invoice"))
+  );
+}
+
 async function attachInvoicePaymentLink(paymentIntent): Promise<void> {
   if (paymentIntentInvoiceId(paymentIntent) || !paymentIntent.id) {
     return;
@@ -424,8 +433,8 @@ export function isReadyToProcess(paymentIntent) {
       paymentIntent.status == "canceled") &&
     paymentIntent.metadata["processed"] != "true" &&
     paymentIntent.metadata["purpose"] &&
-    paymentIntent.metadata["deleted"] != "true" &&
-    paymentIntentInvoiceId(paymentIntent)
+    paymentIntent.metadata["total_excluding_tax_usd"] &&
+    paymentIntent.metadata["deleted"] != "true"
   );
 }
 
@@ -443,11 +452,11 @@ function paymentIntentNotReadyReason(paymentIntent): string {
   if (!paymentIntent.metadata?.purpose) {
     reasons.push("missing purpose metadata");
   }
+  if (!paymentIntent.metadata?.total_excluding_tax_usd) {
+    reasons.push("missing total metadata");
+  }
   if (paymentIntent.metadata?.deleted == "true") {
     reasons.push("deleted");
-  }
-  if (!paymentIntentInvoiceId(paymentIntent)) {
-    reasons.push("missing invoice link");
   }
   return reasons.join(", ") || "unknown reason";
 }
@@ -457,7 +466,6 @@ function paymentIntentNotReadyReason(paymentIntent): string {
 // checkout since we make our non-checkout payment intents from an invoice.
 function needsToBeRecorded(paymentIntent) {
   return (
-    !isReadyToProcess(paymentIntent) &&
     !paymentIntent.invoice &&
     paymentIntent.metadata["purpose"] &&
     paymentIntent.metadata["recorded"] != "true" &&
@@ -538,7 +546,16 @@ export const processPaymentIntent = reuseInFlight(
     const getInvoice = async () => {
       const invoiceId = paymentIntentInvoiceId(paymentIntent);
       if (invoice == null && invoiceId) {
-        invoice = await stripe.invoices.retrieve(invoiceId);
+        try {
+          invoice = await stripe.invoices.retrieve(invoiceId);
+        } catch (err) {
+          if (!isMissingStripeInvoiceError(err)) {
+            throw err;
+          }
+          logger.debug(
+            `WARNING: unable to retrieve optional invoice ${invoiceId} for payment intent ${paymentIntent.id} -- ${err}`,
+          );
+        }
       }
       return invoice;
     };
@@ -717,10 +734,12 @@ ${await support()}`;
     }
 
     invoice = await getInvoice();
-    assertInvoiceAccountBinding({
-      invoice,
-      expected_customer_id: expectedCustomerId,
-    });
+    if (invoice != null) {
+      assertInvoiceAccountBinding({
+        invoice,
+        expected_customer_id: expectedCustomerId,
+      });
+    }
 
     // credit the account.  If the account was already credited for this (e.g.,
     // by another process doing this at the same time), that should be detected
@@ -990,7 +1009,7 @@ export async function maintainPaymentIntents() {
 }
 
 function getInvoiceLineItems(invoice): LineItem[] {
-  const data = invoice.lines?.data;
+  const data = invoice?.lines?.data;
   if (data == null) {
     return [];
   }

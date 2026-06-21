@@ -230,4 +230,124 @@ describe("processPaymentIntents invoice-payment links", () => {
       }),
     });
   });
+
+  it("processes direct student course package payment intents without an invoice", async () => {
+    const product = {
+      type: "membership-package",
+      kind: "course",
+      membership_class: "student1",
+      seat_count: 1,
+      course_project_id: "course-project-1",
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+        project_id: "student-project-1",
+        course_project_id: "course-project-1",
+      },
+    };
+    stripe.invoicePayments.list.mockResolvedValue({ data: [] });
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      customer: "cus_123",
+      id: "pi_direct_course",
+      metadata: {
+        account_id: "acct-1",
+        membership_package_product: JSON.stringify(product),
+        purpose: MEMBERSHIP_PACKAGE_PURCHASE,
+        total_excluding_tax_usd: "1800",
+      },
+      status: "succeeded",
+    });
+
+    await expect(
+      processPaymentIntents({
+        account_id: "acct-1",
+        payment_intent_id: "pi_direct_course",
+        strict: true,
+      }),
+    ).resolves.toBe(1);
+
+    expect(stripe.invoices.retrieve).not.toHaveBeenCalled();
+    expect(mockCreateCredit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-1",
+        invoice_id: "pi_direct_course",
+        description: expect.objectContaining({
+          line_items: [],
+          purpose: MEMBERSHIP_PACKAGE_PURCHASE,
+        }),
+      }),
+    );
+    expect(mockPurchaseMembershipPackage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-1",
+        fulfillment_id: "pi_direct_course",
+      }),
+    );
+    expect(stripe.paymentIntents.update).toHaveBeenLastCalledWith(
+      "pi_direct_course",
+      {
+        metadata: expect.objectContaining({
+          credit_id: 101,
+          processed: "true",
+        }),
+      },
+    );
+  });
+
+  it("processes payment intents when optional invoice metadata points to a missing Stripe invoice", async () => {
+    const product = {
+      type: "membership-package",
+      kind: "course",
+      membership_class: "student1",
+      seat_count: 1,
+      course_project_id: "course-project-1",
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+        project_id: "student-project-1",
+        course_project_id: "course-project-1",
+      },
+    };
+    stripe.invoices.retrieve.mockRejectedValue(
+      Object.assign(new Error("No such invoice: 'in_missing'"), {
+        code: "resource_missing",
+        param: "invoice",
+      }),
+    );
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      customer: "cus_123",
+      id: "pi_missing_invoice",
+      invoice: "in_missing",
+      metadata: {
+        account_id: "acct-1",
+        invoice_id: "in_missing",
+        membership_package_product: JSON.stringify(product),
+        purpose: MEMBERSHIP_PACKAGE_PURCHASE,
+        total_excluding_tax_usd: "1800",
+      },
+      status: "succeeded",
+    });
+
+    await expect(
+      processPaymentIntents({
+        account_id: "acct-1",
+        payment_intent_id: "pi_missing_invoice",
+        strict: true,
+      }),
+    ).resolves.toBe(1);
+
+    expect(stripe.invoices.retrieve).toHaveBeenCalledWith("in_missing");
+    expect(mockCreateCredit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-1",
+        invoice_id: "pi_missing_invoice",
+      }),
+    );
+    expect(mockPurchaseMembershipPackage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-1",
+        fulfillment_id: "pi_missing_invoice",
+      }),
+    );
+  });
 });

@@ -164,7 +164,7 @@ import {
 } from "@cocalc/server/projects/project-secrets";
 import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/project-secret-ssh-key";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
-import { getMembershipTierById } from "@cocalc/server/membership/tiers";
+import { getSeedMembershipTierById } from "@cocalc/server/membership/tiers";
 import {
   listClaimableMembershipPackagesForAccount,
   listMembershipPackageDetailsForOwner,
@@ -1687,7 +1687,7 @@ export async function getCourseStudentAccess({
     return { status: "not-required", course };
   }
 
-  const requiredTier = await getMembershipTierById({
+  const requiredTier = await getSeedMembershipTierById({
     id: requiredMembershipClass,
   });
   if (requiredTier == null) {
@@ -1699,7 +1699,7 @@ export async function getCourseStudentAccess({
   }
   const requiredPriority = requiredTier.priority ?? 0;
   const membership = await resolveMembershipForAccount(account_id);
-  const currentTier = await getMembershipTierById({ id: membership.class });
+  const currentTier = await getSeedMembershipTierById({ id: membership.class });
   if ((currentTier?.priority ?? 0) >= requiredPriority) {
     return {
       status: "active",
@@ -1746,7 +1746,7 @@ export async function getCourseStudentAccess({
       if (pkg.kind !== "site") {
         continue;
       }
-      const pkgTier = await getMembershipTierById({
+      const pkgTier = await getSeedMembershipTierById({
         id: pkg.membership_class,
       });
       if (
@@ -1843,7 +1843,7 @@ async function getAssignedDirectCoursePackageMembership({
     if (!assignedToAccount) {
       continue;
     }
-    const tier = await getMembershipTierById({
+    const tier = await getSeedMembershipTierById({
       id: membershipPackage.membership_class,
     });
     if (

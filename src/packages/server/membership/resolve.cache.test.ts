@@ -16,8 +16,10 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 
 jest.mock("./tiers", () => ({
-  getMembershipTierMap: (...args: any[]) => getMembershipTierMapMock(...args),
-  getMembershipTierById: (...args: any[]) => getMembershipTierByIdMock(...args),
+  getSeedMembershipTierMap: (...args: any[]) =>
+    getMembershipTierMapMock(...args),
+  getSeedMembershipTierById: (...args: any[]) =>
+    getMembershipTierByIdMock(...args),
 }));
 
 jest.mock("./usage-status", () => ({

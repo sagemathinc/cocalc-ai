@@ -8,8 +8,8 @@ import type {
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
 import {
-  getMembershipTierById,
-  getMembershipTierMap,
+  getSeedMembershipTierById,
+  getSeedMembershipTierMap,
   MembershipTierRecord,
 } from "./tiers";
 import { listActiveMembershipGrantsForAccount } from "./grants";
@@ -94,7 +94,7 @@ async function buildMembershipCandidates(
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
     const tier =
       tiers[membershipClass] ??
-      (await getMembershipTierById({ id: membershipClass }));
+      (await getSeedMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "subscription",
@@ -115,7 +115,7 @@ async function buildMembershipCandidates(
     const membershipClass = admin.membership_class as MembershipClass;
     const tier =
       tiers[membershipClass] ??
-      (await getMembershipTierById({ id: membershipClass }));
+      (await getSeedMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "admin",
@@ -143,7 +143,7 @@ async function buildMembershipCandidates(
     const membershipClass = grant.membership_class as MembershipClass;
     const tier =
       tiers[membershipClass] ??
-      (await getMembershipTierById({ id: membershipClass }));
+      (await getSeedMembershipTierById({ id: membershipClass }));
     const siteLicenseId = getMetadataString(grant.metadata, "site_license_id");
     const siteLicenseDisplayName =
       siteLicenseId == null
@@ -327,7 +327,7 @@ async function buildMembershipResolutionForAccount(
   candidates: MembershipCandidate[];
   selected: MembershipResolution;
 }> {
-  const tiers = await getMembershipTierMap({ includeDisabled: true });
+  const tiers = await getSeedMembershipTierMap({ includeDisabled: true });
   const candidates = await buildMembershipCandidates(account_id, tiers);
   const selected = pickBestMembership(candidates, tiers);
   return { candidates, selected };
