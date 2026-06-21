@@ -20,6 +20,7 @@ import {
 
 import { useStore } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import {
   groupedRootfsOptions,
@@ -189,7 +190,21 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
       <Card
         title={
           <>
-            <Icon name="cube" /> Student Project RootFS Image
+            <Icon name="cube" /> Student Project RootFS Image (
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={() =>
+                openProjectDocs({
+                  projectId: courseProjectId ?? "",
+                  slug: "teaching/student-project-rootfs",
+                })
+              }
+            >
+              Docs
+            </Button>
+            )
           </>
         }
       >

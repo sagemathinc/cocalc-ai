@@ -7,6 +7,9 @@ import type { DocsEntry } from "../types";
 import { docsIcon } from "../helpers";
 import {
   COURSE_ASSIGNMENT_BODY,
+  COURSE_RESTRICT_STUDENT_PROJECTS_BODY,
+  COURSE_SHARED_PROJECT_BODY,
+  COURSE_STUDENT_PROJECT_ROOTFS_BODY,
   COURSE_STUDENT_PAY_BODY,
   COURSE_WORKFLOW_BODY,
   NBGRADER_BODY,
@@ -50,6 +53,66 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
     summary:
       "Configure student pay, instructor-paid seats, site licenses, course start dates, and grace periods.",
     title: "Configure course student pay",
+  },
+  {
+    audiences: ["agents", "instructors"],
+    body: COURSE_RESTRICT_STUDENT_PROJECTS_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.restrict-student-projects",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-06-21",
+    noActionReason:
+      "Student project restrictions are configured inside a selected .course file.",
+    searchKeywords:
+      "restrict student projects course disable actions uploads collaborators terminals ai jupyterlab vscode pluto rserver exams",
+    slug: "teaching/restrict-student-projects",
+    status: "ready",
+    summary:
+      "Explain each student-project restriction option and what it really disables.",
+    title: "Restrict student projects",
+  },
+  {
+    audiences: ["agents", "instructors"],
+    body: COURSE_SHARED_PROJECT_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.shared-project",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-06-21",
+    noActionReason:
+      "Shared projects are created from a selected .course file and depend on that course roster.",
+    searchKeywords:
+      "course shared project students collaborators write access labs common workspace",
+    slug: "teaching/shared-project",
+    status: "ready",
+    summary:
+      "Use a common writable project shared by all students, instructors, and TAs.",
+    title: "Course shared project",
+  },
+  {
+    audiences: ["agents", "instructors"],
+    body: COURSE_STUDENT_PROJECT_ROOTFS_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.student-project-rootfs",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-06-21",
+    noActionReason:
+      "Student project RootFS images are configured inside a selected .course file.",
+    searchKeywords:
+      "course student project rootfs image software environment managed image apply existing projects restart",
+    slug: "teaching/student-project-rootfs",
+    status: "ready",
+    summary:
+      "Choose and roll out managed RootFS images for course student projects.",
+    title: "Student project RootFS images",
   },
   {
     audiences: ["agents", "instructors"],

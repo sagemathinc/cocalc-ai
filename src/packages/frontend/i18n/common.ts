@@ -1941,10 +1941,6 @@ export const course = defineMessages({
     id: "course.distribute",
     defaultMessage: "Distribute",
   },
-  collaborator_policy: {
-    id: "course.commands.collaborator-policy.label",
-    defaultMessage: "Collaborator Policy",
-  },
   restrict_student_projects: {
     id: "course.commands.restrict-student-projects.label",
     defaultMessage: "Restrict Student Projects",

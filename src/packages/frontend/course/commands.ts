@@ -122,24 +122,6 @@ export const COMMANDS: { [name: string]: Command } = {
       actions.setModal("copy-limit");
     },
   },
-  "collaborator-policy": {
-    icon: "mail",
-    label: course.collaborator_policy,
-    button: defineMessage({
-      id: "course.commands.collaborator-policy.button",
-      defaultMessage: "Collab",
-      description: "Short label on a button, abbrivation of 'Collaborators'",
-    }),
-    title: defineMessage({
-      id: "course.commands.collaborator-policy.tooltip",
-      defaultMessage:
-        "Control if the owner and any collaborator on this student project may add collaborators to this project.",
-    }),
-    onClick: ({ props }) => {
-      const { actions } = props;
-      actions.setModal("collaborator-policy");
-    },
-  },
   "restrict-student-projects": {
     icon: "lock",
     label: course.restrict_student_projects,

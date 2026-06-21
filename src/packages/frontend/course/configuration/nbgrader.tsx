@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Card, InputNumber, Radio } from "antd";
+import { Button, Card, InputNumber, Radio } from "antd";
 
 import { Checkbox } from "@cocalc/frontend/antd-bootstrap";
 import {
@@ -12,7 +12,8 @@ import {
   useActions,
   useRedux,
 } from "@cocalc/frontend/app-framework";
-import { A, Icon } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 
 import { CourseActions } from "../actions";
@@ -285,7 +286,20 @@ export function Nbgrader({ name }: Props) {
       title={
         <>
           <Icon name="graduation-cap" /> nbgrader (
-          <A href="/docs/teaching/nbgrader">Docs</A>)
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() =>
+              openProjectDocs({
+                projectId: course_project_id,
+                slug: "teaching/nbgrader",
+              })
+            }
+          >
+            Docs
+          </Button>
+          )
         </>
       }
     >

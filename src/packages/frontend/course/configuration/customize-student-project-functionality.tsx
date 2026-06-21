@@ -15,6 +15,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, Tip } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { useProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import { isViewerProjectRole } from "@cocalc/frontend/project/realtime-access";
@@ -191,11 +192,13 @@ const OPTIONS: Option[] = [
 interface Props {
   functionality: StudentProjectFunctionality;
   onChange: (StudentProjectFunctionality) => Promise<void>;
+  project_id: string;
 }
 
 export function CustomizeStudentProjectFunctionality({
   functionality,
   onChange,
+  project_id,
 }: Props) {
   const intl = useIntl();
   const [state, setState] = useState<StudentProjectFunctionality>(
@@ -264,6 +267,21 @@ export function CustomizeStudentProjectFunctionality({
       title={
         <>
           <Icon name="lock" /> {title}
+          {" ("}
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() =>
+              openProjectDocs({
+                projectId: project_id,
+                slug: "teaching/restrict-student-projects",
+              })
+            }
+          >
+            Docs
+          </Button>
+          {")"}
           <HelpPopover
             title={title}
             content={

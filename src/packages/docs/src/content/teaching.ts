@@ -183,6 +183,190 @@ Before inviting students:
 6. If students will pay directly, test the purchase flow before class starts.
 `;
 
+export const COURSE_RESTRICT_STUDENT_PROJECTS_BODY = String.raw`
+## What this panel controls
+
+**Restrict Student Projects** writes a
+\`student_project_functionality\` policy into each student project's course
+metadata. The CoCalc frontend reads that policy and hides or disables matching
+UI features inside student projects.
+
+These options are useful for exams, guided labs, and courses where students
+should focus on a narrow set of tools. They are not a hard security boundary:
+students may still have other ways to communicate, copy data, or use tools
+outside CoCalc.
+
+## When the settings take effect
+
+After changing options, save the panel and reconfigure student projects. New
+student projects get the current policy when they are created. Existing student
+projects get the policy when course configuration is pushed to them, for
+example by **Reconfigure all projects** or other course maintenance actions.
+
+## File and upload restrictions
+
+- **Disable file actions** hides or disables common file-management actions in
+  the file browser, such as delete, download, copy, move, publish, and related
+  context-menu actions. It also disables drag-and-drop file reordering where
+  that would otherwise expose file actions.
+- **Disable file uploads** disables the Upload button and drag-and-drop upload
+  paths in the project file UI.
+
+These settings are meant to reduce accidental or casual use of those actions.
+They do not rewrite assignments or make files cryptographically immutable.
+
+## Notebook and server restrictions
+
+- **Disable toggling whether cells are editable or deletable** disables
+  notebook UI that lets students change Jupyter cell editability/deletability.
+  It also disables the raw JSON editor and Jupyter command-list dialog.
+- **Disable Jupyter Classic notebook server** hides the Jupyter Classic server
+  launcher for student projects.
+- **Disable JupyterLab notebook server** hides the JupyterLab launcher.
+- **Disable VS Code IDE Server** hides the VS Code server launcher.
+- **Disable Pluto Julia notebook server** hides the Pluto launcher.
+- **Disable R IDE Server** hides the R IDE launcher.
+
+The server-launcher options matter because external IDEs and notebook servers
+can have their own file browsers, download tools, terminals, or editing
+interfaces outside the main CoCalc course UI.
+
+## Terminal and collaborator restrictions
+
+- **Disable command line terminal** disables opening terminal sessions from the
+  main project UI and flyouts.
+- **Disable adding or removing collaborators** removes the collaborators UI for
+  student projects. Students should not be able to use the standard project UI
+  to add other people or remove course staff.
+
+The course still manages student-project collaborators during reconfiguration:
+students, instructors, and TAs are kept in sync based on the course roster and
+the collaborators on the instructor project.
+
+## AI restrictions
+
+- **Disable all AI integration** hides CoCalc AI features in the student
+  project.
+- **Disable some AI integration** keeps limited help such as explain, hint, and
+  chat replies, but disables stronger "complete the work for me" style actions
+  such as solution-oriented Help Me Fix flows.
+
+These AI settings are course UI policy. They do not stop a student from using
+an external AI tool in another browser tab.
+`;
+
+export const COURSE_SHARED_PROJECT_BODY = String.raw`
+## What the shared project is
+
+A course shared project is one ordinary CoCalc project that is shared with the
+whole course. Students, instructors, and TAs all get write access to the same
+project.
+
+It is separate from each student's private course project. Use it when students
+should collaborate in a common workspace instead of each working in their own
+copy.
+
+## What happens when you create it
+
+When you click **Create shared project**, CoCalc creates a new project with a
+course-specific title and description, saves its project id in the course
+settings, and configures collaborators.
+
+The collaborator set is kept as:
+
+- all collaborators on the instructor project that contains the course file
+- all students in the course who have CoCalc accounts
+
+Whenever the course is reopened or reconfigured, CoCalc tries to add missing
+course staff and students to the shared project. If the course is configured to
+disallow arbitrary extra collaborators, reconfiguration also removes people who
+are not course staff or students.
+
+## What gets synchronized
+
+The shared project receives course metadata of type \`shared\`. Course datastore
+configuration and environment variables are pushed to it so shared-project
+software can see the same course-level settings that student projects see.
+
+Student-project restrictions do not apply to the shared project. The shared
+project is intentionally collaborative and writable by everyone in the course.
+
+## Why it is useful
+
+Use a shared project for:
+
+- live in-class labs where everybody edits or runs code together
+- a course-wide chat or scratch workspace
+- shared datasets, examples, or notebooks students should experiment with
+- demonstrations where students should see the same running files
+
+Do not use it for private student submissions, grades, or work that must remain
+separate by student. Use assignments and student projects for that.
+
+## Resource planning
+
+The shared project is a real project. If many students use it at once, it may
+need enough CPU, RAM, disk, and network capacity for the class activity. After
+creating it, consider assigning an appropriate membership, pay-as-you-go
+resources, or project host placement before class starts.
+`;
+
+export const COURSE_STUDENT_PROJECT_ROOTFS_BODY = String.raw`
+## What this setting controls
+
+**Student Project RootFS Image** controls the base software image used by
+student projects. The RootFS image is the visible \`/\` filesystem and provides
+system packages, language runtimes, command line tools, and other managed
+software.
+
+By default, new student projects follow the RootFS image configured on the
+instructor project that contains the course file. Set an override only when the
+course should force a specific managed image for student projects.
+
+## New student projects
+
+When a new student project is created, the course copies the current course
+RootFS choice into that project:
+
+- if no override is saved, the student project follows the instructor
+  project's current RootFS image
+- if an override is saved, the student project uses the selected managed image
+  and image id
+
+This makes it possible to prepare a course against a known software stack and
+avoid per-student environment drift.
+
+## Existing student projects
+
+Existing student projects do not change automatically just because you save a
+new RootFS choice. Use **Apply To Existing Student Projects...** when you are
+ready to roll the image out to already-created projects.
+
+Applying to existing projects updates each student project's RootFS image. Any
+student project that is currently running is restarted so the new image takes
+effect immediately.
+
+## Data safety
+
+Changing the RootFS changes the managed base filesystem. It is appropriate for
+course software, installed packages, system libraries, and base image updates.
+
+Important student data should live in persistent project storage such as
+\`/root\`. Treat \`/tmp\` as temporary workspace storage. Do not ask students to
+store important work only in paths that belong to the base RootFS image.
+
+## Image selection
+
+The selector shows managed RootFS catalog entries. It hides older versions by
+default, but you can show older versions when you need to pin a course to a
+previous image. Hidden or blocked catalog entries are not offered for new
+selection.
+
+If the course is already configured to use an image that is no longer visible
+in the catalog, the panel warns you. Save a new selection to move the course to
+a current managed image.
+`;
+
 export const NBGRADER_BODY = String.raw`
 ## What nbgrader is for
 

@@ -24,7 +24,6 @@ import { CourseSettingsRecord, CourseStore } from "../store";
 import ConfigurationCopying from "./configuration-copying";
 import { CustomizeStudentProjectFunctionality } from "./customize-student-project-functionality";
 import { DatastoreConfig } from "./datastore-config";
-import { DisableStudentCollaboratorsPanel } from "./disable-collaborators";
 import { EnvironmentVariablesConfig } from "./envvars-config";
 import { Nbgrader } from "./nbgrader";
 import { Parallel } from "./parallel";
@@ -80,9 +79,11 @@ export function ConfigurationPanel({
           <Nbgrader name={name} />
         </Col>
         <Col md={12} style={{ padding: "15px" }}>
-          <CollaboratorPolicy settings={settings} actions={actions} />
-          <br />
-          <RestrictStudentProjects settings={settings} actions={actions} />
+          <RestrictStudentProjects
+            settings={settings}
+            actions={actions}
+            project_id={project_id}
+          />
           <br />
           <Parallel name={name} />
           <NetworkFilesystem
@@ -239,20 +240,12 @@ export function EmailInvitation({ actions, name }) {
   );
 }
 
-export function CollaboratorPolicy({ settings, actions }) {
-  return (
-    <DisableStudentCollaboratorsPanel
-      checked={!!settings.get("allow_collabs")}
-      on_change={(val) => actions.configuration.set_allow_collabs(val)}
-    />
-  );
-}
-
-export function RestrictStudentProjects({ settings, actions }) {
+export function RestrictStudentProjects({ settings, actions, project_id }) {
   const functionality =
     settings.get("student_project_functionality")?.toJS() ?? {};
   return (
     <CustomizeStudentProjectFunctionality
+      project_id={project_id}
       functionality={functionality}
       onChange={async (opts) =>
         await actions.configuration.set_student_project_functionality(opts)

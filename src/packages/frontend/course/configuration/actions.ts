@@ -411,7 +411,6 @@ async function openCourseFileAndGetActions({ project_id, path, maxTimeMs }) {
 }
 
 export const CONFIGURATION_GROUPS = [
-  "collaborator-policy",
   "email-invitation",
   "copy-limit",
   "restrict-student-projects",
@@ -434,10 +433,6 @@ async function configureGroup({
   actions: CourseActions;
 }) {
   switch (group) {
-    case "collaborator-policy":
-      const allow_collabs = !!settings.get("allow_collabs");
-      actions.configuration.set_allow_collabs(allow_collabs);
-      return;
     case "email-invitation":
       actions.configuration.set_email_invite(settings.get("email_invite"));
       return;

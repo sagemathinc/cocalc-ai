@@ -21,7 +21,6 @@ import {
 } from "@cocalc/frontend/course/configuration/actions-panel";
 import ConfigurationCopying from "@cocalc/frontend/course/configuration/configuration-copying";
 import {
-  CollaboratorPolicy,
   EmailInvitation,
   EnvVariables,
   NetworkFilesystem,
@@ -161,8 +160,6 @@ function getModal(modal: string): {
       return { Body: EmailInvitation };
     case "copy-limit":
       return { Body: Parallel };
-    case "collaborator-policy":
-      return { Body: CollaboratorPolicy };
     case "restrict-student-projects":
       return { Body: RestrictStudentProjects };
     case "nbgrader":

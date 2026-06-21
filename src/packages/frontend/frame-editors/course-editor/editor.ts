@@ -55,10 +55,7 @@ const COURSE_MENUS = {
         "course-email-invitation",
         "course-copy-limit",
       ],
-      restrictCourse: [
-        "course-collaborator-policy",
-        "course-restrict-student-projects",
-      ],
+      restrictCourse: ["course-restrict-student-projects"],
       nbgraderConfig: ["course-nbgrader"],
       environmentConfig: [
         "course-network-file-systems",
