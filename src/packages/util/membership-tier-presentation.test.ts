@@ -14,7 +14,7 @@ describe("buildMembershipTierPresentation", () => {
     expect(presentation.summaryBenefits).toEqual(
       expect.arrayContaining([
         "Shared public project-host pool access, tier 2.",
-        "Up to 32 simultaneous sponsored running projects.",
+        "Up to 16 simultaneous sponsored running projects.",
       ]),
     );
     expect(presentation.benefits).toContain(
@@ -22,16 +22,16 @@ describe("buildMembershipTierPresentation", () => {
     );
     expect(presentation.summaryLimits).toEqual(
       expect.arrayContaining([
-        "Shared compute priority: 8",
+        "Shared compute priority: 4",
         "Project RAM: 16 GB",
-        "Per-project disk quota: 64 GB",
+        "Per-project disk quota: 40 GB",
       ]),
     );
     expect(presentation.limits).toEqual(
       expect.arrayContaining([
-        "Shared compute priority: 8",
+        "Shared compute priority: 4",
         "Project RAM: 16 GB",
-        "RootFS: 250 images, 250 GB total, 30 GB per image",
+        "Per-project disk quota: 40 GB",
       ]),
     );
     expect(presentation.billing).toContain("$200.00 per month");
@@ -45,9 +45,9 @@ describe("buildMembershipTierPresentation", () => {
     const presentation = buildMembershipTierPresentation(tier);
 
     expect(presentation.billing).toContain(
-      "Course option: $25.00 for 122 days.",
+      "Course option: $18.00 for 122 days.",
     );
-    expect(presentation.billing).toContain("Course grace period: 14 days.");
+    expect(presentation.billing).toContain("Course grace period: 10 days.");
   });
 
   it("falls back to a configured-tier tagline for custom tiers", () => {

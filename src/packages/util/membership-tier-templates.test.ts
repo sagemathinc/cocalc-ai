@@ -1,6 +1,23 @@
-import { applyMembershipTierTemplateFallbacks } from "./membership-tier-templates";
+import {
+  applyMembershipTierTemplateFallbacks,
+  TIER_TEMPLATES,
+} from "./membership-tier-templates";
 
-describe("applyMembershipTierTemplateFallbacks", () => {
+describe("membership tier templates", () => {
+  it("defines the exported preset catalog", () => {
+    expect(Object.keys(TIER_TEMPLATES)).toEqual([
+      "admin",
+      "basic",
+      "free",
+      "instructor",
+      "member",
+      "pro",
+      "student",
+    ]);
+    expect(TIER_TEMPLATES).not.toHaveProperty("standard");
+    expect(TIER_TEMPLATES).not.toHaveProperty("researcher");
+  });
+
   it("fills missing entitlements from the built-in tier template", () => {
     const tier = applyMembershipTierTemplateFallbacks({
       id: "pro",
@@ -9,63 +26,39 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       features: undefined,
     });
 
-    expect(tier.project_defaults).toBeDefined();
-    expect(tier.features).toBeDefined();
-    expect(tier.ai_limits).toBeDefined();
-
-    const projectDefaults = tier.project_defaults as unknown as Record<
-      string,
-      unknown
-    >;
-    const features = tier.features as unknown as Record<string, unknown>;
-    const aiLimits = tier.ai_limits as unknown as Record<string, unknown>;
-
-    expect(features.create_hosts).toBe(true);
-    expect(features.project_host_tier).toBe(2);
-    expect(projectDefaults).toEqual(
-      expect.not.objectContaining({
-        cores: expect.anything(),
-        cpu_shares: expect.anything(),
-        mintime: expect.anything(),
-        network: expect.anything(),
-        member_host: expect.anything(),
-        always_running: expect.anything(),
-        ephemeral_state: expect.anything(),
-        ephemeral_disk: expect.anything(),
-      }),
-    );
+    expect(tier.project_defaults).toEqual({
+      disk_quota: 40000,
+      memory: 16000,
+      memory_request: 250,
+    });
+    expect(tier.features).toEqual({
+      create_hosts: true,
+      project_host_tier: 2,
+    });
+    expect(tier.ai_limits).toEqual({ units_5h: 0, units_7d: 0 });
+    expect(tier.store_visible).toBe(true);
+    expect(tier.team_visible).toBe(true);
     expect(tier.course_store_visible).toBe(false);
-    expect(tier.team_visible).toBeUndefined();
-    expect(aiLimits.units_5h).toBe(0);
-    expect(aiLimits.units_7d).toBe(0);
-    expect(
-      (tier.usage_limits as Record<string, unknown>)?.shared_compute_priority,
-    ).toBeGreaterThan(0);
+    expect(tier.price_monthly).toBe(200);
+    expect(tier.price_yearly).toBe(1800);
+    expect(tier.store_highlights).toContain(
+      "Pay at the end of the month for powerful dedicated VMs",
+    );
     expect(
       (tier.usage_limits as Record<string, unknown>)
         ?.max_sponsored_running_projects,
-    ).toBe(32);
+    ).toBe(16);
     expect((tier.usage_limits as Record<string, unknown>)?.rootfs_count).toBe(
       250,
     );
     expect(
       (tier.usage_limits as Record<string, unknown>)?.rootfs_oci_images,
     ).toBe(true);
-    expect(
-      (tier.usage_limits as Record<string, unknown>)
-        ?.project_max_collaborators_and_pending_invites,
-    ).toBe(500);
-    expect(
-      (tier.usage_limits as Record<string, unknown>)?.credit_spend_limit_7d_usd,
-    ).toBeGreaterThan(0);
-    expect(tier.store_highlights).toContain(
-      "Postpaid billing for dedicated hosts",
-    );
   });
 
   it("merges explicit entitlements over built-in defaults", () => {
     const tier = applyMembershipTierTemplateFallbacks({
-      id: "standard",
+      id: "member",
       course_store_visible: true,
       course_price: 10,
       course_duration_days: 30,
@@ -82,14 +75,15 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.course_grace_days).toBe(3);
     expect(tier.project_defaults).toEqual(
       expect.objectContaining({
-        disk_quota: 32000,
+        disk_quota: 16000,
         memory: 1234,
+        memory_request: 0,
       }),
     );
     expect(tier.ai_limits).toEqual(
       expect.objectContaining({
         units_5h: 7,
-        units_7d: expect.any(Number),
+        units_7d: 0,
       }),
     );
     expect(tier.features).toEqual(
@@ -101,16 +95,14 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.usage_limits).toEqual(
       expect.objectContaining({
         shared_compute_priority: 99,
-        max_sponsored_running_projects: 4,
-        max_projects: 25,
-        total_storage_soft_bytes: 64_000_000_000,
-        total_storage_hard_bytes: 64_000_000_000,
+        max_sponsored_running_projects: 3,
+        max_projects: 20,
+        total_storage_soft_bytes: 45_000_000_000,
+        total_storage_hard_bytes: 50_000_000_000,
         notification_email_send_limit_5h: 200,
         notification_email_send_limit_7d: 1000,
-        prepaid_host_usage_limit_5h_usd: 300,
+        prepaid_host_usage_limit_5h_usd: 100,
         prepaid_host_usage_limit_7d_usd: 1000,
-        acp_max_running_per_account: 10,
-        acp_max_active_automations_per_project: 3,
         rootfs_count: 20,
         rootfs_total_storage_gb: 25,
         rootfs_max_storage_gb: 10,
@@ -122,7 +114,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     );
   });
 
-  it("marks the student template as course-visible with a one-time course price", () => {
+  it("marks the student template as course-visible with the exported course price", () => {
     const tier = applyMembershipTierTemplateFallbacks({
       id: "student",
       course_store_visible: undefined,
@@ -132,65 +124,60 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     });
 
     expect(tier.course_store_visible).toBe(true);
-    expect(tier.course_price).toBe(25);
+    expect(tier.course_price).toBe(18);
     expect(tier.course_duration_days).toBe(122);
-    expect(tier.course_grace_days).toBe(14);
+    expect(tier.course_grace_days).toBe(10);
+    expect((tier.project_defaults as Record<string, unknown>).memory).toBe(
+      8000,
+    );
+    expect((tier.usage_limits as Record<string, unknown>).max_projects).toBe(
+      10,
+    );
   });
 
-  it("defines hidden basic and standard individual membership templates", () => {
-    const free = applyMembershipTierTemplateFallbacks({ id: "free" });
-    const basic = applyMembershipTierTemplateFallbacks({ id: "basic" });
-    const standard = applyMembershipTierTemplateFallbacks({ id: "standard" });
-
-    expect(free.store_description).toMatch(/explore the platform/);
-    expect(free.store_highlights).toEqual([]);
-    expect(free.ai_limits).toEqual({ units_5h: 0, units_7d: 0 });
-
-    expect(basic.label).toBe("Basic");
-    expect(basic.store_description).toMatch(/occasional light use/);
-    expect(basic.store_highlights).toContain("More shared resources");
-    expect(basic.site_license_pool_description).toMatch(/Light CoCalc access/);
-    expect(basic.store_visible).toBe(false);
-    expect(basic.team_visible).toBeUndefined();
-    expect(basic.course_store_visible).toBe(false);
-    expect(basic.price_monthly).toBe(8);
-    expect(basic.price_yearly).toBe(72);
-    expect((basic.project_defaults as Record<string, unknown>).disk_quota).toBe(
-      16000,
+  it("defines free, basic, member, instructor, pro, and admin visibility", () => {
+    expect(applyMembershipTierTemplateFallbacks({ id: "free" })).toEqual(
+      expect.objectContaining({
+        label: "Free",
+        store_visible: true,
+        team_visible: false,
+        course_store_visible: false,
+        price_monthly: 0,
+      }),
     );
-    expect(
-      (basic.usage_limits as Record<string, unknown>)
-        .max_sponsored_running_projects,
-    ).toBe(2);
-    expect((basic.usage_limits as Record<string, unknown>).max_projects).toBe(
-      5,
+    expect(applyMembershipTierTemplateFallbacks({ id: "basic" })).toEqual(
+      expect.objectContaining({
+        label: "Basic",
+        store_visible: true,
+        team_visible: false,
+        trial_days: 7,
+      }),
     );
-    expect(
-      (basic.usage_limits as Record<string, unknown>).total_storage_hard_bytes,
-    ).toBe(16_000_000_000);
-
-    expect(standard.label).toBe("Standard");
-    expect(standard.store_description).toMatch(/everyday work/);
-    expect(standard.store_highlights).toContain(
-      "Dedicated project host access, including GPU",
+    expect(applyMembershipTierTemplateFallbacks({ id: "member" })).toEqual(
+      expect.objectContaining({
+        label: "Member",
+        store_visible: true,
+        team_visible: true,
+        price_monthly: 25,
+      }),
     );
-    expect(standard.site_license_pool_description).toMatch(/Everyday CoCalc/);
-    expect(standard.store_visible).toBe(false);
-    expect(standard.team_visible).toBeUndefined();
-    expect(standard.course_store_visible).toBe(false);
-    expect(standard.price_monthly).toBe(24);
-    expect(standard.price_yearly).toBe(216);
-    expect(standard.trial_days).toBe(7);
-    expect(
-      (standard.project_defaults as Record<string, unknown>).disk_quota,
-    ).toBe(32000);
-    expect((standard.features as Record<string, unknown>).create_hosts).toBe(
-      true,
+    expect(applyMembershipTierTemplateFallbacks({ id: "instructor" })).toEqual(
+      expect.objectContaining({
+        label: "Instructor",
+        store_visible: false,
+        team_visible: false,
+        notes:
+          "This is meant to be provided FOR FREE to instructors who will using student-pay or institute pay after we connect with them. ",
+      }),
     );
-    expect(
-      (standard.usage_limits as Record<string, unknown>)
-        .prepaid_host_usage_limit_7d_usd,
-    ).toBe(1000);
+    expect(applyMembershipTierTemplateFallbacks({ id: "admin" })).toEqual(
+      expect.objectContaining({
+        label: "Admin",
+        store_visible: false,
+        priority: 31,
+        notes: "bootstrap admin tier",
+      }),
+    );
   });
 
   it("does not emit eliminated legacy project quota fields from built-in templates", () => {
@@ -205,86 +192,12 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       "ephemeral_disk",
     ];
 
-    for (const id of [
-      "free",
-      "student",
-      "basic",
-      "standard",
-      "instructor",
-      "researcher",
-      "pro",
-    ]) {
+    for (const id of Object.keys(TIER_TEMPLATES)) {
       const tier = applyMembershipTierTemplateFallbacks({ id });
       const projectDefaults = tier.project_defaults as Record<string, unknown>;
       for (const key of eliminated) {
         expect(projectDefaults).not.toHaveProperty(key);
       }
     }
-  });
-
-  it("defines an instructor tier with course-scale invite limits", () => {
-    const tier = applyMembershipTierTemplateFallbacks({
-      id: "instructor",
-    });
-
-    expect(tier.label).toBe("Instructor");
-    expect(tier.store_visible).toBe(true);
-    expect(tier.course_store_visible).toBe(false);
-    expect((tier.project_defaults as Record<string, unknown>).disk_quota).toBe(
-      50000,
-    );
-    expect((tier.usage_limits as Record<string, unknown>).max_projects).toBe(
-      250,
-    );
-    expect(
-      (tier.usage_limits as Record<string, unknown>).invite_email_daily_count,
-    ).toBe(500);
-    expect(
-      (tier.usage_limits as Record<string, unknown>)
-        .course_max_students_and_pending_invites,
-    ).toBe(500);
-  });
-
-  it("defines a researcher tier with research-scale compute and storage", () => {
-    const tier = applyMembershipTierTemplateFallbacks({
-      id: "researcher",
-    });
-
-    expect(tier.label).toBe("Researcher");
-    expect(tier.store_visible).toBe(false);
-    expect(tier.course_store_visible).toBe(false);
-    expect((tier.features as Record<string, unknown>).create_hosts).toBe(true);
-    expect((tier.features as Record<string, unknown>).project_host_tier).toBe(
-      2,
-    );
-    expect((tier.project_defaults as Record<string, unknown>).disk_quota).toBe(
-      100000,
-    );
-    expect((tier.project_defaults as Record<string, unknown>).memory).toBe(
-      16000,
-    );
-    expect((tier.usage_limits as Record<string, unknown>).max_projects).toBe(
-      150,
-    );
-    expect((tier.usage_limits as Record<string, unknown>).rootfs_count).toBe(
-      100,
-    );
-    expect(
-      (tier.usage_limits as Record<string, unknown>).rootfs_oci_images,
-    ).toBe(true);
-    expect(
-      (tier.usage_limits as Record<string, unknown>)
-        .project_max_collaborators_and_pending_invites,
-    ).toBe(250);
-    expect(
-      (tier.usage_limits as Record<string, unknown>)
-        .course_max_students_and_pending_invites,
-    ).toBe(500);
-  });
-
-  it("keeps the pro template hidden until public pricing is explicitly enabled", () => {
-    const tier = applyMembershipTierTemplateFallbacks({ id: "pro" });
-
-    expect(tier.store_visible).toBe(false);
   });
 });
