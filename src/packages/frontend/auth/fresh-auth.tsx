@@ -225,7 +225,7 @@ export function FreshAuthModal({
               name="current-password"
               autoComplete="current-password"
               value={currentPassword}
-              placeholder="Leave blank if this account has no password"
+              placeholder="Enter your current password"
               onChange={(e) => setCurrentPassword(e.target.value)}
               onPressEnter={submit}
             />

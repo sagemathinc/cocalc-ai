@@ -90,10 +90,9 @@ jest.mock("@cocalc/frontend/auth/passkeys", () => ({
 }));
 
 function enterCurrentPassword() {
-  fireEvent.change(
-    screen.getByPlaceholderText("Leave blank if this account has no password"),
-    { target: { value: "current-password" } },
-  );
+  fireEvent.change(screen.getByPlaceholderText("Enter your current password"), {
+    target: { value: "current-password" },
+  });
 }
 
 describe("FreshAuthModal", () => {
@@ -124,9 +123,7 @@ describe("FreshAuthModal", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByPlaceholderText(
-          "Leave blank if this account has no password",
-        ),
+        screen.getByPlaceholderText("Enter your current password"),
       ).toBeTruthy();
     });
     enterCurrentPassword();
@@ -172,9 +169,7 @@ describe("FreshAuthModal", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByPlaceholderText(
-          "Leave blank if this account has no password",
-        ),
+        screen.getByPlaceholderText("Enter your current password"),
       ).toBeTruthy();
     });
     enterCurrentPassword();
@@ -293,9 +288,7 @@ describe("useFreshAuthAction", () => {
     expect(screen.getByText("Protected action running")).toBeTruthy();
     await waitFor(() => {
       expect(
-        screen.getByPlaceholderText(
-          "Leave blank if this account has no password",
-        ),
+        screen.getByPlaceholderText("Enter your current password"),
       ).toBeTruthy();
     });
     enterCurrentPassword();
