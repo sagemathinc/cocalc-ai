@@ -19,6 +19,7 @@ source, operating docs, command prompts, scratch artifacts, and local runtime
 state belong.
 
 > **READ FIRST every session — live coordination (multiple agents share this repo):**
+> Shared coordination docs: read `cocalc-shared/INDEX.md` first.
 > 1. **`src/.agents/active-agent-handoff.md`** — the live "who is doing what right
 >    now" ledger: claimed files, current branch, preview owner, open risks. Updated
 >    at the START and END of every agent turn; update your block before editing. From
