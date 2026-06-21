@@ -356,8 +356,16 @@ export function StudentAssignmentInfo({
 
   function render_last_time(time?: string | number | Date) {
     return (
-      <div key="time" style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
-        {time != null ? <BigTime date={time} /> : <span>&nbsp;</span>}
+      <div
+        key="time"
+        style={{
+          color: COLORS.GRAY_M,
+          fontSize: 12,
+          lineHeight: "14px",
+          minHeight: 14,
+        }}
+      >
+        {time != null ? <BigTime date={time} /> : null}
       </div>
     );
   }
@@ -579,8 +587,7 @@ export function StudentAssignmentInfo({
       background,
       border: `1px solid ${borderColor}`,
       borderRadius: 6,
-      height: "100%",
-      minHeight: 72,
+      minHeight: 92,
       padding: 8,
       display: "flex",
       flexDirection: "column",
@@ -814,8 +821,7 @@ export function StudentAssignmentInfo({
               display: "flex",
               flexDirection: "column",
               gap: 6,
-              height: "100%",
-              minHeight: 72,
+              minHeight: 92,
               padding: 8,
               width: "100%",
             }}
@@ -893,7 +899,7 @@ export function StudentAssignmentInfo({
           </div>
         </Col>
         <Col md={20} key="rest">
-          <Row align="stretch">
+          <Row>
             {render_assignment_col()}
             {render_collect_col()}
             {render_peer_assign_col()}
