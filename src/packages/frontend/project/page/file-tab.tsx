@@ -163,11 +163,11 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
   rootfs: {
     label: defineMessage({
       id: "project.page.file-tab.rootfs.label",
-      defaultMessage: "Software",
+      defaultMessage: "RootFS",
     }),
     flyoutTitle: defineMessage({
       id: "project.page.flyout.rootfs.title",
-      defaultMessage: "Project Software",
+      defaultMessage: "Root Filesystem",
     }),
     icon: "docker",
     flyout: RootfsFlyout,
