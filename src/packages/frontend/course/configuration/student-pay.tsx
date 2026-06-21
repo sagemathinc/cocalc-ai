@@ -21,8 +21,9 @@ import {
   MembershipTierBenefits,
   type MembershipTierWithPresentation,
 } from "@cocalc/frontend/account/membership-tier-benefits";
-import { A, Icon } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
 import { currency } from "@cocalc/util/misc";
 import { membershipTierVisibleForVerifiedInstructorEmail } from "@cocalc/util/membership-tier-domains";
@@ -236,7 +237,21 @@ export default function StudentPay({ actions, settings, project_id }) {
             id="course.student-pay.title"
             defaultMessage={"Course Payment Options"}
           />{" "}
-          (<A href="/app-docs/teaching/student-pay">Docs</A>)
+          (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() =>
+              openProjectDocs({
+                projectId: project_id,
+                slug: "teaching/student-pay",
+              })
+            }
+          >
+            Docs
+          </Button>
+          )
         </>
       }
     >

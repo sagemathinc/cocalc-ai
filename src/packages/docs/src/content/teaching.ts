@@ -120,7 +120,9 @@ If a student already has an active membership whose tier priority is at least
 the required course tier, they do not need to buy the course membership. This
 means one sufficiently high membership can cover multiple courses at the same
 time, and a student's own higher-tier membership can satisfy the course
-requirement.
+requirement. If a student switches classes or sections and has already bought a
+sufficient membership, they can usually keep using it without purchasing
+another membership.
 
 ## Set the course start date
 
