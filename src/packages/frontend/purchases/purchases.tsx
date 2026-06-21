@@ -43,8 +43,8 @@ import {
   cmp,
   field_cmp,
   currency,
+  hoursToTimeIntervalHuman,
   plural,
-  round1,
 } from "@cocalc/util/misc";
 import {
   moneyRound2Down,
@@ -909,6 +909,42 @@ function Description({ description, service }) {
     return <>Course fee</>;
   }
   if (service === "membership") {
+    if (description?.type === "membership-package") {
+      const {
+        expanded_existing_package,
+        kind,
+        membership_class,
+        metadata,
+        seat_count,
+      } = description;
+      const kindLabel =
+        kind === "course"
+          ? "Course membership"
+          : kind === "team"
+            ? "Team membership package"
+            : kind === "site"
+              ? "Site membership package"
+              : "Membership package";
+      const courseLabel =
+        kind === "course"
+          ? `${metadata?.course_title ?? metadata?.course_path ?? ""}`.trim()
+          : "";
+      return (
+        <>
+          {kindLabel}: {membership_class ?? "unknown"}
+          {seat_count != null && seat_count !== 1
+            ? ` (${seat_count} seats)`
+            : ""}
+          {courseLabel ? <> for {courseLabel}</> : null}
+          {expanded_existing_package ? (
+            <>
+              {" "}
+              <Tag color="blue">expanded</Tag>
+            </>
+          ) : null}
+        </>
+      );
+    }
     const {
       admin_assigned,
       assigned_by,
@@ -1168,14 +1204,17 @@ function Active({ record }) {
 function Period({ record }) {
   if (record.period_start) {
     const hours = periodLengthInHours(record);
-    const x = (
-      <div style={{ borderTop: "1px solid #ccc" }}>{round1(hours)} hours</div>
-    );
+    const duration =
+      hours > 0 && hours < 24 ? (
+        <div style={{ borderTop: "1px solid #ccc" }}>
+          {hoursToTimeIntervalHuman(hours)}
+        </div>
+      ) : null;
     if (!record.period_end) {
       return (
         <div>
           <TimeAgo date={record.period_start} /> - now
-          {x}
+          {duration}
         </div>
       );
     } else {
@@ -1183,7 +1222,7 @@ function Period({ record }) {
         <div>
           <TimeAgo date={record.period_start} /> -{" "}
           <TimeAgo date={record.period_end} />
-          {x}
+          {duration}
         </div>
       );
     }
