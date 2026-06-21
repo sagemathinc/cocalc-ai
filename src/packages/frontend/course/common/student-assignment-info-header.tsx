@@ -124,7 +124,11 @@ export function StudentAssignmentInfoHeader({
     const { tip, title } = tip_title(key);
 
     return (
-      <Col md={width} key={key} style={{ minWidth: 0, paddingRight: 8 }}>
+      <Col
+        md={width}
+        key={key}
+        style={{ minWidth: 0, overflowX: "hidden", paddingRight: 8 }}
+      >
         <Tip title={title} tip={tip}>
           <span
             style={{
@@ -212,7 +216,12 @@ export function StudentAssignmentInfoHeader({
         <Col
           md={4}
           key="title"
-          style={{ minWidth: 0, paddingLeft: 10, paddingRight: 12 }}
+          style={{
+            minWidth: 0,
+            overflowX: "hidden",
+            paddingLeft: 10,
+            paddingRight: 12,
+          }}
         >
           <Tip title={title} tip={tooltip}>
             <span
@@ -233,7 +242,7 @@ export function StudentAssignmentInfoHeader({
             </span>
           </Tip>
         </Col>
-        <Col md={20} key="rest" style={{ minWidth: 0 }}>
+        <Col md={20} key="rest" style={{ minWidth: 0, overflowX: "hidden" }}>
           {peer_grade ? render_headers_peer() : render_headers()}
         </Col>
       </Row>
