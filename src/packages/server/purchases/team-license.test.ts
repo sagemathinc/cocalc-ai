@@ -109,6 +109,15 @@ describe("team license renewal payments", () => {
         [teamTier]: 1,
       },
     });
+    await getPool().query("UPDATE team_licenses SET payment=$2 WHERE id=$1", [
+      overview.id,
+      {
+        amount: 120,
+        payment_intent_id: "pi_team_license_success_notification_failed",
+        status: "active",
+        team_license_id: overview.id,
+      },
+    ]);
     mockSend.mockRejectedValueOnce(new Error("message delivery failed"));
 
     await expect(
@@ -136,7 +145,63 @@ describe("team license renewal payments", () => {
       `,
       [overview.id],
     );
-    expect(rows[0].payment).toBeNull();
+    expect(rows[0].payment).toMatchObject({ status: "paid" });
+    expect(new Date(rows[0].current_period_start).toISOString()).toBe(
+      new Date(overview.current_period_end).toISOString(),
+    );
+    const purchases = await getPool().query(
+      "SELECT COUNT(*)::int AS count FROM purchases WHERE account_id=$1 AND tag='team-license-renewal'",
+      [owner_account_id],
+    );
+    expect(purchases.rows[0].count).toBe(1);
+  });
+
+  it("does not duplicate renewals when a Stripe renewal payment is retried", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const overview = await applyTeamLicenseSeatConfiguration({
+      owner_account_id,
+      target_seats: {
+        [teamTier]: 1,
+      },
+    });
+    await getPool().query("UPDATE team_licenses SET payment=$2 WHERE id=$1", [
+      overview.id,
+      {
+        amount: 120,
+        payment_intent_id: "pi_team_license_retry",
+        status: "active",
+        team_license_id: overview.id,
+      },
+    ]);
+
+    const paymentIntent = {
+      id: "pi_team_license_retry",
+      metadata: { team_license_id: overview.id },
+    };
+    await processTeamLicenseRenewal({
+      account_id: owner_account_id,
+      amount: 120,
+      paymentIntent,
+    });
+    await processTeamLicenseRenewal({
+      account_id: owner_account_id,
+      amount: 120,
+      paymentIntent,
+    });
+
+    const { rows } = await getPool().query(
+      `
+        SELECT current_period_start, current_period_end, payment
+          FROM team_licenses
+         WHERE id=$1
+      `,
+      [overview.id],
+    );
+    expect(rows[0].payment).toMatchObject({
+      payment_intent_id: "pi_team_license_retry",
+      status: "paid",
+    });
     expect(new Date(rows[0].current_period_start).toISOString()).toBe(
       new Date(overview.current_period_end).toISOString(),
     );
