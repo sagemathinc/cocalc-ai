@@ -1137,12 +1137,26 @@ async function withPackageOwnerWriteFence<T>({
   }
   if (isSeedBay() && isSeedAuthoritativeSitePackage(pkg)) {
     if (client != null) {
-      return await fn({ client, pkg });
+      const lockedPkg = await getMembershipPackageForUpdate({
+        package_id,
+        client,
+      });
+      if (!lockedPkg) {
+        throw Error("membership package not found");
+      }
+      return await fn({ client, pkg: lockedPkg });
     }
     const dbClient = await getPool().connect();
     try {
       await dbClient.query("BEGIN");
-      const result = await fn({ client: dbClient, pkg });
+      const lockedPkg = await getMembershipPackageForUpdate({
+        package_id,
+        client: dbClient,
+      });
+      if (!lockedPkg) {
+        throw Error("membership package not found");
+      }
+      const result = await fn({ client: dbClient, pkg: lockedPkg });
       await dbClient.query("COMMIT");
       return result;
     } catch (err) {
@@ -1158,12 +1172,29 @@ async function withPackageOwnerWriteFence<T>({
       action,
       client,
     });
-    return await fn({ client, pkg });
+    const lockedPkg = await getMembershipPackageForUpdate({
+      package_id,
+      client,
+    });
+    if (!lockedPkg) {
+      throw Error("membership package not found");
+    }
+    return await fn({ client, pkg: lockedPkg });
   }
   return await withAccountRehomeWriteFence({
     account_id: pkg.owner_account_id,
     action,
-    fn: async (db) => await fn({ client: db as PoolClient, pkg }),
+    fn: async (db) => {
+      const dbClient = db as PoolClient;
+      const lockedPkg = await getMembershipPackageForUpdate({
+        package_id,
+        client: dbClient,
+      });
+      if (!lockedPkg) {
+        throw Error("membership package not found");
+      }
+      return await fn({ client: dbClient, pkg: lockedPkg });
+    },
   });
 }
 
@@ -1851,6 +1882,36 @@ export async function getMembershipPackage({
         updated
       FROM membership_packages
       WHERE id=$1
+    `,
+    [package_id],
+  );
+  return normalizePackageRecord(rows[0]);
+}
+
+async function getMembershipPackageForUpdate({
+  package_id,
+  client,
+}: {
+  package_id: string;
+  client: PoolClient;
+}): Promise<MembershipPackageRecord | undefined> {
+  const { rows } = await client.query<RawMembershipPackageRecord>(
+    `
+      SELECT
+        id,
+        owner_account_id,
+        kind,
+        membership_class,
+        seat_count,
+        purchase_id,
+        starts_at,
+        expires_at,
+        metadata,
+        created,
+        updated
+      FROM membership_packages
+      WHERE id=$1
+      FOR UPDATE
     `,
     [package_id],
   );

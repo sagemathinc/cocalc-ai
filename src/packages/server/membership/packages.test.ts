@@ -840,6 +840,55 @@ describe("membership packages", () => {
     );
   });
 
+  it("does not over-assign a one-seat site-license pool under concurrent claims", async () => {
+    const owner_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const domain = `race-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(owner_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await markVerifiedEmail(first_account_id, `first@${domain}`);
+    await markVerifiedEmail(second_account_id, `second@${domain}`);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        allowed_domains: [domain],
+        site_license_id: uuid(),
+      },
+    });
+
+    const results = await Promise.allSettled([
+      claimMembershipPackageSeat({
+        package_id,
+        account_id: first_account_id,
+      }),
+      claimMembershipPackageSeat({
+        package_id,
+        account_id: second_account_id,
+      }),
+    ]);
+
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(`${(rejected[0] as PromiseRejectedResult).reason}`).toContain(
+      "no seats available",
+    );
+
+    const details = await listMembershipPackageDetailsForOwner({
+      owner_account_id,
+    });
+    const pkg = details.find((pkg) => pkg.id === package_id);
+    expect(pkg?.active_assignment_count).toBe(1);
+    expect(pkg?.available_seat_count).toBe(0);
+  });
+
   it("does not allow direct entitlement expansion for non-site packages", async () => {
     const owner_account_id = uuid();
     await createTestAccount(owner_account_id);
