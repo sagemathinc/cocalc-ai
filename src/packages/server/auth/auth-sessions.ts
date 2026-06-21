@@ -401,7 +401,7 @@ export async function setSessionFreshAuth({
                      WHEN $3::VARCHAR(32) = 'none' THEN factor_level
                      ELSE $3::VARCHAR(32)
                    END,
-                 metadata = COALESCE(metadata, '{}'::JSONB) || $4::JSONB,
+                 metadata = COALESCE(metadata, '{}'::JSONB) || $4::JSONB
            WHERE session_hash = $1::CHAR(127)
              AND account_id = $5::UUID
              AND revoked_at IS NULL
