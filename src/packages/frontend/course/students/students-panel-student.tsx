@@ -8,6 +8,7 @@ import {
   Col,
   Input,
   message as antdMessage,
+  Modal,
   Popconfirm,
   Row,
   Space,
@@ -135,6 +136,7 @@ export function Student({
   const [courseInvite, setCourseInvite] = useState<
     ProjectCollabInviteRow | undefined
   >();
+  const [inviteDetailsOpen, setInviteDetailsOpen] = useState<boolean>(false);
 
   const size = useButtonSize();
 
@@ -155,6 +157,7 @@ export function Student({
     set_edited_last_name(student_name.last || "");
     set_edited_email_address(student.get("email_address") || "");
     set_more(false);
+    setInviteDetailsOpen(false);
     actions.students.setAssignmentFilter(student_id, "");
   }
 
@@ -530,7 +533,7 @@ export function Student({
     if (hasAccount) return;
     if (inviteStatusLoading) {
       return (
-        <Text type="secondary" style={{ fontSize: "12px" }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           Checking invite status...
         </Text>
       );
@@ -539,9 +542,12 @@ export function Student({
       const last_email_invite = student.get("last_email_invite");
       if (last_email_invite == null) return;
       return (
-        <Text type="secondary" style={{ fontSize: "12px" }}>
-          Last invite attempt <TimeAgo date={last_email_invite} />
-        </Text>
+        <Space size={6} wrap>
+          <Tag>Invite attempted</Tag>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            <TimeAgo date={last_email_invite} />
+          </Text>
+        </Space>
       );
     }
     const isExpiredPendingInvite =
@@ -559,37 +565,77 @@ export function Student({
             : "warning";
     const label = status === "canceled" ? "revoked" : status;
     return (
-      <Space direction="vertical" size={0}>
-        <Space size={4} wrap>
-          <Tag color={color}>Invite {label}</Tag>
-          {courseInvite.target_email && (
-            <Text type="secondary" style={{ fontSize: "12px" }}>
-              {courseInvite.target_email}
-            </Text>
-          )}
-        </Space>
-        <Text type="secondary" style={{ fontSize: "12px" }}>
-          Created <TimeAgo date={courseInvite.created} />
+      <Space size={6} wrap>
+        <Tag color={color}>Invite {label}</Tag>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           {courseInvite.last_sent ? (
             <>
-              {" "}
-              · emailed <TimeAgo date={courseInvite.last_sent} />
+              emailed <TimeAgo date={courseInvite.last_sent} />
             </>
           ) : (
-            <> · email not sent</>
+            <>email not sent</>
           )}
         </Text>
-        {courseInvite.status === "pending" && !courseInvite.last_sent ? (
-          <Text type="warning" style={{ fontSize: "12px" }}>
-            Copy the invite link and send it to the student manually.
-          </Text>
-        ) : undefined}
-        {courseInvite.status === "pending" && courseInvite.expires ? (
-          <Text type="secondary" style={{ fontSize: "12px" }}>
-            Expires <TimeAgo date={courseInvite.expires} />
-          </Text>
-        ) : undefined}
+        <Button
+          size="small"
+          type="link"
+          style={{ padding: 0, height: "auto" }}
+          onClick={() => setInviteDetailsOpen(true)}
+        >
+          Details
+        </Button>
       </Space>
+    );
+  }
+
+  function render_course_invite_details_modal() {
+    if (!courseInvite) return;
+    const isExpiredPendingInvite =
+      courseInvite.status === "pending" &&
+      courseInvite.expires != null &&
+      new Date(courseInvite.expires).valueOf() <= Date.now();
+    const status = isExpiredPendingInvite ? "expired" : courseInvite.status;
+    return (
+      <Modal
+        open={inviteDetailsOpen}
+        title="Course invite details"
+        footer={null}
+        onCancel={() => setInviteDetailsOpen(false)}
+      >
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <div>
+            <b>Status:</b> {status === "canceled" ? "revoked" : status}
+          </div>
+          {courseInvite.target_email && (
+            <div>
+              <b>Email:</b> {courseInvite.target_email}
+            </div>
+          )}
+          <div>
+            <b>Created:</b> <TimeAgo date={courseInvite.created} />
+          </div>
+          <div>
+            <b>Email:</b>{" "}
+            {courseInvite.last_sent ? (
+              <>
+                sent <TimeAgo date={courseInvite.last_sent} />
+              </>
+            ) : (
+              "not sent"
+            )}
+          </div>
+          {courseInvite.status === "pending" && courseInvite.expires ? (
+            <div>
+              <b>Expires:</b> <TimeAgo date={courseInvite.expires} />
+            </div>
+          ) : undefined}
+          {courseInvite.status === "pending" && !courseInvite.last_sent ? (
+            <Text type="warning">
+              Copy the invite link and send it to the student manually.
+            </Text>
+          ) : undefined}
+        </Space>
+      </Modal>
     );
   }
 
@@ -943,6 +989,26 @@ export function Student({
     }
   }
 
+  function render_expanded_student_summary() {
+    return (
+      <Space size={[8, 6]} wrap>
+        <Tag color={hasAccount ? "success" : "processing"}>
+          {hasAccount ? "Account linked" : "Invite pending"}
+        </Tag>
+        <Tag color={studentProjectId ? "blue" : "default"}>
+          {studentProjectId ? "Project created" : "No project"}
+        </Tag>
+        {activeSeatAssignment && <Tag color="green">Paid seat assigned</Tag>}
+        {student.get("deleted") && <Tag color="red">Deleted</Tag>}
+        <Text type="secondary">{render_student_email()}</Text>
+        {!deletedAccount && (
+          <Text type="secondary">{render_last_active()}</Text>
+        )}
+        <Text type="secondary">{render_hosting()}</Text>
+      </Space>
+    );
+  }
+
   function render_panel_header() {
     // The whiteSpace normal is because the title of an
     // antd Card doesn't wrap, and I don't want to restructure
@@ -952,15 +1018,35 @@ export function Student({
     // See https://github.com/sagemathinc/cocalc/issues/4286
     return (
       <div style={{ whiteSpace: "normal" }}>
-        <Row>
-          <Col md={4}>{render_project_access()}</Col>
-          <Col md={4}>{render_edit_student()}</Col>
-          <Col md={4}>{render_search_assignment()}</Col>
-          <Col md={5}>{render_resend_invitation()}</Col>
-          <Col md={4} offset={3}>
-            {render_delete_button()}
-          </Col>
-        </Row>
+        <div
+          style={{
+            background: COLORS.GRAY_LLL,
+            border: `1px solid ${COLORS.GRAY_L}`,
+            borderRadius: 6,
+            marginBottom: 10,
+            padding: "8px 10px",
+          }}
+        >
+          {render_expanded_student_summary()}
+        </div>
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            marginBottom: 10,
+            marginTop: 4,
+          }}
+        >
+          {render_project_access()}
+          {render_edit_student()}
+          <div style={{ minWidth: 220, width: 280 }}>
+            {render_search_assignment()}
+          </div>
+          {render_resend_invitation()}
+          <div style={{ marginLeft: "auto" }}>{render_delete_button()}</div>
+        </div>
         {editing_student ? (
           <Row>
             <Col md={8}>{render_edit_student_interface()}</Col>
@@ -1165,6 +1251,7 @@ export function Student({
           {is_expanded ? render_more_panel() : undefined}
         </Col>
       </Row>
+      {render_course_invite_details_modal()}
       <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
