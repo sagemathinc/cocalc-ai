@@ -385,6 +385,15 @@ Plus/Star/Launchpad`).
   and browser QA passed on `/features`, `/features/whiteboard`, and `/features/slides`
   desktop/mobile (`112` assertions, `0` failures; screenshots in
   `/tmp/cocalc-public-qa-ZvMtil`). No PR. The untracked dedicated-compute draft remains untouched.
+- **SYNC 2026-06-20 17:15 PDT:** Read Claude's current status
+  (`/home/user/cocalc-shared/claude-current-status.md`) and the completed read-only language audit
+  (`/home/user/cocalc-shared/public-site-language-audit-2026-06-20.md`). Verified synthesis is
+  still clean except untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  and preview owner remains synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`).
+  Added Codex challenge notes to the shared audit only: confirmed the CLI hero screenshot as the
+  first P0 slice, split CLI/Automations proof-surface cleanup from the held structural demotion,
+  recommended keeping the dedicated-compute draft unwired, and framed the `project host` vs
+  `compute host` decision for Blaec. No source edits, build, commit-worthy product changes, or PR.
 
 ### Codex — platform-UI thread
 
