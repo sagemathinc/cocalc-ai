@@ -126,6 +126,64 @@ describe("hub API argument transforms", () => {
     ).rejects.toThrow("user must be signed in");
   });
 
+  it("restricts managed metering RPCs to project or host principals", async () => {
+    const rpcNames = [
+      "system.recordManagedProjectEgress",
+      "system.getManagedProjectEgressPolicy",
+      "system.recordManagedProjectCpuUsage",
+    ];
+
+    for (const name of rpcNames) {
+      const hostArgs = await transformArgs({
+        name,
+        args: [
+          {
+            project_id: "spoofed-project",
+            host_id: "spoofed-host",
+            category: "file-download",
+            bytes: 1,
+            cpu_seconds: 1,
+          },
+        ],
+        host_id: "host-1",
+      });
+      expect(hostArgs[0].host_id).toBe("host-1");
+      expect(hostArgs[0].project_id).toBeUndefined();
+
+      const projectArgs = await transformArgs({
+        name,
+        args: [
+          {
+            project_id: "spoofed-project",
+            host_id: "spoofed-host",
+            category: "file-download",
+            bytes: 1,
+            cpu_seconds: 1,
+          },
+        ],
+        project_id: "project-1",
+      });
+      expect(projectArgs[0].project_id).toBe("project-1");
+      expect(projectArgs[0].host_id).toBeUndefined();
+
+      await expect(
+        transformArgs({
+          name,
+          args: [
+            {
+              project_id: "spoofed-project",
+              host_id: "spoofed-host",
+              category: "file-download",
+              bytes: 1,
+              cpu_seconds: 1,
+            },
+          ],
+          account_id: "acct-1",
+        }),
+      ).rejects.toThrow("must be a project or host");
+    }
+  });
+
   it("requires account auth for name and local UI helpers without reshaping args", async () => {
     const cases = [
       {

@@ -3,6 +3,7 @@ import {
   authFirst,
   authFirstRequireAccount,
   authFirstRequireProject,
+  authFirstRequireProjectOrHost,
   requireAccount,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
@@ -165,9 +166,9 @@ export const system = {
   tracePublicAppHostname: authFirst,
   reserveProjectAppPublicSubdomain: authFirst,
   releaseProjectAppPublicSubdomain: authFirst,
-  recordManagedProjectEgress: authFirst,
-  getManagedProjectEgressPolicy: authFirst,
-  recordManagedProjectCpuUsage: authFirst,
+  recordManagedProjectEgress: authFirstRequireProjectOrHost,
+  getManagedProjectEgressPolicy: authFirstRequireProjectOrHost,
+  recordManagedProjectCpuUsage: authFirstRequireProjectOrHost,
   recordServiceAdmissionDenial: authFirstRequireProject,
   recordServiceAdmissionNearLimit: authFirstRequireProject,
   getServiceAdmissionConfig: authFirst,

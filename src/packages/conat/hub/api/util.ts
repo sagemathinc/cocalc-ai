@@ -70,3 +70,24 @@ export const authFirstRequireHost = async ({ args, host_id }) => {
   args[0].host_id = host_id;
   return args;
 };
+
+export const authFirstRequireProjectOrHost = async ({
+  args,
+  project_id,
+  host_id,
+}) => {
+  if (args[0] == null) {
+    args[0] = {} as any;
+  }
+  if (host_id) {
+    delete args[0].project_id;
+    args[0].host_id = host_id;
+    return args;
+  }
+  if (project_id) {
+    delete args[0].host_id;
+    args[0].project_id = project_id;
+    return args;
+  }
+  throw Error("must be a project or host");
+};
