@@ -23,7 +23,8 @@ import {
   useRedux,
 } from "@cocalc/frontend/app-framework";
 
-import { Gap, Icon, Paragraph } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
+import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { course, labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 import { CourseActions } from "../actions";
@@ -46,13 +47,8 @@ export function TerminalCommandPanel({ name }: Props) {
 
   function render_button(running: boolean) {
     return (
-      <Button
-        style={{ width: "6em" }}
-        onClick={() => run_terminal_command()}
-        disabled={running}
-      >
-        <Icon name={running ? "cocalc-ring" : "play"} spin={running} /> <Gap />{" "}
-        Run
+      <Button onClick={() => run_terminal_command()} disabled={running}>
+        <Icon name={running ? "cocalc-ring" : "play"} spin={running} /> Run
       </Button>
     );
   }
@@ -88,13 +84,17 @@ export function TerminalCommandPanel({ name }: Props) {
           />
           {render_button(running)}
         </Space.Compact>
-        <InputNumber
-          value={timeout}
-          onChange={(t) => setTimeout(t ?? null)}
-          min={0}
-          max={30}
-          suffix={"minute timeout"}
-        />
+        <Space size={6} wrap={false}>
+          <span>Timeout</span>
+          <InputNumber
+            value={timeout}
+            onChange={(t) => setTimeout(t ?? null)}
+            min={0}
+            max={30}
+            style={{ width: 80 }}
+          />
+          <span>minutes</span>
+        </Space>
       </Form>
     );
   }
@@ -206,25 +206,23 @@ export function TerminalCommandPanel({ name }: Props) {
       <>
         <Icon name="terminal" />{" "}
         {intl.formatMessage(course.run_terminal_command_title)}
+        <HelpPopover
+          title={intl.formatMessage(course.run_terminal_command_title)}
+          content={
+            <FormattedMessage
+              id="course.terminal-command.info"
+              defaultMessage={`Run a BASH terminal command in the home directory of all student projects.
+              Up to {MAX_PARALLEL_TASKS} commands run in parallel,
+              with a timeout of {timeout} minutes.`}
+              values={{ MAX_PARALLEL_TASKS, timeout }}
+            />
+          }
+        />
       </>
     );
   }
 
-  return (
-    <Card title={render_header()}>
-      {render_terminal()}
-      <hr />
-      <Paragraph type="secondary">
-        <FormattedMessage
-          id="course.terminal-command.info"
-          defaultMessage={`Run a BASH terminal command in the home directory of all student projects.
-            Up to {MAX_PARALLEL_TASKS} commands run in parallel,
-            with a timeout of {timeout} minutes.`}
-          values={{ MAX_PARALLEL_TASKS, timeout }}
-        />
-      </Paragraph>
-    </Card>
-  );
+  return <Card title={render_header()}>{render_terminal()}</Card>;
 }
 
 const PROJECT_LINK_STYLE: CSS = {

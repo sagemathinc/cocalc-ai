@@ -14,7 +14,8 @@ import {
   useProjectMapField,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, Paragraph, Tip } from "@cocalc/frontend/components";
+import { Icon, Tip } from "@cocalc/frontend/components";
+import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { useProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import { isViewerProjectRole } from "@cocalc/frontend/project/realtime-access";
 import { course, IntlMessage, labels } from "@cocalc/frontend/i18n";
@@ -263,23 +264,26 @@ export function CustomizeStudentProjectFunctionality({
       title={
         <>
           <Icon name="lock" /> {title}
+          <HelpPopover
+            title={title}
+            content={
+              <FormattedMessage
+                id="course.customize-student-project-functionality.description"
+                defaultMessage={`Check any of the boxes below
+                to remove the corresponding functionality from all student projects.
+                Hover over an option for more information about what it disables.
+                This is useful to reduce student confusion and keep the students more focused,
+                e.g., during an exam.
+                <i>
+                  Do not gain a false sense of security and expect these to prevent all forms of cheating.
+                </i>`}
+                values={{ i: (c) => <i>{c}</i> }}
+              />
+            }
+          />
         </>
       }
     >
-      <Paragraph type="secondary">
-        <FormattedMessage
-          id="course.customize-student-project-functionality.description"
-          defaultMessage={`Check any of the boxes below
-          to remove the corresponding functionality from all student projects.
-          Hover over an option for more information about what it disables.
-          This is useful to reduce student confusion and keep the students more focused,
-          e.g., during an exam.
-          <i>
-            Do not gain a false sense of security and expect these to prevent all forms of cheating.
-          </i>`}
-        />
-      </Paragraph>
-      <hr />
       <div
         style={{
           border: "1px solid lightgrey",

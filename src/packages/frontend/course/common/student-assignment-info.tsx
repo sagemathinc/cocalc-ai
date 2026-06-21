@@ -8,7 +8,7 @@ import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions } from "@cocalc/frontend/app-framework";
-import { Icon, Markdown, Tip } from "@cocalc/frontend/components";
+import { Icon, Tip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { labels } from "@cocalc/frontend/i18n";
@@ -201,10 +201,10 @@ export function StudentAssignmentInfo({
           size={size}
           style={{
             maxWidth: "100%",
-            minWidth: 110,
             overflow: "hidden",
             textAlign: "left",
             textOverflow: "ellipsis",
+            width: "100%",
           }}
         >
           {text}
@@ -215,23 +215,29 @@ export function StudentAssignmentInfo({
 
   function render_comments() {
     if (!is_editing) {
-      if (!comments?.trim()) return;
+      const preview = comments?.replace(/\s+/g, " ").trim();
+      if (!preview) return;
       return (
         <div style={{ width: "100%", paddingRight: "5px" }}>
-          <Markdown
-            value={comments}
+          <div
+            title={comments}
             style={{
-              width: "100%",
-              maxHeight: "4em",
-              overflowY: "auto",
-              padding: "5px",
               border: `1px solid ${COLORS.GRAY_L}`,
               borderRadius: 4,
               cursor: "pointer",
-              display: "inline-block",
+              fontSize: 12,
+              lineHeight: "22px",
+              maxWidth: "100%",
+              overflow: "hidden",
+              padding: "0 6px",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
             }}
             onClick={() => set_edited_feedback()}
-          />
+          >
+            {preview}
+          </div>
         </div>
       );
     } else {
@@ -355,6 +361,7 @@ export function StudentAssignmentInfo({
   }
 
   function render_last_time(time?: string | number | Date) {
+    if (time == null) return null;
     return (
       <div
         key="time"
@@ -365,7 +372,7 @@ export function StudentAssignmentInfo({
           minHeight: 14,
         }}
       >
-        {time != null ? <BigTime date={time} /> : null}
+        <BigTime date={time} />
       </div>
     );
   }
@@ -587,7 +594,8 @@ export function StudentAssignmentInfo({
       background,
       border: `1px solid ${borderColor}`,
       borderRadius: 6,
-      minHeight: 92,
+      minHeight: 72,
+      overflowX: "hidden",
       padding: 8,
       display: "flex",
       flexDirection: "column",
@@ -598,6 +606,7 @@ export function StudentAssignmentInfo({
 
   const workflowColStyle: CSSProperties = {
     display: "flex",
+    minWidth: 0,
     paddingRight: 8,
   };
 
@@ -808,7 +817,7 @@ export function StudentAssignmentInfo({
       <Col
         md={width}
         key="grade"
-        style={{ ...workflowColStyle, minWidth: 240, paddingRight: 12 }}
+        style={{ ...workflowColStyle, minWidth: 0, paddingRight: 8 }}
       >
         {show_grade_col && (
           <div
@@ -821,7 +830,8 @@ export function StudentAssignmentInfo({
               display: "flex",
               flexDirection: "column",
               gap: 6,
-              minHeight: 92,
+              minHeight: 72,
+              overflowX: "hidden",
               padding: 8,
               width: "100%",
             }}
@@ -830,10 +840,21 @@ export function StudentAssignmentInfo({
               style={{
                 alignItems: "center",
                 display: "flex",
+                gap: 6,
                 justifyContent: "space-between",
+                minWidth: 0,
               }}
             >
-              <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+              <span
+                style={{
+                  color: COLORS.GRAY_D,
+                  fontWeight: 600,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 Grade & Feedback
               </span>
               <Tag color={grade || comments ? "success" : "blue"}>

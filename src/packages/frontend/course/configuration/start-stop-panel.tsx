@@ -2,7 +2,7 @@ import { Alert, Button, Card, Col, Popconfirm, Row, Space, Spin } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions, useRedux } from "@cocalc/frontend/app-framework";
-import { Paragraph } from "@cocalc/frontend/components";
+import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { labels } from "@cocalc/frontend/i18n";
 import { capitalize } from "@cocalc/util/misc";
@@ -76,6 +76,25 @@ export function StudentProjectsStartStopPanel({
             id="course.start-stop-panel.title"
             defaultMessage="Start or Stop all Student {projectsLabel}"
             values={{ projectsLabel }}
+          />
+          <HelpPopover
+            title={
+              <FormattedMessage
+                id="course.start-stop-panel.title"
+                defaultMessage="Start or Stop all Student {projectsLabel}"
+                values={{ projectsLabel }}
+              />
+            }
+            content={
+              <FormattedMessage
+                id="course.start-stop-panel.info"
+                defaultMessage={`Start all projects associated with this course,
+                so they are immediately ready for your students to use.
+                For example, you might do this before a computer lab.
+                You can also stop all projects in order to ensure
+                that they do not waste resources or are properly upgraded when next used by students.`}
+              />
+            }
           />
         </>
       }
@@ -154,17 +173,6 @@ export function StudentProjectsStartStopPanel({
           {action_all_projects_state !== "any" && render_in_progress_action()}
         </Col>
       </Row>
-      <hr />
-      <Paragraph type="secondary">
-        <FormattedMessage
-          id="course.start-stop-panel.info"
-          defaultMessage={`Start all projects associated with this course,
-            so they are immediately ready for your students to use.
-            For example, you might do this before a computer lab.
-            You can also stop all projects in order to ensure
-            that they do not waste resources or are properly upgraded when next used by students.`}
-        />
-      </Paragraph>
     </Card>
   );
 }
