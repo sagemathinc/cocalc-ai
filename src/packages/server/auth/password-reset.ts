@@ -102,16 +102,19 @@ export async function redeemResetLocal(password_reset_id: string): Promise<{
 }> {
   const pool = getPool();
   const { rows } = await pool.query(
-    "SELECT email_address FROM password_reset WHERE expire > NOW() AND id=$1::UUID",
+    `
+      UPDATE password_reset
+         SET expire = NOW()
+       WHERE id = $1::UUID
+         AND expire > NOW()
+       RETURNING email_address
+    `,
     [password_reset_id],
   );
   if (rows.length == 0) {
     throw Error("Password reset no longer valid.");
   }
   const email_address = `${rows[0].email_address ?? ""}`.trim().toLowerCase();
-  await pool.query("UPDATE password_reset SET expire=NOW() WHERE id=$1::UUID", [
-    password_reset_id,
-  ]);
   return { email_address };
 }
 
