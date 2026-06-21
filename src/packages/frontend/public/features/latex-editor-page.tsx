@@ -7,7 +7,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -28,7 +32,7 @@ function LatexEditorMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -50,7 +54,7 @@ function LatexEditorMock() {
             <div
               style={{
                 background: "#10213f",
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 color: "#dbeafe",
                 minHeight: 280,
                 padding: 16,
@@ -83,7 +87,7 @@ shows concentration after normalization.
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 minHeight: 280,
                 padding: 18,
               }}
@@ -97,7 +101,7 @@ shows concentration after normalization.
                   style={{
                     background: "#f8fafc",
                     border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: 8,
+                    borderRadius: PUBLIC_RADIUS.panel,
                     minHeight: 180,
                     padding: 16,
                   }}
@@ -138,7 +142,7 @@ shows concentration after normalization.
                 style={{
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 8,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   padding: "9px 10px",
                 }}
               >
@@ -358,7 +362,7 @@ export default function LatexEditorFeaturePage({
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
                 padding: 24,
               }}
@@ -377,7 +381,7 @@ export default function LatexEditorFeaturePage({
                           ? PUBLIC_COLORS.surfaceMuted
                           : PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 8,
+                      borderRadius: PUBLIC_RADIUS.panel,
                       display: "grid",
                       gap: 10,
                       gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",

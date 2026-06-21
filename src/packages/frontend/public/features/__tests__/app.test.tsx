@@ -1,5 +1,8 @@
 /** @jest-environment jsdom */
 
+import { execFileSync } from "child_process";
+import { readFileSync } from "fs";
+
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import {
@@ -24,6 +27,16 @@ beforeAll(() => {
   installMatchMediaStub();
 });
 
+function trackedFeatureSources(): { file: string; source: string }[] {
+  return execFileSync("git", ["ls-files", "public/features/*.tsx"], {
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n")
+    .filter((file) => file && !file.includes("/__tests__/"))
+    .map((file) => ({ file, source: readFileSync(file, "utf8") }));
+}
+
 // Internal/implementation language that must never leak into feature copy.
 // The shared INTERNAL_IMPLEMENTATION_TERMS floor supplies the cross-surface
 // bans (serious technical work, project hosts, multi-bay, control plane,
@@ -45,6 +58,21 @@ describe("getFeaturesRouteFromPath", () => {
 });
 
 describe("PublicFeaturesApp", () => {
+  it("uses PUBLIC_RADIUS.panel for exact 8px feature panel radii", () => {
+    const offenders = trackedFeatureSources().flatMap(({ file, source }) => {
+      const messages: string[] = [];
+      if (/\b(?:FEATURE_)?PANEL_RADIUS\b/.test(source)) {
+        messages.push(`${file}: local panel radius constant`);
+      }
+      if (/borderRadius:\s*8\b/.test(source)) {
+        messages.push(`${file}: bare borderRadius: 8`);
+      }
+      return messages;
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
   const contextualSupportLinks = [
     {
       context: "feature-ai",

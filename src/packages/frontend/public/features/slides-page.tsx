@@ -7,7 +7,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -32,7 +36,7 @@ export function SlideDeckMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7fbff 56%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -58,7 +62,7 @@ export function SlideDeckMock() {
                   aspectRatio: "16 / 9",
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 8,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
                   padding: 14,
                 }}
@@ -78,7 +82,7 @@ export function SlideDeckMock() {
                     style={{
                       background: "#fff7e6",
                       border: "1px solid #ffd591",
-                      borderRadius: 8,
+                      borderRadius: PUBLIC_RADIUS.panel,
                       padding: 12,
                     }}
                   >
@@ -125,7 +129,7 @@ function SlideFlow() {
           style={{
             background: PUBLIC_COLORS.surface,
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 8,
+            borderRadius: PUBLIC_RADIUS.panel,
             boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
             padding: 22,
           }}
@@ -141,7 +145,7 @@ function SlideFlow() {
                       style={{
                         background: "#f7fbff",
                         border: `1px solid ${PUBLIC_COLORS.border}`,
-                        borderRadius: 8,
+                        borderRadius: PUBLIC_RADIUS.panel,
                         height: "100%",
                         padding: 14,
                       }}

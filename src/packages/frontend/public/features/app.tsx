@@ -19,6 +19,7 @@ import {
 import {
   alpha,
   PUBLIC_COLORS,
+  PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
@@ -204,8 +205,6 @@ const FEATURE_INDEX_CARD_OVERRIDES = {
   { href: string; slug: string; summary: string; title: string }
 >;
 
-const FEATURE_PANEL_RADIUS = 8;
-
 const FEATURE_PANEL_SHADOW = `0 14px 34px ${alpha(
   PUBLIC_COLORS.heading,
   0.07,
@@ -336,7 +335,7 @@ function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: FEATURE_PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: FEATURE_PANEL_SHADOW,
         color: "inherit",
         display: "block",
@@ -353,7 +352,7 @@ function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
               alignItems: "center",
               background: `${meta.accent}14`,
               border: `1px solid ${meta.accent}33`,
-              borderRadius: FEATURE_PANEL_RADIUS,
+              borderRadius: PUBLIC_RADIUS.panel,
               color: meta.accent,
               display: "flex",
               fontSize: 22,
@@ -386,7 +385,7 @@ function FeatureListLink({ card }: { card: FeatureIndexCard }) {
         alignItems: "start",
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: FEATURE_PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: FEATURE_PANEL_SHADOW,
         color: "inherit",
         display: "grid",
@@ -402,7 +401,7 @@ function FeatureListLink({ card }: { card: FeatureIndexCard }) {
           alignItems: "center",
           background: `${meta.accent}14`,
           border: `1px solid ${meta.accent}33`,
-          borderRadius: FEATURE_PANEL_RADIUS,
+          borderRadius: PUBLIC_RADIUS.panel,
           color: meta.accent,
           display: "flex",
           fontSize: 19,
@@ -473,7 +472,7 @@ function FeatureGroupSection({
                 style={{
                   alignItems: "center",
                   background: `${group.accent}10`,
-                  borderRadius: FEATURE_PANEL_RADIUS,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   color: group.accent,
                   display: "flex",
                   fontSize: 22,
@@ -560,7 +559,7 @@ function TeachingWorkflowCallout() {
                 style={{
                   alignItems: "center",
                   background: `${meta.accent}10`,
-                  borderRadius: FEATURE_PANEL_RADIUS,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   color: meta.accent,
                   display: "flex",
                   fontSize: 22,
@@ -592,7 +591,7 @@ function TeachingWorkflowCallout() {
             style={{
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: FEATURE_PANEL_RADIUS,
+              borderRadius: PUBLIC_RADIUS.panel,
               boxShadow: FEATURE_PANEL_SHADOW,
               color: "inherit",
               display: "block",
@@ -606,7 +605,7 @@ function TeachingWorkflowCallout() {
                   alignItems: "center",
                   background: `${meta.accent}14`,
                   border: `1px solid ${meta.accent}33`,
-                  borderRadius: FEATURE_PANEL_RADIUS,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   color: meta.accent,
                   display: "flex",
                   flex: "0 0 auto",
@@ -753,7 +752,7 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
         style={{
           background: PUBLIC_COLORS.surface,
           border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: 8,
+          borderRadius: PUBLIC_RADIUS.panel,
           padding: 24,
         }}
       >

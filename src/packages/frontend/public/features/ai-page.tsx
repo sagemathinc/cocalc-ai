@@ -7,7 +7,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -54,7 +58,7 @@ function ThreadMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7f4ff 52%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -79,7 +83,7 @@ function ThreadMock() {
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 padding: 14,
               }}
             >
@@ -125,7 +129,7 @@ function ProjectContextList() {
               style={{
                 alignItems: "center",
                 background: `${PUBLIC_COLORS.brand}10`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 color: PUBLIC_COLORS.brand,
                 display: "inline-flex",
                 flex: "0 0 auto",
@@ -190,7 +194,7 @@ function WorkflowStrip() {
         style={{
           background: PUBLIC_COLORS.surfaceMuted,
           border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: 8,
+          borderRadius: PUBLIC_RADIUS.panel,
           padding: 24,
         }}
       >
@@ -205,7 +209,7 @@ function WorkflowStrip() {
                   style={{
                     background: PUBLIC_COLORS.surface,
                     border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: 8,
+                    borderRadius: PUBLIC_RADIUS.panel,
                     height: "100%",
                     padding: 18,
                   }}

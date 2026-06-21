@@ -10,6 +10,7 @@ import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   alpha,
   PUBLIC_COLORS,
+  PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
@@ -24,7 +25,6 @@ import { IconBadge } from "./feature-visuals";
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
-const PANEL_RADIUS = 8;
 const COURSE_ACCENT = COLORS.RUN;
 
 function CourseDashboardMock() {
@@ -42,7 +42,7 @@ function CourseDashboardMock() {
       style={{
         background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 55%, ${PUBLIC_COLORS.warningTint} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: `0 24px 70px ${alpha(PUBLIC_COLORS.heading, 0.12)}`,
         padding: 20,
       }}
@@ -66,7 +66,7 @@ function CourseDashboardMock() {
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
+                borderRadius: PUBLIC_RADIUS.panel,
                 color: PUBLIC_COLORS.heading,
                 minHeight: 270,
                 padding: 16,
@@ -88,7 +88,7 @@ function CourseDashboardMock() {
                     style={{
                       background: PUBLIC_COLORS.surface,
                       border: `1px solid ${alpha(PUBLIC_COLORS.brand, 0.12)}`,
-                      borderRadius: PANEL_RADIUS,
+                      borderRadius: PUBLIC_RADIUS.panel,
                       padding: "10px 12px",
                     }}
                   >
@@ -121,7 +121,7 @@ function CourseDashboardMock() {
                   style={{
                     background: PUBLIC_COLORS.warningTint,
                     border: `1px solid ${alpha(PUBLIC_COLORS.warning, 0.18)}`,
-                    borderRadius: PANEL_RADIUS,
+                    borderRadius: PUBLIC_RADIUS.panel,
                     color: PUBLIC_COLORS.heading,
                     padding: "10px 12px",
                   }}
@@ -136,7 +136,7 @@ function CourseDashboardMock() {
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
+                borderRadius: PUBLIC_RADIUS.panel,
                 minHeight: 270,
                 padding: 14,
               }}
@@ -159,7 +159,7 @@ function CourseDashboardMock() {
                       style={{
                         background: PUBLIC_COLORS.surfaceMuted,
                         border: `1px solid ${PUBLIC_COLORS.border}`,
-                        borderRadius: PANEL_RADIUS,
+                        borderRadius: PUBLIC_RADIUS.panel,
                         padding: 12,
                       }}
                     >
@@ -212,7 +212,7 @@ function WorkflowDiagram() {
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: `0 18px 52px ${alpha(PUBLIC_COLORS.heading, 0.08)}`,
         padding: 22,
       }}
@@ -233,7 +233,7 @@ function WorkflowDiagram() {
                   ? PUBLIC_COLORS.warningTint
                   : PUBLIC_COLORS.surfaceMuted,
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
+              borderRadius: PUBLIC_RADIUS.panel,
               minHeight: 150,
               padding: 14,
             }}
@@ -278,7 +278,7 @@ function CourseBoundaryPanel() {
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         padding: 22,
       }}
     >

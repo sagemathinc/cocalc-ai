@@ -578,6 +578,31 @@ Plus/Star/Launchpad`).
   and `/support/tickets` on desktop/mobile passed with 262 assertions and 0 failures, artifacts
   in `/tmp/cocalc-public-qa-wTlPpR`. Dedicated-compute draft remains untouched and untracked. No
   PR.
+- **START 2026-06-20 20:18 PDT:** Starting Slice 2a only: exact `PUBLIC_RADIUS.panel`
+  consolidation for public feature routes. Read Claude status and
+  `/home/user/cocalc-shared/slice-2-handoff-2026-06-20.md`; Claude remains read-only on
+  synthesis and owns only `/home/user/cocalc-ai/docs/pitch`. Verified preview owner remains
+  synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Scope is zero-visual
+  `8 -> PUBLIC_RADIUS.panel`: delete local `PANEL_RADIUS` / `FEATURE_PANEL_RADIUS` constants in
+  feature routes, replace exact `borderRadius: 8` in `src/packages/frontend/public/features`, and
+  add source guards. Out of scope: home/app.tsx, radius strays `10/12/14/16`, PUBLIC_ELEVATION,
+  PUBLIC_TYPE, palette/accent collapse, pricing/compliance/policy copy, protected home/Brief, and
+  the untracked dedicated-compute draft. No PR.
+- **END 2026-06-20 20:57 PDT:** Slice 2a implemented and verified as zero-visual. Replaced exact
+  `borderRadius: 8` and the local `PANEL_RADIUS` / `FEATURE_PANEL_RADIUS` constants in tracked
+  public feature files with `PUBLIC_RADIUS.panel`; `border-radius: ${...}px` usage in the compare
+  route now also reads from the token. Left radius strays `10/12/14/16`, `home/app.tsx`,
+  `PUBLIC_ELEVATION`, `PUBLIC_TYPE`, and palette/accent work untouched. Added a source guard in
+  `public/features/__tests__/app.test.tsx` that scans tracked public feature files and fails on
+  local panel-radius constants or bare `borderRadius: 8`. Validation: baseline rendered QA before
+  source edits passed on `/features/jupyter-notebook`, `/features/teaching`, `/features/cli`,
+  `/features/compare`, `/features`, `/products`, and `/support` desktop/mobile with 328
+  assertions / 0 failures (`/tmp/cocalc-public-qa-8XDdx7`); focused feature Jest passed 89 tests;
+  public browser-QA script Jest passed 5 tests; source guard found no tracked feature offenders;
+  `pnpm lint:frontend` passed; `git diff --check` passed; `pnpm -C src/packages/static build:dev`
+  passed including `tsc --build`; post-change rendered QA passed the same routes/viewports with
+  328 assertions / 0 failures (`/tmp/cocalc-public-qa-EZYFhg`); all 14 before/after screenshot PNGs
+  were byte-identical by `cmp`. No public copy or product claims changed. No PR.
 
 ### Codex — platform-UI thread
 

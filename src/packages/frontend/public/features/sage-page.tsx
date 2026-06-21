@@ -7,7 +7,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -58,7 +62,7 @@ function SageWorkspaceMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f3fbf3 52%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -83,7 +87,7 @@ function SageWorkspaceMock() {
                 style={{
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 8,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   height: "100%",
                   padding: 14,
                 }}
@@ -105,7 +109,7 @@ function SageWorkspaceMock() {
         <div
           style={{
             background: "#0b1522",
-            borderRadius: 8,
+            borderRadius: PUBLIC_RADIUS.panel,
             color: "#dbeafe",
             overflow: "hidden",
           }}
@@ -330,7 +334,7 @@ export default function SageFeaturePage({
               style={{
                 background: PUBLIC_COLORS.surfaceMuted,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
                 color: PUBLIC_COLORS.heading,
                 padding: 26,

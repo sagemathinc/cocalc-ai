@@ -6,7 +6,11 @@
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   CodeBlock,
@@ -125,7 +129,7 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 padding: 24,
               }}
             >

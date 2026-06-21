@@ -7,7 +7,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -35,7 +39,7 @@ function LinuxWorkspaceMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -57,7 +61,7 @@ function LinuxWorkspaceMock() {
             <div
               style={{
                 background: "#0b1522",
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 color: "#dbeafe",
                 height: "100%",
                 overflow: "hidden",
@@ -125,7 +129,7 @@ function LinuxWorkspaceMock() {
                   style={{
                     background: PUBLIC_COLORS.surface,
                     border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: 8,
+                    borderRadius: PUBLIC_RADIUS.panel,
                     padding: "10px 12px",
                   }}
                 >
@@ -165,7 +169,7 @@ function SoftwareLayersDiagram() {
         background:
           "linear-gradient(145deg, #fff 0%, #f6fbff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -179,7 +183,7 @@ function SoftwareLayersDiagram() {
             style={{
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 8,
+              borderRadius: PUBLIC_RADIUS.panel,
               padding: 16,
             }}
           >
@@ -310,7 +314,7 @@ export default function LinuxFeaturePage({
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
                 padding: 24,
               }}
@@ -318,7 +322,7 @@ export default function LinuxFeaturePage({
               <pre
                 style={{
                   background: "#0b1522",
-                  borderRadius: 8,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   color: "#dbeafe",
                   margin: 0,
                   overflowX: "auto",
@@ -416,7 +420,7 @@ PY`}</code>
               style={{
                 background: PUBLIC_COLORS.surfaceMuted,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
                 color: PUBLIC_COLORS.heading,
                 padding: 26,

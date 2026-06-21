@@ -11,6 +11,7 @@ import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   alpha,
   PUBLIC_COLORS,
+  PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { builtinPolicyPath, type PublicConfig } from "../common";
@@ -18,7 +19,6 @@ import { LinkButton, featureAppPath } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
 
-const PANEL_RADIUS = 8;
 const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
 
 const DECISION_ROWS = [
@@ -130,7 +130,7 @@ const COMPARE_PAGE_CSS = `
   .cocalc-compare-hero {
     background: linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.brandTint} 100%);
     border: 1px solid ${PUBLIC_COLORS.border};
-    border-radius: ${PANEL_RADIUS}px;
+    border-radius: ${PUBLIC_RADIUS.panel}px;
     box-shadow: ${PANEL_SHADOW};
     display: grid;
     gap: 24px;
@@ -141,7 +141,7 @@ const COMPARE_PAGE_CSS = `
   .cocalc-compare-quick-read {
     background: ${alpha(PUBLIC_COLORS.surface, 0.78)};
     border: 1px solid ${PUBLIC_COLORS.border};
-    border-radius: ${PANEL_RADIUS}px;
+    border-radius: ${PUBLIC_RADIUS.panel}px;
     padding: 18px;
   }
 
@@ -155,7 +155,7 @@ const COMPARE_PAGE_CSS = `
   .cocalc-compare-checklist {
     background: ${PUBLIC_COLORS.surface};
     border: 1px solid ${PUBLIC_COLORS.border};
-    border-radius: ${PANEL_RADIUS}px;
+    border-radius: ${PUBLIC_RADIUS.panel}px;
     box-shadow: ${PANEL_SHADOW};
     overflow: hidden;
   }
@@ -179,7 +179,7 @@ const COMPARE_PAGE_CSS = `
   .cocalc-compare-route-panel {
     background: ${PUBLIC_COLORS.surface};
     border: 1px solid ${PUBLIC_COLORS.border};
-    border-radius: ${PANEL_RADIUS}px;
+    border-radius: ${PUBLIC_RADIUS.panel}px;
     box-shadow: ${PANEL_SHADOW};
   }
 

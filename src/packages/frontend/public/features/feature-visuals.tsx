@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 import { Button, Flex, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_RADIUS } from "@cocalc/frontend/public/theme";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -32,7 +32,7 @@ export function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -63,7 +63,7 @@ export function StoryCard({
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -130,7 +130,7 @@ export function TerminalMock({
     <div
       style={{
         background: "#0b1522",
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         color: "#dbeafe",
         overflow: "hidden",
       }}
@@ -197,7 +197,7 @@ export function StartCard({
       style={{
         background: PUBLIC_COLORS.surfaceMuted,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
         color: PUBLIC_COLORS.heading,
         padding: 26,

@@ -9,7 +9,11 @@ import { Button, Col, Flex, Modal, Row, Typography } from "antd";
 
 import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -23,7 +27,6 @@ import { IconBadge } from "./feature-visuals";
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
-const PANEL_RADIUS = 8;
 
 function StoryCard({
   accent = PUBLIC_COLORS.brand,
@@ -41,7 +44,7 @@ function StoryCard({
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -80,7 +83,7 @@ function NotebookMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -100,7 +103,7 @@ function NotebookMock() {
         <div
           style={{
             background: "#0b1f47",
-            borderRadius: PANEL_RADIUS,
+            borderRadius: PUBLIC_RADIUS.panel,
             color: "#dbeafe",
             overflow: "hidden",
           }}
@@ -137,7 +140,7 @@ function NotebookMock() {
                 style={{
                   background: "rgba(255,255,255,0.08)",
                   border: "1px solid rgba(255,255,255,0.14)",
-                  borderRadius: PANEL_RADIUS,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   padding: 12,
                 }}
               >
@@ -146,7 +149,7 @@ function NotebookMock() {
                 <div
                   style={{
                     background: "rgba(255,255,255,0.1)",
-                    borderRadius: PANEL_RADIUS,
+                    borderRadius: PUBLIC_RADIUS.panel,
                     color: "#bbf7d0",
                     marginTop: 10,
                     padding: "8px 10px",
@@ -169,7 +172,7 @@ function LiveStateDiagram() {
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -198,7 +201,7 @@ cocalc project jupyter exec --path analysis.ipynb --stdin`}
                   style={{
                     background: `${COLORS.AI_ASSISTANT_FONT}12`,
                     border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PANEL_RADIUS,
+                    borderRadius: PUBLIC_RADIUS.panel,
                     padding: "8px 10px",
                     width: "100%",
                   }}
@@ -378,7 +381,7 @@ export default function JupyterNotebookFeaturePage({
               style={{
                 background: PUBLIC_COLORS.surfaceMuted,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
+                borderRadius: PUBLIC_RADIUS.panel,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
                 color: PUBLIC_COLORS.heading,
                 padding: 26,

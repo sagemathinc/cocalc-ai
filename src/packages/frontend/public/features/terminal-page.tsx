@@ -7,7 +7,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -35,7 +39,7 @@ function TerminalMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -55,7 +59,7 @@ function TerminalMock() {
         <div
           style={{
             background: "#0b1522",
-            borderRadius: 8,
+            borderRadius: PUBLIC_RADIUS.panel,
             color: "#dbeafe",
             overflow: "hidden",
           }}
@@ -123,7 +127,7 @@ function TerminalMock() {
                 style={{
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 8,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   padding: "9px 10px",
                 }}
               >
@@ -144,7 +148,7 @@ function TermFileDiagram() {
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -165,7 +169,7 @@ function TermFileDiagram() {
               style={{
                 background: "#f7fbff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 padding: 16,
               }}
             >
@@ -198,7 +202,7 @@ function TermFileDiagram() {
                   style={{
                     background: "#fff8e8",
                     border: "1px solid rgba(215, 155, 43, 0.3)",
-                    borderRadius: 8,
+                    borderRadius: PUBLIC_RADIUS.panel,
                     padding: "10px 12px",
                   }}
                 >
@@ -231,7 +235,7 @@ function SharedStreamDiagram() {
         background:
           "linear-gradient(145deg, #fff 0%, #f6fbff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -244,7 +248,7 @@ function SharedStreamDiagram() {
                 style={{
                   background: `${accent}10`,
                   border: `1px solid ${accent}33`,
-                  borderRadius: 8,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   padding: 14,
                   textAlign: "center",
                 }}
@@ -275,7 +279,7 @@ function SharedStreamDiagram() {
           style={{
             background: "#0b1522",
             border: "1px solid rgba(255,255,255,0.18)",
-            borderRadius: 8,
+            borderRadius: PUBLIC_RADIUS.panel,
             color: "#dbeafe",
             padding: 18,
             textAlign: "center",
@@ -484,7 +488,7 @@ export default function TerminalFeaturePage({
               style={{
                 background: PUBLIC_COLORS.surfaceMuted,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
+                borderRadius: PUBLIC_RADIUS.panel,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
                 color: PUBLIC_COLORS.heading,
                 padding: 26,

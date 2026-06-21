@@ -9,7 +9,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   featureAppPath as appPath,
@@ -21,7 +25,6 @@ const { Paragraph, Text, Title } = Typography;
 
 const CLI_DOCS_PATH = appPath("docs/cli/use-cocalc-cli");
 const CLI_ACCENT = COLORS.GRAY_D;
-const PANEL_RADIUS = 8;
 
 const CLI_WORKFLOW_LINES = [
   { kind: "command", text: "$ cocalc browser files --project-id PROJECT_ID" },
@@ -61,7 +64,7 @@ function CliHeroWorkflow() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
+        borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -82,7 +85,7 @@ function CliHeroWorkflow() {
           style={{
             background: "#101820",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
+            borderRadius: PUBLIC_RADIUS.panel,
             boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
             color: "#dbeafe",
             fontFamily:
@@ -171,7 +174,7 @@ function CliFitSection() {
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderLeft: `3px solid ${CLI_ACCENT}`,
-                  borderRadius: PANEL_RADIUS,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   height: "100%",
                   padding: "16px 18px",
                 }}
@@ -226,7 +229,7 @@ function CliSurfaceChoice({
         style={{
           background: PUBLIC_COLORS.surface,
           border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: PANEL_RADIUS,
+          borderRadius: PUBLIC_RADIUS.panel,
           height: "100%",
           padding: 18,
         }}
