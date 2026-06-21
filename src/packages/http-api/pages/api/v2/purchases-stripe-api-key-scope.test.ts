@@ -23,6 +23,7 @@ const mockCreatePaymentIntent = jest.fn();
 const mockGetCheckoutSession = jest.fn();
 const mockGetPaymentIntentAccountId = jest.fn();
 const mockProcessPaymentIntents = jest.fn();
+const mockCreateSubscriptionPayment = jest.fn();
 const mockCreateSetupIntent = jest.fn();
 const mockGetCustomerSession = jest.fn();
 const mockSetCustomer = jest.fn();
@@ -104,6 +105,14 @@ jest.mock("@cocalc/server/purchases/stripe/process-payment-intents", () => ({
   default: (...args) => mockProcessPaymentIntents(...args),
 }));
 
+jest.mock(
+  "@cocalc/server/purchases/stripe/create-subscription-payment",
+  () => ({
+    __esModule: true,
+    default: (...args) => mockCreateSubscriptionPayment(...args),
+  }),
+);
+
 jest.mock("@cocalc/server/purchases/stripe/create-setup-intent", () => ({
   __esModule: true,
   default: (...args) => mockCreateSetupIntent(...args),
@@ -157,6 +166,7 @@ describe("Stripe billing read routes API-key scope", () => {
     });
     mockGetPaymentIntentAccountId.mockReset().mockResolvedValue("acct-1");
     mockProcessPaymentIntents.mockReset().mockResolvedValue(0);
+    mockCreateSubscriptionPayment.mockReset().mockResolvedValue(undefined);
     mockCreateSetupIntent.mockReset().mockResolvedValue({
       clientSecret: "seti_secret",
     });
@@ -233,6 +243,10 @@ describe("Stripe billing read routes API-key scope", () => {
 
   it.each([
     ["./purchases/stripe/create-payment-intent", mockCreatePaymentIntent],
+    [
+      "./purchases/stripe/create-subscription-payment",
+      mockCreateSubscriptionPayment,
+    ],
     ["./purchases/stripe/get-checkout-session", mockGetCheckoutSession],
     ["./purchases/stripe/create-setup-intent", mockCreateSetupIntent],
     ["./purchases/stripe/get-customer-session", mockGetCustomerSession],
