@@ -9,8 +9,12 @@ import getPool from "@cocalc/database/pool";
 import {
   createTestAccount,
   createTestMembershipSubscription,
-  createTestMembershipTier,
+  createTestMembershipTier as insertTestMembershipTier,
 } from "./test-data";
+import {
+  getMembershipTierMap,
+  type MembershipTierRecord,
+} from "@cocalc/server/membership/tiers";
 
 const mockAssertBillingReady = jest.fn();
 
@@ -19,6 +23,45 @@ jest.mock("@cocalc/server/purchases/stripe/billing-readiness", () => ({
 }));
 
 import { applyMembershipChange } from "./membership-change";
+
+const testTierMap: Record<string, MembershipTierRecord> = {};
+
+async function createTestMembershipTier(
+  opts: Parameters<typeof insertTestMembershipTier>[0],
+) {
+  await insertTestMembershipTier(opts);
+  testTierMap[opts.id] = {
+    id: opts.id,
+    label: opts.id,
+    store_visible: true,
+    team_visible: opts.team_visible ?? false,
+    course_store_visible: opts.course_store_visible ?? false,
+    priority: opts.priority ?? 0,
+    price_monthly: opts.price_monthly ?? 0,
+    price_yearly: opts.price_yearly ?? 0,
+    trial_days: opts.trial_days,
+    course_price: opts.course_price,
+    course_duration_days: opts.course_duration_days,
+    course_grace_days: opts.course_grace_days,
+    project_defaults: opts.project_defaults ?? {},
+    ai_limits: opts.ai_limits ?? {},
+    features: opts.features ?? {},
+    usage_limits: opts.usage_limits ?? {},
+    disabled: false,
+  };
+}
+
+async function applyTestMembershipChange(
+  opts: Parameters<typeof applyMembershipChange>[0],
+) {
+  const tierMap = await getMembershipTierMap({
+    includeDisabled: true,
+  });
+  return await applyMembershipChange({
+    ...opts,
+    tierMap: opts.tierMap ?? { ...tierMap, ...testTierMap },
+  });
+}
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -46,7 +89,7 @@ describe("membership change payment enforcement", () => {
     });
 
     await expect(
-      applyMembershipChange({
+      applyTestMembershipChange({
         account_id,
         targetClass,
         interval: "month",
@@ -56,7 +99,7 @@ describe("membership change payment enforcement", () => {
   });
 
   it("allows externally paid membership changes when the payment covers the server-computed cost", async () => {
-    const result = await applyMembershipChange({
+    const result = await applyTestMembershipChange({
       account_id,
       targetClass,
       interval: "month",
@@ -90,7 +133,7 @@ describe("membership change payment enforcement", () => {
       end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     });
 
-    const result = await applyMembershipChange({
+    const result = await applyTestMembershipChange({
       account_id: downgradeAccount,
       targetClass: lowTier,
       interval: "month",
@@ -134,7 +177,7 @@ describe("membership change payment enforcement", () => {
       end: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
-    const result = await applyMembershipChange({
+    const result = await applyTestMembershipChange({
       account_id: downgradeAccount,
       targetClass: freeTier,
       interval: "year",
@@ -186,7 +229,7 @@ describe("membership change payment enforcement", () => {
       end: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
-    const lowResult = await applyMembershipChange({
+    const lowResult = await applyTestMembershipChange({
       account_id: downgradeAccount,
       targetClass: lowTier,
       interval: "year",
@@ -194,7 +237,7 @@ describe("membership change payment enforcement", () => {
     });
     expect(lowResult.subscription_id).toBeGreaterThan(0);
 
-    const freeResult = await applyMembershipChange({
+    const freeResult = await applyTestMembershipChange({
       account_id: downgradeAccount,
       targetClass: freeTier,
       interval: "year",
@@ -230,7 +273,7 @@ describe("membership change payment enforcement", () => {
     );
 
     await expect(
-      applyMembershipChange({
+      applyTestMembershipChange({
         account_id: trialAccount,
         targetClass: trialTier,
         interval: "month",
@@ -252,7 +295,7 @@ describe("membership change payment enforcement", () => {
       trial_days: 7,
     });
 
-    const result = await applyMembershipChange({
+    const result = await applyTestMembershipChange({
       account_id: trialAccount,
       targetClass: trialTier,
       interval: "month",

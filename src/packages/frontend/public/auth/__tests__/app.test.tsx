@@ -1142,17 +1142,17 @@ describe("PublicAuthApp", () => {
 
     expect(await screen.findByText("Confirm security action")).not.toBeNull();
     fireEvent.change(
-      screen.getByPlaceholderText(
-        "Leave blank if this account has no password",
-      ),
-      { target: { value: "current-password" } },
+      screen.getByPlaceholderText("Enter your current password"),
+      {
+        target: { value: "current-password" },
+      },
     );
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
 
     await waitFor(() =>
       expect(mockedPostAuthApi).toHaveBeenCalledWith({
         endpoint: "auth/fresh-auth",
-        origin: undefined,
+        origin: "https://bay.example.test",
         body: {
           current_password: "current-password",
           duration: "default",
