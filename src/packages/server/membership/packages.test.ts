@@ -334,6 +334,60 @@ describe("membership packages", () => {
     expect(membership.grant_source).toBe("student-course-purchase");
   });
 
+  it("repairs missing grants when reassigning an existing course package seat", async () => {
+    const student_account_id = uuid();
+    await createTestAccount(student_account_id);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id: student_account_id,
+      kind: "course",
+      membership_class: courseTier,
+      seat_count: 1,
+      metadata: {
+        direct_student_purchase: true,
+        course_project_id: uuid(),
+      },
+    });
+
+    const assignment = await assignMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+      assigned_by_account_id: student_account_id,
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+      },
+    });
+    expect(assignment.grant_id).toBeTruthy();
+
+    await getPool("medium").query(
+      "DELETE FROM membership_grants WHERE package_id=$1 AND account_id=$2",
+      [package_id, student_account_id],
+    );
+    const missingGrantMembership =
+      await resolveMembershipForAccount(student_account_id);
+    expect(missingGrantMembership.class).toBe("free");
+
+    const repaired = await assignMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+      assigned_by_account_id: student_account_id,
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+      },
+    });
+    expect(repaired.id).toBe(assignment.id);
+    expect(repaired.grant_id).toBeTruthy();
+    expect(repaired.grant_id).not.toBe(assignment.grant_id);
+    expect(repaired.grant_source).toBe("student-course-purchase");
+
+    const membership = await resolveMembershipForAccount(student_account_id);
+    expect(membership.class).toBe(courseTier);
+    expect(membership.grant_package_id).toBe(package_id);
+    expect(membership.grant_source).toBe("student-course-purchase");
+  });
+
   it("reuses the package's stored seat price when expanding seats later", async () => {
     const owner_account_id = uuid();
     await createTestAccount(owner_account_id);

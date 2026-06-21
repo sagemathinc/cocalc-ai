@@ -165,7 +165,10 @@ import {
 import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/project-secret-ssh-key";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getMembershipTierById } from "@cocalc/server/membership/tiers";
-import { listClaimableMembershipPackagesForAccount } from "@cocalc/server/membership/packages";
+import {
+  listClaimableMembershipPackagesForAccount,
+  listMembershipPackageDetailsForOwner,
+} from "@cocalc/server/membership/packages";
 import {
   deleteProjectSshKeyInDb,
   upsertProjectSshKeyInDb,
@@ -1716,6 +1719,24 @@ export async function getCourseStudentAccess({
     };
   }
 
+  const assignedCourseMembership =
+    await getAssignedDirectCoursePackageMembership({
+      account_id,
+      requiredMembershipClass,
+      requiredPriority,
+    });
+  if (assignedCourseMembership) {
+    return {
+      status: "active",
+      source: "student-course-purchase",
+      required_membership_class: requiredMembershipClass,
+      required_label: requiredTier?.label,
+      current_membership_class: assignedCourseMembership.membership_class,
+      current_expires: assignedCourseMembership.expires_at ?? null,
+      course,
+    };
+  }
+
   if (course.site_license_pay) {
     const claimables = await listClaimableMembershipPackagesForAccount({
       account_id,
@@ -1777,6 +1798,64 @@ export async function getCourseStudentAccess({
     deadline: deadline?.isValid() ? deadline.toDate() : null,
     course,
   };
+}
+
+async function getAssignedDirectCoursePackageMembership({
+  account_id,
+  requiredMembershipClass,
+  requiredPriority,
+}: {
+  account_id: string;
+  requiredMembershipClass: string;
+  requiredPriority: number;
+}): Promise<
+  | {
+      membership_class: string;
+      expires_at?: Date | string | null;
+    }
+  | undefined
+> {
+  const packages = await listMembershipPackageDetailsForOwner({
+    owner_account_id: account_id,
+  });
+  for (const membershipPackage of packages) {
+    if (membershipPackage.kind !== "course") {
+      continue;
+    }
+    const startsAt =
+      membershipPackage.starts_at == null
+        ? undefined
+        : new Date(membershipPackage.starts_at);
+    if (startsAt && startsAt > new Date()) {
+      continue;
+    }
+    const expiresAt =
+      membershipPackage.expires_at == null
+        ? undefined
+        : new Date(membershipPackage.expires_at);
+    if (expiresAt && expiresAt <= new Date()) {
+      continue;
+    }
+    const assignedToAccount = membershipPackage.assignments.some(
+      (assignment) =>
+        assignment.account_id === account_id && assignment.revoked_at == null,
+    );
+    if (!assignedToAccount) {
+      continue;
+    }
+    const tier = await getMembershipTierById({
+      id: membershipPackage.membership_class,
+    });
+    if (
+      membershipPackage.membership_class === requiredMembershipClass ||
+      (tier?.priority ?? 0) >= requiredPriority
+    ) {
+      return {
+        membership_class: membershipPackage.membership_class,
+        expires_at: membershipPackage.expires_at ?? null,
+      };
+    }
+  }
 }
 
 export async function createCollabInvite({

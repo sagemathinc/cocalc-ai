@@ -896,6 +896,48 @@ type AssignmentGrantInfo = {
   grant_home_bay_id?: string;
 };
 
+async function getActiveGrantInfoForAssignment({
+  package_id,
+  account_id,
+  assignment_id,
+  client,
+}: {
+  package_id: string;
+  account_id: string;
+  assignment_id: string;
+  client: PoolClient;
+}): Promise<AssignmentGrantInfo | undefined> {
+  const { rows } = await getQueryClient(client).query<{
+    id: string;
+    source: string;
+    purchase_id?: number | null;
+  }>(
+    `
+      SELECT id, source, purchase_id
+        FROM membership_grants
+       WHERE package_id = $1
+         AND account_id = $2
+         AND revoked_at IS NULL
+         AND (
+           metadata->>'assignment_id' = $3
+           OR metadata->>'assignment_id' IS NULL
+         )
+       ORDER BY created DESC
+       LIMIT 1
+    `,
+    [package_id, account_id, assignment_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    return;
+  }
+  return {
+    grant_id: row.id,
+    grant_source: row.source,
+    grant_purchase_id: row.purchase_id ?? null,
+  };
+}
+
 async function prepareGrantForAssignment({
   package_id,
   account_id,
@@ -2100,6 +2142,62 @@ export async function assignMembershipPackageSeat(
             assignment.email_address === normalizedEmailAddress),
       );
       if (existingAssignment) {
+        if (normalizedAccountId) {
+          let grantInfo = await getActiveGrantInfoForAssignment({
+            package_id,
+            account_id: normalizedAccountId,
+            assignment_id: existingAssignment.id,
+            client: dbClient,
+          });
+          if (!grantInfo) {
+            grantInfo = await createGrantForAssignment({
+              owner_account_id: pkg.owner_account_id,
+              package_id,
+              account_id: normalizedAccountId,
+              assigned_by_account_id,
+              assignment_id: existingAssignment.id,
+              metadata: {
+                ...normalizeMetadata(existingAssignment.metadata),
+                ...normalizeMetadata(metadata),
+              },
+              client: dbClient,
+            });
+            const assignmentMetadata: Record<string, unknown> = {
+              ...normalizeMetadata(existingAssignment.metadata),
+              ...normalizeMetadata(metadata),
+              grant_id: grantInfo.grant_id,
+              grant_source: grantInfo.grant_source,
+              grant_purchase_id: grantInfo.grant_purchase_id ?? null,
+              grant_home_bay_id: grantInfo.grant_home_bay_id,
+            };
+            await pool.query(
+              `
+                UPDATE membership_package_assignments
+                   SET metadata = $2::jsonb,
+                       updated = NOW()
+                 WHERE id = $1
+              `,
+              [existingAssignment.id, assignmentMetadata],
+            );
+            const project_id = `${assignmentMetadata.project_id ?? ""}`.trim();
+            if (pkg.kind === "course" && isValidUUID(project_id)) {
+              await syncProjectUsageForAssignment({
+                owner_account_id: pkg.owner_account_id,
+                package_id,
+                assignment_id: existingAssignment.id,
+                project_id,
+                account_id: normalizedAccountId,
+                client: dbClient,
+              });
+            }
+          }
+          return {
+            ...existingAssignment,
+            grant_id: grantInfo.grant_id,
+            grant_source: grantInfo.grant_source,
+            grant_purchase_id: grantInfo.grant_purchase_id ?? undefined,
+          };
+        }
         return existingAssignment;
       }
       const { activeSeatCount, activeSeatLimit } =

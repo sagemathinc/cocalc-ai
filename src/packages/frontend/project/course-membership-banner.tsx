@@ -516,14 +516,42 @@ function StudentCoursePurchaseModal({
 
   const courseTitle = getCourseTitle(access.course);
 
+  async function closeModal() {
+    try {
+      if (place === "done") {
+        await onPurchased();
+      }
+    } finally {
+      onClose();
+    }
+  }
+
   return (
     <Modal
       open={open}
-      onCancel={onClose}
-      onOk={onClose}
+      onCancel={() => {
+        void closeModal();
+      }}
+      onOk={() => {
+        void closeModal();
+      }}
       width={760}
       destroyOnHidden
-      footer={null}
+      footer={
+        place === "done"
+          ? [
+              <Button
+                key="close"
+                type="primary"
+                onClick={() => {
+                  void closeModal();
+                }}
+              >
+                Close
+              </Button>,
+            ]
+          : null
+      }
       title={
         <>
           <Icon name="shopping-cart" style={{ marginRight: "10px" }} />
