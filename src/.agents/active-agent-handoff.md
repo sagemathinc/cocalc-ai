@@ -443,6 +443,28 @@ Plus/Star/Launchpad`).
   hero bullet (`scripts or agents that can run shell commands`). Rebuilt preview and re-ran browser
   QA for `/features/cli` + `/features` desktop/mobile: 116 assertions, 0 failures, artifacts in
   `/tmp/cocalc-public-qa-J3ESvT`; desktop and mobile screenshots inspected. No PR.
+- **START 2026-06-20 18:10 PDT:** Applying the bounded `/features/cli` design-polish slice from
+  Claude's review: remove the lone ad-hoc gold terminal icon color, break the repeated card-row
+  rhythm by turning the middle proof cards into a numbered Read → Run → Return flow, run visual
+  density/contrast QA, rebuild the preview, and commit with a detailed message. Read Claude status
+  first; Claude remains read-only. Verified preview owner remains synthesis hub pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`). Claiming
+  `src/packages/frontend/public/features/cli-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, browser QA artifacts, and this
+  ledger. Pre-existing untracked dedicated-compute draft remains out of scope. No PR.
+- **END 2026-06-20 18:13 PDT:** `/features/cli` design-polish slice implemented and preview
+  rebuilt. Removed the terminal header's lone ad-hoc gold icon color so it inherits the terminal
+  header treatment, converted the middle proof row into a numbered Read → Run → Return sequence,
+  and added a browser-QA selector guard for the new sequence. Validation:
+  `pnpm prettier:write -- packages/frontend/public/features/cli-page.tsx packages/frontend/scripts/public-site-browser-qa.mjs`;
+  `pnpm --dir packages/frontend exec jest public/features/__tests__/app.test.tsx --runInBand`;
+  `pnpm --dir packages/frontend exec jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand`;
+  `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA
+  for `/features/cli` and `/features` on desktop/mobile passed with 118 assertions and 0 failures,
+  artifacts in `/tmp/cocalc-public-qa-pOscri`. Desktop and mobile screenshots inspected. The
+  repo-level `pnpm test -- ...` wrapper is blocked in this environment by missing Python
+  `requests`, so focused package Jest was run directly. Dedicated-compute draft untouched. No PR.
 
 ### Codex — platform-UI thread
 

@@ -102,7 +102,7 @@ function CliHeroWorkflow() {
               padding: "10px 14px",
             }}
           >
-            <Icon name="terminal" style={{ color: "#f7c948", fontSize: 14 }} />
+            <Icon name="terminal" style={{ fontSize: 14 }} />
             <span>reviewable notebook workflow</span>
           </Flex>
           <div style={{ padding: "16px 18px" }}>
@@ -134,16 +134,19 @@ function CliFitSection() {
     {
       body: "List open files, tabs, and notebook state before an automated step changes anything.",
       icon: "terminal" as IconName,
+      step: "01",
       title: "Read project context",
     },
     {
       body: "Execute notebook or browser checks through documented commands instead of UI scripting.",
       icon: "jupyter" as IconName,
+      step: "02",
       title: "Run bounded actions",
     },
     {
       body: "Leave run IDs, files, and generated outputs in the project where collaborators can inspect them.",
       icon: "gears" as IconName,
+      step: "03",
       title: "Return reviewable output",
     },
   ];
@@ -161,33 +164,54 @@ function CliFitSection() {
             the notebooks, files, and terminal evidence people need to review.
           </Paragraph>
         </Flex>
-        <Row gutter={[16, 16]}>
-          {signals.map(({ body, icon, title }) => (
+        <Row className="cocalc-cli-workflow-flow" gutter={[16, 16]}>
+          {signals.map(({ body, icon, step, title }) => (
             <Col key={title} xs={24} md={8}>
               <Flex
-                align="flex-start"
-                gap={12}
+                vertical
+                gap={14}
                 style={{
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderRadius: PANEL_RADIUS,
-                  boxShadow: "0 14px 42px rgba(33, 49, 57, 0.07)",
                   height: "100%",
                   padding: 18,
                 }}
               >
-                <IconBadge accent={CLI_ACCENT} icon={icon} size="sm" />
-                <div>
-                  <Text strong>{title}</Text>
-                  <Paragraph
-                    style={{
-                      color: PUBLIC_COLORS.mutedText,
-                      margin: "4px 0 0",
-                    }}
-                  >
-                    {body}
-                  </Paragraph>
-                </div>
+                <Flex align="center" gap={12} justify="space-between">
+                  <Flex align="center" gap={10}>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        alignItems: "center",
+                        background: PUBLIC_COLORS.surfaceMuted,
+                        border: `1px solid ${PUBLIC_COLORS.border}`,
+                        borderRadius: 999,
+                        color: CLI_ACCENT,
+                        display: "inline-flex",
+                        flex: "0 0 auto",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        height: 28,
+                        justifyContent: "center",
+                        letterSpacing: 0,
+                        width: 28,
+                      }}
+                    >
+                      {step}
+                    </span>
+                    <Text strong>{title}</Text>
+                  </Flex>
+                  <IconBadge accent={CLI_ACCENT} icon={icon} size="sm" />
+                </Flex>
+                <Paragraph
+                  style={{
+                    color: PUBLIC_COLORS.mutedText,
+                    margin: 0,
+                  }}
+                >
+                  {body}
+                </Paragraph>
               </Flex>
             </Col>
           ))}

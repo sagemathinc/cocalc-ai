@@ -309,6 +309,7 @@ const ROUTE_RULES = {
       { text: "CLI Docs", hrefIncludes: "/docs/cli/use-cocalc-cli" },
       { text: "Project automations", hrefIncludes: "/features/automations" },
     ],
+    requireSelectors: [".cocalc-cli-workflow-flow"],
   },
   "/features/jupyter-notebook": {
     requireText: [
