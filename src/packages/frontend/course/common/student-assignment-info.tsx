@@ -3,17 +3,18 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Row, Space, Spin } from "antd";
-import { ReactNode, useRef, useState } from "react";
+import { Button, Col, Input, Row, Space, Spin } from "antd";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Gap, Icon, Markdown, Tip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
-import { MarkdownInput } from "@cocalc/frontend/editors/markdown-input";
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { labels } from "@cocalc/frontend/i18n";
 import { NotebookScores } from "@cocalc/frontend/jupyter/nbgrader/autograde";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { COLORS } from "@cocalc/util/theme";
 import { BigTime } from ".";
 import { CourseActions } from "../actions";
 import { NbgraderScores } from "../nbgrader/scores";
@@ -98,6 +99,13 @@ export function StudentAssignmentInfo({
   const actions = useActions<CourseActions>({ name });
   const size = useButtonSize();
   const [recopy, set_recopy] = useRecopy();
+  const [commentDraft, setCommentDraft] = useState(comments || "");
+
+  useEffect(() => {
+    if (!is_editing) {
+      setCommentDraft(comments || "");
+    }
+  }, [comments, is_editing]);
 
   function open(
     type: AssignmentCopyType,
@@ -141,23 +149,41 @@ export function StudentAssignmentInfo({
     );
   }
 
+  function save_grade(value: string) {
+    actions.assignments.set_grade(
+      assignment.get("assignment_id"),
+      student.get("student_id"),
+      value,
+    );
+  }
+
+  function save_comment(value: string) {
+    actions.assignments.set_comment(
+      assignment.get("assignment_id"),
+      student.get("student_id"),
+      value,
+    );
+  }
+
   function render_grade() {
     if (is_editing) {
       return (
-        <MarkdownInput
+        <Input
           placeholder="Grade..."
-          value={grade || ""}
-          onBlur={(grade) => {
-            actions.assignments.set_grade(
-              assignment.get("assignment_id"),
-              student.get("student_id"),
-              grade,
-            );
+          defaultValue={grade || ""}
+          onBlur={(event) => save_grade(event.target.value)}
+          onPressEnter={(event) => {
+            save_grade(event.currentTarget.value);
+            stop_editing();
           }}
-          onShiftEnter={() => stop_editing()}
-          height="3em"
-          hideHelp
-          style={{ margin: "5px 0" }}
+          size={size}
+          spellCheck={false}
+          style={{
+            margin: "5px 0",
+            maxWidth: 240,
+            minWidth: 110,
+            width: "100%",
+          }}
           autoFocus
         />
       );
@@ -196,7 +222,8 @@ export function StudentAssignmentInfo({
               maxHeight: "4em",
               overflowY: "auto",
               padding: "5px",
-              border: "1px solid lightgray",
+              border: `1px solid ${COLORS.GRAY_L}`,
+              borderRadius: 4,
               cursor: "pointer",
               display: "inline-block",
             }}
@@ -207,18 +234,26 @@ export function StudentAssignmentInfo({
     } else {
       return (
         <MarkdownInput
+          cacheId={`course-grade-comment-${assignment.get(
+            "assignment_id",
+          )}-${student.get("student_id")}`}
           placeholder="Optional markdown comments..."
-          value={comments || ""}
-          onBlur={(comment) => {
-            actions.assignments.set_comment(
-              assignment.get("assignment_id"),
-              student.get("student_id"),
-              comment,
-            );
+          value={commentDraft}
+          onChange={setCommentDraft}
+          onBlur={() => save_comment(commentDraft)}
+          onShiftEnter={(value) => {
+            save_comment(value);
+            stop_editing();
           }}
-          onShiftEnter={() => stop_editing()}
-          height="7em"
+          height="auto"
+          autoGrow
+          autoGrowMinHeight={120}
+          autoGrowMaxHeight={320}
+          enableUpload={false}
           hideHelp
+          modeSwitchPlacement="toolbar"
+          saveDebounceMs={0}
+          style={{ width: "100%" }}
         />
       );
     }
@@ -666,9 +701,9 @@ export function StudentAssignmentInfo({
   function render_grade_col() {
     //      {render_enter_grade()}
     return (
-      <Col md={width} key="grade">
+      <Col md={width} key="grade" style={{ minWidth: 240 }}>
         {show_grade_col && (
-          <div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {render_save_button()}
             {render_grade()}
             {render_comments()}
