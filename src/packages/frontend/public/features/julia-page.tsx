@@ -159,7 +159,7 @@ export default function JuliaFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Use Julia, Pluto, and Jupyter in reproducible CoCalc projects.
+                Julia for reproducible modeling your team can pick up and continue.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Model, run simulations, and review results with your lab or

@@ -750,6 +750,28 @@ Plus/Star/Launchpad`).
   `/features/octave` desktop/mobile; screenshots reviewed from `/tmp/cocalc-public-qa-p9FdGW`.
   No protected home, pitch-doc, docs route/content, pricing/compliance, Slice 4c/4d, broader
   feature-index, type/palette visual, or dedicated-compute draft edits. No PR.
+- **START 2026-06-21 15:22 PDT:** Correcting Slice 4b after Blaec + Claude feedback. Decision:
+  recast both Julia and Octave H2s to outcome-led versions, keep Star and terminal Slice 4b changes,
+  and keep Codex's Octave visual-density reduction (`47b79aa68d`) after Claude confirmed it was a
+  clean subtraction. Claimed files:
+  `src/packages/frontend/public/features/julia-page.tsx`,
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: protected home, pitch docs, docs
+  routes/content, pricing/compliance, Star/terminal changes already accepted, Slice 4c/4d, broader
+  feature-index copy, type/palette visual work, and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-21 15:24 PDT:** Slice 4b correction complete before commit. Recast Julia H2 to
+  "Julia for reproducible modeling your team can pick up and continue." and Octave H2 to "Octave
+  for shared numerical work — no local install to maintain." Supporting copy and visuals still name
+  the concrete tools technical visitors care about: Julia, Pluto, Jupyter, source files, terminals,
+  GNU Octave, `.m` files, notebooks, plots/output, TimeTravel, and real-time collaboration. Kept the
+  accepted Star/terminal copy and kept Octave's density reduction from `47b79aa68d`. Validation:
+  `git diff --check` clean; `public/features/__tests__/app.test.tsx` 91/91 passed;
+  `pnpm lint:frontend` clean from `src`; live browser QA for `/features/julia` and
+  `/features/octave` desktop/mobile passed 72/72 assertions; screenshots reviewed from
+  `/tmp/cocalc-public-qa-CVSew9`. No protected home, pitch-doc, docs route/content,
+  pricing/compliance, Slice 4c/4d, broader feature-index copy, type/palette visual work, or
+  dedicated-compute draft edits. No PR.
 
 ### Codex — platform-UI thread
 

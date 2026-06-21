@@ -141,7 +141,7 @@ export default function OctaveFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                GNU Octave for notebooks, scripts, and shared project files.
+                Octave for shared numerical work — no local install to maintain.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Edit <code>.m</code> files, run Octave in terminals, use

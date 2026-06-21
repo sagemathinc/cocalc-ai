@@ -216,7 +216,7 @@ describe("PublicFeaturesApp", () => {
     },
     {
       marker:
-        "Use Julia, Pluto, and Jupyter in reproducible CoCalc projects.",
+        "Julia for reproducible modeling your team can pick up and continue.",
       slug: "julia",
     },
     {
@@ -249,7 +249,7 @@ describe("PublicFeaturesApp", () => {
       slug: "api",
     },
     {
-      marker: "GNU Octave for notebooks, scripts, and shared project files.",
+      marker: "Octave for shared numerical work — no local install to maintain.",
       slug: "octave",
     },
     {
@@ -892,7 +892,8 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "julia",
-      title: "Use Julia, Pluto, and Jupyter in reproducible CoCalc projects.",
+      title:
+        "Julia for reproducible modeling your team can pick up and continue.",
       section: "Keep Julia close to the rest of the research.",
     },
     {
@@ -904,7 +905,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "octave",
-      title: "GNU Octave for notebooks, scripts, and shared project files.",
+      title: "Octave for shared numerical work — no local install to maintain.",
       section: "Teach and run Octave without local setup drift.",
     },
     {
