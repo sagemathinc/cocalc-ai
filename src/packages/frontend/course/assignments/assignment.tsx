@@ -1267,9 +1267,9 @@ export function Assignment({
     const due_date = assignment.get("due_date");
     if (due_date) {
       return (
-        <div style={{ marginTop: "12px" }}>
+        <span style={{ color: COLORS.GRAY_D }}>
           Due <BigTime date={due_date} />
-        </div>
+        </span>
       );
     }
   }
@@ -1307,12 +1307,22 @@ export function Assignment({
   }
 
   function render_summary_line() {
+    const cellStyle = {
+      alignItems: "center",
+      display: "flex",
+      minHeight: "34px",
+    };
     return (
-      <Row key="summary" style={{ backgroundColor: background }}>
-        <Col md={12}>
-          <h5>{render_assignment_title_link()}</h5>
+      <Row
+        key="summary"
+        style={{ alignItems: "center", backgroundColor: background }}
+      >
+        <Col md={12} style={cellStyle}>
+          <h5 style={{ margin: 0 }}>{render_assignment_title_link()}</h5>
         </Col>
-        <Col md={12}>{render_summary_due_date()}</Col>
+        <Col md={12} style={cellStyle}>
+          {render_summary_due_date()}
+        </Col>
       </Row>
     );
   }

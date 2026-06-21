@@ -12,6 +12,7 @@ import type { CourseStore, HandoutRecord } from "../store";
 import { webapp_client } from "../../webapp-client";
 import { redux } from "../../app-framework";
 import { uuid } from "@cocalc/util/misc";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type { SyncDBRecordHandout } from "../types";
 import { exec } from "../../frame-editors/generic/client";
 import { export_student_file_use_times } from "../export/file-use-times";
@@ -408,6 +409,13 @@ export class HandoutsActions {
   };
 
   open_handout = (handout_id: string, student_id: string): void => {
+    void this.open_handout_async(handout_id, student_id);
+  };
+
+  private open_handout_async = async (
+    handout_id: string,
+    student_id: string,
+  ): Promise<void> => {
     const { handout, student } = this.course_actions.resolve({
       handout_id,
       student_id,
@@ -426,8 +434,23 @@ export class HandoutsActions {
       this.course_actions.set_error("no such project");
       return;
     }
-    // Now open it
-    redux.getProjectActions(proj).open_directory(path);
+    try {
+      await redux.getActions("projects").open_project({
+        project_id: proj,
+        target: this.open_directory_target(path),
+        switch_to: true,
+        restore_session: false,
+      });
+    } catch (err) {
+      this.course_actions.set_error(`Error opening handout: ${err}`);
+    }
+  };
+
+  private open_directory_target = (path: string): string => {
+    const relativePath = (projectRuntimeHomeRelativePath(path) ?? path)
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    return relativePath.length === 0 ? "files/" : `files/${relativePath}/`;
   };
 
   export_file_use_times = async (

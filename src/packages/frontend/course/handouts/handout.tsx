@@ -11,6 +11,7 @@ import { Icon, MarkdownInput, Tip } from "@cocalc/frontend/components";
 import { course, labels } from "@cocalc/frontend/i18n";
 import { UserMap } from "@cocalc/frontend/todo-types";
 import { capitalize, trunc_middle } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import type { CourseActions } from "../actions";
 import { CourseStore, HandoutRecord, StudentsMap } from "../store";
 import * as styles from "../styles";
@@ -525,16 +526,15 @@ export function Handout({
   }
 
   const outside_button_style: CSS = {
-    margin: "4px",
-    paddingTop: "6px",
-    paddingBottom: "4px",
+    margin: 0,
   };
 
   function render_handout_name() {
     return (
-      <h5>
+      <h5 style={{ margin: 0 }}>
         <a
           href=""
+          style={{ alignItems: "center", display: "flex" }}
           onClick={(e) => {
             e.preventDefault();
             return actions.toggle_item_expansion(
@@ -544,13 +544,13 @@ export function Handout({
           }}
         >
           <Icon
-            style={{ marginRight: "10px", float: "left" }}
+            style={{ marginRight: "10px" }}
             name={is_expanded ? "caret-down" : "caret-right"}
           />
-          <div>
+          <span>
             {trunc_middle(handout.get("path"), 24)}
             {handout.get("deleted") ? <b> (deleted)</b> : undefined}
-          </div>
+          </span>
         </a>
       </h5>
     );
@@ -570,22 +570,32 @@ export function Handout({
         not_handout: 0,
       };
     }
+    const cellStyle = {
+      alignItems: "center",
+      display: "flex",
+      minHeight: "34px",
+    };
     return (
-      <Row key="summary" style={{ backgroundColor: backgroundColor }}>
-        <Col md={8} style={{ paddingRight: "0px" }}>
+      <Row
+        key="summary"
+        style={{ alignItems: "center", backgroundColor: backgroundColor }}
+      >
+        <Col md={8} style={{ ...cellStyle, paddingRight: 0 }}>
           {render_handout_name()}
         </Col>
         <Col md={16}>
-          <Row style={{ marginLeft: "8px" }}>
+          <Space
+            size={8}
+            wrap
+            style={{ alignItems: "center", display: "flex", marginLeft: 8 }}
+          >
             {render_handout_button(status)}
-            <span
-              style={{ color: "#666", marginLeft: "5px", marginTop: "10px" }}
-            >
+            <span style={{ color: COLORS.GRAY_D }}>
               ({status.handout}/{status.handout + status.not_handout}{" "}
               transferred)
             </span>
-          </Row>
-          <Row style={{ marginLeft: "8px" }}>{render_copy_all(status)}</Row>
+          </Space>
+          <div style={{ marginLeft: 8 }}>{render_copy_all(status)}</div>
         </Col>
       </Row>
     );

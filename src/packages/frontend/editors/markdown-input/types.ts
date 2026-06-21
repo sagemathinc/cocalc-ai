@@ -54,6 +54,8 @@ export interface MultiMarkdownInputProps {
   placeholder?: string;
   fontSize?: number;
   height?: string;
+  project_id?: string;
+  path?: string;
   autoGrow?: boolean;
   autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;

@@ -8,6 +8,7 @@ import { useIntl } from "react-intl";
 
 import { Tip } from "@cocalc/frontend/components";
 import { capitalize, unreachable } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import { AssignmentCopyStep } from "../types";
 import { course } from "@cocalc/frontend/i18n";
 
@@ -119,19 +120,24 @@ export function StudentAssignmentInfoHeader({
     throw new Error(`unknown key: ${key}`);
   }
 
-  function render_col(
-    number: number,
-    key: AssignmentCopyStep | "grade",
-    width: 4 | 6,
-  ) {
+  function render_col(key: AssignmentCopyStep | "grade", width: 4 | 6) {
     const { tip, title } = tip_title(key);
 
     return (
-      <Col md={width} key={key}>
+      <Col md={width} key={key} style={{ paddingRight: 8 }}>
         <Tip title={title} tip={tip}>
-          <b>
-            {number}. {title}
-          </b>
+          <span
+            style={{
+              color: COLORS.GRAY_D,
+              display: "block",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: 0,
+              textTransform: "uppercase",
+            }}
+          >
+            {title}
+          </span>
         </Tip>
       </Col>
     );
@@ -141,10 +147,10 @@ export function StudentAssignmentInfoHeader({
     const w = 6;
     return (
       <Row>
-        {render_col(1, "assignment", w)}
-        {render_col(2, "collect", w)}
-        {render_col(3, "grade", w)}
-        {render_col(4, "return_graded", w)}
+        {render_col("assignment", w)}
+        {render_col("collect", w)}
+        {render_col("grade", w)}
+        {render_col("return_graded", w)}
       </Row>
     );
   }
@@ -153,12 +159,12 @@ export function StudentAssignmentInfoHeader({
     const w = 4;
     return (
       <Row>
-        {render_col(1, "assignment", w)}
-        {render_col(2, "collect", w)}
-        {render_col(3, "peer_assignment", w)}
-        {render_col(4, "peer_collect", w)}
-        {render_col(5, "grade", w)}
-        {render_col(6, "return_graded", w)}
+        {render_col("assignment", w)}
+        {render_col("collect", w)}
+        {render_col("peer_assignment", w)}
+        {render_col("peer_collect", w)}
+        {render_col("grade", w)}
+        {render_col("return_graded", w)}
       </Row>
     );
   }
@@ -189,10 +195,29 @@ export function StudentAssignmentInfoHeader({
 
   return (
     <div>
-      <Row style={{ borderBottom: "2px solid #aaa" }}>
-        <Col md={4} key="title">
+      <Row
+        style={{
+          background: COLORS.GRAY_LLL,
+          border: `1px solid ${COLORS.GRAY_L}`,
+          borderRadius: 6,
+          marginBottom: 6,
+          padding: "8px 0 8px 0",
+        }}
+      >
+        <Col md={4} key="title" style={{ paddingLeft: 10, paddingRight: 12 }}>
           <Tip title={title} tip={tooltip}>
-            <b>{capitalize(titleIntl())}</b>
+            <span
+              style={{
+                color: COLORS.GRAY_D,
+                display: "block",
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: 0,
+                textTransform: "uppercase",
+              }}
+            >
+              {capitalize(titleIntl())}
+            </span>
           </Tip>
         </Col>
         <Col md={20} key="rest">

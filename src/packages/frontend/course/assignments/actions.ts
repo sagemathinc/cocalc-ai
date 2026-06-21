@@ -38,6 +38,7 @@ import {
   trunc,
   uuid,
 } from "@cocalc/util/misc";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { CourseActions } from "../actions";
 import { export_assignment } from "../export/export-assignment";
 import { export_student_file_use_times } from "../export/file-use-times";
@@ -1936,6 +1937,14 @@ ${details}
     assignment_id: string,
     student_id: string,
   ): void => {
+    void this.open_assignment_async(type, assignment_id, student_id);
+  };
+
+  private open_assignment_async = async (
+    type: AssignmentCopyType,
+    assignment_id: string,
+    student_id: string,
+  ): Promise<void> => {
     const { store, assignment, student } = this.course_actions.resolve({
       assignment_id,
       student_id,
@@ -1983,8 +1992,30 @@ ${details}
       this.course_actions.set_error("no such project");
       return;
     }
-    // Now open it
-    redux.getProjectActions(proj).open_directory(path);
+    await this.open_project_directory(proj, path);
+  };
+
+  private open_project_directory = async (
+    project_id: string,
+    path: string,
+  ): Promise<void> => {
+    try {
+      await redux.getActions("projects").open_project({
+        project_id,
+        target: this.open_directory_target(path),
+        switch_to: true,
+        restore_session: false,
+      });
+    } catch (err) {
+      this.course_actions.set_error(`Error opening assignment: ${err}`);
+    }
+  };
+
+  private open_directory_target = (path: string): string => {
+    const relativePath = (projectRuntimeHomeRelativePath(path) ?? path)
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    return relativePath.length === 0 ? "files/" : `files/${relativePath}/`;
   };
 
   private write_text_file_to_course_project = async (opts: {

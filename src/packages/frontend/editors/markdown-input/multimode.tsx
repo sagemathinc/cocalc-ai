@@ -66,6 +66,8 @@ export default function MultiMarkdownInput({
   onUploadEnd,
   onUploadStart,
   overflowEllipsis = true,
+  project_id: explicitProjectId,
+  path: explicitPath,
   placeholder,
   refresh,
   registerEditor,
@@ -83,9 +85,11 @@ export default function MultiMarkdownInput({
   const {
     isFocused: isFocusedFrame,
     isVisible,
-    project_id,
-    path,
+    project_id: frameProjectId,
+    path: framePath,
   } = frameContext;
+  const project_id = explicitProjectId ?? frameProjectId;
+  const path = explicitPath ?? framePath;
   const isFrameScoped = Boolean(frameContext.id || project_id || path);
   const modeSwitchFrameFocused = isFrameScoped ? isFocusedFrame : true;
   const modeSwitchFrameVisible = isFrameScoped ? isVisible : true;

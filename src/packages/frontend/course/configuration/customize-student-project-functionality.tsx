@@ -19,7 +19,10 @@ import { useProjectCourseInfo } from "@cocalc/frontend/project/use-project-cours
 import { isViewerProjectRole } from "@cocalc/frontend/project/realtime-access";
 import { course, IntlMessage, labels } from "@cocalc/frontend/i18n";
 import { R_IDE } from "@cocalc/util/consts/ui";
-import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
+import {
+  normalizeStudentProjectFunctionality,
+  type StudentProjectFunctionality,
+} from "@cocalc/util/db-schema/projects";
 
 export type { StudentProjectFunctionality };
 
@@ -27,7 +30,6 @@ interface Option {
   name: string;
   title: IntlMessage;
   description: IntlMessage;
-  isCoCalcCom?: boolean;
   notImplemented?: boolean;
 }
 
@@ -160,44 +162,6 @@ const OPTIONS: Option[] = [
   //       "Makes it so the HTTP API is blocked from accessing the student project.  A student might use the API to get around various other restrictions.",
   //   },
   {
-    name: "disableNetwork",
-    title: defineMessage({
-      id: "course.customize-student-project-functionality.disableNetwork.title",
-      defaultMessage: "Disable outgoing network access",
-    }),
-    description: defineMessage({
-      id: "course.customize-student-project-functionality.disableNetwork.description",
-      defaultMessage:
-        "Blocks all outgoing network connections from the student projects.",
-    }),
-    isCoCalcCom: true,
-  },
-  {
-    name: "disableNetworkWarningBanner",
-    title: defineMessage({
-      id: "course.customize-student-project-functionality.disableNetworkWarningBanner.title",
-      defaultMessage: "Disable outgoing network access warning banner",
-    }),
-    description: defineMessage({
-      id: "course.customize-student-project-functionality.disableNetworkWarningBanner.description",
-      defaultMessage:
-        "Disables the banner at the top of the screen that warns students that network access is disabled.",
-    }),
-    isCoCalcCom: true,
-  },
-  {
-    name: "disableSSH",
-    title: defineMessage({
-      id: "course.customize-student-project-functionality.disableSSH.title",
-      defaultMessage: "Disable SSH access to project",
-    }),
-    description: defineMessage({
-      id: "course.customize-student-project-functionality.disableSSH.description",
-      defaultMessage: "Makes any attempt to ssh to a student project fail.",
-    }),
-    isCoCalcCom: true,
-  },
-  {
     name: "disableAI",
     title: defineMessage({
       id: "course.customize-student-project-functionality.disableAI.title",
@@ -221,18 +185,6 @@ const OPTIONS: Option[] = [
         "Disable AI integration except for 'Hint', 'Explain' buttons, and chat replies. Students can get hints to help them get unstuck, but cannot get complete solutions from 'Help me fix'.",
     }),
   },
-  {
-    name: "disableSharing",
-    title: defineMessage({
-      id: "course.customize-student-project-functionality.disableSharing.title",
-      defaultMessage: "Disable Public sharing",
-    }),
-    description: defineMessage({
-      id: "course.customize-student-project-functionality.disableSharing.description",
-      defaultMessage:
-        "Disable public sharing of files from the student projects.  This is a hint for honest students, since of course students can still download files or even copy them to another project and share them.  This does not change the share status of any files that are currently shared.",
-    }),
-  },
 ] as const;
 
 interface Props {
@@ -245,9 +197,9 @@ export function CustomizeStudentProjectFunctionality({
   onChange,
 }: Props) {
   const intl = useIntl();
-  const isCoCalcCom = useTypedRedux("customize", "is_cocalc_com");
-  const [state, setState] =
-    useState<StudentProjectFunctionality>(functionality);
+  const [state, setState] = useState<StudentProjectFunctionality>(
+    normalizeStudentProjectFunctionality(functionality),
+  );
   const [saving, setSaving] = useState<boolean>(false);
 
   function onChangeState(obj: StudentProjectFunctionality) {
@@ -268,7 +220,7 @@ export function CustomizeStudentProjectFunctionality({
     }
     // some sort of upstream change
     lastFunctionalityRef.current = functionality;
-    setState(functionality);
+    setState(normalizeStudentProjectFunctionality(functionality));
   }, [functionality]);
 
   function renderOption(option: Option) {
@@ -301,7 +253,6 @@ export function CustomizeStudentProjectFunctionality({
 
   const options: React.JSX.Element[] = [];
   for (const option of OPTIONS) {
-    if (option.isCoCalcCom && !isCoCalcCom) continue;
     options.push(renderOption(option));
   }
 
@@ -360,13 +311,7 @@ export function CustomizeStudentProjectFunctionality({
 export function completeStudentProjectFunctionality(
   x: StudentProjectFunctionality,
 ) {
-  const y = { ...x };
-  for (const { name } of OPTIONS) {
-    if (y[name] == null) {
-      y[name] = false;
-    }
-  }
-  return y;
+  return normalizeStudentProjectFunctionality(x);
 }
 
 // NOTE: we allow project_id to be undefined for convenience since some clients

@@ -116,8 +116,8 @@ jest.mock("@ant-design/icons", () => ({
 }));
 
 jest.mock("@cocalc/frontend/course", () => ({
-  useStudentProjectFunctionality: () => ({ disableSSH: false }),
-  getStudentProjectFunctionality: () => ({ disableSSH: false }),
+  useStudentProjectFunctionality: () => ({}),
+  getStudentProjectFunctionality: () => ({}),
 }));
 
 jest.mock("@cocalc/frontend/i18n", () => ({

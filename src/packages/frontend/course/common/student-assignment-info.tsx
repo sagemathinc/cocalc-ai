@@ -3,17 +3,18 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Row, Space, Spin } from "antd";
-import { ReactNode, useRef, useState } from "react";
+import { Button, Col, Input, Row, Space, Spin, Tag } from "antd";
+import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions } from "@cocalc/frontend/app-framework";
-import { Gap, Icon, Markdown, Tip } from "@cocalc/frontend/components";
+import { Icon, Markdown, Tip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
-import { MarkdownInput } from "@cocalc/frontend/editors/markdown-input";
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { labels } from "@cocalc/frontend/i18n";
 import { NotebookScores } from "@cocalc/frontend/jupyter/nbgrader/autograde";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { COLORS } from "@cocalc/util/theme";
 import { BigTime } from ".";
 import { CourseActions } from "../actions";
 import { NbgraderScores } from "../nbgrader/scores";
@@ -29,6 +30,7 @@ import { STEP_NAMES, Steps, STEPS_INTL, STEPS_INTL_ACTIVE } from "./consts";
 
 interface StudentAssignmentInfoProps {
   name: string;
+  course_project_id?: string;
   title: ReactNode;
   student: StudentRecord;
   assignment: AssignmentRecord;
@@ -61,6 +63,8 @@ interface RenderLastProps {
   omit_errors?: boolean;
 }
 
+type StageState = "waiting" | "ready" | "running" | "done" | "error";
+
 const RECOPY_INIT: Record<Steps, false> = {
   Assign: false,
   Collect: false,
@@ -82,6 +86,7 @@ function useRecopy(): [
 
 export function StudentAssignmentInfo({
   name,
+  course_project_id,
   title,
   student,
   assignment,
@@ -98,6 +103,16 @@ export function StudentAssignmentInfo({
   const actions = useActions<CourseActions>({ name });
   const size = useButtonSize();
   const [recopy, set_recopy] = useRecopy();
+  const [commentDraft, setCommentDraft] = useState(comments || "");
+  const assignment_id = assignment.get("assignment_id");
+  const student_id = student.get("student_id");
+  const uploadPath = `.course/feedback/${assignment_id}/${student_id}`;
+
+  useEffect(() => {
+    if (!is_editing) {
+      setCommentDraft(comments || "");
+    }
+  }, [comments, is_editing]);
 
   function open(
     type: AssignmentCopyType,
@@ -135,29 +150,36 @@ export function StudentAssignmentInfo({
   }
 
   function stop_editing() {
-    actions.assignments.clear_edited_feedback(
-      assignment.get("assignment_id"),
-      student.get("student_id"),
-    );
+    actions.assignments.clear_edited_feedback(assignment_id, student_id);
+  }
+
+  function save_grade(value: string) {
+    actions.assignments.set_grade(assignment_id, student_id, value);
+  }
+
+  function save_comment(value: string) {
+    actions.assignments.set_comment(assignment_id, student_id, value);
   }
 
   function render_grade() {
     if (is_editing) {
       return (
-        <MarkdownInput
+        <Input
           placeholder="Grade..."
-          value={grade || ""}
-          onBlur={(grade) => {
-            actions.assignments.set_grade(
-              assignment.get("assignment_id"),
-              student.get("student_id"),
-              grade,
-            );
+          defaultValue={grade || ""}
+          onBlur={(event) => save_grade(event.target.value)}
+          onPressEnter={(event) => {
+            save_grade(event.currentTarget.value);
+            stop_editing();
           }}
-          onShiftEnter={() => stop_editing()}
-          height="3em"
-          hideHelp
-          style={{ margin: "5px 0" }}
+          size={size}
+          spellCheck={false}
+          style={{
+            margin: "5px 0",
+            maxWidth: 240,
+            minWidth: 110,
+            width: "100%",
+          }}
           autoFocus
         />
       );
@@ -177,6 +199,13 @@ export function StudentAssignmentInfo({
           onClick={() => set_edited_feedback()}
           disabled={is_editing}
           size={size}
+          style={{
+            maxWidth: "100%",
+            minWidth: 110,
+            overflow: "hidden",
+            textAlign: "left",
+            textOverflow: "ellipsis",
+          }}
         >
           {text}
         </Button>
@@ -196,7 +225,8 @@ export function StudentAssignmentInfo({
               maxHeight: "4em",
               overflowY: "auto",
               padding: "5px",
-              border: "1px solid lightgray",
+              border: `1px solid ${COLORS.GRAY_L}`,
+              borderRadius: 4,
               cursor: "pointer",
               display: "inline-block",
             }}
@@ -207,18 +237,27 @@ export function StudentAssignmentInfo({
     } else {
       return (
         <MarkdownInput
+          cacheId={`course-grade-comment-${assignment_id}-${student_id}`}
+          project_id={course_project_id}
+          path={uploadPath}
+          defaultMode="markdown"
           placeholder="Optional markdown comments..."
-          value={comments || ""}
-          onBlur={(comment) => {
-            actions.assignments.set_comment(
-              assignment.get("assignment_id"),
-              student.get("student_id"),
-              comment,
-            );
+          value={commentDraft}
+          onChange={setCommentDraft}
+          onBlur={() => save_comment(commentDraft)}
+          onShiftEnter={(value) => {
+            save_comment(value);
+            stop_editing();
           }}
-          onShiftEnter={() => stop_editing()}
-          height="7em"
+          height="auto"
+          autoGrow
+          autoGrowMinHeight={120}
+          autoGrowMaxHeight={320}
+          enableUpload={course_project_id != null}
           hideHelp
+          modeSwitchPlacement="toolbar"
+          saveDebounceMs={0}
+          style={{ width: "100%" }}
         />
       );
     }
@@ -315,10 +354,18 @@ export function StudentAssignmentInfo({
     );
   }
 
-  function render_last_time(time: string | number | Date) {
+  function render_last_time(time?: string | number | Date) {
     return (
-      <div key="time" style={{ color: "#666" }}>
-        <BigTime date={time} />
+      <div
+        key="time"
+        style={{
+          color: COLORS.GRAY_M,
+          fontSize: 12,
+          lineHeight: "14px",
+          minHeight: 14,
+        }}
+      >
+        {time != null ? <BigTime date={time} /> : null}
       </div>
     );
   }
@@ -410,15 +457,14 @@ export function StudentAssignmentInfo({
   ) {
     const placement = step === "Return" ? "left" : "right";
     return (
-      <div key="open_recopy">
+      <Space key="open_recopy" wrap size={[6, 6]}>
         {render_open_recopy_confirm(step, copy, copy_tip, placement)}
-        <Gap />
         <Button key="open" size={size} onClick={open}>
           <Tip title="Open assignment" placement={placement} tip={open_tip}>
             <Icon name="folder-open" /> {intl.formatMessage(labels.open)}
           </Tip>
         </Button>
-      </div>
+      </Space>
     );
   }
 
@@ -494,6 +540,73 @@ export function StudentAssignmentInfo({
     );
   }
 
+  function stage_state(data: LastCopyInfo, enable_copy: boolean): StageState {
+    if (data.error) return "error";
+    if (webapp_client.server_time() - (data.start ?? 0) < 15_000) {
+      return "running";
+    }
+    if (data.time) return "done";
+    return enable_copy ? "ready" : "waiting";
+  }
+
+  function render_stage_tag(state: StageState) {
+    switch (state) {
+      case "done":
+        return <Tag color="success">Done</Tag>;
+      case "error":
+        return <Tag color="error">Error</Tag>;
+      case "running":
+        return <Tag color="processing">Working</Tag>;
+      case "ready":
+        return <Tag color="blue">Ready</Tag>;
+      case "waiting":
+        return <Tag>Waiting</Tag>;
+    }
+  }
+
+  function stage_card_style(state: StageState): CSSProperties {
+    const borderColor =
+      state === "done"
+        ? COLORS.BS_GREEN
+        : state === "error"
+          ? COLORS.BS_RED
+          : state === "running" || state === "ready"
+            ? COLORS.ANTD_LINK_BLUE
+            : COLORS.GRAY_L;
+    const background =
+      state === "done"
+        ? COLORS.BS_GREEN_LL
+        : state === "error"
+          ? COLORS.ANTD_BG_RED_L
+          : state === "running"
+            ? COLORS.YELL_LLL
+            : state === "ready"
+              ? COLORS.ANTD_BG_BLUE_L
+              : COLORS.GRAY_LLL;
+    return {
+      background,
+      border: `1px solid ${borderColor}`,
+      borderRadius: 6,
+      minHeight: 92,
+      padding: 8,
+      display: "flex",
+      flexDirection: "column",
+      gap: 6,
+      width: "100%",
+    };
+  }
+
+  const workflowColStyle: CSSProperties = {
+    display: "flex",
+    paddingRight: 8,
+  };
+
+  const workflowCardContentStyle: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  };
+
   function Status({
     step,
     type,
@@ -506,9 +619,10 @@ export function StudentAssignmentInfo({
     const do_open = () => open(type, info.assignment_id, info.student_id);
     const do_copy = () => copy(type, info.assignment_id, info.student_id);
     const do_stop = () => stop(type, info.assignment_id, info.student_id);
+    const state = stage_state(data, enable_copy);
     const v: React.JSX.Element[] = [];
     if (enable_copy) {
-      if (webapp_client.server_time() - (data.start ?? 0) < 15_000) {
+      if (state === "running") {
         v.push(render_open_copying(step, do_open, do_stop));
       } else if (data.time) {
         v.push(
@@ -524,13 +638,38 @@ export function StudentAssignmentInfo({
         v.push(render_copy(step, do_copy, copy_tip as string));
       }
     }
-    if (data.time) {
-      v.push(render_last_time(data.time));
-    }
-    if (data.error && !omit_errors) {
-      v.push(render_error(step, data.error));
-    }
-    return <>{v}</>;
+    return (
+      <div style={stage_card_style(state)}>
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            gap: 6,
+            justifyContent: "space-between",
+          }}
+        >
+          <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+            {step_intl(step, false)}
+          </span>
+          {render_stage_tag(state)}
+        </div>
+        {v.length > 0 ? (
+          <div style={workflowCardContentStyle}>
+            {v}
+            {render_last_time(data.time)}
+            {data.error && !omit_errors ? render_error(step, data.error) : null}
+          </div>
+        ) : (
+          <div style={workflowCardContentStyle}>
+            <span style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+              Waiting for the previous stage.
+            </span>
+            {render_last_time(data.time)}
+            {data.error && !omit_errors ? render_error(step, data.error) : null}
+          </div>
+        )}
+      </div>
+    );
   }
 
   let show_grade_col, show_return_graded;
@@ -553,7 +692,7 @@ export function StudentAssignmentInfo({
 
   function render_assignment_col() {
     return (
-      <Col md={width} key="last_assignment">
+      <Col md={width} key="last_assignment" style={workflowColStyle}>
         <Status
           step="Assign"
           data={info.last_assignment}
@@ -578,7 +717,7 @@ export function StudentAssignmentInfo({
 
   function render_collect_col() {
     return (
-      <Col md={width} key="last_collect">
+      <Col md={width} key="last_collect" style={workflowColStyle}>
         {skip_assignment ||
         !(info.last_assignment != null
           ? info.last_assignment.error
@@ -612,7 +751,7 @@ export function StudentAssignmentInfo({
     if (!info.peer_assignment) return;
     if (info.last_collect?.error != null) return;
     return (
-      <Col md={4} key="peer_assign">
+      <Col md={4} key="peer_assign" style={workflowColStyle}>
         <Status
           step="Peer Assign"
           data={info.last_peer_assignment}
@@ -639,7 +778,7 @@ export function StudentAssignmentInfo({
     if (!peer_grade) return;
     if (!info.peer_collect) return;
     return (
-      <Col md={4} key="peer_collect">
+      <Col md={4} key="peer_collect" style={workflowColStyle}>
         <Status
           step="Peer Collect"
           data={info.last_peer_collect}
@@ -666,13 +805,46 @@ export function StudentAssignmentInfo({
   function render_grade_col() {
     //      {render_enter_grade()}
     return (
-      <Col md={width} key="grade">
+      <Col
+        md={width}
+        key="grade"
+        style={{ ...workflowColStyle, minWidth: 240, paddingRight: 12 }}
+      >
         {show_grade_col && (
-          <div>
+          <div
+            style={{
+              background: is_editing ? COLORS.ANTD_BG_BLUE_L : COLORS.GRAY_LLL,
+              border: `1px solid ${
+                is_editing ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_L
+              }`,
+              borderRadius: 6,
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              minHeight: 92,
+              padding: 8,
+              width: "100%",
+            }}
+          >
+            <div
+              style={{
+                alignItems: "center",
+                display: "flex",
+                justifyContent: "space-between",
+              }}
+            >
+              <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+                Grade & Feedback
+              </span>
+              <Tag color={grade || comments ? "success" : "blue"}>
+                {grade || comments ? "Recorded" : "Ready"}
+              </Tag>
+            </div>
             {render_save_button()}
             {render_grade()}
             {render_comments()}
             {render_nbgrader()}
+            {render_last_time()}
           </div>
         )}
       </Col>
@@ -681,7 +853,7 @@ export function StudentAssignmentInfo({
 
   function render_return_graded_col() {
     return (
-      <Col md={width} key="return_graded">
+      <Col md={width} key="return_graded" style={workflowColStyle}>
         {show_return_graded ? (
           <Status
             step="Return"
@@ -709,13 +881,22 @@ export function StudentAssignmentInfo({
     <div>
       <Row
         style={{
-          borderTop: "1px solid #aaa",
-          paddingTop: "5px",
-          paddingBottom: "5px",
+          borderTop: `1px solid ${COLORS.GRAY_L}`,
+          paddingTop: 8,
+          paddingBottom: 8,
         }}
       >
-        <Col md={4} key="title">
-          {title}
+        <Col md={4} key="title" style={{ paddingRight: 12 }}>
+          <div
+            style={{
+              color: COLORS.GRAY_D,
+              fontWeight: 600,
+              overflowWrap: "anywhere",
+              paddingTop: 8,
+            }}
+          >
+            {title}
+          </div>
         </Col>
         <Col md={20} key="rest">
           <Row>

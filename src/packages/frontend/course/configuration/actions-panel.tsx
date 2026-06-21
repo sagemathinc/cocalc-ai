@@ -224,36 +224,47 @@ export function ResendInvites({
         </>
       }
     >
-      <FormattedMessage
-        id="course.actions-panel.resend-invite.info"
-        defaultMessage={`Create or resend pending invite links for every student who has not signed up yet.
-        When email is configured, CoCalc also emails those links. Otherwise,
-        use "Copy pending invite links" and send them manually. This sends at
-        most one email every {days} {days, plural, one {day} other {days}}.`}
-        values={{ days: RESEND_INVITE_INTERVAL_DAYS }}
-      />
+      <Paragraph style={{ marginBottom: "12px" }}>
+        <FormattedMessage
+          id="course.actions-panel.resend-invite.info"
+          defaultMessage={`Create or resend pending invite links for every student who has not signed up yet.
+          When email is configured, CoCalc also emails those links. Otherwise,
+          use "Copy pending invite links" and send them manually. This sends at
+          most one email every {days} {days, plural, one {day} other {days}}.`}
+          values={{ days: RESEND_INVITE_INTERVAL_DAYS }}
+        />
+      </Paragraph>
       <hr />
-      <Button
-        disabled={reinviting_students}
-        onClick={() => {
-          actions.student_projects.reinvite_oustanding_students();
+      <Space
+        size={[8, 8]}
+        wrap
+        style={{
+          alignItems: "center",
+          display: "flex",
+          width: "100%",
         }}
       >
-        {reinviting_students ? <Icon name="cocalc-ring" spin /> : undefined}{" "}
-        <FormattedMessage
-          id="course.actions-panel.resend-invite.button"
-          defaultMessage={"Reinvite students"}
-          description={"Resending email invitiatons to students in a course."}
-        />
-      </Button>
-      <Button
-        style={{ marginLeft: "8px" }}
-        disabled={reinviting_students}
-        loading={copyingInviteLinks}
-        onClick={() => void copyPendingInviteLinks()}
-      >
-        <Icon name="copy" /> Copy pending invite links
-      </Button>
+        <Button
+          disabled={reinviting_students}
+          onClick={() => {
+            actions.student_projects.reinvite_oustanding_students();
+          }}
+        >
+          {reinviting_students ? <Icon name="cocalc-ring" spin /> : undefined}{" "}
+          <FormattedMessage
+            id="course.actions-panel.resend-invite.button"
+            defaultMessage={"Reinvite students"}
+            description={"Resending email invitiatons to students in a course."}
+          />
+        </Button>
+        <Button
+          disabled={reinviting_students}
+          loading={copyingInviteLinks}
+          onClick={() => void copyPendingInviteLinks()}
+        >
+          <Icon name="copy" /> Copy pending invite links
+        </Button>
+      </Space>
     </Card>
   );
 }

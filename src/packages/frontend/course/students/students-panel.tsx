@@ -17,6 +17,7 @@ import { useProjectRunQuotaPrefetch } from "@cocalc/frontend/project/use-project
 import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
 import type { MembershipPackageDetails } from "@cocalc/conat/hub/api/purchases";
 import { search_match, search_split } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import type { CourseActions } from "../actions";
 import { getCourseMembershipPackage } from "../membership-packages";
 import {
@@ -221,8 +222,16 @@ export function StudentsPanel({
 
     return (
       <div>
-        <Row>
-          <Col md={6}>
+        <Row align="middle" gutter={[8, 8]} style={{ marginBottom: 10 }}>
+          <Col flex="none">
+            <Button
+              type="primary"
+              onClick={() => frameActions.setModal("add-students")}
+            >
+              <Icon name="user-plus" /> Add Students
+            </Button>
+          </Col>
+          <Col flex="320px">
             <Input.Search
               allowClear
               placeholder={intl.formatMessage({
@@ -233,9 +242,9 @@ export function StudentsPanel({
               onChange={(e) => setFilter(e.target.value)}
             />
           </Col>
-          <Col md={8}>
+          <Col flex="auto">
             {num_omitted ? (
-              <h5 style={{ marginLeft: "15px" }}>
+              <span style={{ color: COLORS.GRAY_D }}>
                 {intl.formatMessage(
                   {
                     id: "course.students-panel.filter_students.info",
@@ -243,16 +252,8 @@ export function StudentsPanel({
                   },
                   { num_omitted },
                 )}
-              </h5>
+              </span>
             ) : undefined}
-          </Col>
-          <Col md={6} style={{ textAlign: "right" }}>
-            <Button
-              type="primary"
-              onClick={() => frameActions.setModal("add-students")}
-            >
-              <Icon name="user-plus" /> Add Students
-            </Button>
           </Col>
         </Row>
       </div>
