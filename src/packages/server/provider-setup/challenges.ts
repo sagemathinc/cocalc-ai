@@ -184,12 +184,20 @@ export async function uploadProviderSetupChallengePayload(opts: {
     ]);
     throw new Error("provider setup challenge has expired");
   }
-  const { rows: updated } = await pool().query(
+  if (row.status !== "pending") {
+    throw new Error("provider setup challenge upload token has been used");
+  }
+  const { rows: updated, rowCount } = await pool().query(
     `UPDATE ${TABLE}
         SET status='uploaded', payload_json=$2::jsonb, uploaded_at=NOW(), error=NULL
       WHERE id=$1
+        AND status='pending'
+        AND expires_at > NOW()
       RETURNING *`,
     [opts.id, JSON.stringify(payload)],
   );
+  if ((rowCount ?? 0) === 0 || !updated[0]) {
+    throw new Error("provider setup challenge upload token has been used");
+  }
   return rowToChallenge(updated[0]);
 }
