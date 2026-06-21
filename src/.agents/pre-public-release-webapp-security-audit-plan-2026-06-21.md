@@ -2,7 +2,8 @@
 
 Date: 2026-06-21
 
-Status: In progress. Phase 1 is done except manual logged-out smoke testing.
+Status: In progress. Phases 1 and 2 are done except manual smoke/adversarial
+testing.
 This follows the completed purchasing/security code audit and focuses on the
 remaining highest-risk web-app surfaces before the first public release.
 
@@ -151,6 +152,8 @@ Manual follow-up:
 
 ## Phase 2: Project-Host and Data-Plane Authorization
 
+Status: Done except manual follow-up, 2026-06-21.
+
 Goal: ensure files, terminals, Jupyter, Codex, app previews, sync, and other
 project-host services are only reachable with current project-scoped authority.
 
@@ -197,6 +200,89 @@ Execution:
 - Verify cross-bay/project-host routing uses the routing layer rather than local
   database shortcuts.
 - Add regression tests for any auth bypass that is fixed.
+
+Completed audit notes:
+
+- Hub-to-project-host routing issues signed project-host JWTs that are bound to
+  the target host audience (`project-host:<host_id>`) with short expirations.
+  Remote host cases route through the inter-bay host API; local cases sign with
+  the local host key. The helper never trusts a frontend-selected project-host
+  URL as the authority.
+- Account-issued project-host tokens are gated by current project access before
+  issuance. Project-host Conat authorization then rechecks local synced project
+  membership per subject, so a token alone does not grant access to another
+  project on the same host.
+- The apparent `host_id` override path in
+  `hosts.issueProjectHostAgentAuthToken` is safe: the Conat API transform
+  `authFirstRequireHost` overwrites caller-supplied `host_id` with the
+  authenticated project-host id before the method runs.
+- Project-host Conat auth accepts bearer tokens, project-host browser-session
+  cookies, and a restricted project-secret path. Project-secret auth is only
+  accepted from trusted local project peers and rejects forwarded external
+  connections; browser-session and bearer auth take precedence over
+  project-secret cookies.
+- Viewer access is separated from collaborator/owner access at the project-host
+  subject-policy layer. Viewers are allowed only on their
+  `fs-viewer.project-<project_id>.account-<account_id>` subject and are denied
+  normal fs, file-server, persist, acp, codex, terminal/storage, and
+  `hub.project` subjects. The viewer filesystem is read-only and applies the
+  per-viewer read policy after canonicalizing symlinks through the project
+  sandbox.
+- API keys cannot use project-host file-server management subjects. They are
+  limited to ordinary project/fs subjects and still require both declared API
+  key capability and current collaborator access.
+- HTTP/app/file proxy authorization is enforced on the project host before
+  proxying. Browser-session cookies and HTTP session cookies still require
+  current local collaborator access for the requested project, and positive
+  collaborator decisions are cached only briefly. Query bearer tokens are
+  stripped or redirected after successful auth so they are not forwarded to app
+  backends.
+- Project-host HTTP session cookies are project-path scoped. Existing tests
+  cover path scoping, stale broad cookie handling, shared browser-session to
+  project HTTP session minting, websocket upgrade auth, and query token
+  stripping.
+- Project file-server paths are served through `createProjectSandboxFilesystem`
+  and `SandboxedFilesystem.safeAbsPath` / canonical path checks. Direct
+  container file I/O uses `O_NOFOLLOW` and revalidates opened file descriptors
+  against the project root to mitigate symlink and TOCTOU escapes.
+- Server-side file-server clients intentionally do not authorize by themselves;
+  caller-side APIs must authorize before requesting a routed file-server client.
+  The reviewed user-triggered callers for imports, copy, scratch volume,
+  snapshots, backups, restore, and backup file reads perform collaborator,
+  viewer-read-policy, dangerous-operation, or storage-destructive checks before
+  calling into the project-host file service.
+- Background workers and host control flows that call file-server clients
+  without an account are hub/host-authoritative maintenance paths, not
+  browser-user authority paths.
+- Public app/preview access is gated by the project-host public-exposure feature
+  flag, per-app live exposure state, path matching under the requested project
+  id, and optional app token. Static app roots are constrained to project
+  writable areas and then served through a read-only sandbox rooted at the
+  resolved static root.
+- No release-blocking Phase 2 authorization bypass was found in this code
+  review pass.
+
+Validation:
+
+- Code review of project-host token issuance, host routing, project-host Conat
+  auth, HTTP proxy auth, file-server sandboxing, viewer read-only filesystem,
+  public app access, file-server client callers, and relevant existing tests.
+- Existing focused coverage includes:
+  `src/packages/project-host/conat-auth.test.ts`,
+  `src/packages/project-host/http-proxy-auth.test.ts`,
+  `src/packages/conat/auth/subject-policy.test.ts`, and
+  `src/packages/server/conat/socketio/auth.test.ts`.
+
+Manual follow-up:
+
+- Exercise two-account/two-project browser tests for unauthorized file open,
+  terminal start, Jupyter access, Codex/project service access, app preview,
+  public app exposure, viewer-only file access, collaborator removal, role
+  downgrade, project restart, stale browser tab, and stale project-host HTTP
+  session behavior.
+- Product decision follow-up: public app exposure is project-owned and can make
+  app paths public when collaborators configure exposure. Confirm this is
+  acceptable for launch UX and documentation.
 
 ## Phase 3: Secrets, API Keys, and Tokens
 
