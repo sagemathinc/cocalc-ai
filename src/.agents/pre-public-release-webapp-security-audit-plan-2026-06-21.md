@@ -2,8 +2,8 @@
 
 Date: 2026-06-21
 
-Status: In progress. Phases 1 and 2 are done except manual smoke/adversarial
-testing.
+Status: In progress. Phases 1, 2, and 3 are done except manual
+smoke/adversarial testing.
 This follows the completed purchasing/security code audit and focuses on the
 remaining highest-risk web-app surfaces before the first public release.
 
@@ -286,6 +286,8 @@ Manual follow-up:
 
 ## Phase 3: Secrets, API Keys, and Tokens
 
+Status: Done except manual follow-up, 2026-06-21.
+
 Goal: ensure credentials and one-time tokens are scoped, revocable, non-leaking,
 and never accepted for operations that require stronger browser or fresh-auth
 semantics.
@@ -328,6 +330,77 @@ Execution:
   project-host mutating endpoints.
 - Verify token expiry, replay, revocation, and stale-session behavior for the
   highest-impact tokens.
+
+Completed audit notes:
+
+- API keys are explicit-capability credentials. Creation normalizes and requires
+  at least one capability, stores only a hash/truncated display value, and
+  audits creation/use/denial by key id rather than secret. HTTP hub RPC access
+  is deny-by-default with a short allowlist; project RPC access is
+  project-capability scoped.
+- API keys are explicitly rejected for reviewed browser-only account-security,
+  Stripe billing, project invite, admin, and dangerous mutation flows. Existing
+  tests cover account security, admin RPC, Stripe read/write denial, and
+  project capability negative cases.
+- Server-side fresh-auth gates protect reviewed password, 2FA, passkey, SSO
+  unlink, account deletion, billing, purchase, CLI login approval, host, and
+  dangerous admin flows. Fresh-auth state is checked on the server via current
+  browser session or explicitly passed browser-session hash for Conat/RPC
+  actions.
+- Fixed release blocker: password-reset redemption used a select-then-expire
+  pattern, so concurrent requests with the same reset code could both redeem
+  before the token was expired. Commit `9013a7987e` now consumes the token with
+  one conditional `UPDATE ... WHERE expire > NOW() RETURNING email_address`.
+- Fixed release blocker: CLI login redemption created a remember-me cookie and
+  auth-session row before marking the approved login challenge redeemed. Commit
+  `5a6c92062c` now performs a conditional approved-to-redeemed update first and
+  records the session only after winning that transition.
+- Fixed release blocker: provider setup direct-upload tokens for cloud
+  credentials could overwrite an already-uploaded payload until challenge
+  expiry. Commit `a5318881f9` now makes the upload token single-use by
+  atomically transitioning `pending` to `uploaded`.
+- Fixed hardening issue: low-level auth-session write helpers accepted both
+  `account_id` and `session_hash` but updated by `session_hash` alone. Commit
+  `e1e20a5a6e` now scopes fresh-auth promotion and single-session revocation by
+  both account and session, and rejects fresh-auth promotion if the session row
+  is not owned by that account.
+- Registration tokens are protected at rest: normal tokens are encrypted,
+  bootstrap-admin tokens are hidden/hash-only in admin listing after creation,
+  legacy plaintext rows are opportunistically encrypted on validation, and
+  redeem counters are updated under row lock. No release-blocking issue was
+  found in the code review pass.
+- Project-host bootstrap/master tokens are high-entropy secret tokens stored as
+  password hashes, scoped by host/purpose, TTL-bound, and replaced by revoking
+  previous active tokens for the same host/purpose.
+- Logging/telemetry scan of high-risk auth, API key, project-host token, and
+  provider setup paths did not find raw token/secret logging in the reviewed
+  paths. API key and token audit records use ids, key ids, or aggregate byte
+  counts rather than raw secret material.
+
+Validation:
+
+- `cd src/packages/server && pnpm exec jest ./auth/auth-sessions.test.ts ./auth/cli-auth.test.ts ./auth/password-reset.test.ts ./provider-setup/challenges.test.ts`
+- `cd src/packages/server && pnpm exec jest ./api/http-api-key-policy.test.ts ./api/manage.test.ts ./auth/auth-sessions.test.ts ./auth/cli-auth.test.ts ./auth/password-reset.test.ts ./provider-setup/challenges.test.ts`
+- `cd src/packages/server && pnpm tsc --build`
+- `cd src/packages/http-api && pnpm exec jest ./pages/api/v2/account-security-browser-session.test.ts ./pages/api/v2/admin-api-key-scope.test.ts ./pages/api/v2/purchases-stripe-api-key-scope.test.ts ./pages/api/v2/purchases-stripe-fresh-auth.test.ts ./pages/api/v2/auth-cli-login-approve-fresh-auth.test.ts ./pages/api/v2/api-keys.test.ts`
+
+Validation not completed:
+
+- `cd src/packages/server && pnpm exec jest ./auth/tokens/registration-token-storage.test.ts`
+  could not run in this shell because the local Postgres socket was unavailable
+  at `/home/user/.cache/cocalc/project/postgres/socket/.s.PGSQL.5432`. The
+  storage code and test coverage were reviewed, but this DB-backed suite should
+  be run once local Postgres is available.
+
+Manual follow-up:
+
+- Exercise password reset, email verification, registration token redemption,
+  CLI login approval/redeem, CLI fresh-auth elevation, provider setup direct
+  upload, API key creation/revocation/use/denial, account-security fresh-auth,
+  and Stripe fresh-auth flows end-to-end in a browser/dev environment.
+- Confirm that provider setup challenge payloads are cleared after successful
+  settings application and that re-running a cloud setup command requires a new
+  challenge.
 
 ## Phase 4: Resource Abuse and Free-User Enforcement
 
