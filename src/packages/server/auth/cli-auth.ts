@@ -277,7 +277,7 @@ async function updateChallengeApprovalWithDb({
   redeem_token?: string;
   account_id?: string;
 }): Promise<void> {
-  const metadata = {
+  const metadata: Record<string, any> = {
     ...(row.metadata ?? {}),
     ...(metadataPatch ?? {}),
   };
@@ -297,6 +297,41 @@ async function updateChallengeApprovalWithDb({
     `,
     [row.id, redeem_token_hash, JSON.stringify(metadata), account_id ?? null],
   );
+}
+
+async function redeemApprovedCliLoginChallengeWithDb({
+  db,
+  row,
+  redeem_token_hash,
+  redeemed_session_hash,
+}: {
+  db: Queryable;
+  row: CliAuthChallengeRow;
+  redeem_token_hash: string;
+  redeemed_session_hash: string;
+}): Promise<void> {
+  const metadata: Record<string, any> = {
+    ...(row.metadata ?? {}),
+    redeemed_session_hash,
+  };
+  delete metadata.redeem_token;
+  const result = await db.query(
+    `
+      UPDATE account_cli_auth_challenges
+         SET status = 'redeemed'::VARCHAR(32),
+             redeemed_at = NOW(),
+             metadata = $2::JSONB
+       WHERE id = $1::UUID
+         AND kind = 'login'::VARCHAR(32)
+         AND status = 'approved'::VARCHAR(32)
+         AND redeem_token_hash = $3::CHAR(64)
+         AND expire > NOW()
+    `,
+    [row.id, JSON.stringify(metadata), redeem_token_hash],
+  );
+  if ((result.rowCount ?? 0) !== 1) {
+    throw new Error("cli auth challenge has already been redeemed");
+  }
 }
 
 function approvalPath(
@@ -492,7 +527,9 @@ export async function getCliAuthChallengeStatus({
     kind: row.kind,
     state: row.status === "canceled" ? "pending" : row.status,
     expires_at: new Date(row.expire),
-    ...(row.kind === "login" && metadata.redeem_token
+    ...(row.kind === "login" &&
+    row.status === "approved" &&
+    metadata.redeem_token
       ? { redeem_token: `${metadata.redeem_token}` }
       : {}),
     ...(row.kind === "elevate"
@@ -545,6 +582,18 @@ export async function redeemCliLoginChallenge({
     row.account_id,
     DEFAULT_MAX_AGE_MS / 1000,
   );
+  await withAccountRehomeWriteFence({
+    account_id: row.account_id,
+    action: "redeem cli auth login challenge",
+    fn: async (db) => {
+      await redeemApprovedCliLoginChallengeWithDb({
+        db,
+        row,
+        redeem_token_hash: expectedHash,
+        redeemed_session_hash: hash,
+      });
+    },
+  });
   await recordNewAuthSession({
     account_id: row.account_id,
     session_hash: hash,
@@ -559,28 +608,6 @@ export async function redeemCliLoginChallenge({
       approved_challenge_id: row.id,
       ip_address: ip_address ?? undefined,
       user_agent: user_agent ?? undefined,
-    },
-  });
-  await withAccountRehomeWriteFence({
-    account_id: row.account_id,
-    action: "redeem cli auth login challenge",
-    fn: async (db) => {
-      await db.query(
-        `
-          UPDATE account_cli_auth_challenges
-             SET status = 'redeemed'::VARCHAR(32),
-                 redeemed_at = NOW(),
-                 metadata = $2::JSONB
-           WHERE id = $1::UUID
-        `,
-        [
-          row.id,
-          JSON.stringify({
-            ...(row.metadata ?? {}),
-            redeemed_session_hash: hash,
-          }),
-        ],
-      );
     },
   });
   const account = await getClusterAccountById(row.account_id);
