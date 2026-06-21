@@ -45,7 +45,7 @@ import {
 } from "./side-effects";
 import {
   getMembershipPrice,
-  getMembershipTierById,
+  getSeedMembershipTierById,
   type MembershipTierRecord,
 } from "./tiers";
 import {
@@ -196,20 +196,17 @@ function isMembershipTierVisibleForPackageKind({
 async function getPurchasableMembershipTierForPackageKind({
   kind,
   membership_class,
-  client,
 }: {
   kind: MembershipPackageKind;
   membership_class: MembershipClass;
-  client?: PoolClient;
 }): Promise<MembershipTierRecord> {
   if (kind === "site") {
     throw Error(
       "site membership packages must be managed through site licenses",
     );
   }
-  const tier = await getMembershipTierById({
+  const tier = await getSeedMembershipTierById({
     id: membership_class,
-    client,
   });
   if (
     !tier ||
@@ -1233,9 +1230,8 @@ async function getCourseSeatQuote({
   if (!membership_class) {
     throw Error("membership_class is required for course packages");
   }
-  const tier = await getMembershipTierById({
+  const tier = await getSeedMembershipTierById({
     id: membership_class,
-    client,
   });
   if (!tier || tier.disabled || !tier.course_store_visible) {
     throw Error(
@@ -1301,20 +1297,17 @@ async function getTierSeatQuote({
   interval,
   starts_at,
   expires_at,
-  client,
 }: {
   product: MembershipPackageProduct;
   membership_class: MembershipClass;
   interval: "month" | "year";
   starts_at?: Date;
   expires_at?: Date;
-  client?: PoolClient;
 }): Promise<MembershipPackageQuote> {
   const kind = normalizePackageKind(product.kind);
   const tier = await getPurchasableMembershipTierForPackageKind({
     kind,
     membership_class,
-    client,
   });
   const seat_price = getMembershipPrice(tier, interval);
   const start = starts_at ?? new Date();
@@ -1358,7 +1351,6 @@ export async function resolveMembershipPackageQuote(
     await getPurchasableMembershipTierForPackageKind({
       kind: existing.kind,
       membership_class: existing.membership_class,
-      client,
     });
     const seat_price =
       toNumber(existing.metadata?.seat_price) ??
@@ -1386,7 +1378,6 @@ export async function resolveMembershipPackageQuote(
                   : "month") as "month" | "year",
               starts_at: existing.starts_at,
               expires_at: existing.expires_at ?? undefined,
-              client,
             })
           ).seat_price);
     return {
@@ -1438,7 +1429,6 @@ export async function resolveMembershipPackageQuote(
     interval,
     starts_at: asDate(product.starts_at),
     expires_at: asDate(product.expires_at),
-    client,
   });
 }
 

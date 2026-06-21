@@ -154,6 +154,16 @@ export async function getSeedMembershipTierMap({
   return membershipTierMapFromTiers(tiers, { includeDisabled });
 }
 
+export async function getSeedMembershipTierById({
+  id,
+  includeDisabled = true,
+}: {
+  id: MembershipClass;
+  includeDisabled?: boolean;
+}): Promise<MembershipTierRecord | undefined> {
+  return (await getSeedMembershipTierMap({ includeDisabled }))[id];
+}
+
 export function membershipTierMapFromTiers(
   tiers: readonly MembershipTierRecord[],
   {

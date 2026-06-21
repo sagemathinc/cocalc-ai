@@ -84,4 +84,35 @@ describe("seed membership tier routing", () => {
       courseStoreVisibleOnly: true,
     });
   });
+
+  it("resolves a tier by id from the seed bay on attached bays", async () => {
+    const getMembershipTiers = jest.fn(async () => [
+      {
+        id: "student1",
+        course_store_visible: true,
+        disabled: false,
+        priority: 10,
+      },
+    ]);
+    const bayOps = jest.fn(() => ({ getMembershipTiers }));
+    getConfiguredBayIdMock = jest.fn(() => "bay-2");
+    getConfiguredClusterSeedBayIdMock = jest.fn(() => "bay-0");
+    getInterBayBridgeMock = jest.fn(() => ({ bayOps }));
+    const { getSeedMembershipTierById } = await import("./tiers");
+
+    const tier = await getSeedMembershipTierById({ id: "student1" });
+
+    expect(tier).toMatchObject({
+      id: "student1",
+      course_store_visible: true,
+      disabled: false,
+    });
+    expect(getPoolMock).not.toHaveBeenCalled();
+    expect(bayOps).toHaveBeenCalledWith("bay-0", { timeout_ms: 15_000 });
+    expect(getMembershipTiers).toHaveBeenCalledWith({
+      includeDisabled: true,
+      storeVisibleOnly: false,
+      courseStoreVisibleOnly: false,
+    });
+  });
 });
