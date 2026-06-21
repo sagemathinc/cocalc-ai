@@ -117,6 +117,7 @@ export function StudentListForAssignment({
         key={student_id}
         title={trunc_middle(store.get_student_name(student_id), 40)}
         name={name}
+        course_project_id={store.get("course_project_id")}
         student={student}
         assignment={assignment}
         grade={store.get_grade(assignment.get("assignment_id"), student_id)}

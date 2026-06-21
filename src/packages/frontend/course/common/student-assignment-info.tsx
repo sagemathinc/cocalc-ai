@@ -30,6 +30,7 @@ import { STEP_NAMES, Steps, STEPS_INTL, STEPS_INTL_ACTIVE } from "./consts";
 
 interface StudentAssignmentInfoProps {
   name: string;
+  course_project_id?: string;
   title: ReactNode;
   student: StudentRecord;
   assignment: AssignmentRecord;
@@ -83,6 +84,7 @@ function useRecopy(): [
 
 export function StudentAssignmentInfo({
   name,
+  course_project_id,
   title,
   student,
   assignment,
@@ -100,6 +102,9 @@ export function StudentAssignmentInfo({
   const size = useButtonSize();
   const [recopy, set_recopy] = useRecopy();
   const [commentDraft, setCommentDraft] = useState(comments || "");
+  const assignment_id = assignment.get("assignment_id");
+  const student_id = student.get("student_id");
+  const uploadPath = `.course/feedback/${assignment_id}/${student_id}`;
 
   useEffect(() => {
     if (!is_editing) {
@@ -143,26 +148,15 @@ export function StudentAssignmentInfo({
   }
 
   function stop_editing() {
-    actions.assignments.clear_edited_feedback(
-      assignment.get("assignment_id"),
-      student.get("student_id"),
-    );
+    actions.assignments.clear_edited_feedback(assignment_id, student_id);
   }
 
   function save_grade(value: string) {
-    actions.assignments.set_grade(
-      assignment.get("assignment_id"),
-      student.get("student_id"),
-      value,
-    );
+    actions.assignments.set_grade(assignment_id, student_id, value);
   }
 
   function save_comment(value: string) {
-    actions.assignments.set_comment(
-      assignment.get("assignment_id"),
-      student.get("student_id"),
-      value,
-    );
+    actions.assignments.set_comment(assignment_id, student_id, value);
   }
 
   function render_grade() {
@@ -203,6 +197,13 @@ export function StudentAssignmentInfo({
           onClick={() => set_edited_feedback()}
           disabled={is_editing}
           size={size}
+          style={{
+            maxWidth: "100%",
+            minWidth: 110,
+            overflow: "hidden",
+            textAlign: "left",
+            textOverflow: "ellipsis",
+          }}
         >
           {text}
         </Button>
@@ -234,9 +235,10 @@ export function StudentAssignmentInfo({
     } else {
       return (
         <MarkdownInput
-          cacheId={`course-grade-comment-${assignment.get(
-            "assignment_id",
-          )}-${student.get("student_id")}`}
+          cacheId={`course-grade-comment-${assignment_id}-${student_id}`}
+          project_id={course_project_id}
+          path={uploadPath}
+          defaultMode="markdown"
           placeholder="Optional markdown comments..."
           value={commentDraft}
           onChange={setCommentDraft}
@@ -249,7 +251,7 @@ export function StudentAssignmentInfo({
           autoGrow
           autoGrowMinHeight={120}
           autoGrowMaxHeight={320}
-          enableUpload={false}
+          enableUpload={course_project_id != null}
           hideHelp
           modeSwitchPlacement="toolbar"
           saveDebounceMs={0}
@@ -701,7 +703,7 @@ export function StudentAssignmentInfo({
   function render_grade_col() {
     //      {render_enter_grade()}
     return (
-      <Col md={width} key="grade" style={{ minWidth: 240 }}>
+      <Col md={width} key="grade" style={{ minWidth: 240, paddingRight: 12 }}>
         {show_grade_col && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {render_save_button()}

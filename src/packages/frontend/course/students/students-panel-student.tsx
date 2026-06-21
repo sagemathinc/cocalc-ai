@@ -782,6 +782,7 @@ export function Student({
           key={assignment.get("assignment_id")}
           title={render_title(assignment)}
           name={name}
+          course_project_id={store.get("course_project_id")}
           student={student}
           assignment={assignment}
           grade={grade}
