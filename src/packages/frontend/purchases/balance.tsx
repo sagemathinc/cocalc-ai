@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { useState } from "react";
-import { Button, Card, Spin } from "antd";
+import { Button, Card, Space, Spin } from "antd";
 import { Tooltip } from "@cocalc/frontend/components";
 import { zIndexTip } from "./zindex";
 import MoneyStatistic from "./money-statistic";
@@ -20,6 +20,17 @@ interface Props {
 export default function Balance({ style, refresh, cost, defaultAdd }: Props) {
   const balance = useTypedRedux("account", "balance");
   const [add, setAdd] = useState<boolean>(!!defaultAdd);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      await refresh?.();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   let body;
   if (balance == null) {
     body = (
@@ -53,15 +64,18 @@ export default function Balance({ style, refresh, cost, defaultAdd }: Props) {
       body = (
         <div>
           {stat}
-          <Button
-            type="primary"
-            size="large"
-            onClick={() => setAdd(true)}
-            style={{ marginTop: "5px" }}
-          >
-            <Icon name="credit-card" style={{ marginRight: "5px" }} />
-            Deposit Money
-          </Button>
+          <Space style={{ marginTop: "5px" }} wrap>
+            <Button type="primary" size="large" onClick={() => setAdd(true)}>
+              <Icon name="credit-card" style={{ marginRight: "5px" }} />
+              Deposit Money
+            </Button>
+            {refresh != null && (
+              <Button size="large" loading={refreshing} onClick={handleRefresh}>
+                <Icon name="refresh" style={{ marginRight: "5px" }} />
+                Refresh
+              </Button>
+            )}
+          </Space>
           <div style={{ marginTop: "20px" }}>
             <AutoBalance />
           </div>

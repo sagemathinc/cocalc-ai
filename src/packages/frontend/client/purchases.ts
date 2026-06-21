@@ -1,7 +1,8 @@
 import type { Service } from "@cocalc/util/db-schema/purchases";
 import * as purchasesApi from "@cocalc/frontend/purchases/api";
-import type { MoneyValue } from "@cocalc/util/money";
+import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import type { WebappClient } from "./client";
+import { redux } from "@cocalc/frontend/app-framework";
 
 export class PurchasesClient {
   api: typeof purchasesApi;
@@ -12,7 +13,11 @@ export class PurchasesClient {
     this.client = client;
   }
   async getBalance(): Promise<MoneyValue> {
-    return await this.client.conat_client.hub.purchases.getBalance();
+    const balance = await this.client.conat_client.hub.purchases.getBalance();
+    redux.getActions("account")?.setState({
+      balance: toDecimal(balance).toNumber(),
+    });
+    return balance;
   }
 
   async isPurchaseAllowed(
