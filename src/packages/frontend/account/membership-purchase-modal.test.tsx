@@ -21,6 +21,7 @@ import {
 import MembershipPurchaseModal from "./membership-purchase-modal";
 
 let mockEmailVerificationRequired = false;
+let mockStripeEnabled = true;
 
 jest.mock("antd", () => {
   const Box = ({
@@ -146,6 +147,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useTypedRedux: () => mockStripeEnabled,
+}));
+
 jest.mock("./membership-pricing-chooser", () => ({
   MembershipBillingSelector: () => <div>billing selector</div>,
   MembershipPricingTierGrid: ({ children }: { children?: ReactNode }) => (
@@ -168,6 +173,7 @@ describe("MembershipPurchaseModal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockEmailVerificationRequired = false;
+    mockStripeEnabled = true;
     currentMembership = { class: "free", source: "free" };
     mockFinishStripePayment = undefined;
     mockGetMembershipDetails.mockResolvedValue({
@@ -319,6 +325,65 @@ describe("MembershipPurchaseModal", () => {
       expect(getMembershipChangeQuote).toHaveBeenCalledTimes(2);
     });
     expect(screen.queryByText("local billing setup modal")).not.toBeTruthy();
+  });
+
+  it("does not open trial billing setup when Stripe is unavailable", async () => {
+    mockStripeEnabled = false;
+    jest.mocked(getMembershipChangeQuote).mockResolvedValueOnce({
+      allowed: false,
+      change: "upgrade",
+      charge: 0,
+      price: 216,
+      trial_available: true,
+      trial_days: 7,
+      trial_requires_payment_method: true,
+    } as any);
+
+    render(<MembershipPurchaseModal open onClose={jest.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Standard" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Card billing is not configured on this site."),
+      ).toBeTruthy();
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Add payment method to start free trial",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("local billing setup modal")).toBeNull();
+  });
+
+  it("allows credit-funded paid membership changes when Stripe is unavailable", async () => {
+    mockStripeEnabled = false;
+    jest.mocked(getMembershipChangeQuote).mockResolvedValueOnce({
+      allowed: true,
+      change: "upgrade",
+      charge: 216,
+      charge_amount: 0,
+      price: 216,
+    } as any);
+
+    render(<MembershipPurchaseModal open onClose={jest.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Standard" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm change" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Membership updated.")).toBeTruthy();
+    });
+    expect(applyMembershipChange).toHaveBeenCalledWith({
+      allow_downgrade: true,
+      class: "standard",
+      interval: "year",
+    });
+    expect(
+      screen.queryByRole("button", { name: "Pay with Stripe" }),
+    ).toBeNull();
   });
 
   it("finalizes paid membership changes without showing payment history", async () => {

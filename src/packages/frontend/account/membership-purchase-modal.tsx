@@ -48,6 +48,7 @@ import type {
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
 const { Text } = Typography;
 const MEMBERSHIP_FINALIZATION_TIMEOUT_MS = 30_000;
@@ -189,6 +190,7 @@ function MembershipPurchaseModalInner({
     "choose" | "checkout" | "processing" | "done"
   >("choose");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
 
   const load = async ({ showLoading = true } = {}) => {
     if (showLoading) {
@@ -585,7 +587,15 @@ function MembershipPurchaseModalInner({
         >
           Change selection
         </Button>
-        {trialSetupRequired && (
+        {trialSetupRequired && !stripeEnabled && (
+          <Alert
+            showIcon
+            type="warning"
+            message="Card billing is not configured on this site."
+            description="This membership can only be activated if account credit covers the full charge. Contact an administrator to add account credit or enable Stripe billing."
+          />
+        )}
+        {trialSetupRequired && stripeEnabled && (
           <Button
             disabled={paymentSubmitting || actionLoading}
             onClick={() => setBillingSetupOpen(true)}

@@ -307,6 +307,7 @@ describe("StripePayment", () => {
   });
 
   it("adds a payment method without requiring fresh auth", async () => {
+    mockStripeEnabled = true;
     render(<AddPaymentMethodButton />);
 
     fireEvent.click(screen.getByText(/Add Payment Method/));
@@ -336,6 +337,7 @@ describe("StripePayment", () => {
   });
 
   it("skips billing details when adding a payment method with saved address", async () => {
+    mockStripeEnabled = true;
     jest.mocked(getStripeCustomer).mockResolvedValueOnce({
       address: {
         city: "San Francisco",
@@ -362,6 +364,7 @@ describe("StripePayment", () => {
   });
 
   it("requires email verification before adding a payment method", async () => {
+    mockStripeEnabled = true;
     mockEmailVerificationRequired = true;
 
     render(<AddPaymentMethodButton />);
@@ -387,6 +390,7 @@ describe("StripePayment", () => {
   });
 
   it("can collect billing details without requiring another payment method", async () => {
+    mockStripeEnabled = true;
     const onFinished = jest.fn();
 
     render(
@@ -408,5 +412,25 @@ describe("StripePayment", () => {
     expect(screen.queryByText("Stripe payment element")).toBeNull();
     expect(createSetupIntent).not.toHaveBeenCalled();
     expect(getCustomerSession).not.toHaveBeenCalled();
+  });
+
+  it("does not mount Stripe setup when Stripe billing is unavailable", async () => {
+    mockStripeEnabled = false;
+
+    render(
+      <BillingSetupModal
+        onCancel={jest.fn()}
+        onFinished={jest.fn()}
+        requirePaymentMethod
+      />,
+    );
+
+    expect(
+      screen.getByText(/Card billing is not configured on this site/),
+    ).toBeTruthy();
+    expect(getStripeCustomer).not.toHaveBeenCalled();
+    expect(createSetupIntent).not.toHaveBeenCalled();
+    expect(screen.queryByText("Stripe address element")).toBeNull();
+    expect(screen.queryByText("Stripe payment element")).toBeNull();
   });
 });

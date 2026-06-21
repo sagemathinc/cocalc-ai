@@ -840,11 +840,12 @@ export function BillingSetupModal({
   const [checkingAddress, setCheckingAddress] =
     useState<boolean>(requirePaymentMethod);
   const [addressCheckError, setAddressCheckError] = useState<string>("");
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
 
   useEffect(() => {
     let active = true;
 
-    if (!requirePaymentMethod) {
+    if (!stripeEnabled || !requirePaymentMethod) {
       setAddressSaved(false);
       setCheckingAddress(false);
       setAddressCheckError("");
@@ -873,7 +874,7 @@ export function BillingSetupModal({
     return () => {
       active = false;
     };
-  }, [requirePaymentMethod]);
+  }, [requirePaymentMethod, stripeEnabled]);
 
   const finishAddress = () => {
     if (requirePaymentMethod) {
@@ -884,7 +885,14 @@ export function BillingSetupModal({
   };
   return (
     <Modal open title={title} onCancel={onCancel} onOk={onCancel} footer={[]}>
-      {checkingAddress ? (
+      {!stripeEnabled ? (
+        <Alert
+          showIcon
+          type="warning"
+          message="Card billing is not configured on this site."
+          description="Billing details and payment methods can only be managed after an administrator configures Stripe billing."
+        />
+      ) : checkingAddress ? (
         <BigSpin tip="Checking billing details..." />
       ) : addressCheckError ? (
         <ShowError error={addressCheckError} setError={setAddressCheckError} />
@@ -930,6 +938,7 @@ function CollectPaymentMethodInner({
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
 
   const load = async () => {
     try {
@@ -947,8 +956,22 @@ function CollectPaymentMethodInner({
   };
 
   useEffect(() => {
-    load();
-  }, []);
+    if (stripeEnabled) {
+      load();
+    }
+  }, [stripeEnabled]);
+
+  if (!stripeEnabled) {
+    return (
+      <Alert
+        showIcon
+        style={style}
+        type="warning"
+        message="Card billing is not configured on this site."
+        description="Payment methods can only be added after an administrator configures Stripe billing."
+      />
+    );
+  }
 
   if (loading) {
     return <BigSpin style={style} tip="Loading payment form..." />;

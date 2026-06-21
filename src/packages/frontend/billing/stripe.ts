@@ -17,10 +17,13 @@ export const loadStripe = reuseInFlight(async (): Promise<Stripe> => {
   if (stripe != null) {
     return stripe;
   }
+  const key = `${await getStripePublishableKey()}`.trim();
+  if (!key) {
+    throw Error("Stripe payments are not configured on this site.");
+  }
   // load only when actually used, since this involves dynamic load over the internet to stripe.com,
   // and we don't want loading cocalc in an airgapped network to have hung network requests.
   const { loadStripe: loadStripe0 } = await import("@stripe/stripe-js");
-  const key = await getStripePublishableKey();
   stripe = await loadStripe0(key);
   if (stripe == null) {
     throw Error("failed to initialized Stripe");

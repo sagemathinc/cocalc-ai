@@ -1,4 +1,4 @@
-import { Button, Divider, Modal, Space } from "antd";
+import { Alert, Button, Divider, Modal, Space } from "antd";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components/icon";
 import {
@@ -11,6 +11,7 @@ import { getStripeCustomer, setStripeCustomer } from "./api";
 import ShowError from "@cocalc/frontend/components/error";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
 import { BigSpin, ConfirmButton } from "./stripe-payment";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
 function Title() {
   return (
@@ -57,8 +58,10 @@ export function StripeAddressElement({
 }) {
   const [error, setError] = useState<string>("");
   const [customer, setCustomer] = useState<any | null>(null);
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
 
   useEffect(() => {
+    if (!stripeEnabled) return;
     (async () => {
       try {
         setCustomer(await getStripeCustomer());
@@ -66,7 +69,19 @@ export function StripeAddressElement({
         setError(`${err}`);
       }
     })();
-  }, []);
+  }, [stripeEnabled]);
+
+  if (!stripeEnabled) {
+    return (
+      <Alert
+        showIcon
+        style={style}
+        type="warning"
+        message="Card billing is not configured on this site."
+        description="Billing details and payment methods can only be managed after an administrator configures Stripe billing."
+      />
+    );
+  }
 
   if (error) {
     return <ShowError style={style} error={error} setError={setError} />;
