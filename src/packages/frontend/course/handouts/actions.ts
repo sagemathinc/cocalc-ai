@@ -258,7 +258,7 @@ export class HandoutsActions {
           project_id: student_project_id,
           path: handout.get("target_path"),
         },
-        options: { force: !!overwrite },
+        options: { recursive: true, force: !!overwrite },
       };
       const op =
         await webapp_client.project_client.copyPathBetweenProjects(opts);
@@ -374,7 +374,7 @@ export class HandoutsActions {
             path: handout.get("path"),
           },
           dests,
-          options: { force: !!overwrite },
+          options: { recursive: true, force: !!overwrite },
         });
         const result = await waitForCourseCopyLro({
           op,
