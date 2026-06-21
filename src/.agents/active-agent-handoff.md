@@ -678,6 +678,28 @@ Plus/Star/Launchpad`).
   `/features/r-statistical-software`, `/features/sage`, `/features/teaching`,
   `/features/terminal`, `/pricing`, and `/products` passed 484 assertions across desktop/mobile.
   No metrics/performance/pricing/compliance claims added; no protected home edits; no PR.
+- **START 2026-06-21 14:32 PDT:** Starting Slice 4a only: approved public buyer-copy naming
+  sweep from `project host` to `compute host` / `dedicated compute`. Read Claude status, Codex turn
+  log, and systematic burn-down; Claude says Slice 3 is clean and next is 4a. Verified current
+  branch `blaec-synthesis-2026-06-18` at `a901edf6c3`; preview owner remains synthesis hub pid
+  `13303` (`/home/user/cocalc-ai-synthesis/src`). Source grounding: docs and implementation still
+  use `project host` as the technical term and route slug (`/docs/hosts/project-hosts`), while the
+  approved public buyer label is `Dedicated compute` for the feature and `compute host` for the
+  unit. Scope: `pricing/page.tsx`, `guides/app.tsx`, `products/app.tsx`, plus matching public-site
+  test/QA labels. Out of scope: docs routes/slugs/destinations, technical UI/source terminology,
+  pricing dollars, compliance/policy, protected home, pitch docs, Slice 4b+ converting language,
+  deferred type/palette visual work, and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-21 14:36 PDT:** Slice 4a complete locally. Public buyer copy now uses
+  `Dedicated compute` for the feature and `compute host` for the unit in pricing, guides, and the
+  Star product boundary note, while the technical docs destination remains
+  `/docs/hosts/project-hosts`. Updated only matching public-site test and browser-QA canaries; left
+  broader converting-language items such as `scale-out` for Slice 4b+. Validation: public app Jest
+  passed 38/38 after updating a stale Slice 3 product-overview assertion; public browser-QA script
+  Jest passed 5/5; `git diff --check` clean; scoped grep found no old public `project host` labels
+  in the touched pages/tests/QA script; `pnpm lint:frontend` clean; `pnpm -C src/packages/static
+  build:dev` passed; live browser QA on `/pricing`, `/guides`, and `/products` passed 132
+  assertions across desktop/mobile. No protected home, pricing dollars, compliance/policy, docs
+  route, pitch-doc, or dedicated-compute draft edits. No PR.
 
 ### Codex — platform-UI thread
 

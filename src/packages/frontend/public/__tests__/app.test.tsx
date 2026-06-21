@@ -553,7 +553,7 @@ describe("PublicApp", () => {
             store_description: "A solid choice for everyday work.",
             store_highlights: [
               "Stronger shared resources",
-              "Dedicated project host access",
+              "Dedicated compute access",
             ],
             store_visible: true,
           },
@@ -604,7 +604,7 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("A solid choice for everyday work."),
     ).not.toBeNull();
-    expect(screen.getByText("Dedicated project host access")).not.toBeNull();
+    expect(screen.getByText("Dedicated compute access")).not.toBeNull();
     expect(screen.getByText("$18.75")).not.toBeNull();
     expect(screen.getByText("/ mo")).not.toBeNull();
     expect(screen.getAllByText("Billed annually, saving 25%").length).toBe(2);
@@ -617,7 +617,7 @@ describe("PublicApp", () => {
     expect(screen.getByText("Project Limits")).not.toBeNull();
     expect(screen.getByText("Global Limits")).not.toBeNull();
     expect(screen.getByText("Functionality")).not.toBeNull();
-    expect(screen.getByText("Postpaid dedicated-host billing")).not.toBeNull();
+    expect(screen.getByText("Postpaid compute host billing")).not.toBeNull();
     expect(screen.getByText("CPU priority")).not.toBeNull();
     expect(screen.getByText("Low")).not.toBeNull();
     expect(screen.getByText("Medium")).not.toBeNull();
@@ -673,10 +673,10 @@ describe("PublicApp", () => {
       screen.getByText(/support expectations, rollout, data-location/i),
     ).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Dedicated project hosts" }),
+      screen.getByRole("heading", { name: "Dedicated compute" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Manage project hosts" }),
+      screen.getByRole("link", { name: "Manage dedicated compute" }),
     ).toHaveAttribute("href", "/hosts");
     expect(
       screen.getByRole("link", { name: "Manage team seats" }),
@@ -737,7 +737,7 @@ describe("PublicApp", () => {
       screen.getByRole("link", { name: "Sign up for team seats" }),
     ).toHaveAttribute("href", "/auth/sign-up");
     expect(
-      screen.getByRole("link", { name: "Read project host docs" }),
+      screen.getByRole("link", { name: "Compute host docs" }),
     ).toHaveAttribute("href", "/docs/hosts/project-hosts");
     expect(
       screen.queryByText(/No public hosted plans are currently configured/i),
@@ -1337,7 +1337,7 @@ describe("PublicApp", () => {
     expect(screen.getAllByText("CoCalc.ai").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        /Files, notebooks, terminals, chats, and agent context stay with the project/i,
+        /Files, notebooks, terminals, chats, TimeTravel history, and agent context stay with the project/i,
       ),
     ).not.toBeNull();
     expect(screen.getByText(/Use this as a decision guide/i)).not.toBeNull();

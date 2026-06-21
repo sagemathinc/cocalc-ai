@@ -190,7 +190,7 @@ const GUIDE_GROUPS = [
         title: "Durable collaborative projects",
       },
       {
-        body: "Learn the architecture model behind projects, project hosts, routing, storage, and scale.",
+        body: "Learn how project workspaces, compute hosts, and storage fit together.",
         href: guidePath("how-cocalc-works"),
         icon: "sitemap",
         title: "How CoCalc works",

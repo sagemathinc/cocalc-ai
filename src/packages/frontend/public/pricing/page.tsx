@@ -305,12 +305,12 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     title: "Functionality",
     rows: [
       {
-        label: "Dedicated hosts",
+        label: "Dedicated compute",
         value: ({ tier }) =>
           formatBooleanValue(tierFeatures(tier).create_hosts),
       },
       {
-        label: "Postpaid dedicated-host billing",
+        label: "Postpaid compute host billing",
         value: ({ tier }) =>
           formatBooleanValue(
             hasPositiveUsageLimit(
@@ -638,12 +638,12 @@ export default function PricingPage({
           <PublicSection>
             <Space orientation="vertical" size="middle">
               <Title level={3} style={{ margin: 0 }}>
-                Dedicated project hosts
+                Dedicated compute
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Use dedicated hosts when hosted CoCalc.ai projects need more
-                isolated or larger compute. This is hosted infrastructure, not a
-                private deployment path.
+                Use a compute host when hosted CoCalc.ai projects need more
+                isolated or larger compute. This is hosted infrastructure, not
+                a private deployment path.
               </Paragraph>
               <Button
                 href={
@@ -653,8 +653,8 @@ export default function PricingPage({
                 }
               >
                 {isAuthenticated
-                  ? "Manage project hosts"
-                  : "Read project host docs"}
+                  ? "Manage dedicated compute"
+                  : "Compute host docs"}
               </Button>
             </Space>
           </PublicSection>

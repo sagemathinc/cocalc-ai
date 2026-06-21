@@ -127,7 +127,7 @@ const ROUTE_RULES = {
       "CoCalc.ai Pricing and Licensing",
       "Hosted CoCalc.ai plans",
       "Site licensing",
-      "Dedicated project hosts",
+      "Dedicated compute",
     ],
     requireLinks: [
       { text: "Compare operating models", hrefIncludes: "/products" },

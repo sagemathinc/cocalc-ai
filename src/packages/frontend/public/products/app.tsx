@@ -627,7 +627,7 @@ function CocalcStarPage() {
         <ProductDetailCard icon="servers" title="Boundary: one public VM">
           <ProductNotesList
             items={[
-              "Use Star for one public VM, one local project host, and a small shared site.",
+              "Use Star for one public VM, one local compute host, and a small shared site.",
               "Star is not a high-availability or scale-out private-cloud deployment.",
               "Use Launchpad or Rocket when private deployment or institutional rollout is the real decision.",
             ]}
