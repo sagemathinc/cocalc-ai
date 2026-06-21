@@ -13,6 +13,8 @@ const mockUrl = jest.fn();
 const mockName = jest.fn();
 const mockAdminAlert = jest.fn();
 const mockGetBalance = jest.fn();
+const mockPurchaseMembershipPackage = jest.fn();
+const mockVerifyDirectStudentCourseProduct = jest.fn();
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -51,8 +53,23 @@ jest.mock("@cocalc/server/purchases/get-balance", () => ({
   default: (...args: any[]) => mockGetBalance(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/membership-package", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockPurchaseMembershipPackage(...args),
+  purchaseMembershipPackages: jest.fn(),
+}));
+
+jest.mock("@cocalc/server/purchases/direct-student-course-product", () => ({
+  verifyDirectStudentCourseProduct: (...args: any[]) =>
+    mockVerifyDirectStudentCourseProduct(...args),
+  verifyDirectStudentCourseProducts: jest.fn(),
+}));
+
 import processPaymentIntents from "./process-payment-intents";
-import { MEMBERSHIP_CHANGE } from "@cocalc/util/db-schema/purchases";
+import {
+  MEMBERSHIP_CHANGE,
+  MEMBERSHIP_PACKAGE_PURCHASE,
+} from "@cocalc/util/db-schema/purchases";
 
 describe("processPaymentIntents invoice-payment links", () => {
   const stripe = {
@@ -79,6 +96,19 @@ describe("processPaymentIntents invoice-payment links", () => {
     mockUrl.mockResolvedValue("settings/payments");
     mockName.mockResolvedValue("Ada <ada@example.com>");
     mockGetBalance.mockResolvedValue(0);
+    mockPurchaseMembershipPackage.mockResolvedValue({
+      package_id: "package-1",
+      purchase_id: 202,
+    });
+    mockVerifyDirectStudentCourseProduct.mockImplementation(
+      async ({ product }) => ({
+        ...product,
+        metadata: {
+          ...product.metadata,
+          verified_student_course_purchase: true,
+        },
+      }),
+    );
     stripe.invoicePayments.list.mockResolvedValue({
       data: [
         {
@@ -138,6 +168,64 @@ describe("processPaymentIntents invoice-payment links", () => {
       metadata: expect.objectContaining({
         credit_id: 101,
         invoice_id: "in_123",
+        processed: "true",
+      }),
+    });
+  });
+
+  it("verifies direct student course package products before Stripe fulfillment", async () => {
+    const product = {
+      type: "membership-package",
+      kind: "course",
+      membership_class: "student1",
+      seat_count: 1,
+      course_project_id: "course-project-1",
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+        project_id: "student-project-1",
+        course_project_id: "course-project-1",
+      },
+    };
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      customer: "cus_123",
+      id: "pi_123",
+      metadata: {
+        account_id: "acct-1",
+        membership_package_product: JSON.stringify(product),
+        purpose: MEMBERSHIP_PACKAGE_PURCHASE,
+        total_excluding_tax_usd: "1800",
+      },
+      status: "succeeded",
+    });
+
+    await expect(
+      processPaymentIntents({
+        account_id: "acct-1",
+        payment_intent_id: "pi_123",
+        strict: true,
+      }),
+    ).resolves.toBe(1);
+
+    expect(mockVerifyDirectStudentCourseProduct).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      product,
+    });
+    expect(mockPurchaseMembershipPackage).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      fulfillment_id: "pi_123",
+      product: {
+        ...product,
+        metadata: {
+          ...product.metadata,
+          verified_student_course_purchase: true,
+        },
+      },
+      amount: expect.anything(),
+    });
+    expect(stripe.paymentIntents.update).toHaveBeenLastCalledWith("pi_123", {
+      metadata: expect.objectContaining({
+        credit_id: 101,
         processed: "true",
       }),
     });

@@ -36,6 +36,10 @@ import purchaseMembershipPackage, {
   purchaseMembershipPackages,
 } from "@cocalc/server/purchases/membership-package";
 import {
+  verifyDirectStudentCourseProduct,
+  verifyDirectStudentCourseProducts,
+} from "@cocalc/server/purchases/direct-student-course-product";
+import {
   processTeamLicenseRenewal,
   processTeamLicenseRenewalFailure,
   purchaseTeamLicenseChange,
@@ -727,7 +731,10 @@ ${await support()}`;
           paymentIntent.metadata,
         );
         if (products.length === 1) {
-          const product = products[0];
+          const product = await verifyDirectStudentCourseProduct({
+            account_id,
+            product: products[0],
+          });
           reason =
             product.package_id != null
               ? `expand membership package ${product.package_id}`
@@ -739,11 +746,15 @@ ${await support()}`;
             amount,
           });
         } else {
-          reason = `purchase ${products.length} membership package changes`;
+          const verifiedProducts = await verifyDirectStudentCourseProducts({
+            account_id,
+            products,
+          });
+          reason = `purchase ${verifiedProducts.length} membership package changes`;
           await purchaseMembershipPackages({
             account_id,
             fulfillment_id: paymentIntent.id,
-            products,
+            products: verifiedProducts,
             amount,
           });
         }

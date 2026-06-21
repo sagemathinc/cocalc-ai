@@ -82,6 +82,10 @@ import purchaseMembershipPackage0, {
   purchaseMembershipPackages as purchaseMembershipPackages0,
 } from "@cocalc/server/purchases/membership-package";
 import {
+  verifyDirectStudentCourseProduct,
+  verifyDirectStudentCourseProducts,
+} from "@cocalc/server/purchases/direct-student-course-product";
+import {
   getTeamLicenseOverviewForOwner,
   resolveTeamLicenseQuote,
 } from "@cocalc/server/membership/team-licenses";
@@ -93,7 +97,6 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
-import { getProjectReadDetailsAllowRemote } from "@cocalc/server/conat/api/projects";
 import type {
   MembershipPackageDetails,
   SiteLicenseAffiliationReverificationSeat,
@@ -125,54 +128,6 @@ function getSeedSiteLicenseClient() {
     client: getInterBayFabricClient(),
     dest_bay: getSeedBayId(),
   });
-}
-
-async function verifyDirectStudentCourseProduct({
-  account_id,
-  product,
-}: {
-  account_id: string;
-  product: MembershipPackageProduct;
-}): Promise<MembershipPackageProduct> {
-  const metadata = product.metadata ?? {};
-  if (product.kind !== "course" || metadata.direct_student_purchase !== true) {
-    return product;
-  }
-  const studentProjectId = `${metadata.project_id ?? ""}`.trim();
-  const courseProjectId = `${product.course_project_id ?? ""}`.trim();
-  if (!studentProjectId) {
-    throw Error("student project id is required for course purchases");
-  }
-  const details = await getProjectReadDetailsAllowRemote({
-    account_id,
-    project_id: studentProjectId,
-  });
-  const course = details.course;
-  if (
-    course?.type !== "student" ||
-    course.account_id !== account_id ||
-    `${course.project_id ?? ""}`.trim() !== courseProjectId
-  ) {
-    throw Error("course membership purchase is not available for this project");
-  }
-  const requiredMembershipClass = `${
-    course.required_membership_class ?? ""
-  }`.trim();
-  if (
-    !requiredMembershipClass ||
-    requiredMembershipClass !== `${product.membership_class ?? ""}`.trim()
-  ) {
-    throw Error("course membership tier does not match this course");
-  }
-  return {
-    ...product,
-    metadata: {
-      ...metadata,
-      course_project_id: courseProjectId,
-      course_path: course.path,
-      verified_student_course_purchase: true,
-    },
-  };
 }
 
 export async function getMinBalance({
@@ -557,11 +512,10 @@ export async function purchaseMembershipPackages({
       }
     }
   }
-  const verifiedProducts = await Promise.all(
-    products.map((product) =>
-      verifyDirectStudentCourseProduct({ account_id, product }),
-    ),
-  );
+  const verifiedProducts = await verifyDirectStudentCourseProducts({
+    account_id,
+    products,
+  });
   return await purchaseMembershipPackages0({
     account_id,
     products: verifiedProducts,
