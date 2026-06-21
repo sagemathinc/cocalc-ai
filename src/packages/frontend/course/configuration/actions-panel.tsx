@@ -8,7 +8,8 @@ import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions, useStore } from "@cocalc/frontend/app-framework";
-import { Icon, Paragraph } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
+import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { course } from "@cocalc/frontend/i18n";
 import type { ProjectMap } from "@cocalc/frontend/todo-types";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
@@ -105,15 +106,38 @@ export function ExportGrades({ actions, close }: { actions; close? }) {
       title={
         <>
           <Icon name="table" /> {intl.formatMessage(course.export_grades)}
+          <HelpPopover
+            title={intl.formatMessage(course.export_grades)}
+            content={
+              <FormattedMessage
+                id="course.actions-panel.export-grades.info"
+                defaultMessage={`Export all the grades you have recorded for students in your course
+                to a CSV or Python file.
+                {br}
+                In Microsoft Excel, you can <A>import the CSV file</A>.`}
+                values={{
+                  A: (c) => (
+                    <a
+                      target="_blank"
+                      href="https://support.microsoft.com/en-us/office/import-or-export-text-txt-or-csv-files-5250ac4c-663c-47ce-937b-339e391393ba?ui=en-us&rs=en-us&ad=us"
+                    >
+                      {c}
+                    </a>
+                  ),
+                  br: <br />,
+                }}
+              />
+            }
+          />
         </>
       }
     >
-      <Paragraph style={{ marginBottom: "10px" }}>
+      <div style={{ marginBottom: "10px" }}>
         <FormattedMessage
           id="course.actions-panel.export-grades.title"
           defaultMessage="Save grades to..."
         />
-      </Paragraph>
+      </div>
       <Space>
         <Button onClick={save_grades_to_csv}>
           <Icon name="csv" /> CSV file...
@@ -125,27 +149,6 @@ export function ExportGrades({ actions, close }: { actions; close? }) {
           <Icon name="file-code" /> Python file...
         </Button>
       </Space>
-      <hr />
-      <Paragraph type="secondary">
-        <FormattedMessage
-          id="course.actions-panel.export-grades.info"
-          defaultMessage={`Export all the grades you have recorded for students in your course
-          to a CSV or Python file.
-          {br}
-          In Microsoft Excel, you can <A>import the CSV file</A>.`}
-          values={{
-            A: (c) => (
-              <a
-                target="_blank"
-                href="https://support.microsoft.com/en-us/office/import-or-export-text-txt-or-csv-files-5250ac4c-663c-47ce-937b-339e391393ba?ui=en-us&rs=en-us&ad=us"
-              >
-                {c}
-              </a>
-            ),
-            br: <br />,
-          }}
-        />
-      </Paragraph>
     </Card>
   );
 }
@@ -165,16 +168,20 @@ export function ReconfigureAllProjects({
         <>
           <Icon name="envelope" />{" "}
           {intl.formatMessage(course.reconfigure_all_projects)}
+          <HelpPopover
+            title={intl.formatMessage(course.reconfigure_all_projects)}
+            content={
+              <FormattedMessage
+                id="course.actions-panel.reconfigure-all-projects.info"
+                defaultMessage={`Ensure all projects have the correct students and TA's,
+                titles and descriptions set, etc.
+                This will also resend any outstanding email invitations.`}
+              />
+            }
+          />
         </>
       }
     >
-      <FormattedMessage
-        id="course.actions-panel.reconfigure-all-projects.info"
-        defaultMessage={`Ensure all projects have the correct students and TA's,
-          titles and descriptions set, etc.
-          This will also resend any outstanding email invitations.`}
-      />
-      <hr />
       <Button
         disabled={configuring_projects}
         onClick={() => {
@@ -221,20 +228,22 @@ export function ResendInvites({
       title={
         <>
           <Icon name="envelope" /> {intl.formatMessage(course.resend_invites)}
+          <HelpPopover
+            title={intl.formatMessage(course.resend_invites)}
+            content={
+              <FormattedMessage
+                id="course.actions-panel.resend-invite.info"
+                defaultMessage={`Create or resend pending invite links for every student who has not signed up yet.
+                When email is configured, CoCalc also emails those links. Otherwise,
+                use "Copy pending invite links" and send them manually. This sends at
+                most one email every {days} {days, plural, one {day} other {days}}.`}
+                values={{ days: RESEND_INVITE_INTERVAL_DAYS }}
+              />
+            }
+          />
         </>
       }
     >
-      <Paragraph style={{ marginBottom: "12px" }}>
-        <FormattedMessage
-          id="course.actions-panel.resend-invite.info"
-          defaultMessage={`Create or resend pending invite links for every student who has not signed up yet.
-          When email is configured, CoCalc also emails those links. Otherwise,
-          use "Copy pending invite links" and send them manually. This sends at
-          most one email every {days} {days, plural, one {day} other {days}}.`}
-          values={{ days: RESEND_INVITE_INTERVAL_DAYS }}
-        />
-      </Paragraph>
-      <hr />
       <Space
         size={[8, 8]}
         wrap
@@ -277,16 +286,21 @@ export function CopyMissingHandoutsAndAssignments({ actions }) {
         <>
           <Icon name="share-square" />{" "}
           {intl.formatMessage(course.copy_missing_handouts_assignments)}
+          <HelpPopover
+            title={intl.formatMessage(course.copy_missing_handouts_assignments)}
+            content={
+              <FormattedMessage
+                id="course.actions-panel.copy-missing-handouts-assignments"
+                defaultMessage={`If you <b>add new students</b> to your course,
+                you can click this button to ensure they have all the assignments and handouts
+                that you have already assigned to other students in the course.`}
+                values={{ b: (c) => <b>{c}</b> }}
+              />
+            }
+          />
         </>
       }
     >
-      <FormattedMessage
-        id="course.actions-panel.copy-missing-handouts-assignments"
-        defaultMessage={`If you <b>add new students</b> to your course,
-          you can click this button to ensure they have all the assignments and handouts
-          that you have already assigned to other students in the course.`}
-      />
-      <hr />
       <Button
         onClick={() => {
           actions.configuration.push_missing_handouts_and_assignments();

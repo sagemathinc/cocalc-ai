@@ -8,6 +8,7 @@ import { debounce } from "lodash";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions, useState, useStore } from "@cocalc/frontend/app-framework";
+import type { AppRedux } from "@cocalc/frontend/app-framework";
 import {
   Icon,
   LabeledRow,
@@ -15,7 +16,9 @@ import {
   TextInput,
 } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { course } from "@cocalc/frontend/i18n";
+import { SharedProjectPanel } from "@cocalc/frontend/course/shared-project/shared-project-panel";
 import { CourseActions } from "../actions";
 import { CourseSettingsRecord, CourseStore } from "../store";
 import ConfigurationCopying from "./configuration-copying";
@@ -27,16 +30,21 @@ import { Nbgrader } from "./nbgrader";
 import { Parallel } from "./parallel";
 import { StudentProjectRootfsConfig } from "./student-project-rootfs";
 import StudentPay from "./student-pay";
-import { COLORS } from "@cocalc/util/theme";
 import { getEmailInviteValidationError } from "./email-invite-validation";
 
 interface Props {
   name: string;
   project_id: string;
   settings: CourseSettingsRecord;
+  redux: AppRedux;
 }
 
-export function ConfigurationPanel({ name, project_id, settings }: Props) {
+export function ConfigurationPanel({
+  name,
+  project_id,
+  settings,
+  redux,
+}: Props) {
   const actions = useActions<CourseActions>({ name });
 
   return (
@@ -61,6 +69,13 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
           />
           <br />
           <EmailInvitation actions={actions} name={name} />
+          <br />
+          <SharedProjectPanel
+            settings={settings}
+            redux={redux}
+            name={name}
+            embedded
+          />
           <br />
           <Nbgrader name={name} />
         </Col>
@@ -132,6 +147,21 @@ export function TitleAndDescription({ actions, settings, name }) {
         <>
           <Icon name="header" />{" "}
           {intl.formatMessage(course.title_and_description_label)}
+          <HelpPopover
+            title={intl.formatMessage(course.title_and_description_label)}
+            content={
+              <FormattedMessage
+                id="course.configuration.title_and_description.info"
+                defaultMessage={`Set the course title and description here.
+                When you change the title or description,
+                the corresponding title and description of each student project will be updated.
+                The description is set to this description,
+                and the title is set to the student name followed by this title.
+                Use the description to provide additional information about the course,
+                e.g., a link to the main course website.`}
+              />
+            }
+          />
         </>
       }
     >
@@ -150,19 +180,6 @@ export function TitleAndDescription({ actions, settings, name }) {
           on_save={(desc) => actions.configuration.set_description(desc)}
         />
       </LabeledRow>
-      <hr />
-      <span style={{ color: COLORS.GRAY_M }}>
-        <FormattedMessage
-          id="course.configuration.title_and_description.info"
-          defaultMessage={`Set the course title and description here.
-          When you change the title or description,
-          the corresponding title and description of each student project will be updated.
-          The description is set to this description,
-          and the title is set to the student name followed by this title.
-          Use the description to provide additional information about the course,
-          e.g., a link to the main course website.`}
-        />
-      </span>
     </Card>
   );
 }
@@ -196,6 +213,22 @@ export function EmailInvitation({ actions, name }) {
         <>
           <Icon name="envelope" />{" "}
           {intl.formatMessage(course.email_invitation_label)}
+          <HelpPopover
+            title={intl.formatMessage(course.email_invitation_label)}
+            content={
+              <FormattedMessage
+                id="course.configuration.email_invitation.info"
+                defaultMessage={`If you add a student to this course using their email address,
+                and they do not have a CoCalc account, then they will receive this email invitation.
+                Also, "{title}" will be replaced by the title of the course and "{name}" by your name.`}
+                description={`Email invitations for students in an online course. Do not change {name} and {title} since they are variables.`}
+                values={{
+                  title: "{title}",
+                  name: "{name}",
+                }}
+              />
+            }
+          />
         </>
       }
     >
@@ -218,21 +251,6 @@ export function EmailInvitation({ actions, name }) {
           on_cancel={() => setError("")}
         />
       </div>
-      <hr />
-      <span style={{ color: COLORS.GRAY_M }}>
-        <FormattedMessage
-          id="course.configuration.email_invitation.info"
-          defaultMessage={`If you add a student to this course using their email address,
-          and they do not have a CoCalc account, then they will receive this email invitation.
-          Also, "{title}" will be replaced by the title of the course and "{name}" by your name.`}
-          description={`Email invitations for students in an online course. Do not change {name} and {title} since they are variables.`}
-          values={{
-            // the curly brackets are replaced by the variable with brackets, since we also use this for template vars.
-            title: "{title}",
-            name: "{name}",
-          }}
-        />
-      </span>
     </Card>
   );
 }

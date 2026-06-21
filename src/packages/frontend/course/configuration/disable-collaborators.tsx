@@ -1,7 +1,8 @@
 import { Card, Checkbox } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
-import { Icon, Paragraph } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
+import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { course } from "@cocalc/frontend/i18n";
 
 interface Props {
@@ -22,6 +23,27 @@ export function DisableStudentCollaboratorsPanel({
       title={
         <>
           <Icon name="envelope" /> {title}
+          <HelpPopover
+            title={title}
+            content={
+              <FormattedMessage
+                id="course.configuration.disable-collaborators.description"
+                defaultMessage={`If this box is checked (this is the default),
+                the owner and any collaborator on this student project may add collaborators to this project.
+                If this box is not checked, any collaborators on this student project will be removed,
+                with the exception of the student, instructor, and TAs whenever the projects are reconfigured.
+                Here "instructor and TAs" means any user who is an owner or collaborator on the teaching project,
+                i.e. the project containing the course file.
+                After "Allow arbitrary collaborators" is checked,
+                collaborators to be excluded are removed when opening the course file or upon clicking
+                "Reconfigure all projects".
+                {br}
+                <b>NOTE:</b> There is also a new "Disable adding or removing collaborators" option below,
+                which you should also consider using.`}
+                values={{ br: <br />, b: (c) => <b>{c}</b> }}
+              />
+            }
+          />
         </>
       }
     >
@@ -36,25 +58,6 @@ export function DisableStudentCollaboratorsPanel({
           />
         </Checkbox>
       </div>
-      <hr />
-      <Paragraph type="secondary">
-        <FormattedMessage
-          id="course.configuration.disable-collaborators.description"
-          defaultMessage={`If this box is checked (this is the default),
-          the owner and any collaborator on this student project may add collaborators to this project.
-          If this box is not checked, any collaborators on this student project will be removed,
-          with the exception of the student, instructor, and TAs whenever the projects are reconfigured.
-          Here "instructor and TAs" means any user who is an owner or collaborator on the teaching project,
-          i.e. the project containing the course file.
-          After "Allow arbitrary collaborators" is checked,
-          collaborators to be excluded are removed when opening the course file or upon clicking
-          "Reconfigure all projects".
-          {br}
-          <b>NOTE:</b> There is also a new "Disable adding or removing collaborators" option below,
-          which you should also consider using.`}
-          values={{ br: <br /> }}
-        />
-      </Paragraph>
     </Card>
   );
 }

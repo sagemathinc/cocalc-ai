@@ -361,6 +361,7 @@ export function StudentAssignmentInfo({
   }
 
   function render_last_time(time?: string | number | Date) {
+    if (time == null) return null;
     return (
       <div
         key="time"
@@ -371,7 +372,7 @@ export function StudentAssignmentInfo({
           minHeight: 14,
         }}
       >
-        {time != null ? <BigTime date={time} /> : null}
+        <BigTime date={time} />
       </div>
     );
   }
@@ -593,7 +594,7 @@ export function StudentAssignmentInfo({
       background,
       border: `1px solid ${borderColor}`,
       borderRadius: 6,
-      minHeight: 92,
+      minHeight: 72,
       padding: 8,
       display: "flex",
       flexDirection: "column",
@@ -814,7 +815,7 @@ export function StudentAssignmentInfo({
       <Col
         md={width}
         key="grade"
-        style={{ ...workflowColStyle, minWidth: 240, paddingRight: 12 }}
+        style={{ ...workflowColStyle, minWidth: 0, paddingRight: 8 }}
       >
         {show_grade_col && (
           <div
@@ -827,7 +828,7 @@ export function StudentAssignmentInfo({
               display: "flex",
               flexDirection: "column",
               gap: 6,
-              minHeight: 92,
+              minHeight: 72,
               padding: 8,
               width: "100%",
             }}

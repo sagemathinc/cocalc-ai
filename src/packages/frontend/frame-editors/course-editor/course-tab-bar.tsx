@@ -55,10 +55,6 @@ export const CourseTabBar: React.FC<Props> = (props: Props) => {
       eventKey: "course_configuration",
       title: intl.formatMessage(labels.configuration),
     }),
-    Tab({
-      eventKey: "course_shared_project",
-      title: intl.formatMessage(course.shared_project),
-    }),
   ];
 
   return (
