@@ -15,7 +15,11 @@ import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impers
 import { isValidUUID } from "@cocalc/util/misc";
 
 export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
-export type AuthSessionFactorLevel = "none" | SecondFactorMethod;
+export type PasswordFreshAuthFactorLevel = "none" | SecondFactorMethod;
+export type SsoFreshAuthMethod = "google_oidc";
+export type AuthSessionFactorLevel =
+  | PasswordFreshAuthFactorLevel
+  | SsoFreshAuthMethod;
 export type FreshAuthDuration = "default" | "extended";
 
 export const FRESH_AUTH_DEFAULT_MS = 15 * 60_000;
@@ -333,11 +337,13 @@ export async function setCurrentSessionFreshAuth({
   account_id,
   factor_level,
   fresh_auth_until,
+  metadata_patch,
 }: {
   req: Request;
   account_id: string;
   factor_level: AuthSessionFactorLevel;
   fresh_auth_until: Date;
+  metadata_patch?: Record<string, unknown>;
 }): Promise<void> {
   const session_hash = (await getCurrentAuthSession({ req, account_id }))
     .session_hash;
@@ -349,6 +355,7 @@ export async function setCurrentSessionFreshAuth({
     session_hash,
     factor_level,
     fresh_auth_until,
+    metadata_patch,
   });
 }
 
@@ -588,9 +595,13 @@ export function resolveFreshAuthDurationMs({
   factor_level: AuthSessionFactorLevel;
 }): number {
   if (duration === "extended") {
-    if (factor_level !== "totp" && factor_level !== "passkey") {
+    if (
+      factor_level !== "totp" &&
+      factor_level !== "passkey" &&
+      factor_level !== "google_oidc"
+    ) {
       throw new Error(
-        "extended fresh auth requires a TOTP or passkey verification in this browser session",
+        "extended fresh auth requires a TOTP, passkey, or Google verification in this browser session",
       );
     }
     return FRESH_AUTH_EXTENDED_MS;

@@ -7,7 +7,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-import { postAuthApi } from "@cocalc/frontend/auth/api";
+import { postAuthApi, startGoogleFreshAuth } from "@cocalc/frontend/auth/api";
 import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 
 import { FreshAuthModal, useFreshAuthAction } from "./fresh-auth";
@@ -30,6 +30,11 @@ jest.mock("antd", () => {
         {message}
         {description}
       </section>
+    ),
+    Button: ({ block: _block, children, onClick, ...props }: any) => (
+      <button onClick={onClick} type="button" {...props}>
+        {children}
+      </button>
     ),
     Checkbox: ({ children, checked, disabled, onChange }: any) => (
       <label>
@@ -79,6 +84,7 @@ jest.mock("antd", () => {
 
 jest.mock("@cocalc/frontend/auth/api", () => ({
   postAuthApi: jest.fn(),
+  startGoogleFreshAuth: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/control-plane-origin", () => ({
@@ -98,6 +104,7 @@ function enterCurrentPassword() {
 describe("FreshAuthModal", () => {
   beforeEach(() => {
     jest.mocked(postAuthApi).mockReset();
+    jest.mocked(startGoogleFreshAuth).mockReset();
     jest.mocked(getControlPlaneOrigin).mockReset();
     jest.mocked(getControlPlaneOrigin).mockReturnValue(undefined);
   });
@@ -212,6 +219,58 @@ describe("FreshAuthModal", () => {
 
     expect(screen.getByTestId("antd-modal").dataset.zIndex).toBe("3000");
   });
+
+  it("lets passwordless Google-linked accounts verify with Google", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return {
+          mode: "account",
+          enabled: false,
+          has_password: false,
+          sso_methods: [{ provider: "google", display: "Google" }],
+          email_address: "user@example.com",
+        };
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    });
+    jest.mocked(startGoogleFreshAuth).mockResolvedValue({
+      url: "https://accounts.google.com/o/oauth2/v2/auth?state=state",
+    });
+    const open = jest.spyOn(window, "open").mockReturnValue({} as any);
+    const onSuccess = jest.fn(async () => undefined);
+
+    render(<FreshAuthModal open onCancel={jest.fn()} onSuccess={onSuccess} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Verify with Google")).toBeTruthy();
+    });
+    expect(
+      screen.queryByPlaceholderText("Enter your current password"),
+    ).toBeNull();
+    fireEvent.click(screen.getByText("Verify with Google"));
+
+    await waitFor(() => {
+      expect(startGoogleFreshAuth).toHaveBeenCalledWith({
+        duration: "default",
+        origin: undefined,
+      });
+    });
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "cocalc:google-fresh-auth", ok: true },
+      }),
+    );
+    await waitFor(() => {
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+    });
+    expect(open).toHaveBeenCalledWith(
+      "https://accounts.google.com/o/oauth2/v2/auth?state=state",
+      "cocalc-google-fresh-auth",
+      "popup,width=520,height=700",
+    );
+    open.mockRestore();
+  });
 });
 
 function FreshAuthActionHarness({ action }: { action: () => Promise<void> }) {
@@ -249,6 +308,7 @@ function FreshAuthActionHarness({ action }: { action: () => Promise<void> }) {
 describe("useFreshAuthAction", () => {
   beforeEach(() => {
     jest.mocked(postAuthApi).mockReset();
+    jest.mocked(startGoogleFreshAuth).mockReset();
     jest.mocked(getControlPlaneOrigin).mockReset();
     jest.mocked(getControlPlaneOrigin).mockReturnValue(undefined);
   });

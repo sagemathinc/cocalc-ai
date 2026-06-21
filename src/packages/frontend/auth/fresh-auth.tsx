@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Checkbox, Input, Modal, Radio, Space } from "antd";
+import { Alert, Button, Checkbox, Input, Modal, Radio, Space } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   postAuthApi,
+  startGoogleFreshAuth,
   type SecondFactorMethod,
 } from "@cocalc/frontend/auth/api";
 import { freshAuthWithPasskey } from "@cocalc/frontend/auth/passkeys";
@@ -22,6 +23,8 @@ type FreshAuthStatus = {
   mode: "account" | "impersonation_actor";
   enabled: boolean;
   methods?: SecondFactorMethod[];
+  has_password?: boolean;
+  sso_methods?: { provider: "google"; display: string }[];
   email_address?: string | null;
   actor_name?: string | null;
   actor_email_address?: string | null;
@@ -79,6 +82,17 @@ export function FreshAuthModal({
   const inferredMethod = inferSecondFactorInputMethod(code);
   const expectedEmailAddress = getFreshAuthEmail(status);
   const authOrigin = origin ?? getControlPlaneOrigin();
+  const googleFreshAuth = status?.sso_methods?.find(
+    (method) => method.provider === "google",
+  );
+  const canUseGoogleFreshAuth =
+    status?.mode === "account" && googleFreshAuth != null;
+  const hasPassword = status?.has_password !== false;
+  const showPassword =
+    factorEnabled === false && (hasPassword || !canUseGoogleFreshAuth);
+  const canUseSecondFactor =
+    factorEnabled === true && (usePasskey || inferredMethod === "totp");
+  const canUseExtended = canUseGoogleFreshAuth || canUseSecondFactor;
   const emailMismatch =
     expectedEmailAddress.length > 0 &&
     normalizeFreshAuthEmail(emailAddress) !==
@@ -121,10 +135,81 @@ export function FreshAuthModal({
   }, [authOrigin, open]);
 
   useEffect(() => {
-    if (factorEnabled !== true || (!usePasskey && inferredMethod !== "totp")) {
+    if (!canUseExtended) {
       setExtended(false);
     }
-  }, [factorEnabled, inferredMethod, usePasskey]);
+  }, [canUseExtended]);
+
+  function getExpectedPopupOrigin(): string {
+    if (authOrigin) {
+      return new URL(authOrigin).origin;
+    }
+    return window.location.origin;
+  }
+
+  async function verifyWithGoogle() {
+    if (emailMismatch) {
+      setError(
+        "Use the signed-in account email address for this confirmation.",
+      );
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const { url } = await startGoogleFreshAuth({
+        duration: extended ? "extended" : "default",
+        origin: authOrigin,
+      });
+      const expectedOrigin = getExpectedPopupOrigin();
+      await new Promise<void>((resolve, reject) => {
+        const popup = window.open(
+          url,
+          "cocalc-google-fresh-auth",
+          "popup,width=520,height=700",
+        );
+        if (popup == null) {
+          reject(new Error("Allow popups to verify with Google."));
+          return;
+        }
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          reject(new Error("Google verification timed out."));
+        }, 5 * 60_000);
+        function cleanup() {
+          window.clearTimeout(timeout);
+          window.removeEventListener("message", handleMessage);
+        }
+        function handleMessage(event: MessageEvent) {
+          if (event.origin !== expectedOrigin) {
+            return;
+          }
+          const data = event.data;
+          if (data?.type !== "cocalc:google-fresh-auth") {
+            return;
+          }
+          cleanup();
+          if (data.ok === true) {
+            resolve();
+          } else {
+            reject(
+              new Error(`${data?.error ?? "Google verification failed."}`),
+            );
+          }
+        }
+        window.addEventListener("message", handleMessage);
+      });
+      await onSuccess();
+      setCurrentPassword("");
+      setCode("");
+      setUsePasskey(false);
+      setExtended(false);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function submit() {
     if (emailMismatch) {
@@ -180,7 +265,8 @@ export function FreshAuthModal({
           saving ||
           factorEnabled == null ||
           emailMismatch ||
-          (factorEnabled === false && currentPassword.length === 0) ||
+          (showPassword && currentPassword.length === 0) ||
+          (factorEnabled === false && !showPassword) ||
           (factorEnabled === true && !usePasskey && code.trim().length === 0),
       }}
     >
@@ -197,7 +283,11 @@ export function FreshAuthModal({
           <Alert
             type="info"
             showIcon
-            message="This account does not have 2FA enabled. Only your current password is required."
+            message={
+              showPassword
+                ? "This account does not have 2FA enabled. Verify with your current password or a linked sign-in provider."
+                : "This account does not have a CoCalc password. Verify with a linked sign-in provider."
+            }
           />
         ) : undefined}
         <div>
@@ -218,7 +308,16 @@ export function FreshAuthModal({
             </div>
           ) : undefined}
         </div>
-        {factorEnabled === false ? (
+        {canUseGoogleFreshAuth ? (
+          <Button
+            block
+            disabled={saving || factorEnabled == null || emailMismatch}
+            onClick={verifyWithGoogle}
+          >
+            Verify with {googleFreshAuth?.display ?? "Google"}
+          </Button>
+        ) : undefined}
+        {showPassword ? (
           <div>
             <div>Current password</div>
             <Input.Password
@@ -282,9 +381,7 @@ export function FreshAuthModal({
         ) : undefined}
         <Checkbox
           checked={extended}
-          disabled={
-            factorEnabled !== true || (!usePasskey && inferredMethod !== "totp")
-          }
+          disabled={!canUseExtended}
           onChange={(e) => setExtended(e.target.checked)}
         >
           Keep this verification active for 8 hours on this browser

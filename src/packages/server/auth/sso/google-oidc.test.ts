@@ -75,6 +75,23 @@ describe("googleOidcAuthorizationUrl", () => {
     expect(url.searchParams.get("scope")).toBe("openid email profile");
     expect(url.searchParams.get("state")).toBe("state");
     expect(url.searchParams.get("nonce")).toBe("nonce");
+    expect(url.searchParams.get("prompt")).toBe("select_account");
+    expect(url.searchParams.get("max_age")).toBeNull();
+  });
+
+  it("requests a fresh Google authentication for fresh-auth flows", () => {
+    const url = new URL(
+      googleOidcAuthorizationUrl({
+        clientID: "client-id",
+        redirectURI: "https://example.com/auth/google/return",
+        state: "state",
+        nonce: "nonce",
+        freshAuth: true,
+      }),
+    );
+
+    expect(url.searchParams.get("prompt")).toBe("select_account");
+    expect(url.searchParams.get("max_age")).toBe("0");
   });
 });
 

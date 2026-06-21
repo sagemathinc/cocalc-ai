@@ -76,13 +76,24 @@ import {
   SSO_API_KEY_COOKIE_NAME,
 } from "@cocalc/server/auth/sso/consts";
 import {
+  GOOGLE_OIDC_CLOCK_SKEW_SECONDS,
   exchangeGoogleOidcCode,
   googleOidcAuthorizationUrl,
   googleHostedDomainsForTokenVerification,
   googleProfileFromClaims,
+  type GoogleIdTokenClaims,
   verifyGoogleIdToken,
 } from "@cocalc/server/auth/sso/google-oidc";
 import getAccountId from "@cocalc/server/auth/get-account";
+import getPool from "@cocalc/database/pool";
+import { _passport_key } from "@cocalc/database/postgres/account/passport-key";
+import {
+  getCurrentAuthSession,
+  resolveFreshAuthDurationMs,
+  setCurrentSessionFreshAuth,
+  type FreshAuthDuration,
+} from "@cocalc/server/auth/auth-sessions";
+import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   directSamlConfig,
   passportProfileFromSamlProfile,
@@ -139,10 +150,15 @@ interface HandleReturnOpts {
 }
 
 interface GoogleOidcState {
+  flow?: "fresh-auth";
   nonce: string;
   browserBinding: string;
+  createdAt?: number;
   target?: string;
   authenticatedAccountId?: string;
+  freshAuthAccountId?: string;
+  freshAuthSessionHash?: string;
+  freshAuthDuration?: FreshAuthDuration;
   termsAccepted?: boolean;
   marketingConsent?: boolean;
   registrationToken?: string;
@@ -166,6 +182,43 @@ function stringQueryValue(value: unknown): string | undefined {
   if (Array.isArray(value)) return stringQueryValue(value[0]);
   const str = `${value ?? ""}`.trim();
   return str || undefined;
+}
+
+function freshAuthDurationValue(value: unknown): FreshAuthDuration {
+  return value === "extended" ? "extended" : "default";
+}
+
+function googleOidcFreshAuthPopupHtml({
+  ok,
+  origin,
+  error,
+}: {
+  ok: boolean;
+  origin: string;
+  error?: unknown;
+}): string {
+  const payload = {
+    type: "cocalc:google-fresh-auth",
+    ok,
+    error: ok ? undefined : `${error instanceof Error ? error.message : error}`,
+  };
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Google verification</title></head>
+  <body>
+    <script>
+      (function() {
+        var payload = ${safeJsonStringify(payload)};
+        var origin = ${safeJsonStringify(origin)};
+        if (window.opener) {
+          window.opener.postMessage(payload, origin);
+        }
+        window.close();
+      })();
+    </script>
+    ${ok ? "Google verification complete. You may close this window." : "Google verification failed. You may close this window."}
+  </body>
+</html>`;
 }
 
 function strategyToPassportFrontend(
@@ -789,6 +842,82 @@ export class PassportManager {
 
   private async initGoogleOidc(): Promise<void> {
     const stateCache = getOauthCache(GOOGLE_SSO_STRATEGY);
+    this.router.post(
+      `${AUTH_BASE}/google/fresh-auth/start`,
+      express.json(),
+      async (req, res) => {
+        try {
+          if (!this.isGoogleOidcStartOnCanonicalHost(req)) {
+            throw new Error(
+              "Google fresh authentication must start on this bay.",
+            );
+          }
+          const account_id = await getAccountId(req);
+          if (!account_id) {
+            throw new Error("must be signed in");
+          }
+          const sessionHash = getRememberMeHash(req);
+          if (!sessionHash) {
+            throw new Error("browser sign-in is required");
+          }
+          await getCurrentAuthSession({ req, account_id });
+          if (!(await this.hasLinkedGoogleOidcPassport(account_id))) {
+            throw new Error("this account is not linked to Google");
+          }
+          const duration = freshAuthDurationValue(
+            req.body?.duration ?? req.query.duration,
+          );
+          resolveFreshAuthDurationMs({
+            duration,
+            factor_level: "google_oidc",
+          });
+
+          const strategy = await this.getGoogleOidcStrategy();
+          const clientID = strategy.conf.clientID;
+          const state = uuidv4();
+          const nonce = uuidv4();
+          const browserBinding = uuidv4();
+          const savedState: GoogleOidcState = {
+            flow: "fresh-auth",
+            nonce,
+            browserBinding,
+            createdAt: Date.now(),
+            freshAuthAccountId: account_id,
+            freshAuthSessionHash: sessionHash,
+            freshAuthDuration: duration,
+          };
+          await stateCache.saveAsync(state, JSON.stringify(savedState));
+          new Cookies(req, res).set(
+            GOOGLE_OIDC_BROWSER_STATE_COOKIE,
+            browserBinding,
+            {
+              httpOnly: true,
+              maxAge: 10 * 60 * 1000,
+              overwrite: true,
+              sameSite: "lax",
+              secure: req.protocol === "https",
+            },
+          );
+          res.json({
+            url: googleOidcAuthorizationUrl({
+              clientID: clientID!,
+              redirectURI: this.googleOidcRedirectURI(),
+              state,
+              nonce,
+              freshAuth: true,
+            }),
+          });
+        } catch (err) {
+          logger.warn(`Google OIDC fresh-auth start failed: ${err}`);
+          res.json({
+            error:
+              err instanceof Error
+                ? err.message
+                : "Problem starting Google verification.",
+          });
+        }
+      },
+    );
     this.router.get(
       `${AUTH_BASE}/google`,
       this.handle_get_api_key,
@@ -846,6 +975,7 @@ export class PassportManager {
 
     this.router.get(`${AUTH_BASE}/google/return`, async (req, res) => {
       let passportLogin: PassportLogin | undefined;
+      let isFreshAuthReturn = false;
       try {
         const cookies = new Cookies(req, res);
         const browserBinding = cookies.get(GOOGLE_OIDC_BROWSER_STATE_COOKIE);
@@ -875,6 +1005,7 @@ export class PassportManager {
           throw new Error("Google OIDC state is invalid or expired.");
         }
         const savedState = JSON.parse(savedStateRaw) as GoogleOidcState;
+        isFreshAuthReturn = savedState.flow === "fresh-auth";
         if (!savedState.nonce) {
           throw new Error("Google OIDC state did not include a nonce.");
         }
@@ -901,6 +1032,15 @@ export class PassportManager {
             googleHostedDomainsForTokenVerification(googleStrategy),
           nonce: savedState.nonce,
         });
+        if (savedState.flow === "fresh-auth") {
+          await this.finishGoogleOidcFreshAuth({
+            req,
+            res,
+            savedState,
+            claims,
+          });
+          return;
+        }
         const profile = googleProfileFromClaims(claims);
         const emails = profile.emails?.map((email) => email.value) ?? [];
         passportLogin = new PassportLogin({
@@ -926,6 +1066,17 @@ export class PassportManager {
         });
         await passportLogin.login();
       } catch (err) {
+        if (isFreshAuthReturn) {
+          logger.warn(`Google OIDC fresh-auth failed: ${err}`);
+          res.type("html").send(
+            googleOidcFreshAuthPopupHtml({
+              ok: false,
+              origin: this.authOrigin(),
+              error: err,
+            }),
+          );
+          return;
+        }
         if (err.name !== "PassportLoginError") {
           logger.warn(`Google OIDC sign-in failed: ${err}`);
           await this.logSsoReturnDenied({
@@ -944,6 +1095,148 @@ export class PassportManager {
         });
       }
     });
+  }
+
+  private authOrigin(): string {
+    if (this.auth_url) {
+      return new URL(this.auth_url).origin;
+    }
+    if (this.site_url) {
+      return new URL(this.site_url).origin;
+    }
+    throw new Error("auth origin is not initialized");
+  }
+
+  private async hasLinkedGoogleOidcPassport(
+    account_id: string,
+  ): Promise<boolean> {
+    const { rows } = await getPool("short").query<{
+      passports?: Record<string, unknown> | null;
+    }>(
+      `
+        SELECT passports
+          FROM accounts
+         WHERE account_id = $1::UUID
+         LIMIT 1
+      `,
+      [account_id],
+    );
+    if (rows.length === 0) {
+      throw new Error("no such account");
+    }
+    return Object.keys(rows[0].passports ?? {}).some((key) =>
+      key.startsWith(`${GOOGLE_SSO_STRATEGY}-`),
+    );
+  }
+
+  private async assertGoogleOidcPassportBelongsToAccount({
+    account_id,
+    googleSub,
+  }: {
+    account_id: string;
+    googleSub: string;
+  }): Promise<void> {
+    const key = _passport_key({
+      strategy: GOOGLE_SSO_STRATEGY,
+      id: googleSub,
+    });
+    const { rows } = await getPool("short").query<{ account_id: string }>(
+      `
+        SELECT account_id
+          FROM accounts
+         WHERE passports ? $1::TEXT
+      `,
+      [key],
+    );
+    if (rows.length === 0) {
+      throw new Error("Google account is not linked to this CoCalc account.");
+    }
+    if (rows.some((row) => row.account_id !== account_id)) {
+      throw new Error(
+        "Google account is linked to a different CoCalc account.",
+      );
+    }
+    if (!rows.some((row) => row.account_id === account_id)) {
+      throw new Error("Google account is not linked to this CoCalc account.");
+    }
+  }
+
+  private assertRecentGoogleAuthTime({
+    claims,
+    savedState,
+  }: {
+    claims: GoogleIdTokenClaims;
+    savedState: GoogleOidcState;
+  }): void {
+    const authTime = claims.auth_time;
+    if (typeof authTime !== "number") {
+      throw new Error("Google did not return a fresh authentication time.");
+    }
+    const startedAtSeconds = Math.floor((savedState.createdAt ?? 0) / 1000);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (authTime < startedAtSeconds - GOOGLE_OIDC_CLOCK_SKEW_SECONDS) {
+      throw new Error("Google authentication is older than this request.");
+    }
+    if (authTime > nowSeconds + GOOGLE_OIDC_CLOCK_SKEW_SECONDS) {
+      throw new Error("Google authentication time is in the future.");
+    }
+  }
+
+  private async finishGoogleOidcFreshAuth({
+    req,
+    res,
+    savedState,
+    claims,
+  }: {
+    req: Request;
+    res: Response;
+    savedState: GoogleOidcState;
+    claims: GoogleIdTokenClaims;
+  }): Promise<void> {
+    const account_id = savedState.freshAuthAccountId;
+    if (!account_id) {
+      throw new Error("Google fresh-auth state is missing the account.");
+    }
+    const sessionHash = getRememberMeHash(req);
+    if (
+      !sessionHash ||
+      !savedState.freshAuthSessionHash ||
+      sessionHash !== savedState.freshAuthSessionHash
+    ) {
+      throw new Error("Google fresh-auth browser session changed.");
+    }
+    await getCurrentAuthSession({ req, account_id });
+    this.assertRecentGoogleAuthTime({ claims, savedState });
+    await this.assertGoogleOidcPassportBelongsToAccount({
+      account_id,
+      googleSub: claims.sub,
+    });
+    const fresh_auth_until = new Date(
+      Date.now() +
+        resolveFreshAuthDurationMs({
+          duration: savedState.freshAuthDuration,
+          factor_level: "google_oidc",
+        }),
+    );
+    await setCurrentSessionFreshAuth({
+      req,
+      account_id,
+      factor_level: "google_oidc",
+      fresh_auth_until,
+      metadata_patch: {
+        google_oidc_fresh_auth: {
+          email: claims.email,
+          hd: claims.hd ?? null,
+          verified_at: new Date().toISOString(),
+        },
+      },
+    });
+    res.type("html").send(
+      googleOidcFreshAuthPopupHtml({
+        ok: true,
+        origin: this.authOrigin(),
+      }),
+    );
   }
 
   private getDirectSaml(name: string): SAML {
