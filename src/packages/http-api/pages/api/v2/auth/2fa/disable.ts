@@ -4,11 +4,16 @@
  */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { disableTwoFactor } from "@cocalc/server/auth/two-factor";
 
 export default async function disableTwoFactorApi(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     if (req.header("Authorization")) {
       throw new Error(

@@ -242,7 +242,7 @@ async function validatePurchaseFreshAuth({
   });
 }
 
-async function maybeRequireFreshAuthForBrowserPurchaseAction({
+async function requireFreshAuthForPurchaseAction({
   account_id,
   browser_id,
   session_hash,
@@ -253,9 +253,6 @@ async function maybeRequireFreshAuthForBrowserPurchaseAction({
   session_hash?: string | null;
   allow_actor_impersonation?: boolean;
 }): Promise<void> {
-  if (!`${browser_id ?? ""}`.trim() && !`${session_hash ?? ""}`.trim()) {
-    return;
-  }
   await validatePurchaseFreshAuth({
     account_id,
     browser_id,
@@ -431,7 +428,7 @@ export async function purchaseMembershipPackage({
     account_id,
     "purchase memberships",
   );
-  await maybeRequireFreshAuthForBrowserPurchaseAction({
+  await requireFreshAuthForPurchaseAction({
     account_id,
     browser_id,
     session_hash,
@@ -481,7 +478,7 @@ export async function purchaseMembershipPackages({
     account_id,
     "purchase memberships",
   );
-  await maybeRequireFreshAuthForBrowserPurchaseAction({
+  await requireFreshAuthForPurchaseAction({
     account_id,
     browser_id,
     session_hash,
@@ -563,7 +560,7 @@ export async function purchaseTeamLicenseChange({
 }) {
   const owner = requireAccount(account_id);
   await assertAccountTrustedForProductAccess(owner, "purchase memberships");
-  await maybeRequireFreshAuthForBrowserPurchaseAction({
+  await requireFreshAuthForPurchaseAction({
     account_id: owner,
     browser_id,
     session_hash,

@@ -7,6 +7,8 @@ import axios from "axios";
 import { createSign, generateKeyPairSync } from "crypto";
 
 import {
+  exchangeGoogleOidcCode,
+  googleHostedDomainsForTokenVerification,
   googleOidcAuthorizationUrl,
   googleProfileFromClaims,
   verifyGoogleIdToken,
@@ -19,6 +21,10 @@ jest.mock("axios", () => ({
     post: jest.fn(),
   },
 }));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 function encodedJson(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -72,6 +78,21 @@ describe("googleOidcAuthorizationUrl", () => {
   });
 });
 
+describe("googleHostedDomainsForTokenVerification", () => {
+  it("uses both allowed and exclusive Google domains", () => {
+    expect(
+      googleHostedDomainsForTokenVerification({
+        strategy: "google",
+        conf: { type: "oidc", clientID: "id", clientSecret: "secret" },
+        info: {
+          allowed_domains: ["Allowed.edu", "shared.edu"],
+          exclusive_domains: ["Exclusive.edu", "shared.edu"],
+        },
+      }),
+    ).toEqual(["allowed.edu", "exclusive.edu", "shared.edu"]);
+  });
+});
+
 describe("verifyGoogleIdToken", () => {
   it("verifies signature and required Google claims", async () => {
     const now = Math.floor(Date.now() / 1000);
@@ -99,6 +120,10 @@ describe("verifyGoogleIdToken", () => {
 
     expect(claims.sub).toBe("google-subject");
     expect(claims.email).toBe("User@Example.com");
+    expect(axios.get).toHaveBeenCalledWith(
+      "https://www.googleapis.com/oauth2/v3/certs",
+      expect.objectContaining({ timeout: 10_000 }),
+    );
   });
 
   it("rejects an unverified email claim", async () => {
@@ -127,6 +152,94 @@ describe("verifyGoogleIdToken", () => {
         nonce: "nonce",
       }),
     ).rejects.toThrow("Google did not verify the email address.");
+  });
+
+  it("requires a matching hosted domain when configured", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { idToken, jwk } = signedToken({
+      claims: {
+        iss: "https://accounts.google.com",
+        aud: "client-id",
+        exp: now + 600,
+        nonce: "nonce",
+        sub: "google-subject",
+        email: "user@example.com",
+        email_verified: true,
+        hd: "example.com",
+      },
+      kid: "hosted-domain-key",
+    });
+    (axios.get as jest.Mock).mockResolvedValueOnce({
+      data: { keys: [jwk] },
+      headers: { "cache-control": "max-age=0" },
+    });
+
+    await expect(
+      verifyGoogleIdToken({
+        idToken,
+        clientID: "client-id",
+        hostedDomains: ["school.edu"],
+        nonce: "nonce",
+      }),
+    ).rejects.toThrow(
+      "Google ID token is missing a matching hosted domain claim.",
+    );
+  });
+
+  it("accepts matching hosted domains when configured", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { idToken, jwk } = signedToken({
+      claims: {
+        iss: "https://accounts.google.com",
+        aud: "client-id",
+        exp: now + 600,
+        nonce: "nonce",
+        sub: "google-subject",
+        email: "user@dept.school.edu",
+        email_verified: true,
+        hd: "dept.school.edu",
+      },
+      kid: "matching-hosted-domain-key",
+    });
+    (axios.get as jest.Mock).mockResolvedValueOnce({
+      data: { keys: [jwk] },
+      headers: { "cache-control": "max-age=0" },
+    });
+
+    await expect(
+      verifyGoogleIdToken({
+        idToken,
+        clientID: "client-id",
+        hostedDomains: ["school.edu"],
+        nonce: "nonce",
+      }),
+    ).resolves.toMatchObject({
+      hd: "dept.school.edu",
+      sub: "google-subject",
+    });
+  });
+});
+
+describe("exchangeGoogleOidcCode", () => {
+  it("uses a bounded timeout for Google token exchange", async () => {
+    (axios.post as jest.Mock).mockResolvedValueOnce({
+      data: { id_token: "id-token" },
+    });
+
+    await expect(
+      exchangeGoogleOidcCode({
+        code: "code",
+        clientID: "client-id",
+        clientSecret: "client-secret",
+        redirectURI: "https://example.com/auth/google/return",
+      }),
+    ).resolves.toEqual({ id_token: "id-token" });
+
+    expect(axios.post).toHaveBeenCalledWith(
+      "https://oauth2.googleapis.com/token",
+      expect.any(String),
+      expect.objectContaining({ timeout: 10_000 }),
+    );
   });
 });
 

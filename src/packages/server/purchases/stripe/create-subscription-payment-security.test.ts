@@ -10,6 +10,7 @@ import {
   createTestMembershipSubscription,
 } from "@cocalc/server/purchases/test-data";
 import {
+  processResumeSubscription,
   processResumeSubscriptionFailure,
   processSubscriptionRenewalFailure,
 } from "./create-subscription-payment";
@@ -124,5 +125,31 @@ describe("Stripe subscription payment failure ownership checks", () => {
 
     const state = await getSubscriptionState(subscription_id);
     expect(state.resume_payment_intent).toBe("pi_owner_resume");
+  });
+
+  it("does not let a low-value resume payment reactivate a paid subscription", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        cost: 50,
+        status: "canceled",
+      },
+    );
+
+    await expect(
+      processResumeSubscription({
+        account_id,
+        paymentIntent: {
+          id: "pi_resume_low_value",
+          metadata: { subscription_id: `${subscription_id}` },
+        },
+        amount: 1,
+      }),
+    ).rejects.toThrow(/subscription costs a lot more than payment/);
+
+    const state = await getSubscriptionState(subscription_id);
+    expect(state.status).toBe("canceled");
   });
 });

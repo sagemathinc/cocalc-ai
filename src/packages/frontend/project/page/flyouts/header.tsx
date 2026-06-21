@@ -11,7 +11,7 @@ import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator"
 
 import { capitalize } from "@cocalc/util/misc";
 import { FIX_BORDER } from "../common";
-import { FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
+import { FixedProjectTabIcon, FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
 import { FIXED_TABS_BG_COLOR } from "../activity-bar-tabs";
 import { ActiveHeader } from "./active-header";
 import { FLYOUT_PADDING } from "./consts";
@@ -43,9 +43,8 @@ export function FlyoutHeader(_: Readonly<Props>) {
   }
 
   function renderIcon() {
-    const iconName = FIXED_PROJECT_TABS[flyout].icon;
-    if (iconName != null) {
-      return <Icon name={iconName} />;
+    if (FIXED_PROJECT_TABS[flyout].icon != null) {
+      return <FixedProjectTabIcon name={flyout} />;
     } else {
       return null;
     }
@@ -88,8 +87,10 @@ export function FlyoutHeader(_: Readonly<Props>) {
     return (
       <>
         <Tooltip
-          title="Open this side panel as a full page. You can also Shift-click or Ctrl/Cmd-click its button in the left rail."
+          title="Open as full page"
           placement="bottom"
+          mouseEnterDelay={0}
+          mouseLeaveDelay={0}
         >
           <Icon
             name="expand"

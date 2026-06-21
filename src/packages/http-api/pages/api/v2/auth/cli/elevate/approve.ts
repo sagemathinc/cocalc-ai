@@ -5,10 +5,15 @@
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { approveCliElevateChallenge } from "@cocalc/server/auth/cli-auth";
 
 export default async function cliElevateApprove(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const account_id = await getAccountId(req);
     if (!account_id || !getRememberMeHash(req)) {

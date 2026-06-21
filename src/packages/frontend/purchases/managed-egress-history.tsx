@@ -500,10 +500,16 @@ export function ManagedEgressCompactButton({
   project_id,
   user_account_id,
   label = "Egress",
+  showUsageText = true,
+  size,
+  style,
 }: {
   project_id?: string;
   user_account_id?: string;
   label?: string;
+  showUsageText?: boolean;
+  size?: "small" | "middle" | "large";
+  style?: CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
   const { error, history, loading } = useManagedEgressHistorySnapshot({
@@ -524,48 +530,60 @@ export function ManagedEgressCompactButton({
     primary = "Recent usage unavailable";
   } else if (history != null) {
     const recent = summarizeManagedEgressRecentUsage(history);
-    primary = `${humanSize(recent.lastHourBytes)} / hour`;
-    secondary = `5 min ${humanSize(recent.last5MinutesBytes)}`;
+    primary = `${humanSize(recent.lastHourBytes)}/hr`;
+    secondary = `Last 5 minutes: ${humanSize(recent.last5MinutesBytes)}`;
   }
+
+  const tooltip = `${label}: ${primary}${
+    secondary ? `; ${secondary}` : ""
+  }. Click for history.`;
 
   return (
     <>
-      <Button
-        onClick={() => setOpen(true)}
-        style={{
-          alignItems: "center",
-          display: "flex",
-          gap: "8px",
-          height: "auto",
-          justifyContent: "flex-start",
-          padding: "4px 8px",
-          textAlign: "left",
-        }}
-      >
-        <Icon name="network" />
-        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-          <Space size={8} wrap>
-            <Text strong>{label}</Text>
-            <Text>{primary}</Text>
-          </Space>
-          {secondary ? (
-            <div
-              style={{
-                color: COLORS.GRAY_D,
-                fontSize: "12px",
-                lineHeight: 1.35,
-                marginTop: "2px",
-                maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {secondary}
+      <Tooltip title={tooltip}>
+        <Button
+          size={size}
+          onClick={() => setOpen(true)}
+          style={{
+            alignItems: "center",
+            display: "flex",
+            gap: showUsageText ? "8px" : "6px",
+            height: showUsageText ? "auto" : undefined,
+            justifyContent: "flex-start",
+            padding: showUsageText ? "4px 8px" : undefined,
+            textAlign: "left",
+            ...style,
+          }}
+        >
+          <Icon name="network" />
+          {showUsageText ? (
+            <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+              <Space size={8} wrap>
+                <Text strong>{label}</Text>
+                <Text>{primary}</Text>
+              </Space>
+              {secondary ? (
+                <div
+                  style={{
+                    color: COLORS.GRAY_D,
+                    fontSize: "12px",
+                    lineHeight: 1.35,
+                    marginTop: "2px",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {secondary}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      </Button>
+          ) : (
+            <span>{label}</span>
+          )}
+        </Button>
+      </Tooltip>
       {open ? (
         <ManagedEgressHistoryModal
           open={open}

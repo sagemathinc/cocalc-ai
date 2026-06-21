@@ -12,8 +12,13 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function handle(req: Request, res: Response) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const result = await doIt(req);
     // edit has been successful: clear cache

@@ -448,7 +448,9 @@ async function verifyFreshAuthInputs({
   }
 
   if (!hasSecondFactor) {
-    return "none";
+    throw new Error(
+      "fresh authentication requires a password or second factor",
+    );
   }
 
   const resolvedMethod = ensureFreshAuthCodeMethod(`${method ?? ""}`);

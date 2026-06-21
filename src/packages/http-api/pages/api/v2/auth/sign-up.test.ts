@@ -21,6 +21,7 @@ const mockSendEmailVerification = jest.fn();
 const mockRecordSignUpTokenFail = jest.fn();
 const mockSignUpTokenCheck = jest.fn();
 const mockGetEnabledSsoDomainPolicyForEmail = jest.fn();
+const mockGetStrategies = jest.fn();
 const mockSelectSignupHomeBay = jest.fn();
 const mockIssueHomeBayRetryToken = jest.fn();
 const mockPoolQuery = jest.fn();
@@ -62,6 +63,11 @@ jest.mock("@cocalc/database/settings/sso-policies", () => ({
     mockGetEnabledSsoDomainPolicyForEmail(...args),
   passwordSignupBlockedBySsoPolicy: (policy) =>
     policy?.mode === "sso_required" || policy?.mode === "sso_signup_only",
+}));
+
+jest.mock("@cocalc/database/settings/get-sso-strategies", () => ({
+  __esModule: true,
+  default: (...args) => mockGetStrategies(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
@@ -128,6 +134,7 @@ describe("/api/v2/auth/sign-up", () => {
     mockGetEnabledSsoDomainPolicyForEmail
       .mockReset()
       .mockResolvedValue(undefined);
+    mockGetStrategies.mockReset().mockResolvedValue([]);
     mockSelectSignupHomeBay.mockReset().mockResolvedValue("bay-0");
     mockIssueHomeBayRetryToken.mockReset().mockReturnValue({
       token: "retry-token",
@@ -307,6 +314,43 @@ describe("/api/v2/auth/sign-up", () => {
       require_cocalc_2fa: false,
       signup_mode: "inherit",
     });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        email:
+          'To sign up with "@example.com", you have to use the corresponding single sign on mechanism.  Delete your email address above, then click the SSO icon.',
+      },
+    });
+    expect(mockValidateRegistrationToken).not.toHaveBeenCalled();
+    expect(mockCreateClusterAccount).not.toHaveBeenCalled();
+  });
+
+  it("blocks password signup when strategy settings require SSO", async () => {
+    mockGetStrategies.mockResolvedValue([
+      {
+        name: "google",
+        display: "Google",
+        backgroundColor: "#fff",
+        public: true,
+        exclusiveDomains: ["example.com"],
+        doNotHide: false,
+      },
+    ]);
     const { req, res } = createMocks({
       method: "POST",
       url: "/api/v2/auth/sign-up",

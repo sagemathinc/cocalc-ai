@@ -69,11 +69,6 @@ import {
   FALLBACK_ACCOUNT_UUID,
 } from "@cocalc/util/misc";
 import * as misc from "@cocalc/util/misc";
-import {
-  callRemoteHub,
-  hasRemote,
-  project_id as REMOTE_PROJECT_ID,
-} from "../remote";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { execFile as execFileCb } from "node:child_process";
@@ -188,8 +183,6 @@ export function getSingleLiteBayInfo(): BayInfo {
 function resolveLiteProjectId(value?: string): string {
   const explicit = `${value ?? ""}`.trim();
   if (explicit) return explicit;
-  const remoteProjectId = `${REMOTE_PROJECT_ID ?? ""}`.trim();
-  if (remoteProjectId) return remoteProjectId;
   const localProjectId = `${LITE_PROJECT_ID ?? ""}`.trim();
   if (localProjectId) return localProjectId;
   return FALLBACK_PROJECT_UUID;
@@ -262,11 +255,6 @@ async function getLiteProjectReadDetails(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<LiteProjectReadDetails> {
-  if (hasRemote) {
-    // There is no aggregate RPC; individual project detail getters route
-    // remotely as needed.
-    throw Error("remote project detail aggregator is not available");
-  }
   requireLiteAccountId(opts.account_id);
   const project_id = requireLiteProjectId(opts.project_id);
   return getLiteProjectReadDetailsLocal(project_id);
@@ -276,12 +264,6 @@ async function getProjectRegionLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectRegion> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectRegion",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).region;
 }
 
@@ -289,12 +271,6 @@ async function getProjectCreatedLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectCreated> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectCreated",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).created;
 }
 
@@ -302,12 +278,6 @@ async function getProjectEnvLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectEnv> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectEnv",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).env;
 }
 
@@ -315,12 +285,6 @@ async function getProjectRootfsLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectRootfsConfig | null> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectRootfs",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).rootfs;
 }
 
@@ -328,12 +292,6 @@ async function getProjectCourseInfoLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectCourseInfo> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectCourseInfo",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).course;
 }
 
@@ -341,12 +299,6 @@ async function getProjectRunQuotaLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectRunQuota> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectRunQuota",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).run_quota;
 }
 
@@ -354,12 +306,6 @@ async function getProjectSnapshotScheduleLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectSnapshotSchedule> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectSnapshotSchedule",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).snapshots;
 }
 
@@ -367,12 +313,6 @@ async function getProjectBackupScheduleLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectBackupSchedule> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectBackupSchedule",
-      args: [opts],
-    });
-  }
   return (await getLiteProjectReadDetails(opts)).backups;
 }
 
@@ -380,12 +320,6 @@ async function getProjectActiveOperationLite(opts: {
   account_id?: string;
   project_id: string;
 }): Promise<ProjectActiveOperationSummary | null> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectActiveOperation",
-      args: [opts],
-    });
-  }
   requireLiteAccountId(opts.account_id);
   requireLiteProjectId(opts.project_id);
   return null;
@@ -557,12 +491,6 @@ async function codexDeviceAuthStartLite(opts: {
   account_id?: string;
   project_id?: string;
 }) {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.codexDeviceAuthStart",
-      args: [opts],
-    });
-  }
   const account_id = requireLiteAccountId(opts.account_id);
   const project_id = requireLiteProjectId(opts.project_id);
   return await startLiteCodexDeviceAuth({
@@ -576,12 +504,6 @@ async function codexDeviceAuthStatusLite(opts: {
   project_id?: string;
   id: string;
 }) {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.codexDeviceAuthStatus",
-      args: [opts],
-    });
-  }
   const account_id = requireLiteAccountId(opts.account_id);
   const project_id = requireLiteProjectId(opts.project_id);
   const id = `${opts.id ?? ""}`.trim();
@@ -601,12 +523,6 @@ async function codexDeviceAuthCancelLite(opts: {
   project_id?: string;
   id: string;
 }) {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.codexDeviceAuthCancel",
-      args: [opts],
-    });
-  }
   const account_id = requireLiteAccountId(opts.account_id);
   const project_id = requireLiteProjectId(opts.project_id);
   const id = `${opts.id ?? ""}`.trim();
@@ -627,12 +543,6 @@ async function codexUploadAuthFileLite(opts: {
   filename?: string;
   content: string;
 }) {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.codexUploadAuthFile",
-      args: [opts],
-    });
-  }
   requireLiteAccountId(opts.account_id);
   requireLiteProjectId(opts.project_id);
   if (opts.filename && !/auth\.json$/i.test(opts.filename.trim())) {
@@ -936,23 +846,11 @@ function fallbackNames(account_ids: Set<string>): {
   if (account_ids.has(ACCOUNT_ID)) {
     names[ACCOUNT_ID] = { first_name: "CoCalc", last_name: "User" };
   }
-  if (account_ids.has(REMOTE_PROJECT_ID)) {
-    // TODO: get the actual project title (?).
-    names[REMOTE_PROJECT_ID] = { first_name: "Remote", last_name: "Project" };
-  }
   return names;
 }
 
 async function getNames(account_ids: string[]) {
-  const x = fallbackNames(new Set(account_ids));
-  if (!hasRemote) {
-    return x;
-  }
-  const names = await callRemoteHub({
-    name: "system.getNames",
-    args: [account_ids],
-  });
-  return { ...names, ...x };
+  return fallbackNames(new Set(account_ids));
 }
 
 async function logClientError(_opts?: { event?: string; error?: string }) {
@@ -963,15 +861,9 @@ async function webappError(_opts?: object) {
   // No-op in lite mode.
 }
 
-export async function listBaysLite(opts?: {
+export async function listBaysLite(_opts?: {
   account_id?: string;
 }): Promise<BayInfo[]> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.listBays",
-      args: [opts ?? {}],
-    });
-  }
   return [getSingleLiteBayInfo()];
 }
 
@@ -979,12 +871,6 @@ export async function getAccountBayLite(opts?: {
   account_id?: string;
   user_account_id?: string;
 }): Promise<AccountBayLocation> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.getAccountBay",
-      args: [opts ?? {}],
-    });
-  }
   const account_id =
     `${opts?.user_account_id ?? opts?.account_id ?? ACCOUNT_ID}`.trim() ||
     ACCOUNT_ID;
@@ -999,12 +885,6 @@ export async function getProjectBayLite(opts?: {
   account_id?: string;
   project_id?: string;
 }): Promise<ProjectBayLocation> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.getProjectBay",
-      args: [opts ?? {}],
-    });
-  }
   return {
     project_id: resolveLiteProjectId(opts?.project_id),
     owning_bay_id: getLiteBayId(),
@@ -1018,12 +898,6 @@ export async function getHostBayLite(opts?: {
   account_id?: string;
   host_id?: string;
 }): Promise<HostBayLocation> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.getHostBay",
-      args: [opts ?? {}],
-    });
-  }
   const host_id = `${opts?.host_id ?? ""}`.trim();
   if (!host_id) {
     throw Error("host_id is required");
@@ -1042,12 +916,6 @@ export async function backfillBayOwnershipLite(opts?: {
   dry_run?: boolean;
   limit_per_table?: number;
 }): Promise<BayOwnershipBackfillResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.backfillBayOwnership",
-      args: [opts ?? {}],
-    });
-  }
   const bay_id = `${opts?.bay_id ?? ""}`.trim() || getLiteBayId();
   return {
     bay_id,
@@ -1063,144 +931,90 @@ export async function backfillBayOwnershipLite(opts?: {
   };
 }
 
-export async function rebuildAccountProjectIndexLite(opts?: {
+export async function rebuildAccountProjectIndexLite(_opts?: {
   account_id?: string;
   target_account_id?: string;
   dry_run?: boolean;
 }): Promise<AccountProjectIndexRebuildResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.rebuildAccountProjectIndex",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_project_index rebuild requires a remote hub connection",
+    "account_project_index rebuild is not supported in lite mode",
   );
 }
 
-export async function drainAccountProjectIndexProjectionLite(opts?: {
+export async function drainAccountProjectIndexProjectionLite(_opts?: {
   account_id?: string;
   bay_id?: string;
   limit?: number;
   dry_run?: boolean;
 }): Promise<AccountProjectIndexProjectionDrainResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.drainAccountProjectIndexProjection",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_project_index projector drain requires a remote hub connection",
+    "account_project_index projector drain is not supported in lite mode",
   );
 }
 
-export async function getAccountProjectIndexProjectionStatusLite(opts?: {
+export async function getAccountProjectIndexProjectionStatusLite(_opts?: {
   account_id?: string;
 }): Promise<AccountProjectIndexProjectionStatus> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.getAccountProjectIndexProjectionStatus",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_project_index projector status requires a remote hub connection",
+    "account_project_index projector status is not supported in lite mode",
   );
 }
 
-export async function rebuildAccountCollaboratorIndexLite(opts?: {
+export async function rebuildAccountCollaboratorIndexLite(_opts?: {
   account_id?: string;
   target_account_id?: string;
   dry_run?: boolean;
 }): Promise<AccountCollaboratorIndexRebuildResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.rebuildAccountCollaboratorIndex",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_collaborator_index rebuild requires a remote hub connection",
+    "account_collaborator_index rebuild is not supported in lite mode",
   );
 }
 
-export async function drainAccountCollaboratorIndexProjectionLite(opts?: {
+export async function drainAccountCollaboratorIndexProjectionLite(_opts?: {
   account_id?: string;
   bay_id?: string;
   limit?: number;
   dry_run?: boolean;
 }): Promise<AccountCollaboratorIndexProjectionDrainResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.drainAccountCollaboratorIndexProjection",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_collaborator_index projector drain requires a remote hub connection",
+    "account_collaborator_index projector drain is not supported in lite mode",
   );
 }
 
-export async function getAccountCollaboratorIndexProjectionStatusLite(opts?: {
+export async function getAccountCollaboratorIndexProjectionStatusLite(_opts?: {
   account_id?: string;
 }): Promise<AccountCollaboratorIndexProjectionStatus> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.getAccountCollaboratorIndexProjectionStatus",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_collaborator_index projector status requires a remote hub connection",
+    "account_collaborator_index projector status is not supported in lite mode",
   );
 }
 
-export async function rebuildAccountNotificationIndexLite(opts?: {
+export async function rebuildAccountNotificationIndexLite(_opts?: {
   account_id?: string;
   target_account_id?: string;
   dry_run?: boolean;
 }): Promise<AccountNotificationIndexRebuildResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.rebuildAccountNotificationIndex",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_notification_index rebuild requires a remote hub connection",
+    "account_notification_index rebuild is not supported in lite mode",
   );
 }
 
-export async function drainAccountNotificationIndexProjectionLite(opts?: {
+export async function drainAccountNotificationIndexProjectionLite(_opts?: {
   account_id?: string;
   bay_id?: string;
   limit?: number;
   dry_run?: boolean;
 }): Promise<AccountNotificationIndexProjectionDrainResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.drainAccountNotificationIndexProjection",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_notification_index projector drain requires a remote hub connection",
+    "account_notification_index projector drain is not supported in lite mode",
   );
 }
 
-export async function getAccountNotificationIndexProjectionStatusLite(opts?: {
+export async function getAccountNotificationIndexProjectionStatusLite(_opts?: {
   account_id?: string;
 }): Promise<AccountNotificationIndexProjectionStatus> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.getAccountNotificationIndexProjectionStatus",
-      args: [opts ?? {}],
-    });
-  }
   throw new Error(
-    "account_notification_index projector status requires a remote hub connection",
+    "account_notification_index projector status is not supported in lite mode",
   );
 }
 
@@ -1291,34 +1105,22 @@ async function removeBrowserSession(opts?: {
   };
 }
 
-async function getManagedRootfsReleaseArtifact(opts?: {
+async function getManagedRootfsReleaseArtifact(_opts?: {
   host_id?: string;
   image: string;
 }) {
-  if (!hasRemote) {
-    throw new Error(
-      "managed RootFS release artifacts require a remote hub connection",
-    );
-  }
-  return await callRemoteHub({
-    name: "hosts.getManagedRootfsReleaseArtifact",
-    args: [opts ?? {}],
-  });
+  throw new Error(
+    "managed RootFS release artifacts are not supported in lite mode",
+  );
 }
 
-async function listManagedRootfsReleaseLifecycle(opts?: {
+async function listManagedRootfsReleaseLifecycle(_opts?: {
   host_id?: string;
   images: string[];
 }) {
-  if (!hasRemote) {
-    throw new Error(
-      "managed RootFS release lifecycle requires a remote hub connection",
-    );
-  }
-  return await callRemoteHub({
-    name: "hosts.listManagedRootfsReleaseLifecycle",
-    args: [opts ?? {}],
-  });
+  throw new Error(
+    "managed RootFS release lifecycle is not supported in lite mode",
+  );
 }
 
 async function issueBrowserSignInCookie(opts?: { max_age_ms?: number }) {
@@ -1329,125 +1131,59 @@ async function issueBrowserSignInCookie(opts?: { max_age_ms?: number }) {
 }
 
 async function listNewsLite(): Promise<NewsItemWebapp[]> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "system.listNews",
-      args: [{}],
-    });
-  }
   return [];
 }
 
 async function createMentionLite(
-  opts: CreateMentionNotificationOptions,
+  _opts: CreateMentionNotificationOptions,
 ): Promise<CreateNotificationResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.createMention",
-      args: [opts],
-    });
-  }
-  throw Error(
-    "notifications.createMention requires a remote hub connection in lite mode",
-  );
+  throw Error("notifications.createMention is not supported in lite mode");
 }
 
 async function createAccountNoticeLite(
-  opts: CreateAccountNoticeOptions,
+  _opts: CreateAccountNoticeOptions,
 ): Promise<CreateNotificationResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.createAccountNotice",
-      args: [opts],
-    });
-  }
   throw Error(
-    "notifications.createAccountNotice requires a remote hub connection in lite mode",
+    "notifications.createAccountNotice is not supported in lite mode",
   );
 }
 
 async function createCodexTurnNoticeLite(
-  opts: CreateCodexTurnNoticeOptions,
+  _opts: CreateCodexTurnNoticeOptions,
 ): Promise<CreateNotificationResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.createCodexTurnNotice",
-      args: [opts],
-    });
-  }
   throw Error(
-    "notifications.createCodexTurnNotice requires a remote hub connection in lite mode",
+    "notifications.createCodexTurnNotice is not supported in lite mode",
   );
 }
 
 async function listNotificationsLite(
-  opts?: ListNotificationsOptions,
+  _opts?: ListNotificationsOptions,
 ): Promise<NotificationListRow[]> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.list",
-      args: [opts ?? {}],
-    });
-  }
-  throw Error(
-    "notifications.list requires a remote hub connection in lite mode",
-  );
+  throw Error("notifications.list is not supported in lite mode");
 }
 
-async function getNotificationCountsLite(opts?: {
+async function getNotificationCountsLite(_opts?: {
   account_id?: string;
 }): Promise<NotificationCountsResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.counts",
-      args: [opts ?? {}],
-    });
-  }
-  throw Error(
-    "notifications.counts requires a remote hub connection in lite mode",
-  );
+  throw Error("notifications.counts is not supported in lite mode");
 }
 
 async function markNotificationReadLite(
-  opts: MarkNotificationReadOptions,
+  _opts: MarkNotificationReadOptions,
 ): Promise<MarkNotificationReadResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.markRead",
-      args: [opts],
-    });
-  }
-  throw Error(
-    "notifications.markRead requires a remote hub connection in lite mode",
-  );
+  throw Error("notifications.markRead is not supported in lite mode");
 }
 
 async function saveNotificationLite(
-  opts: SaveNotificationOptions,
+  _opts: SaveNotificationOptions,
 ): Promise<MarkNotificationReadResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.save",
-      args: [opts],
-    });
-  }
-  throw Error(
-    "notifications.save requires a remote hub connection in lite mode",
-  );
+  throw Error("notifications.save is not supported in lite mode");
 }
 
 async function archiveNotificationLite(
-  opts: ArchiveNotificationOptions,
+  _opts: ArchiveNotificationOptions,
 ): Promise<MarkNotificationReadResult> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "notifications.archive",
-      args: [opts],
-    });
-  }
-  throw Error(
-    "notifications.archive requires a remote hub connection in lite mode",
-  );
+  throw Error("notifications.archive is not supported in lite mode");
 }
 
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add

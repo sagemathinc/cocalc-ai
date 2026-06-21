@@ -156,7 +156,7 @@ export interface SiteLicenseExternalClaimKey {
 
 export interface SiteLicenseVerifiedExternalClaim {
   issuer: string;
-  audience?: string;
+  audience: string;
   site_license_id: string;
   pool_id: string;
   jti: string;
@@ -1084,30 +1084,30 @@ export async function verifySiteLicenseExternalClaimToken({
   if (notBefore != null && notBefore.getTime() > now) {
     throw Error("external claim token is not active yet");
   }
-  const payloadPoolId = normalizeOptionalString(payload.pool_id);
-  if (payloadPoolId != null && payloadPoolId !== pool.id) {
+  const payloadPoolId = normalizeUUID(payload.pool_id, "pool_id");
+  if (payloadPoolId !== pool.id) {
     throw Error("claim pool does not match key");
   }
-  const payloadSiteLicenseId = normalizeOptionalString(payload.site_license_id);
-  if (
-    payloadSiteLicenseId != null &&
-    payloadSiteLicenseId !== pool.site_license_id
-  ) {
+  const payloadSiteLicenseId = normalizeUUID(
+    payload.site_license_id,
+    "site_license_id",
+  );
+  if (payloadSiteLicenseId !== pool.site_license_id) {
     throw Error("claim site license does not match key");
   }
-  const payloadIssuer = normalizeOptionalString(payload.iss);
-  if (payloadIssuer != null && payloadIssuer !== pool.issuer) {
+  const payloadIssuer = normalizeString(payload.iss, "iss");
+  if (payloadIssuer !== pool.issuer) {
     throw Error("claim issuer does not match pool");
   }
-  const payloadAudience = normalizeOptionalString(payload.aud);
-  if (payloadAudience != null && payloadAudience !== pool.audience) {
+  const payloadAudience = normalizeString(payload.aud, "aud");
+  if (payloadAudience !== pool.audience) {
     throw Error("claim audience does not match pool");
   }
   return {
-    issuer: pool.issuer,
-    audience: pool.audience,
-    site_license_id: pool.site_license_id,
-    pool_id: pool.id,
+    issuer: payloadIssuer,
+    audience: payloadAudience,
+    site_license_id: payloadSiteLicenseId,
+    pool_id: payloadPoolId,
     jti: normalizeString(payload.jti, "jti"),
     token_hash: hashSiteLicenseExternalClaimToken({ token }),
     account_id: normalizeUUID(account_id, "account_id"),
@@ -1303,9 +1303,7 @@ async function seedConsumeVerifiedClaim(
     if (pool.issuer !== normalizeString(claim.issuer, "issuer")) {
       throw Error("claim issuer does not match pool");
     }
-    const audience =
-      normalizeOptionalString(claim.audience) ??
-      SITE_LICENSE_EXTERNAL_CLAIM_AUDIENCE;
+    const audience = normalizeString(claim.audience, "audience");
     if (pool.audience !== audience) {
       throw Error("claim audience does not match pool");
     }

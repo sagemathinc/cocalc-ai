@@ -5,8 +5,13 @@
 
 import redeemVerifyEmail from "@cocalc/server/auth/redeem-verify-email";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function redeemVerifyEmailAPICall(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   const { email_address, token } = getParams(req);
   try {
     await redeemVerifyEmail(email_address, token);

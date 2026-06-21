@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -33,7 +33,11 @@ import type {
 import { useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import {
+  Icon,
+  isIconName,
+  type IconName,
+} from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
@@ -192,11 +196,96 @@ function getPresetTheme(preset: AppServerPreset): {
       surface: COLORS.GRAY_LLL,
       icon: "server" as IconName,
     };
+  const icon = preset.icon?.trim();
   return {
     accent: preset.accentColor ?? fallback.accent,
     surface: preset.surfaceColor ?? fallback.surface,
-    icon: (preset.icon as IconName | undefined) ?? fallback.icon,
+    icon: isIconName(icon) ? icon : fallback.icon,
   };
+}
+
+function presetKindLabel(preset: AppServerPreset): string {
+  return preset.kind === "static" ? "Publish files" : "Run app";
+}
+
+const PRESET_TAG_STYLE: CSSProperties = {
+  borderRadius: 4,
+  fontSize: 11,
+  lineHeight: "18px",
+  marginInlineEnd: 0,
+};
+
+const PRESET_KIND_TAG_STYLE: CSSProperties = {
+  ...PRESET_TAG_STYLE,
+  background: COLORS.GRAY_LLL,
+  borderColor: COLORS.GRAY_L0,
+  color: COLORS.GRAY_M,
+};
+
+function presetCategoryLabel(category?: string): string | undefined {
+  if (!category) return;
+  const labels: Record<string, string> = {
+    core: "Core",
+    docs: "Docs",
+    publishing: "Publish",
+    "python-web": "Python",
+    "python-notebooks": "Notebook",
+  };
+  return (
+    labels[category] ??
+    category
+      .split(/[-_\s]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ")
+  );
+}
+
+function presetCategoryTagStyle(category?: string): CSSProperties {
+  const styles: Record<string, CSSProperties> = {
+    core: {
+      background: COLORS.BLUE_LLLL,
+      borderColor: COLORS.BLUE_LLL,
+      color: COLORS.BLUE_D,
+    },
+    docs: {
+      background: COLORS.BLUE_LLLL,
+      borderColor: COLORS.BLUE_LLL,
+      color: COLORS.BLUE_DOC,
+    },
+    publishing: {
+      background: COLORS.YELL_LLL,
+      borderColor: COLORS.YELL_LL,
+      color: COLORS.YELL_D,
+    },
+    "python-web": {
+      background: COLORS.BS_GREEN_LL,
+      borderColor: COLORS.BS_GREEN,
+      color: COLORS.BS_GREEN_D,
+    },
+    "python-notebooks": {
+      background: COLORS.BLUE_LLLL,
+      borderColor: COLORS.BLUE_LL,
+      color: COLORS.BLUE_DD,
+    },
+  };
+  return {
+    ...PRESET_TAG_STYLE,
+    ...(category ? styles[category] : undefined),
+  };
+}
+
+function presetSearchText(preset: AppServerPreset): string {
+  return [
+    preset.label,
+    preset.title,
+    preset.category,
+    preset.description,
+    preset.homepage,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }
 
 function PresetSummaryCard({
@@ -209,101 +298,96 @@ function PresetSummaryCard({
   compact?: boolean;
 }) {
   const theme = getPresetTheme(preset);
-  const heroHeight = compact ? 88 : 110;
+  const categoryLabel = presetCategoryLabel(preset.category);
+  const categoryTagStyle = presetCategoryTagStyle(preset.category);
+  const accentColor = COLORS.ANTD_LINK_BLUE;
+  const accentSurface = COLORS.ANTD_BG_BLUE_L;
+
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (!onClick) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onClick();
+    }
+  }
+
   return (
-    <Card
-      size="small"
-      hoverable={!!onClick}
+    <div
       onClick={onClick}
+      onKeyDown={handleKeyDown}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       style={{
+        background: "white",
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderLeft: `3px solid ${accentColor}`,
+        borderRadius: 8,
         cursor: onClick ? "pointer" : undefined,
-        borderColor: theme.accent,
-        background: `linear-gradient(135deg, ${theme.surface} 0%, white 78%)`,
-        minHeight: compact ? 196 : undefined,
+        minHeight: compact ? 104 : undefined,
         overflow: "hidden",
+        padding: compact ? "10px 12px" : "12px 14px",
       }}
     >
-      <Space
-        orientation="vertical"
-        size={compact ? 8 : 6}
-        style={{ width: "100%" }}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: compact ? 10 : 12,
+          minWidth: 0,
+        }}
       >
         <div
           style={{
-            margin: "-12px -12px 0",
-            height: heroHeight,
-            borderBottom: `1px solid ${theme.accent}22`,
-            backgroundColor: theme.surface,
-            backgroundImage: preset.heroImage
-              ? `url("${preset.heroImage}")`
-              : `radial-gradient(circle at 82% 22%, ${theme.accent}22 0, ${theme.accent}22 18%, transparent 18%), linear-gradient(135deg, ${theme.surface} 0%, white 85%)`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            backgroundRepeat: "no-repeat",
-            position: "relative",
+            alignItems: "center",
+            background: accentSurface,
+            border: `1px solid ${COLORS.BLUE_LLL}`,
+            borderRadius: 8,
+            color: accentColor,
+            display: "flex",
+            flex: "0 0 auto",
+            height: compact ? 32 : 36,
+            justifyContent: "center",
+            width: compact ? 32 : 36,
           }}
         >
-          <div
-            style={{
-              position: "absolute",
-              left: 16,
-              bottom: -12,
-              width: compact ? 40 : 46,
-              height: compact ? 40 : 46,
-              borderRadius: compact ? 14 : 16,
-              background: theme.accent,
-              color: "white",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: `0 10px 24px ${theme.accent}44`,
-              border: "2px solid white",
-            }}
-          >
-            <Icon name={theme.icon} />
-          </div>
+          <Icon name={theme.icon} />
         </div>
-        <Space
-          align="start"
-          style={{ width: "100%", justifyContent: "space-between" }}
-        >
-          <div style={{ minWidth: 0, paddingTop: compact ? 12 : 16 }}>
-            <Typography.Text strong style={{ display: "block" }}>
-              {preset.label}
-            </Typography.Text>
-            {preset.description ? (
-              <Typography.Text
-                type="secondary"
-                style={{
-                  display: "block",
-                  marginTop: 2,
-                  lineHeight: 1.35,
-                }}
-              >
-                {preset.description}
-              </Typography.Text>
-            ) : null}
-          </div>
-          {preset.category ? (
-            <Tag
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <Typography.Text
+            strong
+            style={{
+              display: "block",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={preset.label}
+          >
+            {preset.label}
+          </Typography.Text>
+          {preset.description ? (
+            <Typography.Text
+              type="secondary"
               style={{
-                marginInlineEnd: 0,
-                borderColor: theme.accent,
-                color: theme.accent,
-                background: "white",
+                display: "block",
+                fontSize: 12,
+                lineHeight: 1.35,
+                marginTop: 3,
               }}
             >
-              {preset.category}
-            </Tag>
+              {preset.description}
+            </Typography.Text>
           ) : null}
-        </Space>
-        {!compact && preset.homepage ? (
-          <a href={preset.homepage} target="_blank" rel="noreferrer">
-            Learn more
-          </a>
-        ) : null}
-      </Space>
-    </Card>
+          <Space size={4} wrap style={{ marginTop: 6 }}>
+            <Tag style={PRESET_KIND_TAG_STYLE}>{presetKindLabel(preset)}</Tag>
+            {categoryLabel ? (
+              <Tag style={categoryTagStyle}>{categoryLabel}</Tag>
+            ) : null}
+          </Space>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -967,9 +1051,13 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [transferBusy, setTransferBusy] = useState<boolean>(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const instanceIdRef = useRef<string>(appServerPanelInstanceId());
-  const presetSelectorContainerRef = useRef<HTMLDivElement | null>(null);
+  const installedTemplatesAutoDetectProjectRef = useRef<string | undefined>(
+    undefined,
+  );
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
   const [presetSelectorOpen, setPresetSelectorOpen] = useState<boolean>(false);
+  const [presetBrowserOpen, setPresetBrowserOpen] = useState<boolean>(false);
+  const [presetBrowserSearch, setPresetBrowserSearch] = useState<string>("");
   const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const presets = useMemo(
@@ -1131,17 +1219,60 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     () => [
       "jupyterlab",
       "code-server",
+      "streamlit",
       "cocalc-public-viewer",
       "public-notes",
-      "public-slides",
-      "static-hello",
+      "gradio",
+      "fastapi",
+      "marimo",
     ],
     [],
   );
-  const quickPresets = useMemo(
-    () => presets.filter((preset) => quickPresetKeys.includes(preset.key)),
-    [presets, quickPresetKeys],
+  const expandedPresetKeys = useMemo(
+    () => [
+      ...quickPresetKeys,
+      "rserver",
+      "pluto",
+      "flask",
+      "dash",
+      "mkdocs",
+      "voila",
+      "public-slides",
+      "quarto",
+      "python-hello",
+      "node-hello",
+      "static-hello",
+    ],
+    [quickPresetKeys],
   );
+  const orderedPresets = useMemo(() => {
+    const presetByKey = new Map(presets.map((preset) => [preset.key, preset]));
+    const seen = new Set<string>();
+    const ranked = expandedPresetKeys
+      .map((key) => presetByKey.get(key))
+      .filter((preset): preset is AppServerPreset => {
+        if (preset == null || seen.has(preset.key)) return false;
+        seen.add(preset.key);
+        return true;
+      });
+    return [...ranked, ...presets.filter((preset) => !seen.has(preset.key))];
+  }, [expandedPresetKeys, presets]);
+  const quickPresets = useMemo(() => {
+    const presetByKey = new Map(
+      orderedPresets.map((preset) => [preset.key, preset]),
+    );
+    return quickPresetKeys
+      .map((key) => presetByKey.get(key))
+      .filter((preset): preset is AppServerPreset => preset != null);
+  }, [orderedPresets, quickPresetKeys]);
+  const visiblePresetTiles = useMemo(() => {
+    if (!presetBrowserOpen) return quickPresets;
+    const needle = presetBrowserSearch.trim().toLowerCase();
+    if (!needle) return orderedPresets;
+    return orderedPresets.filter((preset) =>
+      presetSearchText(preset).includes(needle),
+    );
+  }, [orderedPresets, presetBrowserOpen, presetBrowserSearch, quickPresets]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1286,8 +1417,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   useEffect(() => {
     if (detectingInstalledTemplates || installedTemplates.length > 0) return;
+    if (installedTemplatesAutoDetectProjectRef.current === project_id) return;
+    installedTemplatesAutoDetectProjectRef.current = project_id;
     void onDetectInstalledTemplates({ open: false });
-  }, [detectingInstalledTemplates, installedTemplates.length]);
+  }, [detectingInstalledTemplates, installedTemplates.length, project_id]);
 
   function applyPreset(nextKey: string) {
     const preset = presets.find((x) => x.key === nextKey);
@@ -1458,21 +1591,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     setStaticDirectorySelectorOpen(true);
   }
 
-  function focusPresetSelector() {
-    setTimeout(() => {
-      presetSelectorContainerRef.current
-        ?.querySelector<HTMLInputElement>("input")
-        ?.focus();
-    }, 0);
-  }
-
-  function openCreator(opts?: { openSelector?: boolean }) {
-    const openSelector = opts?.openSelector ?? false;
+  function openCreator() {
     setCreatorOpen(true);
-    setPresetSelectorOpen(openSelector);
-    if (openSelector) {
-      focusPresetSelector();
-    }
+    setPresetSelectorOpen(false);
   }
 
   function toggleRowExpanded(id: string) {
@@ -2426,15 +2547,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   return (
     <div style={{ display: "grid", gap: "12px" }}>
-      <div>
-        <div style={{ fontSize: "20px", fontWeight: 700, marginBottom: "4px" }}>
-          Applications
-        </div>
-        <Paragraph style={{ color: "#666", marginBottom: 0 }}>
-          Run, adopt, and troubleshoot project apps without mixing this page
-          with normal file-creation workflows.
-        </Paragraph>
-      </div>
       <input
         ref={importInputRef}
         type="file"
@@ -2525,19 +2637,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             </Tag>
           </Space>
           <Space wrap>
-            <Button
-              onClick={() => {
-                if (creatorOpen) {
-                  setCreatorOpen(false);
-                  setPresetSelectorOpen(false);
-                  return;
-                }
-                openCreator();
-              }}
-            >
-              {creatorOpen ? "Hide new app form" : "New app"}
-            </Button>
-            <Button onClick={() => setSecurityOpen(true)}>Security?</Button>
+            <Button onClick={() => setSecurityOpen(true)}>Security</Button>
             <Button onClick={() => void refresh()} disabled={loading}>
               Refresh
             </Button>
@@ -2582,19 +2682,25 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 setPresetSelectorOpen(false);
                 return;
               }
-              openCreator({ openSelector: true });
+              openCreator();
             }}
           >
-            {creatorOpen ? "Collapse" : "Expand"}
+            {creatorOpen ? "Hide advanced" : "Advanced setup"}
           </Button>
         }
       >
         {!creatorOpen ? (
           <Space orientation="vertical" style={{ width: "100%" }} size={10}>
-            <Paragraph style={{ color: COLORS.GRAY_M, marginBottom: 0 }}>
-              Start from a preset or expand the full form when you need custom
-              commands and proxy settings.
-            </Paragraph>
+            {presetBrowserOpen ? (
+              <Input.Search
+                allowClear
+                autoFocus
+                placeholder="Search presets"
+                value={presetBrowserSearch}
+                onChange={(event) => setPresetBrowserSearch(event.target.value)}
+                onSearch={setPresetBrowserSearch}
+              />
+            ) : null}
             <div
               style={{
                 display: "grid",
@@ -2603,30 +2709,45 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 width: "100%",
               }}
             >
-              {quickPresets.map((preset) => (
+              {visiblePresetTiles.map((preset) => (
                 <PresetSummaryCard
                   key={preset.key}
                   preset={preset}
                   compact
                   onClick={() => {
                     applyPreset(preset.key);
-                    openCreator({ openSelector: false });
+                    setPresetBrowserOpen(false);
+                    setPresetBrowserSearch("");
+                    openCreator();
                   }}
                 />
               ))}
             </div>
+            {visiblePresetTiles.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="No matching presets"
+              />
+            ) : null}
             <Button
               block
               size="large"
-              onClick={() => openCreator({ openSelector: true })}
+              onClick={() => {
+                setPresetBrowserOpen((open) => {
+                  if (open) {
+                    setPresetBrowserSearch("");
+                  }
+                  return !open;
+                });
+              }}
               style={{ marginTop: "4px" }}
             >
-              More...
+              {presetBrowserOpen ? "Show fewer presets" : "More presets"}
             </Button>
           </Space>
         ) : (
           <Space orientation="vertical" style={{ width: "100%" }} size={10}>
-            <div ref={presetSelectorContainerRef}>
+            <div>
               <Select
                 open={presetSelectorOpen}
                 value={presetKey || undefined}
@@ -3337,7 +3458,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           </Space>
         </Card>
       ) : null}
-      <Card size="small" title={`Applications (${summaryCounts.total})`}>
+      <Card size="small" title={`Managed apps (${summaryCounts.total})`}>
         {loading ? <Spin /> : null}
         {!loading && rows.length === 0 ? (
           <Empty

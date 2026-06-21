@@ -70,6 +70,12 @@ interface OpenedFile {
 
 const LOG_WORKSPACE_ONLY_STORAGE_PREFIX = "project-log-workspace-only";
 
+const LOG_FILTER_ACTIVE_BUTTON_STYLE: React.CSSProperties = {
+  backgroundColor: COLORS.BLUE_LLLL,
+  borderColor: COLORS.BLUE_LLL,
+  color: COLORS.BLUE_DD,
+};
+
 function workspaceOnlyStorageKey(project_id: string): string {
   return `${LOG_WORKSPACE_ONLY_STORAGE_PREFIX}:${project_id}`;
 }
@@ -272,6 +278,7 @@ interface Props {
   max?: number;
   wrap: (list: React.JSX.Element, style?: CSS) => React.JSX.Element;
   flyoutWidth: number;
+  isVisible?: boolean;
 }
 
 export function LogFlyout({
@@ -279,6 +286,7 @@ export function LogFlyout({
   project_id,
   wrap,
   flyoutWidth,
+  isVisible = true,
 }: Props): React.JSX.Element {
   const { workspaces } = useProjectContext();
   const intl = useIntl();
@@ -317,6 +325,8 @@ export function LogFlyout({
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
   const dimFileExtensions = !!useAccountOtherSetting("dim_file_extensions");
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const visibleRef = useRef(false);
+  const projectIdRef = useRef(project_id);
 
   const search = useTypedRedux({ project_id }, "search") ?? "";
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -332,8 +342,18 @@ export function LogFlyout({
   }, [project_id, workspaceOnly]);
 
   useEffect(() => {
-    actions?.refresh_project_log();
-  }, [actions, project_id]);
+    if (projectIdRef.current !== project_id) {
+      projectIdRef.current = project_id;
+      visibleRef.current = false;
+    }
+    if (!isVisible) {
+      visibleRef.current = false;
+      return;
+    }
+    if (visibleRef.current || actions == null) return;
+    visibleRef.current = true;
+    actions.refresh_project_log();
+  }, [actions, isVisible, project_id]);
 
   const workspacePathMatches = useMemo(() => {
     if (!workspaceOnly || !workspaces.current) return undefined;
@@ -611,8 +631,9 @@ export function LogFlyout({
     const icon: IconName = deduplicate ? "file" : "copy";
     return (
       <BSButton
-        active={!deduplicate}
+        active={false}
         bsSize="xsmall"
+        style={!deduplicate ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
         title={
           <FormattedMessage
             id="page.flyouts.log.deduplicate.tooltip"
@@ -655,18 +676,20 @@ export function LogFlyout({
             Show:
           </BSButton>
           <BSButton
-            active={showOpenFiles}
+            active={false}
             bsSize="xsmall"
+            style={showOpenFiles ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("open", !showOpenFiles);
             }}
             title={"Show file open events"}
           >
-            <Icon name="edit" />
+            <Icon name="file" />
           </BSButton>
           <BSButton
-            active={showFileActions}
+            active={false}
             bsSize="xsmall"
+            style={showFileActions ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("files", !showFileActions);
             }}
@@ -675,18 +698,20 @@ export function LogFlyout({
             <Icon name="files" />
           </BSButton>
           <BSButton
-            active={showProject}
+            active={false}
             bsSize="xsmall"
+            style={showProject ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("project", !showProject);
             }}
             title={"Show project events"}
           >
-            <Icon name="edit" />
+            <Icon name="project-outlined" />
           </BSButton>
           <BSButton
-            active={showUser}
+            active={false}
             bsSize="xsmall"
+            style={showUser ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("user", !showUser);
             }}
@@ -695,8 +720,9 @@ export function LogFlyout({
             <Icon name="users" />
           </BSButton>
           <BSButton
-            active={showOther}
+            active={false}
             bsSize="xsmall"
+            style={showOther ? LOG_FILTER_ACTIVE_BUTTON_STYLE : undefined}
             onClick={() => {
               actions?.setFlyoutLogFilter("other", !showOther);
             }}

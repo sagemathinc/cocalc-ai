@@ -6,10 +6,12 @@
 import axios from "axios";
 import { createPublicKey, createVerify } from "crypto";
 import type { Profile } from "passport";
+import type { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
 
 const GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
+const GOOGLE_OIDC_HTTP_TIMEOUT_MS = 10_000;
 const GOOGLE_ISSUERS = new Set([
   "accounts.google.com",
   "https://accounts.google.com",
@@ -53,6 +55,7 @@ export interface GoogleIdTokenClaims {
   sub: string;
   email: string;
   email_verified: boolean | string;
+  hd?: string;
   name?: string;
   given_name?: string;
   family_name?: string;
@@ -69,9 +72,33 @@ function decodeJsonSegment<T>(value: string): T {
   return JSON.parse(base64UrlDecode(value).toString("utf8"));
 }
 
+function normalizeDomain(value: unknown): string {
+  return `${value ?? ""}`.trim().toLowerCase();
+}
+
+function domainMatches(domain: string, allowedDomain: string): boolean {
+  return domain === allowedDomain || domain.endsWith(`.${allowedDomain}`);
+}
+
 function parseCacheMaxAge(cacheControl: unknown): number {
   const match = `${cacheControl ?? ""}`.match(/(?:^|,\s*)max-age=(\d+)/i);
   return match == null ? 3600 : Number(match[1]);
+}
+
+export function googleHostedDomainsForTokenVerification(
+  strategy: PassportStrategyDB,
+): string[] {
+  const domains = new Set<string>();
+  for (const domain of [
+    ...(strategy.info?.allowed_domains ?? []),
+    ...(strategy.info?.exclusive_domains ?? []),
+  ]) {
+    const normalized = normalizeDomain(domain);
+    if (normalized) {
+      domains.add(normalized);
+    }
+  }
+  return [...domains].sort();
 }
 
 async function getGoogleJwks(): Promise<GoogleJwks> {
@@ -80,6 +107,7 @@ async function getGoogleJwks(): Promise<GoogleJwks> {
   }
   const response = await axios.get<GoogleJwks>(GOOGLE_JWKS_URL, {
     responseType: "json",
+    timeout: GOOGLE_OIDC_HTTP_TIMEOUT_MS,
   });
   const maxAgeSeconds = parseCacheMaxAge(response.headers["cache-control"]);
   cachedJwks = {
@@ -92,10 +120,12 @@ async function getGoogleJwks(): Promise<GoogleJwks> {
 function assertValidClaims({
   claims,
   clientID,
+  hostedDomains,
   nonce,
 }: {
   claims: GoogleIdTokenClaims;
   clientID: string;
+  hostedDomains?: string[];
   nonce: string;
 }): void {
   const now = Math.floor(Date.now() / 1000);
@@ -129,6 +159,22 @@ function assertValidClaims({
   }
   if (claims.email_verified !== true && claims.email_verified !== "true") {
     throw new Error("Google did not verify the email address.");
+  }
+  const allowedHostedDomains = (hostedDomains ?? [])
+    .map(normalizeDomain)
+    .filter(Boolean);
+  if (allowedHostedDomains.length > 0) {
+    const hostedDomain = normalizeDomain(claims.hd);
+    if (
+      !hostedDomain ||
+      !allowedHostedDomains.some((allowedDomain) =>
+        domainMatches(hostedDomain, allowedDomain),
+      )
+    ) {
+      throw new Error(
+        "Google ID token is missing a matching hosted domain claim.",
+      );
+    }
   }
 }
 
@@ -180,6 +226,7 @@ export async function exchangeGoogleOidcCode({
         "content-type": "application/x-www-form-urlencoded",
       },
       responseType: "json",
+      timeout: GOOGLE_OIDC_HTTP_TIMEOUT_MS,
     },
   );
   if (!response.data.id_token) {
@@ -191,10 +238,12 @@ export async function exchangeGoogleOidcCode({
 export async function verifyGoogleIdToken({
   idToken,
   clientID,
+  hostedDomains,
   nonce,
 }: {
   idToken: string;
   clientID: string;
+  hostedDomains?: string[];
   nonce: string;
 }): Promise<GoogleIdTokenClaims> {
   const [encodedHeader, encodedPayload, encodedSignature] = idToken.split(".");
@@ -231,7 +280,7 @@ export async function verifyGoogleIdToken({
   }
 
   const claims = decodeJsonSegment<GoogleIdTokenClaims>(encodedPayload);
-  assertValidClaims({ claims, clientID, nonce });
+  assertValidClaims({ claims, clientID, hostedDomains, nonce });
   return claims;
 }
 

@@ -8,11 +8,7 @@ import { useEffect, useState } from "react";
 import { Alert, Button, Card, Flex, Input, Spin, Typography } from "antd";
 
 import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
-import {
-  isWrongBayAuthResponse,
-  retryAuthOnHomeBay,
-  signOutAuthSession,
-} from "@cocalc/frontend/auth/api";
+import { signOutAuthSession } from "@cocalc/frontend/auth/api";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -81,17 +77,10 @@ export function PublicRedeemPasswordResetView({
     setSubmitting(true);
     setError("");
     try {
-      const result = await api("auth/redeem-password-reset", {
+      await api("auth/redeem-password-reset", {
         password,
         passwordResetId,
       });
-      if (isWrongBayAuthResponse(result)) {
-        await retryAuthOnHomeBay({
-          endpoint: "auth/redeem-password-reset",
-          wrongBay: result,
-          body: { passwordResetId },
-        });
-      }
       openPath(pathForPasswordResetDone());
     } catch (err) {
       setError(`${err}`);
@@ -104,7 +93,7 @@ export function PublicRedeemPasswordResetView({
     <Flex vertical gap={16}>
       <Paragraph style={{ margin: 0 }}>
         Choose a new password for your account. After this succeeds, you will be
-        signed in automatically.
+        asked to sign in with the new password.
       </Paragraph>
       {error ? (
         <Alert
@@ -153,15 +142,17 @@ export function PublicPasswordResetDoneView() {
     <Flex vertical gap={16}>
       <Alert
         title="Password updated"
-        description="Your password was changed successfully and you are now signed in."
+        description="Your password was changed successfully. Sign in with your new password to continue."
         showIcon
         type="success"
       />
       <Flex wrap gap={12}>
-        <Button href={joinUrlPath(appBasePath, "projects")} type="primary">
+        <Button href={pathForAuthView("sign-in")} type="primary">
+          Sign in
+        </Button>
+        <Button href={joinUrlPath(appBasePath, "projects")}>
           Open projects
         </Button>
-        <Button href={joinUrlPath(appBasePath, "settings")}>Settings</Button>
       </Flex>
     </Flex>
   );

@@ -11,7 +11,7 @@ import {
   useAccountOtherSetting,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -37,6 +37,12 @@ interface Props {
   configuration?;
   disabled: boolean;
 }
+
+const NEW_BUTTON_TOOLTIP_PROPS = {
+  mouseEnterDelay: 0,
+  mouseLeaveDelay: 0,
+  placement: "bottom" as const,
+};
 
 export const NewButton: React.FC<Props> = ({
   project_id,
@@ -139,22 +145,34 @@ export const NewButton: React.FC<Props> = ({
   return (
     <>
       <Space.Compact>
-        <Button onClick={on_create_button_clicked} disabled={disabled}>
-          {file_dropdown_icon()}{" "}
-        </Button>
+        <Tooltip title="Create file or folder" {...NEW_BUTTON_TOOLTIP_PROPS}>
+          <span style={{ display: "inline-flex" }}>
+            <Button
+              aria-label="Create file or folder"
+              onClick={on_create_button_clicked}
+              disabled={disabled}
+            >
+              {file_dropdown_icon()}{" "}
+            </Button>
+          </span>
+        </Tooltip>
 
-        <QuickCreateDropdown
-          title=""
-          button
-          showDown
-          quickCreateIds={mergedLauncher.quickCreate}
-          availableFeatures={availableFeatures}
-          disabledExtensions={disabledExtensions}
-          onCreateFile={choose_extension}
-          onCreateFolder={on_create_folder_button_clicked}
-          onCustomize={() => setShowCustomizeModal(true)}
-          moreFileTypeItems={moreFileTypeMenuItems}
-        />
+        <Tooltip title="Choose file type" {...NEW_BUTTON_TOOLTIP_PROPS}>
+          <span style={{ display: "inline-flex" }}>
+            <QuickCreateDropdown
+              title=""
+              button
+              showDown
+              quickCreateIds={mergedLauncher.quickCreate}
+              availableFeatures={availableFeatures}
+              disabledExtensions={disabledExtensions}
+              onCreateFile={choose_extension}
+              onCreateFolder={on_create_folder_button_clicked}
+              onCustomize={() => setShowCustomizeModal(true)}
+              moreFileTypeItems={moreFileTypeMenuItems}
+            />
+          </span>
+        </Tooltip>
       </Space.Compact>
       <LauncherCustomizeModal
         open={showCustomizeModal}

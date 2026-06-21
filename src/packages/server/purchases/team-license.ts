@@ -225,10 +225,45 @@ export async function processTeamLicenseRenewal({
   if (!team_license_id) {
     throw Error("team license renewal metadata is missing team_license_id");
   }
+  const paymentIntentId = `${paymentIntent.id ?? ""}`.trim();
   const ownedClient = client == null ? await getTransactionClient() : undefined;
   const dbClient = client ?? ownedClient!;
   let committed = false;
   try {
+    const { rows: lockedRows } = await dbClient.query(
+      `
+        SELECT payment
+          FROM team_licenses
+         WHERE id=$1
+           AND owner_account_id=$2
+           AND status != 'canceled'
+         FOR UPDATE
+      `,
+      [team_license_id, account_id],
+    );
+    if (lockedRows.length === 0) {
+      throw Error("team license owner mismatch");
+    }
+    const renewalPayment = lockedRows[0].payment;
+    if (paymentIntentId) {
+      if (
+        renewalPayment?.payment_intent_id === paymentIntentId &&
+        renewalPayment?.status === "paid"
+      ) {
+        if (ownedClient) {
+          await ownedClient.query("COMMIT");
+          committed = true;
+        }
+        return;
+      }
+      if (
+        renewalPayment?.payment_intent_id !== paymentIntentId ||
+        renewalPayment?.status !== "active"
+      ) {
+        throw Error("team license renewal payment is not active");
+      }
+    }
+
     const quote = await getTeamLicenseRenewalQuote({
       team_license_id,
       client: dbClient,
@@ -262,7 +297,7 @@ export async function processTeamLicenseRenewal({
                current_period_start=$2,
                current_period_end=$3,
                latest_purchase_id=$4,
-               payment=NULL,
+               payment=$6::jsonb,
                updated=NOW()
          WHERE id=$1
            AND owner_account_id=$5
@@ -273,6 +308,14 @@ export async function processTeamLicenseRenewal({
         quote.next_period_end,
         purchase_id,
         account_id,
+        paymentIntentId
+          ? {
+              ...renewalPayment,
+              status: "paid",
+              paid_at: new Date().toISOString(),
+              paid_purchase_id: purchase_id,
+            }
+          : null,
       ],
     );
     if (ownedClient) {

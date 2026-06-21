@@ -4,10 +4,15 @@
  */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { listPasskeys } from "@cocalc/server/auth/passkeys";
 
 export default async function listPasskeysApi(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const account_id = await getAccountId(req);
     if (!account_id) {

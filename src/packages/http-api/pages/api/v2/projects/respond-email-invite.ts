@@ -6,11 +6,16 @@
 import type { ProjectCollabInviteAction } from "@cocalc/conat/hub/api/projects";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { respondEmailProjectInvite } from "@cocalc/server/conat/api/projects";
 
 const ACTIONS = new Set(["accept", "decline", "block"]);
 
 export default async function handle(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     if (req.header("Authorization")) {
       throw new Error("API keys are not allowed to use project invite links");

@@ -6,13 +6,11 @@ import {
   FALLBACK_PROJECT_UUID,
   FALLBACK_ACCOUNT_UUID,
 } from "@cocalc/util/misc";
-import { init as initSyncDoc } from "./sync";
 import Cookies from "js-cookie";
 
 export let lite = false;
 export let project_id: string = "";
 export let account_id: string = "";
-export let remote_sync = false;
 
 function getLiteInitialProjectState(
   targetPath: string,
@@ -41,7 +39,6 @@ function getLiteInitialProjectState(
 export function init(redux, configuration: CustomizeState) {
   // console.log("Initializing CoCalc Lite!");
   lite = true;
-  remote_sync = !!configuration.remote_sync;
   ({ account_id = FALLBACK_ACCOUNT_UUID, project_id = FALLBACK_PROJECT_UUID } =
     configuration);
   const initialProjectState = getLiteInitialProjectState(target, project_id);
@@ -67,8 +64,4 @@ export function init(redux, configuration: CustomizeState) {
     .catch((err) => {
       console.warn("lite/init: failed to open default files target", err);
     });
-
-  if (remote_sync) {
-    initSyncDoc();
-  }
 }

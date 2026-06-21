@@ -56,13 +56,15 @@ export default function CloneProject({ project_id, flyout, disabled }: Props) {
       <Tooltip
         title={
           <>
-            Cloning makes a copy of "
+            Cloning will copy "
             <ProjectTitle project_id={project_id} noClick />
-            ", including any customization to the root filesystem / (e.g.,
-            systemwide software install), but without any TimeTravel edit
-            history or collaborators. It has the same root filesystem image.
+            ", including changes to the root filesystem / (e.g., systemwide
+            software install) and TimeTravel edit history, but without
+            collaborators.
           </>
         }
+        mouseEnterDelay={0}
+        mouseLeaveDelay={0}
       >
         <Button disabled={saving || disabled}>
           <Icon name="fork-outlined" />

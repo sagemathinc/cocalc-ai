@@ -3,10 +3,24 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { OUCH_FORMATS } from "@cocalc/conat/files/fs";
+
 interface Entry {
   list: { command: string; args: ReadonlyArray<string> };
   extract: { command: string; args: ReadonlyArray<string> };
 }
+
+const ouch: Entry = {
+  list: { command: "ouch", args: ["list", "--accessible", "--yes"] },
+  extract: {
+    command: "ouch",
+    args: ["decompress", "--accessible", "--yes"],
+  },
+};
+
+const ouchFormats = Object.fromEntries(
+  OUCH_FORMATS.map((format) => [format, ouch]),
+);
 
 const bz2: Entry = {
   list: { command: "ls", args: ["-l"] },
@@ -24,6 +38,7 @@ const tgz: Entry = {
 };
 
 export const COMMANDS: { [type: string]: Entry } = {
+  ...ouchFormats,
   "tar.bz2": tbz2,
   tbz2: tbz2,
   zip: {
@@ -55,4 +70,11 @@ export const COMMANDS: { [type: string]: Entry } = {
 // all keys of COMMANDS, that have at least one "." in their name
 export const DOUBLE_EXT = Object.keys(COMMANDS).filter(
   (key) => key.indexOf(".") >= 0,
+);
+
+export const ARCHIVE_EXTENSIONS = Array.from(
+  new Set([
+    ...Object.keys(COMMANDS),
+    ...OUCH_FORMATS.flatMap((format) => format.split(".")),
+  ]),
 );

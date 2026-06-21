@@ -4,8 +4,13 @@ Get all support tickets for a signed in user.
 
 import getSupportTickets from "@cocalc/server/support/get-tickets";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 
 export default async function handle(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   if (req.header("Authorization")) {
     res.json({ error: "API keys are not allowed to access support tickets" });
     return;

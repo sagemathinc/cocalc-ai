@@ -6,7 +6,7 @@ Resume a canceled membership subscription, which does all of the following in a 
   and current_period_end an interval (='month' or 'year') from now.
 */
 
-import { getTransactionClient } from "@cocalc/database/pool";
+import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import { getSubscription, addInterval } from "./renew-subscription";
 import dayjs from "dayjs";
 import send, { support, url, name } from "@cocalc/server/messages/send";
@@ -16,6 +16,7 @@ import getBalance from "./get-balance";
 import createPurchase from "./create-purchase";
 import { toDecimal } from "@cocalc/util/money";
 import { formatRenewalDate } from "./subscription-renewal-notice";
+import { assertPurchaseAllowed } from "./is-purchase-allowed";
 
 interface Options {
   account_id: string;
@@ -26,12 +27,35 @@ export default async function resumeSubscription({
   account_id,
   subscription_id,
 }: Options): Promise<number | null | undefined> {
-  const { metadata, start, end, current_period_end, periodicCost, interval } =
-    await getSubscriptionRenewalData({ account_id, subscription_id });
+  // Verify ownership before opening a transaction or creating side effects.
+  await getSubscriptionRenewalData({
+    account_id,
+    subscription_id,
+  });
   const client = await getTransactionClient();
   let purchase_id: number | undefined = undefined;
+  let subscriptionType = "membership";
+  let renewalEnd = new Date();
   try {
+    const renewalData = await getSubscriptionRenewalData({
+      account_id,
+      subscription_id,
+      client,
+      forUpdate: true,
+    });
+    const { metadata, start, end, current_period_end, periodicCost, interval } =
+      renewalData;
+    subscriptionType = metadata.type;
+    renewalEnd = end;
     if (current_period_end <= new Date()) {
+      if (toDecimal(periodicCost).gt(0)) {
+        await assertPurchaseAllowed({
+          account_id,
+          service: "membership",
+          cost: periodicCost,
+          client,
+        });
+      }
       // make purchase, if needed
       purchase_id = await createPurchase({
         account_id,
@@ -49,22 +73,37 @@ export default async function resumeSubscription({
       });
 
       if (purchase_id) {
-        await client.query(
+        const update = await client.query(
           "UPDATE subscriptions SET status='active', resumed_at=NOW(), current_period_start=$3, current_period_end=$4, latest_purchase_id=$5 WHERE id=$1 AND account_id=$2",
           [subscription_id, account_id, start, end, purchase_id],
         );
+        if (update.rowCount != 1) {
+          throw Error(
+            `You do not have a subscription with id ${subscription_id}.`,
+          );
+        }
       } else {
-        await client.query(
+        const update = await client.query(
           "UPDATE subscriptions SET status='active', resumed_at=NOW(), current_period_start=$3, current_period_end=$4 WHERE id=$1 AND account_id=$2",
           [subscription_id, account_id, start, end],
         );
+        if (update.rowCount != 1) {
+          throw Error(
+            `You do not have a subscription with id ${subscription_id}.`,
+          );
+        }
       }
     } else {
       // only have to change subscription status so it works again
-      await client.query(
+      const update = await client.query(
         "UPDATE subscriptions SET status='active', resumed_at=NOW() WHERE id=$1 AND account_id=$2",
         [subscription_id, account_id],
       );
+      if (update.rowCount != 1) {
+        throw Error(
+          `You do not have a subscription with id ${subscription_id}.`,
+        );
+      }
     }
 
     await client.query("COMMIT");
@@ -72,9 +111,9 @@ export default async function resumeSubscription({
       to_ids: [account_id],
       subject: `Subscription Id=${subscription_id} Successfully Resumed!`,
       body: `
-You have successfully manually resumed subscription id=${subscription_id} which covers your ${metadata.type}
+You have successfully manually resumed subscription id=${subscription_id} which covers your ${subscriptionType}
 
-Your subscription will automatically renew on ${formatRenewalDate(end)}.
+Your subscription will automatically renew on ${formatRenewalDate(renewalEnd)}.
 
 - [Your Membership](${await url(`/settings/membership`)})
 
@@ -102,7 +141,7 @@ You might want to check in with them.`,
       to_ids: [account_id],
       subject: `Subscription Id=${subscription_id} Failed to Resume`,
       body: `
-An unexpected error happened when manually resuming your subscription with id=${subscription_id} for your ${metadata.type}
+An unexpected error happened when manually resuming your subscription with id=${subscription_id} for your ${subscriptionType}
 
 - [Your Membership](${await url(`/settings/membership`)})
 
@@ -130,7 +169,12 @@ error. An admin should check in on this.
 async function getSubscriptionRenewalData({
   account_id,
   subscription_id,
-}: Options): Promise<{
+  client,
+  forUpdate = false,
+}: Options & {
+  client?: PoolClient;
+  forUpdate?: boolean;
+}): Promise<{
   metadata: { type: "membership"; class: MembershipClass };
   start: Date;
   end: Date;
@@ -138,7 +182,11 @@ async function getSubscriptionRenewalData({
   current_period_end: Date;
   interval: "month" | "year";
 }> {
-  const subscription = await getSubscription(subscription_id);
+  const subscription = await getSubscription(
+    subscription_id,
+    client,
+    forUpdate,
+  );
   if (subscription.account_id != account_id) {
     throw Error("you must be signed in as the owner of the subscription");
   }

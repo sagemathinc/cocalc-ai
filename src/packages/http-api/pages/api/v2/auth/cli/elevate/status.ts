@@ -4,9 +4,14 @@
  */
 
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getCliAuthChallengeStatus } from "@cocalc/server/auth/cli-auth";
 
 export default async function cliElevateStatus(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const { challenge_id, poll_token } = getParams(req);
     res.json(

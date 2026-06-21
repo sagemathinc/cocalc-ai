@@ -208,32 +208,43 @@ jest.mock("./file-tabs", () => ({
   default: () => <div data-testid="file-tabs" />,
 }));
 
-jest.mock("./file-tab", () => ({
-  FileTab: ({ iconName, iconStyle, name }: any) => (
-    <div
-      data-testid={`rail-${name}`}
-      data-bg={iconStyle?.backgroundColor}
-      data-color={iconStyle?.color}
-    >
-      {iconName ?? name}
-    </div>
-  ),
-  FIXED_PROJECT_TABS: {
+jest.mock("./file-tab", () => {
+  const FIXED_PROJECT_TABS = {
     workspaces: { label: "Workspaces", icon: "cube" },
     agents: { label: "Agents", icon: "comment" },
     files: { label: "Files", icon: "folder-open-o" },
-    rootfs: { label: "RootFS", icon: "docker" },
+    rootfs: { label: "Software", icon: "docker" },
     new: { label: "New", icon: "plus-circle" },
     search: { label: "Search", icon: "search" },
     docs: { label: "Docs", icon: "book" },
     users: { label: "Users", icon: "users" },
     settings: { label: "Settings", icon: "wrench" },
-    active: { label: "Tabs", icon: "edit", noFullPage: true },
+    active: {
+      label: "Tabs",
+      icon: "database",
+      iconRotate: "270",
+      noFullPage: true,
+    },
     log: { label: "Log", icon: "history" },
-    servers: { label: "Servers", icon: "server" },
+    servers: { label: "Servers", icon: "overview" },
     info: { label: "Info", icon: "info-circle" },
-  },
-}));
+  };
+  return {
+    FileTab: ({ iconName, iconStyle, name }: any) => (
+      <div
+        data-testid={`rail-${name}`}
+        data-bg={iconStyle?.backgroundColor}
+        data-color={iconStyle?.color}
+      >
+        {iconName ?? name}
+      </div>
+    ),
+    FixedProjectTabIcon: ({ iconName, name }: any) => (
+      <span>{iconName ?? FIXED_PROJECT_TABS[name].icon}</span>
+    ),
+    FIXED_PROJECT_TABS,
+  };
+});
 
 import {
   CustomizeRailButtonsModal,
@@ -317,6 +328,17 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("menu-overflow:agents")).toBeNull();
   });
 
+  it("puts Workspaces in More and Software on the rail by default", () => {
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.queryByTestId("rail-workspaces")).toBeNull();
+    expect(screen.getByTestId("rail-rootfs")).toBeTruthy();
+    expect(screen.getByTestId("menu-overflow:workspaces")).toHaveTextContent(
+      "Workspaces",
+    );
+    expect(screen.queryByTestId("menu-overflow:rootfs")).toBeNull();
+  });
+
   it("uses the current Rootfs theme icon on the rail", () => {
     mockRootfsImages = [
       {
@@ -331,8 +353,16 @@ describe("VerticalFixedTabs overflow actions", () => {
 
     const rootfsRail = screen.getByTestId("rail-rootfs");
     expect(rootfsRail).toHaveTextContent("python");
-    expect(rootfsRail).toHaveAttribute("data-bg", "#3572a5");
-    expect(rootfsRail).toHaveAttribute("data-color", "#fff");
+  });
+
+  it("keeps rail controls available when every tab is visible", () => {
+    setActivityBarHiddenTabs([], { liteMode: true });
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.getByTestId("rail-log")).toBeTruthy();
+    expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
+    expect(screen.getByTestId("menu-overflow:customize")).toBeTruthy();
   });
 
   it("keeps rail controls available when every tab is visible", () => {

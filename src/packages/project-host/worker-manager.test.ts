@@ -432,23 +432,6 @@ describe("ACP worker spawn backoff", () => {
   });
 });
 
-describe("ACP worker child environment", () => {
-  it("passes the scrubbed REMOTE_HUB value to child workers", () => {
-    expect(
-      __test__.remoteHubChildEnv(
-        "https://lite4b.cocalc.ai/conat-remote?apiKey=secret",
-      ),
-    ).toEqual({
-      REMOTE_HUB: "https://lite4b.cocalc.ai/conat-remote?apiKey=secret",
-    });
-  });
-
-  it("omits REMOTE_HUB when no remote hub is configured", () => {
-    expect(__test__.remoteHubChildEnv(undefined)).toEqual({});
-    expect(__test__.remoteHubChildEnv("   ")).toEqual({});
-  });
-});
-
 describe("ACP worker control startup grace", () => {
   afterEach(() => {
     jest.restoreAllMocks();

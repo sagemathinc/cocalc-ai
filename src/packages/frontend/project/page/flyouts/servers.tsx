@@ -12,7 +12,7 @@ export function ServersFlyout({ project_id, wrap }) {
     return (
       <div style={{ padding: FLYOUT_PADDING }}>
         <Title level={5}>
-          <Icon name="server" /> Managed Applications
+          <Icon name="overview" /> Managed Applications
         </Title>
         <Paragraph>
           Create and manage private or deployable applications for this project

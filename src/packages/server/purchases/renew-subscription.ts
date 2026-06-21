@@ -3,13 +3,17 @@ Renewing a membership subscription creates a new purchase for the next period
 and updates current_period dates and status.
 */
 
-import getPool, { getTransactionClient } from "@cocalc/database/pool";
+import getPool, {
+  getTransactionClient,
+  type PoolClient,
+} from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import dayjs from "dayjs";
 import type { Status } from "@cocalc/util/db-schema/subscriptions";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import createPurchase from "./create-purchase";
 import { toDecimal } from "@cocalc/util/money";
+import { assertPurchaseAllowed } from "./is-purchase-allowed";
 
 const logger = getLogger("purchases:renew-subscription");
 
@@ -24,19 +28,38 @@ export default async function renewSubscription({
 }: Options): Promise<number | null | undefined> {
   // might not be a purchase in case there's no fee
   logger.debug({ account_id, subscription_id });
-  const subscription = await getSubscription(subscription_id);
-  if (subscription.account_id != account_id) {
-    throw Error("you must be signed in as the owner of the subscription");
-  }
-  const { metadata, interval, current_period_end, cost } = subscription;
-  if (metadata?.type != "membership") {
-    throw Error("subscription must be a membership");
-  }
-  const end = addInterval(current_period_end, interval);
-
   // Use a transaction so we either record the renewal and update subscription or do nothing.
   const client = await getTransactionClient();
   try {
+    const subscription = await getSubscription(subscription_id, client, true);
+    if (subscription.account_id != account_id) {
+      throw Error("you must be signed in as the owner of the subscription");
+    }
+    const { metadata, interval, current_period_end, cost, status } =
+      subscription;
+    if (metadata?.type != "membership") {
+      throw Error("subscription must be a membership");
+    }
+    if (status == "active") {
+      throw Error("subscription is already active");
+    }
+    if (status == "canceled") {
+      throw Error("use resume subscription for canceled subscriptions");
+    }
+    if (status != "unpaid" && status != "past_due") {
+      throw Error(`subscription is not due for renewal; status is "${status}"`);
+    }
+
+    const end = addInterval(current_period_end, interval);
+    if (toDecimal(cost).gt(0)) {
+      await assertPurchaseAllowed({
+        account_id,
+        service: "membership",
+        cost,
+        client,
+      });
+    }
+
     const purchase_id = await createPurchase({
       account_id,
       service: "membership",
@@ -52,10 +75,19 @@ export default async function renewSubscription({
       period_end: end,
     });
 
-    await client.query(
-      "UPDATE subscriptions SET status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3 WHERE id=$4",
-      [subtractInterval(end, interval), end, purchase_id, subscription_id],
+    const update = await client.query(
+      "UPDATE subscriptions SET status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3 WHERE id=$4 AND account_id=$5 AND status IN ('unpaid','past_due')",
+      [
+        subtractInterval(end, interval),
+        end,
+        purchase_id,
+        subscription_id,
+        account_id,
+      ],
     );
+    if (update.rowCount != 1) {
+      throw Error("subscription is no longer due for renewal");
+    }
     await client.query("COMMIT");
     return purchase_id;
   } catch (err) {
@@ -109,7 +141,11 @@ export const test = {
   subtractInterval,
 };
 
-export async function getSubscription(subscription_id: number): Promise<{
+export async function getSubscription(
+  subscription_id: number,
+  client?: PoolClient,
+  forUpdate = false,
+): Promise<{
   id: number;
   account_id: string;
   metadata: any;
@@ -119,9 +155,9 @@ export async function getSubscription(subscription_id: number): Promise<{
   current_period_end: Date;
   status: Status; // used externally (not in this file)
 }> {
-  const pool = getPool();
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
-    "SELECT id, account_id, metadata, cost, interval, current_period_end, status FROM subscriptions WHERE id=$1",
+    `SELECT id, account_id, metadata, cost, interval, current_period_end, status FROM subscriptions WHERE id=$1${forUpdate ? " FOR UPDATE" : ""}`,
     [subscription_id],
   );
   if (rows.length == 0) {

@@ -62,4 +62,17 @@ describe("test that the API framework works in either dev or production mode", (
       expect(res.statusCode).toBe(400);
     }
   });
+
+  test("rejects requests that do not use the declared method", async () => {
+    const { req, res } = createMocks({
+      method: "GET",
+      url: "/api/v2/test-validation",
+      query: { code: "abc" },
+    });
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(405);
+    expect(res.getHeader("Allow")).toBe("POST");
+  });
 });

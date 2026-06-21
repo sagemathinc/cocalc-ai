@@ -17,6 +17,7 @@ const setEmailAddressVerifiedMock = jest.fn();
 const assertSignupEmailDomainAllowedMock = jest.fn();
 const validateRegistrationTokenMock = jest.fn();
 const getEmailAddressMock = jest.fn();
+const setSignInCookiesMock = jest.fn();
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   assertNoClusterBannedEquivalentEmailAccount: jest.fn(),
@@ -67,6 +68,11 @@ jest.mock("@cocalc/server/auth/tokens/redeem", () => ({
     validateRegistrationTokenMock(...args),
 }));
 
+jest.mock("@cocalc/server/auth/set-sign-in-cookies", () => ({
+  __esModule: true,
+  default: (...args: any[]) => setSignInCookiesMock(...args),
+}));
+
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: jest.fn(() => ({
@@ -106,6 +112,7 @@ describe("PassportLogin SSO account creation", () => {
       .mockResolvedValue(undefined);
     setEmailAddressVerifiedMock.mockReset().mockResolvedValue(undefined);
     validateRegistrationTokenMock.mockReset().mockResolvedValue(undefined);
+    setSignInCookiesMock.mockReset().mockResolvedValue(undefined);
   });
 
   it("creates new SSO accounts through the cluster account directory path", async () => {
@@ -258,7 +265,7 @@ describe("PassportLogin SSO account creation", () => {
       emails: ["ada@example.com"],
       authenticated_account_id: "22222222-2222-4222-8222-222222222222",
       req: { headers: {}, header: jest.fn() },
-      res: { send: jest.fn() },
+      res: { type: jest.fn().mockReturnThis(), send: jest.fn() },
       update_on_login: false,
       host: "",
       site_url: "https://cocalc.test",
@@ -320,6 +327,52 @@ describe("PassportLogin SSO account creation", () => {
     expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
     expect(isAccountBannedCachedMock).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
+    );
+  });
+
+  it("records SSO browser sessions without password verification", async () => {
+    const { PassportLogin } = await import("./passport-login");
+    const opts = {
+      passports: {
+        google: {
+          strategy: "google",
+          conf: { type: "oidc" },
+          info: {},
+        },
+      },
+      database: {},
+      strategyName: "google",
+      profile: { id: "google-id" },
+      id: "google-id",
+      req: {},
+      res: {},
+      update_on_login: false,
+      host: "",
+      site_url: "https://cocalc.test",
+    };
+    const login = new PassportLogin(opts as any);
+
+    await expect(
+      (login as any).handleNewSignIn(
+        { ...opts, emails: ["ada@example.com"] },
+        {
+          account_id: "11111111-1111-4111-8111-111111111111",
+          email_address: "ada@example.com",
+          has_valid_remember_me: false,
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(setSignInCookiesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "11111111-1111-4111-8111-111111111111",
+        session: expect.objectContaining({
+          password_verified_at: null,
+          factor_verified_at: null,
+          factor_level: "none",
+          fresh_auth_until: null,
+        }),
+      }),
     );
   });
 });

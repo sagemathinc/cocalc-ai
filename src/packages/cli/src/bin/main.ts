@@ -185,6 +185,7 @@ import {
   registerWorkspacesCommand,
   type WorkspacesCommandDeps,
 } from "./commands/workspaces";
+import { registerCodexCommand, type CodexCommandDeps } from "./commands/codex";
 import { createExportApi } from "../api/export";
 import { createImportApi } from "../api/import";
 import { createTasksApi } from "../api/tasks";
@@ -2690,6 +2691,13 @@ const tasksCommandDeps = {
 } satisfies TasksCommandDeps;
 
 registerTasksCommand(program, tasksCommandDeps);
+
+const codexCommandDeps = {
+  withContext,
+  toIso,
+} satisfies CodexCommandDeps;
+
+registerCodexCommand(program, codexCommandDeps);
 
 const workspacesCommandDeps = {
   withContext,

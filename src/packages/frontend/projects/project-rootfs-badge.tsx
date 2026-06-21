@@ -179,7 +179,7 @@ export function ProjectRootfsBadge({
         onClick={onClick}
         style={{
           alignItems: "center",
-          color: COLORS.GRAY_D,
+          color: "#666",
           cursor: onClick ? "pointer" : "default",
           display: "inline-flex",
           gap: 6,

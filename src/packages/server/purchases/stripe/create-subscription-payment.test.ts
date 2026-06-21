@@ -44,7 +44,9 @@ jest.mock("../subscription-renewal-notice", () => ({
     mockUseBalanceTowardSubscriptions(...args),
 }));
 
-import createSubscriptionPayment from "./create-subscription-payment";
+import createSubscriptionPayment, {
+  processSubscriptionRenewal,
+} from "./create-subscription-payment";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -105,5 +107,58 @@ describe("createSubscriptionPayment", () => {
       status: "active",
       subscription_id,
     });
+  });
+
+  it("does not duplicate renewal purchases when a payment intent is retried", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        cost: 72,
+        status: "past_due",
+      },
+    );
+    const newExpiresMs = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    await getPool().query("UPDATE subscriptions SET payment=$2 WHERE id=$1", [
+      subscription_id,
+      {
+        new_expires_ms: newExpiresMs,
+        payment_intent_id: "pi_retry",
+        status: "active",
+      },
+    ]);
+
+    const paymentIntent = {
+      metadata: { subscription_id: `${subscription_id}` },
+    };
+    await processSubscriptionRenewal({
+      account_id,
+      paymentIntent,
+      amount: 72,
+    });
+    await processSubscriptionRenewal({
+      account_id,
+      paymentIntent,
+      amount: 72,
+    });
+
+    const { rows: purchases } = await getPool().query(
+      `SELECT id
+         FROM purchases
+        WHERE account_id=$1
+          AND service='membership'
+          AND description->>'type'='membership'
+          AND (description->>'subscription_id')::int=$2`,
+      [account_id, subscription_id],
+    );
+    expect(purchases).toHaveLength(1);
+
+    const { rows: subscriptions } = await getPool().query(
+      "SELECT latest_purchase_id, payment FROM subscriptions WHERE id=$1",
+      [subscription_id],
+    );
+    expect(subscriptions[0].latest_purchase_id).toBe(purchases[0].id);
+    expect(subscriptions[0].payment).toMatchObject({ status: "paid" });
   });
 });

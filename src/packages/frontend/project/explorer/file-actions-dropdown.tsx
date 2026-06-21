@@ -21,6 +21,7 @@ interface Props {
   label?: string;
   size?: "small" | "middle" | "large";
   iconOnly?: boolean;
+  showEllipsis?: boolean;
   showDown?: boolean;
   hideFlyout?: boolean;
   activateFilesTab?: boolean;
@@ -35,6 +36,7 @@ export function FileActionsDropdown({
   label = "Actions",
   size,
   iconOnly,
+  showEllipsis = true,
   showDown = true,
   hideFlyout,
   activateFilesTab,
@@ -106,7 +108,12 @@ export function FileActionsDropdown({
     <Icon name="ellipsis" />
   ) : (
     <span style={{ whiteSpace: "nowrap" }}>
-      <Icon name="ellipsis" /> {label}
+      {showEllipsis ? (
+        <>
+          <Icon name="ellipsis" />{" "}
+        </>
+      ) : null}
+      {label}
     </span>
   );
 

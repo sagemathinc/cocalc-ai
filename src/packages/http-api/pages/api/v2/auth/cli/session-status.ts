@@ -4,10 +4,15 @@
  */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { getCliAuthSessionStatus } from "@cocalc/server/auth/cli-auth";
 
 export default async function cliSessionStatus(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const account_id = await getAccountId(req);
     const session_hash = getRememberMeHash(req);

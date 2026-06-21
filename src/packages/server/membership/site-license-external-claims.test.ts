@@ -152,6 +152,7 @@ describe("site license external claim tokens", () => {
     const token = `claim-token-${uuid()}`;
     const consumption = await consumeVerifiedSiteLicenseExternalClaim({
       issuer: claimPool.issuer,
+      audience: claimPool.audience,
       site_license_id: claimPool.site_license_id,
       pool_id: claimPool.id,
       jti: uuid(),
@@ -195,6 +196,7 @@ describe("site license external claim tokens", () => {
     });
     const first = await consumeVerifiedSiteLicenseExternalClaim({
       issuer: claimPool.issuer,
+      audience: claimPool.audience,
       site_license_id: claimPool.site_license_id,
       pool_id: claimPool.id,
       jti,
@@ -203,6 +205,7 @@ describe("site license external claim tokens", () => {
     });
     const second = await consumeVerifiedSiteLicenseExternalClaim({
       issuer: claimPool.issuer,
+      audience: claimPool.audience,
       site_license_id: claimPool.site_license_id,
       pool_id: claimPool.id,
       jti,
@@ -227,6 +230,7 @@ describe("site license external claim tokens", () => {
     });
     await consumeVerifiedSiteLicenseExternalClaim({
       issuer: claimPool.issuer,
+      audience: claimPool.audience,
       site_license_id: claimPool.site_license_id,
       pool_id: claimPool.id,
       jti,
@@ -237,6 +241,7 @@ describe("site license external claim tokens", () => {
     await expect(
       consumeVerifiedSiteLicenseExternalClaim({
         issuer: claimPool.issuer,
+        audience: claimPool.audience,
         site_license_id: claimPool.site_license_id,
         pool_id: claimPool.id,
         jti,
@@ -257,6 +262,7 @@ describe("site license external claim tokens", () => {
     const membership_expires_at = dayjs().add(45, "day").toDate();
     const consumption = await consumeVerifiedSiteLicenseExternalClaim({
       issuer: claimPool.issuer,
+      audience: claimPool.audience,
       site_license_id: claimPool.site_license_id,
       pool_id: claimPool.id,
       jti: uuid(),
@@ -296,6 +302,10 @@ describe("site license external claim tokens", () => {
       privateKey,
       kid,
       payload: {
+        iss: claimPool.issuer,
+        aud: claimPool.audience,
+        site_license_id: claimPool.site_license_id,
+        pool_id: claimPool.id,
         jti,
         exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
         subject: "reader-456",
@@ -318,6 +328,36 @@ describe("site license external claim tokens", () => {
     expect(consumption.external_subject).toBe("reader-456");
   });
 
+  it("rejects compact claim tokens without explicit issuer, audience, site license, and pool binding", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool({
+      default_membership_duration_days: 30,
+    });
+    const { kid, privateKey } = await addEdDsaKey(claimPool.id);
+    const token = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        jti: uuid(),
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+      },
+    });
+
+    await expect(
+      consumeSiteLicenseExternalClaimToken({
+        token,
+        account_id,
+      }),
+    ).rejects.toThrow("pool_id is required");
+
+    const consumptions = await listSiteLicenseExternalClaimConsumptions({
+      pool_id: claimPool.id,
+      account_id,
+    });
+    expect(consumptions).toHaveLength(0);
+  });
+
   it("allows pending key reservations and rejects tokens until public key is added", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
@@ -338,6 +378,10 @@ describe("site license external claim tokens", () => {
       privateKey,
       kid,
       payload: {
+        iss: claimPool.issuer,
+        aud: claimPool.audience,
+        site_license_id: claimPool.site_license_id,
+        pool_id: claimPool.id,
         jti: uuid(),
         exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
       },
@@ -365,6 +409,10 @@ describe("site license external claim tokens", () => {
       privateKey,
       kid,
       payload: {
+        iss: claimPool.issuer,
+        aud: claimPool.audience,
+        site_license_id: claimPool.site_license_id,
+        pool_id: claimPool.id,
         jti: uuid(),
         exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
       },
@@ -433,6 +481,7 @@ describe("site license external claim tokens", () => {
     const { kid } = await addEdDsaKey(claimPool.id);
     const consumption = await consumeVerifiedSiteLicenseExternalClaim({
       issuer: claimPool.issuer,
+      audience: claimPool.audience,
       site_license_id: claimPool.site_license_id,
       pool_id: claimPool.id,
       jti: uuid(),
@@ -483,6 +532,7 @@ describe("site license external claim tokens", () => {
     const { claimPool } = await provisionExternalClaimPool();
     const consumption = await consumeVerifiedSiteLicenseExternalClaim({
       issuer: claimPool.issuer,
+      audience: claimPool.audience,
       site_license_id: claimPool.site_license_id,
       pool_id: claimPool.id,
       jti: uuid(),

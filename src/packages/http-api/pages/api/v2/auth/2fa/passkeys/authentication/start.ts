@@ -4,9 +4,14 @@
  */
 
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import isPost from "@cocalc/http-api/lib/api/is-post";
 import { startSignInPasskeyAuthentication } from "@cocalc/server/auth/passkeys";
 
 export default async function startPasskeyAuthenticationApi(req, res) {
+  if (!isPost(req, res)) {
+    return;
+  }
+
   try {
     const { challenge_id } = getParams(req);
     res.json(

@@ -44,6 +44,9 @@ const setSiteLicenseManagerMock = jest.fn();
 const removeSiteLicenseManagerMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
 const purchaseMembershipPackagesMock = jest.fn();
+const purchaseTeamLicenseChangeMock = jest.fn();
+const getTeamLicenseOverviewForOwnerMock = jest.fn();
+const resolveTeamLicenseQuoteMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const getClusterAccountByIdDirectMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
@@ -193,6 +196,18 @@ jest.mock("@cocalc/server/purchases/membership-package", () => ({
     purchaseMembershipPackagesMock(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/team-license", () => ({
+  purchaseTeamLicenseChange: (...args: any[]) =>
+    purchaseTeamLicenseChangeMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/team-licenses", () => ({
+  getTeamLicenseOverviewForOwner: (...args: any[]) =>
+    getTeamLicenseOverviewForOwnerMock(...args),
+  resolveTeamLicenseQuote: (...args: any[]) =>
+    resolveTeamLicenseQuoteMock(...args),
+}));
+
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: (...args: any[]) => isAdminMock(...args),
@@ -289,6 +304,11 @@ beforeEach(() => {
   getBrowserAuthSessionHashMock.mockReset();
   requireFreshAuthForSessionHashMock.mockReset();
   assertAccountTrustedForProductAccessMock.mockReset();
+  purchaseMembershipPackageMock.mockReset();
+  purchaseMembershipPackagesMock.mockReset();
+  purchaseTeamLicenseChangeMock.mockReset();
+  getTeamLicenseOverviewForOwnerMock.mockReset();
+  resolveTeamLicenseQuoteMock.mockReset();
   updateSiteLicensePoolMock.mockReset();
   updateSiteLicenseMock.mockReset();
   addSiteLicensePoolMock.mockReset();
@@ -1650,6 +1670,7 @@ describe("purchases membership packages", () => {
     const { purchaseMembershipPackage } = await import("./purchases");
     const result = await purchaseMembershipPackage({
       account_id: "owner-1",
+      session_hash: "session-1",
       kind: "course",
       seat_count: 5,
       course_project_id: "course-project-1",
@@ -1674,6 +1695,11 @@ describe("purchases membership packages", () => {
       "owner-1",
       "purchase memberships",
     );
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      allow_actor_impersonation: true,
+      session_hash: "session-1",
+    });
     expect(result).toEqual({
       package_id: "package-1",
       purchase_id: 17,
@@ -1696,6 +1722,40 @@ describe("purchases membership packages", () => {
 
     expect(requireFreshAuthForSessionHashMock).not.toHaveBeenCalled();
     expect(purchaseMembershipPackageMock).not.toHaveBeenCalled();
+  });
+
+  it("requires fresh auth for membership-package purchases without browser context", async () => {
+    const { purchaseMembershipPackage, purchaseMembershipPackages } =
+      await import("./purchases");
+
+    await expect(
+      purchaseMembershipPackage({
+        account_id: "owner-1",
+        kind: "team",
+        seat_count: 2,
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+    await expect(
+      purchaseMembershipPackages({
+        account_id: "owner-1",
+        products: [
+          {
+            type: "membership-package",
+            kind: "team",
+            membership_class: "standard",
+            seat_count: 2,
+            interval: "year",
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+
+    expect(purchaseMembershipPackageMock).not.toHaveBeenCalled();
+    expect(purchaseMembershipPackagesMock).not.toHaveBeenCalled();
   });
 
   it("requires fresh auth for browser membership-package purchases", async () => {
@@ -1807,6 +1867,23 @@ describe("purchases membership packages", () => {
         },
       ],
     });
+  });
+
+  it("requires fresh auth for team-license purchases without browser context", async () => {
+    const { purchaseTeamLicenseChange } = await import("./purchases");
+
+    await expect(
+      purchaseTeamLicenseChange({
+        account_id: "owner-1",
+        target_seats: {
+          standard: 1,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+
+    expect(purchaseTeamLicenseChangeMock).not.toHaveBeenCalled();
   });
 
   it("revokes a package seat for the owner", async () => {

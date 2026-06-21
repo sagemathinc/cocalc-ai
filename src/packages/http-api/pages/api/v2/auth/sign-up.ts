@@ -31,6 +31,7 @@ TIP: If you want to pass in an email like jd+1@example.com, use '%2B' in place o
 import { v4 } from "uuid";
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import {
   getEnabledSsoDomainPolicyForEmail,
   passwordSignupBlockedBySsoPolicy,
@@ -44,6 +45,10 @@ import {
   signUpTokenCheck,
 } from "@cocalc/server/auth/throttle";
 import { evaluateAccountCreationPolicy } from "@cocalc/server/auth/account-creation-policy";
+import {
+  checkRequiredSSO,
+  getEmailDomain,
+} from "@cocalc/server/auth/sso/check-required-sso";
 import redeemRegistrationToken, {
   deleteRegistrationToken,
   restoreRedeemedRegistrationToken,
@@ -189,10 +194,17 @@ export async function signUp(req, res) {
     });
     return;
   }
-  const ssoDomainPolicy = await getEnabledSsoDomainPolicyForEmail(email);
+  const [ssoDomainPolicy, ssoRequiredStrategy] = await Promise.all([
+    getEnabledSsoDomainPolicyForEmail(email),
+    getStrategies().then((strategies) =>
+      checkRequiredSSO({ email, strategies }),
+    ),
+  ]);
   const exclusive = passwordSignupBlockedBySsoPolicy(ssoDomainPolicy)
     ? ssoDomainPolicy?.domain
-    : undefined;
+    : ssoRequiredStrategy != null
+      ? getEmailDomain(email)
+      : undefined;
   const domainPolicy = evaluateAccountCreationPolicy({
     auth_method: "password",
     email,

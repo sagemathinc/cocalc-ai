@@ -2,18 +2,24 @@ import os from "node:os";
 import path from "node:path";
 
 const connectMock = jest.fn();
+const callHubMock = jest.fn();
 const inboxPrefixMock = jest.fn(() => "inbox-prefix");
 const setConatPasswordMock = jest.fn();
 const setConatClientMock = jest.fn();
 const disposeAcpAgentsMock = jest.fn(async () => {});
 const runDetachedAcpQueueWorkerMock = jest.fn(async () => {});
 const setAcpAdmissionLimitsProviderMock = jest.fn();
+const setAcpSessionPublisherOverrideMock = jest.fn();
+const publishActiveAcpSessionsMock = jest.fn(() => 0);
 const acpAdmissionLimitsFromEffectiveLimitsMock = jest.fn((limits) => ({
   converted: limits,
 }));
 const setAcpAdmissionDenialRecorderMock = jest.fn();
 const setContainerExecMock = jest.fn();
 const setPreferContainerExecutorMock = jest.fn();
+const loggerDebugMock = jest.fn();
+const loggerInfoMock = jest.fn();
+const loggerWarnMock = jest.fn();
 const projectRunnerClientMock = jest.fn(() => ({ kind: "runner-client" }));
 const initProjectRunnerFilesystemMock = jest.fn();
 const sandboxExecMock = jest.fn();
@@ -37,6 +43,8 @@ const resolveProjectHostPreferredMasterConatServerMock = jest.fn(
   () => "http://master.example",
 );
 const getProjectHostMasterConatTokenMock = jest.fn(() => "master-token");
+const masterConatClient = { kind: "master-client" };
+const getMasterConatClientMock = jest.fn(() => masterConatClient);
 const setMasterConatClientMock = jest.fn();
 const initSqliteMock = jest.fn();
 const getLocalHostIdMock = jest.fn(
@@ -55,12 +63,17 @@ jest.mock("@cocalc/conat/names", () => ({
   inboxPrefix: (...args: any[]) => inboxPrefixMock(...args),
 }));
 
+jest.mock("@cocalc/conat/hub/call-hub", () => ({
+  __esModule: true,
+  default: (...args: any[]) => callHubMock(...args),
+}));
+
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: () => ({
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
+    debug: loggerDebugMock,
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
   }),
 }));
 
@@ -82,6 +95,10 @@ jest.mock("@cocalc/lite/hub/acp", () => ({
     setAcpAdmissionDenialRecorderMock(...args),
   setAcpAdmissionLimitsProvider: (...args: any[]) =>
     setAcpAdmissionLimitsProviderMock(...args),
+  setAcpSessionPublisherOverride: (...args: any[]) =>
+    setAcpSessionPublisherOverrideMock(...args),
+  publishActiveAcpSessions: (...args: any[]) =>
+    publishActiveAcpSessionsMock(...args),
 }));
 
 jest.mock("@cocalc/lite/hub/acp/executor/container", () => ({
@@ -157,6 +174,7 @@ jest.mock("./master-conat-token", () => ({
 }));
 
 jest.mock("./master-status", () => ({
+  getMasterConatClient: (...args: any[]) => getMasterConatClientMock(...args),
   setMasterConatClient: (...args: any[]) => setMasterConatClientMock(...args),
 }));
 
@@ -208,6 +226,7 @@ describe("project-host ACP worker runtime wiring", () => {
     expect(setAcpAdmissionLimitsProviderMock).toHaveBeenCalledTimes(1);
     expect(setAcpAdmissionDenialRecorderMock).toHaveBeenCalledTimes(1);
     expect(wireProjectsApiMock).toHaveBeenCalledTimes(1);
+    expect(publishActiveAcpSessionsMock).toHaveBeenCalledTimes(1);
     expect(runDetachedAcpQueueWorkerMock).toHaveBeenCalledTimes(1);
   });
 
@@ -254,5 +273,79 @@ describe("project-host ACP worker runtime wiring", () => {
       acp_max_queued_per_account: 10,
     });
     await expect(provider({ project_id: " " })).resolves.toBeUndefined();
+  });
+
+  it("publishes ACP session state to the master hub from project-host workers", async () => {
+    const { main } = await import("./acp-worker");
+
+    await main();
+
+    expect(setAcpSessionPublisherOverrideMock).toHaveBeenCalledTimes(1);
+    const publisher = setAcpSessionPublisherOverrideMock.mock.calls[0][0];
+    await publisher({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      created_at: 1,
+      ended_at: null,
+      last_heartbeat: 2,
+      model: "gpt-test",
+      output_tokens: 8,
+      payment_source: "user",
+      project_id: "00000000-0000-4000-8000-000000000123",
+      session_id: "session-1",
+      started_at: 1,
+      state: "running",
+      terminal: 1,
+      thread_id: "thread-1",
+      title: "Test turn",
+      updated_at: 2,
+    });
+
+    expect(callHubMock).toHaveBeenCalledWith({
+      client: masterConatClient,
+      host_id: "00000000-1000-4000-8000-000000000123",
+      name: "aiSessions.upsertProjectHostSession",
+      args: [
+        expect.objectContaining({
+          project_id: "00000000-0000-4000-8000-000000000123",
+          session_id: "session-1",
+          state: "running",
+          terminal: true,
+        }),
+      ],
+      timeout: 5_000,
+    });
+  });
+
+  it("logs failed ACP session state publication to the master hub", async () => {
+    callHubMock.mockRejectedValueOnce(new Error("hub unavailable"));
+    const { main } = await import("./acp-worker");
+
+    await main();
+
+    const publisher = setAcpSessionPublisherOverrideMock.mock.calls[0][0];
+    await expect(
+      publisher({
+        account_id: "11111111-1111-4111-8111-111111111111",
+        project_id: "00000000-0000-4000-8000-000000000123",
+        session_key: "session-key",
+        session_id: "session-1",
+        state: "running",
+        terminal: 0,
+        updated_at: 2,
+      }),
+    ).rejects.toThrow("hub unavailable");
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "failed to publish ACP session state to master hub",
+      expect.objectContaining({
+        err: "Error: hub unavailable",
+        host_id: "00000000-1000-4000-8000-000000000123",
+        project_id: "00000000-0000-4000-8000-000000000123",
+        session_key: "session-key",
+        session_id: "session-1",
+        state: "running",
+        terminal: 0,
+      }),
+    );
   });
 });

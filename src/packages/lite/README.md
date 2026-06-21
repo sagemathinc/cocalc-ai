@@ -49,7 +49,6 @@ packages/lite/
 │   ├── acp.ts                # Agent/AI prompt execution service
 │   ├── changefeeds.ts        # Real-time data change notifications
 │   ├── llm.ts                # LLM (Language Model) integration
-│   ├── proxy.ts              # WebSocket proxy for /conat-remote upgrades
 │   ├── settings.ts           # Configuration/customization payload
 │   ├── blobs/                # File blob storage
 │   │   ├── download.ts       # Download blob handler
@@ -80,7 +79,6 @@ packages/lite/
   - Initializes HTTP server (HTTP/HTTPS)
   - Creates Conat server for internal communication
   - Sets up project services, changefeeds, LLM, and ACP agents
-  - Optionally connects to remote CoCalc instance
 
 ### HTTP/Network Layer
 
@@ -103,7 +101,6 @@ packages/lite/
 - **`hub/api.ts`**: Lightweight hub API
   - Subscribes to `hub.*.*.api` messages
   - Delegates to local SQLite for queries
-  - Falls back to remote hub if available
   - Implements minimal HubApi interface
 
 - **`hub/changefeeds.ts`**: Real-time data synchronization
@@ -121,8 +118,6 @@ packages/lite/
   - Loads API keys from settings (OpenAI, Google Vertex AI, Anthropic, Mistral)
   - Provides token counting via heuristics
 
-- **`hub/proxy.ts`**: WebSocket upgrade proxy
-  - Proxies `/conat-remote` upgrade requests to an upstream hub
   - Attaches auth cookie headers for the proxied connection
 
 - **`hub/acp/`**: Agent Client Protocol (AI prompt execution)
@@ -171,6 +166,7 @@ packages/lite/
 1. **Offline Development**: Run CoCalc completely offline on your laptop
 2. **Edge Computing**: Deploy as a binary on edge devices
 3. **Desktop App**: Package as Electron app for Mac/Windows/Linux
+
 ## Packaging & Builds
 
 - Distribution-focused workflows (bundle, tarball, SEA, Electron) now live in [../plus](../plus/README.md) to keep Lite lean. Use the Plus package for shipping artifacts.

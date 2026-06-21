@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import { interruptAcp } from "@cocalc/conat/ai/acp/client";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -14,6 +15,7 @@ import type {
   AiSessionInterruptAllResponse,
   AiSessionInterruptResponse,
   AiSessionRecord,
+  AiSessionsAdminListOptions,
   AiSessionsListOptions,
   AiSessionState,
 } from "@cocalc/conat/hub/api/ai-sessions";
@@ -23,6 +25,15 @@ const TABLE = "ai_sessions";
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 100;
 const MAX_TEXT_BYTES = 8192;
+const logger = getLogger("server:ai:acp-sessions");
+const RECONCILIATION_ENABLED =
+  `${process.env.COCALC_AI_SESSION_RECONCILIATION_ENABLED ?? "true"}`
+    .trim()
+    .toLowerCase() !== "false";
+const RECONCILIATION_INTERVAL_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_AI_SESSION_RECONCILIATION_INTERVAL_MS ?? 60_000),
+);
 
 const TERMINAL_STATES = new Set<AiSessionState>([
   "completed",
@@ -33,6 +44,8 @@ const TERMINAL_STATES = new Set<AiSessionState>([
 ]);
 
 let schemaReady: Promise<void> | undefined;
+let reconciliationTimer: NodeJS.Timeout | undefined;
+let reconciliationRunning = false;
 
 export async function ensureAiSessionsSchema(): Promise<void> {
   schemaReady ??= (async () => {
@@ -275,7 +288,12 @@ export async function upsertProjectHostAiSession({
         parent_message_id = COALESCE(EXCLUDED.parent_message_id, ${TABLE}.parent_message_id),
         state = EXCLUDED.state,
         terminal = EXCLUDED.terminal,
-        payment_source_kind = COALESCE(EXCLUDED.payment_source_kind, ${TABLE}.payment_source_kind),
+        payment_source_kind = CASE
+          WHEN EXCLUDED.payment_source_kind IS NOT NULL
+               AND EXCLUDED.payment_source_kind != 'unknown'
+          THEN EXCLUDED.payment_source_kind
+          ELSE ${TABLE}.payment_source_kind
+        END,
         payment_source_id = COALESCE(EXCLUDED.payment_source_id, ${TABLE}.payment_source_id),
         payment_source_label = COALESCE(EXCLUDED.payment_source_label, ${TABLE}.payment_source_label),
         payment_source_owner_account_id = COALESCE(EXCLUDED.payment_source_owner_account_id, ${TABLE}.payment_source_owner_account_id),
@@ -346,7 +364,9 @@ export async function listAiSessionsForAccount({
     1,
     Math.min(MAX_LIMIT, Math.floor(Number(opts?.limit ?? DEFAULT_LIMIT))),
   );
-  const conditions = ["account_id=$1::UUID"];
+  const conditions = [
+    "(account_id=$1::UUID OR payment_source_owner_account_id=$1::UUID)",
+  ];
   const params: unknown[] = [caller];
   if (opts?.activeOnly) {
     conditions.push("terminal IS NOT TRUE");
@@ -363,6 +383,23 @@ export async function listAiSessionsForAccount({
     params.push(cleanRequiredUuid(opts.host_id, "host_id"));
     conditions.push(`host_id=$${params.length}::UUID`);
   }
+  if (opts?.payment_source_kind) {
+    params.push(cleanText(opts.payment_source_kind, 80));
+    conditions.push(`payment_source_kind=$${params.length}`);
+  }
+  if (opts?.payment_source_id) {
+    params.push(cleanText(opts.payment_source_id, 256));
+    conditions.push(`payment_source_id=$${params.length}`);
+  }
+  if (opts?.payment_source_owner_account_id) {
+    params.push(
+      cleanRequiredUuid(
+        opts.payment_source_owner_account_id,
+        "payment_source_owner_account_id",
+      ),
+    );
+    conditions.push(`payment_source_owner_account_id=$${params.length}::UUID`);
+  }
   params.push(limit);
   await ensureAiSessionsSchema();
   const { rows } = await getPool().query(
@@ -376,6 +413,83 @@ export async function listAiSessionsForAccount({
              last_heartbeat_at, finished_at, error, metadata AS metadata_json
       FROM ${TABLE}
       WHERE ${conditions.join(" AND ")}
+      ORDER BY updated_at DESC
+      LIMIT $${params.length}
+    `,
+    params,
+  );
+  return rows.map((row) => {
+    const ownSession = row.account_id === caller;
+    return {
+      ...row,
+      terminal: !!row.terminal,
+      path: ownSession ? row.path : null,
+      thread_id: ownSession ? row.thread_id : null,
+      message_id: ownSession ? row.message_id : null,
+      parent_message_id: ownSession ? row.parent_message_id : null,
+      title: ownSession ? row.title : null,
+      prompt_snippet: ownSession ? row.prompt_snippet : null,
+      metadata_json: JSON.stringify(row.metadata_json ?? {}),
+    };
+  }) as AiSessionRecord[];
+}
+
+export async function listAiSessionsForAdmin({
+  opts,
+}: {
+  opts?: AiSessionsAdminListOptions;
+} = {}): Promise<AiSessionRecord[]> {
+  const limit = Math.max(
+    1,
+    Math.min(MAX_LIMIT, Math.floor(Number(opts?.limit ?? DEFAULT_LIMIT))),
+  );
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (opts?.activeOnly) {
+    conditions.push("terminal IS NOT TRUE");
+  }
+  if (opts?.target_account_id) {
+    params.push(cleanRequiredUuid(opts.target_account_id, "target_account_id"));
+    conditions.push(`account_id=$${params.length}::UUID`);
+  }
+  if (opts?.project_id) {
+    params.push(cleanRequiredUuid(opts.project_id, "project_id"));
+    conditions.push(`project_id=$${params.length}::UUID`);
+  }
+  if (opts?.host_id) {
+    params.push(cleanRequiredUuid(opts.host_id, "host_id"));
+    conditions.push(`host_id=$${params.length}::UUID`);
+  }
+  if (opts?.payment_source_kind) {
+    params.push(cleanText(opts.payment_source_kind, 80));
+    conditions.push(`payment_source_kind=$${params.length}`);
+  }
+  if (opts?.payment_source_id) {
+    params.push(cleanText(opts.payment_source_id, 256));
+    conditions.push(`payment_source_id=$${params.length}`);
+  }
+  if (opts?.payment_source_owner_account_id) {
+    params.push(
+      cleanRequiredUuid(
+        opts.payment_source_owner_account_id,
+        "payment_source_owner_account_id",
+      ),
+    );
+    conditions.push(`payment_source_owner_account_id=$${params.length}::UUID`);
+  }
+  params.push(limit);
+  await ensureAiSessionsSchema();
+  const { rows } = await getPool().query(
+    `
+      SELECT session_key, session_id, op_id, project_id::TEXT, account_id::TEXT,
+             approver_account_id::TEXT, host_id::TEXT, path, thread_id,
+             message_id, parent_message_id, state, terminal,
+             payment_source_kind, payment_source_id, payment_source_label,
+             payment_source_owner_account_id::TEXT, model, agent_kind, run_kind,
+             title, prompt_snippet, queued_at, started_at, updated_at,
+             last_heartbeat_at, finished_at, error, metadata AS metadata_json
+      FROM ${TABLE}
+      ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
       ORDER BY updated_at DESC
       LIMIT $${params.length}
     `,
@@ -457,6 +571,39 @@ async function getAiSessionForAccount({
   } as AiSessionDbRow;
 }
 
+async function getAiSessionForAdmin({
+  identity,
+}: {
+  identity: AiSessionIdentity;
+}): Promise<AiSessionDbRow | undefined> {
+  const params: unknown[] = [];
+  const where = identityWhere({ identity, params });
+  await ensureAiSessionsSchema();
+  const { rows } = await getPool().query(
+    `
+      SELECT session_key, session_id, op_id, project_id::TEXT, account_id::TEXT,
+             approver_account_id::TEXT, host_id::TEXT, path, thread_id,
+             message_id, parent_message_id, state, terminal,
+             payment_source_kind, payment_source_id, payment_source_label,
+             payment_source_owner_account_id::TEXT, model, agent_kind, run_kind,
+             title, prompt_snippet, queued_at, started_at, updated_at,
+             last_heartbeat_at, finished_at, error, metadata AS metadata_json
+      FROM ${TABLE}
+      WHERE ${where}
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `,
+    params,
+  );
+  const row = rows[0];
+  if (!row) return undefined;
+  return {
+    ...row,
+    terminal: !!row.terminal,
+    metadata_json: JSON.stringify(row.metadata_json ?? {}),
+  } as AiSessionDbRow;
+}
+
 async function updateAiSessionState({
   session_key,
   state,
@@ -503,12 +650,6 @@ function interruptRequestFromRow({
 }) {
   const path = cleanText(row.path, 2048) ?? "";
   const threadId = cleanText(row.thread_id, 512) ?? undefined;
-  const messageDate = (
-    timestamp(row.started_at) ??
-    timestamp(row.queued_at) ??
-    timestamp(row.updated_at) ??
-    new Date()
-  ).toISOString();
   return {
     project_id: row.project_id,
     account_id,
@@ -523,7 +664,7 @@ function interruptRequestFromRow({
             message_id: cleanText(row.message_id, 512) ?? undefined,
             parent_message_id:
               cleanText(row.parent_message_id, 512) ?? undefined,
-            message_date: messageDate,
+            message_date: "",
             sender_id: "openai-codex-agent",
           }
         : undefined,
@@ -644,6 +785,117 @@ export async function interruptAiSessionForAccount({
   }
 }
 
+export async function interruptAiSessionForAdmin({
+  actor_account_id,
+  session_key,
+  session_id,
+  op_id,
+  note,
+}: {
+  actor_account_id: string;
+  session_key?: string;
+  session_id?: string;
+  op_id?: string;
+  note?: string;
+}): Promise<AiSessionInterruptResponse> {
+  const actor = cleanRequiredUuid(actor_account_id, "actor_account_id");
+  const row = await getAiSessionForAdmin({
+    identity: { session_key, session_id, op_id },
+  });
+  if (!row) {
+    return {
+      ok: false,
+      state: "missing",
+      terminal: true,
+      message: "session not found",
+    };
+  }
+  if (row.terminal || isTerminalState(row.state)) {
+    return {
+      ok: true,
+      state: "already_terminal",
+      terminal: true,
+      ...baseInterruptResponse(row),
+    };
+  }
+  await updateAiSessionState({
+    session_key: row.session_key,
+    state: "interrupting",
+    terminal: false,
+    metadata: {
+      admin_interrupt_requested_at: new Date().toISOString(),
+      admin_interrupt_requested_by: actor,
+    },
+  });
+  try {
+    const response = await interruptAcp(
+      interruptRequestFromRow({ row, account_id: actor, note }),
+      await conat(),
+    );
+    if (response.state === "interrupted" || response.state === "repaired") {
+      await updateAiSessionState({
+        session_key: row.session_key,
+        state: "interrupted",
+        terminal: true,
+        metadata: {
+          interrupt_result: response.state,
+          admin_interrupt_requested_by: actor,
+        },
+      });
+      return {
+        ok: true,
+        state: response.state,
+        terminal: true,
+        ...baseInterruptResponse(row),
+      };
+    }
+    if (response.state === "missing") {
+      await updateAiSessionState({
+        session_key: row.session_key,
+        state: "interrupted",
+        terminal: true,
+        error: "interrupt reported no live session",
+        metadata: {
+          interrupt_result: "missing",
+          admin_interrupt_requested_by: actor,
+        },
+      });
+      return {
+        ok: true,
+        state: "missing",
+        terminal: true,
+        ...baseInterruptResponse(row),
+        message: "backend reported no live session",
+      };
+    }
+    return {
+      ok: true,
+      state: "queued",
+      terminal: false,
+      ...baseInterruptResponse(row),
+      message: "interrupt request queued",
+    };
+  } catch (err) {
+    await updateAiSessionState({
+      session_key: row.session_key,
+      state: "possibly_active",
+      terminal: false,
+      error: `admin interrupt transport failed: ${err}`,
+      metadata: {
+        interrupt_result: "transport_failed",
+        admin_interrupt_requested_by: actor,
+      },
+    });
+    return {
+      ok: false,
+      state: "transport_failed",
+      terminal: false,
+      ...baseInterruptResponse(row),
+      message: `${err}`,
+    };
+  }
+}
+
 export async function interruptAllAiSessionsForAccount({
   account_id,
   limit,
@@ -660,6 +912,46 @@ export async function interruptAllAiSessionsForAccount({
     results.push(
       await interruptAiSessionForAccount({
         account_id,
+        session_key: row.session_key,
+        note,
+      }),
+    );
+  }
+  return {
+    total: results.length,
+    terminal: results.filter((result) => result.terminal).length,
+    uncertain: results.filter((result) => !result.terminal).length,
+    results,
+  };
+}
+
+export async function interruptAllAiSessionsForAdmin({
+  actor_account_id,
+  target_account_id,
+  project_id,
+  host_id,
+  limit,
+  note,
+}: AiSessionInterruptAllOptions & {
+  actor_account_id: string;
+  target_account_id?: string;
+  project_id?: string;
+  host_id?: string;
+}): Promise<AiSessionInterruptAllResponse> {
+  const rows = await listAiSessionsForAdmin({
+    opts: {
+      activeOnly: true,
+      target_account_id,
+      project_id,
+      host_id,
+      limit,
+    },
+  });
+  const results: AiSessionInterruptResponse[] = [];
+  for (const row of rows) {
+    results.push(
+      await interruptAiSessionForAdmin({
+        actor_account_id,
         session_key: row.session_key,
         note,
       }),
@@ -733,4 +1025,52 @@ export async function markHostStoppedAiSessions({
     [hostId, cleanText(reason, 2048) ?? "host stopped"],
   );
   return rowCount ?? 0;
+}
+
+export async function runAiSessionReconciliationMaintenanceTick(): Promise<
+  number | null
+> {
+  if (reconciliationRunning) return null;
+  reconciliationRunning = true;
+  try {
+    const count = await markStaleAiSessionsPossiblyActive();
+    if (count > 0) {
+      logger.info("AI session reconciliation marked stale sessions", {
+        count,
+      });
+    }
+    return count;
+  } catch (err) {
+    logger.warn("AI session reconciliation failed", { err: `${err}` });
+    throw err;
+  } finally {
+    reconciliationRunning = false;
+  }
+}
+
+export function startAiSessionReconciliationMaintenance(): void {
+  if (!RECONCILIATION_ENABLED) {
+    logger.info("AI session reconciliation maintenance disabled");
+    return;
+  }
+  if (reconciliationTimer) return;
+  reconciliationTimer = setInterval(() => {
+    void runAiSessionReconciliationMaintenanceTick();
+  }, RECONCILIATION_INTERVAL_MS);
+  reconciliationTimer.unref?.();
+  void runAiSessionReconciliationMaintenanceTick();
+  logger.info("AI session reconciliation maintenance started", {
+    interval_ms: RECONCILIATION_INTERVAL_MS,
+  });
+}
+
+export function stopAiSessionReconciliationMaintenance(): void {
+  if (!reconciliationTimer) return;
+  clearInterval(reconciliationTimer);
+  reconciliationTimer = undefined;
+}
+
+export function resetAiSessionReconciliationMaintenanceStateForTests(): void {
+  stopAiSessionReconciliationMaintenance();
+  reconciliationRunning = false;
 }

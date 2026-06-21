@@ -73,6 +73,7 @@ afterAll(after);
 describe("membership packages", () => {
   const teamTier = `team-tier-${uuid()}`;
   const teamTier2 = `team-tier-${uuid()}`;
+  const hiddenTeamTier = `hidden-team-tier-${uuid()}`;
   const courseTier = `course-tier-${uuid()}`;
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
@@ -118,12 +119,21 @@ describe("membership packages", () => {
       priority: 25,
       price_monthly: 20,
       price_yearly: 200,
+      team_visible: true,
     });
     await createTestMembershipTier({
       id: teamTier2,
       priority: 30,
       price_monthly: 50,
       price_yearly: 500,
+      team_visible: true,
+    });
+    await createTestMembershipTier({
+      id: hiddenTeamTier,
+      priority: 35,
+      price_monthly: 60,
+      price_yearly: 600,
+      team_visible: false,
     });
     await createTestMembershipTier({
       id: courseTier,
@@ -830,6 +840,106 @@ describe("membership packages", () => {
     );
   });
 
+  it("does not over-assign a one-seat site-license pool under concurrent claims", async () => {
+    const owner_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const domain = `race-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(owner_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await markVerifiedEmail(first_account_id, `first@${domain}`);
+    await markVerifiedEmail(second_account_id, `second@${domain}`);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        allowed_domains: [domain],
+        site_license_id: uuid(),
+      },
+    });
+
+    const results = await Promise.allSettled([
+      claimMembershipPackageSeat({
+        package_id,
+        account_id: first_account_id,
+      }),
+      claimMembershipPackageSeat({
+        package_id,
+        account_id: second_account_id,
+      }),
+    ]);
+
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(`${(rejected[0] as PromiseRejectedResult).reason}`).toContain(
+      "no seats available",
+    );
+
+    const details = await listMembershipPackageDetailsForOwner({
+      owner_account_id,
+    });
+    const pkg = details.find((pkg) => pkg.id === package_id);
+    expect(pkg?.active_assignment_count).toBe(1);
+    expect(pkg?.available_seat_count).toBe(0);
+  });
+
+  it("does not allow direct entitlement expansion for non-site packages", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const expires_at = dayjs().add(30, "day").toDate();
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 2,
+      expires_at,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+
+    await expect(
+      updateMembershipPackage({
+        package_id,
+        seat_count: 3,
+      }),
+    ).rejects.toThrow(
+      "seat_count increases must go through membership package purchase",
+    );
+    await expect(
+      updateMembershipPackage({
+        package_id,
+        expires_at: dayjs(expires_at).add(1, "day").toDate(),
+      }),
+    ).rejects.toThrow(
+      "expires_at extensions must go through membership package purchase",
+    );
+    await expect(
+      updateMembershipPackage({
+        package_id,
+        expires_at: null,
+      }),
+    ).rejects.toThrow(
+      "expires_at extensions must go through membership package purchase",
+    );
+
+    const shortened = dayjs(expires_at).subtract(1, "day").toDate();
+    const updated = await updateMembershipPackage({
+      package_id,
+      seat_count: 1,
+      expires_at: shortened,
+    });
+    expect(updated.seat_count).toBe(1);
+    expect(updated.expires_at?.toISOString()).toBe(shortened.toISOString());
+  });
+
   it("updates site-license domains for future claims without revoking existing seats", async () => {
     const owner_account_id = uuid();
     const first_account_id = uuid();
@@ -1249,6 +1359,177 @@ describe("membership packages", () => {
         { kind: "team", membership_class: teamTier, seat_count: 2 },
         { kind: "team", membership_class: teamTier2, seat_count: 1 },
       ]),
+    );
+  });
+
+  it("does not duplicate membership package purchases when fulfillment is retried", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: teamTier,
+      seat_count: 2,
+      interval: "year" as const,
+    };
+
+    const first = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 400,
+      fulfillment_id: "pi_membership_package_retry",
+      product,
+    });
+    const second = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 400,
+      fulfillment_id: "pi_membership_package_retry",
+      product,
+    });
+
+    expect(second).toEqual(first);
+    const details = await listMembershipPackageDetailsForOwner({
+      owner_account_id,
+    });
+    expect(details).toHaveLength(1);
+    expect(details[0]).toMatchObject({
+      id: first.package_id,
+      membership_class: teamTier,
+      seat_count: 2,
+    });
+    const purchases = await getPool().query(
+      "SELECT COUNT(*)::int AS count FROM purchases WHERE account_id=$1 AND invoice_id LIKE 'membership-package:pi_membership_package_retry:%'",
+      [owner_account_id],
+    );
+    expect(purchases.rows[0].count).toBe(1);
+  });
+
+  it("does not duplicate membership package expansions when fulfillment is retried", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 2,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+    const product = {
+      type: "membership-package" as const,
+      membership_class: teamTier,
+      package_id,
+      seat_count: 1,
+    };
+
+    const first = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 20,
+      fulfillment_id: "pi_membership_package_expand_retry",
+      product,
+    });
+    const second = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 20,
+      fulfillment_id: "pi_membership_package_expand_retry",
+      product,
+    });
+
+    expect(second).toEqual(first);
+    const details = await listMembershipPackageDetailsForOwner({
+      owner_account_id,
+    });
+    expect(details.find(({ id }) => id === package_id)).toMatchObject({
+      seat_count: 3,
+    });
+    const purchases = await getPool().query(
+      "SELECT COUNT(*)::int AS count FROM purchases WHERE account_id=$1 AND invoice_id LIKE 'membership-package:pi_membership_package_expand_retry:%'",
+      [owner_account_id],
+    );
+    expect(purchases.rows[0].count).toBe(1);
+  });
+
+  it("rejects hidden team tiers in membership package purchases and expansions", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: hiddenTeamTier,
+      seat_count: 1,
+      interval: "year" as const,
+    };
+
+    await expect(resolveMembershipPackageQuote(product)).rejects.toThrow(
+      `membership tier "${hiddenTeamTier}" is not available for team packages`,
+    );
+    await expect(
+      purchaseMembershipPackage({
+        account_id: owner_account_id,
+        amount: 600,
+        product,
+      }),
+    ).rejects.toThrow(
+      `membership tier "${hiddenTeamTier}" is not available for team packages`,
+    );
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: hiddenTeamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "year",
+        seat_price: 600,
+      },
+    });
+    await expect(
+      resolveMembershipPackageQuote({
+        ...product,
+        package_id,
+      }),
+    ).rejects.toThrow(
+      `membership tier "${hiddenTeamTier}" is not available for team packages`,
+    );
+  });
+
+  it("rejects generic site membership package purchases", async () => {
+    await expect(
+      resolveMembershipPackageQuote({
+        type: "membership-package",
+        kind: "site",
+        membership_class: teamTier,
+        seat_count: 1,
+        interval: "year",
+      }),
+    ).rejects.toThrow(
+      "site membership packages must be managed through site licenses",
+    );
+
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "year",
+        seat_price: 200,
+      },
+    });
+    await expect(
+      resolveMembershipPackageQuote({
+        type: "membership-package",
+        kind: "site",
+        membership_class: teamTier,
+        seat_count: 1,
+        interval: "year",
+        package_id,
+      }),
+    ).rejects.toThrow(
+      "site membership packages must be managed through site licenses",
     );
   });
 

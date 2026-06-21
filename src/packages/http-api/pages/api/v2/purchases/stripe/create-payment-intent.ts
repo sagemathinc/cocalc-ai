@@ -23,6 +23,9 @@ export default async function handle(req, res) {
 }
 
 async function get(req) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to modify Stripe billing details");
+  }
   const { user_account_id, lineItems, purpose, description, metadata } =
     getParams(req);
   await assertPaymentCheckoutAllowed();

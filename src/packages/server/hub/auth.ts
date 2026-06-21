@@ -78,6 +78,7 @@ import {
 import {
   exchangeGoogleOidcCode,
   googleOidcAuthorizationUrl,
+  googleHostedDomainsForTokenVerification,
   googleProfileFromClaims,
   verifyGoogleIdToken,
 } from "@cocalc/server/auth/sso/google-oidc";
@@ -139,12 +140,15 @@ interface HandleReturnOpts {
 
 interface GoogleOidcState {
   nonce: string;
+  browserBinding: string;
   target?: string;
   authenticatedAccountId?: string;
   termsAccepted?: boolean;
   marketingConsent?: boolean;
   registrationToken?: string;
 }
+
+const GOOGLE_OIDC_BROWSER_STATE_COOKIE = `${base_path}google_oidc_state`;
 
 function safeAuthTarget(value: unknown): string | undefined {
   const target = `${value ?? ""}`.trim();
@@ -188,6 +192,25 @@ function escapeHtml(value: unknown): string {
 
 function displayNameForPassport(name: string): string {
   return name === GOOGLE_SSO_STRATEGY ? "Google" : name;
+}
+
+export function assertExclusiveDomainsUnique(passports: {
+  [k: string]: PassportStrategyDB;
+}): void {
+  const seen: { [k: string]: string } = {};
+  for (const strategyName in passports) {
+    const strategy = passports[strategyName];
+    for (const rawDomain of strategy.info?.exclusive_domains ?? []) {
+      const domain = `${rawDomain ?? ""}`.trim().toLowerCase();
+      if (!domain) continue;
+      if (seen[domain] != null) {
+        throw new Error(
+          `exclusive domain '${domain}' defined by ${seen[domain]} and ${strategyName}: they must be unique`,
+        );
+      }
+      seen[domain] = strategyName;
+    }
+  }
 }
 
 function passportLoginErrorHtml({
@@ -455,18 +478,7 @@ export class PassportManager {
 
   // check if exclusive domains are unique
   private check_exclusive_domains_unique() {
-    const ret: { [k: string]: string } = {};
-    for (const k in this.passports) {
-      const v = this.passports[k];
-      for (const domain of v.info?.exclusive_domains ?? []) {
-        if (ret[domain] != null) {
-          throw new Error(
-            `exclusive domain '${domain}' defined by ${ret[domain]} and ${k}: they must be unique`,
-          );
-        }
-        ret[domain] = k;
-      }
-    }
+    assertExclusiveDomainsUnique(this.passports ?? {});
   }
 
   private init_strategies_endpoint(): void {
@@ -727,6 +739,27 @@ export class PassportManager {
     return `${this.auth_url}/google/return`;
   }
 
+  private googleOidcStartURL(req: express.Request): string {
+    if (this.auth_url == null) {
+      throw new Error("auth_url must be initialized before Google OIDC");
+    }
+    const target = new URL(`${this.auth_url}/google`);
+    target.search = new URL(
+      req.originalUrl ?? req.url ?? "",
+      "https://placeholder.invalid",
+    ).search;
+    return target.toString();
+  }
+
+  private isGoogleOidcStartOnCanonicalHost(req: express.Request): boolean {
+    if (this.auth_url == null) {
+      throw new Error("auth_url must be initialized before Google OIDC");
+    }
+    const currentHost = `${req.get("host") ?? ""}`.trim().toLowerCase();
+    if (!currentHost) return true;
+    return currentHost === new URL(this.auth_url).host.toLowerCase();
+  }
+
   private async getGoogleOidcStrategy(): Promise<PassportStrategyDB> {
     const { strategy } = await getGoogleSsoSettingsState();
     if (strategy == null) {
@@ -750,6 +783,7 @@ export class PassportManager {
     }
     const policies = await getEnabledSsoDomainPolicies();
     applyDomainPoliciesToPassports(passports, policies);
+    assertExclusiveDomainsUnique(passports);
     return passports;
   }
 
@@ -760,12 +794,18 @@ export class PassportManager {
       this.handle_get_api_key,
       async (req, res) => {
         try {
+          if (!this.isGoogleOidcStartOnCanonicalHost(req)) {
+            res.redirect(this.googleOidcStartURL(req));
+            return;
+          }
           const strategy = await this.getGoogleOidcStrategy();
           const clientID = strategy.conf.clientID;
           const state = uuidv4();
           const nonce = uuidv4();
+          const browserBinding = uuidv4();
           const savedState: GoogleOidcState = {
             nonce,
+            browserBinding,
             target: safeAuthTarget(req.query.target),
             authenticatedAccountId: await getAccountId(req),
             termsAccepted: booleanQueryFlag(req.query.terms),
@@ -773,6 +813,17 @@ export class PassportManager {
             registrationToken: stringQueryValue(req.query.registration_token),
           };
           await stateCache.saveAsync(state, JSON.stringify(savedState));
+          new Cookies(req, res).set(
+            GOOGLE_OIDC_BROWSER_STATE_COOKIE,
+            browserBinding,
+            {
+              httpOnly: true,
+              maxAge: 60 * 60 * 1000,
+              overwrite: true,
+              sameSite: "lax",
+              secure: req.protocol === "https",
+            },
+          );
           res.redirect(
             googleOidcAuthorizationUrl({
               clientID: clientID!,
@@ -796,6 +847,14 @@ export class PassportManager {
     this.router.get(`${AUTH_BASE}/google/return`, async (req, res) => {
       let passportLogin: PassportLogin | undefined;
       try {
+        const cookies = new Cookies(req, res);
+        const browserBinding = cookies.get(GOOGLE_OIDC_BROWSER_STATE_COOKIE);
+        cookies.set(GOOGLE_OIDC_BROWSER_STATE_COOKIE, undefined, {
+          httpOnly: true,
+          overwrite: true,
+          sameSite: "lax",
+          secure: req.protocol === "https",
+        });
         const strategy = await this.getGoogleOidcStrategy();
         const clientID = strategy.conf.clientID!;
         const clientSecret = strategy.conf.clientSecret!;
@@ -819,7 +878,16 @@ export class PassportManager {
         if (!savedState.nonce) {
           throw new Error("Google OIDC state did not include a nonce.");
         }
+        if (
+          !browserBinding ||
+          !savedState.browserBinding ||
+          browserBinding !== savedState.browserBinding
+        ) {
+          throw new Error("Google OIDC browser state did not match.");
+        }
 
+        const passports = await this.getLivePassports(strategy);
+        const googleStrategy = passports[GOOGLE_SSO_STRATEGY] ?? strategy;
         const tokens = await exchangeGoogleOidcCode({
           code: req.query.code,
           clientID,
@@ -829,11 +897,12 @@ export class PassportManager {
         const claims = await verifyGoogleIdToken({
           idToken: tokens.id_token,
           clientID,
+          hostedDomains:
+            googleHostedDomainsForTokenVerification(googleStrategy),
           nonce: savedState.nonce,
         });
         const profile = googleProfileFromClaims(claims);
         const emails = profile.emails?.map((email) => email.value) ?? [];
-        const passports = await this.getLivePassports(strategy);
         passportLogin = new PassportLogin({
           passports,
           database: this.database,

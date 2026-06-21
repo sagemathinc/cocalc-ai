@@ -216,7 +216,7 @@ function tierFeatures(tier: PublicMembershipTier): Record<string, unknown> {
 
 const COMPARISON_GROUPS: ComparisonGroup[] = [
   {
-    title: "Project Limits",
+    title: "Limits Per Project",
     rows: [
       {
         label: "CPU priority",
@@ -243,14 +243,14 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     ],
   },
   {
-    title: "Global Limits",
+    title: "Global Limits Across All Projects",
     rows: [
       {
-        label: "Projects owned",
+        label: "Owned Projects",
         value: ({ tier }) => formatNumberValue(usageLimits(tier).max_projects),
       },
       {
-        label: "Projects running",
+        label: "Running Projects",
         value: ({ tier }) =>
           formatNumberValue(usageLimits(tier).max_sponsored_running_projects),
       },
@@ -283,12 +283,12 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     title: "Functionality",
     rows: [
       {
-        label: "Dedicated hosts",
+        label: "Dedicated Project Host VM with much larger RAM, CPU, and Disk (pay as you go)",
         value: ({ tier }) =>
           formatBooleanValue(tierFeatures(tier).create_hosts),
       },
       {
-        label: "Postpaid dedicated-host billing",
+        label: "Pay at the end of the month for dedicated project host",
         value: ({ tier }) =>
           formatBooleanValue(
             hasPositiveUsageLimit(

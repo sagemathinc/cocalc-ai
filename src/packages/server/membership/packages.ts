@@ -43,7 +43,11 @@ import {
   queueMembershipGrantSyncEffect,
   queueMembershipProjectUsageSyncEffect,
 } from "./side-effects";
-import { getMembershipPrice, getMembershipTierById } from "./tiers";
+import {
+  getMembershipPrice,
+  getMembershipTierById,
+  type MembershipTierRecord,
+} from "./tiers";
 import {
   resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
@@ -170,6 +174,53 @@ function normalizePackageKind(kind?: string): MembershipPackageKind {
     throw Error(`unsupported membership package kind '${kind}'`);
   }
   return kind as MembershipPackageKind;
+}
+
+function isMembershipTierVisibleForPackageKind({
+  kind,
+  tier,
+}: {
+  kind: MembershipPackageKind;
+  tier: MembershipTierRecord;
+}): boolean {
+  switch (kind) {
+    case "course":
+      return tier.course_store_visible === true;
+    case "team":
+      return tier.team_visible === true;
+    case "site":
+      return false;
+  }
+}
+
+async function getPurchasableMembershipTierForPackageKind({
+  kind,
+  membership_class,
+  client,
+}: {
+  kind: MembershipPackageKind;
+  membership_class: MembershipClass;
+  client?: PoolClient;
+}): Promise<MembershipTierRecord> {
+  if (kind === "site") {
+    throw Error(
+      "site membership packages must be managed through site licenses",
+    );
+  }
+  const tier = await getMembershipTierById({
+    id: membership_class,
+    client,
+  });
+  if (
+    !tier ||
+    tier.disabled ||
+    !isMembershipTierVisibleForPackageKind({ kind, tier })
+  ) {
+    throw Error(
+      `membership tier "${membership_class}" is not available for ${kind} packages`,
+    );
+  }
+  return tier;
 }
 
 function normalizeStoredPackageKind(kind?: string): MembershipPackageKind {
@@ -1086,12 +1137,26 @@ async function withPackageOwnerWriteFence<T>({
   }
   if (isSeedBay() && isSeedAuthoritativeSitePackage(pkg)) {
     if (client != null) {
-      return await fn({ client, pkg });
+      const lockedPkg = await getMembershipPackageForUpdate({
+        package_id,
+        client,
+      });
+      if (!lockedPkg) {
+        throw Error("membership package not found");
+      }
+      return await fn({ client, pkg: lockedPkg });
     }
     const dbClient = await getPool().connect();
     try {
       await dbClient.query("BEGIN");
-      const result = await fn({ client: dbClient, pkg });
+      const lockedPkg = await getMembershipPackageForUpdate({
+        package_id,
+        client: dbClient,
+      });
+      if (!lockedPkg) {
+        throw Error("membership package not found");
+      }
+      const result = await fn({ client: dbClient, pkg: lockedPkg });
       await dbClient.query("COMMIT");
       return result;
     } catch (err) {
@@ -1107,12 +1172,29 @@ async function withPackageOwnerWriteFence<T>({
       action,
       client,
     });
-    return await fn({ client, pkg });
+    const lockedPkg = await getMembershipPackageForUpdate({
+      package_id,
+      client,
+    });
+    if (!lockedPkg) {
+      throw Error("membership package not found");
+    }
+    return await fn({ client, pkg: lockedPkg });
   }
   return await withAccountRehomeWriteFence({
     account_id: pkg.owner_account_id,
     action,
-    fn: async (db) => await fn({ client: db as PoolClient, pkg }),
+    fn: async (db) => {
+      const dbClient = db as PoolClient;
+      const lockedPkg = await getMembershipPackageForUpdate({
+        package_id,
+        client: dbClient,
+      });
+      if (!lockedPkg) {
+        throw Error("membership package not found");
+      }
+      return await fn({ client: dbClient, pkg: lockedPkg });
+    },
   });
 }
 
@@ -1217,13 +1299,12 @@ async function getTierSeatQuote({
   expires_at?: Date;
   client?: PoolClient;
 }): Promise<MembershipPackageQuote> {
-  const tier = await getMembershipTierById({
-    id: membership_class,
+  const kind = normalizePackageKind(product.kind);
+  const tier = await getPurchasableMembershipTierForPackageKind({
+    kind,
+    membership_class,
     client,
   });
-  if (!tier || tier.disabled) {
-    throw Error(`membership tier "${membership_class}" is not available`);
-  }
   const seat_price = getMembershipPrice(tier, interval);
   const start = starts_at ?? new Date();
   const end =
@@ -1232,7 +1313,7 @@ async function getTierSeatQuote({
       ? dayjs(start).add(1, "month").toDate()
       : dayjs(start).add(1, "year").toDate());
   return {
-    kind: normalizePackageKind(product.kind),
+    kind,
     membership_class,
     seat_count: normalizeSeatCount(product.seat_count),
     seat_price,
@@ -1263,6 +1344,11 @@ export async function resolveMembershipPackageQuote(
     if (!existing) {
       throw Error("membership package not found");
     }
+    await getPurchasableMembershipTierForPackageKind({
+      kind: existing.kind,
+      membership_class: existing.membership_class,
+      client,
+    });
     const seat_price =
       toNumber(existing.metadata?.seat_price) ??
       (existing.kind === "course" &&
@@ -1280,7 +1366,7 @@ export async function resolveMembershipPackageQuote(
           ).seat_price
         : (
             await getTierSeatQuote({
-              product,
+              product: { ...product, kind: existing.kind },
               membership_class: existing.membership_class,
               interval:
                 (`${existing.metadata?.interval ?? product.interval ?? ""}` ===
@@ -1617,8 +1703,30 @@ export async function updateMembershipPackage({
           `seat_count cannot be less than the ${activeSeatCount} active assigned seats`,
         );
       }
+      if (
+        pkg.kind !== "site" &&
+        normalizedSeatCount != null &&
+        normalizedSeatCount > pkg.seat_count
+      ) {
+        throw Error(
+          "seat_count increases must go through membership package purchase",
+        );
+      }
       const nextExpiresAt =
         expires_at === undefined ? undefined : asDate(expires_at);
+      if (pkg.kind !== "site" && expires_at !== undefined) {
+        if (nextExpiresAt == null) {
+          if (pkg.expires_at != null) {
+            throw Error(
+              "expires_at extensions must go through membership package purchase",
+            );
+          }
+        } else if (pkg.expires_at != null && nextExpiresAt > pkg.expires_at) {
+          throw Error(
+            "expires_at extensions must go through membership package purchase",
+          );
+        }
+      }
       if (allowed_domains !== undefined && pkg.kind !== "site") {
         throw Error("allowed_domains can only be updated for site packages");
       }
@@ -1774,6 +1882,36 @@ export async function getMembershipPackage({
         updated
       FROM membership_packages
       WHERE id=$1
+    `,
+    [package_id],
+  );
+  return normalizePackageRecord(rows[0]);
+}
+
+async function getMembershipPackageForUpdate({
+  package_id,
+  client,
+}: {
+  package_id: string;
+  client: PoolClient;
+}): Promise<MembershipPackageRecord | undefined> {
+  const { rows } = await client.query<RawMembershipPackageRecord>(
+    `
+      SELECT
+        id,
+        owner_account_id,
+        kind,
+        membership_class,
+        seat_count,
+        purchase_id,
+        starts_at,
+        expires_at,
+        metadata,
+        created,
+        updated
+      FROM membership_packages
+      WHERE id=$1
+      FOR UPDATE
     `,
     [package_id],
   );

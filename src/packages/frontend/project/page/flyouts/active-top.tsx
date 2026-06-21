@@ -168,7 +168,7 @@ export function ActiveTop(props: Readonly<ActiveTopProps>) {
 
     switch (sortTabs) {
       case "custom":
-        icon = <Icon name="database" rotate="270" />;
+        icon = <Icon name="list-alt" />;
         nextSort = "alphanum-down";
         title =
           "Showing open files in custom order (drag to reorder). Click to sort alphabetically.";

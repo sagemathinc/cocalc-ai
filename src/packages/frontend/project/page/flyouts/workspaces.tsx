@@ -1419,18 +1419,31 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const body = (
     <div style={{ paddingRight: isFlyout ? 4 : 0 }}>
       <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-        <Space wrap size={[6, 6]}>
+        <Space
+          wrap
+          size={[6, 6]}
+          style={{ paddingLeft: isFlyout ? 8 : 4 }}
+        >
           <Popover
             trigger="click"
             content={
-              <div style={{ maxWidth: 280 }}>
-                A workspace filters visible tabs by an absolute directory path
-                inside this project. It does not close files or change
-                permissions.
+              <div style={{ maxWidth: 320 }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                  How to use workspaces
+                </div>
+                <div style={{ color: COLORS.GRAY_D, lineHeight: 1.35 }}>
+                  Workspaces show tabs from a project folder. They do not close
+                  files, move files, or change permissions.
+                </div>
               </div>
             }
           >
-            <Button size="small">?</Button>
+            <Button
+              aria-label="Workspace information"
+              icon={<Icon name="info" />}
+              shape="circle"
+              size="small"
+            />
           </Popover>
           {workspaceSelectionTagChoices().map((tag) => (
             <Tag.CheckableTag

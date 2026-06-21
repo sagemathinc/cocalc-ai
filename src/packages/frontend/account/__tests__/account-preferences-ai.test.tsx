@@ -9,6 +9,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("antd", () => ({
   Alert: ({ children }: any) => <div>{children}</div>,
+  Button: ({ children, onClick }: any) => (
+    <button onClick={onClick}>{children}</button>
+  ),
+  Modal: ({ children, open }: any) => (open ? <div>{children}</div> : null),
   Typography: {
     Title: ({ children }: any) => <div>{children}</div>,
     Paragraph: ({ children }: any) => <div>{children}</div>,
@@ -29,6 +33,11 @@ jest.mock("../codex-credentials-panel", () => ({
 
 jest.mock("../codex-defaults-panel", () => ({
   CodexDefaultsPanel: () => <div>CodexDefaultsPanel</div>,
+}));
+
+jest.mock("../codex-sessions-panel", () => ({
+  __esModule: true,
+  default: () => <div>CodexSessionsPanel</div>,
 }));
 
 jest.mock("../lite-ai-settings", () => ({

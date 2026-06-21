@@ -3,13 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Space } from "antd";
+import { Alert, Button, Input, Modal, Segmented, Space } from "antd";
+import { useMemo, useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
+import { file_associations } from "@cocalc/frontend/file-associations";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { NEW_FILETYPE_ICONS } from "@cocalc/frontend/project/new/consts";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
+import { capitalize, keys } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -17,6 +20,7 @@ interface Props {
   file_search: string;
   current_path: string;
   project_id: string;
+  canCreateFiles?: boolean;
   openUploadFiles?: () => void;
 }
 
@@ -24,6 +28,7 @@ export default function NoFiles({
   file_search = "",
   current_path,
   project_id,
+  canCreateFiles = true,
   openUploadFiles,
 }: Props) {
   let actions:
@@ -115,62 +120,58 @@ export default function NoFiles({
       />
     );
   }
-  if (
-    normalizeAbsolutePath(current_path) !==
-    normalizeAbsolutePath(getProjectHomeDirectory(project_id))
-  ) {
-    return (
-      <Alert
-        type="info"
-        showIcon
-        style={{ margin: "16px 16px 16px 0" }}
-        title="This folder is empty."
-        description={
-          <Space wrap style={{ marginTop: 8 }}>
-            <Button size="small" type="primary" onClick={openNewPage}>
-              +New
-            </Button>
-          </Space>
-        }
-      />
-    );
-  }
+  const isProjectHome =
+    normalizeAbsolutePath(current_path) ===
+    normalizeAbsolutePath(getProjectHomeDirectory(project_id));
+
   return (
     <EmptyDirectoryWelcome
       openNewPage={openNewPage}
       createFile={createFile}
       aiAllowed={aiAllowed}
+      canCreateFiles={canCreateFiles}
       openUploadFiles={openUploadFiles}
+      context={isProjectHome ? "project" : "folder"}
     />
   );
 }
+
+type EmptyDirectoryContext = "project" | "folder";
 
 function EmptyDirectoryWelcome({
   createFile,
   openNewPage,
   aiAllowed,
+  canCreateFiles,
   openUploadFiles,
+  context,
 }: {
   createFile: (ext: string) => void;
   openNewPage: () => void;
   aiAllowed: boolean;
+  canCreateFiles: boolean;
   openUploadFiles?: () => void;
+  context: EmptyDirectoryContext;
 }) {
+  const [showMoreFileTypes, setShowMoreFileTypes] = useState(false);
+  const heading = context === "project" ? "No files yet" : "This folder is empty";
+  const description =
+    context === "project"
+      ? "Create a notebook, terminal, folder, or upload files to get started."
+      : "Create a notebook, terminal, folder, or upload files here.";
   const actions: {
     title: string;
     description: string;
     tooltip: string;
     icon: IconName;
-    color: string;
     onClick?: () => void;
     className?: string;
   }[] = [
     {
-      title: "Jupyter",
-      description: "Notebook",
-      tooltip: "Create a notebook for code, text, plots, and results.",
+      title: "Notebook",
+      description: "Jupyter",
+      tooltip: "Create a Jupyter notebook for code, text, plots, and results.",
       icon: NEW_FILETYPE_ICONS.ipynb,
-      color: COLORS.COCALC_ORANGE,
       onClick: () => createFile("ipynb"),
     },
     ...(aiAllowed
@@ -180,7 +181,6 @@ function EmptyDirectoryWelcome({
             description: "AI chat",
             tooltip: "Start an AI agent thread in this project.",
             icon: NEW_FILETYPE_ICONS.chat,
-            color: COLORS.ANTD_LINK_BLUE,
             onClick: () => createFile("chat"),
           },
         ]
@@ -190,7 +190,6 @@ function EmptyDirectoryWelcome({
       description: "Shell",
       tooltip: "Open a shell in this project environment.",
       icon: NEW_FILETYPE_ICONS.term,
-      color: COLORS.GRAY_D,
       onClick: () => createFile("term"),
     },
     {
@@ -198,8 +197,7 @@ function EmptyDirectoryWelcome({
       description: "Files",
       tooltip: "Add files from your computer to this project.",
       icon: "cloud-upload",
-      color: COLORS.BS_GREEN_D,
-      onClick: openUploadFiles,
+      onClick: openUploadFiles ?? openNewPage,
       className: "upload-button",
     },
     {
@@ -207,7 +205,6 @@ function EmptyDirectoryWelcome({
       description: "Document",
       tooltip: "Create a LaTeX document for math-rich writing.",
       icon: NEW_FILETYPE_ICONS.tex,
-      color: COLORS.BLUE_D,
       onClick: () => createFile("tex"),
     },
     {
@@ -215,142 +212,353 @@ function EmptyDirectoryWelcome({
       description: "Notes",
       tooltip: "Create a Markdown note, README, or project context file.",
       icon: NEW_FILETYPE_ICONS.md,
-      color: COLORS.ANTD_LINK_BLUE_DARK,
       onClick: () => createFile("md"),
     },
     {
       title: "Folder",
       description: "Directory",
       tooltip: "Create a folder to organize files in this project.",
-      icon: "folder",
-      color: COLORS.BS_GREEN,
+      icon: NEW_FILETYPE_ICONS["/"],
       onClick: () => createFile("/"),
     },
     {
-      title: "Other",
-      description: "More types",
-      tooltip: "Open the full file creator for more file types.",
+      title: "More",
+      description: "File types",
+      tooltip: canCreateFiles
+        ? "Choose from more file types without leaving this page."
+        : "Open the guarded file creator for more file types.",
       icon: "plus-circle",
-      color: COLORS.GRAY_M,
-      onClick: openNewPage,
+      onClick: canCreateFiles ? () => setShowMoreFileTypes(true) : openNewPage,
     },
   ];
 
   return (
-    <div
-      data-testid="empty-directory-welcome"
-      style={{
-        margin: "32px auto 28px auto",
-        width: "calc(100% - 56px)",
-        maxWidth: 960,
-        border: `1px solid ${COLORS.GRAY_DDD}`,
-        borderRadius: 16,
-        overflow: "hidden",
-        background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL} 0%, ${COLORS.GRAY_LLL} 55%, ${COLORS.BS_GREEN_LL} 100%)`,
-        boxShadow: `0 12px 32px ${COLORS.GRAY_DDD}`,
-      }}
-    >
+    <>
       <div
+        data-testid="empty-directory-welcome"
         style={{
-          padding: "26px 28px 10px 28px",
+          margin: "26px auto",
+          width: "calc(100% - 48px)",
+          maxWidth: 900,
           textAlign: "center",
         }}
       >
-        <h2
-          style={{
-            margin: "0 0 6px 0",
-            color: COLORS.GRAY_DD,
-            fontSize: 26,
-            fontWeight: 700,
-          }}
-        >
-          Welcome to your project
-        </h2>
         <div
           style={{
-            color: COLORS.GRAY_M,
-            fontSize: 15,
-            maxWidth: 620,
-            margin: "0 auto",
+            marginBottom: 14,
           }}
         >
-          Create a notebook, terminal, folder, or upload files to get started.
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(112px, 1fr))",
-          gap: 10,
-          padding: "18px 22px 22px 22px",
-        }}
-      >
-        {actions.map((action) => (
-          <Tooltip
-            key={action.title}
-            title={action.tooltip}
-            placement="bottom"
-            mouseEnterDelay={0.35}
+          <h2
+            style={{
+              margin: "0 0 4px 0",
+              color: COLORS.GRAY_DD,
+              fontSize: 22,
+              fontWeight: 600,
+            }}
           >
-            <button
-              aria-label={action.tooltip}
-              className={action.className}
-              onClick={action.onClick}
-              type="button"
-              style={{
-                textAlign: "center",
-                border: `1px solid ${COLORS.GRAY_DDD}`,
-                borderRadius: 12,
-                padding: "12px 10px",
-                minHeight: 88,
-                background: "white",
-                cursor: "pointer",
-                boxShadow: `0 6px 18px ${COLORS.GRAY_DDD}`,
-              }}
+            {heading}
+          </h2>
+          <div
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: 14,
+              maxWidth: 520,
+              margin: "0 auto",
+            }}
+          >
+            {description}
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
+            gap: 8,
+          }}
+        >
+          {actions.map((action) => (
+            <Tooltip
+              key={action.title}
+              title={action.tooltip}
+              placement="bottom"
+              mouseEnterDelay={0.35}
             >
-              <div
+              <button
+                aria-label={action.tooltip}
+                className={action.className}
+                onClick={action.onClick}
+                type="button"
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                  marginBottom: 6,
+                  textAlign: "center",
+                  border: `1px solid ${COLORS.GRAY_DDD}`,
+                  borderRadius: 8,
+                  padding: "10px 8px",
+                  minHeight: 76,
+                  background: "white",
+                  cursor: "pointer",
+                  boxShadow: `0 2px 8px ${COLORS.GRAY_LLL}`,
                 }}
               >
-                <span
+                <div
                   style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 10,
-                    display: "inline-flex",
+                    display: "flex",
+                    flexDirection: "column",
                     alignItems: "center",
                     justifyContent: "center",
-                    background: action.color,
-                    color: "white",
-                    fontSize: 16,
+                    gap: 6,
+                    marginBottom: 4,
                   }}
                 >
-                  <Icon name={action.icon} />
-                </span>
-                <strong style={{ color: COLORS.GRAY_DD, fontSize: 15 }}>
-                  {action.title}
-                </strong>
-              </div>
-              <div
+                  <span
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 7,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: COLORS.BLUE_LLLL,
+                      border: `1px solid ${COLORS.BLUE_LLL}`,
+                      color: COLORS.BLUE_DD,
+                      fontSize: 15,
+                    }}
+                  >
+                    <Icon name={action.icon} />
+                  </span>
+                  <strong style={{ color: COLORS.GRAY_DD, fontSize: 14 }}>
+                    {action.title}
+                  </strong>
+                </div>
+                <div
+                  style={{
+                    color: COLORS.GRAY_M,
+                    lineHeight: 1.2,
+                    fontSize: 12,
+                  }}
+                >
+                  {action.description}
+                </div>
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+      </div>
+      <MoreFileTypesModal
+        createFile={createFile}
+        onClose={() => setShowMoreFileTypes(false)}
+        open={showMoreFileTypes}
+      />
+    </>
+  );
+}
+
+interface MoreFileType {
+  ext: string;
+  icon: IconName;
+  label: string;
+}
+
+type MoreFileTypeSort = "recommended" | "alphabetical";
+type MoreFileTypeView = "grid" | "list";
+
+const PRIMARY_EMPTY_ACTIONS = new Set([
+  "/",
+  "chat",
+  "ipynb",
+  "md",
+  "term",
+  "tex",
+]);
+const PREFERRED_MORE_FILE_TYPES = [
+  "py",
+  "r",
+  "jl",
+  "sage",
+  "qmd",
+  "rmd",
+  "slides",
+  "board",
+  "tasks",
+  "course",
+  "csv",
+  "json",
+  "html",
+];
+
+function buildMoreFileTypes(): MoreFileType[] {
+  const ordered = [
+    ...PREFERRED_MORE_FILE_TYPES,
+    ...keys(file_associations).sort(),
+  ];
+  const seenExt = new Set<string>();
+  const seenLabel = new Set<string>();
+  const types: MoreFileType[] = [];
+
+  for (let ext of ordered) {
+    if (PRIMARY_EMPTY_ACTIONS.has(ext)) continue;
+    const association = file_associations[ext];
+    if (association?.exclude_from_menu) continue;
+    const value = association?.ext ?? ext;
+    if (!value || PRIMARY_EMPTY_ACTIONS.has(value) || seenExt.has(value)) {
+      continue;
+    }
+    const info = file_associations[value] ?? association;
+    const label = capitalize(info?.name ?? value);
+    const dedupeKey = label.toLowerCase();
+    if (seenLabel.has(dedupeKey)) continue;
+    seenExt.add(value);
+    seenLabel.add(dedupeKey);
+    types.push({
+      ext: value,
+      icon: (info?.icon ?? "file") as IconName,
+      label,
+    });
+  }
+
+  return types;
+}
+
+function MoreFileTypesModal({
+  createFile,
+  onClose,
+  open,
+}: {
+  createFile: (ext: string) => void;
+  onClose: () => void;
+  open: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const [sortMode, setSortMode] = useState<MoreFileTypeSort>("recommended");
+  const [viewMode, setViewMode] = useState<MoreFileTypeView>("grid");
+  const fileTypes = useMemo(() => buildMoreFileTypes(), []);
+  const sortedFileTypes = useMemo(() => {
+    if (sortMode === "recommended") return fileTypes;
+    return [...fileTypes].sort(
+      (a, b) => a.label.localeCompare(b.label) || a.ext.localeCompare(b.ext),
+    );
+  }, [fileTypes, sortMode]);
+  const query = search.trim().toLowerCase();
+  const filtered = query
+    ? sortedFileTypes.filter(
+        ({ ext, label }) =>
+          label.toLowerCase().includes(query) ||
+          ext.toLowerCase().includes(query),
+      )
+    : sortedFileTypes;
+
+  function createAndClose(ext: string) {
+    createFile(ext);
+    setSearch("");
+    onClose();
+  }
+
+  return (
+    <Modal
+      footer={null}
+      open={open}
+      onCancel={() => {
+        setSearch("");
+        onClose();
+      }}
+      title="More file types"
+      width={680}
+    >
+      <div
+        style={{
+          alignItems: "center",
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        <Input
+          allowClear
+          aria-label="Search file types"
+          placeholder="Search file types..."
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          style={{ flex: "1 1 220px", minWidth: 220 }}
+        />
+        <Segmented
+          aria-label="Sort file types"
+          options={[
+            { label: "Recommended", value: "recommended" },
+            { label: "A-Z", value: "alphabetical" },
+          ]}
+          value={sortMode}
+          onChange={(value) => setSortMode(value as MoreFileTypeSort)}
+        />
+        <Segmented
+          aria-label="View file types"
+          options={[
+            { label: "Grid", value: "grid" },
+            { label: "List", value: "list" },
+          ]}
+          value={viewMode}
+          onChange={(value) => setViewMode(value as MoreFileTypeView)}
+        />
+      </div>
+      <div
+        data-testid="more-file-types-list"
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            viewMode === "grid"
+              ? "repeat(auto-fit, minmax(130px, 1fr))"
+              : "1fr",
+          gap: 8,
+          maxHeight: 360,
+          overflowY: "auto",
+          paddingRight: 2,
+        }}
+      >
+        {filtered.map((type) => (
+          <button
+            aria-label={`Create ${type.label}`}
+            key={type.ext}
+            onClick={() => createAndClose(type.ext)}
+            type="button"
+            style={{
+              alignItems: "center",
+              background: "white",
+              border: `1px solid ${COLORS.GRAY_DDD}`,
+              borderRadius: 8,
+              cursor: "pointer",
+              display: "flex",
+              gap: 8,
+              minHeight: 46,
+              padding: "8px 10px",
+              textAlign: "left",
+            }}
+          >
+            <Icon name={type.icon} />
+            <span style={{ minWidth: 0 }}>
+              <span
                 style={{
-                  color: COLORS.GRAY_M,
-                  lineHeight: 1.25,
-                  fontSize: 12,
+                  color: COLORS.GRAY_DD,
+                  display: "block",
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
-                {action.description}
-              </div>
-            </button>
-          </Tooltip>
+                {type.label}
+              </span>
+              <span style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                .{type.ext}
+              </span>
+            </span>
+          </button>
         ))}
       </div>
-    </div>
+      {filtered.length === 0 ? (
+        <div style={{ color: COLORS.GRAY_M, padding: "18px 0" }}>
+          No file types match that search.
+        </div>
+      ) : null}
+    </Modal>
   );
 }

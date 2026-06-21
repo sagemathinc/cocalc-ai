@@ -23,7 +23,13 @@ import {
   useRedux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, Tooltip, r_join } from "@cocalc/frontend/components";
+import {
+  Icon,
+  IconName,
+  Tooltip,
+  r_join,
+} from "@cocalc/frontend/components";
+import type { IconRotation } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import { ICON_USERS } from "@cocalc/frontend/project/servers/consts";
@@ -84,6 +90,7 @@ type FixedTabs = {
       isVisible?: boolean;
     }) => React.JSX.Element;
     flyoutTitle?: string | ReactNode | IntlMessage;
+    iconRotate?: IconRotation;
     noAnonymous?: boolean;
     noLite?: boolean;
     noFullPage?: boolean; // if true, then this tab can't be opened in a full page
@@ -110,7 +117,8 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
   active: {
     label: labels.tabs,
     flyoutTitle: "File Tabs",
-    icon: "edit",
+    icon: "database",
+    iconRotate: "270",
     flyout: ActiveFlyout,
     noAnonymous: false,
     noFullPage: true,
@@ -153,8 +161,14 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     noAnonymous: false,
   },
   rootfs: {
-    label: "RootFS",
-    flyoutTitle: "RootFS",
+    label: defineMessage({
+      id: "project.page.file-tab.rootfs.label",
+      defaultMessage: "Software",
+    }),
+    flyoutTitle: defineMessage({
+      id: "project.page.flyout.rootfs.title",
+      defaultMessage: "Project Software",
+    }),
     icon: "docker",
     flyout: RootfsFlyout,
     noAnonymous: false,
@@ -173,7 +187,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
       id: "project.page.file-tab.servers.label",
       defaultMessage: "Apps",
     }),
-    icon: "server",
+    icon: "overview",
     flyout: ServersFlyout,
     noAnonymous: false,
   },
@@ -213,6 +227,26 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     }),
   },
 } as const;
+
+export function FixedProjectTabIcon({
+  iconName,
+  name,
+  style,
+}: {
+  iconName?: IconName;
+  name: FixedTab;
+  style?: CSSProperties;
+}) {
+  return (
+    <Icon
+      name={iconName ?? FIXED_PROJECT_TABS[name].icon}
+      rotate={
+        iconName == null ? FIXED_PROJECT_TABS[name].iconRotate : undefined
+      }
+      style={style}
+    />
+  );
+}
 
 interface Props0 {
   project_id: string;
@@ -366,10 +400,7 @@ export function FileTab(props: Readonly<Props>) {
 
   if (label == null) throw Error("label must not be null");
 
-  const icon =
-    path != null
-      ? (file_options(path)?.icon ?? "code-o")
-      : (props.iconName ?? FIXED_PROJECT_TABS[name!].icon);
+  const icon = path != null ? (file_options(path)?.icon ?? "code-o") : null;
 
   const image = path == null ? props.imageUrl?.trim() : undefined;
   const workspaceAccentColor = workspaceRecord?.theme.color ?? null;
@@ -439,6 +470,11 @@ export function FileTab(props: Readonly<Props>) {
     }
   }
 
+  const iconStyle = {
+    display: condensed ? "inline-block" : undefined,
+    ...icon_style,
+  };
+
   const iconNode = image ? (
     <img
       src={image}
@@ -453,13 +489,16 @@ export function FileTab(props: Readonly<Props>) {
         verticalAlign: "middle",
       }}
     />
-  ) : (
+  ) : path != null ? (
     <Icon
-      style={{
-        display: condensed ? "inline-block" : undefined,
-        ...icon_style,
-      }}
+      style={iconStyle}
       name={icon}
+    />
+  ) : (
+    <FixedProjectTabIcon
+      name={name as FixedTab}
+      iconName={props.iconName}
+      style={iconStyle}
     />
   );
 

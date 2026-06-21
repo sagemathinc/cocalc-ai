@@ -18,7 +18,6 @@ import {
   type AcpDaemonStatus,
 } from "@cocalc/conat/ai/acp/daemon-control";
 import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
-import { getRemoteHubForChildProcess } from "@cocalc/lite/remote";
 import {
   listQueuedAcpJobs,
   listRunningAcpJobs,
@@ -97,13 +96,6 @@ function workerRollingCapable(worker: WorkerProcessInfo): boolean {
       ACP_WORKER_ROLLING_CAPABILITY &&
     `${worker.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim().length > 0
   );
-}
-
-function remoteHubChildEnv(
-  remoteHub: string | undefined,
-): Record<string, string> {
-  const value = `${remoteHub ?? ""}`.trim();
-  return value ? { REMOTE_HUB: value } : {};
 }
 
 export function planProjectHostAcpWorkerRollout({
@@ -715,7 +707,6 @@ function spawnProjectHostAcpWorker({
   const stdout = openSync(ACP_WORKER_LOG_FILE, "a");
   const env = {
     ...process.env,
-    ...remoteHubChildEnv(getRemoteHubForChildProcess()),
     CONAT_SERVER: conatServer,
     DATA: data,
     COCALC_DATA: data,
@@ -914,5 +905,4 @@ export const __test__ = {
   resetProjectHostAcpWorkerSpawnBackoff,
   workerDatabaseStateProtectsUnresponsiveWorker,
   workerControlStartupGraceExpired,
-  remoteHubChildEnv,
 };
