@@ -677,10 +677,10 @@ function FeaturesIndex() {
                 maxWidth: 600,
               }}
             >
-              For research, engineering, and technical teams. Each page shows
-              one workflow — AI-assisted work, notebooks, runtime environments,
-              language stacks, or teaching — with a concrete example and a
-              route-specific next step.
+              For research, engineering, and technical teams whose work needs
+              notebooks, code, terminals, documents, outputs, TimeTravel
+              history, collaborators, and AI-assisted review to stay together.
+              Choose the workflow you need next.
             </Paragraph>
           </div>
         </Flex>

@@ -823,6 +823,25 @@ Plus/Star/Launchpad`).
   --silent` (90/90), `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static build:dev`,
   and browser QA for `/features/julia` + `/features/octave` desktop/mobile (72/72). Screenshots
   reviewed from `/tmp/cocalc-public-qa-NG326m`; no PR.
+- **START 2026-06-21:** Implementing Slice 4c from the logged proposal: add the
+  multi-artifact/unoccupied-bundle line on `/features`, update `/features/compare` hero/quick-read
+  copy, and convert compare decision rows into a labeled `Choose CoCalc when` / `Choose a lighter
+  tool when` table if the existing source supports it. Claimed files:
+  `src/packages/frontend/public/features/app.tsx`,
+  `src/packages/frontend/public/features/compare-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: protected home, pitch docs, docs
+  routes/content, pricing/compliance, type/palette visual work, the dedicated-compute draft, and
+  PRs.
+- **END 2026-06-21:** Slice 4c landed in source: `/features` now names the multi-artifact project
+  bundle in the index lead; `/features/compare` now contrasts CoCalc with lighter tools in the hero
+  and quick-read; the decision checklist is a semantic table with `Decision question`, `Choose
+  CoCalc when`, and `Choose a lighter tool when` columns that stacks into labeled rows on mobile.
+  Validation: `git diff --check`, `pnpm --dir src/packages/frontend exec jest
+  public/features/__tests__/app.test.tsx --runInBand --silent` (90/90), `pnpm lint:frontend` from
+  `src`, `pnpm -C src/packages/static build:dev`, and browser QA for `/features` +
+  `/features/compare` desktop/mobile (88/88). Screenshots reviewed from
+  `/tmp/cocalc-public-qa-cXFSHV`; no PR.
 
 ### Codex — platform-UI thread
 

@@ -94,13 +94,17 @@ function DecisionRow({
   question: string;
 }) {
   return (
-    <div className="cocalc-compare-row">
-      <Text strong className="cocalc-compare-row-question">
+    <tr className="cocalc-compare-row">
+      <th className="cocalc-compare-row-question" scope="row">
         {question}
-      </Text>
-      <Paragraph style={{ margin: 0 }}>{cocalc}</Paragraph>
-      <Paragraph style={{ margin: 0 }}>{other}</Paragraph>
-    </div>
+      </th>
+      <td data-label="Choose CoCalc when">
+        <Paragraph style={{ margin: 0 }}>{cocalc}</Paragraph>
+      </td>
+      <td data-label="Choose a lighter tool when">
+        <Paragraph style={{ margin: 0 }}>{other}</Paragraph>
+      </td>
+    </tr>
   );
 }
 
@@ -160,20 +164,38 @@ const COMPARE_PAGE_CSS = `
     overflow: hidden;
   }
 
-  .cocalc-compare-row {
-    display: grid;
-    gap: 18px;
-    grid-template-columns: 0.75fr 1fr 1fr;
-    padding: 18px 20px;
+  .cocalc-compare-table {
+    border-collapse: collapse;
+    width: 100%;
   }
 
-  .cocalc-compare-row + .cocalc-compare-row {
+  .cocalc-compare-table th,
+  .cocalc-compare-table td {
+    padding: 18px 20px;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .cocalc-compare-table thead th {
+    background: ${alpha(PUBLIC_COLORS.brandTint, 0.5)};
+    border-bottom: 1px solid ${PUBLIC_COLORS.border};
+    color: ${PUBLIC_COLORS.heading};
+    font-size: ${PUBLIC_TYPE.small};
+  }
+
+  .cocalc-compare-row + .cocalc-compare-row th,
+  .cocalc-compare-row + .cocalc-compare-row td {
     border-top: 1px solid ${PUBLIC_COLORS.border};
   }
 
   .cocalc-compare-row-question {
     color: ${PUBLIC_COLORS.heading};
     font-size: 16px;
+    width: 26%;
+  }
+
+  .cocalc-compare-table td {
+    width: 37%;
   }
 
   .cocalc-compare-route-panel {
@@ -196,13 +218,59 @@ const COMPARE_PAGE_CSS = `
   }
 
   @media (max-width: 900px) {
-    .cocalc-compare-hero,
-    .cocalc-compare-row {
+    .cocalc-compare-hero {
       grid-template-columns: minmax(0, 1fr) !important;
     }
 
-    .cocalc-compare-row {
-      gap: 8px;
+    .cocalc-compare-table,
+    .cocalc-compare-table thead,
+    .cocalc-compare-table tbody,
+    .cocalc-compare-table tr,
+    .cocalc-compare-table th,
+    .cocalc-compare-table td {
+      display: block;
+      width: 100%;
+    }
+
+    .cocalc-compare-table thead {
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      height: 1px;
+      overflow: hidden;
+      position: absolute;
+      white-space: nowrap;
+      width: 1px;
+    }
+
+    .cocalc-compare-table tbody tr {
+      padding: 18px 20px;
+    }
+
+    .cocalc-compare-row + .cocalc-compare-row {
+      border-top: 1px solid ${PUBLIC_COLORS.border};
+    }
+
+    .cocalc-compare-table tbody th,
+    .cocalc-compare-table tbody td {
+      padding: 0;
+    }
+
+    .cocalc-compare-row + .cocalc-compare-row th,
+    .cocalc-compare-row + .cocalc-compare-row td {
+      border-top: 0;
+    }
+
+    .cocalc-compare-table tbody td {
+      margin-top: 10px;
+    }
+
+    .cocalc-compare-table tbody td::before {
+      color: ${PUBLIC_COLORS.heading};
+      content: attr(data-label);
+      display: block;
+      font-size: ${PUBLIC_TYPE.small};
+      font-weight: 600;
+      margin-bottom: 3px;
     }
   }
 
@@ -287,10 +355,10 @@ export default function CompareFeaturePage({
                 maxWidth: "65ch",
               }}
             >
-              CoCalc is worth evaluating when the work is larger than one
-              notebook, dashboard, or editor. It helps when people need to
-              review active work, recover context with TimeTravel, and choose
-              where the workspace runs.
+              Evaluate CoCalc when notebooks, code, terminals, documents,
+              outputs, TimeTravel history, collaborators, and AI-assisted
+              review need to stay together. Choose a lighter tool when one
+              notebook, dashboard, editor, or report is the whole job.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -305,10 +373,13 @@ export default function CompareFeaturePage({
             </Text>
             <ul className="cocalc-compare-list">
               <li>
-                Best fit: work that needs review, handoff, and TimeTravel
-                recovery.
+                Best fit: multi-artifact projects that need review, handoff,
+                and TimeTravel recovery.
               </li>
-              <li>Better elsewhere: one-off notebooks or isolated reports.</li>
+              <li>
+                Better elsewhere: one-off notebooks, dashboards, editors, or
+                isolated reports.
+              </li>
               <li>Next question: who operates the workspace?</li>
             </ul>
           </div>
@@ -320,15 +391,23 @@ export default function CompareFeaturePage({
         intro="Start with the shape of the work, not the names of competing tools. These questions decide whether CoCalc belongs in the evaluation before pricing, procurement, or deployment details take over."
         title="Decision checklist"
       >
-        <div
+        <table
           aria-label="CoCalc compare decision rows"
-          className="cocalc-compare-checklist"
-          role="group"
+          className="cocalc-compare-checklist cocalc-compare-table"
         >
-          {DECISION_ROWS.map((row) => (
-            <DecisionRow key={row.question} {...row} />
-          ))}
-        </div>
+          <thead>
+            <tr>
+              <th scope="col">Decision question</th>
+              <th scope="col">Choose CoCalc when</th>
+              <th scope="col">Choose a lighter tool when</th>
+            </tr>
+          </thead>
+          <tbody>
+            {DECISION_ROWS.map((row) => (
+              <DecisionRow key={row.question} {...row} />
+            ))}
+          </tbody>
+        </table>
       </PublicSection>
 
       <PublicSection

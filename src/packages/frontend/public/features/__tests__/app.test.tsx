@@ -311,6 +311,11 @@ describe("PublicFeaturesApp", () => {
         "Run documented commands against CoCalc projects so scripts and shell-capable agents can inspect context, run notebook checks, and leave outputs for review.",
       ),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /notebooks, code, terminals, documents, outputs, TimeTravel history/i,
+      ),
+    ).not.toBeNull();
     expect(container.textContent ?? "").not.toMatch(/command-line surface/i);
     expect(
       screen
@@ -1368,7 +1373,12 @@ describe("PublicFeaturesApp", () => {
       SECTION_H2_MAX,
     );
     expect(
-      screen.getByText(/Best fit: work that needs review/i),
+      screen.getByText(
+        /Evaluate CoCalc when notebooks, code, terminals, documents, outputs, TimeTravel history/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/Best fit: multi-artifact projects/i),
     ).not.toBeNull();
     expect(
       screen
@@ -1421,7 +1431,22 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.queryByRole("link", { name: "Compare workspace model" }),
     ).toBeNull();
-    expect(container.querySelector("table")).toBeNull();
+    expect(
+      screen.getByRole("table", {
+        name: "CoCalc compare decision rows",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("columnheader", { name: "Decision question" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("columnheader", { name: "Choose CoCalc when" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("columnheader", {
+        name: "Choose a lighter tool when",
+      }),
+    ).not.toBeNull();
     expect(container.textContent ?? "").not.toMatch(
       /These comparisons are intentionally high level|How CoCalc compares by category|Google Colab|Deepnote|narrower point solution|product ladder|card wall|Use CoCalc when/i,
     );
@@ -1461,14 +1486,17 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    const decisionRows = screen.getByRole("group", {
+    const decisionTable = screen.getByRole("table", {
       name: "CoCalc compare decision rows",
     });
+    const decisionRows = Array.from(
+      decisionTable.querySelectorAll(".cocalc-compare-row"),
+    );
 
     expect(
       container.querySelectorAll(".cocalc-compare-decision-panel"),
     ).toHaveLength(0);
-    expect(getDirectCards(decisionRows)).toHaveLength(5);
+    expect(decisionRows).toHaveLength(5);
     expect(
       container.querySelectorAll(".cocalc-compare-route-row"),
     ).toHaveLength(4);
@@ -1483,7 +1511,7 @@ describe("PublicFeaturesApp", () => {
     )) {
       expect(textLength(panel)).toBeLessThanOrEqual(480);
     }
-    for (const row of getDirectCards(decisionRows)) {
+    for (const row of decisionRows) {
       expect(textLength(row)).toBeLessThanOrEqual(310);
     }
 
@@ -1492,6 +1520,7 @@ describe("PublicFeaturesApp", () => {
       .join("\n");
     expect(css).toContain(".cocalc-compare-hero");
     expect(css).toContain(".cocalc-compare-checklist");
+    expect(css).toContain(".cocalc-compare-table");
     expect(css).toContain("@media (max-width: 900px)");
     expect(css).toContain("@media (max-width: 560px)");
 
