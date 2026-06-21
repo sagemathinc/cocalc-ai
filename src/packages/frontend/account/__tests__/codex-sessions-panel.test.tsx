@@ -7,6 +7,17 @@ const interruptMock = jest.fn();
 const interruptAllMock = jest.fn();
 const messageSuccessMock = jest.fn();
 const messageWarningMock = jest.fn();
+const ensureProjectIsOpenMock = jest.fn();
+const openFileMock = jest.fn();
+
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: {
+    getProjectActions: jest.fn(() => ({
+      ensureProjectIsOpen: (...args: any[]) => ensureProjectIsOpenMock(...args),
+      open_file: (...args: any[]) => openFileMock(...args),
+    })),
+  },
+}));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -99,16 +110,21 @@ describe("CodexSessionsPanel", () => {
     jest.clearAllMocks();
   });
 
-  it("links directly to the chat file for a session", async () => {
+  it("opens the chat file internally for a session", async () => {
     listMock.mockResolvedValueOnce([runningSession()]);
+    ensureProjectIsOpenMock.mockResolvedValueOnce(undefined);
+    openFileMock.mockResolvedValueOnce(undefined);
 
     render(<CodexSessionsPanel />);
 
-    const link = await screen.findByRole("link", { name: "Open chat" });
-    expect(link).toHaveAttribute(
-      "href",
-      "/projects/22222222-2222-4222-8222-222222222222/files/home/user/sage/sage.chat",
+    fireEvent.click(await screen.findByRole("button", { name: "Open chat" }));
+    await waitFor(() =>
+      expect(ensureProjectIsOpenMock).toHaveBeenCalledWith(true),
     );
+    expect(openFileMock).toHaveBeenCalledWith({
+      path: "sage/sage.chat",
+      foreground: true,
+    });
   });
 
   it("interrupts one session and confirms after refresh", async () => {
