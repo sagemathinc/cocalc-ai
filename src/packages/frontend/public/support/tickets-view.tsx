@@ -10,6 +10,7 @@ import { Button } from "antd";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import MarkdownIt from "markdown-it";
@@ -105,21 +106,33 @@ function Alert({
 
 function StatusPill({ status }: { status?: string }) {
   const label = `${status ?? "open"}`.toUpperCase();
-  const color =
+  const tone =
     status === "solved"
-      ? COLORS.GRAY_M
+      ? {
+          background: COLORS.GRAY_LLL,
+          border: COLORS.GRAY_L,
+        }
       : status === "pending"
-        ? "#f5ca00"
-        : COLORS.BLUE_D;
+        ? {
+            background: PUBLIC_COLORS.warningTint,
+            border: PUBLIC_COLORS.warningBorder,
+          }
+        : {
+            background: PUBLIC_COLORS.brandTint,
+            border: PUBLIC_COLORS.brandSubtle,
+          };
   return (
     <span
       style={{
-        display: "inline-block",
+        alignItems: "center",
+        display: "inline-flex",
         borderRadius: "999px",
-        background: color,
-        color: "white",
+        background: tone.background,
+        border: `1px solid ${tone.border}`,
+        color: PUBLIC_COLORS.heading,
         fontSize: "12px",
         fontWeight: 700,
+        minHeight: 24,
         padding: "4px 8px",
       }}
     >
@@ -132,11 +145,13 @@ function TypePill({ type }: { type?: TicketType }) {
   return (
     <span
       style={{
-        display: "inline-block",
+        alignItems: "center",
+        display: "inline-flex",
         borderRadius: "999px",
-        border: `1px solid ${COLORS.GRAY_LL}`,
-        color: COLORS.GRAY_D,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        color: PUBLIC_COLORS.text,
         fontSize: "12px",
+        minHeight: 24,
         padding: "4px 8px",
         textTransform: "capitalize",
       }}
@@ -277,7 +292,7 @@ export default function SupportTickets({ config }: { config: SupportConfig }) {
               <TypePill type={ticket.type} />
             </div>
           </div>
-          <div style={{ color: COLORS.GRAY, fontSize: "14px" }}>
+          <div style={{ color: PUBLIC_COLORS.mutedText, fontSize: "14px" }}>
             Created {formatDate(ticket.created_at)}; updated{" "}
             {formatDate(ticket.updated_at)}
           </div>

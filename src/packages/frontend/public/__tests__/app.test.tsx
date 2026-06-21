@@ -72,6 +72,11 @@ function expectNoInternalFloor(scope: HTMLElement = document.body) {
 function expectProductPathChooserCards() {
   const cards = document.querySelectorAll(".cocalc-public-products-path-card");
   expect(cards).toHaveLength(5);
+  expect(
+    screen
+      .getByRole("list", { name: "CoCalc product path chooser" })
+      .querySelectorAll('[role="listitem"]'),
+  ).toHaveLength(5);
   const titles = Array.from(
     document.querySelectorAll(
       ".cocalc-public-products-path-card > div:first-child strong",
@@ -1281,9 +1286,10 @@ describe("PublicApp", () => {
 
     expectSingleLeadHeadline();
     expectSharedProjectContextNote();
-    const positioning = screen.getByRole("group", {
+    const positioning = screen.getByRole("list", {
       name: "CoCalc Plus positioning",
     });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
     for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),
@@ -1336,7 +1342,7 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText(/Use this as a decision guide/i)).not.toBeNull();
     expect(screen.queryByText(/buyer map/i)).toBeNull();
-    const pathChooser = screen.getByRole("group", {
+    const pathChooser = screen.getByRole("list", {
       name: "CoCalc product path chooser",
     });
     expect(pathChooser).not.toBeNull();
@@ -1467,9 +1473,10 @@ describe("PublicApp", () => {
 
     expectSingleLeadHeadline();
     expectSharedProjectContextNote();
-    const positioning = screen.getByRole("group", {
+    const positioning = screen.getByRole("list", {
       name: "CoCalc Launchpad positioning",
     });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
     for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),
@@ -1531,9 +1538,10 @@ describe("PublicApp", () => {
 
     expectSingleLeadHeadline();
     expectSharedProjectContextNote();
-    const positioning = screen.getByRole("group", {
+    const positioning = screen.getByRole("list", {
       name: "CoCalc Star positioning",
     });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
     for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),
@@ -1566,9 +1574,10 @@ describe("PublicApp", () => {
 
     expectSingleLeadHeadline();
     expectSharedProjectContextNote();
-    const positioning = screen.getByRole("group", {
+    const positioning = screen.getByRole("list", {
       name: "CoCalc Rocket positioning",
     });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
     for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),

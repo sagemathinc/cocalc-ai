@@ -546,6 +546,38 @@ Plus/Star/Launchpad`).
   in `/tmp/cocalc-public-qa-zX4jcd`. Desktop/mobile screenshots for `/features`,
   `/features/jupyter-notebook`, `/features/ai`, `/features/python`, and `/features/terminal`
   inspected. Dedicated-compute draft remains untouched and untracked. No PR.
+- **START 2026-06-20 20:02 PDT:** Continuing systematic-audit Slice 1 on the remaining
+  non-feature accessibility findings: support pending/status/date contrast, products list
+  semantics, and about social-link 24px targets. Read Claude status, framing digest, and the
+  burn-down doc first; Claude remains read-only on synthesis and owns only the separate
+  `/home/user/cocalc-ai/docs/pitch` lane. Verified preview owner remains synthesis hub pid
+  `13303` (`/home/user/cocalc-ai-synthesis/src`). Claiming
+  `src/packages/frontend/public/about/app.tsx`,
+  `src/packages/frontend/public/support/tickets-view.tsx`,
+  `src/packages/frontend/public/products/app.tsx`, related public tests/browser QA, and this
+  ledger. Out of scope: pricing dollars, compliance/policy copy, protected home/Brief positioning,
+  and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-20 20:09 PDT:** Completed the remaining non-feature Slice 1 accessibility pass.
+  Support ticket status/type pills now use dark token text on pale status surfaces with 24px
+  minimum height; support ticket dates moved from `COLORS.GRAY` to `PUBLIC_COLORS.mutedText`.
+  Product chooser/detail grids now expose repeated cards as `list`/`listitem`, and small chooser
+  labels/tags use dark ink instead of brand-blue small text. About team social links now use
+  dark token icons with 24px minimum targets, and the team/profile grids were made responsive
+  after browser QA found `/about/team/william-stein` mobile horizontal overflow. This slice added
+  no public product claims and did not touch pricing, policy/compliance copy, the protected home,
+  or the dedicated-compute draft. Contrast checks: support pending label `13.39:1`, support open
+  label `12.43:1`, support dates `6.39:1`, products labels `13.92:1`, products start tag
+  `12.43:1`, about social icons `13.92:1`. `axe-core` is not installed in this workspace, so the
+  accessibility verification used source-level contrast checks, semantic Jest assertions, and
+  browser QA. Validation: `pnpm prettier:write` on touched files; `pnpm --dir packages/frontend
+  exec jest public/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend
+  exec jest public/support/tickets-view.test.tsx --runInBand --silent`; `pnpm --dir
+  packages/frontend exec jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand
+  --silent`; `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`;
+  browser QA for `/products`, all product detail routes, `/about/team/william-stein`, `/support`,
+  and `/support/tickets` on desktop/mobile passed with 262 assertions and 0 failures, artifacts
+  in `/tmp/cocalc-public-qa-wTlPpR`. Dedicated-compute draft remains untouched and untracked. No
+  PR.
 
 ### Codex — platform-UI thread
 

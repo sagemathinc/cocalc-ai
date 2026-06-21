@@ -180,7 +180,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
         </Paragraph>
         <div
           aria-label="CoCalc product path chooser"
-          role="group"
+          role="list"
           style={{
             display: "grid",
             gap: 12,
@@ -191,6 +191,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
             <div
               className="cocalc-public-products-path-card"
               key={path.title}
+              role="listitem"
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
@@ -222,7 +223,14 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                 </span>
                 <Text strong>{path.title}</Text>
                 {index === 0 ? (
-                  <Tag color="blue" style={{ marginInlineStart: "auto" }}>
+                  <Tag
+                    style={{
+                      background: PUBLIC_COLORS.surfaceMuted,
+                      borderColor: PUBLIC_COLORS.border,
+                      color: PUBLIC_COLORS.heading,
+                      marginInlineStart: "auto",
+                    }}
+                  >
                     Start here
                   </Tag>
                 ) : null}
@@ -230,7 +238,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
               <div>
                 <Text
                   style={{
-                    color: PUBLIC_COLORS.brand,
+                    color: PUBLIC_COLORS.heading,
                     display: "block",
                     fontSize: PUBLIC_TYPE.caption,
                     fontWeight: 700,
@@ -244,7 +252,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
               <div style={{ flex: 1 }}>
                 <Text
                   style={{
-                    color: PUBLIC_COLORS.brand,
+                    color: PUBLIC_COLORS.heading,
                     display: "block",
                     fontSize: PUBLIC_TYPE.caption,
                     fontWeight: 700,
@@ -365,16 +373,19 @@ function ProductSharedProjectNote() {
 function ProductDetailCard({
   children,
   icon,
+  role,
   title,
 }: {
   children: ReactNode;
   icon: IconName;
+  role?: "listitem";
   title: string;
 }) {
   return (
     <section
       aria-label={title}
       className="cocalc-public-products-detail-card"
+      role={role}
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
@@ -424,7 +435,7 @@ function ProductDetailGrid({
   return (
     <div
       aria-label={label}
-      role="group"
+      role="list"
       style={{
         display: "grid",
         gap: 12,
@@ -432,7 +443,12 @@ function ProductDetailGrid({
       }}
     >
       {items.map((item) => (
-        <ProductDetailCard icon={item.icon} key={item.title} title={item.title}>
+        <ProductDetailCard
+          icon={item.icon}
+          key={item.title}
+          role="listitem"
+          title={item.title}
+        >
           <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
         </ProductDetailCard>
       ))}

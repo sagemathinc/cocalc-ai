@@ -8,9 +8,8 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import { Flex, Tag, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { NewsItem } from "@cocalc/util/types/news";
-import { COLORS } from "@cocalc/util/theme";
 
-import { PUBLIC_TYPE } from "../theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "../theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   EmptySection,
@@ -84,7 +83,8 @@ function AboutTeamPage() {
                 alignItems: "start",
                 display: "grid",
                 gap: 24,
-                gridTemplateColumns: "minmax(180px, 240px) minmax(0, 1fr)",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
               }}
             >
               <Paragraph>{member.cardText}</Paragraph>
@@ -157,7 +157,16 @@ function TeamSocialLinks({ member }: { member: TeamMemberProfile }) {
             href={href}
             key={platform}
             rel="noreferrer noopener"
-            style={{ color: COLORS.GRAY_M, fontSize: 22, lineHeight: 1 }}
+            style={{
+              alignItems: "center",
+              color: PUBLIC_COLORS.heading,
+              display: "inline-flex",
+              fontSize: 22,
+              justifyContent: "center",
+              lineHeight: 1,
+              minHeight: 24,
+              minWidth: 24,
+            }}
             target="_blank"
           >
             <Icon name={platform} />
@@ -182,7 +191,8 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
           style={{
             display: "grid",
             gap: 24,
-            gridTemplateColumns: "minmax(220px, 320px) minmax(0, 1fr)",
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
           }}
         >
           <img
@@ -191,6 +201,7 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
             style={{
               alignSelf: "start",
               borderRadius: 16,
+              maxWidth: 320,
               objectFit: "cover",
               width: "100%",
             }}
@@ -213,10 +224,15 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
             <Flex
               align="center"
               justify="space-between"
-              style={{ marginTop: "auto" }}
+              style={{ marginTop: "auto", minWidth: 0 }}
               wrap
             >
-              <a href={`mailto:${member.email}`}>{member.email}</a>
+              <a
+                href={`mailto:${member.email}`}
+                style={{ overflowWrap: "anywhere" }}
+              >
+                {member.email}
+              </a>
               <Flex align="center" gap={16} wrap>
                 {member.website ? (
                   <a href={member.website.href}>{member.website.label}</a>
