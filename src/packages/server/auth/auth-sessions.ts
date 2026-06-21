@@ -402,9 +402,10 @@ export async function setSessionFreshAuth({
                      ELSE $3::VARCHAR(32)
                    END,
                  metadata = COALESCE(metadata, '{}'::JSONB) || $4::JSONB,
-                 revoked_at = NULL
            WHERE session_hash = $1::CHAR(127)
              AND account_id = $5::UUID
+             AND revoked_at IS NULL
+             AND expire > NOW()
         `,
         [
           cleanedSessionHash,

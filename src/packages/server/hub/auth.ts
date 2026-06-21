@@ -89,8 +89,9 @@ import getPool from "@cocalc/database/pool";
 import { _passport_key } from "@cocalc/database/postgres/account/passport-key";
 import {
   getCurrentAuthSession,
+  getCurrentAuthSessionForSessionHash,
   resolveFreshAuthDurationMs,
-  setCurrentSessionFreshAuth,
+  setSessionFreshAuth,
   type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
 import {
@@ -1035,7 +1036,6 @@ export class PassportManager {
         });
         if (savedState.flow === "fresh-auth") {
           await this.finishGoogleOidcFreshAuth({
-            req,
             res,
             savedState,
             claims,
@@ -1190,12 +1190,10 @@ export class PassportManager {
   }
 
   private async finishGoogleOidcFreshAuth({
-    req,
     res,
     savedState,
     claims,
   }: {
-    req: Request;
     res: Response;
     savedState: GoogleOidcState;
     claims: GoogleIdTokenClaims;
@@ -1204,14 +1202,14 @@ export class PassportManager {
     if (!account_id) {
       throw new Error("Google fresh-auth state is missing the account.");
     }
-    const authSession = await getCurrentAuthSession({ req, account_id });
-    if (
-      !authSession.session_hash ||
-      !savedState.freshAuthSessionHash ||
-      authSession.session_hash !== savedState.freshAuthSessionHash
-    ) {
+    const session_hash = `${savedState.freshAuthSessionHash ?? ""}`.trim();
+    if (!session_hash) {
       throw new Error("Google fresh-auth browser session changed.");
     }
+    await getCurrentAuthSessionForSessionHash({
+      session_hash,
+      account_id,
+    });
     const googleFreshAuthTimeSource = this.assertRecentGoogleAuthTime({
       claims,
       savedState,
@@ -1227,9 +1225,9 @@ export class PassportManager {
           factor_level: "google_oidc",
         }),
     );
-    await setCurrentSessionFreshAuth({
-      req,
+    await setSessionFreshAuth({
       account_id,
+      session_hash,
       factor_level: "google_oidc",
       fresh_auth_until,
       metadata_patch: {

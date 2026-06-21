@@ -41,6 +41,9 @@ describe("auth session ownership writes", () => {
       `${sql}`.includes("UPDATE account_auth_sessions"),
     );
     expect(update?.[0]).toContain("AND account_id = $5::UUID");
+    expect(update?.[0]).toContain("AND revoked_at IS NULL");
+    expect(update?.[0]).toContain("AND expire > NOW()");
+    expect(update?.[0]).not.toContain("revoked_at = NULL");
     expect(update?.[1][4]).toBe(account_id);
   });
 
