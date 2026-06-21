@@ -157,6 +157,7 @@ export function CourseMembershipBanner({ project_id }: { project_id: string }) {
   const [error, setError] = useState<string>("");
   const [purchaseOpen, setPurchaseOpen] = useState<boolean>(false);
   const [claiming, setClaiming] = useState<boolean>(false);
+  const [dismissedGraceKey, setDismissedGraceKey] = useState<string>("");
 
   async function refresh() {
     setLoading(true);
@@ -204,6 +205,70 @@ export function CourseMembershipBanner({ project_id }: { project_id: string }) {
   if (access.status === "active") {
     return null;
   }
+  const paymentAccess =
+    access.status === "grace" || access.status === "blocked" ? access : null;
+  const graceKey =
+    paymentAccess?.status === "grace"
+      ? `${paymentAccess.required_membership_class}:${toTime(paymentAccess.deadline)}`
+      : "";
+  if (paymentAccess?.status === "grace" && dismissedGraceKey === graceKey) {
+    return null;
+  }
+
+  const courseMembershipAlert =
+    paymentAccess == null ? null : (
+      <Alert
+        type={paymentAccess.status === "blocked" ? "error" : "warning"}
+        showIcon
+        closable={paymentAccess.status === "grace"}
+        onClose={
+          paymentAccess.status === "grace"
+            ? () => {
+                setDismissedGraceKey(graceKey);
+              }
+            : undefined
+        }
+        style={{ margin: "12px" }}
+        message={`Course membership required: ${title}`}
+        description={
+          <Space direction="vertical" size="small">
+            <span>
+              {paymentAccess.status === "grace" ? (
+                <>
+                  You have full access until{" "}
+                  <Text strong>
+                    <TimeAgo date={paymentAccess.deadline} />
+                  </Text>
+                  .
+                </>
+              ) : (
+                <>
+                  The grace period for this course has ended
+                  {paymentAccess.deadline ? (
+                    <>
+                      {" "}
+                      (<TimeAgo date={paymentAccess.deadline} />)
+                    </>
+                  ) : null}
+                  .
+                </>
+              )}{" "}
+              Purchase the course membership to keep using this course.
+            </span>
+            <Space wrap>
+              <Tag color={paymentAccess.status === "blocked" ? "red" : "gold"}>
+                {paymentAccess.status === "blocked"
+                  ? "Payment required"
+                  : "Grace"}
+              </Tag>
+              <Button type="primary" onClick={() => setPurchaseOpen(true)}>
+                <Icon name="shopping-cart" /> Buy course membership
+              </Button>
+            </Space>
+          </Space>
+        }
+      />
+    );
 
   return (
     <>
@@ -232,48 +297,25 @@ export function CourseMembershipBanner({ project_id }: { project_id: string }) {
             </Space>
           }
         />
+      ) : access.status === "blocked" ? (
+        <div
+          style={{
+            alignItems: "center",
+            background: COLORS.GRAY_LLL,
+            display: "flex",
+            inset: 0,
+            justifyContent: "center",
+            padding: "24px",
+            position: "absolute",
+            zIndex: 50,
+          }}
+        >
+          <div style={{ maxWidth: 720, width: "100%" }}>
+            {courseMembershipAlert}
+          </div>
+        </div>
       ) : (
-        <Alert
-          type={access.status === "blocked" ? "error" : "warning"}
-          showIcon
-          style={{ margin: "12px" }}
-          message={`Course membership required: ${title}`}
-          description={
-            <Space direction="vertical" size="small">
-              <span>
-                {access.status === "grace" ? (
-                  <>
-                    You have full access until{" "}
-                    <Text strong>
-                      <TimeAgo date={access.deadline} />
-                    </Text>
-                    .
-                  </>
-                ) : (
-                  <>
-                    The grace period for this course has ended
-                    {access.deadline ? (
-                      <>
-                        {" "}
-                        (<TimeAgo date={access.deadline} />)
-                      </>
-                    ) : null}
-                    .
-                  </>
-                )}{" "}
-                Purchase the course membership to keep using this course.
-              </span>
-              <Space wrap>
-                <Tag color={access.status === "blocked" ? "red" : "gold"}>
-                  {access.status === "blocked" ? "Payment required" : "Grace"}
-                </Tag>
-                <Button type="primary" onClick={() => setPurchaseOpen(true)}>
-                  <Icon name="shopping-cart" /> Buy course membership
-                </Button>
-              </Space>
-            </Space>
-          }
-        />
+        courseMembershipAlert
       )}
       <StudentCoursePurchaseModal
         open={purchaseOpen}
