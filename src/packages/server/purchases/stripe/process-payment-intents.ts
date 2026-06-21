@@ -734,6 +734,7 @@ ${await support()}`;
               : `purchase a ${product.kind} membership package`;
           await purchaseMembershipPackage({
             account_id,
+            fulfillment_id: paymentIntent.id,
             product,
             amount,
           });
@@ -741,6 +742,7 @@ ${await support()}`;
           reason = `purchase ${products.length} membership package changes`;
           await purchaseMembershipPackages({
             account_id,
+            fulfillment_id: paymentIntent.id,
             products,
             amount,
           });

@@ -1362,6 +1362,94 @@ describe("membership packages", () => {
     );
   });
 
+  it("does not duplicate membership package purchases when fulfillment is retried", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: teamTier,
+      seat_count: 2,
+      interval: "year" as const,
+    };
+
+    const first = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 400,
+      fulfillment_id: "pi_membership_package_retry",
+      product,
+    });
+    const second = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 400,
+      fulfillment_id: "pi_membership_package_retry",
+      product,
+    });
+
+    expect(second).toEqual(first);
+    const details = await listMembershipPackageDetailsForOwner({
+      owner_account_id,
+    });
+    expect(details).toHaveLength(1);
+    expect(details[0]).toMatchObject({
+      id: first.package_id,
+      membership_class: teamTier,
+      seat_count: 2,
+    });
+    const purchases = await getPool().query(
+      "SELECT COUNT(*)::int AS count FROM purchases WHERE account_id=$1 AND invoice_id LIKE 'membership-package:pi_membership_package_retry:%'",
+      [owner_account_id],
+    );
+    expect(purchases.rows[0].count).toBe(1);
+  });
+
+  it("does not duplicate membership package expansions when fulfillment is retried", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 2,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+    const product = {
+      type: "membership-package" as const,
+      membership_class: teamTier,
+      package_id,
+      seat_count: 1,
+    };
+
+    const first = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 20,
+      fulfillment_id: "pi_membership_package_expand_retry",
+      product,
+    });
+    const second = await purchaseMembershipPackage({
+      account_id: owner_account_id,
+      amount: 20,
+      fulfillment_id: "pi_membership_package_expand_retry",
+      product,
+    });
+
+    expect(second).toEqual(first);
+    const details = await listMembershipPackageDetailsForOwner({
+      owner_account_id,
+    });
+    expect(details.find(({ id }) => id === package_id)).toMatchObject({
+      seat_count: 3,
+    });
+    const purchases = await getPool().query(
+      "SELECT COUNT(*)::int AS count FROM purchases WHERE account_id=$1 AND invoice_id LIKE 'membership-package:pi_membership_package_expand_retry:%'",
+      [owner_account_id],
+    );
+    expect(purchases.rows[0].count).toBe(1);
+  });
+
   it("rejects hidden team tiers in membership package purchases and expansions", async () => {
     const owner_account_id = uuid();
     await createTestAccount(owner_account_id);

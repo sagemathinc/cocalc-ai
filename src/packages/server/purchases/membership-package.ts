@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
+import getPool, {
+  getTransactionClient,
+  type PoolClient,
+} from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { moneyRound2Up, toDecimal, type MoneyValue } from "@cocalc/util/money";
@@ -27,9 +30,11 @@ const logger = getLogger("purchases:membership-package");
 export async function createMembershipPackagePurchase(
   {
     account_id,
+    invoice_id,
     product,
   }: {
     account_id: string;
+    invoice_id?: string;
     product: MembershipPackageProduct;
   },
   client: PoolClient,
@@ -50,6 +55,14 @@ export async function createMembershipPackagePurchase(
     account_id,
     action: "purchase membership package",
   });
+  const existingPurchase = await getExistingMembershipPackagePurchase({
+    account_id,
+    invoice_id,
+    client,
+  });
+  if (existingPurchase) {
+    return existingPurchase;
+  }
 
   const existingPackageId = `${product.package_id ?? ""}`.trim();
   if (existingPackageId) {
@@ -111,6 +124,7 @@ export async function createMembershipPackagePurchase(
       expanded_existing_package: expandingExistingPackage,
       metadata: quote.metadata ?? null,
     },
+    invoice_id,
     tag: expandingExistingPackage
       ? "membership-package-expand"
       : "membership-package-purchase",
@@ -134,10 +148,12 @@ export async function createMembershipPackagePurchase(
 
 export default async function purchaseMembershipPackage({
   account_id,
+  fulfillment_id,
   product,
   amount,
 }: {
   account_id: string;
+  fulfillment_id?: string;
   product: MembershipPackageProduct;
   amount?: number;
 }): Promise<{ package_id: string; purchase_id: number }> {
@@ -147,8 +163,18 @@ export default async function purchaseMembershipPackage({
     amount,
   });
   const quote = await resolveMembershipPackageQuote(product);
+  const invoice_id = membershipPackageFulfillmentInvoiceId(fulfillment_id);
   const client = await getTransactionClient();
   try {
+    const existingPurchase = await getExistingMembershipPackagePurchase({
+      account_id,
+      invoice_id,
+      client,
+    });
+    if (existingPurchase) {
+      await client.query("COMMIT");
+      return existingPurchase;
+    }
     await assertPurchaseAllowed({
       account_id,
       service: "membership",
@@ -159,6 +185,7 @@ export default async function purchaseMembershipPackage({
     const result = await createMembershipPackagePurchase(
       {
         account_id,
+        invoice_id,
         product,
       },
       client,
@@ -167,6 +194,15 @@ export default async function purchaseMembershipPackage({
     return result;
   } catch (err) {
     await client.query("ROLLBACK");
+    if (invoice_id && isUniqueViolation(err)) {
+      const existingPurchase = await getExistingMembershipPackagePurchase({
+        account_id,
+        invoice_id,
+      });
+      if (existingPurchase) {
+        return existingPurchase;
+      }
+    }
     throw err;
   } finally {
     client.release();
@@ -175,10 +211,12 @@ export default async function purchaseMembershipPackage({
 
 export async function purchaseMembershipPackages({
   account_id,
+  fulfillment_id,
   products,
   amount,
 }: {
   account_id: string;
+  fulfillment_id?: string;
   products: MembershipPackageProduct[];
   amount?: MoneyValue;
 }): Promise<{ package_id: string; purchase_id: number }[]> {
@@ -201,6 +239,18 @@ export async function purchaseMembershipPackages({
   );
   const client = await getTransactionClient();
   try {
+    const invoiceIds = products.map((_product, index) =>
+      membershipPackageFulfillmentInvoiceId(fulfillment_id, index),
+    );
+    const existingPurchases = await getExistingMembershipPackagePurchases({
+      account_id,
+      invoiceIds,
+      client,
+    });
+    if (existingPurchases) {
+      await client.query("COMMIT");
+      return existingPurchases;
+    }
     await assertPurchaseAllowed({
       account_id,
       service: "membership",
@@ -209,11 +259,12 @@ export async function purchaseMembershipPackages({
       amount,
     });
     const results: { package_id: string; purchase_id: number }[] = [];
-    for (const product of products) {
+    for (const [index, product] of products.entries()) {
       results.push(
         await createMembershipPackagePurchase(
           {
             account_id,
+            invoice_id: invoiceIds[index],
             product,
           },
           client,
@@ -224,8 +275,93 @@ export async function purchaseMembershipPackages({
     return results;
   } catch (err) {
     await client.query("ROLLBACK");
+    if (fulfillment_id && isUniqueViolation(err)) {
+      const existingPurchases = await getExistingMembershipPackagePurchases({
+        account_id,
+        invoiceIds: products.map((_product, index) =>
+          membershipPackageFulfillmentInvoiceId(fulfillment_id, index),
+        ),
+      });
+      if (existingPurchases) {
+        return existingPurchases;
+      }
+    }
     throw err;
   } finally {
     client.release();
   }
+}
+
+function membershipPackageFulfillmentInvoiceId(
+  fulfillment_id?: string,
+  index = 0,
+): string | undefined {
+  const id = `${fulfillment_id ?? ""}`.trim();
+  if (!id) {
+    return undefined;
+  }
+  return `membership-package:${id}:${index}`;
+}
+
+async function getExistingMembershipPackagePurchase({
+  account_id,
+  invoice_id,
+  client,
+}: {
+  account_id: string;
+  invoice_id?: string;
+  client?: PoolClient;
+}): Promise<{ package_id: string; purchase_id: number } | undefined> {
+  if (!invoice_id) {
+    return undefined;
+  }
+  const { rows } = await (client ?? getPool("medium")).query(
+    `SELECT id, description
+       FROM purchases
+      WHERE account_id=$1
+        AND invoice_id=$2
+        AND service='membership'
+      LIMIT 1`,
+    [account_id, invoice_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    return undefined;
+  }
+  const package_id = `${row.description?.package_id ?? ""}`.trim();
+  if (row.description?.type !== "membership-package" || !package_id) {
+    throw Error("membership package fulfillment id has incompatible purchase");
+  }
+  return { package_id, purchase_id: row.id };
+}
+
+async function getExistingMembershipPackagePurchases({
+  account_id,
+  invoiceIds,
+  client,
+}: {
+  account_id: string;
+  invoiceIds: (string | undefined)[];
+  client?: PoolClient;
+}): Promise<{ package_id: string; purchase_id: number }[] | undefined> {
+  if (invoiceIds.some((invoiceId) => !invoiceId)) {
+    return undefined;
+  }
+  const purchases: { package_id: string; purchase_id: number }[] = [];
+  for (const invoice_id of invoiceIds) {
+    const purchase = await getExistingMembershipPackagePurchase({
+      account_id,
+      invoice_id,
+      client,
+    });
+    if (!purchase) {
+      return undefined;
+    }
+    purchases.push(purchase);
+  }
+  return purchases;
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string })?.code === "23505";
 }
