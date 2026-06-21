@@ -2,9 +2,9 @@
 
 Date: 2026-06-21
 
-Status: Planned. This follows the completed purchasing/security code audit and
-focuses on the remaining highest-risk web-app surfaces before the first public
-release.
+Status: In progress. Phase 1 is done except manual logged-out smoke testing.
+This follows the completed purchasing/security code audit and focuses on the
+remaining highest-risk web-app surfaces before the first public release.
 
 ## Context
 
@@ -60,6 +60,8 @@ Treat a finding as release-blocking if it enables any of the following:
 
 ## Phase 1: Anonymous and Public HTTP Attack Surface
 
+Status: Done except manual follow-up, 2026-06-21.
+
 Goal: ensure every route reachable without a logged-in browser session is
 explicitly intended to be public and cannot be used to mutate or disclose private
 state.
@@ -100,6 +102,52 @@ Execution:
 - Manually test logged-out access to representative public and non-public
   endpoints.
 - Add focused regression tests for any blocker that is fixed.
+
+Completed audit notes:
+
+- No `src/packages/next/pages/api/` tree is present in this checkout. The live
+  API surface for this phase is `src/packages/http-api/pages/api/v2/`, public
+  frontend routes under `src/packages/frontend/public/`, and auth helpers under
+  `src/packages/server/auth/`.
+- Public/no-session HTTP API routes were classified as public metadata/static
+  reads (`customize`, public news, SSO strategy metadata, service-cost
+  estimates, software status, API index, no-op bookmarks), narrow auth/token
+  flows (sign-in, sign-up, password reset, email verification, 2FA/passkey,
+  CLI auth, project invite links), or optional-session support/user-query flows.
+- Anonymous `user-query` reads are constrained by database schema
+  `anonymous: true`, and the scan found only the public `news` table using that
+  flag. Anonymous set queries are rejected.
+- Public SSO/customize metadata does not expose provider client secrets or
+  private OAuth/SAML material. Strategy metadata exposes intended button/domain
+  policy information only.
+- Public auth redirect targets are normalized to app-relative paths and reject
+  external URLs, protocol-relative URLs, root/default loops, and nested auth
+  loops.
+- Fixed release blocker: production `apiRoute` wrappers previously skipped
+  method enforcement when validation was disabled, while the router dispatches
+  every API route with `router.all(...)`. Commit `276fb8522a` now enforces the
+  declared operation method in production and returns `405` with `Allow`.
+- Fixed release blocker: hand-written auth, 2FA, passkey, CLI auth, invite,
+  support, and admin news handlers did not have a uniform method guard. Commit
+  `54dd75369a` now rejects non-POST requests before any token, cookie, account,
+  session, or mutation work for those handlers.
+
+Validation:
+
+- `cd src/packages/http-api && pnpm tsc --build`
+- `cd src/packages/http-api && pnpm exec jest ./pages/api/v2/auth/sign-in.test.ts ./pages/api/v2/auth/password-reset-api.test.ts ./pages/api/v2/projects/email-invite.test.ts ./pages/api/v2/support-api-key-scope.test.ts ./pages/api/v2/news-fresh-auth.test.ts`
+- `cd src/packages/http-api && pnpm test-api`
+
+Manual follow-up:
+
+- Logged-out browser/API smoke test representative public routes:
+  `customize`, `news/list`, `auth/sso-strategies`, `auth/requires-token`,
+  password reset request, password reset redeem with bogus token, project invite
+  preview/redeem with bogus token, support ticket creation, and a private route
+  expected to reject anonymous access.
+- Decide separately whether password reset/sign-up copy should hide account
+  existence even when registration-token mode is off. This is a privacy/abuse
+  hardening decision, not an authority bypass found in this phase.
 
 ## Phase 2: Project-Host and Data-Plane Authorization
 
