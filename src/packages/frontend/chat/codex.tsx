@@ -26,6 +26,7 @@ import {
   CodexCredentialsPanel,
   CodexUsageMeters,
 } from "@cocalc/frontend/account/codex-credentials-panel";
+import CodexSessionsPanel from "@cocalc/frontend/account/codex-sessions-panel";
 import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
@@ -338,6 +339,7 @@ export function CodexConfigButton({
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [form] = Form.useForm();
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
@@ -934,6 +936,9 @@ export function CodexConfigButton({
                   Payment & Credentials
                 </Button>
               </Tooltip>
+              <Button onClick={() => setSessionsOpen(true)}>
+                View All Codex Sessions
+              </Button>
             </Space>
           </div>
           <Form form={form} layout="vertical">
@@ -1134,6 +1139,15 @@ export function CodexConfigButton({
         refreshPaymentSource={refreshPaymentSource}
         onClose={() => setPaymentOpen(false)}
       />
+      <Modal
+        title="Codex sessions"
+        open={sessionsOpen}
+        onCancel={() => setSessionsOpen(false)}
+        footer={null}
+        width={1200}
+      >
+        <CodexSessionsPanel />
+      </Modal>
     </>
   );
 }
