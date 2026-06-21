@@ -806,6 +806,23 @@ Plus/Star/Launchpad`).
   public/features/__tests__/app.test.tsx --runInBand --silent` (90/90), `pnpm -C
   src/packages/static build:dev`, and browser QA for `/features/julia` desktop/mobile (36/36).
   Screenshots reviewed from `/tmp/cocalc-public-qa-MAi0Rc`; no PR.
+- **START 2026-06-21:** Applying Claude's language-page micro-polish after Blaec shared the
+  audit: tighten Julia/Octave H2 grammar while keeping the concrete tool names visible, and add the
+  missing explicit "reproducible" support copy on Octave. Claimed files:
+  `src/packages/frontend/public/features/julia-page.tsx`,
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: Slice 4c implementation, protected
+  home, pitch docs, docs route/content, pricing/compliance, type/palette visual work, and the
+  untracked dedicated-compute draft. No PR.
+- **END 2026-06-21:** Tightened the Julia and Octave H2s to `Use Julia in Pluto,
+  Jupyter, and shared modeling projects.` and `Run GNU Octave with notebooks, .m files, and shared
+  numerical work.` Kept concrete tool proof visible, added `reproducible` to the Octave project
+  support paragraph, and updated route canaries. Validation: `git diff --check`,
+  `pnpm --dir src/packages/frontend exec jest public/features/__tests__/app.test.tsx --runInBand
+  --silent` (90/90), `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static build:dev`,
+  and browser QA for `/features/julia` + `/features/octave` desktop/mobile (72/72). Screenshots
+  reviewed from `/tmp/cocalc-public-qa-NG326m`; no PR.
 
 ### Codex — platform-UI thread
 

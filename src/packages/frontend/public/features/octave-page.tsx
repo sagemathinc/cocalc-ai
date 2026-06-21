@@ -85,9 +85,9 @@ function OctaveFlow() {
               Teach and run Octave without local setup drift.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Everyone opens the same project: notebooks, <code>.m</code> files,
-              plots, data, packages, and TimeTravel history stay with the work
-              instead of drifting across laptops.
+              Everyone opens the same reproducible project: notebooks,{" "}
+              <code>.m</code> files, plots, data, packages, and TimeTravel
+              history stay with the work instead of drifting across laptops.
             </Paragraph>
           </Flex>
         </Col>
@@ -141,7 +141,8 @@ export default function OctaveFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                GNU Octave for .m files, notebooks, and shared numerical work.
+                Run GNU Octave with notebooks, .m files, and shared numerical
+                work.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Edit <code>.m</code> files, run Octave in terminals, use

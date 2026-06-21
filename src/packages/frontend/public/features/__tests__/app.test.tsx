@@ -211,7 +211,7 @@ describe("PublicFeaturesApp", () => {
     },
     {
       marker:
-        "Julia for Pluto, Jupyter, and shared modeling projects.",
+        "Use Julia in Pluto, Jupyter, and shared modeling projects.",
       slug: "julia",
     },
     {
@@ -244,7 +244,8 @@ describe("PublicFeaturesApp", () => {
       slug: "api",
     },
     {
-      marker: "GNU Octave for .m files, notebooks, and shared numerical work.",
+      marker:
+        "Run GNU Octave with notebooks, .m files, and shared numerical work.",
       slug: "octave",
     },
     {
@@ -887,7 +888,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "julia",
-      title: "Julia for Pluto, Jupyter, and shared modeling projects.",
+      title: "Use Julia in Pluto, Jupyter, and shared modeling projects.",
       section: "Keep Julia close to the rest of the research.",
     },
     {
@@ -899,7 +900,8 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "octave",
-      title: "GNU Octave for .m files, notebooks, and shared numerical work.",
+      title:
+        "Run GNU Octave with notebooks, .m files, and shared numerical work.",
       section: "Teach and run Octave without local setup drift.",
     },
     {

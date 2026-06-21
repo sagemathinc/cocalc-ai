@@ -152,7 +152,7 @@ export default function JuliaFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Julia for Pluto, Jupyter, and shared modeling projects.
+                Use Julia in Pluto, Jupyter, and shared modeling projects.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Model, run simulations, and review results with your lab or
