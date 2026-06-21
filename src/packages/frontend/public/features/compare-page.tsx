@@ -270,7 +270,7 @@ export default function CompareFeaturePage({
             <Text
               strong
               style={{
-                color: PUBLIC_COLORS.brand,
+                color: PUBLIC_COLORS.heading,
                 letterSpacing: 0,
                 textTransform: "uppercase",
               }}

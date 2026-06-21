@@ -86,7 +86,7 @@ function ThreadMock() {
               <Flex align="start" gap={12}>
                 <IconBadge accent={message.accent} icon={message.icon} />
                 <div>
-                  <Text strong style={{ color: message.accent }}>
+                  <Text strong style={{ color: PUBLIC_COLORS.heading }}>
                     {message.label}
                   </Text>
                   <Paragraph style={{ margin: "4px 0 0" }}>
@@ -219,7 +219,7 @@ function WorkflowStrip() {
                       />
                       <Text
                         style={{
-                          color: step.accent,
+                          color: PUBLIC_COLORS.heading,
                           fontSize: PUBLIC_TYPE.subhead,
                         }}
                         strong
@@ -227,7 +227,7 @@ function WorkflowStrip() {
                         {step.label}
                       </Text>
                     </Flex>
-                    <Title level={4} style={{ margin: 0 }}>
+                    <Title level={3} style={{ margin: 0 }}>
                       {step.title}
                     </Title>
                     <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>

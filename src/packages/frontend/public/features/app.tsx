@@ -366,7 +366,7 @@ function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
           </div>
         </Flex>
         <div>
-          <Title level={4} style={{ margin: "0 0 8px" }}>
+          <Title level={3} style={{ margin: "0 0 8px" }}>
             {card.title}
           </Title>
           <Paragraph style={{ margin: 0 }}>{card.summary}</Paragraph>
@@ -619,7 +619,7 @@ function TeachingWorkflowCallout() {
                 <Icon name={meta.icon} />
               </span>
               <span>
-                <Title level={4} style={{ margin: "0 0 8px" }}>
+                <Title level={3} style={{ margin: "0 0 8px" }}>
                   Technical courses and labs
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
@@ -649,7 +649,7 @@ function FeaturesIndex() {
           <Text
             strong
             style={{
-              color: PUBLIC_COLORS.brand,
+              color: PUBLIC_COLORS.heading,
               fontSize: PUBLIC_TYPE.eyebrow,
               letterSpacing: 0,
               textTransform: "uppercase",
@@ -706,7 +706,11 @@ function FeatureDetailNavigation({ page }: { page: FeaturePage }) {
       }}
     >
       <Flex align="center" gap={8} wrap>
-        <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
+        <Button
+          type="link"
+          href={featurePath()}
+          style={{ minHeight: 24, paddingInline: 0 }}
+        >
           Features
         </Button>
         <Text type="secondary">/</Text>
@@ -938,7 +942,11 @@ function FeatureDetailContent({
   return (
     <Flex vertical gap={18}>
       <div>
-        <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
+        <Button
+          type="link"
+          href={featurePath()}
+          style={{ minHeight: 24, paddingInline: 0 }}
+        >
           Back to features
         </Button>
       </div>
@@ -956,7 +964,7 @@ function FeatureDetailContent({
             <Button
               type="link"
               href={page.docsUrl}
-              style={{ paddingInline: 0 }}
+              style={{ minHeight: 24, paddingInline: 0 }}
             >
               Documentation
             </Button>
@@ -995,7 +1003,7 @@ function FeatureDetailContent({
                   key={link.href}
                   type="link"
                   href={link.href}
-                  style={{ paddingInline: 0 }}
+                  style={{ minHeight: 24, paddingInline: 0 }}
                 >
                   {link.label}
                 </Button>
@@ -1025,7 +1033,11 @@ function FeatureDetail({
       <PublicSection>
         <Empty description="Feature page not found" />
         <div>
-          <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
+          <Button
+            type="link"
+            href={featurePath()}
+            style={{ minHeight: 24, paddingInline: 0 }}
+          >
             Back to features
           </Button>
         </div>

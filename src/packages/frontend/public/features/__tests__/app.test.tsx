@@ -496,7 +496,8 @@ describe("PublicFeaturesApp", () => {
     // Three durable-execution story cards exist — count, not prose.
     const storyRow = container.querySelector(".cocalc-jupyter-story-row");
     expect(storyRow).not.toBeNull();
-    expect((storyRow as HTMLElement).querySelectorAll("h4")).toHaveLength(3);
+    expect((storyRow as HTMLElement).querySelectorAll("h3")).toHaveLength(3);
+    expect((storyRow as HTMLElement).querySelectorAll("h4")).toHaveLength(0);
     // Closing section identity without pinning the exact headline.
     expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
     // Mock-UI output labels stay qualitative (never invented metrics).
@@ -1129,6 +1130,7 @@ describe("PublicFeaturesApp", () => {
         .map((heading) => heading.textContent?.replace(/\s+/g, " ").trim())
         .filter((heading): heading is string => !!heading);
       expect(new Set(headings).size).toBe(headings.length);
+      expect(container.querySelectorAll("main h4")).toHaveLength(0);
 
       // Design guardrail: primary-CTA emphasis stays sane — the main action may
       // repeat hero+close, but flag 3+ repeats or multiple repeated primaries.

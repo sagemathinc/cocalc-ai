@@ -423,7 +423,7 @@ PY`}</code>
               }}
             >
               <Title
-                level={4}
+                level={3}
                 style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
               >
                 Ready to use Linux in CoCalc?

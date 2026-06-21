@@ -71,7 +71,7 @@ export function StoryCard({
     >
       <Flex vertical gap={14}>
         <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
+        <Title level={3} style={{ margin: 0 }}>
           {title}
         </Title>
         <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
@@ -204,7 +204,7 @@ export function StartCard({
       }}
     >
       <Title
-        level={4}
+        level={3}
         style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
       >
         {title}

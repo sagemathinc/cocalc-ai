@@ -176,7 +176,7 @@ function TermFileDiagram() {
                 </Text>
                 <Text
                   strong
-                  style={{ color: PUBLIC_COLORS.brand, paddingLeft: 36 }}
+                  style={{ color: PUBLIC_COLORS.heading, paddingLeft: 36 }}
                 >
                   <Icon name="terminal" /> run.term
                 </Text>
@@ -202,7 +202,10 @@ function TermFileDiagram() {
                     padding: "10px 12px",
                   }}
                 >
-                  <Text strong style={{ color: "#ad6800", minWidth: 64 }}>
+                  <Text
+                    strong
+                    style={{ color: PUBLIC_COLORS.heading, minWidth: 64 }}
+                  >
                     {label}
                   </Text>
                   <Text>{value}</Text>
@@ -246,7 +249,7 @@ function SharedStreamDiagram() {
                   textAlign: "center",
                 }}
               >
-                <Text strong style={{ color: accent }}>
+                <Text strong style={{ color: PUBLIC_COLORS.heading }}>
                   {label}
                 </Text>
                 <div
@@ -488,7 +491,7 @@ export default function TerminalFeaturePage({
               }}
             >
               <Title
-                level={4}
+                level={3}
                 style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
               >
                 Ready to use terminals in CoCalc?

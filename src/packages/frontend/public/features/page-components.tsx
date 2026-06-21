@@ -88,7 +88,7 @@ export function LinkButton({
   href: string;
 }) {
   return (
-    <Button type="link" href={href} style={{ paddingInline: 0 }}>
+    <Button type="link" href={href} style={{ minHeight: 24, paddingInline: 0 }}>
       {children}
     </Button>
   );

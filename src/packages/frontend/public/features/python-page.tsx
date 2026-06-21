@@ -201,12 +201,18 @@ function WorkflowNode({
       <Flex vertical gap={12}>
         <Flex align="center" justify="space-between" gap={12}>
           <IconBadge accent={accent} icon={icon} />
-          <Text strong style={{ color: accent, fontSize: PUBLIC_TYPE.caption }}>
+          <Text
+            strong
+            style={{
+              color: PUBLIC_COLORS.heading,
+              fontSize: PUBLIC_TYPE.caption,
+            }}
+          >
             {label}
           </Text>
         </Flex>
         <div>
-          <Title level={4} style={{ margin: "0 0 6px" }}>
+          <Title level={3} style={{ margin: "0 0 6px" }}>
             {title}
           </Title>
           <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
@@ -323,7 +329,7 @@ function CompactUseCard({
     >
       <Flex vertical gap={12}>
         <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
+        <Title level={3} style={{ margin: 0 }}>
           {title}
         </Title>
         <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
@@ -485,7 +491,7 @@ export default function PythonFeaturePage({
               }}
             >
               <Title
-                level={4}
+                level={3}
                 style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
               >
                 Start using Python

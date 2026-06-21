@@ -107,7 +107,7 @@ function CourseDashboardMock() {
                     <Text
                       strong
                       style={{
-                        color: PUBLIC_COLORS.brand,
+                        color: PUBLIC_COLORS.heading,
                         flex: "0 0 auto",
                         marginLeft: 8,
                         whiteSpace: "nowrap",
@@ -336,7 +336,7 @@ export default function TeachingFeaturePage({
                 strong
                 style={{
                   alignSelf: "flex-start",
-                  color: COURSE_ACCENT,
+                  color: PUBLIC_COLORS.heading,
                   fontSize: PUBLIC_TYPE.eyebrow,
                   letterSpacing: 0,
                   textTransform: "uppercase",

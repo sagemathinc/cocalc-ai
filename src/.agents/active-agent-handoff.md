@@ -517,6 +517,35 @@ Plus/Star/Launchpad`).
   artifacts in `/tmp/cocalc-public-qa-CN4zC2`. Desktop/mobile CLI screenshots and sibling
   feature-page screenshots inspected. Dedicated-compute draft remains untouched and untracked. No
   PR.
+- **START 2026-06-20 18:40 PDT:** Beginning the systematic-audit burn-down with bounded Slice 1:
+  public feature-page accessibility only. Scope: fix contrast failures from accent colors used as
+  small text (eyebrows, tags, step labels, diagram labels), heading-level skips from card titles,
+  and sub-24px interactive targets where present. Out of scope: pricing dollars, compliance/policy
+  language, protected home/Brief positioning, and Claude's claimed `/home/user/cocalc-ai/docs/pitch`
+  lane. Read Claude status and `framing-principles-digest-2026-06-20.md`; Claude remains read-only
+  on synthesis. Verified branch `blaec-synthesis-2026-06-18` at `cf51f3075e`; preview remains the
+  synthesis hub. Pre-existing untracked dedicated-compute draft remains out of scope. No PR.
+- **END 2026-06-20 19:55 PDT:** Slice 1 implemented across public feature pages. Moved small
+  label text off failing accent colors and onto dark ink (`PUBLIC_COLORS.heading`) while leaving
+  accent colors on icons, borders, and visual panels. Removed the feature-page `h2 -> h4` skip by
+  changing card/final-panel headings from semantic `h4` to `h3`; added a test guard that audited
+  feature routes have no `main h4` headings. Added explicit `minHeight: 24` to feature link-style
+  buttons that intentionally use zero inline padding, including the shared `LinkButton`. This slice
+  added no new public product claims; it only changed accessibility semantics and visual text
+  treatments. Contrast checks: heading on white `14.03:1`, heading on page background `12.87:1`,
+  muted text on white `6.39:1`, muted text on page background `5.86:1`, dark text on white
+  `9.89:1`, dark text on warning tint `9.35:1`; old brand-blue small text on white is `4.10:1`
+  and no longer used for the audited small labels. Source checks: `rg` found no
+  `Title level={4}` / `level={4}` in `src/packages/frontend/public/features`, and no direct
+  `style={{ paddingInline: 0 }}` link buttons without the target-size floor. Validation:
+  `pnpm prettier:write` on touched feature files; `pnpm --dir packages/frontend exec jest
+  public/features/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend exec
+  jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`;
+  `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`; broad browser
+  QA for 18 feature routes on desktop/mobile passed with 668 assertions and 0 failures, artifacts
+  in `/tmp/cocalc-public-qa-zX4jcd`. Desktop/mobile screenshots for `/features`,
+  `/features/jupyter-notebook`, `/features/ai`, `/features/python`, and `/features/terminal`
+  inspected. Dedicated-compute draft remains untouched and untracked. No PR.
 
 ### Codex — platform-UI thread
 

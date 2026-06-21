@@ -49,7 +49,7 @@ function StoryCard({
     >
       <Flex vertical gap={14}>
         <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
+        <Title level={3} style={{ margin: 0 }}>
           {title}
         </Title>
         <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
@@ -203,7 +203,7 @@ cocalc project jupyter exec --path analysis.ipynb --stdin`}
                     width: "100%",
                   }}
                 >
-                  <Text strong style={{ color: COLORS.AI_ASSISTANT_FONT }}>
+                  <Text strong style={{ color: PUBLIC_COLORS.heading }}>
                     {label}
                   </Text>
                 </div>
@@ -244,7 +244,7 @@ export default function JupyterNotebookFeaturePage({
                 strong
                 style={{
                   alignSelf: "flex-start",
-                  color: COLORS.BLUE_D,
+                  color: PUBLIC_COLORS.heading,
                   fontSize: PUBLIC_TYPE.eyebrow,
                   letterSpacing: 0,
                   textTransform: "uppercase",
@@ -357,7 +357,7 @@ export default function JupyterNotebookFeaturePage({
                 <Button
                   type="link"
                   onClick={() => setShowAgentDetails(true)}
-                  style={{ paddingInline: 0 }}
+                  style={{ minHeight: 24, paddingInline: 0 }}
                 >
                   See agent details
                 </Button>
@@ -385,7 +385,7 @@ export default function JupyterNotebookFeaturePage({
               }}
             >
               <Title
-                level={4}
+                level={3}
                 style={{ color: PUBLIC_COLORS.heading, margin: 0 }}
               >
                 Ready to use Jupyter in CoCalc?

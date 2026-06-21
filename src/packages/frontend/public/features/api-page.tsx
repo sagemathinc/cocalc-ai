@@ -129,7 +129,7 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
                 padding: 24,
               }}
             >
-              <Title level={4} style={{ margin: "0 0 10px" }}>
+              <Title level={3} style={{ margin: "0 0 10px" }}>
                 Start automating
               </Title>
               <Paragraph style={{ margin: 0 }}>
