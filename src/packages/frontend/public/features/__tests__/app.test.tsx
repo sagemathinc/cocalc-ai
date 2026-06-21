@@ -1130,6 +1130,22 @@ describe("PublicFeaturesApp", () => {
     }
   });
 
+  it("uses the balanced final band on the Julia pilot page", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "julia", view: "detail" }}
+      />,
+    );
+
+    expect(container.querySelector(".cocalc-feature-final-band")).not.toBeNull();
+    expect(screen.getByText("When Julia belongs in CoCalc")).not.toBeNull();
+    expect(screen.getByText("Related workflows")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Compare operating models" }),
+    ).not.toBeNull();
+  });
+
   it.each(auditedFeaturePages)(
     "keeps the audited $slug feature page route-specific and free of decorative tags",
     ({ marker, slug }) => {

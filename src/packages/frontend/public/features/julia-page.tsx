@@ -18,7 +18,7 @@ import {
   featureAppPath as appPath,
 } from "./page-components";
 import { FEATURE_ACCENTS } from "./feature-accents";
-import { ContextList, IconBadge, StartCard } from "./feature-visuals";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -186,36 +186,30 @@ export default function JuliaFeaturePage({
       <JuliaProjectFit />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>When Julia belongs in CoCalc</Title>
-            <BulletList
-              items={[
-                "Use Jupyter, Pluto, source files, and terminal workflows together.",
-                "Share a Julia environment with students or collaborators.",
-                "Keep Julia work near data, reports, Python, R, and Linux tools.",
-                "Best fit when collaboration and project context matter as much as the language.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/linux")}>
-                Linux environment
-              </Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              <Button href={appPath("products")}>
-                Compare operating models
-              </Button>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows."
-              href={primaryHref}
-              label={primaryLabel}
-              title="Start in a project"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body:
+              "Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows.",
+            href: primaryHref,
+            label: primaryLabel,
+            title: "Start in a project",
+          }}
+          relatedLinks={[
+            { href: appPath("features/linux"), label: "Linux environment" },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="When Julia belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "Use Jupyter, Pluto, source files, and terminal workflows together.",
+              "Share a Julia environment with students or collaborators.",
+              "Keep Julia work near data, reports, Python, R, and Linux tools.",
+              "Best fit when collaboration and project context matter as much as the language.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

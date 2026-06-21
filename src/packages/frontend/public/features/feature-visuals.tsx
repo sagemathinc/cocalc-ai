@@ -5,7 +5,7 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Flex, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
@@ -232,6 +232,101 @@ export function StartCard({
       >
         {label}
       </Button>
+    </div>
+  );
+}
+
+export function FeatureFinalBand({
+  action,
+  children,
+  relatedLinks,
+  relatedTitle = "Related workflows",
+  title,
+}: {
+  action: {
+    body: ReactNode;
+    href: string;
+    label: string;
+    title: ReactNode;
+  };
+  children: ReactNode;
+  relatedLinks?: { href: string; label: ReactNode }[];
+  relatedTitle?: ReactNode;
+  title: ReactNode;
+}) {
+  return (
+    <div
+      className="cocalc-feature-final-band"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: PUBLIC_ELEVATION.panel,
+        padding: 24,
+      }}
+    >
+      <Row gutter={[24, 24]} align="top">
+        <Col xs={24} lg={15}>
+          <Flex vertical gap={14}>
+            <Title level={3} style={{ margin: 0 }}>
+              {title}
+            </Title>
+            {children}
+            {relatedLinks?.length ? (
+              <Flex vertical gap={8}>
+                <Text strong style={{ color: PUBLIC_COLORS.mutedText }}>
+                  {relatedTitle}
+                </Text>
+                <Flex wrap gap={12}>
+                  {relatedLinks.map(({ href, label }) => (
+                    <Button
+                      href={href}
+                      key={href}
+                      style={{ minHeight: 24, paddingInline: 0 }}
+                      type="link"
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </Flex>
+              </Flex>
+            ) : null}
+          </Flex>
+        </Col>
+        <Col xs={24} lg={9}>
+          <div
+            className="cocalc-feature-final-panel"
+            style={{
+              background: PUBLIC_COLORS.surfaceMuted,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PUBLIC_RADIUS.panel,
+              color: PUBLIC_COLORS.heading,
+              height: "100%",
+              padding: 22,
+            }}
+          >
+            <Flex vertical gap={14}>
+              <Title
+                level={3}
+                style={{ color: PUBLIC_COLORS.heading, margin: 0 }}
+              >
+                {action.title}
+              </Title>
+              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+                {action.body}
+              </Paragraph>
+              <Button
+                href={action.href}
+                size="large"
+                style={{ marginTop: 4, width: "fit-content" }}
+                type="primary"
+              >
+                {action.label}
+              </Button>
+            </Flex>
+          </div>
+        </Col>
+      </Row>
     </div>
   );
 }
