@@ -361,6 +361,7 @@ function StripeCheckout({
   const [secret, setSecret] = useState<CheckoutSessionSecret | null>(null);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const updateSecret = useCallback(
     debounce(
@@ -372,12 +373,18 @@ function StripeCheckout({
           let attempts = 3;
           for (let i = 0; i < attempts; i++) {
             try {
-              secret = await getCheckoutSession({
-                lineItems,
-                description,
-                purpose,
-                metadata,
+              const completed = await runFreshAuthAction(async () => {
+                secret = await getCheckoutSession({
+                  lineItems,
+                  description,
+                  purpose,
+                  metadata,
+                });
               });
+              if (!completed) {
+                setLoading(false);
+                return;
+              }
               break;
             } catch (err) {
               console.warn("issue getting stripe checkout session", err);
@@ -401,7 +408,7 @@ function StripeCheckout({
       PAYMENT_UPDATE_DEBOUNCE,
       { leading: true, trailing: true },
     ),
-    [],
+    [metadata, runFreshAuthAction],
   );
 
   useEffect(() => {
@@ -409,11 +416,21 @@ function StripeCheckout({
   }, [lineItems, description, purpose]);
 
   if (error) {
-    return <ShowError style={style} error={error} setError={setError} />;
+    return (
+      <>
+        <ShowError style={style} error={error} setError={setError} />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   if (secret == null) {
-    return <BigSpin style={style} />;
+    return (
+      <>
+        <BigSpin style={style} />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   return (
@@ -472,6 +489,7 @@ function StripeCheckout({
       >
         <EmbeddedCheckout className="cc-stripe-embedded-checkout" />
       </EmbeddedCheckoutProvider>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

@@ -13,6 +13,7 @@ import StripePayment, {
 import {
   createPaymentIntent,
   createSetupIntent,
+  getCheckoutSession,
   getCustomerSession,
   getPaymentMethods,
   getStripeCustomer,
@@ -88,7 +89,7 @@ jest.mock("@stripe/react-stripe-js", () => ({
     }, [onReady]);
     return <div>Stripe address element</div>;
   },
-  EmbeddedCheckout: () => null,
+  EmbeddedCheckout: () => <div>Stripe embedded checkout</div>,
   EmbeddedCheckoutProvider: ({ children }: { children?: ReactNode }) => (
     <>{children}</>
   ),
@@ -182,6 +183,11 @@ describe("StripePayment", () => {
     jest
       .mocked(createSetupIntent)
       .mockResolvedValue({ clientSecret: "seti_test_secret" } as any);
+    jest.mocked(getCheckoutSession).mockReset();
+    jest.mocked(getCheckoutSession).mockResolvedValue({
+      clientSecret: "cs_test_secret",
+      sessionId: "cs_test",
+    } as any);
     jest.mocked(getCustomerSession).mockReset();
     jest.mocked(getCustomerSession).mockResolvedValue({});
     jest.mocked(getPaymentMethods).mockReset();
@@ -309,6 +315,49 @@ describe("StripePayment", () => {
         strict: true,
       });
       expect(onFinished).toHaveBeenCalledWith(1440);
+    });
+  });
+
+  it("uses fresh auth before creating an embedded checkout session", async () => {
+    mockStripeEnabled = true;
+    jest.mocked(getPaymentMethods).mockResolvedValue({ data: [] } as any);
+    jest
+      .mocked(getCheckoutSession)
+      .mockRejectedValueOnce(freshAuthRequiredError())
+      .mockResolvedValueOnce({
+        clientSecret: "cs_test_secret",
+        sessionId: "cs_test",
+      } as any);
+
+    render(
+      <StripePayment
+        description="Membership change"
+        lineItems={[{ description: "Pro membership, annual", amount: 1440 }]}
+        purpose="membership-change"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Choose Payment Method")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Choose Payment Method"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Confirm security action")).toBeTruthy();
+    });
+    expect(screen.queryByText("Stripe embedded checkout")).toBeNull();
+
+    fireEvent.click(screen.getByText("Verify fresh auth"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Stripe embedded checkout")).toBeTruthy();
+    });
+    expect(getCheckoutSession).toHaveBeenCalledTimes(2);
+    expect(getCheckoutSession).toHaveBeenLastCalledWith({
+      description: "Membership change",
+      lineItems: [{ description: "Pro membership, annual", amount: 1440 }],
+      purpose: "membership-change",
+      metadata: undefined,
     });
   });
 
