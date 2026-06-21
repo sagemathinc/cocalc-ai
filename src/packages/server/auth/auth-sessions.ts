@@ -378,7 +378,7 @@ export async function setSessionFreshAuth({
         account_id,
         action: "set fresh auth",
       });
-      await db.query(
+      const { rowCount } = await db.query(
         `
           UPDATE account_auth_sessions
              SET updated = NOW(),
@@ -397,14 +397,19 @@ export async function setSessionFreshAuth({
                  metadata = COALESCE(metadata, '{}'::JSONB) || $4::JSONB,
                  revoked_at = NULL
            WHERE session_hash = $1::CHAR(127)
+             AND account_id = $5::UUID
         `,
         [
           cleanedSessionHash,
           fresh_auth_until,
           factor_level,
           JSON.stringify(metadata_patch ?? {}),
+          account_id,
         ],
       );
+      if ((rowCount ?? 0) === 0) {
+        throw new Error("current browser session not found");
+      }
     },
   });
 }
@@ -425,8 +430,9 @@ export async function revokeAuthSession({
           UPDATE account_auth_sessions
              SET updated = NOW(), revoked_at = NOW()
            WHERE session_hash = $1::CHAR(127)
+             AND account_id = $2::UUID
         `,
-        [session_hash],
+        [session_hash, account_id],
       );
     },
   });
