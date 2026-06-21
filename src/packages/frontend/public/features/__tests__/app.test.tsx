@@ -259,6 +259,12 @@ describe("PublicFeaturesApp", () => {
       screen.getByRole("link", { name: /CoCalc CLI/i }).getAttribute("href"),
     ).toBe("/features/cli");
     expect(
+      screen.getByText(
+        "Run documented commands against CoCalc projects so scripts and shell-capable agents can inspect context, run notebook checks, and leave outputs for review.",
+      ),
+    ).not.toBeNull();
+    expect(container.textContent ?? "").not.toMatch(/command-line surface/i);
+    expect(
       screen
         .getByRole("link", { name: /Project Automations/i })
         .getAttribute("href"),

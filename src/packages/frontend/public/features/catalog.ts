@@ -97,9 +97,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "cli",
     title: "CoCalc CLI",
-    tagline: "Use typed commands for repeatable project automation.",
+    tagline: "Run project checks from documented commands.",
     summary:
-      "Use the CoCalc CLI for technical automation, browser scripting, notebook execution, and operational workflows that need a command-line surface.",
+      "Run documented commands against CoCalc projects so scripts and shell-capable agents can inspect context, run notebook checks, and leave outputs for review.",
     image: "/public/features/terminal.png",
     index: true,
   },

@@ -74,7 +74,7 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
     slug: "cli",
     title: "CoCalc CLI",
     summary:
-      "Use the CoCalc CLI for project automation, browser scripting, notebook execution, and operational workflows that need typed commands.",
+      "Run documented commands against CoCalc projects so scripts and shell-capable agents can inspect context, run notebook checks, and leave outputs for review.",
     image: "/public/features/terminal.png",
   },
   {

@@ -72,6 +72,44 @@ and deployment boundaries stay together.
 10. Bias to subtraction: if the visitor already understands the point, remove
     the extra sentence.
 
+## Validated Guardrails
+
+These rules are durable guardrails for every public-site agent. They are
+validated against the pitch package, current source-code behavior, or an
+approved product decision. If a future edit needs to weaken one, record the
+evidence and route it through the pitch-challenge path before public copy
+changes.
+
+1. Do not collapse CoCalc into a narrower category. Avoid framing CoCalc as an
+   AI IDE, notebook platform, Jupyter replacement, cloud coding agent, sandbox
+   or runtime API, prompt-to-app builder, sovereign/private AI cloud, or agent
+   cloud. These categories can appear as adjacent markets in internal analysis,
+   not as the public identity.
+2. Treat CLI, HTTP API, automations, browser automation, and compute hosts as
+   proof/mechanism surfaces. They may get detail pages when they answer a
+   visitor question, but they should not become the wedge, homepage headline,
+   or default primary buying path. Mechanism pages generally use docs-first
+   CTAs, with conversion CTAs subordinate to the workflow.
+3. Gate strong claims. No trust, security, compliance, customer, pricing,
+   migration, benchmark, setup-time, restore-time, scale, capacity,
+   reliability, cost-saving, or performance claims go public unless the
+   controlling proof gate supports that exact line. Use qualitative workflow
+   wording when measured proof or approval is absent.
+4. Keep public naming and technical naming separate. Public copy should use
+   buyer-facing labels, while docs/routes/UI internals may retain implementation
+   terms. Example: public "Dedicated compute" / "compute host"; technical
+   docs/routes may still say "project host." Never surface implementation
+   architecture such as RootFS, bay, Conat, control/data plane, placement, or
+   runtime policy as marketing copy.
+5. Bound agent-compatibility claims to implemented behavior. CoCalc has CLI and
+   project/browser command surfaces that shell-capable agents can call. Do not
+   imply native support for every external agent platform or MCP integration
+   unless that exists in the source and has an approved public frame.
+6. Verify product capability claims against the current repository before they
+   ship. Pitch notes and shared audits can guide framing, but any public claim
+   about what CoCalc does must be traceable to code, docs, tests, or assets in
+   the current `github.com/sagemathinc/cocalc-ai` source tree.
+
 ## Route Frame
 
 Every route or section edit must have this frame before source changes:

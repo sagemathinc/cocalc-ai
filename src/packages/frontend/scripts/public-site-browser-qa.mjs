@@ -239,6 +239,7 @@ const ROUTE_RULES = {
       "AI workflows",
       "Languages",
       "Teaching",
+      "Run documented commands against CoCalc projects",
     ],
     expectedOrder: [
       "Runtime",
@@ -247,7 +248,7 @@ const ROUTE_RULES = {
       "Languages",
       "Teaching",
     ],
-    forbidText: ["Notebook, writing, and visual work"],
+    forbidText: ["Notebook, writing, and visual work", "command-line surface"],
     requireSelectors: [".cocalc-feature-link-card"],
     styleChecks: [
       {
@@ -298,6 +299,7 @@ const ROUTE_RULES = {
       "A practical bridge for external tools.",
       "typed surface",
       "run and report",
+      "command-line surface",
       "Create account",
       "admin/operator",
       "hub-password",

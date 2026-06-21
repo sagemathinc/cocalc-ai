@@ -481,6 +481,42 @@ Plus/Star/Launchpad`).
   `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA
   for `/features/cli` and `/features` on desktop/mobile passed with 118 assertions and 0 failures,
   artifacts in `/tmp/cocalc-public-qa-xRagwv`. Desktop and mobile screenshots inspected. No PR.
+- **START 2026-06-20 18:20 PDT:** Folding Claude's validated framing-principles digest items 3-7
+  into the durable public-site framing layer and running the remaining `/features/cli` polish pass:
+  WCAG contrast verification, sibling-page rhythm check, and low-risk meta-description alignment.
+  Principles 1, 2, 8, and 9 remain provisional until Claude's research runs land. Read Claude
+  status first; Claude remains read-only. Verified preview owner remains synthesis hub pid `13303`
+  (`/home/user/cocalc-ai-synthesis/src`). Claiming
+  `docs/landing-page-framing-system.md`, `docs/landing-page-framing-research-register.md`,
+  `src/packages/frontend/public/features/cli-page.tsx`, browser QA artifacts, and this ledger.
+  Dedicated-compute draft remains out of scope. No PR.
+- **END 2026-06-20 18:35 PDT:** Folded validated principles 3-7 into
+  `docs/landing-page-framing-system.md` and logged their evidence in
+  `docs/landing-page-framing-research-register.md`; principles 1, 2, 8, and 9 remain provisional.
+  Added the explicit rule that public product capability claims must trace to the current
+  `github.com/sagemathinc/cocalc-ai` source tree. Source verification for the CLI copy is based on
+  `src/packages/cli/src/bin/commands/browser.ts` (`browser files`, `browser workspace-state`,
+  `browser exec`), `src/packages/cli/src/bin/commands/project/jupyter.ts`
+  (`project jupyter exec --path ... --stdin`), and
+  `src/packages/ai/acp/codex-app-server.ts` (agent runtime guidance that shells out to those CLI
+  commands). `rg` found no source-backed native MCP integration, so public copy remains bounded to
+  scripts and shell-capable agents. Updated CLI feature index/catalog/social metadata to lead with
+  the source-backed project-command workflow and added tests/QA forbids for the old
+  "command-line surface" wording. Contrast pass: muted text on white `6.39:1`, muted text on page
+  background `5.86:1`, CLI step/accent text on white `9.89:1`, CLI step/accent text on light panel
+  `9.07:1`, terminal output/command/chrome text on terminal background `14.67:1` / `14.37:1` /
+  `12.05:1`. Validation: `pnpm --dir packages/frontend exec jest
+  public/features/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend exec
+  jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`;
+  `pnpm lint:frontend`; `git diff --check`; `pnpm prettier:check --
+  ../docs/landing-page-framing-system.md ../docs/landing-page-framing-research-register.md`;
+  `pnpm -C src/packages/static build:dev`; browser QA for `/features`, `/features/cli`,
+  `/features/api`, `/features/automations`, and `/features/terminal` on desktop/mobile passed with
+  202 assertions and 0 failures, artifacts in `/tmp/cocalc-public-qa-lAP9x1`; post-commit preview
+  rebuild and browser QA passed the same routes/viewports with 202 assertions and 0 failures,
+  artifacts in `/tmp/cocalc-public-qa-CN4zC2`. Desktop/mobile CLI screenshots and sibling
+  feature-page screenshots inspected. Dedicated-compute draft remains untouched and untracked. No
+  PR.
 
 ### Codex — platform-UI thread
 

@@ -182,7 +182,7 @@ const FEATURE_INDEX_CARD_OVERRIDES = {
     href: featurePath("cli"),
     slug: "cli",
     summary:
-      "Use the CoCalc CLI for technical automation, browser scripting, and operational workflows that need a command-line surface.",
+      "Run documented commands against CoCalc projects so scripts and shell-capable agents can inspect context, run notebook checks, and leave outputs for review.",
     title: "CoCalc CLI",
   },
   "project-hosts": {
