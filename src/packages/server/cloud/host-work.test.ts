@@ -1501,6 +1501,8 @@ describe("cloud host start failures", () => {
     expect(hostRows.rows[0].metadata.last_error_at).toBeUndefined();
     expect(hostRows.rows[0].metadata.spot_recovery_state).toEqual({
       phase: "idle",
+      outage_started_at: "2026-05-04T03:02:20.004Z",
+      last_recovered_at: expect.any(String),
       last_probe_at: "2026-05-04T03:19:02.285Z",
       last_probe_result: "success",
     });
@@ -1517,6 +1519,92 @@ describe("cloud host start failures", () => {
     expect(logRows.rows[0]).toMatchObject({
       action: "spot_return_succeeded",
       status: "success",
+    });
+  });
+
+  it("falls back to standard when a recently recovered spot host dies again", async () => {
+    const hostId = "c8227e7d-a34a-4e29-9d5e-d246fd31584a";
+    const setPricingModel = jest.fn(async () => undefined);
+    const startHost = jest.fn(async () => undefined);
+    const getStatus = jest.fn(async () => "running");
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          setPricingModel,
+          startHost,
+          getStatus,
+        },
+      },
+      creds: {},
+    });
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Repeated spot interruption host",
+      region: "us-west2",
+      status: "running",
+      last_seen: new Date(Date.now() - 8 * 60_000) as any,
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west2-c",
+          machine_type: "t2d-standard-16",
+          disk_gb: 200,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west2-c",
+          instance_id: `cocalc-host-${hostId}`,
+          provider_status: "TERMINATED",
+        },
+        spot_recovery_policy: {
+          spot_restore_retry_window_minutes: 10,
+        },
+        spot_recovery_state: {
+          phase: "idle",
+          outage_started_at: "2026-05-04T03:02:20.004Z",
+          last_recovered_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+          attempt: 1,
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.start({
+      id: "start-repeated-spot-interruption-1",
+      vm_id: hostId,
+      action: "start",
+      payload: {
+        provider: "gcp",
+        source: "cloud_reconcile",
+        reason: "provider-status:TERMINATED",
+      },
+    } as any);
+
+    expect(setPricingModel).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: `cocalc-host-${hostId}` }),
+      "on_demand",
+      {},
+    );
+    expect(startHost).toHaveBeenCalled();
+
+    const hostRows = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("starting");
+    expect(hostRows.rows[0].metadata.effective_pricing_model).toBe("on_demand");
+    expect(hostRows.rows[0].metadata.spot_recovery_state).toMatchObject({
+      phase: "running_standard_fallback",
+      outage_started_at: "2026-05-04T03:02:20.004Z",
+      attempt: 2,
     });
   });
 });

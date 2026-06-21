@@ -38,12 +38,16 @@ export function AccountPreferencesAI() {
   const other_settings = useTypedRedux("account", "other_settings");
   const stripe_customer = useTypedRedux("account", "stripe_customer");
   const [codexSessionsOpen, setCodexSessionsOpen] = useState(false);
-  const codexSessionsButton = (
-    <>
-      <Button
-        style={{ marginTop: 12 }}
-        onClick={() => setCodexSessionsOpen(true)}
-      >
+  const codexSessionsSection = (
+    <div style={{ marginTop: 24, marginBottom: 8 }}>
+      <Typography.Title level={5} style={{ marginBottom: 6 }}>
+        Codex sessions
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 10 }}>
+        Review current and recent Codex sessions, jump back to their chat files,
+        and stop any turns that might still be using AI resources.
+      </Typography.Paragraph>
+      <Button onClick={() => setCodexSessionsOpen(true)}>
         View Codex sessions
       </Button>
       <Modal
@@ -55,7 +59,7 @@ export function AccountPreferencesAI() {
       >
         <CodexSessionsPanel />
       </Modal>
-    </>
+    </div>
   );
 
   if (lite) {
@@ -76,7 +80,7 @@ export function AccountPreferencesAI() {
         <CodexCredentialsPanel />
         <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
-        {codexSessionsButton}
+        {codexSessionsSection}
       </>
     );
   }
@@ -100,7 +104,7 @@ export function AccountPreferencesAI() {
       <AIUsageStatus variant="full" showHelp />
       <CodexCredentialsPanel />
       <CodexDefaultsPanel other_settings={other_settings} />
-      {codexSessionsButton}
+      {codexSessionsSection}
     </>
   );
 }

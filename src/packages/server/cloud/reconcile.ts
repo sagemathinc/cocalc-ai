@@ -90,6 +90,18 @@ type KnownCloudHost = {
   metadata?: Record<string, any>;
 };
 
+const RESTORE_BLOCKING_PENDING_ACTIONS = [
+  "start",
+  "stop",
+  "restart",
+  "hard_restart",
+  "delete",
+  "deprovision",
+  "force_deprovision",
+  "provision",
+  "bootstrap",
+];
+
 async function loadHosts(provider: Provider): Promise<HostRow[]> {
   const { rows } = await pool().query(
     `
@@ -357,7 +369,9 @@ export async function listCloudOrphanInstances(
   return classifyCloudOrphanInstances({ provider, instances, hosts });
 }
 
-async function hasPendingWork(vmId: string): Promise<boolean> {
+export async function hasPendingRestoreBlockingWork(
+  vmId: string,
+): Promise<boolean> {
   const { rows } = await pool().query<{ exists: boolean }>(
     `
       SELECT EXISTS(
@@ -365,9 +379,10 @@ async function hasPendingWork(vmId: string): Promise<boolean> {
         FROM cloud_vm_work
         WHERE vm_id=$1
           AND state IN ('queued','in_progress')
+          AND action = ANY($2::text[])
       ) AS exists
     `,
-    [vmId],
+    [vmId, RESTORE_BLOCKING_PENDING_ACTIONS],
   );
   return !!rows[0]?.exists;
 }
@@ -595,7 +610,7 @@ async function reconcileProvider(provider: Provider) {
     const inGrace =
       lastActionAt &&
       now.getTime() - lastActionAt.getTime() < RECONCILE_GRACE_MS;
-    const pendingWork = await hasPendingWork(row.id);
+    const pendingBlockingWork = await hasPendingRestoreBlockingWork(row.id);
     let missingCount = getMissingCount(runtime);
     let nextRuntime = {
       ...runtime,
@@ -615,7 +630,7 @@ async function reconcileProvider(provider: Provider) {
       await updateHost(row, { runtime: nextRuntime });
       continue;
     }
-    if (pendingWork) {
+    if (pendingBlockingWork) {
       await updateHost(row, { runtime: nextRuntime });
       continue;
     }

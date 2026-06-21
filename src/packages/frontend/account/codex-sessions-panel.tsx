@@ -113,14 +113,22 @@ function compactValue(value: unknown): string | undefined {
   return text || undefined;
 }
 
+function metadataValue(
+  metadata: Record<string, unknown>,
+  snakeKey: string,
+  camelKey: string,
+): string | undefined {
+  return compactValue(metadata[snakeKey] ?? metadata[camelKey]);
+}
+
 function modelLabel(session: AiSessionRecord): string {
   const metadata = sessionMetadata(session);
   return (
     [
       compactValue(session.model),
       compactValue(metadata.reasoning),
-      compactValue(metadata.service_tier),
-      compactValue(metadata.session_mode),
+      metadataValue(metadata, "service_tier", "serviceTier"),
+      metadataValue(metadata, "session_mode", "sessionMode"),
     ]
       .filter(Boolean)
       .join(" / ") || "-"
@@ -135,6 +143,12 @@ function titleForSession(session: AiSessionRecord): string {
     session.session_id ||
     session.session_key
   );
+}
+
+function truncateMiddle(text: string, max = 72): string {
+  if (text.length <= max) return text;
+  const edge = Math.max(8, Math.floor((max - 3) / 2));
+  return `${text.slice(0, edge)}...${text.slice(-edge)}`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -356,11 +370,36 @@ export default function CodexSessionsPanel() {
       key: "session",
       render: (_, group) => {
         const session = group.latest;
+        const title = titleForSession(session);
+        const subtitle = session.path || session.project_id;
         return (
           <Space direction="vertical" size={0}>
-            <Text strong>{titleForSession(session)}</Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {session.path || session.project_id}
+            <Text
+              strong
+              title={title}
+              style={{
+                display: "inline-block",
+                maxWidth: 300,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {truncateMiddle(title)}
+            </Text>
+            <Text
+              type="secondary"
+              title={subtitle}
+              style={{
+                display: "inline-block",
+                fontSize: 12,
+                maxWidth: 300,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {truncateMiddle(subtitle, 66)}
             </Text>
             {session.project_id && session.path ? (
               <Button
