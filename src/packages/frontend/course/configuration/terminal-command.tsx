@@ -23,7 +23,7 @@ import {
   useRedux,
 } from "@cocalc/frontend/app-framework";
 
-import { Gap, Icon } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
 import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { course, labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
@@ -47,13 +47,8 @@ export function TerminalCommandPanel({ name }: Props) {
 
   function render_button(running: boolean) {
     return (
-      <Button
-        style={{ width: "6em" }}
-        onClick={() => run_terminal_command()}
-        disabled={running}
-      >
-        <Icon name={running ? "cocalc-ring" : "play"} spin={running} /> <Gap />{" "}
-        Run
+      <Button onClick={() => run_terminal_command()} disabled={running}>
+        <Icon name={running ? "cocalc-ring" : "play"} spin={running} /> Run
       </Button>
     );
   }
@@ -89,13 +84,17 @@ export function TerminalCommandPanel({ name }: Props) {
           />
           {render_button(running)}
         </Space.Compact>
-        <InputNumber
-          value={timeout}
-          onChange={(t) => setTimeout(t ?? null)}
-          min={0}
-          max={30}
-          suffix={"minute timeout"}
-        />
+        <Space size={6} wrap={false}>
+          <span>Timeout</span>
+          <InputNumber
+            value={timeout}
+            onChange={(t) => setTimeout(t ?? null)}
+            min={0}
+            max={30}
+            style={{ width: 80 }}
+          />
+          <span>minutes</span>
+        </Space>
       </Form>
     );
   }

@@ -201,10 +201,10 @@ export function StudentAssignmentInfo({
           size={size}
           style={{
             maxWidth: "100%",
-            minWidth: 110,
             overflow: "hidden",
             textAlign: "left",
             textOverflow: "ellipsis",
+            width: "100%",
           }}
         >
           {text}
@@ -605,6 +605,7 @@ export function StudentAssignmentInfo({
 
   const workflowColStyle: CSSProperties = {
     display: "flex",
+    minWidth: 0,
     paddingRight: 8,
   };
 
@@ -837,10 +838,21 @@ export function StudentAssignmentInfo({
               style={{
                 alignItems: "center",
                 display: "flex",
+                gap: 6,
                 justifyContent: "space-between",
+                minWidth: 0,
               }}
             >
-              <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+              <span
+                style={{
+                  color: COLORS.GRAY_D,
+                  fontWeight: 600,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 Grade & Feedback
               </span>
               <Tag color={grade || comments ? "success" : "blue"}>
