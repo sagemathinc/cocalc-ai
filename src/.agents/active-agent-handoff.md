@@ -465,6 +465,22 @@ Plus/Star/Launchpad`).
   artifacts in `/tmp/cocalc-public-qa-pOscri`. Desktop and mobile screenshots inspected. The
   repo-level `pnpm test -- ...` wrapper is blocked in this environment by missing Python
   `requests`, so focused package Jest was run directly. Dedicated-compute draft untouched. No PR.
+- **START 2026-06-20 18:16 PDT:** Revising the `/features/cli` middle flow after Blaec flagged
+  the `01/02/03` badges and right-aligned icons as visually weird/inconsistent. Scope: keep the
+  sequence concept but simplify the treatment so each step has one consistent left-aligned marker
+  and no competing per-card icon. Read Claude status first; Claude remains read-only. Verified
+  preview owner remains synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`).
+  Claiming `src/packages/frontend/public/features/cli-page.tsx`, browser QA artifacts, and this
+  ledger. Dedicated-compute draft remains out of scope. No PR.
+- **END 2026-06-20 18:18 PDT:** `/features/cli` middle flow revised and preview rebuilt. Removed
+  the `01/02/03` circular badges and the competing right-aligned icons; each step now uses the same
+  left-aligned pattern (`Step 1/2/3`, title, body) with a subtle left border. Validation:
+  `pnpm prettier:write -- packages/frontend/public/features/cli-page.tsx`;
+  `pnpm --dir packages/frontend exec jest public/features/__tests__/app.test.tsx --runInBand`;
+  `pnpm --dir packages/frontend exec jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand`;
+  `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA
+  for `/features/cli` and `/features` on desktop/mobile passed with 118 assertions and 0 failures,
+  artifacts in `/tmp/cocalc-public-qa-xRagwv`. Desktop and mobile screenshots inspected. No PR.
 
 ### Codex — platform-UI thread
 

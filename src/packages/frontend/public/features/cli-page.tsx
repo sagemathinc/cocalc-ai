@@ -133,20 +133,17 @@ function CliFitSection() {
   const signals = [
     {
       body: "List open files, tabs, and notebook state before an automated step changes anything.",
-      icon: "terminal" as IconName,
-      step: "01",
+      step: "Step 1",
       title: "Read project context",
     },
     {
       body: "Execute notebook or browser checks through documented commands instead of UI scripting.",
-      icon: "jupyter" as IconName,
-      step: "02",
+      step: "Step 2",
       title: "Run bounded actions",
     },
     {
       body: "Leave run IDs, files, and generated outputs in the project where collaborators can inspect them.",
-      icon: "gears" as IconName,
-      step: "03",
+      step: "Step 3",
       title: "Return reviewable output",
     },
   ];
@@ -165,49 +162,36 @@ function CliFitSection() {
           </Paragraph>
         </Flex>
         <Row className="cocalc-cli-workflow-flow" gutter={[16, 16]}>
-          {signals.map(({ body, icon, step, title }) => (
+          {signals.map(({ body, step, title }) => (
             <Col key={title} xs={24} md={8}>
               <Flex
                 vertical
-                gap={14}
+                gap={8}
                 style={{
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderLeft: `3px solid ${CLI_ACCENT}`,
                   borderRadius: PANEL_RADIUS,
                   height: "100%",
-                  padding: 18,
+                  padding: "16px 18px",
                 }}
               >
-                <Flex align="center" gap={12} justify="space-between">
-                  <Flex align="center" gap={10}>
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        alignItems: "center",
-                        background: PUBLIC_COLORS.surfaceMuted,
-                        border: `1px solid ${PUBLIC_COLORS.border}`,
-                        borderRadius: 999,
-                        color: CLI_ACCENT,
-                        display: "inline-flex",
-                        flex: "0 0 auto",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        height: 28,
-                        justifyContent: "center",
-                        letterSpacing: 0,
-                        width: 28,
-                      }}
-                    >
-                      {step}
-                    </span>
-                    <Text strong>{title}</Text>
-                  </Flex>
-                  <IconBadge accent={CLI_ACCENT} icon={icon} size="sm" />
-                </Flex>
+                <Text
+                  style={{
+                    color: CLI_ACCENT,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    letterSpacing: 0,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {step}
+                </Text>
+                <Text strong>{title}</Text>
                 <Paragraph
                   style={{
                     color: PUBLIC_COLORS.mutedText,
-                    margin: 0,
+                    margin: "2px 0 0",
                   }}
                 >
                   {body}
