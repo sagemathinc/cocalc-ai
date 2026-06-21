@@ -215,6 +215,7 @@ export function CourseMembershipBanner({ project_id }: { project_id: string }) {
     access?.status === "grace" || access?.status === "blocked" ? access : null;
   const purchaseModal = purchaseAccess ? (
     <StudentCoursePurchaseModal
+      key="student-course-purchase-modal"
       open={purchaseOpen}
       onClose={() => {
         setPurchaseOpen(false);
@@ -230,21 +231,21 @@ export function CourseMembershipBanner({ project_id }: { project_id: string }) {
     return null;
   }
   if (access == null || access.status === "not-required") {
-    return purchaseModal;
+    return <>{purchaseModal}</>;
   }
 
   const title = access.required_label ?? access.required_membership_class;
   const courseTitle = getCourseTitle(access.course);
 
   if (access.status === "active") {
-    return purchaseModal;
+    return <>{purchaseModal}</>;
   }
   const graceKey =
     paymentAccess?.status === "grace"
       ? `${paymentAccess.required_membership_class}:${toTime(paymentAccess.deadline)}`
       : "";
   if (paymentAccess?.status === "grace" && dismissedGraceKey === graceKey) {
-    return purchaseModal;
+    return <>{purchaseModal}</>;
   }
 
   const courseMembershipAlert =
