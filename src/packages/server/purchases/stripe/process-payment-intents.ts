@@ -465,6 +465,49 @@ function needsToBeRecorded(paymentIntent) {
   );
 }
 
+export function paymentSuccessSubject({
+  amount,
+}: {
+  amount: MoneyValue;
+}): string {
+  return `Payment received: ${moneyToCurrency(amount)}`;
+}
+
+export function paymentSuccessBody({
+  amount,
+  reason,
+  credit_id,
+  balance,
+  paymentsUrl,
+  purchasesUrl,
+  supportUrl,
+}: {
+  amount: MoneyValue;
+  reason: string;
+  credit_id: number;
+  balance: MoneyValue;
+  paymentsUrl: string;
+  purchasesUrl: string;
+  supportUrl: string;
+}): string {
+  return `Your payment of ${moneyToCurrency(amount)} was successful.
+
+It was used to ${reason}.
+
+Receipt details:
+- Amount: ${moneyToCurrency(amount)}
+- CoCalc credit id: ${credit_id}
+- Account balance after payment: ${moneyToCurrency(balance)}
+
+Account pages:
+- Payments: ${paymentsUrl}
+- Purchases: ${purchasesUrl}
+
+If you have questions, reply to this message or contact support:
+${supportUrl}
+`;
+}
+
 async function setMetadataRecorded(paymentIntent) {
   const stripe = await getConn();
   paymentIntent.metadata.recorded = "true";
@@ -834,22 +877,16 @@ ${await support()}
     try {
       await send({
         to_ids: [account_id],
-        subject: `You Made a ${moneyToCurrency(amount)} Payment (Credit id: ${credit_id})`,
-        body: `
-You successfully made a payment of ${moneyToCurrency(amount)}, which was used to ${reason}.
-Thank you!
-
-- Payment id: ${paymentIntent.id}
-
-- Purchase credit id: ${credit_id}
-
-- Browser all your [Payments](${await url("settings", "payments")}) and [Purchases](${await url("settings", "purchases")})
-
-- Account Balance: ${moneyToCurrency(
-          moneyRound2Down(toDecimal(await getBalance({ account_id }))),
-        )}
-
-${await support()}`,
+        subject: paymentSuccessSubject({ amount }),
+        body: paymentSuccessBody({
+          amount,
+          reason,
+          credit_id,
+          balance: moneyRound2Down(toDecimal(await getBalance({ account_id }))),
+          paymentsUrl: await url("settings", "payments"),
+          purchasesUrl: await url("settings", "purchases"),
+          supportUrl: await url("support", "new"),
+        }),
       });
     } catch (err) {
       logger.debug(
