@@ -803,24 +803,45 @@ export interface EnvVarsRecord {
 }
 export type EnvVars = EnvVarsRecord | undefined;
 
+export const STUDENT_PROJECT_FUNCTIONALITY_KEYS = [
+  "disableActions",
+  "disableJupyterToggleReadonly",
+  "disableJupyterClassicServer",
+  "disableJupyterLabServer",
+  "disableRServer",
+  "disableVSCodeServer",
+  "disablePlutoServer",
+  "disableTerminals",
+  "disableUploads",
+  "disableCollaborators",
+  "disableAI",
+  "disableSomeAI",
+] as const;
+
 export interface StudentProjectFunctionality {
   disableActions?: boolean;
   disableJupyterToggleReadonly?: boolean;
   disableJupyterClassicServer?: boolean;
-  disableJupyterClassicMode?: boolean;
   disableJupyterLabServer?: boolean;
   disableRServer?: boolean;
   disableVSCodeServer?: boolean;
-  disableNetworkWarningBanner?: boolean;
   disablePlutoServer?: boolean;
   disableTerminals?: boolean;
   disableUploads?: boolean;
-  disableNetwork?: boolean;
-  disableSSH?: boolean;
   disableCollaborators?: boolean;
   disableAI?: boolean;
   disableSomeAI?: boolean;
-  disableSharing?: boolean;
+}
+
+export function normalizeStudentProjectFunctionality(
+  value?: Record<string, unknown> | StudentProjectFunctionality | null,
+): StudentProjectFunctionality {
+  const normalized: StudentProjectFunctionality = {};
+  if (value == null) return normalized;
+  for (const key of STUDENT_PROJECT_FUNCTIONALITY_KEYS) {
+    normalized[key] = !!value[key];
+  }
+  return normalized;
 }
 
 export interface CourseInfo {

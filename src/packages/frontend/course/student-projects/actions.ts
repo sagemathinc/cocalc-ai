@@ -19,6 +19,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import type { ProjectEmailInviteDeliveryResult } from "@cocalc/frontend/client/project-collaborators";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
+import { normalizeStudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
 import { days_ago } from "@cocalc/util/misc";
 import { SITE_NAME } from "@cocalc/util/theme";
 import {
@@ -501,9 +502,9 @@ export class StudentProjectsActions {
     const datastore: Datastore = store.get_datastore();
     const envvars: EnvVars = store.get_envvars();
     const courseRootfs = await this.get_student_project_rootfs();
-    const student_project_functionality = store
-      .getIn(["settings", "student_project_functionality"])
-      ?.toJS();
+    const student_project_functionality = normalizeStudentProjectFunctionality(
+      store.getIn(["settings", "student_project_functionality"])?.toJS(),
+    );
 
     const actions = redux.getActions("projects");
     const id = this.course_actions.set_activity({

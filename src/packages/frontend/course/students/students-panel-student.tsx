@@ -128,6 +128,7 @@ export function Student({
   const [inviteStatusLoading, setInviteStatusLoading] =
     useState<boolean>(false);
   const [noteDraft, setNoteDraft] = useState<string>(student.get("note") ?? "");
+  const [notesOpen, setNotesOpen] = useState<boolean>(false);
   const noteValueRef = useRef<() => string>(() => noteDraft);
   const [courseInvite, setCourseInvite] = useState<
     ProjectCollabInviteRow | undefined
@@ -154,6 +155,7 @@ export function Student({
     set_edited_email_address(student.get("email_address") || "");
     set_more(false);
     setInviteDetailsOpen(false);
+    setNotesOpen(false);
     actions.students.setAssignmentFilter(student_id, "");
   }
 
@@ -570,6 +572,73 @@ export function Student({
     }
   }
 
+  function getInviteButtonState():
+    | {
+        disabled: boolean;
+        msg: string | React.JSX.Element;
+        when: string;
+      }
+    | undefined {
+    if (hasAccount) return;
+    const lastEmailInviteDate = valid_date(student.get("last_email_invite"));
+    const hasInvite =
+      courseInvite != null || student.get("last_email_invite") != null;
+    const canCreateInvite =
+      courseInvite?.status !== "accepted" && courseInvite?.status !== "blocked";
+    const allowResending =
+      lastEmailInviteDate == null || lastEmailInviteDate < RESEND_INVITE_BEFORE;
+    const msg = hasInvite
+      ? intl.formatMessage(
+          {
+            id: "course.student-panel.resend_invitation.button",
+            defaultMessage: `{allowResending, select, true {Resend invitation} other {Recently invited}}`,
+          },
+          { allowResending },
+        )
+      : "Send invitation";
+    const when =
+      lastEmailInviteDate != null
+        ? `Last invite attempt on ${lastEmailInviteDate.toLocaleString()}`
+        : "never";
+    return {
+      disabled:
+        !student.get("email_address") || !allowResending || !canCreateInvite,
+      msg,
+      when,
+    };
+  }
+
+  async function sendInvite() {
+    const email = student.get("email_address");
+    if (!email) return;
+    setSendInviteLoading(true);
+    try {
+      const result = await actions.student_projects.invite_student_to_project({
+        student: email, // we use email address to trigger sending an actual email!
+        student_project_id: student.get("project_id"),
+        student_id: student.get("student_id"),
+      });
+      await refreshCourseInviteStatus();
+      if (result?.email_sent) {
+        void antdMessage.success("Invitation created and emailed.");
+      } else if (result?.manual_delivery_required) {
+        void antdMessage.warning(
+          "Invitation link created, but email was not sent. Copy the invite link and send it manually.",
+          8,
+        );
+      } else {
+        void antdMessage.info(
+          "Invitation created. Email delivery was not confirmed; copy the invite link if needed.",
+          8,
+        );
+      }
+    } catch (err) {
+      void antdMessage.error(`${err}`);
+    } finally {
+      setSendInviteLoading(false);
+    }
+  }
+
   function render_course_invite_status() {
     if (hasAccount) return;
     if (inviteStatusLoading) {
@@ -648,6 +717,7 @@ export function Student({
     const canCopyInvite =
       courseInvite.status === "pending" && !isExpiredPendingInvite;
     const canRevokeInvite = courseInvite.status === "pending";
+    const inviteButton = getInviteButtonState();
     return (
       <Modal
         open={inviteDetailsOpen}
@@ -682,8 +752,20 @@ export function Student({
               Copy the invite link and send it to the student manually.
             </Text>
           ) : undefined}
-          {(canCopyInvite || canRevokeInvite) && (
+          {(inviteButton || canCopyInvite || canRevokeInvite) && (
             <Space size={8} wrap>
+              {inviteButton && (
+                <Tooltip placement="bottom" title={inviteButton.when}>
+                  <Button
+                    size={size}
+                    loading={sendInviteLoading}
+                    disabled={inviteButton.disabled}
+                    onClick={() => void sendInvite()}
+                  >
+                    <Icon name="mail" /> {inviteButton.msg}
+                  </Button>
+                </Tooltip>
+              )}
               {canCopyInvite && (
                 <Button
                   size={size}
@@ -714,74 +796,25 @@ export function Student({
   function render_resend_invitation() {
     // don't invite student if there is already an account
     if (hasAccount) return;
-    const last_email_invite = student.get("last_email_invite");
-    const lastEmailInviteDate = valid_date(last_email_invite);
-    const hasInvite = courseInvite != null || last_email_invite != null;
-    const canCreateInvite =
-      courseInvite?.status !== "accepted" && courseInvite?.status !== "blocked";
-    const allowResending =
-      lastEmailInviteDate == null || lastEmailInviteDate < RESEND_INVITE_BEFORE;
-
-    const msg = hasInvite
-      ? intl.formatMessage(
-          {
-            id: "course.student-panel.resend_invitation.button",
-            defaultMessage: `{allowResending, select, true {Resend invitation} other {Recently invited}}`,
-          },
-          { allowResending },
-        )
-      : "Send invitation";
-    const when =
-      lastEmailInviteDate != null
-        ? `Last invite attempt on ${lastEmailInviteDate.toLocaleString()}`
-        : "never";
+    const inviteButton = getInviteButtonState();
+    if (!inviteButton) return;
+    if (courseInvite != null) {
+      return (
+        <div style={{ marginTop: "10px" }}>{render_course_invite_status()}</div>
+      );
+    }
 
     return (
       <Space direction="vertical" size={4}>
         {render_course_invite_status()}
-        <Tooltip placement="bottom" title={when}>
+        <Tooltip placement="bottom" title={inviteButton.when}>
           <Button
             size={size}
-            onClick={async () => {
-              const email = student.get("email_address");
-              if (email) {
-                setSendInviteLoading(true);
-                try {
-                  const result =
-                    await actions.student_projects.invite_student_to_project({
-                      student: email, // we use email address to trigger sending an actual email!
-                      student_project_id: student.get("project_id"),
-                      student_id: student.get("student_id"),
-                    });
-                  await refreshCourseInviteStatus();
-                  if (result?.email_sent) {
-                    void antdMessage.success("Invitation created and emailed.");
-                  } else if (result?.manual_delivery_required) {
-                    void antdMessage.warning(
-                      "Invitation link created, but email was not sent. Copy the invite link and send it manually.",
-                      8,
-                    );
-                  } else {
-                    void antdMessage.info(
-                      "Invitation created. Email delivery was not confirmed; copy the invite link if needed.",
-                      8,
-                    );
-                  }
-                } catch (err) {
-                  void antdMessage.error(`${err}`);
-                } finally {
-                  setSendInviteLoading(false);
-                }
-              }
-            }}
+            onClick={() => void sendInvite()}
             loading={sendInviteLoading}
-            disabled={
-              !student.get("email_address") ||
-              !allowResending ||
-              !canCreateInvite
-            }
+            disabled={inviteButton.disabled}
           >
-            <Icon name="mail" /> {msg}
+            <Icon name="mail" /> {inviteButton.msg}
           </Button>
         </Tooltip>
       </Space>
@@ -900,6 +933,9 @@ export function Student({
     const saveNote = (value = noteValueRef.current?.() ?? noteDraft): void => {
       actions.students.set_student_note(student.get("student_id"), value);
     };
+    const noteSummary = noteDraft.trim()
+      ? trunc_middle(noteDraft.replace(/\s+/g, " "), 120)
+      : "No private notes";
     return (
       <Row key="note" style={{ ...styles.note, marginTop: "14px" }}>
         <Col xs={24}>
@@ -915,37 +951,58 @@ export function Student({
               style={{
                 alignItems: "center",
                 display: "flex",
+                flexWrap: "wrap",
                 justifyContent: "space-between",
                 gap: "12px",
-                marginBottom: "8px",
               }}
             >
-              <Tip title={tooltipTitle} tip={tooltip}>
-                <b>{title}</b>
-              </Tip>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                Only visible to instructors
-              </Text>
+              <Space size={8} wrap>
+                <Tip title={tooltipTitle} tip={tooltip}>
+                  <b>{title}</b>
+                </Tip>
+                {!notesOpen && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {noteSummary}
+                  </Text>
+                )}
+              </Space>
+              <Space size={8} wrap>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  Only visible to instructors
+                </Text>
+                <Button size="small" onClick={() => setNotesOpen(!notesOpen)}>
+                  <Icon name={notesOpen ? "caret-up" : "caret-down"} />{" "}
+                  {notesOpen
+                    ? "Hide notes"
+                    : noteDraft.trim()
+                      ? "Show notes"
+                      : "Add notes"}
+                </Button>
+              </Space>
             </div>
-            <MarkdownInput
-              autoGrow
-              autoGrowMaxHeight={420}
-              autoGrowMinHeight={140}
-              cacheId={`course-student-note-${name}-${student.get("student_id")}`}
-              defaultMode="markdown"
-              enableUpload={courseProjectId != null}
-              getValueRef={noteValueRef}
-              height="auto"
-              modeSwitchPlacement="toolbar"
-              onBlur={() => saveNote()}
-              onChange={setNoteDraft}
-              onSave={() => saveNote()}
-              onShiftEnter={(value) => saveNote(value)}
-              path={noteEditorPath}
-              placeholder={placeholder}
-              project_id={courseProjectId}
-              value={noteDraft}
-            />
+            {notesOpen && (
+              <div style={{ marginTop: "8px" }}>
+                <MarkdownInput
+                  autoGrow
+                  autoGrowMaxHeight={420}
+                  autoGrowMinHeight={140}
+                  cacheId={`course-student-note-${name}-${student.get("student_id")}`}
+                  defaultMode="markdown"
+                  enableUpload={courseProjectId != null}
+                  getValueRef={noteValueRef}
+                  height="auto"
+                  modeSwitchPlacement="toolbar"
+                  onBlur={() => saveNote()}
+                  onChange={setNoteDraft}
+                  onSave={() => saveNote()}
+                  onShiftEnter={(value) => saveNote(value)}
+                  path={noteEditorPath}
+                  placeholder={placeholder}
+                  project_id={courseProjectId}
+                  value={noteDraft}
+                />
+              </div>
+            )}
           </div>
         </Col>
       </Row>
@@ -967,23 +1024,31 @@ export function Student({
   }
 
   function render_basic_info() {
+    const cellStyle = {
+      alignItems: "center",
+      display: "flex",
+      minHeight: "34px",
+    };
     return (
-      <Row key="basic" style={{ backgroundColor: background }}>
-        <Col md={6}>
-          <h6>
+      <Row
+        key="basic"
+        style={{ alignItems: "center", backgroundColor: background }}
+      >
+        <Col md={6} style={cellStyle}>
+          <h6 style={{ margin: 0 }}>
             {render_student()}
             {render_deleted()}
           </h6>
         </Col>
-        <Col md={4}>
-          <h6 style={{ color: "#666", overflow: "hidden" }}>
+        <Col md={4} style={cellStyle}>
+          <h6 style={{ color: COLORS.GRAY_D, margin: 0, overflow: "hidden" }}>
             {render_student_email()}
           </h6>
         </Col>
-        <Col md={8} style={{ paddingTop: "10px" }}>
+        <Col md={8} style={cellStyle}>
           {render_last_active()}
         </Col>
-        <Col md={6} style={{ paddingTop: "10px" }}>
+        <Col md={6} style={cellStyle}>
           {render_hosting()}
         </Col>
       </Row>
@@ -1070,6 +1135,7 @@ export function Student({
             border: `1px solid ${COLORS.GRAY_L}`,
             borderRadius: 6,
             marginBottom: 10,
+            marginTop: 10,
             padding: "8px 10px",
           }}
         >

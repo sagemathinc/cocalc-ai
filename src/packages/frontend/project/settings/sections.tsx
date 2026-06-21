@@ -7,7 +7,6 @@ import { Space } from "antd";
 import { lazy, Suspense, type ReactNode } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { lite } from "@cocalc/frontend/lite";
 import { BlobCleanupButton } from "@cocalc/frontend/blobs/cleanup-button";
 import { useProjectContext } from "@cocalc/frontend/project/context";
@@ -74,9 +73,7 @@ export function useProjectSettingsSections({
     enabled: !isViewer,
   });
   const datastore = useTypedRedux("customize", "datastore");
-  const student = useStudentProjectFunctionality(project_id);
-
-  const showSSH = !lite && !student.disableSSH;
+  const showSSH = !lite;
   const showDatastore =
     platformMode === PLATFORM_MODE_CLOUD ||
     (platformMode === PLATFORM_MODE_ON_PREMISES && datastore);
@@ -284,11 +281,7 @@ export function useProjectSettingsSections({
         "Course-managed restrictions and inherited settings for this project.",
       children: (
         <Space direction="vertical" size={sectionGap} style={{ width: "100%" }}>
-          {student.disableSSH ? (
-            <p>SSH access is disabled by the course configuration.</p>
-          ) : (
-            <p>This project is linked to a course.</p>
-          )}
+          <p>This project is linked to a course.</p>
           <Suspense fallback={null}>
             <CourseRuntimeSponsorSummary project_id={project_id} />
           </Suspense>
