@@ -9,6 +9,7 @@ import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_COLORS,
+  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -58,9 +59,9 @@ function TerminalMock() {
         </Flex>
         <div
           style={{
-            background: "#0b1522",
+            background: PUBLIC_DARK.terminalSurface,
             borderRadius: PUBLIC_RADIUS.panel,
-            color: "#dbeafe",
+            color: PUBLIC_DARK.mockText,
             overflow: "hidden",
           }}
         >
@@ -73,7 +74,11 @@ function TerminalMock() {
               padding: "12px 14px",
             }}
           >
-            {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
+            {[
+              PUBLIC_DARK.dotRed,
+              PUBLIC_DARK.dotAmber,
+              PUBLIC_DARK.dotGreen,
+            ].map((color) => (
               <span
                 aria-hidden="true"
                 key={color}
@@ -85,7 +90,7 @@ function TerminalMock() {
                 }}
               />
             ))}
-            <Text style={{ color: "#dbeafe", marginLeft: 8 }}>
+            <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
               CoCalc Terminal
             </Text>
           </div>
@@ -102,11 +107,17 @@ function TerminalMock() {
               <div key={`${prompt}-${command}-${index}`}>
                 {prompt ? (
                   <>
-                    <Text style={{ color: "#86efac" }}>{prompt}</Text>
-                    <Text style={{ color: "#dbeafe" }}> $ </Text>
+                    <Text style={{ color: PUBLIC_DARK.mockTextAlt }}>
+                      {prompt}
+                    </Text>
+                    <Text style={{ color: PUBLIC_DARK.mockText }}> $ </Text>
                   </>
                 ) : null}
-                <Text style={{ color: prompt ? "#bfdbfe" : "#f8fafc" }}>
+                <Text
+                  style={{
+                    color: prompt ? PUBLIC_DARK.mockTextDim : "#f8fafc",
+                  }}
+                >
                   {command}
                 </Text>
               </div>
@@ -258,7 +269,7 @@ function SharedStreamDiagram() {
                 </Text>
                 <div
                   style={{
-                    background: "#111827",
+                    background: PUBLIC_DARK.barSurface,
                     borderRadius: 10,
                     height: 46,
                     marginTop: 10,
@@ -277,15 +288,15 @@ function SharedStreamDiagram() {
         </Flex>
         <div
           style={{
-            background: "#0b1522",
+            background: PUBLIC_DARK.terminalSurface,
             border: "1px solid rgba(255,255,255,0.18)",
             borderRadius: PUBLIC_RADIUS.panel,
-            color: "#dbeafe",
+            color: PUBLIC_DARK.mockText,
             padding: 18,
             textAlign: "center",
           }}
         >
-          <Text strong style={{ color: "#dbeafe" }}>
+          <Text strong style={{ color: PUBLIC_DARK.mockText }}>
             one PTY stream
           </Text>
           <div style={{ color: "#93c5fd", marginTop: 6 }}>

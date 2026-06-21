@@ -11,6 +11,7 @@ import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_COLORS,
+  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -87,7 +88,7 @@ function CliHeroWorkflow() {
             border: `1px solid ${PUBLIC_COLORS.border}`,
             borderRadius: PUBLIC_RADIUS.panel,
             boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
-            color: "#dbeafe",
+            color: PUBLIC_DARK.mockText,
             fontFamily:
               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
             fontSize: 14,
@@ -116,7 +117,10 @@ function CliHeroWorkflow() {
                 <div
                   key={`${line.kind}-${line.text}`}
                   style={{
-                    color: line.kind === "command" ? "#fde68a" : "#dbeafe",
+                    color:
+                      line.kind === "command"
+                        ? "#fde68a"
+                        : PUBLIC_DARK.mockText,
                     whiteSpace: "pre-wrap",
                     wordBreak: "break-word",
                   }}

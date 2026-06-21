@@ -20,6 +20,7 @@ import {
   SECTION_H2_MAX,
   textLength,
 } from "../../__tests__/test-helpers";
+import { PUBLIC_DARK } from "../../theme";
 import PublicFeaturesApp from "../app";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
 
@@ -69,6 +70,18 @@ describe("PublicFeaturesApp", () => {
       }
       return messages;
     });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("uses PUBLIC_DARK tokens for exact mock chrome colors", () => {
+    const tokenizedDarkHex =
+      /#(?:0b1522|10213f|0b1f47|111827|dbeafe|86efac|bfdbfe|ff6b6b|ffd166|06d6a0)\b/i;
+    const offenders = trackedFeatureSources().flatMap(({ file, source }) =>
+      tokenizedDarkHex.test(source)
+        ? [`${file}: tokenable PUBLIC_DARK literal`]
+        : [],
+    );
 
     expect(offenders).toEqual([]);
   });
@@ -429,7 +442,7 @@ describe("PublicFeaturesApp", () => {
       container
         .querySelector(".cocalc-ai-workflow-panel")
         ?.getAttribute("style") ?? "",
-    ).not.toContain("#0b1522");
+    ).not.toContain(PUBLIC_DARK.terminalSurface);
     expect(screen.getByText("Durable agent thread")).not.toBeNull();
     expect(screen.queryByText("Durable chat history")).toBeNull();
     // Closing section identity without pinning the exact headline wording.

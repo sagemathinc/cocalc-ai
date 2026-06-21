@@ -603,6 +603,29 @@ Plus/Star/Launchpad`).
   passed including `tsc --build`; post-change rendered QA passed the same routes/viewports with
   328 assertions / 0 failures (`/tmp/cocalc-public-qa-EZYFhg`); all 14 before/after screenshot PNGs
   were byte-identical by `cmp`. No public copy or product claims changed. No PR.
+- **START 2026-06-20 21:04 PDT:** Starting Slice 2b only: exact `PUBLIC_DARK` token consumption
+  for tracked public feature mock-chrome literals. Read Claude status and
+  `/home/user/cocalc-shared/slice-2-handoff-2026-06-20.md`; Claude remains read-only on synthesis
+  and owns only `/home/user/cocalc-ai/docs/pitch`. Verified preview owner remains synthesis hub
+  pid `13303` (`/home/user/cocalc-ai-synthesis/src`). Scope is zero-visual exact-value
+  replacements for `#0b1522`, `#10213f`, `#0b1f47`, `#111827`, `#dbeafe`, `#86efac`, `#bfdbfe`,
+  and the three mock dot colors with `PUBLIC_DARK`. Explicitly out of scope: the CLI `#101820`
+  stray, `#fde68a`, `#f8fafc`, `#bbf7d0`, PUBLIC_ELEVATION, PUBLIC_TYPE, palette/accent collapse,
+  protected home/Brief, and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-20 21:07 PDT:** Slice 2b complete locally: exact feature-page mock chrome
+  literals now consume `PUBLIC_DARK` tokens, with a source guard preventing tracked
+  `public/features/*.tsx` files from reintroducing the tokenized hexes. Left `#101820` in
+  `cli-page.tsx` surfaced for later because snapping it to `PUBLIC_DARK.codeSurface` would be a
+  visual delta; also left out-of-scope `#fde68a`, `#f8fafc`, and `#bbf7d0`. Validation:
+  pre-change rendered QA passed `/features`, `/features/cli`, `/features/jupyter-notebook`,
+  `/features/latex-editor`, `/features/linux`, `/features/sage`, `/features/terminal`, and
+  `/features/python` desktop/mobile with 336 assertions / 0 failures
+  (`/tmp/cocalc-public-qa-hdy3nv`); focused feature Jest passed 90 tests; public browser-QA script
+  Jest passed 5 tests; exact-dark-hex grep returned no tracked feature offenders;
+  `git diff --check` passed; `pnpm lint:frontend` passed from `src`; `pnpm -C src/packages/static
+  build:dev` passed including `tsc --build`; post-change rendered QA passed the same routes/viewports
+  with 336 assertions / 0 failures (`/tmp/cocalc-public-qa-nkH0wr`); all 16 before/after screenshot
+  PNGs were byte-identical by `cmp`. No public copy or product claims changed. No PR.
 
 ### Codex — platform-UI thread
 

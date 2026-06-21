@@ -9,6 +9,7 @@ import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_COLORS,
+  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -53,9 +54,9 @@ function LatexEditorMock() {
           <Col xs={24} md={12}>
             <div
               style={{
-                background: "#10213f",
+                background: PUBLIC_DARK.codeSurface,
                 borderRadius: PUBLIC_RADIUS.panel,
-                color: "#dbeafe",
+                color: PUBLIC_DARK.mockText,
                 minHeight: 280,
                 padding: 16,
               }}
@@ -115,8 +116,7 @@ shows concentration after normalization.
                   </Paragraph>
                   <div
                     style={{
-                      background:
-                        "linear-gradient(90deg, #dbeafe 0%, #bbf7d0 100%)",
+                      background: `linear-gradient(90deg, ${PUBLIC_DARK.mockText} 0%, #bbf7d0 100%)`,
                       borderRadius: 999,
                       height: 12,
                       marginTop: 22,

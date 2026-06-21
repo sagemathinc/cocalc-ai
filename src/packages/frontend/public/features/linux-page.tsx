@@ -9,6 +9,7 @@ import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_COLORS,
+  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -60,9 +61,9 @@ function LinuxWorkspaceMock() {
           <Col xs={24} md={15}>
             <div
               style={{
-                background: "#0b1522",
+                background: PUBLIC_DARK.terminalSurface,
                 borderRadius: PUBLIC_RADIUS.panel,
-                color: "#dbeafe",
+                color: PUBLIC_DARK.mockText,
                 height: "100%",
                 overflow: "hidden",
               }}
@@ -76,7 +77,11 @@ function LinuxWorkspaceMock() {
                   padding: "12px 14px",
                 }}
               >
-                {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
+                {[
+                  PUBLIC_DARK.dotRed,
+                  PUBLIC_DARK.dotAmber,
+                  PUBLIC_DARK.dotGreen,
+                ].map((color) => (
                   <span
                     aria-hidden="true"
                     key={color}
@@ -88,7 +93,7 @@ function LinuxWorkspaceMock() {
                     }}
                   />
                 ))}
-                <Text style={{ color: "#dbeafe", marginLeft: 8 }}>
+                <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
                   install.term
                 </Text>
               </div>
@@ -105,7 +110,9 @@ function LinuxWorkspaceMock() {
                   <Text
                     key={command}
                     style={{
-                      color: command.startsWith("$") ? "#bfdbfe" : "#86efac",
+                      color: command.startsWith("$")
+                        ? PUBLIC_DARK.mockTextDim
+                        : PUBLIC_DARK.mockTextAlt,
                     }}
                   >
                     {command}
@@ -321,9 +328,9 @@ export default function LinuxFeaturePage({
             >
               <pre
                 style={{
-                  background: "#0b1522",
+                  background: PUBLIC_DARK.terminalSurface,
                   borderRadius: PUBLIC_RADIUS.panel,
-                  color: "#dbeafe",
+                  color: PUBLIC_DARK.mockText,
                   margin: 0,
                   overflowX: "auto",
                   padding: 18,

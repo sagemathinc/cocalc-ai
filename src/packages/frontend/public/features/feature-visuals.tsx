@@ -8,7 +8,11 @@ import type { ReactNode } from "react";
 import { Button, Flex, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
-import { PUBLIC_COLORS, PUBLIC_RADIUS } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_DARK,
+  PUBLIC_RADIUS,
+} from "@cocalc/frontend/public/theme";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -129,9 +133,9 @@ export function TerminalMock({
   return (
     <div
       style={{
-        background: "#0b1522",
+        background: PUBLIC_DARK.terminalSurface,
         borderRadius: PUBLIC_RADIUS.panel,
-        color: "#dbeafe",
+        color: PUBLIC_DARK.mockText,
         overflow: "hidden",
       }}
     >
@@ -144,19 +148,23 @@ export function TerminalMock({
           padding: "10px 14px",
         }}
       >
-        {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
-          <span
-            aria-hidden="true"
-            key={color}
-            style={{
-              background: color,
-              borderRadius: "50%",
-              height: 10,
-              width: 10,
-            }}
-          />
-        ))}
-        <Text style={{ color: "#dbeafe", marginLeft: 8 }}>{title}</Text>
+        {[PUBLIC_DARK.dotRed, PUBLIC_DARK.dotAmber, PUBLIC_DARK.dotGreen].map(
+          (color) => (
+            <span
+              aria-hidden="true"
+              key={color}
+              style={{
+                background: color,
+                borderRadius: "50%",
+                height: 10,
+                width: 10,
+              }}
+            />
+          ),
+        )}
+        <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
+          {title}
+        </Text>
       </div>
       <Flex
         vertical
@@ -170,7 +178,10 @@ export function TerminalMock({
         {rows.map((row, index) => (
           <Text
             key={index}
-            style={{ color: index % 2 ? "#86efac" : "#bfdbfe" }}
+            style={{
+              color:
+                index % 2 ? PUBLIC_DARK.mockTextAlt : PUBLIC_DARK.mockTextDim,
+            }}
           >
             {row}
           </Text>

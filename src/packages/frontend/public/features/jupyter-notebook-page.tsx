@@ -11,6 +11,7 @@ import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_COLORS,
+  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -102,9 +103,9 @@ function NotebookMock() {
         </Flex>
         <div
           style={{
-            background: "#0b1f47",
+            background: PUBLIC_DARK.deepSurface,
             borderRadius: PUBLIC_RADIUS.panel,
-            color: "#dbeafe",
+            color: PUBLIC_DARK.mockText,
             overflow: "hidden",
           }}
         >
@@ -117,7 +118,11 @@ function NotebookMock() {
               padding: "12px 14px",
             }}
           >
-            {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
+            {[
+              PUBLIC_DARK.dotRed,
+              PUBLIC_DARK.dotAmber,
+              PUBLIC_DARK.dotGreen,
+            ].map((color) => (
               <span
                 aria-hidden="true"
                 key={color}
@@ -129,7 +134,7 @@ function NotebookMock() {
                 }}
               />
             ))}
-            <Text style={{ color: "#dbeafe", marginLeft: 8 }}>
+            <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
               CoCalc Notebook
             </Text>
           </div>

@@ -11,6 +11,7 @@ import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_COLORS,
+  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -106,9 +107,9 @@ function PythonProjectMock() {
 
         <div
           style={{
-            background: "#0b1522",
+            background: PUBLIC_DARK.terminalSurface,
             borderRadius: PUBLIC_RADIUS.panel,
-            color: "#dbeafe",
+            color: PUBLIC_DARK.mockText,
             overflow: "hidden",
           }}
         >
@@ -121,7 +122,11 @@ function PythonProjectMock() {
               padding: "10px 14px",
             }}
           >
-            {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
+            {[
+              PUBLIC_DARK.dotRed,
+              PUBLIC_DARK.dotAmber,
+              PUBLIC_DARK.dotGreen,
+            ].map((color) => (
               <span
                 aria-hidden="true"
                 key={color}
@@ -133,7 +138,9 @@ function PythonProjectMock() {
                 }}
               />
             ))}
-            <Text style={{ color: "#dbeafe", marginLeft: 8 }}>terminal</Text>
+            <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
+              terminal
+            </Text>
           </div>
           <Flex
             vertical
@@ -144,12 +151,16 @@ function PythonProjectMock() {
               padding: 16,
             }}
           >
-            <Text style={{ color: "#bfdbfe" }}>
+            <Text style={{ color: PUBLIC_DARK.mockTextDim }}>
               $ uv venv && uv pip install numpy matplotlib
             </Text>
-            <Text style={{ color: "#86efac" }}>installed packages</Text>
-            <Text style={{ color: "#bfdbfe" }}>$ python model.py</Text>
-            <Text style={{ color: "#86efac" }}>
+            <Text style={{ color: PUBLIC_DARK.mockTextAlt }}>
+              installed packages
+            </Text>
+            <Text style={{ color: PUBLIC_DARK.mockTextDim }}>
+              $ python model.py
+            </Text>
+            <Text style={{ color: PUBLIC_DARK.mockTextAlt }}>
               wrote figures/model-fit.pdf
             </Text>
           </Flex>
