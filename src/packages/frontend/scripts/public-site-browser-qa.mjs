@@ -38,6 +38,7 @@ const ROUTE_GROUPS = {
     "/features/whiteboard",
     "/features/slides",
     "/features/api",
+    "/features/cli",
     "/features/sage",
     "/features/r-statistical-software",
     "/features/julia",
@@ -275,6 +276,31 @@ const ROUTE_RULES = {
     ],
     requireLinks: [
       { text: "Terminal workflows", hrefIncludes: "/features/terminal" },
+    ],
+  },
+  "/features/cli": {
+    requireText: [
+      "Connect external tools and agents to CoCalc projects.",
+      "project review workflow",
+      "$ cocalc browser files --project-id PROJECT_ID",
+      "$ cocalc project jupyter exec --path analysis.ipynb --stdin",
+      "status: finished",
+      "Choose the right way to connect.",
+    ],
+    forbidText: [
+      "CoCalc CLI (Phase 0)",
+      "Phase 0",
+      "RootFS",
+      "Conat",
+      "admin/operator",
+      "hub-password",
+      "bearer",
+      "raw-cookie",
+      "cocalc-cli-browser-automation",
+    ],
+    requireLinks: [
+      { text: "CLI Docs", hrefIncludes: "/docs/cli/use-cocalc-cli" },
+      { text: "Project automations", hrefIncludes: "/features/automations" },
     ],
   },
   "/features/jupyter-notebook": {

@@ -394,6 +394,27 @@ Plus/Star/Launchpad`).
   first P0 slice, split CLI/Automations proof-surface cleanup from the held structural demotion,
   recommended keeping the dedicated-compute draft unwired, and framed the `project host` vs
   `compute host` decision for Blaec. No source edits, build, commit-worthy product changes, or PR.
+- **START 2026-06-20 17:26 PDT:** Blaec approved Slice A for `/features/cli`: remove the raw
+  `cocalc-cli-browser-automation.png` `--help` screenshot and replace it with a clean framed
+  one-workflow CLI visual using safe public commands/output, while preserving the framed panel +
+  terminal icon treatment. Read Claude status first; Claude is read-only and waiting for re-audit.
+  Verified synthesis remains clean except untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`,
+  preview owner remains synthesis hub pid `13303` (`/home/user/cocalc-ai-synthesis/src`), and no
+  build is active. Claiming `src/packages/frontend/public/features/cli-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/assets/public/features/cocalc-cli-browser-automation.png`, browser QA expectations
+  if needed, and this ledger. No PR.
+- **END 2026-06-20 17:55 PDT:** Slice A implemented and preview rebuilt. Replaced the raw CLI
+  `--help` screenshot with an in-code framed terminal workflow showing safe public commands
+  (`cocalc browser files` and `cocalc project jupyter exec`), deleted the unsafe PNG asset, and
+  added Jest/browser-QA guards that require the safe workflow while forbidding the leaked internal
+  terms. Validation: `pnpm prettier:write -- packages/frontend/public/features/cli-page.tsx
+  packages/frontend/public/features/__tests__/app.test.tsx packages/frontend/scripts/public-site-browser-qa.mjs`;
+  `pnpm jest public/features/__tests__/app.test.tsx --runInBand`; `pnpm jest
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand`; `pnpm lint:frontend`;
+  `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA for `/features/cli` and
+  `/features` on desktop/mobile passed with 102 assertions and 0 failures, artifacts in
+  `/tmp/cocalc-public-qa-DDGlvr`. Pre-existing untracked dedicated-compute draft untouched. No PR.
 
 ### Codex — platform-UI thread
 

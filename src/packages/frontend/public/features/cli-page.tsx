@@ -20,9 +20,23 @@ import { IconBadge } from "./feature-visuals";
 const { Paragraph, Text, Title } = Typography;
 
 const CLI_DOCS_PATH = appPath("docs/cli/use-cocalc-cli");
-const CLI_HERO_IMAGE = "/public/features/cocalc-cli-browser-automation.png";
 const CLI_ACCENT = COLORS.GRAY_D;
 const PANEL_RADIUS = 8;
+
+const CLI_WORKFLOW_LINES = [
+  { kind: "command", text: "$ cocalc browser files --project-id PROJECT_ID" },
+  { kind: "output", text: "open files:" },
+  { kind: "output", text: "  analysis.ipynb" },
+  { kind: "output", text: "  notes/review.md" },
+  { kind: "spacer", text: "" },
+  {
+    kind: "command",
+    text: "$ cocalc project jupyter exec --path analysis.ipynb --stdin",
+  },
+  { kind: "output", text: "run_id: report-refresh" },
+  { kind: "output", text: "status: finished" },
+  { kind: "output", text: "updated: figures/summary.png" },
+] as const;
 
 function HeroPoint({ children }: { children: ReactNode }) {
   return (
@@ -40,7 +54,7 @@ function HeroPoint({ children }: { children: ReactNode }) {
   );
 }
 
-function CliHeroImage() {
+function CliHeroWorkflow() {
   return (
     <div
       style={{
@@ -62,20 +76,54 @@ function CliHeroImage() {
             </div>
           </div>
         </Flex>
-        <img
-          src={CLI_HERO_IMAGE}
-          alt="CoCalc CLI browser automation example"
-          width={3024}
-          height={1722}
+        <div
+          aria-label="CoCalc CLI project workflow example"
+          role="img"
           style={{
-            background: PUBLIC_COLORS.surfaceMuted,
+            background: "#101820",
             border: `1px solid ${PUBLIC_COLORS.border}`,
             borderRadius: PANEL_RADIUS,
-            display: "block",
-            height: "auto",
-            width: "100%",
+            boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
+            color: "#dbeafe",
+            fontFamily:
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+            fontSize: 14,
+            lineHeight: 1.6,
+            overflow: "hidden",
           }}
-        />
+        >
+          <Flex
+            align="center"
+            gap={8}
+            style={{
+              background: "rgba(255, 255, 255, 0.06)",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+              color: "#cbd5e1",
+              padding: "10px 14px",
+            }}
+          >
+            <Icon name="terminal" style={{ color: "#f7c948", fontSize: 14 }} />
+            <span>project review workflow</span>
+          </Flex>
+          <div style={{ padding: "16px 18px" }}>
+            {CLI_WORKFLOW_LINES.map((line, index) =>
+              line.kind === "spacer" ? (
+                <div key={index} aria-hidden="true" style={{ height: 8 }} />
+              ) : (
+                <div
+                  key={`${line.kind}-${line.text}`}
+                  style={{
+                    color: line.kind === "command" ? "#fde68a" : "#dbeafe",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {line.text}
+                </div>
+              ),
+            )}
+          </div>
+        </div>
       </Flex>
     </div>
   );
@@ -254,7 +302,7 @@ export default function CliFeaturePage({
             </Flex>
           </Col>
           <Col xs={24} lg={13}>
-            <CliHeroImage />
+            <CliHeroWorkflow />
           </Col>
         </Row>
       </PublicSection>

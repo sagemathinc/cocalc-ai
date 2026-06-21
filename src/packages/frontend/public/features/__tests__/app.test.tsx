@@ -1084,12 +1084,19 @@ describe("PublicFeaturesApp", () => {
           screen.getByText("typed commands for project automation"),
         ).not.toBeNull();
         expect(
-          screen
-            .getByRole("img", {
-              name: "CoCalc CLI browser automation example",
-            })
-            .getAttribute("src"),
-        ).toBe("/public/features/cocalc-cli-browser-automation.png");
+          screen.getByRole("img", {
+            name: "CoCalc CLI project workflow example",
+          }),
+        ).not.toBeNull();
+        expect(
+          screen.getByText("$ cocalc browser files --project-id PROJECT_ID"),
+        ).not.toBeNull();
+        expect(
+          screen.getByText(
+            "$ cocalc project jupyter exec --path analysis.ipynb --stdin",
+          ),
+        ).not.toBeNull();
+        expect(screen.queryByText(/Phase 0|RootFS|Conat|bay/i)).toBeNull();
       }
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
       expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
