@@ -21,10 +21,36 @@ import {
   createTestMembershipSubscription,
 } from "@cocalc/server/purchases/test-data";
 
+const savedBayEnv = {
+  bay_id: process.env.COCALC_BAY_ID,
+  cluster_role: process.env.COCALC_CLUSTER_ROLE,
+  seed_bay_id: process.env.COCALC_CLUSTER_SEED_BAY_ID,
+};
+
 beforeAll(async () => {
+  process.env.COCALC_BAY_ID = "bay-0";
+  process.env.COCALC_CLUSTER_ROLE = "seed";
+  process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-0";
   await before({ noConat: true });
 }, 15000);
-afterAll(after);
+afterAll(async () => {
+  await after();
+  if (savedBayEnv.bay_id == null) {
+    delete process.env.COCALC_BAY_ID;
+  } else {
+    process.env.COCALC_BAY_ID = savedBayEnv.bay_id;
+  }
+  if (savedBayEnv.cluster_role == null) {
+    delete process.env.COCALC_CLUSTER_ROLE;
+  } else {
+    process.env.COCALC_CLUSTER_ROLE = savedBayEnv.cluster_role;
+  }
+  if (savedBayEnv.seed_bay_id == null) {
+    delete process.env.COCALC_CLUSTER_SEED_BAY_ID;
+  } else {
+    process.env.COCALC_CLUSTER_SEED_BAY_ID = savedBayEnv.seed_bay_id;
+  }
+});
 
 async function makeTestAccountAdmin(account_id: string) {
   await getPool("medium").query(

@@ -82,7 +82,9 @@ export async function getMembershipTiers({
   courseStoreVisibleOnly?: boolean;
   client?: PoolClient;
 } = {}): Promise<MembershipTierRecord[]> {
-  const pool = client ?? getPool("medium");
+  // Membership tiers are billing/security policy; avoid the generic query cache
+  // so admin changes and tests that create tiers are visible immediately.
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, store_description, store_highlights,
             site_license_pool_description,
@@ -194,7 +196,7 @@ export async function getMembershipTierById({
   id: MembershipClass;
   client?: PoolClient;
 }): Promise<MembershipTierRecord | undefined> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, store_description, store_highlights,
             site_license_pool_description,
