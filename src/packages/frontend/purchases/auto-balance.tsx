@@ -34,6 +34,11 @@ interface Props {
 export default function AutoBalance({ style, type }: Props) {
   const [open, setOpen] = useState<boolean>(false);
   const autoBalance = useTypedRedux("account", "auto_balance")?.toJS();
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
+
+  if (!stripeEnabled) {
+    return null;
+  }
 
   let btn = (
     <Button type={type} style={style} onClick={() => setOpen(!open)}>

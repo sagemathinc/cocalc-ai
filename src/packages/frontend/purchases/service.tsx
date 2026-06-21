@@ -7,6 +7,7 @@ Show tag for each service
 import { Tag } from "antd";
 import { useState } from "react";
 import { Tooltip } from "@cocalc/frontend/components";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
 import {
   QUOTA_SPEC,
@@ -24,6 +25,7 @@ export default function ServiceTag({
 }) {
   const [showAutoCreditModal, setShowAutoCreditModal] =
     useState<boolean>(false);
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
 
   // safeguard for https://github.com/sagemathinc/cocalc/issues/8074
   const spec = QUOTA_SPEC[service] satisfies Spec as Spec | null;
@@ -46,13 +48,13 @@ export default function ServiceTag({
         if (showAutoCreditModal) {
           return;
         }
-        if (service == "auto-credit") {
+        if (service == "auto-credit" && stripeEnabled) {
           setShowAutoCreditModal(!showAutoCreditModal);
         }
       }}
     >
       {spec?.display ?? service}
-      {showAutoCreditModal && (
+      {stripeEnabled && showAutoCreditModal && (
         <AutoBalanceModal
           onClose={() => {
             setShowAutoCreditModal(false);
