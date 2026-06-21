@@ -954,7 +954,7 @@ function normalizeLogTail(lines?: number): number {
   return Math.max(1, Math.min(5000, Math.floor(n)));
 }
 
-async function getProjectReadDetailsAllowRemote({
+export async function getProjectReadDetailsAllowRemote({
   account_id,
   project_id,
 }: {

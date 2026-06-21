@@ -411,6 +411,44 @@ describe("membership packages", () => {
     );
   });
 
+  it("quotes verified direct student course purchases without a local course project row", async () => {
+    const course_project_id = uuid();
+    const student_project_id = uuid();
+    const quote = await resolveMembershipPackageQuote({
+      type: "membership-package",
+      kind: "course",
+      membership_class: courseTier,
+      course_project_id,
+      seat_count: 1,
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+        project_id: student_project_id,
+        course_project_id,
+        course_path: "math101.course",
+        course_title: "Math 101",
+        verified_student_course_purchase: true,
+      },
+    });
+
+    expect(quote.kind).toBe("course");
+    expect(quote.membership_class).toBe(courseTier);
+    expect(quote.seat_price).toBe(25);
+    expect(quote.total_price).toBe(25);
+    expect(quote.metadata).toMatchObject({
+      direct_student_purchase: true,
+      grant_source: "student-course-purchase",
+      project_id: student_project_id,
+      course_project_id,
+      course_path: "math101.course",
+      course_title: "Math 101",
+      verified_student_course_purchase: true,
+      course_duration_days: 122,
+      course_grace_days: 14,
+      seat_price: 25,
+    });
+  });
+
   it("allows expanding an existing package without resupplying the package kind", async () => {
     const owner_account_id = uuid();
     await createTestAccount(owner_account_id);

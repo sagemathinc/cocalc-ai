@@ -1214,10 +1214,21 @@ async function getCourseSeatQuote({
     [course_project_id],
   );
   const row = rows[0];
-  if (!row) {
+  const metadata = normalizeMetadata(product.metadata);
+  const verifiedStudentCoursePurchase =
+    metadata?.verified_student_course_purchase === true &&
+    metadata?.direct_student_purchase === true &&
+    `${metadata?.course_project_id ?? ""}`.trim() === course_project_id;
+  if (!row && !verifiedStudentCoursePurchase) {
     throw Error("course project not found");
   }
-  const course = row.course as CourseInfo | undefined;
+  const course = row?.course as CourseInfo | undefined;
+  const coursePath =
+    course?.path ??
+    `${verifiedStudentCoursePurchase ? metadata?.course_path : ""}`;
+  const courseTitle =
+    row?.title ??
+    `${verifiedStudentCoursePurchase ? metadata?.course_title : ""}`;
   const membership_class = `${product.membership_class ?? ""}`.trim();
   if (!membership_class) {
     throw Error("membership_class is required for course packages");
@@ -1273,10 +1284,10 @@ async function getCourseSeatQuote({
     starts_at,
     expires_at,
     metadata: {
-      ...normalizeMetadata(product.metadata),
+      ...metadata,
       course_project_id,
-      course_path: course?.path,
-      course_title: row.title,
+      course_path: coursePath || undefined,
+      course_title: courseTitle || undefined,
       course_duration_days: duration_days,
       course_grace_days: grace_days,
       seat_price,
