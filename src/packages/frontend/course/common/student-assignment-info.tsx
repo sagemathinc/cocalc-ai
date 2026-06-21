@@ -579,13 +579,26 @@ export function StudentAssignmentInfo({
       background,
       border: `1px solid ${borderColor}`,
       borderRadius: 6,
+      height: "100%",
       minHeight: 72,
       padding: 8,
       display: "flex",
       flexDirection: "column",
       gap: 6,
+      width: "100%",
     };
   }
+
+  const workflowColStyle: CSSProperties = {
+    display: "flex",
+    paddingRight: 8,
+  };
+
+  const workflowCardContentStyle: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  };
 
   function Status({
     step,
@@ -634,13 +647,13 @@ export function StudentAssignmentInfo({
           {render_stage_tag(state)}
         </div>
         {v.length > 0 ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={workflowCardContentStyle}>
             {v}
             {render_last_time(data.time)}
             {data.error && !omit_errors ? render_error(step, data.error) : null}
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={workflowCardContentStyle}>
             <span style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
               Waiting for the previous stage.
             </span>
@@ -672,7 +685,7 @@ export function StudentAssignmentInfo({
 
   function render_assignment_col() {
     return (
-      <Col md={width} key="last_assignment" style={{ paddingRight: 8 }}>
+      <Col md={width} key="last_assignment" style={workflowColStyle}>
         <Status
           step="Assign"
           data={info.last_assignment}
@@ -697,7 +710,7 @@ export function StudentAssignmentInfo({
 
   function render_collect_col() {
     return (
-      <Col md={width} key="last_collect" style={{ paddingRight: 8 }}>
+      <Col md={width} key="last_collect" style={workflowColStyle}>
         {skip_assignment ||
         !(info.last_assignment != null
           ? info.last_assignment.error
@@ -731,7 +744,7 @@ export function StudentAssignmentInfo({
     if (!info.peer_assignment) return;
     if (info.last_collect?.error != null) return;
     return (
-      <Col md={4} key="peer_assign" style={{ paddingRight: 8 }}>
+      <Col md={4} key="peer_assign" style={workflowColStyle}>
         <Status
           step="Peer Assign"
           data={info.last_peer_assignment}
@@ -758,7 +771,7 @@ export function StudentAssignmentInfo({
     if (!peer_grade) return;
     if (!info.peer_collect) return;
     return (
-      <Col md={4} key="peer_collect" style={{ paddingRight: 8 }}>
+      <Col md={4} key="peer_collect" style={workflowColStyle}>
         <Status
           step="Peer Collect"
           data={info.last_peer_collect}
@@ -785,7 +798,11 @@ export function StudentAssignmentInfo({
   function render_grade_col() {
     //      {render_enter_grade()}
     return (
-      <Col md={width} key="grade" style={{ minWidth: 240, paddingRight: 12 }}>
+      <Col
+        md={width}
+        key="grade"
+        style={{ ...workflowColStyle, minWidth: 240, paddingRight: 12 }}
+      >
         {show_grade_col && (
           <div
             style={{
@@ -797,8 +814,10 @@ export function StudentAssignmentInfo({
               display: "flex",
               flexDirection: "column",
               gap: 6,
+              height: "100%",
               minHeight: 72,
               padding: 8,
+              width: "100%",
             }}
           >
             <div
@@ -819,6 +838,7 @@ export function StudentAssignmentInfo({
             {render_grade()}
             {render_comments()}
             {render_nbgrader()}
+            {render_last_time()}
           </div>
         )}
       </Col>
@@ -827,7 +847,7 @@ export function StudentAssignmentInfo({
 
   function render_return_graded_col() {
     return (
-      <Col md={width} key="return_graded" style={{ paddingRight: 8 }}>
+      <Col md={width} key="return_graded" style={workflowColStyle}>
         {show_return_graded ? (
           <Status
             step="Return"
@@ -873,7 +893,7 @@ export function StudentAssignmentInfo({
           </div>
         </Col>
         <Col md={20} key="rest">
-          <Row>
+          <Row align="stretch">
             {render_assignment_col()}
             {render_collect_col()}
             {render_peer_assign_col()}
