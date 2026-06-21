@@ -700,6 +700,37 @@ Plus/Star/Launchpad`).
   build:dev` passed; live browser QA on `/pricing`, `/guides`, and `/products` passed 132
   assertions across desktop/mobile. No protected home, pricing dollars, compliance/policy, docs
   route, pitch-doc, or dedicated-compute draft edits. No PR.
+- **START 2026-06-21 15:02 PDT:** Slice 4b implementation, using Blaec's technical-audience
+  correction from `/home/user/cocalc-shared/codex-turn-log.md`: preserve concrete tool names while
+  making the public copy more outcome-led. Verified Claude status before editing; Claude remains
+  read-only on synthesis and active in the pitch-docs lane. Verified preview owner pid `13303`, cwd
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files:
+  `src/packages/frontend/public/features/julia-page.tsx`,
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/terminal-page.tsx`,
+  `src/packages/frontend/public/products/app.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: protected home, pitch docs, docs
+  routes/content, pricing dollars, compliance/policy, route slugs, Slice 4c/4d, deferred type/palette
+  visual work, and the untracked dedicated-compute draft. No PR.
+- **END 2026-06-21 15:08 PDT:** Slice 4b complete locally. Updated the Julia and Octave detail
+  heroes so the first viewport still names the tools technical users care about (`Julia`, `Pluto`,
+  `Jupyter`, `GNU Octave`, notebooks, scripts, `.m` files, terminals, and shared project files) while
+  adding the project/reproducibility outcome. Replaced terminal implementation jargon (`one PTY
+  stream`, `terminal backpressure`) with user-facing session/output wording grounded in the terminal
+  flow-control implementation. Updated the Star hero to state the one-Ubuntu-VM setup path and
+  installer responsibilities without hiding the technical install card. Source grounding checked
+  against the feature catalog, project Julia/Pluto support, Star self-hosting docs, and terminal
+  throttle/connected-terminal implementation. Validation: `git diff --check` clean; focused Jest
+  suites passed (`public/features/__tests__/app.test.tsx` 91/91, `public/__tests__/app.test.tsx`
+  38/38, `public/__tests__/public-site-browser-qa-script.test.ts` 5/5); `pnpm lint:frontend`
+  clean; `pnpm -C src/packages/static build:dev` passed; live browser QA passed 140 assertions on
+  `/features/julia`, `/features/octave`, `/features/terminal`, and `/products/cocalc-star` across
+  desktop/mobile. Screenshots reviewed from `/tmp/cocalc-public-qa-Y5ZHWy`; pre-existing mobile
+  Star install-command overflow noted but left out of this copy slice. No protected home, pitch docs,
+  docs route/content, pricing dollars, compliance/policy, type/palette visual, Slice 4c/4d, or
+  dedicated-compute draft edits. No PR.
 
 ### Codex — platform-UI thread
 

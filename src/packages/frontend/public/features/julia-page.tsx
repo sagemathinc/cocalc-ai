@@ -159,12 +159,12 @@ export default function JuliaFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Use Julia with reactive Pluto notebooks, Jupyter, and terminals.
+                Use Julia, Pluto, and Jupyter in reproducible CoCalc projects.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Model, run simulations, and share the analysis with your lab or
-                team — using Julia in Jupyter, Pluto, source files, and
-                terminals.
+                Model, run simulations, and review results with your lab or
+                team while Julia notebooks, Pluto sessions, source files, and
+                terminals stay together.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 The package environment stays reproducible, so a teammate can

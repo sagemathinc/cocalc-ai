@@ -591,8 +591,8 @@ function CocalcStarPage() {
             label: "Compare with Rocket",
           },
         ]}
-        title="Is one public Ubuntu VM enough?"
-        body="CoCalc Star is the path for a small shared CoCalc instance on a single public Ubuntu VM. It sits between local CoCalc Plus and customer-operated private deployment."
+        title="Run a shared CoCalc site on one Ubuntu VM."
+        body="CoCalc Star gives a lab, course, workshop, or small team a browser-based CoCalc workspace on a VM they operate, with the installer handling HTTPS, onboarding, and the first admin flow."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />

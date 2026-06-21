@@ -161,18 +161,17 @@ export default function OctaveFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Run Octave in notebooks, scripts, and terminals.
+                Run GNU Octave with notebooks, scripts, and shared project files.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                CoCalc supports GNU Octave as part of a real project
-                environment: edit <code>.m</code> files, run Octave in a
-                terminal, use notebook workflows, share files, and teach from a
-                common setup.
+                Edit <code>.m</code> files, run Octave in terminals, use
+                notebook workflows, and teach or review numerical work from one
+                setup instead of every collaborator maintaining a local install.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That makes it a practical way to run numerical courses,
-                research, and prototyping — without asking every student or
-                collaborator to maintain a local install.
+                The project keeps notebooks, <code>.m</code> files, plots, data,
+                and course context together, so the same workspace works for
+                courses, research, and prototyping.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

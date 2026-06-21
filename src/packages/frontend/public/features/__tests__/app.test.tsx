@@ -216,7 +216,7 @@ describe("PublicFeaturesApp", () => {
     },
     {
       marker:
-        "Use Julia with reactive Pluto notebooks, Jupyter, and terminals.",
+        "Use Julia, Pluto, and Jupyter in reproducible CoCalc projects.",
       slug: "julia",
     },
     {
@@ -249,7 +249,7 @@ describe("PublicFeaturesApp", () => {
       slug: "api",
     },
     {
-      marker: "Run Octave in notebooks, scripts, and terminals.",
+      marker: "Run GNU Octave with notebooks, scripts, and shared project files.",
       slug: "octave",
     },
     {
@@ -892,7 +892,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "julia",
-      title: "Use Julia with reactive Pluto notebooks, Jupyter, and terminals.",
+      title: "Use Julia, Pluto, and Jupyter in reproducible CoCalc projects.",
       section: "Keep Julia close to the rest of the research.",
     },
     {
@@ -904,7 +904,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "octave",
-      title: "Run Octave in notebooks, scripts, and terminals.",
+      title: "Run GNU Octave with notebooks, scripts, and shared project files.",
       section: "Teach and run Octave without local setup drift.",
     },
     {

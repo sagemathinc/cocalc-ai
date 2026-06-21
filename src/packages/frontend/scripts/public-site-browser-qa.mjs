@@ -184,7 +184,7 @@ const ROUTE_RULES = {
   "/products/cocalc-star": {
     requireText: [
       "CoCalc Star",
-      "Is one public Ubuntu VM enough?",
+      "Run a shared CoCalc site on one Ubuntu VM.",
       "Boundary: one public VM",
     ],
     requireLinks: [

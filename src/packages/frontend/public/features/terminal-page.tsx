@@ -298,7 +298,7 @@ function SharedStreamDiagram() {
           }}
         >
           <Text strong style={{ color: PUBLIC_DARK.mockText }}>
-            one PTY stream
+            one shared terminal session
           </Text>
           <div style={{ color: "#93c5fd", marginTop: 6 }}>
             live output, shared input, preserved scrollback
@@ -448,9 +448,8 @@ export default function TerminalFeaturePage({
             </Title>
             <Paragraph style={{ margin: 0 }}>
               Some commands produce far more output than a browser should render
-              one line at a time. CoCalc adapts terminal buffering and applies
-              terminal backpressure so large output remains manageable without
-              treating dropped text as an acceptable answer.
+              one line at a time. CoCalc keeps the session usable by pacing
+              heavy output and preserving enough history for later inspection.
             </Paragraph>
             <BulletList
               items={[
