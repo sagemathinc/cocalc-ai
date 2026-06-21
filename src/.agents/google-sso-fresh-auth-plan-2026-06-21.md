@@ -4,7 +4,17 @@ Created: 2026-06-21
 
 ## Status
 
-Planned.
+Implemented.
+
+Implemented in this branch with:
+
+- `/auth/google/fresh-auth/start` on the hub auth router.
+- A Google OIDC return branch that validates state, browser binding, current
+  remember-me session, linked Google passport, and recent Google `auth_time`.
+- `google_oidc` as a fresh-auth session factor level, without treating it as a
+  password/2FA credential result or admin dangerous-operation second factor.
+- `FreshAuthModal` support for `Verify with Google`, including the existing
+  15-minute default and 8-hour checkbox duration choices.
 
 ## Problem
 
@@ -209,7 +219,7 @@ Implementation detail:
   - preferred: add a new `AuthSessionFactorLevel` value such as
     `google_oidc`, and allow extended duration for that level
   - acceptable: represent SSO fresh auth in metadata and use `factor_level:
-    "none"`, but then explicitly allow extended duration for verified SSO
+"none"`, but then explicitly allow extended duration for verified SSO
 
 Preferred is a new factor level because it makes audit/debugging clearer.
 
@@ -350,7 +360,7 @@ Return a minimal page from the callback:
   if (window.opener) {
     window.opener.postMessage(
       { type: "cocalc:fresh-auth", provider: "google", ok: true },
-      window.location.origin
+      window.location.origin,
     );
   }
   window.close();

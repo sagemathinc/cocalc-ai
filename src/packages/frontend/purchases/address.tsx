@@ -149,7 +149,7 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
           return;
         }
         setSuccess(true);
-        onFinished?.();
+        onFinished?.(value);
         return;
       }
       setError("Complete billing name and address before continuing.");

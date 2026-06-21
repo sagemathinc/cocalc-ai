@@ -54,13 +54,17 @@ function hasRecentSecondFactor(session: AccountAuthSessionRow): boolean {
   if (isDevCliFreshAuth(session)) {
     return true;
   }
-  return (
-    (session.factor_level ?? "none") !== "none" &&
-    isAtLeastAsRecent({
-      verified_at: session.factor_verified_at,
-      password_verified_at: session.password_verified_at,
-    })
-  );
+  if (
+    session.factor_level !== "totp" &&
+    session.factor_level !== "recovery_code" &&
+    session.factor_level !== "passkey"
+  ) {
+    return false;
+  }
+  return isAtLeastAsRecent({
+    verified_at: session.factor_verified_at,
+    password_verified_at: session.password_verified_at,
+  });
 }
 
 function impersonationHasRecentSecondFactor(

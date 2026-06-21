@@ -386,6 +386,16 @@ describe("StripePayment", () => {
     });
     expect(createSetupIntent).toHaveBeenCalledWith({
       description: "Add a new payment method.",
+      billing_details: {
+        address: {
+          city: "San Francisco",
+          country: "US",
+          line1: "1 Main St",
+          postal_code: "94105",
+          state: "CA",
+        },
+        name: "Ada Lovelace",
+      },
     });
     expect(getCustomerSession).not.toHaveBeenCalled();
     expect(screen.queryByText("Confirm security action")).toBeNull();
@@ -428,6 +438,16 @@ describe("StripePayment", () => {
     });
     expect(createSetupIntent).toHaveBeenCalledWith({
       description: "Add a new payment method.",
+      billing_details: {
+        address: {
+          city: "San Francisco",
+          country: "US",
+          line1: "1 Main St",
+          postal_code: "94105",
+          state: "CA",
+        },
+        name: "Ada Lovelace",
+      },
     });
   });
 
@@ -454,6 +474,44 @@ describe("StripePayment", () => {
     expect(screen.queryByText("Stripe address element")).toBeNull();
     expect(setStripeCustomer).not.toHaveBeenCalled();
     expect(createSetupIntent).toHaveBeenCalledWith({
+      description: "Add a new payment method.",
+    });
+  });
+
+  it("uses fresh auth before adding a payment method with saved address", async () => {
+    mockStripeEnabled = true;
+    jest.mocked(getStripeCustomer).mockResolvedValueOnce({
+      address: {
+        city: "San Francisco",
+        country: "US",
+        line1: "1 Main St",
+        postal_code: "94105",
+        state: "CA",
+      },
+      name: "Ada Lovelace",
+    });
+    jest
+      .mocked(createSetupIntent)
+      .mockRejectedValueOnce(freshAuthRequiredError())
+      .mockResolvedValueOnce({ clientSecret: "seti_test_secret" } as any);
+
+    render(<AddPaymentMethodButton />);
+
+    fireEvent.click(screen.getByText(/Add Payment Method/));
+
+    await waitFor(() => {
+      expect(screen.getByText("Confirm security action")).toBeTruthy();
+    });
+    expect(screen.queryByText("Stripe address element")).toBeNull();
+    expect(screen.queryByText("Stripe payment element")).toBeNull();
+
+    fireEvent.click(screen.getByText("Verify fresh auth"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Stripe payment element")).toBeTruthy();
+    });
+    expect(createSetupIntent).toHaveBeenCalledTimes(2);
+    expect(createSetupIntent).toHaveBeenLastCalledWith({
       description: "Add a new payment method.",
     });
   });

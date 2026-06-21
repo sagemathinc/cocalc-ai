@@ -14,6 +14,10 @@ import {
   encryptSecretStorageValue,
 } from "@cocalc/database/settings/secret-settings";
 import getPool from "@cocalc/database/pool";
+import {
+  GOOGLE_SSO_STRATEGY,
+  getGoogleSsoSettingsState,
+} from "@cocalc/database/settings/google-sso";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
@@ -31,6 +35,7 @@ import {
   setCurrentSessionFreshAuth,
   type AuthSessionFactorLevel,
   type FreshAuthDuration,
+  type PasswordFreshAuthFactorLevel,
   type SecondFactorMethod,
 } from "@cocalc/server/auth/auth-sessions";
 import {
@@ -97,6 +102,11 @@ type ChallengeRow = {
   attempt_count: number;
   max_attempts: number;
   completed_at?: Date | null;
+};
+
+type FreshAuthSsoMethod = {
+  provider: "google";
+  display: string;
 };
 
 function ensureAccountId(account_id: string): string {
@@ -207,6 +217,50 @@ async function getPasswordHashWithDb({
     throw Error("no such account");
   }
   return rows[0].password_hash ?? null;
+}
+
+async function accountHasPassword(account_id: string): Promise<boolean> {
+  return !!(await getPasswordHashWithDb({
+    db: getPool("short"),
+    account_id,
+  }));
+}
+
+async function getFreshAuthSsoMethods(
+  account_id: string,
+): Promise<FreshAuthSsoMethod[]> {
+  const googleState = await getGoogleSsoSettingsState();
+  if (!googleState.configured || googleState.strategy == null) {
+    return [];
+  }
+  const { rows } = await getPool("short").query<{
+    passports?: Record<string, unknown> | null;
+  }>(
+    `
+      SELECT passports
+        FROM accounts
+       WHERE account_id = $1::UUID
+       LIMIT 1
+    `,
+    [account_id],
+  );
+  if (rows.length === 0) {
+    throw Error("no such account");
+  }
+  const passports = rows[0].passports ?? {};
+  if (
+    Object.keys(passports).some((key) =>
+      key.startsWith(`${GOOGLE_SSO_STRATEGY}-`),
+    )
+  ) {
+    return [
+      {
+        provider: "google",
+        display: googleState.strategy.info?.display ?? "Google",
+      },
+    ];
+  }
+  return [];
 }
 
 async function getTotpAccountLabel(account_id: string): Promise<string> {
@@ -450,7 +504,7 @@ async function verifyFreshAuthInputs({
   method?: string;
   code?: string;
   db: Queryable;
-}): Promise<AuthSessionFactorLevel> {
+}): Promise<PasswordFreshAuthFactorLevel> {
   const hasSecondFactor = await hasActiveSecondFactor(account_id);
   if (!hasSecondFactor) {
     const password_hash = await getPasswordHashWithDb({
@@ -527,9 +581,9 @@ export async function verifyFreshAuthCredentials({
   current_password: string;
   method?: string;
   code?: string;
-}): Promise<AuthSessionFactorLevel> {
+}): Promise<PasswordFreshAuthFactorLevel> {
   const accountId = ensureAccountId(account_id);
-  let factor_level: AuthSessionFactorLevel = "none";
+  let factor_level: PasswordFreshAuthFactorLevel = "none";
   await withAccountRehomeWriteFence({
     account_id: accountId,
     action: "verify fresh auth credentials",
@@ -635,7 +689,7 @@ async function verifyFreshAuthCredentialsForAccount({
   current_password: string;
   method?: string;
   code?: string;
-}): Promise<AuthSessionFactorLevel> {
+}): Promise<PasswordFreshAuthFactorLevel> {
   const accountId = ensureAccountId(account_id);
   const location = await resolveAccountHomeBay({
     account_id: accountId,
@@ -674,6 +728,8 @@ export async function getFreshAuthStatus({
   mode: "account" | "impersonation_actor";
   enabled: boolean;
   methods: SecondFactorMethod[];
+  has_password?: boolean;
+  sso_methods?: FreshAuthSsoMethod[];
   email_address?: string | null;
   actor_account_id?: string;
   actor_email_address?: string | null;
@@ -698,10 +754,16 @@ export async function getFreshAuthStatus({
     };
   }
   const methods = await getActiveSecondFactorMethods(accountId);
+  const [has_password, sso_methods] = await Promise.all([
+    accountHasPassword(accountId),
+    getFreshAuthSsoMethods(accountId),
+  ]);
   return {
     mode: "account",
     enabled: methods.length > 0,
     methods,
+    has_password,
+    sso_methods,
     email_address: (await getEmailAddress(accountId)) ?? null,
   };
 }

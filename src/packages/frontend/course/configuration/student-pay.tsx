@@ -1,13 +1,4 @@
-import {
-  Alert,
-  Card,
-  Checkbox,
-  InputNumber,
-  Select,
-  Space,
-  Spin,
-  Tag,
-} from "antd";
+import { Alert, Card, Radio, Select, Space, Spin, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -23,8 +14,9 @@ import ShowError from "@cocalc/frontend/components/error";
 import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
 import { currency } from "@cocalc/util/misc";
 import { membershipTierVisibleForVerifiedInstructorEmail } from "@cocalc/util/membership-tier-domains";
-import { COLORS } from "@cocalc/util/theme";
 import { InstitutePaySection } from "./institute-pay";
+
+const { Text } = Typography;
 
 interface CourseMembershipTier extends MembershipTierWithPresentation {
   id: string;
@@ -43,6 +35,7 @@ interface MembershipTiersResponse {
 }
 
 const DEFAULT_GRACE_DAYS = 14;
+type CoursePayChoice = "student" | "institute" | "site_license";
 
 export default function StudentPay({ actions, settings, project_id }) {
   const intl = useIntl();
@@ -57,7 +50,7 @@ export default function StudentPay({ actions, settings, project_id }) {
   >([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const siteLicenseDefaultedForTier = useRef<Set<string>>(new Set());
+  const paymentDefaultedForTier = useRef<Set<string>>(new Set());
 
   async function loadTiers() {
     setLoading(true);
@@ -140,37 +133,44 @@ export default function StudentPay({ actions, settings, project_id }) {
         })[0] ?? null
     );
   }, [claimablePackages, selectedTier, tierById]);
-  const selectedTierGraceDays = Number(selectedTier?.course_grace_days);
-  const defaultGraceDays = Number.isFinite(selectedTierGraceDays)
-    ? selectedTierGraceDays
-    : DEFAULT_GRACE_DAYS;
-  const configuredGraceDaysRaw = settings?.get("student_membership_grace_days");
-  const configuredGraceDays =
-    configuredGraceDaysRaw == null ? undefined : Number(configuredGraceDaysRaw);
-  const graceDays =
-    configuredGraceDays != null && Number.isFinite(configuredGraceDays)
-      ? configuredGraceDays
-      : defaultGraceDays;
   const paymentEnabled = !!(
     settings?.get("student_pay") ||
     settings?.get("institute_pay") ||
     settings?.get("site_license_pay")
   );
+  const selectedPayChoice: CoursePayChoice | undefined = settings?.get(
+    "site_license_pay",
+  )
+    ? "site_license"
+    : settings?.get("institute_pay")
+      ? "institute"
+      : settings?.get("student_pay")
+        ? "student"
+        : undefined;
 
   useEffect(() => {
     if (
       !actions ||
       !selectedTierId ||
+      !selectedTier ||
       paymentEnabled ||
-      !matchingSiteLicense ||
-      siteLicenseDefaultedForTier.current.has(selectedTierId)
+      paymentDefaultedForTier.current.has(selectedTierId)
     ) {
       return;
     }
-    siteLicenseDefaultedForTier.current.add(selectedTierId);
-    actions.configuration.set_pay_choice("site_license", true);
+    paymentDefaultedForTier.current.add(selectedTierId);
+    actions.configuration.set_pay_choice(
+      matchingSiteLicense ? "site_license" : "student",
+      true,
+    );
     actions.configuration.configure_all_projects();
-  }, [actions, matchingSiteLicense, paymentEnabled, selectedTierId]);
+  }, [
+    actions,
+    matchingSiteLicense,
+    paymentEnabled,
+    selectedTier,
+    selectedTierId,
+  ]);
 
   if (settings == null || actions == null) {
     return <Spin />;
@@ -189,17 +189,13 @@ export default function StudentPay({ actions, settings, project_id }) {
     });
   }
 
-  function setGraceDays(student_membership_grace_days: number | null) {
-    actions.configuration.set_course_membership({
-      required_membership_class: selectedTierId,
-      student_membership_grace_days:
-        student_membership_grace_days ?? defaultGraceDays,
-    });
+  function setPayChoice(value: CoursePayChoice) {
+    actions.configuration.set_pay_choice(value, true);
+    actions.configuration.configure_all_projects();
   }
 
   return (
     <Card
-      style={!paymentEnabled ? { background: COLORS.YELL_LLL } : undefined}
       title={
         <>
           <Icon name="dashboard" />{" "}
@@ -230,12 +226,6 @@ export default function StudentPay({ actions, settings, project_id }) {
         />
       ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Alert
-            type="info"
-            showIcon
-            title="Choose the membership students need for this course"
-            description="Pricing comes from the selected course-visible membership tier. It is not based on course dates or project quota settings."
-          />
           <div>
             <div style={{ marginBottom: "6px", fontWeight: 600 }}>
               Required student course membership
@@ -255,45 +245,43 @@ export default function StudentPay({ actions, settings, project_id }) {
           </div>
           {selectedTier && (
             <Space direction="vertical" size="small" style={{ width: "100%" }}>
-              <Space wrap>
-                <Tag color="blue">{selectedTier.label ?? selectedTier.id}</Tag>
-                <Tag>{currency(Number(selectedTier.course_price ?? 0))}</Tag>
-                <Tag>{Number(selectedTier.course_duration_days ?? 0)} days</Tag>
-                <Tag>{graceDays} grace days</Tag>
-                <Tag>priority {selectedTier.priority ?? 0}</Tag>
-              </Space>
+              <Text type="secondary">
+                {currency(Number(selectedTier.course_price ?? 0))} for{" "}
+                {Number(selectedTier.course_duration_days ?? 0)} days per
+                student. The payment deadline and any free-trial period come
+                from this membership tier.
+              </Text>
               <MembershipTierBenefits compact tier={selectedTier} />
             </Space>
           )}
           <div>
             <div style={{ marginBottom: "6px", fontWeight: 600 }}>
-              Student grace period
+              Who pays?
             </div>
-            <InputNumber
-              min={0}
-              precision={0}
-              value={graceDays}
-              onChange={setGraceDays}
-            />{" "}
-            <span style={{ color: COLORS.GRAY }}>
-              days of full access before payment is required
-            </span>
+            <Radio.Group
+              value={selectedPayChoice}
+              onChange={(e) => setPayChoice(e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Radio value="student" disabled={!selectedTier}>
+                  {intl.formatMessage({
+                    id: "course.student-pay.radio.students-pay",
+                    defaultMessage: "Student pays directly",
+                  })}
+                </Radio>
+                <Radio value="institute" disabled={!selectedTier}>
+                  Institute or instructor pays directly
+                </Radio>
+                <Radio
+                  value="site_license"
+                  disabled={!selectedTier || !matchingSiteLicense}
+                >
+                  Site license
+                </Radio>
+              </Space>
+            </Radio.Group>
           </div>
-          <Checkbox
-            checked={!!settings?.get("site_license_pay")}
-            disabled={!selectedTier || !matchingSiteLicense}
-            onChange={(e) => {
-              actions.configuration.set_pay_choice(
-                "site_license",
-                e.target.checked,
-              );
-              if (e.target.checked) {
-                actions.configuration.configure_all_projects();
-              }
-            }}
-          >
-            Use matching site license
-          </Checkbox>
           {selectedTier && matchingSiteLicense ? (
             <Alert
               type="success"
@@ -305,8 +293,8 @@ export default function StudentPay({ actions, settings, project_id }) {
                   <strong>{matchingSiteLicense.matched_email_address}</strong>{" "}
                   can claim a site license for{" "}
                   <strong>{matchingSiteLicense.membership_class}</strong>. This
-                  option is selected by default when no other course payment
-                  mode has been chosen.
+                  option is selected by default for this membership when no
+                  other course payment mode has been chosen.
                 </>
               }
             />
@@ -318,24 +306,10 @@ export default function StudentPay({ actions, settings, project_id }) {
               description="Students can still pay directly or the instructor can buy course seats. If a site license is expected, verify the instructor email domain and confirm the site license has available seats."
             />
           ) : null}
-          <Checkbox
-            checked={!!settings?.get("student_pay")}
-            disabled={!selectedTier}
-            onChange={(e) => {
-              actions.configuration.set_pay_choice("student", e.target.checked);
-              if (e.target.checked) {
-                actions.configuration.configure_all_projects();
-              }
-            }}
-          >
-            {intl.formatMessage({
-              id: "course.student-pay.checkbox.students-pay",
-              defaultMessage: "Students pay directly",
-            })}
-          </Checkbox>
           <InstitutePaySection
             project_id={project_id}
-            enabled={!!settings?.get("institute_pay")}
+            enabled={selectedPayChoice === "institute"}
+            showToggle={false}
             selectedTier={selectedTier}
             onToggle={(checked) => {
               actions.configuration.set_pay_choice("institute", checked);

@@ -29,6 +29,7 @@ export type MfaRequiredAuthResponse = {
 };
 
 export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
+export type FreshAuthDuration = "default" | "extended";
 
 export type AuthBootstrapResponse = {
   signed_in: boolean;
@@ -73,6 +74,12 @@ function apiUrl(endpoint: string, origin?: string): string {
   return normalizedOrigin ? `${normalizedOrigin}${path}` : path;
 }
 
+function authUrl(endpoint: string, origin?: string): string {
+  const path = `/${joinUrlPath(appBasePath, "auth", endpoint).replace(/^\/+/, "")}`;
+  const normalizedOrigin = `${origin ?? ""}`.replace(/\/+$/, "");
+  return normalizedOrigin ? `${normalizedOrigin}${path}` : path;
+}
+
 export async function postAuthApi<T = any>({
   endpoint,
   body,
@@ -99,6 +106,34 @@ export async function postAuthApi<T = any>({
     throw err;
   }
   return json;
+}
+
+export async function startGoogleFreshAuth({
+  duration,
+  origin,
+}: {
+  duration: FreshAuthDuration;
+  origin?: string;
+}): Promise<{ url: string }> {
+  const response = await fetch(
+    `${authUrl("google/fresh-auth/start", origin)}?duration=${encodeURIComponent(duration)}`,
+    {
+      method: "POST",
+      credentials: origin ? "include" : "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ duration }),
+    },
+  );
+  const json = await response.json();
+  if (json?.error) {
+    throw new Error(`${json.error}`);
+  }
+  if (typeof json?.url !== "string" || !json.url) {
+    throw new Error("Google verification did not return a start URL.");
+  }
+  return { url: json.url };
 }
 
 export async function retryAuthOnHomeBay<T = any>({

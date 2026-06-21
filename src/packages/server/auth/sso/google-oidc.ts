@@ -16,7 +16,7 @@ const GOOGLE_ISSUERS = new Set([
   "accounts.google.com",
   "https://accounts.google.com",
 ]);
-const CLOCK_SKEW_SECONDS = 300;
+export const GOOGLE_OIDC_CLOCK_SKEW_SECONDS = 300;
 
 interface GoogleJwk {
   kid: string;
@@ -50,6 +50,7 @@ export interface GoogleIdTokenClaims {
   azp?: string;
   exp: number;
   iat?: number;
+  auth_time?: number;
   nbf?: number;
   nonce?: string;
   sub: string;
@@ -139,13 +140,22 @@ function assertValidClaims({
   if (audiences.length > 1 && claims.azp !== clientID) {
     throw new Error("Google ID token has an invalid authorized party.");
   }
-  if (typeof claims.exp !== "number" || claims.exp < now - CLOCK_SKEW_SECONDS) {
+  if (
+    typeof claims.exp !== "number" ||
+    claims.exp < now - GOOGLE_OIDC_CLOCK_SKEW_SECONDS
+  ) {
     throw new Error("Google ID token is expired.");
   }
-  if (typeof claims.iat === "number" && claims.iat > now + CLOCK_SKEW_SECONDS) {
+  if (
+    typeof claims.iat === "number" &&
+    claims.iat > now + GOOGLE_OIDC_CLOCK_SKEW_SECONDS
+  ) {
     throw new Error("Google ID token was issued in the future.");
   }
-  if (typeof claims.nbf === "number" && claims.nbf > now + CLOCK_SKEW_SECONDS) {
+  if (
+    typeof claims.nbf === "number" &&
+    claims.nbf > now + GOOGLE_OIDC_CLOCK_SKEW_SECONDS
+  ) {
     throw new Error("Google ID token is not valid yet.");
   }
   if (claims.nonce !== nonce) {
@@ -183,11 +193,13 @@ export function googleOidcAuthorizationUrl({
   redirectURI,
   state,
   nonce,
+  freshAuth,
 }: {
   clientID: string;
   redirectURI: string;
   state: string;
   nonce: string;
+  freshAuth?: boolean;
 }): string {
   const url = new URL(GOOGLE_AUTHORIZATION_URL);
   url.searchParams.set("client_id", clientID);
@@ -197,6 +209,10 @@ export function googleOidcAuthorizationUrl({
   url.searchParams.set("state", state);
   url.searchParams.set("nonce", nonce);
   url.searchParams.set("prompt", "select_account");
+  if (freshAuth) {
+    // Force a fresh Google authentication so this can satisfy CoCalc fresh auth.
+    url.searchParams.set("max_age", "0");
+  }
   return url.toString();
 }
 

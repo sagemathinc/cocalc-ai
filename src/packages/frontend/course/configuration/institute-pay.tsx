@@ -52,6 +52,7 @@ const { Paragraph, Text } = Typography;
 interface InstitutePaySectionProps {
   project_id: string;
   enabled: boolean;
+  showToggle?: boolean;
   selectedTier: {
     id: string;
     label?: string;
@@ -64,6 +65,7 @@ interface InstitutePaySectionProps {
 export function InstitutePaySection({
   project_id,
   enabled,
+  showToggle = true,
   selectedTier,
   onToggle,
 }: InstitutePaySectionProps) {
@@ -103,9 +105,14 @@ export function InstitutePaySection({
 
   return (
     <div style={{ marginTop: "20px" }}>
-      <Checkbox checked={enabled} onChange={(e) => onToggle(e.target.checked)}>
-        Institute or team pays for all students
-      </Checkbox>
+      {showToggle ? (
+        <Checkbox
+          checked={enabled}
+          onChange={(e) => onToggle(e.target.checked)}
+        >
+          Institute or team pays for all students
+        </Checkbox>
+      ) : undefined}
       {enabled && (
         <div style={{ marginTop: "15px" }}>
           <ShowError error={error} setError={setError} />

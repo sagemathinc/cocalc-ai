@@ -235,7 +235,11 @@ import {
 } from "./browser-sessions";
 import { getLiveBrowserSessionInfo } from "./browser-sessions-live";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
-import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
+import {
+  recordNewAuthSession,
+  type AuthSessionFactorLevel,
+  type PasswordFreshAuthFactorLevel,
+} from "@cocalc/server/auth/auth-sessions";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
 import {
@@ -369,6 +373,19 @@ async function touchAccountActivity(account_id: string): Promise<void> {
 export const BAY_OPS_INTERNAL_AUTH = Symbol("bay-ops-internal-auth");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
 const DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
+
+function passwordFreshAuthFactorLevel(
+  factor_level: AuthSessionFactorLevel | null | undefined,
+): PasswordFreshAuthFactorLevel {
+  if (
+    factor_level === "totp" ||
+    factor_level === "recovery_code" ||
+    factor_level === "passkey"
+  ) {
+    return factor_level;
+  }
+  return "none";
+}
 
 export function ping() {
   return { now: Date.now() };
@@ -4917,7 +4934,7 @@ export async function createImpersonationGrant({
     actor_password_verified_at: session.password_verified_at ?? null,
     actor_factor_verified_at: session.factor_verified_at ?? null,
     actor_fresh_auth_until: session.fresh_auth_until ?? null,
-    actor_factor_level: session.factor_level ?? "none",
+    actor_factor_level: passwordFreshAuthFactorLevel(session.factor_level),
     reason,
     metadata: {
       created_via: "admin-ui",

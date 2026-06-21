@@ -63,8 +63,6 @@ function hasUsableBillingDetails(customer: any): boolean {
   const address = customer?.address ?? {};
   return (
     !!`${customer?.name ?? ""}`.trim() &&
-    !!`${address.line1 ?? ""}`.trim() &&
-    !!`${address.city ?? ""}`.trim() &&
     !!`${address.country ?? ""}`.trim() &&
     !!`${address.postal_code ?? ""}`.trim()
   );
@@ -855,6 +853,7 @@ export function BillingSetupModal({
   title?: ReactNode;
 }) {
   const [addressSaved, setAddressSaved] = useState<boolean>(false);
+  const [billingDetails, setBillingDetails] = useState<any>(null);
   const [checkingAddress, setCheckingAddress] =
     useState<boolean>(requirePaymentMethod);
   const [addressCheckError, setAddressCheckError] = useState<string>("");
@@ -894,8 +893,9 @@ export function BillingSetupModal({
     };
   }, [requirePaymentMethod, stripeEnabled]);
 
-  const finishAddress = () => {
+  const finishAddress = (details?: any) => {
     if (requirePaymentMethod) {
+      setBillingDetails(details ?? null);
       setAddressSaved(true);
     } else {
       onFinished?.();
@@ -925,13 +925,20 @@ export function BillingSetupModal({
           <StripeAddressElement onFinished={finishAddress} showCancel={false} />
         </Space>
       ) : (
-        <CollectPaymentMethod onFinished={onFinished} />
+        <CollectPaymentMethod
+          billingDetails={billingDetails}
+          onFinished={onFinished}
+        />
       )}
     </Modal>
   );
 }
 
-function CollectPaymentMethod(props: { style?; onFinished? }) {
+function CollectPaymentMethod(props: {
+  billingDetails?: any;
+  style?;
+  onFinished?;
+}) {
   const emailVerificationRequired = useEmailVerificationRequired();
   if (emailVerificationRequired) {
     return (
@@ -947,9 +954,11 @@ function CollectPaymentMethod(props: { style?; onFinished? }) {
 }
 
 function CollectPaymentMethodInner({
+  billingDetails,
   style,
   onFinished,
 }: {
+  billingDetails?: any;
   style?;
   onFinished?;
 }) {
@@ -957,15 +966,19 @@ function CollectPaymentMethodInner({
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = async () => {
     try {
       setLoading(true);
       setError("");
-      const intent = await createSetupIntent({
-        description: "Add a new payment method.",
+      await runFreshAuthAction(async () => {
+        const intent = await createSetupIntent({
+          description: "Add a new payment method.",
+          ...(billingDetails ? { billing_details: billingDetails } : {}),
+        });
+        setSecret(intent);
       });
-      setSecret(intent);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -992,7 +1005,12 @@ function CollectPaymentMethodInner({
   }
 
   if (loading) {
-    return <BigSpin style={style} tip="Loading payment form..." />;
+    return (
+      <>
+        <BigSpin style={style} tip="Loading payment form..." />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   if (error) {
@@ -1009,7 +1027,12 @@ function CollectPaymentMethodInner({
   }
 
   if (secret == null) {
-    return <BigSpin style={style} tip="Loading payment form..." />;
+    return (
+      <>
+        <BigSpin style={style} tip="Loading payment form..." />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   return (
@@ -1030,6 +1053,7 @@ function CollectPaymentMethodInner({
           setError={setError}
         />
       </Elements>
+      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }
