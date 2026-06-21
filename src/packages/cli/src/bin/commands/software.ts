@@ -130,6 +130,7 @@ type DeployOptions = {
 type HistoryOptions = {
   envFile?: string;
   limit?: string;
+  wide?: boolean;
 };
 
 type RollbackOptions = DeployOptions;
@@ -2090,6 +2091,16 @@ function deploymentHistoryRow(
   };
 }
 
+function narrowDeploymentHistoryRow(row: SoftwareDeploymentHistoryRow) {
+  return {
+    deployed_at: row.deployed_at,
+    tag: row.tag,
+    git: row.git,
+    deployed_by: row.deployed_by,
+    status: row.status,
+  };
+}
+
 async function readDeploymentRecordByKey({
   client,
   config,
@@ -4022,6 +4033,7 @@ Supported deploy/smoke components:
       "/run/secrets/cocalc/rocket-software-env.sh",
     )
     .option("--limit <n>", "maximum rows to show", "10")
+    .option("--wide", "show all deployment history columns in table output")
     .action(
       async (
         componentArg: string,
@@ -4058,7 +4070,9 @@ Supported deploy/smoke components:
           });
           return;
         }
-        printArrayTable(rows);
+        printArrayTable(
+          opts.wide ? rows : rows.map(narrowDeploymentHistoryRow),
+        );
       },
     );
 
