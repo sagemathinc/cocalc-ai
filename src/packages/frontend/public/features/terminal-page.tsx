@@ -125,7 +125,7 @@ export default function TerminalFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
         <Col xs={24} md={8}>
           <StoryCard icon="file" title="Each terminal opens in its own folder.">
             Open <code>research/runs/run.term</code> and the shell starts in{" "}

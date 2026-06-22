@@ -46,6 +46,33 @@ Known risks:
 
 ---
 
+### Codex - terminal hero spacing adjustment (2026-06-22 13:55 PDT)
+
+- **START 2026-06-22 13:55 PDT:** Responding to Blaec's screenshot feedback
+  that the `/features/terminal` top hero feels too close to the proof cards
+  underneath. Worktree `/home/user/cocalc-ai-synthesis`, branch
+  `blaec-synthesis-2026-06-18`. Verified preview hub pids `15629` and `15671`,
+  both rooted at `/home/user/cocalc-ai-synthesis/src`; no active static
+  build/watch process observed. Claimed route/files: `/features/terminal`,
+  `src/packages/frontend/public/features/terminal-page.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Guardrails: no protected home,
+  pricing/compliance, docs content, pitch docs, type/palette/token lanes, other
+  feature pages, raw-audit foraging, support-alert follow-up, or the untracked
+  dedicated-compute draft.
+- **END 2026-06-22 13:58 PDT:** Added `marginTop: 12` to the first proof-card
+  row on `/features/terminal`, increasing the hero-to-card pause from the
+  page's 22px root gap to 34px while leaving the rest of the page rhythm,
+  cards, copy, CTAs, and layout unchanged. Validation passed: Prettier on
+  `terminal-page.tsx`; `git diff --check`; focused feature Jest 100/100;
+  browser-QA harness Jest 5/5; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev` with the existing local debug-log permission
+  warning only; browser QA for `/features/terminal` desktop+mobile 48/48,
+  screenshots/results at `/tmp/cocalc-public-qa-N0kiTO`. Screenshot inspection:
+  desktop and mobile now show a clearer pause between the hero/context block and
+  first proof cards with no overflow. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched.
+
 ### Codex - scheduled landing-page improvement loop hold (2026-06-22 13:51 PDT)
 
 - **START 2026-06-22 13:51 PDT:** Scheduled landing-page improvement loop
