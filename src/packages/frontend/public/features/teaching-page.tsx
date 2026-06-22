@@ -17,7 +17,6 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
-  featureSupportPath,
   LinkButton,
 } from "./page-components";
 import { IconBadge } from "./feature-visuals";
@@ -319,12 +318,6 @@ export default function TeachingFeaturePage({
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
     : "Use hosted CoCalc.ai";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss CoCalc for technical course workflows. Helpful context: course size, notebook or terminal needs, grading workflow, LMS relationship, shared environment requirements, and whether hosted CoCalc.ai or another operating model matters.",
-    context: "teaching",
-    subject: "CoCalc technical course workflows",
-    title: "Ask CoCalc about teaching workflows",
-  });
 
   return (
     <Flex vertical gap={18}>
@@ -447,7 +440,6 @@ export default function TeachingFeaturePage({
                 <Button href={appPath("products")}>
                   Compare operating models
                 </Button>
-                <Button href={supportHref}>Ask about teaching workflows</Button>
               </Flex>
             </Col>
             <Col xs={24} lg={11}>

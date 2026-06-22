@@ -350,10 +350,6 @@ const ROUTE_RULES = {
     ],
     requireLinks: [
       { text: "Compare operating models", hrefIncludes: "/products" },
-      {
-        text: "Ask about teaching workflows",
-        hrefIncludes: "context=feature-teaching",
-      },
     ],
   },
   "/features/terminal": {

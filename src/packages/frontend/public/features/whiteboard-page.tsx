@@ -13,11 +13,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  featureSupportPath,
-} from "./page-components";
+import { BulletList, featureAppPath as appPath } from "./page-components";
 import { IconBadge, StartCard } from "./feature-visuals";
 import { SlideDeckMock } from "./slides-page";
 
@@ -330,16 +326,6 @@ export default function WhiteboardFeaturePage({
                 <Button href={appPath("features/teaching")}>Teaching</Button>
                 <Button href={appPath("products")}>
                   Compare operating models
-                </Button>
-                <Button
-                  href={featureSupportPath({
-                    body: "I want to discuss CoCalc whiteboards. Helpful context: teaching, research, support, or presentation use case; need for Jupyter cells or math; and expected collaborators.",
-                    context: "whiteboard",
-                    subject: "CoCalc whiteboards",
-                    title: "Ask CoCalc about whiteboards",
-                  })}
-                >
-                  Ask about whiteboards
                 </Button>
               </Flex>
             </Flex>

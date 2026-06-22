@@ -104,11 +104,6 @@ describe("PublicFeaturesApp", () => {
       slug: "ai",
     },
     {
-      context: "feature-automations",
-      label: "Ask about project automations",
-      slug: "automations",
-    },
-    {
       context: "feature-cli",
       label: "Ask about CLI automation",
       slug: "cli",
@@ -117,11 +112,6 @@ describe("PublicFeaturesApp", () => {
       context: "feature-jupyter-notebook",
       label: "Ask about Jupyter workflows",
       slug: "jupyter-notebook",
-    },
-    {
-      context: "feature-teaching",
-      label: "Ask about teaching workflows",
-      slug: "teaching",
     },
     {
       context: "feature-terminal",
@@ -139,40 +129,27 @@ describe("PublicFeaturesApp", () => {
       slug: "api",
     },
     {
-      context: "feature-whiteboard",
-      label: "Ask about whiteboards",
-      slug: "whiteboard",
-    },
-    {
       context: "feature-latex-editor",
       label: "Ask about LaTeX workflows",
       slug: "latex-editor",
-    },
-    {
-      context: "feature-slides",
-      label: "Ask about slides",
-      slug: "slides",
     },
     {
       context: "feature-python",
       label: "Ask about Python workflows",
       slug: "python",
     },
-    {
-      context: "feature-sage",
-      label: "Ask about SageMath workflows",
-      slug: "sage",
-    },
-    {
-      context: "feature-r-statistical-software",
-      label: "Ask about R workflows",
-      slug: "r-statistical-software",
-    },
-    {
-      context: "feature-more-languages",
-      label: "Ask about language workflows",
-      slug: "more-languages",
-    },
+  ] as const;
+
+  const removedFinalSupportLinks = [
+    { label: "Ask about project automations", slug: "automations" },
+    { label: "Ask about teaching workflows", slug: "teaching" },
+    { label: "Ask about whiteboards", slug: "whiteboard" },
+    { label: "Ask about slides", slug: "slides" },
+    { label: "Ask about SageMath workflows", slug: "sage" },
+    { label: "Ask about R workflows", slug: "r-statistical-software" },
+    { label: "Ask about Julia workflows", slug: "julia" },
+    { label: "Ask about Octave workflows", slug: "octave" },
+    { label: "Ask about language workflows", slug: "more-languages" },
   ] as const;
 
   const auditedFeaturePages = [
@@ -939,16 +916,20 @@ describe("PublicFeaturesApp", () => {
       for (const label of contextLabels ?? []) {
         expect(screen.getByText(label)).not.toBeNull();
       }
-      if (slug === "julia" || slug === "octave") {
-        expect(
-          screen.queryByRole("link", {
-            name:
-              slug === "julia"
-                ? "Ask about Julia workflows"
-                : "Ask about Octave workflows",
-          }),
-        ).toBeNull();
-      }
+    },
+  );
+
+  it.each(removedFinalSupportLinks)(
+    "keeps the $slug final support CTA removed",
+    ({ label, slug }) => {
+      render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      expect(screen.queryByRole("link", { name: label })).toBeNull();
     },
   );
 
@@ -1366,13 +1347,12 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("link", { name: "HTTP API" }).getAttribute("href"),
     ).toBe("/features/api");
-    const askLinks = screen.getAllByRole("link", {
-      name: "Ask about project automations",
-    });
-    expect(askLinks).toHaveLength(1);
-    expect(askLinks[0].getAttribute("href")).toContain(
-      "context=feature-automations",
-    );
+    expect(
+      screen.queryByRole("link", { name: "Ask about project automations" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Compare operating models" }),
+    ).not.toBeNull();
   });
 
   it("renders the compare feature page", () => {

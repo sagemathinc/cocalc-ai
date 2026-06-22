@@ -13,11 +13,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  featureSupportPath,
-} from "./page-components";
+import { BulletList, featureAppPath as appPath } from "./page-components";
 import { FEATURE_ACCENTS } from "./feature-accents";
 import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
@@ -147,12 +143,6 @@ export default function AutomationsFeaturePage({
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalLabel = isAuthenticated ? "Open projects" : "Start a workflow";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss automating recurring CoCalc project work. Helpful context: what should trigger the work, what should run, where outputs should land, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
-    context: "automations",
-    subject: "CoCalc project automation workflows",
-    title: "Ask CoCalc about project automations",
-  });
 
   return (
     <Flex vertical gap={22}>
@@ -214,7 +204,6 @@ export default function AutomationsFeaturePage({
               <Button href={appPath("products")}>
                 Compare operating models
               </Button>
-              <Button href={supportHref}>Ask about project automations</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>
