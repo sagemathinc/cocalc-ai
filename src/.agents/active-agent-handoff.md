@@ -46,6 +46,72 @@ Known risks:
 
 ---
 
+### Codex - jupyter feature-page consolidation (2026-06-22 13:59 PDT)
+
+- **START 2026-06-22 13:59 PDT:** Scheduled landing-page improvement loop
+  resumed in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS,
+  multi-agent operating model, website operating system, frozen Brief,
+  public-site skill, finite issues tracker, framing system/register, design
+  system direction, decisions log, active framing workplan, site-round prompt,
+  and `feature-page-consistency-slice-2026-06-22.md`. Current queued item is
+  #9: consolidate `/features/jupyter-notebook` to the terminal/language-page
+  shared-primitive model. Verified preview hub pids `15629` and `15671`, both
+  rooted at `/home/user/cocalc-ai-synthesis/src`; no active static build/watch
+  process observed. Claimed route/files:
+  `src/packages/frontend/public/features/jupyter-notebook-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs` if canaries need
+  route-marker updates, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`.
+- **Route frame:** feature detail. Visitor: researcher, engineer, instructor,
+  or reviewer whose notebook depends on files, packages, kernels,
+  collaborators, and review history. Visitor question: can Jupyter work stay
+  attached to the shared project instead of becoming an isolated notebook
+  session? One-sentence promise: CoCalc keeps Jupyter notebooks beside their
+  data, packages, live kernel state, collaborators, TimeTravel history, and
+  related project files. Proof mechanism: kernels, data files, packages,
+  collaborators, shared kernel/live state, TimeTravel, terminal/Linux paths,
+  and directed-graph workflow proof. Primary next step: create account/open
+  projects. Secondary next step: Jupyter guide, compatibility guide, AI/Linux/
+  terminal/teaching/product routes. What this must not claim: no benchmarks,
+  setup/restore timing, migration guarantees, managed compute, compliance,
+  vertical-specific proof, or broad agent-platform claim. Decision: redesign
+  the route structure and final band around shared primitives while preserving
+  the concrete Jupyter proof.
+- **Do not touch:** protected `home/**`, footer, pricing/compliance, type/
+  palette lanes, pitch docs, docs content, other feature pages except route
+  links from the Jupyter page, raw-audit foraging, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **Validation required:** focused feature Jest, browser-QA harness if markers
+  change, `git diff --check`, Prettier on touched files,
+  `pnpm -C src lint:frontend`, static build, desktop+mobile browser QA/
+  screenshot inspection for `/features/jupyter-notebook`, source commit,
+  preview rebuild, shared-log handoff.
+- **END 2026-06-22 14:07 PDT:** Source slice landed in `fc594e14c2`
+  (`frontend/public: consolidate jupyter feature page`).
+  `/features/jupyter-notebook` now follows the terminal/language-page shared-
+  primitive model:
+  text-first hero with `ContextList`, shared `StoryCard` proof cards, one lower
+  notebook evidence panel, project-scoped Jupyter command proof, and shared
+  `FeatureFinalBand`. Removed the route-owned modal, local `StoryCard`, and
+  custom final panel. Inline `style={{}}` blocks dropped from 31 to 9.
+  Preserved kernels, data files, packages, collaborators, shared live state,
+  TimeTravel, qualitative output labels, Codex notebook commands, and the
+  directed-graph workflow pointer. Validation passed: Prettier on touched
+  files; `git diff --check`; focused feature/browser-QA harness Jest 105/105;
+  `pnpm -C src lint:frontend`; `pnpm -C src/packages/static build:dev` before
+  commit and again after commit from git revision `fc594e14c2` with the
+  existing local debug-log permission warning only; browser QA for
+  `/features/jupyter-notebook` desktop+mobile 50/50, final screenshots/results
+  at `/tmp/cocalc-public-qa-KJn1GA`. Screenshot inspection: desktop/mobile
+  readable with no overlap; long code commands remain horizontally scrollable
+  on mobile. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Next queue item: `/features/linux` consolidation.
+
 ### Codex - terminal hero spacing adjustment (2026-06-22 13:55 PDT)
 
 - **START 2026-06-22 13:55 PDT:** Responding to Blaec's screenshot feedback

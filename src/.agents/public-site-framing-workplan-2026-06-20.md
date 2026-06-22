@@ -209,6 +209,61 @@ Current disposition:
   distinct bullets instead of four restatements.
 - The closing fit section is renamed to "Where the terminal earns its place."
 
+### FS-008 - Consolidate the Jupyter feature page onto shared primitives
+
+Status: `done`
+
+Evidence:
+
+- The curated feature-page consistency slice identifies
+  `/features/jupyter-notebook` as the worst remaining outlier: 31 inline
+  `style={{}}` blocks, three route-owned mock/final-panel patterns, and zero
+  shared feature-page primitives.
+- The accepted terminal rework (`0126856906`) established the model: a
+  text-first hero with compact `ContextList`, shared `StoryCard` proof cards,
+  lower route-specific evidence, and a shared `FeatureFinalBand`.
+- The frozen Brief says notebooks should prove durable project continuity,
+  reviewability, and collaboration rather than read as an isolated notebook
+  inventory.
+
+Current route frame for `/features/jupyter-notebook`:
+
+```md
+Route: /features/jupyter-notebook
+Visitor: researcher, engineer, instructor, or reviewer whose notebook depends
+on files, packages, kernels, collaborators, and review history.
+Visitor question: can Jupyter work stay attached to the shared project instead
+of becoming an isolated notebook session?
+One-sentence promise: CoCalc keeps Jupyter notebooks beside their data,
+packages, live kernel state, collaborators, TimeTravel history, and related
+project files.
+Proof mechanism: kernels, data files, packages, collaborators, shared
+kernel/live state, TimeTravel, terminal/Linux paths, and directed-graph
+workflow proof.
+Primary next step: create account / open projects.
+Secondary next step: Jupyter guide, compatibility guide, AI/Linux/terminal/
+teaching/product routes.
+What this must not claim: no benchmarks, setup/restore timing, migration
+guarantees, managed compute, compliance, vertical-specific proof, or broad
+agent-platform claim.
+Evidence consulted: feature-page consistency slice, frozen Brief, framing
+system/register, current Jupyter page source/tests, browser-QA markers, and
+terminal/language-page implementation patterns.
+Decision: redesign the route structure and final band around shared primitives
+while preserving the concrete Jupyter proof.
+```
+
+Current disposition:
+
+- `/features/jupyter-notebook` now follows the accepted terminal/language-page
+  model: text-first hero, compact `ContextList`, shared `StoryCard` proof
+  cards, lower route-specific notebook evidence, project-scoped Jupyter command
+  proof, and shared `FeatureFinalBand`.
+- Inline `style={{}}` blocks in the page dropped from 31 to 9.
+- Preserved Jupyter proof: kernels, data files, packages, collaborators,
+  shared live state, TimeTravel, project-scoped notebook commands, and the
+  directed-graph workflow pointer through whiteboards.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
