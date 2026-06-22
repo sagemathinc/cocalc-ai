@@ -164,7 +164,7 @@ Plan:
 
 ### FS-007 - Sharpen the terminal feature page
 
-Status: `in_progress`
+Status: `done`
 
 Evidence:
 
@@ -571,9 +571,11 @@ Current disposition:
 
 ## Next Recommended Burn-Down Order
 
-1. Finish FS-001 because it is already in progress and fixes a visible
-   inconsistency on `/features`.
-2. Run FS-005 immediately after, because it is the same failure mode.
-3. Apply FS-004 to each subsequent route edit.
+1. The released Codex queue is drained. Feature-page consistency items 9-12 and
+   design-polish items 13-15 are complete.
+2. Wait for Claude audit plus the fresh vision-critique pass before taking
+   another public-site source slice.
+3. Keep FS-004 and FS-005 as process/backlog items, not autonomous Codex queue
+   items, until Blaec or Claude promotes one into a curated slice.
 4. Keep FS-002, FS-003, and FS-006 as watch rules unless user feedback reopens
    them.
