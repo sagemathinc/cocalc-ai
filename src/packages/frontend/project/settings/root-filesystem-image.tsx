@@ -1192,14 +1192,16 @@ export default function RootFilesystemImage({
         ? "Custom OCI image"
         : "Legacy/custom OCI image";
   const activeDescription =
-    activeDisplayEntry?.description?.trim() ||
-    (isCustomRootfs
-      ? canUseCustomRootfs
-        ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
-        : "This project uses a legacy or custom OCI image. Choose a managed catalog image; only admins can set arbitrary OCI image strings."
-      : catalogRootfsError
-        ? `Catalog metadata could not be loaded: ${catalogRootfsError}`
-        : "Loading image metadata...");
+    activeDisplayEntry != null
+      ? activeDisplayEntry.description?.trim() ||
+        "This image does not have a catalog description."
+      : isCustomRootfs
+        ? canUseCustomRootfs
+          ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
+          : "This project uses a legacy or custom OCI image. Choose a managed catalog image; only admins can set arbitrary OCI image strings."
+        : catalogRootfsError
+          ? `Catalog metadata could not be loaded: ${catalogRootfsError}`
+          : "Loading image metadata...";
   const projectIsRunning = project.getIn(["state", "state"]) == "running";
 
   return (
@@ -1223,7 +1225,11 @@ export default function RootFilesystemImage({
             style={{
               ...rootfsHeroCardStyle(activeDisplayEntry),
               maxWidth: isModal || isPage ? undefined : 760,
-              padding: isPage ? 24 : isFlyout ? "10px 10px 5px 10px" : undefined,
+              padding: isPage
+                ? 24
+                : isFlyout
+                  ? "10px 10px 5px 10px"
+                  : undefined,
             }}
           >
             <div
