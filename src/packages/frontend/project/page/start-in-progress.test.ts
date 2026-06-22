@@ -13,7 +13,7 @@ describe("getStartProgressMessage", () => {
     ).toContain("Archived projects can wait here");
   });
 
-  it("makes RootFS availability explicit during cache_rootfs", () => {
+  it("makes image availability explicit during cache_rootfs", () => {
     expect(
       getStartProgressMessage({
         phase: "cache_rootfs",
@@ -22,7 +22,7 @@ describe("getStartProgressMessage", () => {
         startLroActive: true,
         activeOpStartLike: true,
       }),
-    ).toBe("Making the RootFS image available on this host.");
+    ).toBe("Making the image available on this host.");
   });
 
   it("explains explicit restart requests even if lifecycle is already running", () => {

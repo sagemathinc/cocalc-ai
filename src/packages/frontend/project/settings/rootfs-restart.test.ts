@@ -29,7 +29,7 @@ describe("queueRootfsChangeRestart", () => {
         setRestartQueuedAt,
       }),
     ).rejects.toThrow(
-      "RootFS image changed, but project restart failed: Error: run slots unavailable",
+      "Image changed, but project restart failed: Error: run slots unavailable",
     );
 
     expect(setRestartQueuedAt.mock.calls[0][0]).toEqual(expect.any(String));

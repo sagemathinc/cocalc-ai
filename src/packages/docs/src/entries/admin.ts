@@ -191,10 +191,10 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open the Admin -> RootFS Images section.",
+        description: "Open the Admin -> Images section.",
         executable: true,
         id: "admin.rootfs.open",
-        label: "Open RootFS images",
+        label: "Open images",
       },
     ],
     audiences: ["agents", "teams"],
@@ -206,11 +206,13 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "Runtime image catalog entries cached across project hosts",
     ),
     lastReviewed: "2026-05-26",
+    searchKeywords:
+      "rootfs admin project images runtime images managed image catalog host scans visibility blocking deletion retention",
     slug: "admin/rootfs",
     status: "ready",
     summary:
-      "Manage runtime image catalog entries, host scans, visibility, blocking, deletion, and retention.",
-    title: "Administer RootFS images",
+      "Manage project image catalog entries, host scans, visibility, blocking, deletion, and retention.",
+    title: "Administer project images",
     visibility: "admin",
   },
   {

@@ -897,6 +897,7 @@ function rootfsEntrySearchText(entry: RootfsImageEntry): string {
     entry.version,
     entry.channel,
     entry.owner_name,
+    "rootfs",
     ...(entry.tags ?? []),
   ]
     .filter(Boolean)

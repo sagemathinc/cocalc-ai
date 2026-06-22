@@ -43,8 +43,8 @@ const START_PHASES = [
   },
   {
     key: "cache_rootfs",
-    label: "RootFS",
-    description: "Ensure the selected RootFS image is cached on this host.",
+    label: "Image",
+    description: "Ensure the selected image is cached on this host.",
   },
   {
     key: "runner_start",
@@ -155,12 +155,12 @@ export function getStartProgressMessage({
     .toLowerCase();
   if (phase === "queued") {
     if (normalizedLifecycleState === "archived") {
-      return "Project restore is being prepared. Archived projects can wait here while backup restore and RootFS preparation are getting ready.";
+      return "Project restore is being prepared. Archived projects can wait here while backup restore and image preparation are getting ready.";
     }
-    return "Project start is queued. This can take a while if restore from backup or RootFS preparation is required.";
+    return "Project start is queued. This can take a while if restore from backup or image preparation is required.";
   }
   if (phase === "cache_rootfs") {
-    return "Making the RootFS image available on this host.";
+    return "Making the image available on this host.";
   }
   if (
     !startLroActive &&

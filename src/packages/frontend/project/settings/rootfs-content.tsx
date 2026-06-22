@@ -170,8 +170,8 @@ export function RootfsContentManifestBuilder({
     <Space direction="vertical" size={14} style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
         The discovery config adds browse, copy-to-HOME, open, external link, and
-        one-click project app launch actions to the RootFS component so users
-        can quickly find and use the files and services bundled with this image.
+        one-click project app launch actions to the image component so users can
+        quickly find and use the files and services bundled with this image.
       </Paragraph>
 
       <div style={{ position: "relative" }}>
@@ -207,7 +207,7 @@ export function RootfsContentManifestBuilder({
       <RuntimePanel
         icon="book"
         title="Edit discovery config"
-        subtitle="This saves to the RootFS catalog entry metadata. It is not written into the immutable image filesystem."
+        subtitle="This saves to the image catalog entry metadata. It is not written into the immutable image filesystem."
       >
         <Space direction="vertical" size={14} style={{ width: "100%" }}>
           <div
@@ -398,8 +398,8 @@ export function RootfsContentManifestBuilder({
             ) : null}
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
               {onSave
-                ? "This updates the catalog entry metadata used by the RootFS page and project RootFS panel."
-                : "This config is saved into catalog metadata when you publish the live project RootFS."}
+                ? "This updates the catalog entry metadata used by the Image page and project Image panel."
+                : "This config is saved into catalog metadata when you publish the live project image."}
             </Paragraph>
           </Space>
         </Space>
@@ -855,7 +855,7 @@ function rootfsProjectAppSpecHomeWarning(
     referencedPaths.push(home);
   }
   if (!referencedPaths.length) return;
-  return `This app references ${referencedPaths.slice(0, 3).join(", ")}. It may not work in other projects unless those files are also copied into HOME or included somewhere stable in the RootFS.`;
+  return `This app references ${referencedPaths.slice(0, 3).join(", ")}. It may not work in other projects unless those files are also copied into HOME or included somewhere stable in the image.`;
 }
 
 function nextRootfsContentActionDraftId(): string {
@@ -921,7 +921,7 @@ export function renderRootfsContentPanel({
   const subtitle =
     content.subtitle?.trim() ||
     content.publisher?.name?.trim() ||
-    "Files, examples, or links bundled with this runtime image.";
+    "Files, examples, or links bundled with this image.";
   const description = content.description?.trim();
   const publisher = renderRootfsContentLink(content.publisher);
   const license = renderRootfsContentLink(content.license);
@@ -1043,7 +1043,7 @@ function RootfsContentActionRow({
       }
       return false;
     } catch (err) {
-      const error = `Could not copy RootFS content: ${rootfsActionErrorMessage(err)}`;
+      const error = `Could not copy image content: ${rootfsActionErrorMessage(err)}`;
       setActionError(error);
       message.error(error);
       return false;
@@ -1162,7 +1162,7 @@ function RootfsContentActionRow({
         <Modal
           open
           destroyOnHidden
-          title="Copy RootFS content"
+          title="Copy image content"
           okText="Copy"
           onCancel={() => setCopyChooserOpen(false)}
           onOk={() => void copyToChosenTarget()}

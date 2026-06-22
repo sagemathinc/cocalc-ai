@@ -599,7 +599,7 @@ export function EnvironmentOverview({
   const summaryItems: SummaryCardProps[] = [
     {
       icon: "disk-drive",
-      title: "Runtime Image",
+      title: "Image",
       value: runtimeImage,
       subtitle: "Base software environment",
       action: (

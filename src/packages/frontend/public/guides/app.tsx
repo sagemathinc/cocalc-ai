@@ -68,11 +68,11 @@ const GUIDE_CARDS = [
     title: "Codex agent chat",
   },
   {
-    body: "Understand RootFS images and reusable project environments when you need a controlled software stack.",
+    body: "Understand project images and reusable project environments when you need a controlled software stack.",
     href: guidePath("rootfs-management"),
     icon: "servers",
     tag: "Environment",
-    title: "Runtime images",
+    title: "Project images",
   },
 ] satisfies {
   body: string;

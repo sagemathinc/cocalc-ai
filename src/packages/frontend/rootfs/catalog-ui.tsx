@@ -83,6 +83,7 @@ export function groupedRootfsOptions(images: RootfsImageEntry[]) {
           entry.content?.description,
           entry.content?.publisher?.name,
           entry.owner_name,
+          "rootfs",
           ...(entry.content?.highlights ?? []),
           ...(entry.tags ?? []),
         ]

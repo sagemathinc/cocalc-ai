@@ -105,14 +105,13 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
     ),
     lastReviewed: "2026-06-21",
     noActionReason:
-      "Student project RootFS images are configured inside a selected .course file.",
+      "Student project images are configured inside a selected .course file.",
     searchKeywords:
       "course student project rootfs image software environment managed image apply existing projects restart",
     slug: "teaching/student-project-rootfs",
     status: "ready",
-    summary:
-      "Choose and roll out managed RootFS images for course student projects.",
-    title: "Student project RootFS images",
+    summary: "Choose and roll out managed images for course student projects.",
+    title: "Student project images",
   },
   {
     audiences: ["agents", "instructors"],

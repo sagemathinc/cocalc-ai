@@ -138,7 +138,7 @@ function childOperationLabel(child?: MoveChildProgress): string {
   }
   if (child.kind === "project-start") {
     if (child.phase === "cache_rootfs") {
-      return "Prepare RootFS on destination";
+      return "Prepare image on destination";
     }
     if (child.phase === "restore") {
       return "Restore backup on destination";

@@ -797,7 +797,7 @@ const START_PHASE_LABELS: Record<string, string> = {
   queued: "Queued",
   apply_pending_copies: "Preparing project state",
   prepare_config: "Preparing runtime",
-  cache_rootfs: "Pulling RootFS image",
+  cache_rootfs: "Pulling image",
   "start-project": "Starting runtime",
   runner_start: "Starting runtime",
   refresh_authorized_keys: "Refreshing access",
