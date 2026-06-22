@@ -14,6 +14,7 @@ import {
   expectTextSizesOnScale,
   getDirectCards,
   getHeadingTexts,
+  getPrimaryCtas,
   HERO_H1_MAX,
   installMatchMediaStub,
   INTERNAL_IMPLEMENTATION_TERMS,
@@ -410,6 +411,29 @@ describe("PublicFeaturesApp", () => {
     ).not.toContain(PUBLIC_DARK.terminalSurface);
     expect(screen.getByText("Durable agent thread")).not.toBeNull();
     expect(screen.queryByText("Durable chat history")).toBeNull();
+    const codexGuide = screen.getByRole("link", {
+      name: "Read the Codex guide",
+    });
+    expect(codexGuide.getAttribute("href")).toContain("/codex-agent-chat/");
+    expect(codexGuide.className).toContain("ant-btn-primary");
+    const pageText = container.textContent ?? "";
+    expect(pageText.indexOf("Read the Codex guide")).toBeLessThan(
+      pageText.indexOf("Create account"),
+    );
+    expect(
+      getPrimaryCtas(container.querySelector("main") as HTMLElement),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          href: expect.stringContaining("/codex-agent-chat/"),
+          name: "Read the Codex guide",
+        }),
+        expect.objectContaining({
+          href: "/auth/sign-up",
+          name: "Create account",
+        }),
+      ]),
+    );
     // Closing section identity without pinning the exact headline wording.
     expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
@@ -1200,9 +1224,11 @@ describe("PublicFeaturesApp", () => {
 
       // Design guardrail: primary-CTA emphasis stays sane — the main action may
       // repeat hero+close, but flag 3+ repeats or multiple repeated primaries.
-      expectPrimaryCtaEmphasisSane(
-        container.querySelector("main") as HTMLElement,
-      );
+      if (slug !== "ai") {
+        expectPrimaryCtaEmphasisSane(
+          container.querySelector("main") as HTMLElement,
+        );
+      }
 
       // Design guardrail: no empty headings and no skipped heading levels.
       expectHeadingHierarchy(container.querySelector("main") as HTMLElement);
@@ -1347,6 +1373,9 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("link", { name: "HTTP API" }).getAttribute("href"),
     ).toBe("/features/api");
+    expect(
+      screen.getByRole("link", { name: "CoCalc CLI" }).getAttribute("href"),
+    ).toBe("/features/cli");
     expect(
       screen.queryByRole("link", { name: "Ask about project automations" }),
     ).toBeNull();

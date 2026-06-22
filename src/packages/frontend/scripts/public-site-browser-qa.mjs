@@ -304,6 +304,7 @@ const ROUTE_RULES = {
       },
     ],
     requireLinks: [
+      { text: "Read the Codex guide", hrefIncludes: "/codex-agent-chat/" },
       { text: "Terminal workflows", hrefIncludes: "/features/terminal" },
     ],
   },
@@ -352,6 +353,10 @@ const ROUTE_RULES = {
       ".cocalc-feature-final-panel",
     ],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+    requireLinks: [
+      { text: "HTTP API", hrefIncludes: "/features/api" },
+      { text: "CoCalc CLI", hrefIncludes: "/features/cli" },
+    ],
   },
   "/features/jupyter-notebook": {
     requireText: [

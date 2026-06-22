@@ -1168,3 +1168,29 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   src/packages/static build:dev`; browser QA on `/support` and `/support/tickets`
   desktop+mobile passed 58/58. Screenshots inspected from
   `/tmp/cocalc-public-qa-3oy0dt`.
+
+---
+
+## Codex — post-framing P1 proof-surface CTA consistency (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  slice 2 only: make the AI feature hero docs-first by promoting `Read the Codex
+  guide` and demoting the account/projects CTA in that hero, and route the
+  Automations hero `CoCalc CLI` button to the sibling `/features/cli` page.
+  Claimed files: `features/ai-page.tsx`, `features/automations-page.tsx`,
+  `features/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`, and
+  this ledger. Guardrails: preserve concrete proof and page layouts; no
+  protected home, pitch docs, docs content/routes, pricing/compliance,
+  type/palette work, feature final-band rollout, or dedicated-compute draft.
+- **END 2026-06-22:** Promoted `Read the Codex guide` to the AI hero's primary
+  action, kept account/project access as a secondary hero action and primary
+  closing conversion action, and routed Automations' `CoCalc CLI` hero button to
+  `/features/cli`. Updated feature and browser-QA canaries for both decisions,
+  including a narrow AI exception to the single-primary-destination guardrail
+  because this proof-surface page intentionally has docs-primary hero plus final
+  conversion. Validation passed: `git diff --check`; focused feature + QA
+  harness Jest 104/104; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/features/ai` and
+  `/features/automations` desktop+mobile passed 86/86. Screenshots inspected
+  from `/tmp/cocalc-public-qa-vRXSoX`.

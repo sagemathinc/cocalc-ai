@@ -168,9 +168,7 @@ export default function AutomationsFeaturePage({
                   {primaryLabel}
                 </Button>
                 <Button href={appPath("features/api")}>HTTP API</Button>
-                <Button href={appPath("docs/cli/use-cocalc-cli")}>
-                  CoCalc CLI
-                </Button>
+                <Button href={appPath("features/cli")}>CoCalc CLI</Button>
               </Flex>
             </Flex>
           </Col>

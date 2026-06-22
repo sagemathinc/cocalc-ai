@@ -276,12 +276,10 @@ export default function AIFeaturePage({
                 copying context into a separate tool.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={primaryHref}>
-                  {primaryLabel}
-                </Button>
-                <Button href={`${GUIDE_BASE}/codex-agent-chat/`}>
+                <Button type="primary" href={`${GUIDE_BASE}/codex-agent-chat/`}>
                   Read the Codex guide
                 </Button>
+                <Button href={primaryHref}>{primaryLabel}</Button>
               </Flex>
             </Flex>
           </Col>
