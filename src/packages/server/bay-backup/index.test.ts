@@ -16,6 +16,7 @@ let execFileMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let getSingleBayInfoMock: jest.Mock;
+let installSandboxBinaryMock: jest.Mock;
 let ensureRusticInitializedMock: jest.Mock;
 let whichMock: jest.Mock;
 let listObjectsMock: jest.Mock;
@@ -24,6 +25,8 @@ let issueSignedObjectDownloadMock: jest.Mock;
 let uploadObjectFromBufferMock: jest.Mock;
 let uploadObjectFromFileMock: jest.Mock;
 let oldFetch: typeof global.fetch | undefined;
+let rusticInitCount: number;
+let rusticMissingConfigFailuresRemaining: number;
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -66,6 +69,7 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 
 jest.mock("@cocalc/backend/sandbox/install", () => ({
   __esModule: true,
+  install: (...args: any[]) => installSandboxBinaryMock(...args),
   rustic: "rustic-bin",
 }));
 
@@ -234,6 +238,8 @@ describe("bay-backup runner", () => {
       "123\n",
     );
     rusticSnapshots = [];
+    rusticInitCount = 0;
+    rusticMissingConfigFailuresRemaining = 0;
     ensureRusticInitializedMock = jest.fn(async () => undefined);
     whichMock = jest.fn(async (binary: string) => `/usr/bin/${binary}`);
     listObjectsMock = jest.fn(async () => []);
@@ -316,9 +322,20 @@ describe("bay-backup runner", () => {
         if (cmd === "rustic-bin") {
           const subcommand =
             args.find((arg) =>
-              ["backup", "snapshots", "restore", "forget"].includes(arg),
+              ["backup", "init", "snapshots", "restore", "forget"].includes(
+                arg,
+              ),
             ) ?? "";
           if (subcommand === "backup") {
+            if (rusticMissingConfigFailuresRemaining > 0) {
+              rusticMissingConfigFailuresRemaining -= 1;
+              cb(
+                Object.assign(new Error("rustic backup failed"), {
+                  stderr: "No repository config file found",
+                }),
+              );
+              return;
+            }
             const host = args[args.indexOf("--host") + 1];
             const tags = args
               .flatMap((arg, i) =>
@@ -332,6 +349,11 @@ describe("bay-backup runner", () => {
               tags,
               files,
             });
+            cb(null, { stdout: "", stderr: "" });
+            return;
+          }
+          if (subcommand === "init") {
+            rusticInitCount += 1;
             cb(null, { stdout: "", stderr: "" });
             return;
           }
@@ -439,6 +461,7 @@ describe("bay-backup runner", () => {
       })),
     }));
     getServerSettingsMock = jest.fn(async () => ({}));
+    installSandboxBinaryMock = jest.fn(async () => undefined);
     getSingleBayInfoMock = jest.fn(() => ({
       bay_id: "bay-0",
       label: "bay-0",
@@ -499,6 +522,7 @@ describe("bay-backup runner", () => {
   });
 
   it("backs up snapshots to rustic and restores from rustic when local archives are absent", async () => {
+    rusticMissingConfigFailuresRemaining = 1;
     getServerSettingsMock = jest.fn(async () => ({
       r2_account_id: "acct-1",
       r2_access_key_id: "key-1",
@@ -512,6 +536,8 @@ describe("bay-backup runner", () => {
     expect(backup.storage_backend).toBe("rustic");
     expect(backup.remote_snapshot_id).toBe("snap-1");
     expect(backup.rustic_repo_selector).toBe("r2:bay-backups:wnam");
+    expect(installSandboxBinaryMock).toHaveBeenCalledWith("rustic");
+    expect(rusticInitCount).toBe(1);
 
     await rm(backup.local_manifest_path, { force: true });
     await rm(

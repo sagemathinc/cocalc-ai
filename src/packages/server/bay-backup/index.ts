@@ -74,7 +74,10 @@ import {
 } from "@cocalc/backend/data";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
-import { rustic as rusticBinary } from "@cocalc/backend/sandbox/install";
+import {
+  install as installSandboxBinary,
+  rustic as rusticBinary,
+} from "@cocalc/backend/sandbox/install";
 import { ensureInitialized as ensureRusticInitialized } from "@cocalc/backend/sandbox/rustic";
 import { which } from "@cocalc/backend/which";
 import getPool from "@cocalc/database/pool";
@@ -1186,22 +1189,54 @@ async function execRustic({
   args,
   cwd,
   timeout = 10 * 60 * 1000,
+  initOnMissingRepo = false,
 }: {
   repoProfilePath: string;
   args: string[];
   cwd?: string;
   timeout?: number;
+  initOnMissingRepo?: boolean;
 }): Promise<string> {
-  const { stdout } = await execFile(
-    rusticBinary,
-    [...rusticCommonArgs(repoProfilePath), ...args],
-    {
+  await installSandboxBinary("rustic");
+  const commonArgs = rusticCommonArgs(repoProfilePath);
+  const run = async (): Promise<string> => {
+    const { stdout } = await execFile(rusticBinary, [...commonArgs, ...args], {
       cwd,
       timeout,
       maxBuffer: 20 * 1024 * 1024,
-    },
-  );
+    });
+    return `${stdout ?? ""}`;
+  };
+  try {
+    return await run();
+  } catch (err) {
+    if (
+      !initOnMissingRepo ||
+      !repoProfilePath.endsWith(".toml") ||
+      !isMissingRusticRepositoryError(err)
+    ) {
+      throw err;
+    }
+    await execFile(rusticBinary, [...commonArgs, "init"], {
+      cwd,
+      timeout: 30_000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+  }
+  const { stdout } = await execFile(rusticBinary, [...commonArgs, ...args], {
+    cwd,
+    timeout,
+    maxBuffer: 20 * 1024 * 1024,
+  });
   return `${stdout ?? ""}`;
+}
+
+function isMissingRusticRepositoryError(err: unknown): boolean {
+  const details =
+    typeof err === "object" && err != null
+      ? `${(err as any).message ?? ""}\n${(err as any).stderr ?? ""}`
+      : `${err ?? ""}`;
+  return details.includes("No repository config file found");
 }
 
 function flattenRusticSnapshotGroups(groups: unknown): RusticSnapshotInfo[] {
@@ -1293,6 +1328,7 @@ async function backupToBayRusticRepo({
   await execRustic({
     repoProfilePath,
     cwd: sourceDir,
+    initOnMissingRepo: true,
     args: [
       "backup",
       "--json",
@@ -1460,6 +1496,16 @@ async function assertControlPlaneBackupToolsAvailable(): Promise<void> {
   }
   if (needsSyncArchive && (await treeContainsSqliteDatabase(syncFiles.local))) {
     await requireBinary("sqlite3");
+  }
+}
+
+async function assertRemoteBackupToolsAvailable({
+  rusticRepoProfilePath,
+}: {
+  rusticRepoProfilePath: string | null;
+}): Promise<void> {
+  if (rusticRepoProfilePath) {
+    await installSandboxBinary("rustic");
   }
 }
 
@@ -3667,6 +3713,7 @@ export async function runBayBackup({
         current_storage_backend,
       });
       await assertControlPlaneBackupToolsAvailable();
+      await assertRemoteBackupToolsAvailable({ rusticRepoProfilePath });
       const actual_strategy = await runBackupCommand({
         strategy: postgres.preferred_strategy,
         staging_dir,
