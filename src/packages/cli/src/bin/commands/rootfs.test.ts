@@ -51,6 +51,18 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
               stderr: "",
               exit_code: 0,
             }),
+            readRootfsBuildLog: async (opts: any) => ({
+              build_id: opts.build_id,
+              project_id,
+              lines: opts.lines ?? 0,
+              byte_offset: opts.byte_offset ?? 0,
+              next_byte_offset: opts.byte_offset ?? 0,
+              bytes: 0,
+              eof: true,
+              text: "",
+              found: true,
+              path: ".cocalc/rootfs-builds/build-1/build.log",
+            }),
           },
         },
       })),
@@ -1155,6 +1167,32 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
       calls.push(["resolve", project]);
       return { project_id: "builder-project" };
     },
+    resolveProjectProjectApi: async (_ctx: any, project: string) => {
+      calls.push(["project-api", project]);
+      return {
+        project: { project_id: "builder-project" },
+        api: {
+          system: {
+            readRootfsBuildLog: async (opts: any) => {
+              calls.push(["direct-log", opts]);
+              return {
+                build_id: opts.build_id,
+                project_id: "builder-project",
+                host_id: "host-1",
+                lines: opts.lines,
+                byte_offset: 0,
+                next_byte_offset: 4,
+                bytes: 4,
+                eof: true,
+                text: "done",
+                found: true,
+                path: ".cocalc/rootfs-builds/build-1/build.log",
+              };
+            },
+          },
+        },
+      };
+    },
     projects: {
       getProjectRootfsBuildStatus: async (opts: any) => {
         calls.push(["status", opts]);
@@ -1170,21 +1208,8 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
           },
         };
       },
-      getProjectRootfsBuildLog: async (opts: any) => {
-        calls.push(["log", opts]);
-        return {
-          build_id: opts.build_id,
-          project_id: opts.project_id,
-          host_id: "host-1",
-          lines: opts.lines,
-          byte_offset: 0,
-          next_byte_offset: 4,
-          bytes: 4,
-          eof: true,
-          text: "done",
-          found: true,
-          path: ".cocalc/rootfs-builds/build-1/build.log",
-        };
+      getProjectRootfsBuildLog: async () => {
+        throw new Error("hub log API should not be used");
       },
       cancelProjectRootfsBuild: async (opts: any) => {
         calls.push(["cancel", opts]);
@@ -1237,7 +1262,16 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
     ["resolve", "Builder"],
     ["status", { project_id: "builder-project", build_id: "build-1" }],
     ["resolve", "Builder"],
-    ["log", { project_id: "builder-project", build_id: "build-1", lines: 25 }],
+    ["project-api", "builder-project"],
+    [
+      "direct-log",
+      {
+        build_id: "build-1",
+        lines: 25,
+        byte_offset: undefined,
+        max_bytes: undefined,
+      },
+    ],
     ["resolve", "Builder"],
     ["cancel", { project_id: "builder-project", build_id: "build-1" }],
   ]);

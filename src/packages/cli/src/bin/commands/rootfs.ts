@@ -298,18 +298,23 @@ const ROOTFS_BUILD_TERMINAL_STATUSES = new Set([
 
 async function followRootfsBuildLog({
   ctx,
+  deps,
   project_id,
   build_id,
   byte_offset = 0,
 }: {
   ctx: any;
+  deps: RootfsCommandDeps;
   project_id: string;
   build_id: string;
   byte_offset?: number;
 }) {
   let byteOffset = byte_offset;
+  const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
   while (true) {
-    const chunk = await ctx.hub.projects.getProjectRootfsBuildLog({
+    const chunk = await readRootfsBuildLogDirect({
+      api,
+      ctx,
       project_id,
       build_id,
       byte_offset: byteOffset,
@@ -336,6 +341,50 @@ async function followRootfsBuildLog({
       setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
     );
   }
+}
+
+async function readRootfsBuildLogDirect({
+  api,
+  ctx,
+  project_id,
+  build_id,
+  lines,
+  byte_offset,
+  max_bytes,
+}: {
+  api: any;
+  ctx: any;
+  project_id: string;
+  build_id: string;
+  lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
+}) {
+  try {
+    return await api.system.readRootfsBuildLog({
+      build_id,
+      lines,
+      byte_offset,
+      max_bytes,
+    });
+  } catch (err) {
+    if (!isMissingDirectRootfsBuildLogApi(err)) {
+      throw err;
+    }
+    return await ctx.hub.projects.getProjectRootfsBuildLog({
+      project_id,
+      build_id,
+      lines,
+      byte_offset,
+      max_bytes,
+    });
+  }
+}
+
+function isMissingDirectRootfsBuildLogApi(err: unknown): boolean {
+  return /unknown function 'system\.readRootfsBuildLog'|readRootfsBuildLog is not a function/i.test(
+    `${err}`,
+  );
 }
 
 function formatRootfsBuildStartHuman(result: {
@@ -1355,6 +1404,7 @@ export function registerRootfsCommand(
             ? build
             : await followRootfsBuildLog({
                 ctx,
+                deps,
                 project_id: project.project_id,
                 build_id: build.build_id,
               });
@@ -1419,7 +1469,13 @@ export function registerRootfsCommand(
             ctx,
             requireProjectOption(opts.project),
           );
-          const log = await ctx.hub.projects.getProjectRootfsBuildLog({
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const log = await readRootfsBuildLogDirect({
+            api,
+            ctx,
             project_id: project.project_id,
             build_id,
             lines: parseLimit(opts.tail, 100),
@@ -1436,6 +1492,13 @@ export function registerRootfsCommand(
           if (opts.follow) {
             const finalStatus = await followRootfsBuildLog({
               ctx,
+              deps: {
+                withContext,
+                resolveProjectFromArgOrContext,
+                resolveProjectProjectApi,
+                waitForLro,
+                serializeLroSummary,
+              },
               project_id: project.project_id,
               build_id,
               byte_offset: log.next_byte_offset,
