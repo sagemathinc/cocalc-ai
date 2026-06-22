@@ -4,6 +4,8 @@ export type BayCommandDeps = {
   withContext: any;
 };
 
+const BAY_BACKUP_TIMEOUT_MS = 10 * 60 * 1000;
+
 export function registerBayCommand(
   program: Command,
   deps: BayCommandDeps,
@@ -88,6 +90,7 @@ export function registerBayCommand(
       await withContext(command, "bay backup", async (ctx) => {
         return await ctx.hub.system.runBayBackup({
           bay_id: bay_id?.trim() || undefined,
+          timeout: BAY_BACKUP_TIMEOUT_MS,
         });
       });
     });
