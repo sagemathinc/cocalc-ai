@@ -14,7 +14,7 @@ import {
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
-import { IconBadge, StartCard } from "./feature-visuals";
+import { FeatureFinalBand, IconBadge } from "./feature-visuals";
 import { SlideDeckMock } from "./slides-page";
 
 const { Paragraph, Text, Title } = Typography;
@@ -308,37 +308,29 @@ export default function WhiteboardFeaturePage({
       <ExecutionGraph />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                When a board or deck belongs in CoCalc
-              </Title>
-              <BulletList
-                items={[
-                  "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
-                  "Review a collaborator's work in place — the code, output, and math are all on the board to inspect.",
-                  "Run office hours or a live support session on a shared board everyone can edit.",
-                  "Choose a deck when the explanation needs an ordered presentation path, not a static export.",
-                ]}
-              />
-              <Flex wrap gap={12}>
-                <Button href={appPath("features/teaching")}>Teaching</Button>
-                <Button href={appPath("products")}>
-                  Compare operating models
-                </Button>
-              </Flex>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and create a board or slide deck for technical diagrams, lecture notes, research sketches, presentations, or computational workflows."
-              href={primaryHref}
-              label={primaryLabel}
-              title="Start with a board or deck"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and create a board or slide deck for technical diagrams, lecture notes, research sketches, presentations, or computational workflows.",
+            href: primaryHref,
+            label: primaryLabel,
+            title: "Start with a board or deck",
+          }}
+          relatedLinks={[
+            { href: appPath("features/slides"), label: "Slide decks" },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="When a board or deck belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
+              "Review a collaborator's work in place — the code, output, and math are all on the board to inspect.",
+              "Run office hours or a live support session on a shared board everyone can edit.",
+              "Choose a deck when the explanation needs an ordered presentation path, not a static export.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

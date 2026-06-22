@@ -444,7 +444,10 @@ const ROUTE_RULES = {
       "Slide decks stay close to the project.",
       "Start with a board or deck",
     ],
-    requireSelectors: [".cocalc-feature-final-panel"],
+    requireSelectors: [
+      ".cocalc-feature-final-band",
+      ".cocalc-feature-final-panel",
+    ],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
   "/features/slides": {

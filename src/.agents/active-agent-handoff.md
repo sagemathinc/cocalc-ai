@@ -908,6 +908,27 @@ Plus/Star/Launchpad`).
   `git diff --check`, focused feature Jest 95/95, browser-QA script Jest 5/5, `pnpm lint:frontend`
   from `src`, `pnpm -C src/packages/static build:dev`, and browser QA for `/features/octave`
   desktop+mobile 36/36. Screenshots reviewed from `/tmp/cocalc-public-qa-ucOsFt`; no PR.
+- **START 2026-06-21:** Implementing the final Wave-1 `/features/whiteboard` slice from Blaec's
+  latest direction and Claude's accepted state. Scope: convert only the Whiteboard final section
+  from split fit block + `StartCard` to `FeatureFinalBand`, with fit logic on the left, one
+  distinct primary CTA, and a full-width `Related` row (`Slide decks`, `Teaching`,
+  `Compare operating models`). Preserve existing proof for editable math, Jupyter cells,
+  diagrams, slide-sized pages, computational workflows, shared boards, code/output/math on the
+  board, office-hours/live support, and board-to-deck workflows. Claimed files:
+  `src/packages/frontend/public/features/whiteboard-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: Teaching layout, slide-deck and
+  execution-graph sections, protected home, pitch docs, docs routes/content, pricing/compliance,
+  type/palette work, Sage, Python, Terminal, Jupyter, the dedicated-compute draft, and PRs.
+- **END 2026-06-21:** Whiteboard Wave-1 conversion landed in source. The final section now uses
+  `FeatureFinalBand`, keeps the existing fit bullets and primary CTA, and moves `Slide decks`,
+  `Teaching`, and `Compare operating models` into the full-width `Related` row. Earlier
+  slide-deck and execution-graph sections were untouched; `Ask about whiteboards` stayed removed.
+  Validation: `git diff --check`, focused feature Jest 96/96, browser-QA script Jest 5/5,
+  `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static build:dev`, and browser QA for
+  Whiteboard/Julia/Octave/More Languages/Automations desktop+mobile 152/152. Screenshots reviewed
+  from `/tmp/cocalc-public-qa-qczjhA`; no PR.
 
 ### Codex — platform-UI thread
 
