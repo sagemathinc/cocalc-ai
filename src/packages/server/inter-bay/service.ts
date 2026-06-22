@@ -315,6 +315,7 @@ import {
   issueProjectHostAuthTokenLocal,
   listHostAccess,
   listHostsLocal,
+  markProjectChanged as markProjectChangedLocal,
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
@@ -2102,8 +2103,25 @@ async function startHostConnectionService(): Promise<void> {
       await recordServiceAdmissionDenialLocal(opts),
     recordServiceAdmissionNearLimit: async (opts) =>
       await recordServiceAdmissionNearLimitLocal(opts),
-    recordProjectBackup: async ({ host_id, project_id, time }) =>
-      await recordProjectBackupLocal({ host_id, project_id, time }),
+    recordProjectBackup: async ({ host_id, project_id, time, generation }) =>
+      await recordProjectBackupLocal({
+        host_id,
+        project_id,
+        time,
+        generation,
+      }),
+    markProjectChanged: async ({
+      host_id,
+      project_id,
+      changed_at,
+      generation,
+    }) =>
+      await markProjectChangedLocal({
+        host_id,
+        project_id,
+        changed_at,
+        generation,
+      }),
     recordProjectBackupIndex: async ({
       host_id,
       project_id,

@@ -467,6 +467,7 @@ export interface HostRegisterOnPremTunnelResponse {
 export interface HostProjectMaintenanceSchedule {
   project_id: string;
   last_edited: string | null;
+  last_changed?: string | null;
   snapshots: SnapshotSchedule | null;
   backups: SnapshotSchedule | null;
   max_snapshots_per_project?: number | null;

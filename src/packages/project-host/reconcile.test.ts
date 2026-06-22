@@ -33,6 +33,20 @@ jest.mock("@cocalc/backend/podman/env", () => ({
   podmanEnv: jest.fn(() => ({})),
 }));
 
+jest.mock("@cocalc/file-server/btrfs/subvolume-snapshots", () => ({
+  getGeneration: jest.fn(),
+}));
+
+jest.mock("./last-edited", () => ({
+  markProjectLastChangedRunning: jest.fn(),
+  resetProjectLastChangedRunning: jest.fn(),
+  shouldCheckProjectLastChangedRunning: jest.fn(() => false),
+}));
+
+jest.mock("./file-server", () => ({
+  getMountPoint: jest.fn(() => "/mnt/cocalc"),
+}));
+
 function mockPodmanPs(stdoutText = "", stderrText = "", exitCode = 0) {
   mockSpawn.mockImplementation(() => {
     const child = new EventEmitter() as EventEmitter & {

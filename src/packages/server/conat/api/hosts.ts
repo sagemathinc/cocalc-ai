@@ -166,6 +166,10 @@ import {
   deleteProjectBackupIndex as deleteProjectBackupIndexLocalInternal,
   syncProjectBackupIndexes as syncProjectBackupIndexesLocalInternal,
 } from "@cocalc/server/project-backup";
+import {
+  ensureProjectChangeTrackingColumns,
+  markProjectChanged as markProjectChangedLocalInternal,
+} from "@cocalc/server/projects/change-tracking";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
@@ -661,8 +665,8 @@ async function loadHostBackupStatus(
           WHERE provisioned IS TRUE
             AND last_backup IS NOT NULL
             AND (
-              last_edited IS NULL
-              OR last_edited <= last_backup + ($2::int * INTERVAL '1 minute')
+              COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) IS NULL
+              OR COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) <= last_backup + ($2::int * INTERVAL '1 minute')
             )
         ) AS provisioned_up_to_date,
         COUNT(*) FILTER (
@@ -670,8 +674,8 @@ async function loadHostBackupStatus(
             AND (
               last_backup IS NULL
               OR (
-                last_edited IS NOT NULL
-                AND last_edited > last_backup + ($2::int * INTERVAL '1 minute')
+                COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) IS NOT NULL
+                AND COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) > last_backup + ($2::int * INTERVAL '1 minute')
               )
             )
         ) AS provisioned_needs_backup
@@ -1646,10 +1650,12 @@ export async function recordProjectBackup({
   host_id,
   project_id,
   time,
+  generation,
 }: {
   host_id?: string;
   project_id: string;
   time: Date;
+  generation?: number | null;
 }): Promise<void> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -1661,22 +1667,34 @@ export async function recordProjectBackup({
   if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
     await getInterBayBridge()
       .hostConnection(ownership.bay_id)
-      .recordProjectBackup({ host_id, project_id, time });
+      .recordProjectBackup({ host_id, project_id, time, generation });
     return;
   }
-  await recordProjectBackupLocalInternal({ host_id, project_id, time });
+  await recordProjectBackupLocalInternal({
+    host_id,
+    project_id,
+    time,
+    generation,
+  });
 }
 
 export async function recordProjectBackupLocal({
   host_id,
   project_id,
   time,
+  generation,
 }: {
   host_id?: string;
   project_id: string;
   time: Date;
+  generation?: number | null;
 }): Promise<void> {
-  await recordProjectBackupLocalInternal({ host_id, project_id, time });
+  await recordProjectBackupLocalInternal({
+    host_id,
+    project_id,
+    time,
+    generation,
+  });
 }
 
 export async function recordProjectBackupIndex({
@@ -1940,10 +1958,12 @@ export async function touchProject({
   const activeByAccount = Object.fromEntries(
     activeAccountIds.map((account_id) => [account_id, new Date()]),
   );
+  await ensureProjectChangeTrackingColumns();
   const { rowCount } = await pool().query(
     `
       UPDATE projects
       SET last_edited=NOW(),
+          last_changed=NOW(),
           last_active=CASE
             WHEN $3::JSONB = '{}'::JSONB THEN last_active
             ELSE COALESCE(last_active, '{}'::JSONB) || COALESCE(
@@ -1985,6 +2005,44 @@ export async function touchProject({
     project_id,
     default_bay_id: getConfiguredBayId(),
   });
+}
+
+export async function markProjectChanged({
+  host_id,
+  project_id,
+  changed_at,
+  generation,
+}: {
+  host_id?: string;
+  project_id: string;
+  changed_at?: Date | string | null;
+  generation?: number | null;
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .markProjectChanged({ host_id, project_id, changed_at, generation });
+    return;
+  }
+  const updated = await markProjectChangedLocalInternal({
+    host_id,
+    project_id,
+    changed_at,
+    generation,
+  });
+  if (!updated) {
+    logger.debug("markProjectChanged ignored (host mismatch)", {
+      host_id,
+      project_id,
+    });
+  }
 }
 
 export async function getManagedRootfsReleaseArtifact({
@@ -3714,6 +3772,7 @@ export async function listHostProjectsLocalSnapshot({
     state: string | null;
     provisioned: boolean | null;
     last_edited: Date | null;
+    last_changed: Date | null;
     last_backup: Date | null;
     needs_backup: boolean;
     collab_count: string;
@@ -3725,6 +3784,7 @@ export async function listHostProjectsLocalSnapshot({
         COALESCE(state->>'state', '') AS state,
         provisioned,
         last_edited,
+        (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
         last_backup,
         (${needsBackupSql}) AS needs_backup,
         COALESCE(
@@ -3757,6 +3817,7 @@ export async function listHostProjectsLocalSnapshot({
     state: row.state ?? "",
     provisioned: row.provisioned ?? null,
     last_edited: normalizeDate(row.last_edited),
+    last_changed: normalizeDate(row.last_changed),
     last_backup: normalizeDate(row.last_backup),
     needs_backup: !!row.needs_backup,
     collab_count: Number(row.collab_count ?? 0),
@@ -3801,8 +3862,8 @@ function buildHostProjectsBaseQuery({
     AND (
       last_backup IS NULL
       OR (
-        last_edited IS NOT NULL
-        AND last_edited > last_backup + ($2::int * INTERVAL '1 minute')
+        COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) IS NOT NULL
+        AND COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) > last_backup + ($2::int * INTERVAL '1 minute')
       )
     )
   `;
@@ -4093,6 +4154,7 @@ export async function backupHostProjects({
       state: project.state ?? "",
       provisioned: project.provisioned,
       last_edited: project.last_edited,
+      last_changed: project.last_changed,
       last_backup: project.last_backup,
       needs_backup: project.needs_backup,
     }));

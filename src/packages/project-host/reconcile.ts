@@ -1,9 +1,17 @@
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { getConmonContainerProcesses } from "@cocalc/backend/podman/conmon";
 import { podmanEnv } from "@cocalc/backend/podman/env";
+import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { DEFAULT_PROJECT_PROXY_PORT } from "@cocalc/project-runner/run/env";
 import { listProjects, upsertProject } from "./sqlite/projects";
+import {
+  markProjectLastChangedRunning,
+  resetProjectLastChangedRunning,
+  shouldCheckProjectLastChangedRunning,
+} from "./last-edited";
+import { getMountPoint } from "./file-server";
 
 const DEFAULT_INTERVAL = 15_000;
 const DEFAULT_MISSING_CYCLES_BEFORE_OPENED = 2;
@@ -140,6 +148,18 @@ export async function reconcileOnce() {
     );
     return;
   }
+  let mountPoint: string | undefined;
+  let mountPointError: string | undefined;
+  let loggedMountPointError = false;
+  const resolveMountPoint = (): string | undefined => {
+    if (mountPoint || mountPointError) return mountPoint;
+    try {
+      mountPoint = getMountPoint();
+    } catch (err) {
+      mountPointError = `${err}`;
+    }
+    return mountPoint;
+  };
   // Update rows for containers we see that belong to this host (ignore other hosts on same machine).
   for (const info of containers.values()) {
     if (!knownIds.has(info.project_id)) continue;
@@ -157,6 +177,32 @@ export async function reconcileOnce() {
       row.ssh_port = info.ssh_port ?? null;
     }
     upsertProject(row);
+    if (info.state === "running") {
+      if (shouldCheckProjectLastChangedRunning(info.project_id)) {
+        const base = resolveMountPoint();
+        if (!base) {
+          if (mountPointError && !loggedMountPointError) {
+            logger.debug("running generation check skipped (no mountpoint)", {
+              err: mountPointError,
+            });
+            loggedMountPointError = true;
+          }
+          continue;
+        }
+        try {
+          const projectPath = join(base, `project-${info.project_id}`);
+          const generation = await getGeneration(projectPath);
+          markProjectLastChangedRunning(info.project_id, generation);
+        } catch (err) {
+          logger.debug("running generation check failed", {
+            project_id: info.project_id,
+            err: `${err}`,
+          });
+        }
+      }
+    } else {
+      resetProjectLastChangedRunning(info.project_id);
+    }
   }
 
   // Any project we think is active but has no container should be marked stopped.
@@ -187,6 +233,7 @@ export async function reconcileOnce() {
         updated_at: now,
         last_seen: now,
       });
+      resetProjectLastChangedRunning(row.project_id);
     }
   }
 }

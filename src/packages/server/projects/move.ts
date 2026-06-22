@@ -163,6 +163,7 @@ type MoveProjectContext = {
   source_host_last_seen?: Date | null;
   last_backup?: Date | null;
   last_edited?: Date | null;
+  last_changed?: Date | null;
   backup_region_cutover?: boolean;
 };
 
@@ -611,6 +612,7 @@ async function buildMoveProjectContext(
     provisioned: boolean | null;
     last_backup: Date | null;
     last_edited: Date | null;
+    last_changed: Date | null;
     project_owning_bay_id: string;
     host_bay_id: string;
   }>(
@@ -623,6 +625,7 @@ async function buildMoveProjectContext(
         projects.provisioned,
         projects.last_backup,
         projects.last_edited,
+        (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
         COALESCE(projects.owning_bay_id, $2) AS project_owning_bay_id,
         COALESCE(project_hosts.bay_id, $2) AS host_bay_id
       FROM projects
@@ -727,6 +730,7 @@ async function buildMoveProjectContext(
     source_host_last_seen,
     last_backup: projectRow.last_backup,
     last_edited: projectRow.last_edited,
+    last_changed: projectRow.last_changed,
     backup_region_cutover: !!input.backup_region_cutover,
   };
 }
@@ -747,10 +751,11 @@ function isSourceHostAvailable(context: MoveProjectContext): boolean {
 }
 
 function hasStaleBackup(context: MoveProjectContext): boolean {
-  const lastEdited = context.last_edited?.getTime?.() ?? 0;
-  if (!lastEdited) return false;
+  const lastChanged =
+    context.last_changed?.getTime?.() ?? context.last_edited?.getTime?.() ?? 0;
+  if (!lastChanged) return false;
   const lastBackup = context.last_backup?.getTime?.() ?? 0;
-  return !lastBackup || lastEdited > lastBackup;
+  return !lastBackup || lastChanged > lastBackup;
 }
 
 function isMissingProjectVolumeError(err: unknown): boolean {
@@ -1475,6 +1480,7 @@ export async function moveProjectToHost(
     source_host_last_seen: context.source_host_last_seen,
     last_backup: context.last_backup,
     last_edited: context.last_edited,
+    last_changed: context.last_changed,
     backup_region_cutover: context.backup_region_cutover,
   });
 
@@ -1636,6 +1642,7 @@ export async function moveProjectToHost(
             provisioned: context.provisioned,
             last_backup: context.last_backup,
             last_edited: context.last_edited,
+            last_changed: context.last_changed,
           },
         });
       } else if (hasStaleBackup(context) && !input.allow_offline) {
@@ -1643,7 +1650,7 @@ export async function moveProjectToHost(
           makeOfflineMoveConfirmationPayload({
             source_status: status,
             last_backup: context.last_backup,
-            last_edited: context.last_edited,
+            last_edited: context.last_changed ?? context.last_edited,
           }),
         );
       }
@@ -1654,6 +1661,7 @@ export async function moveProjectToHost(
           source_host_status: status,
           last_backup: context.last_backup,
           last_edited: context.last_edited,
+          last_changed: context.last_changed,
         },
       });
     } else {

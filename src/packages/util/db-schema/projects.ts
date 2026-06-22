@@ -62,6 +62,7 @@ Table({
 
     pg_indexes: [
       "last_edited",
+      "last_changed",
       "created", // TODO: this could have a fillfactor of 100
       "USING GIN (users)", // so get_collaborator_ids is fast
       "lti_id",
@@ -102,6 +103,7 @@ Table({
           deletion_protection: null,
           state: null,
           last_edited: null,
+          last_changed: null,
           last_active: null,
           last_backup: null,
           rootfs_image_id: null,
@@ -413,7 +415,19 @@ Table({
     },
     last_edited: {
       type: "timestamp",
-      desc: "The last time some file was edited in this project.",
+      desc: "The last explicit user-visible edit or activity in this project. Runtime filesystem churn does not update this.",
+    },
+    last_changed: {
+      type: "timestamp",
+      desc: "The last time the project filesystem may have changed, including runtime writes detected by project-host btrfs generation checks. Used for backup exposure decisions.",
+    },
+    last_changed_generation: {
+      type: "integer",
+      desc: "Latest btrfs generation observed when marking last_changed.",
+    },
+    last_backup_generation: {
+      type: "integer",
+      desc: "Latest btrfs generation observed when last_backup was recorded.",
     },
     last_started: {
       type: "timestamp",

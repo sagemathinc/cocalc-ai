@@ -56,11 +56,12 @@ export async function listHostProjectMaintenanceSchedules({
   let activeWhere = "";
   if (normalizedActiveDays > 0) {
     params.push(normalizedActiveDays);
-    activeWhere = ` AND last_edited >= NOW() - ($2::int * INTERVAL '1 day')`;
+    activeWhere = ` AND COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) >= NOW() - ($2::int * INTERVAL '1 day')`;
   }
   const { rows } = await getPool().query<{
     project_id: string;
     last_edited: Date | string | null;
+    last_changed: Date | string | null;
     snapshots: HostProjectMaintenanceSchedule["snapshots"];
     backups: HostProjectMaintenanceSchedule["backups"];
     owner_account_id: string | null;
@@ -68,6 +69,7 @@ export async function listHostProjectMaintenanceSchedules({
     `SELECT
        project_id,
        last_edited,
+       (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
        snapshots,
        backups,
        (
@@ -114,7 +116,7 @@ export async function listHostProjectMaintenanceSchedules({
     const limits = owner_account_id
       ? limitsByOwner.get(owner_account_id)
       : undefined;
-    return {
+    const schedule: HostProjectMaintenanceSchedule = {
       project_id: row.project_id,
       last_edited:
         row.last_edited == null
@@ -129,6 +131,13 @@ export async function listHostProjectMaintenanceSchedules({
       max_backups_per_project:
         limits?.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
     };
+    if (row.last_changed != null) {
+      schedule.last_changed =
+        row.last_changed instanceof Date
+          ? row.last_changed.toISOString()
+          : `${row.last_changed}`;
+    }
+    return schedule;
   });
 }
 

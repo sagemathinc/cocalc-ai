@@ -7,6 +7,8 @@ import type { PostgreSQL } from "../types";
 import { touchAccount } from "../account/management";
 import { appendProjectOutboxEventForProject } from "../project-events-outbox";
 
+const ensuredChangeTracking = new WeakSet<PostgreSQL>();
+
 export interface TouchProjectOptions {
   project_id: string;
 }
@@ -17,6 +19,27 @@ export interface TouchOptions {
   path?: string;
   action?: string;
   ttl_s?: number;
+}
+
+async function ensureProjectChangeTrackingColumns(
+  db: PostgreSQL,
+): Promise<void> {
+  if (ensuredChangeTracking.has(db)) {
+    return;
+  }
+  await db.async_query({
+    query:
+      "ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_changed TIMESTAMP",
+  });
+  await db.async_query({
+    query:
+      "ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_changed_generation BIGINT",
+  });
+  await db.async_query({
+    query:
+      "ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_backup_generation BIGINT",
+  });
+  ensuredChangeTracking.add(db);
 }
 
 /**
@@ -44,9 +67,10 @@ export async function touchProjectInternal(
 
   const NOW = new Date();
 
+  await ensureProjectChangeTrackingColumns(db);
   await db.async_query({
     query: "UPDATE projects",
-    set: { last_edited: NOW },
+    set: { last_edited: NOW, last_changed: NOW },
     jsonb_merge: { last_active: { [account_id]: NOW } },
     where: { "project_id = $::UUID": project_id },
   });
@@ -75,9 +99,10 @@ export async function touchProject(
     return;
   }
 
+  await ensureProjectChangeTrackingColumns(db);
   await db.async_query({
     query: "UPDATE projects",
-    set: { last_edited: "NOW()" },
+    set: { last_edited: "NOW()", last_changed: "NOW()" },
     where: { "project_id = $::UUID": opts.project_id },
   });
   await appendProjectOutboxEventForProject({

@@ -4406,6 +4406,7 @@ const HOST_SEEN_TTL_MS = 2 * 60 * 1000;
 type MoveOfflinePrecheck = {
   source_host_id?: string;
   last_edited: Date | null;
+  last_changed: Date | null;
   last_backup: Date | null;
 };
 
@@ -4418,6 +4419,7 @@ async function getMoveOfflinePrecheck({
   const { rows } = await pool.query<{
     source_host_id: string | null;
     last_edited: Date | null;
+    last_changed: Date | null;
     last_backup: Date | null;
   }>(
     `
@@ -4428,6 +4430,7 @@ async function getMoveOfflinePrecheck({
           ELSE NULL
         END AS source_host_id,
         projects.last_edited,
+        (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
         projects.last_backup
       FROM projects
       LEFT JOIN project_hosts
@@ -4442,6 +4445,7 @@ async function getMoveOfflinePrecheck({
   return {
     source_host_id: row?.source_host_id ?? undefined,
     last_edited: row?.last_edited ?? null,
+    last_changed: row?.last_changed ?? null,
     last_backup: row?.last_backup ?? null,
   };
 }
@@ -4479,21 +4483,23 @@ async function ensureMoveOfflineAllowed({
   if (hostAvailable) {
     return;
   }
-  const lastEdited = movePrecheck.last_edited
-    ? new Date(movePrecheck.last_edited).getTime()
-    : 0;
+  const lastChanged = movePrecheck.last_changed
+    ? new Date(movePrecheck.last_changed).getTime()
+    : movePrecheck.last_edited
+      ? new Date(movePrecheck.last_edited).getTime()
+      : 0;
   const lastBackup = movePrecheck.last_backup
     ? new Date(movePrecheck.last_backup).getTime()
     : 0;
-  if (!lastEdited) {
+  if (!lastChanged) {
     return;
   }
-  if (!lastBackup || lastEdited > lastBackup) {
+  if (!lastBackup || lastChanged > lastBackup) {
     throw offlineMoveConfirmationError(
       makeOfflineMoveConfirmationPayload({
         source_status: status || "unknown",
         last_backup: movePrecheck.last_backup,
-        last_edited: movePrecheck.last_edited,
+        last_edited: movePrecheck.last_changed ?? movePrecheck.last_edited,
       }),
     );
   }

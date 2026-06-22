@@ -304,13 +304,21 @@ async function getProjectBackupFreshness({
   project_id,
 }: {
   project_id: string;
-}): Promise<{ last_edited: Date | null; last_backup: Date | null }> {
+}): Promise<{
+  last_edited: Date | null;
+  last_changed: Date | null;
+  last_backup: Date | null;
+}> {
   const { rows } = await getPool().query<{
     last_edited: Date | null;
+    last_changed: Date | null;
     last_backup: Date | null;
   }>(
     `
-      SELECT last_edited, last_backup
+      SELECT
+        last_edited,
+        (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
+        last_backup
       FROM projects
       WHERE project_id = $1
     `,
@@ -318,6 +326,7 @@ async function getProjectBackupFreshness({
   );
   return {
     last_edited: rows[0]?.last_edited ?? null,
+    last_changed: rows[0]?.last_changed ?? null,
     last_backup: rows[0]?.last_backup ?? null,
   };
 }
@@ -432,18 +441,23 @@ async function findReusableBackupSnapshot({
     return latest;
   }
 
-  const { last_edited, last_backup } = await getProjectBackupFreshness({
-    project_id,
-  });
+  const { last_edited, last_changed, last_backup } =
+    await getProjectBackupFreshness({
+      project_id,
+    });
   if (!last_backup) {
     return;
   }
-  const lastEditedMs = last_edited ? new Date(last_edited).getTime() : 0;
+  const lastChangedMs = last_changed
+    ? new Date(last_changed).getTime()
+    : last_edited
+      ? new Date(last_edited).getTime()
+      : 0;
   const lastBackupMs = new Date(last_backup).getTime();
   if (
-    Number.isFinite(lastEditedMs) &&
+    Number.isFinite(lastChangedMs) &&
     Number.isFinite(lastBackupMs) &&
-    lastEditedMs > lastBackupMs + BACKUP_REUSE_SKEW_MS
+    lastChangedMs > lastBackupMs + BACKUP_REUSE_SKEW_MS
   ) {
     return;
   }
