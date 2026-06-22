@@ -300,12 +300,14 @@ async function followRootfsBuildLog({
   ctx,
   project_id,
   build_id,
+  byte_offset = 0,
 }: {
   ctx: any;
   project_id: string;
   build_id: string;
+  byte_offset?: number;
 }) {
-  let byteOffset = 0;
+  let byteOffset = byte_offset;
   while (true) {
     const chunk = await ctx.hub.projects.getProjectRootfsBuildLog({
       project_id,
@@ -364,6 +366,54 @@ function formatRootfsBuildStartHuman(result: {
     `next: cocalc rootfs publish --project=${result.project_id}`,
   );
   return lines.join("\n");
+}
+
+function formatRootfsBuildStatusHuman(status: any): string {
+  const lines = [
+    `build_id: ${status.build_id}`,
+    `project_id: ${status.project_id}`,
+    `host_id: ${status.host_id}`,
+    `status: ${status.status}`,
+  ];
+  if (status.recipe_ref) {
+    lines.push(`recipe: ${status.recipe_ref}`);
+  }
+  if (status.created_at) {
+    lines.push(`created_at: ${status.created_at}`);
+  }
+  if (status.started_at) {
+    lines.push(`started_at: ${status.started_at}`);
+  }
+  if (status.finished_at) {
+    lines.push(`finished_at: ${status.finished_at}`);
+  }
+  if (status.last_output_at) {
+    lines.push(`last_output_at: ${status.last_output_at}`);
+  }
+  if (status.exit_code != null) {
+    lines.push(`exit_code: ${status.exit_code}`);
+  }
+  if (status.signal) {
+    lines.push(`signal: ${status.signal}`);
+  }
+  if (status.error) {
+    lines.push(`error: ${status.error}`);
+  }
+  if (status.paths?.log) {
+    lines.push(`log_path: ${status.paths.log}`);
+  }
+  if (status.paths?.script) {
+    lines.push(`script_path: ${status.paths.script}`);
+  }
+  return lines.join("\n");
+}
+
+function requireProjectOption(project?: string): string {
+  const trimmed = `${project ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error("--project is required");
+  }
+  return trimmed;
 }
 
 async function rootfsPublishConfigForProject({
@@ -1321,6 +1371,111 @@ export function registerRootfsCommand(
             return result;
           }
           return formatRootfsBuildStartHuman(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("build-status <build>")
+    .description("show durable RootFS build status for a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-status", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const status = await ctx.hub.projects.getProjectRootfsBuildStatus({
+            project_id: project.project_id,
+            build_id,
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return status;
+          }
+          return formatRootfsBuildStatusHuman(status);
+        });
+      },
+    );
+
+  rootfs
+    .command("build-logs <build>")
+    .description("show or follow durable RootFS build logs for a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--tail <lines>", "line count to show before following", "100")
+    .option("--follow", "continue following new log output")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string; tail?: string; follow?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-logs", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const log = await ctx.hub.projects.getProjectRootfsBuildLog({
+            project_id: project.project_id,
+            build_id,
+            lines: parseLimit(opts.tail, 100),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return log;
+          }
+          if (log.text && !ctx.globals?.quiet) {
+            process.stderr.write(log.text);
+            if (!log.text.endsWith("\n")) {
+              process.stderr.write("\n");
+            }
+          }
+          if (opts.follow) {
+            const finalStatus = await followRootfsBuildLog({
+              ctx,
+              project_id: project.project_id,
+              build_id,
+              byte_offset: log.next_byte_offset,
+            });
+            return formatRootfsBuildStatusHuman(finalStatus);
+          }
+          return "";
+        });
+      },
+    );
+
+  rootfs
+    .command("build-cancel <build>")
+    .description("cancel a durable RootFS build for a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-cancel", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const result = await ctx.hub.projects.cancelProjectRootfsBuild({
+            project_id: project.project_id,
+            build_id,
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return result;
+          }
+          return [
+            `build_id: ${result.build_id}`,
+            `project_id: ${result.project_id}`,
+            `status: ${result.status}`,
+            `signaled: ${result.signaled}`,
+            ...(result.message ? [`message: ${result.message}`] : []),
+          ].join("\n");
         });
       },
     );

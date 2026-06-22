@@ -1147,6 +1147,102 @@ test("rootfs build runs recipe and saves publish config on the project", async (
   }
 });
 
+test("rootfs build status logs and cancel use project build APIs", async () => {
+  const calls: any[] = [];
+  const harness = rootfsDeps({
+    globals: { quiet: true },
+    resolveProjectFromArgOrContext: async (_ctx: any, project: string) => {
+      calls.push(["resolve", project]);
+      return { project_id: "builder-project" };
+    },
+    projects: {
+      getProjectRootfsBuildStatus: async (opts: any) => {
+        calls.push(["status", opts]);
+        return {
+          build_id: opts.build_id,
+          project_id: opts.project_id,
+          host_id: "host-1",
+          status: "succeeded",
+          created_at: "2026-06-22T00:00:00.000Z",
+          paths: {
+            log: ".cocalc/rootfs-builds/build-1/build.log",
+            script: ".cocalc/rootfs-builds/build-1/run.sh",
+          },
+        };
+      },
+      getProjectRootfsBuildLog: async (opts: any) => {
+        calls.push(["log", opts]);
+        return {
+          build_id: opts.build_id,
+          project_id: opts.project_id,
+          host_id: "host-1",
+          lines: opts.lines,
+          byte_offset: 0,
+          next_byte_offset: 4,
+          bytes: 4,
+          eof: true,
+          text: "done",
+          found: true,
+          path: ".cocalc/rootfs-builds/build-1/build.log",
+        };
+      },
+      cancelProjectRootfsBuild: async (opts: any) => {
+        calls.push(["cancel", opts]);
+        return {
+          build_id: opts.build_id,
+          project_id: opts.project_id,
+          status: "canceling",
+          signaled: true,
+        };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "build-status",
+    "build-1",
+    "--project",
+    "Builder",
+  ]);
+  assert.match(harness.captured, /status: succeeded/);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "build-logs",
+    "build-1",
+    "--project",
+    "Builder",
+    "--tail",
+    "25",
+  ]);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "build-cancel",
+    "build-1",
+    "--project",
+    "Builder",
+  ]);
+
+  assert.deepEqual(calls, [
+    ["resolve", "Builder"],
+    ["status", { project_id: "builder-project", build_id: "build-1" }],
+    ["resolve", "Builder"],
+    ["log", { project_id: "builder-project", build_id: "build-1", lines: 25 }],
+    ["resolve", "Builder"],
+    ["cancel", { project_id: "builder-project", build_id: "build-1" }],
+  ]);
+});
+
 test("rootfs recipe run creates project, executes modules, and publishes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-run-"));
   const recipePath = join(dir, "recipe.json");
