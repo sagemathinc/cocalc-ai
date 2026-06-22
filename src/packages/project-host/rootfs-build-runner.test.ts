@@ -208,6 +208,51 @@ describe("rootfs build runner", () => {
     expect(status.error).toContain("not tracked");
   });
 
+  it("reads build logs incrementally by byte offset", async () => {
+    const volumePath = await setupVolume();
+    const paths = await __test__.buildPaths(PROJECT_ID, "paged-log");
+    await fs.mkdir(paths.hostDir, { recursive: true });
+    await fs.writeFile(
+      path.join(
+        volumePath,
+        ".cocalc",
+        "rootfs-builds",
+        "paged-log",
+        "build.log",
+      ),
+      "line one\nline two\nline three\n",
+      "utf8",
+    );
+
+    const first = await getRootfsBuildLog({
+      project_id: PROJECT_ID,
+      build_id: "paged-log",
+      byte_offset: 0,
+      max_bytes: 9,
+    });
+    expect(first).toMatchObject({
+      byte_offset: 0,
+      next_byte_offset: 9,
+      bytes: 9,
+      eof: false,
+      text: "line one\n",
+    });
+
+    const second = await getRootfsBuildLog({
+      project_id: PROJECT_ID,
+      build_id: "paged-log",
+      byte_offset: first.next_byte_offset,
+      max_bytes: 9,
+    });
+    expect(second).toMatchObject({
+      byte_offset: 9,
+      next_byte_offset: 18,
+      bytes: 9,
+      eof: false,
+      text: "line two\n",
+    });
+  });
+
   it("cancels a running build by signaling the process group", async () => {
     await setupVolume();
     mockSpawnedBuild({ close: false });

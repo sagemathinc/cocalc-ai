@@ -11,8 +11,10 @@ import {
   appendFile,
   chmod,
   mkdir,
+  open,
   readFile,
   rename,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { join, posix } from "node:path";
@@ -41,6 +43,7 @@ const logger = getLogger("project-host:rootfs-build-runner");
 
 const BUILD_ROOT_RELATIVE = ".cocalc/rootfs-builds";
 const MAX_LOG_LINES = 10_000;
+const MAX_LOG_BYTES = 1024 * 1024;
 const BUILD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -378,13 +381,25 @@ export async function getRootfsBuildLog({
   project_id,
   build_id,
   lines,
+  byte_offset,
+  max_bytes,
 }: {
   project_id: string;
   build_id: string;
   lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
 }): Promise<HostRootfsBuildLogResponse> {
   const paths = await buildPaths(project_id, build_id);
   const limit = Math.max(1, Math.min(MAX_LOG_LINES, Math.floor(lines ?? 200)));
+  const offset =
+    byte_offset == null
+      ? undefined
+      : Math.max(0, Math.floor(Number(byte_offset) || 0));
+  const byteLimit = Math.max(
+    1,
+    Math.min(MAX_LOG_BYTES, Math.floor(Number(max_bytes) || MAX_LOG_BYTES)),
+  );
   try {
     await access(paths.hostLog, fsConstants.R_OK);
   } catch {
@@ -392,20 +407,68 @@ export async function getRootfsBuildLog({
       build_id,
       project_id,
       lines: limit,
+      byte_offset: offset ?? 0,
+      next_byte_offset: offset ?? 0,
+      bytes: 0,
+      eof: true,
       text: "",
       found: false,
       path: paths.publicPaths.log,
     };
+  }
+  if (offset != null) {
+    const info = await stat(paths.hostLog);
+    if (offset >= info.size) {
+      return {
+        build_id,
+        project_id,
+        lines: limit,
+        byte_offset: offset,
+        next_byte_offset: offset,
+        bytes: 0,
+        eof: true,
+        text: "",
+        found: true,
+        path: paths.publicPaths.log,
+      };
+    }
+    const bytesToRead = Math.min(byteLimit, info.size - offset);
+    const buffer = Buffer.alloc(bytesToRead);
+    const handle = await open(paths.hostLog, "r");
+    try {
+      const { bytesRead } = await handle.read(buffer, 0, bytesToRead, offset);
+      const next = offset + bytesRead;
+      return {
+        build_id,
+        project_id,
+        lines: limit,
+        byte_offset: offset,
+        next_byte_offset: next,
+        bytes: bytesRead,
+        eof: next >= info.size,
+        text: buffer.subarray(0, bytesRead).toString("utf8"),
+        found: true,
+        path: paths.publicPaths.log,
+      };
+    } finally {
+      await handle.close();
+    }
   }
   const text = await readFile(paths.hostLog, "utf8");
   const split = text.split(/\r?\n/);
   const selected = split
     .slice(Math.max(0, split.length - limit - 1))
     .join("\n");
+  const bytes = Buffer.byteLength(selected, "utf8");
+  const fileBytes = Buffer.byteLength(text, "utf8");
   return {
     build_id,
     project_id,
     lines: limit,
+    byte_offset: Math.max(0, fileBytes - bytes),
+    next_byte_offset: fileBytes,
+    bytes,
+    eof: true,
     text: selected,
     found: true,
     path: paths.publicPaths.log,

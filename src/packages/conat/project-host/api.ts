@@ -125,6 +125,10 @@ export interface HostRootfsBuildLogResponse {
   build_id: string;
   project_id: string;
   lines: number;
+  byte_offset: number;
+  next_byte_offset: number;
+  bytes: number;
+  eof: boolean;
   text: string;
   found: boolean;
   path: string;
@@ -428,6 +432,8 @@ export interface HostControlApi {
     project_id: string;
     build_id: string;
     lines?: number;
+    byte_offset?: number;
+    max_bytes?: number;
   }) => Promise<HostRootfsBuildLogResponse>;
   cancelRootfsBuild: (opts: {
     project_id: string;
