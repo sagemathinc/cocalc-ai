@@ -159,6 +159,9 @@ venv
 src/packages/frontend/i18n/extracted.json
 src/packages/frontend/i18n/trans/*.compiled.json
 
+# generated during the CLI build from src/packages/rootfs-recipes
+src/packages/cli/src/bin/commands/rootfs-recipes-builtin.generated.ts
+
 **/*.db
 **/project-env.sh
 **/*.bash_history

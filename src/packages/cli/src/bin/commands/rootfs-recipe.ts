@@ -13,9 +13,14 @@ import type { ExecuteCodeOutput } from "@cocalc/util/types/execute-code";
 
 import type { RootfsConfigExport } from "@cocalc/util/rootfs-images";
 import { parse as parseYaml } from "yaml";
-import { BUILTIN_ROOTFS_RECIPES } from "./rootfs-recipes-builtin.generated";
 
 type JsonObject = Record<string, any>;
+
+type BuiltinRootfsRecipes = {
+  version: 1;
+  hash: string;
+  files: Record<string, string>;
+};
 
 export type RootfsRecipe = {
   version: 1;
@@ -182,6 +187,26 @@ type LoadedRecipe = {
 
 const DEFAULT_RECIPE_COMMAND_TIMEOUT_SECONDS = 900;
 const BUILTIN_RECIPE_MODULE_DIR = "builtin:/rootfs-recipes";
+const EMPTY_BUILTIN_ROOTFS_RECIPES: BuiltinRootfsRecipes = {
+  version: 1,
+  hash: "",
+  files: {},
+};
+const BUILTIN_ROOTFS_RECIPES = loadBuiltinRootfsRecipes();
+
+function loadBuiltinRootfsRecipes(): BuiltinRootfsRecipes {
+  try {
+    const mod = require("./rootfs-recipes-builtin.generated") as {
+      BUILTIN_ROOTFS_RECIPES?: BuiltinRootfsRecipes;
+    };
+    return mod.BUILTIN_ROOTFS_RECIPES ?? EMPTY_BUILTIN_ROOTFS_RECIPES;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "MODULE_NOT_FOUND") {
+      return EMPTY_BUILTIN_ROOTFS_RECIPES;
+    }
+    throw err;
+  }
+}
 
 export function loadRootfsRecipe(recipePath: string): RootfsRecipe {
   const resolved = resolve(recipePath);
