@@ -7,21 +7,25 @@ import type { CSSProperties } from "react";
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_ELEVATION,
   PUBLIC_COLORS,
-  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
+  CodeBlock,
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
-import { IconBadge } from "./feature-visuals";
+import {
+  ContextList,
+  FeatureFinalBand,
+  IconBadge,
+  StoryCard,
+} from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -38,170 +42,75 @@ const VISUALLY_HIDDEN_STYLE: CSSProperties = {
   width: 1,
 };
 
+const FIT_BUTTON_STYLE: CSSProperties = { width: "fit-content" };
+const LEAD_STYLE: CSSProperties = {
+  fontSize: PUBLIC_TYPE.lead,
+  margin: 0,
+};
+const MUTED_TEXT_STYLE: CSSProperties = { color: PUBLIC_COLORS.mutedText };
+const NO_MARGIN_STYLE: CSSProperties = { margin: 0 };
+
 const FIT_DECISION_ROWS = [
   ["Hosted paper collaboration", "Dedicated LaTeX editor"],
   ["Local editor craft", "Local TeX editor"],
   ["Paper as technical project", "CoCalc"],
 ] as const;
 
-function LatexEditorMock() {
+function LatexEvidencePanel() {
   return (
     <div
-      aria-label="Illustration of a CoCalc LaTeX editor with source, PDF preview, build log, and project files"
+      aria-label="Illustration of a CoCalc LaTeX project with source, PDF preview, and build log"
       style={{
         background:
-          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
+          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: PUBLIC_ELEVATION.lg,
         padding: 20,
       }}
     >
-      <Flex vertical gap={14}>
-        <Flex align="center" justify="space-between" wrap gap={10}>
-          <Flex align="center" gap={10}>
-            <IconBadge accent="#ad6800" icon="tex" />
-            <div>
-              <Text strong>paper.tex</Text>
-              <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                source, PDF, figures, and build log
-              </div>
+      <Flex vertical gap={16}>
+        <Flex align="center" gap={10}>
+          <IconBadge accent="#ad6800" icon="tex" />
+          <div>
+            <Text strong>paper.tex</Text>
+            <div style={MUTED_TEXT_STYLE}>
+              source, PDF, figures, and build log
             </div>
-          </Flex>
+          </div>
         </Flex>
-        <Row gutter={[12, 12]}>
-          <Col xs={24} md={12}>
-            <div
-              style={{
-                background: PUBLIC_DARK.codeSurface,
-                borderRadius: PUBLIC_RADIUS.panel,
-                color: PUBLIC_DARK.mockText,
-                minHeight: 280,
-                padding: 16,
-              }}
-            >
-              <Flex vertical gap={12}>
-                <Text style={{ color: "#93c5fd" }}>paper.tex</Text>
-                <code style={{ color: "#f8fafc", whiteSpace: "pre-wrap" }}>
-                  {`\\section{Spectral gap}
+        <Row gutter={[14, 14]} align="stretch">
+          <Col xs={24} md={13}>
+            <CodeBlock
+              ariaLabel="LaTeX source with generated table input"
+              code={`\\section{Spectral gap}
 The experiment in Figure~\\ref{fig:gap}
 shows concentration after normalization.
 
 \\input{tables/summary.tex}`}
-                </code>
-                <div
-                  style={{
-                    background: "rgba(255,255,255,0.1)",
-                    borderRadius: 12,
-                    color: "#bbf7d0",
-                    padding: "9px 10px",
-                  }}
-                >
-                  Build log ready
-                </div>
-              </Flex>
-            </div>
+            />
           </Col>
-          <Col xs={24} md={12}>
+          <Col xs={24} md={11}>
             <div
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: PUBLIC_RADIUS.panel,
-                minHeight: 280,
-                padding: 18,
+                height: "100%",
+                padding: 16,
               }}
             >
-              <Flex vertical gap={14}>
-                <Flex align="center" gap={10}>
-                  <Icon name="file-pdf" style={{ color: "#d4380d" }} />
-                  <Text strong>paper.pdf</Text>
-                </Flex>
-                <div
-                  style={{
-                    background: "#f8fafc",
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PUBLIC_RADIUS.panel,
-                    minHeight: 180,
-                    padding: 16,
-                  }}
-                >
-                  <div
-                    style={{
-                      color: PUBLIC_COLORS.heading,
-                      fontSize: PUBLIC_TYPE.body,
-                      fontWeight: 600,
-                      lineHeight: 1.4,
-                      margin: "0 0 10px",
-                    }}
-                  >
-                    Spectral gap
-                  </div>
-                  <Paragraph style={{ margin: 0 }}>
-                    The normalized operator has a stable gap across the sampled
-                    family...
-                  </Paragraph>
-                  <div
-                    style={{
-                      background: `linear-gradient(90deg, ${PUBLIC_DARK.mockText} 0%, #bbf7d0 100%)`,
-                      borderRadius: 999,
-                      height: 12,
-                      marginTop: 22,
-                      width: "78%",
-                    }}
-                  />
-                </div>
+              <Flex vertical gap={12}>
+                <Text strong>paper.pdf</Text>
+                <Paragraph style={NO_MARGIN_STYLE}>
+                  The normalized operator has a stable gap across the sampled
+                  family...
+                </Paragraph>
+                <Text type="success">Build log ready</Text>
               </Flex>
             </div>
           </Col>
         </Row>
-        <Row gutter={[10, 10]}>
-          {[
-            ["users", "Coauthors"],
-            ["history", "TimeTravel"],
-            ["robot", "Codex"],
-            ["jupyter", "Notebook output"],
-          ].map(([icon, label]) => (
-            <Col key={label} xs={12} sm={6}>
-              <Flex
-                align="center"
-                gap={8}
-                style={{
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: PUBLIC_RADIUS.panel,
-                  padding: "9px 10px",
-                }}
-              >
-                <Icon name={icon as IconName} />
-                <Text strong>{label}</Text>
-              </Flex>
-            </Col>
-          ))}
-        </Row>
-      </Flex>
-    </div>
-  );
-}
-
-function PaperProjectContext() {
-  return (
-    <div
-      aria-label="Project context that stays with a LaTeX paper in CoCalc"
-      style={{
-        borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
-        paddingLeft: 18,
-      }}
-    >
-      <Flex vertical gap={10}>
-        <Text strong>What stays with the paper</Text>
-        <BulletList
-          items={[
-            "source, bibliography, generated tables, and figures",
-            "notebooks, scripts, terminals, and package state",
-            "review notes, project history, chat, and collaborator context",
-          ]}
-        />
       </Flex>
     </div>
   );
@@ -279,29 +188,6 @@ function LatexFitTable() {
   );
 }
 
-function ComputationWritingLoop() {
-  return (
-    <div
-      className="cocalc-latex-computation-list"
-      style={{
-        borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
-        paddingLeft: 18,
-      }}
-    >
-      <Flex vertical gap={10}>
-        <Text strong>A practical writing loop</Text>
-        <BulletList
-          items={[
-            "Regenerate a table, figure, or result in the same project.",
-            "Rebuild the PDF without separating the paper from its evidence.",
-            "Let collaborators review the claim, source, and computation together.",
-          ]}
-        />
-      </Flex>
-    </div>
-  );
-}
-
 export default function LatexEditorFeaturePage({
   isAuthenticated,
 }: {
@@ -317,19 +203,19 @@ export default function LatexEditorFeaturePage({
     : "Start writing LaTeX on CoCalc";
 
   return (
-    <Flex vertical gap={18}>
+    <Flex vertical gap={22}>
       <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={11}>
+        <Row gutter={[28, 28]} align="top">
+          <Col xs={24} lg={14}>
             <Flex vertical gap={14}>
-              <Title level={2} style={{ margin: 0 }}>
+              <Title level={2} style={NO_MARGIN_STYLE}>
                 Write the paper where the code, figures, and review live
               </Title>
-              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+              <Paragraph style={LEAD_STYLE}>
                 Coauthors edit in real time, with builds and full history in one
                 project.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
+              <Paragraph style={NO_MARGIN_STYLE}>
                 The evidence behind every claim stays with the paper,
                 reproducible later.
               </Paragraph>
@@ -346,117 +232,197 @@ export default function LatexEditorFeaturePage({
               </Flex>
             </Flex>
           </Col>
-          <Col xs={24} lg={13}>
-            <LatexEditorMock />
+          <Col xs={24} lg={10}>
+            <ContextList
+              accent="#ad6800"
+              items={[
+                { icon: "file-code", label: "Source and PDF output together" },
+                { icon: "users", label: "Visible cursors for coauthors" },
+                { icon: "history", label: "TimeTravel for draft recovery" },
+                { icon: "sagemath", label: "SageTeX and computed figures" },
+              ]}
+              title="Paper context"
+            />
           </Col>
         </Row>
       </PublicSection>
 
+      <Row className="cocalc-latex-story-row" gutter={[16, 16]}>
+        <Col xs={24} md={8}>
+          <StoryCard icon="users" title="Edit with coauthors live">
+            Write in the same project with visible cursors, discussion, source
+            files, figures, bibliography, and build output close enough to
+            review.
+          </StoryCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <StoryCard
+            accent="#ad6800"
+            icon="file-pdf"
+            title="Build the PDF beside evidence"
+          >
+            Keep generated tables, figures, notebooks, scripts, and terminal
+            output next to the source that cites them.
+          </StoryCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <StoryCard
+            accent="#7c3aed"
+            icon="history"
+            title="Review draft history"
+          >
+            TimeTravel keeps edits reviewable, so a collaborator can inspect
+            what changed before continuing the paper.
+          </StoryCard>
+        </Col>
+      </Row>
+
       <PublicSection>
-        <Row gutter={[28, 28]} align="top">
-          <Col xs={24} lg={15}>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={12}>
+            <LatexEvidencePanel />
+          </Col>
+          <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
+              <Title level={3} style={NO_MARGIN_STYLE}>
                 Keep the working tree together
               </Title>
-              <Paragraph style={{ margin: 0 }}>
+              <Paragraph style={NO_MARGIN_STYLE}>
                 A mathematical or scientific paper usually has more structure
                 than the final PDF shows: <code>.tex</code> files, bibliography
                 entries, figures, scripts, notebooks, generated tables, and
                 discussions.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
+              <Paragraph style={NO_MARGIN_STYLE}>
                 CoCalc makes that working tree collaborative. Coauthors can
                 edit, discuss, and review those assets without splitting the
                 paper workflow across separate tools.
               </Paragraph>
-              <Flex wrap gap={12}>
-                <Button href={appPath("features/jupyter-notebook")}>
-                  Jupyter notebooks
-                </Button>
-                <Button href={appPath("features/terminal")}>
-                  Terminal workflows
-                </Button>
-                <Button href={appPath("features/ai")}>AI workflows</Button>
-              </Flex>
+              <ContextList
+                accent="#ad6800"
+                items={[
+                  {
+                    icon: "file",
+                    label: "source, bibliography, figures, and build logs",
+                  },
+                  {
+                    icon: "jupyter",
+                    label: "notebooks, scripts, terminals, and package state",
+                  },
+                  {
+                    icon: "comment",
+                    label: "review notes, chat, and collaborator context",
+                  },
+                ]}
+                title="What stays with the paper"
+              />
             </Flex>
-          </Col>
-          <Col xs={24} lg={9}>
-            <PaperProjectContext />
           </Col>
         </Row>
       </PublicSection>
 
       <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={14}>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
+              <Title level={3} style={NO_MARGIN_STYLE}>
                 Use computation as part of the writing process
               </Title>
-              <Paragraph style={{ margin: 0 }}>
+              <Paragraph style={NO_MARGIN_STYLE}>
                 CoCalc is a strong fit when figures or tables come from code.
-                Regenerate evidence in a notebook or script, rebuild the PDF,
-                and check the result while the draft is still open.
+                Regenerate evidence in a notebook, script, or SageTeX step,
+                rebuild the PDF, and check the result while the draft is still
+                open.
               </Paragraph>
-              <Button
-                href={appPath("features/ai")}
-                style={{ width: "fit-content" }}
-              >
+              <Button href={appPath("features/ai")} style={FIT_BUTTON_STYLE}>
                 AI assistance
               </Button>
             </Flex>
           </Col>
-          <Col xs={24} lg={10}>
-            <ComputationWritingLoop />
+          <Col xs={24} lg={12}>
+            <div className="cocalc-latex-computation-list">
+              <ContextList
+                accent="#278c83"
+                items={[
+                  {
+                    icon: "refresh",
+                    label: "Regenerate a table, figure, or result",
+                  },
+                  {
+                    icon: "file-pdf",
+                    label: "Rebuild the PDF beside its evidence",
+                  },
+                  {
+                    icon: "users",
+                    label: "Review the claim, source, and computation together",
+                  },
+                ]}
+                title="A practical writing loop"
+              />
+            </div>
           </Col>
         </Row>
       </PublicSection>
 
       <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
+        <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
+              <Title level={3} style={NO_MARGIN_STYLE}>
                 Choose the writing environment around the real task
               </Title>
-              <Paragraph style={{ margin: 0 }}>
+              <Paragraph style={NO_MARGIN_STYLE}>
                 Dedicated hosted LaTeX editors are a natural choice when the
                 main task is collaborative paper editing. Local TeX editors are
                 excellent when keyboard-driven local craft is the priority.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
+              <Paragraph style={NO_MARGIN_STYLE}>
                 CoCalc is useful when the paper depends on computation, project
                 files, command-line tools, collaborators, history, and agent
                 help.
               </Paragraph>
-              <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
-                Read the LaTeX guide
-              </LinkButton>
-              <Flex wrap gap={12}>
-                <Button type="primary" href={primaryCtaHref}>
-                  {finalCtaLabel}
-                </Button>
-                <Button href={appPath("products")}>
-                  Compare operating models
-                </Button>
-              </Flex>
             </Flex>
           </Col>
           <Col xs={24} lg={12}>
-            <div
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.panel,
-                boxShadow: PUBLIC_ELEVATION.panel,
-                padding: 24,
-              }}
-            >
-              <LatexFitTable />
-            </div>
+            <LatexFitTable />
           </Col>
         </Row>
+      </PublicSection>
+
+      <PublicSection>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project, create a .tex file, and keep the paper beside the work that supports it.",
+            href: primaryCtaHref,
+            label: finalCtaLabel,
+            title: "Ready to write LaTeX in CoCalc?",
+          }}
+          relatedLinks={[
+            {
+              href: `${GUIDE_BASE}/cocalc-for-latex/`,
+              label: "LaTeX guide",
+            },
+            {
+              href: `${GUIDE_BASE}/paper-polishing/`,
+              label: "Paper polishing workflow",
+            },
+            {
+              href: appPath("features/jupyter-notebook"),
+              label: "Jupyter notebooks",
+            },
+            { href: appPath("features/terminal"), label: "Terminal workflows" },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="Where LaTeX belongs in the project"
+        >
+          <BulletList
+            items={[
+              "This workflow fits papers that depend on code, generated figures, notebooks, terminals, and review history.",
+              "Use SageTeX when computation belongs directly in the LaTeX build.",
+              "Keep coauthors, source, PDF output, project files, and TimeTravel in one workspace.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

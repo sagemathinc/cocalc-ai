@@ -474,7 +474,12 @@ const ROUTE_RULES = {
       "A practical writing loop",
       "Coauthors edit in real time",
     ],
-    requireSelectors: [".cocalc-latex-computation-list"],
+    requireSelectors: [
+      ".cocalc-feature-context-list",
+      ".cocalc-feature-final-band",
+      ".cocalc-feature-final-panel",
+      ".cocalc-latex-computation-list",
+    ],
     forbidText: [
       "PDF build",
       "Ask about LaTeX workflows",

@@ -598,6 +598,12 @@ describe("PublicFeaturesApp", () => {
         "Write the paper where the code, figures, and review live",
       ),
     ).not.toBeNull();
+    expect(
+      container.querySelector(".cocalc-feature-context-list"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(".cocalc-feature-final-band"),
+    ).not.toBeNull();
     // Route-specific body keyword (LaTeX writing loop) instead of pinned prose.
     expect(screen.getByText(/writing loop/i)).not.toBeNull();
     // Mock-UI label ban: the agent panel reads "AI review thread", not "Codex".
