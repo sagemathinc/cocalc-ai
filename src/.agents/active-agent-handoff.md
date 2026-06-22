@@ -1055,3 +1055,35 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/features/linux`, `/features/terminal`, `/features/jupyter-notebook`
   desktop+mobile 228/228. Screenshots inspected. Ready to commit/push/rebuild
   preview; next queued slice is framing-alignment, one cluster at a time.
+
+---
+
+## Codex — framing-alignment batch + Wave-3 (2026-06-22)
+
+- **START 2026-06-22:** Working in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Scope from Blaec: apply finalized
+  `site-framing-alignment-slice-2026-06-21.md` in three grouped commits, then
+  proceed to Wave-3 final-section assessment/rollout for R, Slides, and Sage.
+  Current group: Commit 1 = features-index + languages + tools +
+  other-features, plus Octave primary CTA label `Get using Octave` → `Start
+  using Octave`. Guardrails: preserve concrete proof, use audience-led broad
+  language, no vertical-specific language, avoid protected home/pitch/docs
+  routes/pricing/compliance/type-palette and the dedicated-compute draft. Known
+  unrelated untracked file remains
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx`.
+- **END Commit 1 2026-06-22:** Applied the feature-page framing alignment group:
+  feature index, languages, tools, and other-feature routes now use the approved
+  broad audience-led language while preserving concrete tool proof. Octave's
+  primary CTA was already `Start using Octave`; left it unchanged. One stale
+  vertical-specific Linux example in the slice file was intentionally replaced
+  with a tool-led package-manager line to honor Blaec's latest no-vertical
+  instruction. Updated feature Jest canaries and browser-QA rendered-text
+  guards. Validation passed: `git diff --check`; focused feature Jest 96/96;
+  browser-QA harness Jest 5/5; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/features`,
+  `/features/automations`, `/features/jupyter-notebook`, `/features/terminal`,
+  `/features/linux`, `/features/python`, `/features/latex-editor`,
+  `/features/sage`, `/features/r-statistical-software`, `/features/julia`,
+  `/features/octave`, `/features/more-languages`, `/features/whiteboard`, and
+  `/features/slides` desktop+mobile passed 540/540. Screenshots inspected from
+  `/tmp/cocalc-public-qa-4HSRZz`. Ready for commit/push/rebuild.

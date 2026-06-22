@@ -127,7 +127,7 @@ const FEATURE_GROUPS = [
   {
     accent: COLORS.RUN,
     description:
-      "Jump directly to the language or math environment you need for notebooks, scripts, courses, or research.",
+      "Jump to the language or math environment your work needs for analysis, modeling, and reproducible research.",
     icon: "python",
     slugs: [
       "python",
@@ -666,7 +666,7 @@ function FeaturesIndex() {
                 maxWidth: 640,
               }}
             >
-              Choose the workflow your team needs
+              Durable, collaborative workflows for industry R&D teams
             </Title>
             <Paragraph
               style={{
@@ -677,10 +677,10 @@ function FeaturesIndex() {
                 maxWidth: 600,
               }}
             >
-              For research, engineering, and technical teams whose work needs
+              For industry R&D, data-science, and engineering teams — keeping
               notebooks, code, terminals, documents, outputs, TimeTravel
-              history, collaborators, and AI-assisted review to stay together.
-              Choose the workflow you need next.
+              history, collaborators, and AI-assisted review together in one
+              reproducible project. Choose the workflow you need next.
             </Paragraph>
           </div>
         </Flex>

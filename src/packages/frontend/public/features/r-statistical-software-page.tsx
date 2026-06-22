@@ -156,9 +156,9 @@ export default function RStatisticalSoftwareFeaturePage({
                 Use R for statistics and reproducible reporting.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Fit statistical models, build reproducible reports, and share
-                the analysis with your lab or team — using R in notebooks,
-                scripts, and Quarto or RMarkdown documents.
+                For data-science and research teams: fit statistical models,
+                build reproducible reports, and share the analysis — using R in
+                notebooks, scripts, and Quarto or RMarkdown documents.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -192,7 +192,7 @@ export default function RStatisticalSoftwareFeaturePage({
                 items={[
                   "Develop the model in a notebook or script, with packages and data in the project.",
                   "Render a Quarto or RMarkdown report to HTML or PDF from the same project.",
-                  "Collaborators and reviewers open the project and see the exact code, output, and history.",
+                  "Collaborators and reviewers open the project and see the exact code, output, and TimeTravel history.",
                   "Re-run it later — the environment, data, and report build are still there.",
                 ]}
               />

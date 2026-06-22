@@ -135,8 +135,9 @@ export default function OctaveFeaturePage({
                 work.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Edit <code>.m</code> files, run Octave in terminals, use
-                notebook workflows, and review numerical work without every
+                For engineering and data-science teams, edit <code>.m</code>{" "}
+                files, run Octave in terminals and notebooks, and review
+                numerical work in one durable project — without every
                 collaborator maintaining a local install.
               </Paragraph>
               <Flex wrap gap={12}>
@@ -177,10 +178,10 @@ export default function OctaveFeaturePage({
         >
           <BulletList
             items={[
-              "A numerical course where students share one consistent environment.",
               "Numerical research and prototyping that benefits from shared files and history.",
               "Work that mixes Octave with notebooks, data, and write-ups in one project.",
               "A team that opens each other's Octave work and reviews it together.",
+              "A numerical course where students share one consistent environment.",
             ]}
           />
         </FeatureFinalBand>

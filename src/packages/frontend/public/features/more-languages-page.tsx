@@ -204,10 +204,11 @@ export default function MoreLanguagesFeaturePage({
         >
           <BulletList
             items={[
-              "A course or workshop needs one shared setup for scripts, compilers, and examples.",
-              "A research project mixes notebooks with compiled code or shell tools.",
+              "A research or engineering project mixes notebooks with compiled code or shell tools.",
+              "Teams running large Fortran, C, or Rust simulations keep the pre- and post-processing, visualization, and review together in one durable project.",
               "Generated output needs to stay near the source files and explanation.",
               "Collaborators need to inspect and rerun the same project workflow.",
+              "A course or workshop needs one shared setup for scripts, compilers, and examples.",
             ]}
           />
         </FeatureFinalBand>

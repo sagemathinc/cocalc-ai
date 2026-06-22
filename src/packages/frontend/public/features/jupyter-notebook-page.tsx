@@ -262,7 +262,7 @@ export default function JupyterNotebookFeaturePage({
                 files, packages, collaborators, or a course workflow.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                For research groups, classes, and technical teams, the notebook
+                For industry R&D, data-science, and research teams, the notebook
                 stays connected to the surrounding files and execution state
                 instead of living as an isolated browser session.
               </Paragraph>

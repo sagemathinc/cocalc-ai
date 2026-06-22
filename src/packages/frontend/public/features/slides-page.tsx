@@ -183,10 +183,11 @@ export default function SlidesFeaturePage({
                 Present from the same canvas where technical ideas are built.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                CoCalc slides are a sequence of slide-sized whiteboards. They
-                keep markdown, math, diagrams, Jupyter cells, drawings, and
-                collaborative editing in the same project as the files and
-                notebooks behind the presentation.
+                For R&D and data-science teams, CoCalc slides are a sequence of
+                slide-sized whiteboards. They keep markdown, math, diagrams,
+                Jupyter cells, drawings, and collaborative editing in the same
+                durable project as the files and notebooks behind the
+                presentation.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

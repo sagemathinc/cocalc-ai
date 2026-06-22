@@ -159,9 +159,9 @@ export default function AutomationsFeaturePage({
                 review the work.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Project automations are most useful when work repeats: refresh
-                data, regenerate a result, prepare teaching material, or hand
-                pipeline output back to collaborators.
+                Project automations are most useful when work repeats: refresh a
+                dataset, rerun an analysis or model, hand pipeline output back
+                to collaborators, or prepare teaching material.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -207,7 +207,7 @@ export default function AutomationsFeaturePage({
             items={[
               "A notebook or report needs to be rebuilt on a schedule.",
               "A class or lab setup needs the same preparation every time.",
-              "A data pull or model run should write results back into a shared project.",
+              "A scheduled analysis or model run should write its results back into a shared project the team reviews.",
               "A script should run with the same files, software, and history collaborators already use.",
             ]}
           />

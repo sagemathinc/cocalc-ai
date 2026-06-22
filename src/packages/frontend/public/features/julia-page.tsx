@@ -13,10 +13,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-} from "./page-components";
+import { BulletList, featureAppPath as appPath } from "./page-components";
 import { FEATURE_ACCENTS } from "./feature-accents";
 import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
@@ -155,9 +152,9 @@ export default function JuliaFeaturePage({
                 Use Julia in Pluto, Jupyter, and shared modeling projects.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Model, run simulations, and review results with your lab or
-                team while Julia notebooks, Pluto sessions, source files, and
-                terminals stay together.
+                For engineering and R&D teams running simulations and models in
+                Julia, review results together while notebooks, Pluto sessions,
+                source files, and terminals stay in one project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 The package environment stays reproducible, so a teammate can
@@ -188,8 +185,7 @@ export default function JuliaFeaturePage({
       <PublicSection>
         <FeatureFinalBand
           action={{
-            body:
-              "Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows.",
+            body: "Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows.",
             href: primaryHref,
             label: primaryLabel,
             title: "Start in a project",

@@ -231,10 +231,11 @@ export default function SageFeaturePage({
                 Use SageMath inside collaborative mathematics projects.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                CoCalc has long-standing roots in the SageMath community. It
-                gives SageMath a collaborative project environment for
-                notebooks, terminals, LaTeX documents, teaching workflows, and
-                supporting files.
+                CoCalc is built by the team behind SageMath, with roots in
+                technical computing going back two decades. It gives SageMath a
+                collaborative project environment for notebooks, terminals,
+                LaTeX documents, and supporting files — used across research and
+                teaching alike.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Use SageMath for computational mathematics while keeping the

@@ -367,8 +367,9 @@ function PythonUseCases() {
               maxWidth: "72ch",
             }}
           >
-            The same project can be exploratory, reproducible, teachable, and
-            publishable without copying work between disconnected tools.
+            Across research and data-science teams, the same project stays
+            exploratory, reproducible, and publishable — without copying work
+            between disconnected tools.
           </Paragraph>
         </div>
         <Row gutter={[14, 14]}>
@@ -398,8 +399,8 @@ function PythonUseCases() {
             <CompactUseCard
               accent="#389e0d"
               icon="graduation-cap"
-              title="Teaching and teams"
-              body="Shared notebooks, visible cursors, side chat, and TimeTravel let a class or team work from the same Python stack."
+              title="Teams and teaching"
+              body="Shared notebooks, visible cursors, side chat, and TimeTravel let a data-science team or a class work from the same Python stack."
             />
           </Col>
         </Row>

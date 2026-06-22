@@ -33,6 +33,7 @@ const ROUTE_GROUPS = {
     "/features/terminal",
     "/features/linux",
     "/features/teaching",
+    "/features/automations",
     "/features/python",
     "/features/latex-editor",
     "/features/whiteboard",
@@ -43,6 +44,7 @@ const ROUTE_GROUPS = {
     "/features/r-statistical-software",
     "/features/julia",
     "/features/octave",
+    "/features/more-languages",
   ],
   guides: ["/guides"],
   "conversion-spine": [
@@ -234,6 +236,7 @@ const ROUTE_RULES = {
   },
   "/features": {
     requireText: [
+      "Durable, collaborative workflows for industry R&D teams",
       "Runtime",
       "Notebooks and writing",
       "AI workflows",
@@ -314,11 +317,24 @@ const ROUTE_RULES = {
     ],
     requireSelectors: [".cocalc-cli-workflow-flow"],
   },
+  "/features/automations": {
+    requireText: [
+      "Project automations are most useful when work repeats",
+      "scheduled analysis or model run",
+      "Start a workflow",
+    ],
+    requireSelectors: [
+      ".cocalc-feature-final-band",
+      ".cocalc-feature-final-panel",
+    ],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+  },
   "/features/jupyter-notebook": {
     requireText: [
       "When the notebook depends on more than cells",
       "Choose the notebook path that fits",
       "Ready to use Jupyter in CoCalc?",
+      "For industry R&D, data-science, and research teams",
     ],
     forbidText: ["Ask about Jupyter workflows"],
     requireSelectors: [".cocalc-feature-final-panel"],
@@ -359,6 +375,7 @@ const ROUTE_RULES = {
       "A terminal is a live project document.",
       "Choose the terminal path that fits",
       "Ready to use terminals in CoCalc?",
+      "familiar terminal experience in the browser",
     ],
     forbidText: ["Ask about terminal workflows"],
     requireSelectors: [".cocalc-feature-final-panel"],
@@ -369,6 +386,7 @@ const ROUTE_RULES = {
       "A Linux workspace you can actually administer.",
       "Choose the Linux path that fits",
       "Ready to use Linux in CoCalc?",
+      "Industry R&D, data-science, and engineering teams",
     ],
     forbidText: ["Ask about Linux environments"],
     requireSelectors: [".cocalc-feature-final-panel"],
@@ -379,6 +397,7 @@ const ROUTE_RULES = {
       "Python that moves from notebook to script to paper.",
       "The right interface at each stage",
       "Start using Python",
+      "Across research and data-science teams",
     ],
     forbidText: ["Ask about Python workflows"],
     requireSelectors: [".cocalc-feature-final-panel"],
@@ -390,6 +409,7 @@ const ROUTE_RULES = {
       "What stays with the paper",
       "Use computation as part of the writing process",
       "A practical writing loop",
+      "visible coauthor cursors",
     ],
     requireSelectors: [".cocalc-latex-computation-list"],
     forbidText: ["PDF build", "Ask about LaTeX workflows"],
@@ -412,6 +432,7 @@ const ROUTE_RULES = {
       "Keep R close to the rest of the analysis.",
       "Project context",
       "Start in a project",
+      "For data-science and research teams",
     ],
     requireSelectors: [
       ".cocalc-feature-context-list",
@@ -424,6 +445,7 @@ const ROUTE_RULES = {
       "Keep Julia close to the rest of the research.",
       "Project context",
       "Start in a project",
+      "For engineering and R&D teams",
     ],
     requireSelectors: [
       ".cocalc-feature-context-list",
@@ -436,6 +458,7 @@ const ROUTE_RULES = {
       "Run reproducible Octave work without local setup drift.",
       "Project context",
       "Start in a project",
+      "For engineering and data-science teams",
     ],
     requireSelectors: [
       ".cocalc-feature-context-list",
@@ -443,9 +466,21 @@ const ROUTE_RULES = {
     ],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
+  "/features/more-languages": {
+    requireText: [
+      "Use the language that fits the project.",
+      "large Fortran, C, or Rust simulations",
+      "Start in a project",
+    ],
+    requireSelectors: [
+      ".cocalc-feature-final-band",
+      ".cocalc-feature-final-panel",
+    ],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+  },
   "/features/whiteboard": {
     requireText: [
-      "Whiteboards and slides for math, code, and collaboration.",
+      "Whiteboards and slides that keep the code, math, and explanations together",
       "Slide decks stay close to the project.",
       "Start with a board or deck",
     ],
@@ -459,6 +494,7 @@ const ROUTE_RULES = {
     requireText: [
       "Present from the same canvas where technical ideas are built.",
       "Start with a deck",
+      "For R&D and data-science teams",
     ],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],

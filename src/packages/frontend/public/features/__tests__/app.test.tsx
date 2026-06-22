@@ -178,7 +178,8 @@ describe("PublicFeaturesApp", () => {
       slug: "latex-editor",
     },
     {
-      marker: "Whiteboards and slides for math, code, and collaboration.",
+      marker:
+        "Whiteboards and slides that keep the code, math, and explanations together — in one durable, reviewable project.",
       slug: "whiteboard",
     },
     {
@@ -261,6 +262,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText(
         /notebooks, code, terminals, documents, outputs, TimeTravel history/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Durable, collaborative workflows for industry R&D teams",
       ),
     ).not.toBeNull();
     expect(container.textContent ?? "").not.toMatch(/command-line surface/i);
@@ -812,7 +818,7 @@ describe("PublicFeaturesApp", () => {
     // Hero marker = page identity anchor.
     expect(
       screen.getByText(
-        "Whiteboards and slides for math, code, and collaboration.",
+        "Whiteboards and slides that keep the code, math, and explanations together — in one durable, reviewable project.",
       ),
     ).not.toBeNull();
     // Route-specific section keyword (whiteboard runs Jupyter cells).

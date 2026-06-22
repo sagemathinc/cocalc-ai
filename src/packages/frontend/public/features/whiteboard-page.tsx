@@ -22,7 +22,7 @@ const { Paragraph, Text, Title } = Typography;
 function WhiteboardMock() {
   const inputs = [
     ["markdown", "Markdown note", "Proof idea + checklist", "#d4380d"],
-    ["tex", "KaTeX math", "∫ sin(x²) dx", "#2f6fda"],
+    ["tex", "LaTeX math", "∫ sin(x²) dx", "#2f6fda"],
     ["jupyter", "Jupyter cell", "run after prerequisites", "#389e0d"],
   ] satisfies [IconName, string, string, string][];
 
@@ -276,13 +276,13 @@ export default function WhiteboardFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Whiteboards and slides for math, code, and collaboration.
+                Whiteboards and slides that keep the code, math, and
+                explanations together — in one durable, reviewable project.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Use a shared canvas for editable math, Jupyter cells, diagrams,
-                and slide-sized pages. Everything lives in the project, so
-                collaborators keep the code, explanations, and presentation
-                together.
+                R&D and data-science teams use a shared canvas for editable
+                math, Jupyter cells, diagrams, and slide-sized pages. Everything
+                lives in one project, so the work stays together as it evolves.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -325,7 +325,7 @@ export default function WhiteboardFeaturePage({
           <BulletList
             items={[
               "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
-              "Review a collaborator's work in place — the code, output, and math are all on the board to inspect.",
+              "Review a collaborator's work in place with TimeTravel — replay how the board evolved and recover earlier versions, with the code, output, and math all there to inspect.",
               "Run office hours or a live support session on a shared board everyone can edit.",
               "Choose a deck when the explanation needs an ordered presentation path, not a static export.",
             ]}

@@ -160,7 +160,7 @@ function SoftwareLayersDiagram() {
       title: "Project files",
     },
     {
-      body: "Use pip, conda, R, npm, pnpm, TeX, and language-specific package managers where the code runs.",
+      body: "Use pip, conda, R, Julia, Octave, npm, pnpm, TeX, and language-specific package managers where the code runs.",
       icon: "python",
       title: "Language packages",
     },
@@ -257,11 +257,11 @@ export default function LinuxFeaturePage({
                 servers, and keep the environment with the project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                A research or engineering team can stand up a real Ubuntu
-                environment for analysis, builds, and local services. Because
-                the environment lives in the project, teammates can see how it
-                was set up and return to a known-good state instead of
-                rebuilding it.
+                Industry R&D, data-science, and engineering teams can stand up a
+                real Ubuntu environment for analysis, builds, and local
+                services. Because the environment lives in the project,
+                teammates can see how it was set up and return to a known-good
+                state instead of rebuilding it.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -360,8 +360,10 @@ PY`}</code>
                 can understand.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Codex can read the exact error, choose the right layer, run the
-                command, and verify that the package or binary is available.
+                A shell-capable agent like Codex can help — reading the exact
+                error, suggesting the right layer, and running the command —
+                while the work stays in the project where your team can see and
+                adjust it.
               </Paragraph>
             </Flex>
           </Col>
@@ -373,10 +375,10 @@ PY`}</code>
           Build course and team environments once
         </Title>
         <Paragraph style={{ margin: 0, maxWidth: 820 }}>
-          Reusable environment images let an instructor, team lead, or site
-          admin turn a configured Linux environment into a base for many
-          projects. Install the right packages, include data or tools, and
-          publish upgraded versions instead of repeating setup by hand.
+          Reusable environment images let a team lead, lab admin, or instructor
+          turn a configured Linux environment into a base for many projects.
+          Install the right packages, include data or tools, and publish
+          upgraded versions instead of repeating setup by hand.
         </Paragraph>
         <BulletList
           items={[
