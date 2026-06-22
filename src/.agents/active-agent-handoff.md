@@ -46,6 +46,36 @@ Known risks:
 
 ---
 
+### Codex - octave hierarchy polish (2026-06-22 15:15 PDT)
+
+- **START 2026-06-22 15:09 PDT:** Continuing design-polish item 15 after the
+  whiteboard residual landed in `717f76707f` and handoff `0291848833` was
+  pushed. Taking the next bounded residual sub-slice: `/features/octave`.
+  Claimed files: `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Do not touch protected
+  `home/**`, footer, pricing/compliance, type/palette token values, pitch/docs
+  content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 15:15 PDT:** Octave residual sub-slice landed in
+  `7283d4fa67` (`frontend/public: refine octave heading hierarchy`). The first
+  Octave proof-section title now uses the existing `PUBLIC_TYPE.subhead` scale
+  while preserving the visible hero as the page's `h2` and the proof section
+  as `h3`, restoring clearer visual dominance for the hero without changing
+  copy or proof. Added an Octave-specific canary for that hierarchy. Validation
+  passed: Prettier on touched files; focused feature/browser-QA harness Jest
+  134/134; `git diff --check`; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev` from git revision `7283d4fa67` with only the
+  existing local debug-log permission warning; browser QA desktop+mobile for
+  `/features/octave` passed 38/38 at `/tmp/cocalc-public-qa-DXTbx2`.
+  Screenshot inspection: hero headline now reads stronger than the first proof
+  heading on desktop/mobile, with no overlap. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Item 15 remains open; remaining residual candidates:
+  more-languages cramped pill/right-rail and sage/automations text-heavy left
+  columns.
+
 ### Codex - whiteboard residual polish (2026-06-22 15:08 PDT)
 
 - **START 2026-06-22 14:57 PDT:** Continuing design-polish item 15 after the

@@ -486,6 +486,27 @@ Current disposition:
 - Representative browser QA/screenshots covered `/features/whiteboard` on
   desktop and mobile.
 
+### FS-016 - Refine the Octave hero hierarchy
+
+Status: `done`
+
+Evidence:
+
+- Design-polish item 15 called out `/features/octave`: the hero headline and
+  first proof-section heading rendered too close in size/weight, especially on
+  mobile, reducing the hero's dominance.
+
+Current disposition:
+
+- The visible Octave hero remains the route's `h2`, preserving the detail-page
+  heading model.
+- The first Octave proof-section title remains an `h3` but now uses the
+  existing `PUBLIC_TYPE.subhead` scale so it no longer competes with the hero.
+- A focused test canary asserts the hero/proof heading relationship and the
+  tokenized section-heading size.
+- Representative browser QA/screenshots covered `/features/octave` on desktop
+  and mobile.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
