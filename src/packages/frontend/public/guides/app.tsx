@@ -272,9 +272,9 @@ function GuideDirectory() {
                     rel="noreferrer"
                     target="_blank"
                   >
-                    Full guide library
+                    Open all guides
                   </Button>
-                  <Button href={appPath("docs")}>Reference docs</Button>
+                  <Button href={appPath("docs")}>Browse docs</Button>
                 </Flex>
               </Flex>
             </Col>

@@ -423,18 +423,27 @@ describe("PublicApp", () => {
     expect(document.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(screen.queryByText("CoCalc-AI")).toBeNull();
     expect(
-      screen.getByRole("link", { name: /Open all guides/i }),
-    ).toHaveAttribute("href", "https://sagemathinc.github.io/cocalc-guides/");
+      screen
+        .getAllByRole("link", { name: "Open all guides" })
+        .every(
+          (link) =>
+            link.getAttribute("href") ===
+            "https://sagemathinc.github.io/cocalc-guides/",
+        ),
+    ).toBe(true);
     expect(
       screen.getByRole("link", { name: /From notebook to paper/i }),
     ).toHaveAttribute(
       "href",
       "https://sagemathinc.github.io/cocalc-guides/paper-polishing/",
     );
-    expect(screen.getByRole("link", { name: "Browse docs" })).toHaveAttribute(
-      "href",
-      "/docs",
-    );
+    expect(
+      screen
+        .getAllByRole("link", { name: "Browse docs" })
+        .every((link) => link.getAttribute("href") === "/docs"),
+    ).toBe(true);
+    expect(screen.queryByRole("link", { name: "Full guide library" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Reference docs" })).toBeNull();
   });
 
   it("uses the stored home-bay origin for public auth bootstrap", async () => {

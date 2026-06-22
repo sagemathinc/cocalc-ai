@@ -1325,3 +1325,27 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `pnpm -C src/packages/static build:dev`; browser QA on
   `/products/cocalc-rocket` desktop+mobile passed 40/40. Screenshots inspected
   from `/tmp/cocalc-public-qa-TWYx1B`.
+
+---
+
+## Codex — post-framing P2 Guides CTA label consistency (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  only `/guides` duplicate CTA-label normalization: use one label for the guide
+  library destination and one label for the docs destination across the hero and
+  task-finder section, preserving hrefs, guide cards, layout, and route proof.
+  Claimed files: `guides/app.tsx`, `public/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, and this ledger. Guardrails: no
+  protected home, pitch docs, docs routes/content, pricing/compliance,
+  type/palette work, product pages, or the untracked dedicated-compute draft.
+- **END 2026-06-22:** Guides CTA labels normalized and validated. The guide
+  library destination now uses `Open all guides` in both the hero and task
+  finder; the docs destination uses `Browse docs` in both places. Hrefs,
+  guide cards, layout, and route proof were preserved. Updated public app tests
+  to assert both repeated labels point to the same destinations and browser-QA
+  rules to forbid the old `Full guide library` / `Reference docs` labels.
+  Validation passed: `git diff --check`; focused public app + browser-QA
+  harness Jest 43/43; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/guides` desktop+mobile passed
+  60/60. Screenshots inspected from `/tmp/cocalc-public-qa-13mPlu`.

@@ -559,9 +559,18 @@ const ROUTE_RULES = {
       "Self-hosting CoCalc",
       "How CoCalc works",
     ],
+    forbidText: ["Full guide library", "Reference docs"],
     forbidSelectors: [".ant-tag"],
     requireSelectors: [".cocalc-guide-link-compact"],
     requireLinks: [
+      {
+        text: "Open all guides",
+        hrefIncludes: "https://sagemathinc.github.io/cocalc-guides/",
+      },
+      {
+        text: "Browse docs",
+        hrefIncludes: "/docs",
+      },
       {
         text: "From notebook to paper",
         hrefIncludes: "/paper-polishing/",
