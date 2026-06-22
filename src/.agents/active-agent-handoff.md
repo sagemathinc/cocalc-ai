@@ -88,6 +88,39 @@ Known risks:
   remains untouched. STOP: do not forage raw audits; wait for Claude audit or
   a new curated queue item.
 
+---
+
+### Codex - scheduled landing-page improvement loop no-op (2026-06-22 11:36 PDT)
+
+- **START 2026-06-22 11:36 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS,
+  multi-agent operating model, website operating system, frozen Brief,
+  public-site skill, site quality regimen, consolidated adversarial-fix slice,
+  post-framing queue, finite issues tracker, active framing workplan, and this
+  handoff ledger. Verified preview hub pid `15671` serves
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/watch process
+  was observed. Targeted queue check found no released item: Claude's current
+  status says the consolidated adversarial-fix slice is landed and the queue is
+  drained pending Claude audit, the post-framing queue remains completed or
+  held, the stale FS-001/dedicated-compute work remains held, and raw-audit
+  foraging remains off limits. Claimed files: this ledger and
+  `/home/user/cocalc-shared/codex-turn-log.md` only. Guardrails: no protected
+  home, pricing/compliance, type/palette/palette-token work, pitch docs,
+  docs-route content, product/feature/support source edits, raw-audit foraging,
+  support-alert token follow-up, stale FS-001 work, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 11:36 PDT:** QUEUE DRAINED. No public-site source files
+  were changed and no build/browser QA was run because no route was touched.
+  The latest public-site source-change commit remains `1c5f296324`
+  (`frontend/public: normalize final CTAs and cleanup a11y`); this turn
+  updates only coordination artifacts. The branch matched
+  `origin/blaec-synthesis-2026-06-18` before this ledger update, and the known
+  untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  draft is still untouched. Waiting for Claude's audit or for Blaec/Claude to
+  release a new curated queue item or decide held items.
+
 ## Current state (2026-06-18)
 
 ### Claude — now ASSISTANT / observer (role change 2026-06-20)
