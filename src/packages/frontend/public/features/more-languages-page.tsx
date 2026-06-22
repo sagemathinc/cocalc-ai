@@ -18,6 +18,39 @@ import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
+const LANGUAGE_ACCENT = PUBLIC_COLORS.mutedText;
+
+function LanguageStackCard({
+  body,
+  icon,
+  title,
+}: {
+  body: string;
+  icon: IconName;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: PUBLIC_ELEVATION.compact,
+        height: "100%",
+        padding: 14,
+      }}
+    >
+      <Flex align="center" gap={12}>
+        <IconBadge accent={LANGUAGE_ACCENT} icon={icon} size="sm" />
+        <div>
+          <Text strong>{title}</Text>
+          <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
+        </div>
+      </Flex>
+    </div>
+  );
+}
+
 function MoreLanguagesProjectMock() {
   const blocks = [
     ["file-code", "Compiled code", "C, C++, Fortran, Rust, Go"],
@@ -30,8 +63,7 @@ function MoreLanguagesProjectMock() {
     <div
       aria-label="Illustration of additional language workflows in a CoCalc project"
       style={{
-        background:
-          "linear-gradient(145deg, #ffffff 0%, #f5f9ff 54%, #f7faf7 100%)",
+        background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 54%, ${PUBLIC_COLORS.pageBackground} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: PUBLIC_ELEVATION.lg,
@@ -40,7 +72,7 @@ function MoreLanguagesProjectMock() {
     >
       <Flex vertical gap={16}>
         <Flex align="center" gap={10} wrap>
-          <IconBadge accent="#4b5563" icon="code" />
+          <IconBadge accent={LANGUAGE_ACCENT} icon="code" />
           <div>
             <Text strong>Project language stack</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
@@ -52,23 +84,7 @@ function MoreLanguagesProjectMock() {
         <Row gutter={[12, 12]}>
           {blocks.map(([icon, title, body]) => (
             <Col key={title} xs={24} sm={12}>
-              <div
-                style={{
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: PUBLIC_RADIUS.panel,
-                  height: "100%",
-                  padding: 14,
-                }}
-              >
-                <Flex align="center" gap={12}>
-                  <IconBadge accent="#4b5563" icon={icon} size="sm" />
-                  <div>
-                    <Text strong>{title}</Text>
-                    <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
-                  </div>
-                </Flex>
-              </div>
+              <LanguageStackCard body={body} icon={icon} title={title} />
             </Col>
           ))}
         </Row>
@@ -87,24 +103,16 @@ function MoreLanguagesFit() {
               Use the language that fits the project.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              The headline feature cards cover the most common public pages, but
-              CoCalc projects are ordinary collaborative Linux workspaces. That
-              makes room for compiled languages, JVM and web stacks, shell
-              scripts, SQL/data tools, command-line tools, and supporting code
-              that does not need its own top-level feature page.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              Keep the source, generated output, notes, and review context
-              together so collaborators can see how the work was run; when the
-              work moves into notebooks or project documents, visible cursors
-              and, for notebooks, shared kernel sessions keep review in the same
-              place.
+              CoCalc projects are collaborative Linux workspaces, so compiled
+              languages, JVM and web stacks, shell scripts, SQL/data tools, and
+              command-line tools can live beside the notebooks and documents
+              that explain them.
             </Paragraph>
           </Flex>
         </Col>
         <Col xs={24} lg={12}>
           <ContextList
-            accent="#4b5563"
+            accent={LANGUAGE_ACCENT}
             items={[
               {
                 icon: "terminal",
@@ -158,9 +166,8 @@ export default function MoreLanguagesFeaturePage({
                 shared project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                CoCalc is a good fit when the language is part of a broader
-                technical workflow: source files, command-line runs, generated
-                output, notes, and review all stay in one project.
+                Use a project when source files, command-line runs, generated
+                output, notes, and review need to stay together.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

@@ -167,7 +167,6 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#fff8e8",
     "#ffffff",
   ],
-  "more-languages-page.tsx": ["#4b5563", "#f5f9ff", "#f7faf7", "#ffffff"],
   "octave-page.tsx": ["#d4380d", "#f4f9ff", "#fff7f1", "#ffffff"],
   "python-page.tsx": [
     "#278c83",
