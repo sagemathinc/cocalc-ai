@@ -96,6 +96,7 @@ type RootfsRecipeModule = {
 export type RootfsRecipeRunOptions = {
   browserId?: string;
   configOut?: string;
+  detach?: boolean;
   dryRun?: boolean;
   here?: boolean;
   moduleDir?: string;
@@ -118,6 +119,17 @@ export type RootfsRecipeRunResult = {
   config: RootfsConfigExport;
   config_path?: string;
   publish?: unknown;
+};
+
+export type RootfsRecipeBuildPlan = {
+  recipe: string;
+  recipe_path: string;
+  module_dir: string;
+  base?: RootfsRecipe["base"];
+  builder?: RootfsRecipe["builder"];
+  config: RootfsConfigExport;
+  resolved_recipe: RootfsRecipe;
+  script: string;
 };
 
 export type RootfsRecipeListResult = {
@@ -513,10 +525,21 @@ export function renderRootfsRecipeDryRunScript(
   recipePath: string,
   options: Pick<RootfsRecipeRunOptions, "moduleDir" | "stepTimeout"> = {},
 ): string {
+  return resolveRootfsRecipeBuildPlan(recipePath, options).script;
+}
+
+export function resolveRootfsRecipeBuildPlan(
+  recipePath: string,
+  options: Pick<RootfsRecipeRunOptions, "moduleDir" | "stepTimeout"> = {},
+): RootfsRecipeBuildPlan {
   const loadedRecipe = loadRootfsRecipeSource(recipePath, options.moduleDir);
   const { recipe } = loadedRecipe;
   const moduleDir = loadedRecipe.moduleDir;
   const defaultCommandTimeout = parseRecipeCommandTimeout(options.stepTimeout);
+  const contributionConfig = rootfsRecipeConfigForLoadedRecipe({
+    loadedRecipe,
+    moduleDir,
+  });
   const blocks: string[] = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
@@ -532,7 +555,6 @@ export function renderRootfsRecipeDryRunScript(
     "",
   ];
 
-  const contributionConfig = emptyRecipeConfig(recipe);
   for (let i = 0; i < (recipe.steps ?? []).length; i += 1) {
     const step = recipe.steps![i];
     blocks.push(
@@ -545,9 +567,7 @@ export function renderRootfsRecipeDryRunScript(
       }),
       "",
     );
-    mergeRecipeConfig(contributionConfig, resultContribution(step, moduleDir));
   }
-  mergeRecipeConfig(contributionConfig, emptyRecipeConfig(recipe));
 
   for (let i = 0; i < (recipe.verify ?? []).length; i += 1) {
     const verify = recipe.verify![i];
@@ -577,7 +597,16 @@ export function renderRootfsRecipeDryRunScript(
     "",
   );
 
-  return blocks.join("\n");
+  return {
+    recipe: recipe.name ?? loadedRecipe.recipePath,
+    recipe_path: loadedRecipe.recipePath,
+    module_dir: moduleDir,
+    base: recipe.base,
+    builder: recipe.builder,
+    config: contributionConfig,
+    resolved_recipe: recipe,
+    script: blocks.join("\n"),
+  };
 }
 
 export async function runRootfsRecipe({
@@ -1662,6 +1691,21 @@ function emptyRecipeConfig(recipe: RootfsRecipe): RootfsConfigExport {
     theme: publish.theme as any,
     content: publish.content as any,
   };
+}
+
+function rootfsRecipeConfigForLoadedRecipe({
+  loadedRecipe,
+  moduleDir,
+}: {
+  loadedRecipe: LoadedRecipe;
+  moduleDir: string;
+}): RootfsConfigExport {
+  const contributionConfig = emptyRecipeConfig(loadedRecipe.recipe);
+  for (const step of loadedRecipe.recipe.steps ?? []) {
+    mergeRecipeConfig(contributionConfig, resultContribution(step, moduleDir));
+  }
+  mergeRecipeConfig(contributionConfig, emptyRecipeConfig(loadedRecipe.recipe));
+  return contributionConfig;
 }
 
 function resultContribution(

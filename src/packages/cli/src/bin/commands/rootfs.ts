@@ -21,7 +21,9 @@ import {
   explainRootfsRecipe,
   listRootfsRecipes,
   renderRootfsRecipeDryRunScript,
+  resolveRootfsRecipeBuildPlan,
   runRootfsRecipe,
+  type RootfsRecipeBuildPlan,
   type RootfsRecipeRunResult,
   type RootfsRecipeRunOptions,
 } from "./rootfs-recipe";
@@ -217,7 +219,7 @@ function parseRootfsConfigFile(value?: string): RootfsConfigExport | undefined {
 }
 
 function projectRootfsPublishConfigEnvelope(
-  result: RootfsRecipeRunResult,
+  result: Pick<RootfsRecipeRunResult, "recipe" | "recipe_path" | "config">,
 ): ProjectRootfsPublishConfig {
   return {
     kind: "cocalc-project-rootfs-publish-config",
@@ -229,6 +231,139 @@ function projectRootfsPublishConfigEnvelope(
     },
     config: result.config,
   };
+}
+
+async function startRootfsBuilderProject({
+  ctx,
+  deps,
+  options,
+  plan,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  options: RootfsRecipeRunOptions;
+  plan: RootfsRecipeBuildPlan;
+}): Promise<{ project_id: string; created_project: boolean }> {
+  if (options.project) {
+    const project = await deps.resolveProjectFromArgOrContext(
+      ctx,
+      options.project,
+    );
+    await waitForProjectStart({ ctx, deps, project_id: project.project_id });
+    return { project_id: project.project_id, created_project: false };
+  }
+  const project_id = await ctx.hub.projects.createProject({
+    title: options.title ?? `RootFS build: ${plan.recipe}`,
+    rootfs_image: plan.base?.image,
+    rootfs_image_id: plan.base?.image_id,
+    run_quota: plan.builder?.run_quota,
+    start: false,
+  });
+  await waitForProjectStart({ ctx, deps, project_id });
+  return { project_id, created_project: true };
+}
+
+async function waitForProjectStart({
+  ctx,
+  deps,
+  project_id,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  project_id: string;
+}): Promise<void> {
+  const op = await ctx.hub.projects.start({ project_id, wait: false });
+  const waited = await deps.waitForLro(ctx, op.op_id, {
+    timeoutMs: ctx.timeoutMs,
+    pollMs: ctx.pollMs,
+  });
+  if (waited.timedOut) {
+    throw new Error(
+      `timeout waiting for rootfs build project start op ${op.op_id}; last_status=${waited.status}`,
+    );
+  }
+  if (waited.status !== "succeeded" && waited.status !== "done") {
+    throw new Error(
+      `rootfs build project start failed: status=${waited.status} error=${waited.error ?? "unknown"}`,
+    );
+  }
+}
+
+const ROOTFS_BUILD_TERMINAL_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "unknown",
+]);
+
+async function followRootfsBuildLog({
+  ctx,
+  project_id,
+  build_id,
+}: {
+  ctx: any;
+  project_id: string;
+  build_id: string;
+}) {
+  let byteOffset = 0;
+  while (true) {
+    const chunk = await ctx.hub.projects.getProjectRootfsBuildLog({
+      project_id,
+      build_id,
+      byte_offset: byteOffset,
+      max_bytes: 128 * 1024,
+    });
+    if (
+      chunk.text &&
+      !ctx.globals?.quiet &&
+      !ctx.globals?.json &&
+      ctx.globals?.output !== "json"
+    ) {
+      process.stderr.write(chunk.text);
+    }
+    byteOffset = chunk.next_byte_offset ?? byteOffset;
+    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    const status = current.status ?? "unknown";
+    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+      return current;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
+    );
+  }
+}
+
+function formatRootfsBuildStartHuman(result: {
+  recipe: string;
+  recipe_path: string;
+  project_id: string;
+  created_project: boolean;
+  build: any;
+  saved_rootfs_publish_config: boolean;
+}): string {
+  const lines = [
+    `recipe: ${result.recipe}`,
+    `recipe_path: ${result.recipe_path}`,
+    `project_id: ${result.project_id}`,
+    `created_project: ${result.created_project}`,
+    `build_id: ${result.build.build_id}`,
+    `host_id: ${result.build.host_id}`,
+    `status: ${result.build.status}`,
+  ];
+  if (result.build.paths?.log) {
+    lines.push(`log_path: ${result.build.paths.log}`);
+  }
+  if (result.build.paths?.script) {
+    lines.push(`script_path: ${result.build.paths.script}`);
+  }
+  lines.push(
+    `saved_rootfs_publish_config: ${result.saved_rootfs_publish_config}`,
+    `next: cocalc rootfs publish --project=${result.project_id}`,
+  );
+  return lines.join("\n");
 }
 
 async function rootfsPublishConfigForProject({
@@ -1084,6 +1219,10 @@ export function registerRootfsCommand(
     .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option("--config-out <path>", "also write generated RootFS config JSON")
     .option(
+      "--detach",
+      "start the durable build and return without following logs",
+    )
+    .option(
       "--step-timeout <seconds>",
       "default timeout for each recipe step command",
       "900",
@@ -1095,44 +1234,93 @@ export function registerRootfsCommand(
         command: Command,
       ) => {
         await withContext(command, "rootfs build", async (ctx) => {
-          const result = await runRootfsRecipe({
+          const deps = {
+            withContext,
+            resolveProjectFromArgOrContext,
+            resolveProjectProjectApi,
+            waitForLro,
+            serializeLroSummary,
+          };
+          if (opts.here) {
+            const result = await runRootfsRecipe({
+              ctx,
+              deps,
+              options: {
+                ...opts,
+                publish: false,
+                wait: false,
+              },
+              recipePath,
+            });
+            const publishConfig = projectRootfsPublishConfigEnvelope(result);
+            await ctx.hub.projects.setProjectRootfsPublishConfig({
+              project_id: result.project_id,
+              config: publishConfig,
+            });
+            if (opts.configOut) {
+              writeFileSync(
+                opts.configOut,
+                `${JSON.stringify(result.config, null, 2)}\n`,
+              );
+            }
+            if (ctx.globals?.json || ctx.globals?.output === "json") {
+              return {
+                ...result,
+                saved_rootfs_publish_config: true,
+              };
+            }
+            return [
+              formatRootfsRecipeRunHuman(result),
+              "",
+              "saved_rootfs_publish_config: true",
+              `next: cocalc rootfs publish --project=${result.project_id}`,
+            ].join("\n");
+          }
+          const plan = resolveRootfsRecipeBuildPlan(recipePath, opts);
+          const project = await startRootfsBuilderProject({
             ctx,
-            deps: {
-              resolveProjectFromArgOrContext,
-              resolveProjectProjectApi,
-              waitForLro,
-              serializeLroSummary,
-            },
-            options: {
-              ...opts,
-              publish: false,
-              wait: false,
-            },
-            recipePath,
+            deps,
+            options: opts,
+            plan,
           });
-          const publishConfig = projectRootfsPublishConfigEnvelope(result);
+          const publishConfig = projectRootfsPublishConfigEnvelope(plan);
           await ctx.hub.projects.setProjectRootfsPublishConfig({
-            project_id: result.project_id,
+            project_id: project.project_id,
             config: publishConfig,
+          });
+          const build = await ctx.hub.projects.startProjectRootfsBuild({
+            project_id: project.project_id,
+            script: plan.script,
+            recipe_ref: plan.recipe,
+            resolved_recipe_json: plan.resolved_recipe,
+            metadata_json: plan.config,
           });
           if (opts.configOut) {
             writeFileSync(
               opts.configOut,
-              `${JSON.stringify(result.config, null, 2)}\n`,
+              `${JSON.stringify(plan.config, null, 2)}\n`,
             );
           }
+          const finalBuild = opts.detach
+            ? build
+            : await followRootfsBuildLog({
+                ctx,
+                project_id: project.project_id,
+                build_id: build.build_id,
+              });
+          const result = {
+            recipe: plan.recipe,
+            recipe_path: plan.recipe_path,
+            project_id: project.project_id,
+            created_project: project.created_project,
+            build: finalBuild,
+            config: plan.config,
+            saved_rootfs_publish_config: true,
+          };
           if (ctx.globals?.json || ctx.globals?.output === "json") {
-            return {
-              ...result,
-              saved_rootfs_publish_config: true,
-            };
+            return result;
           }
-          return [
-            formatRootfsRecipeRunHuman(result),
-            "",
-            "saved_rootfs_publish_config: true",
-            `next: cocalc rootfs publish --project=${result.project_id}`,
-          ].join("\n");
+          return formatRootfsBuildStartHuman(result);
         });
       },
     );
