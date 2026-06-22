@@ -20,6 +20,7 @@ import { emitSuccess } from "../core/cli-output";
 import {
   explainRootfsRecipe,
   listRootfsRecipes,
+  renderRootfsRecipeDryRunScript,
   runRootfsRecipe,
   type RootfsRecipeRunResult,
   type RootfsRecipeRunOptions,
@@ -969,6 +970,10 @@ export function registerRootfsCommand(
     .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option("--config-out <path>", "write generated RootFS config JSON")
     .option(
+      "--dry-run",
+      "print a runnable shell script showing the expanded recipe commands without creating or mutating a project",
+    )
+    .option(
       "--step-timeout <seconds>",
       "default timeout for each recipe step command",
       "900",
@@ -979,6 +984,19 @@ export function registerRootfsCommand(
         opts: RootfsRecipeRunOptions,
         command: Command,
       ) => {
+        if (opts.dryRun) {
+          const globals = command.optsWithGlobals?.() ?? {};
+          const script = renderRootfsRecipeDryRunScript(recipePath, opts);
+          if (globals.json || globals.output === "json") {
+            emitSuccess({ globals }, "rootfs recipe run --dry-run", {
+              recipe: recipePath,
+              script,
+            });
+          } else if (!globals.quiet) {
+            console.log(script);
+          }
+          return;
+        }
         await withContext(command, "rootfs recipe run", async (ctx) => {
           const result = await runRootfsRecipe({
             ctx,

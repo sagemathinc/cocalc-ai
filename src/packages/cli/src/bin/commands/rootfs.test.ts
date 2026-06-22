@@ -913,6 +913,104 @@ test("rootfs recipe run executes bundled module scripts from the embedded regist
   assert.match(execCalls[1].command, /cocalc-content-actions/);
 });
 
+test("rootfs recipe run --dry-run prints expanded runnable shell script", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-dry-run-"));
+  const recipePath = join(dir, "recipe.yaml");
+  const moduleDir = join(dir, "modules");
+  const modulePath = join(moduleDir, "cocalc", "demo");
+  const oldWrite = process.stdout.write;
+  let stdout = "";
+  try {
+    mkdirSync(modulePath, { recursive: true });
+    writeFileSync(
+      recipePath,
+      [
+        "version: 1",
+        "name: demo",
+        "steps:",
+        "  - uses: cocalc/demo",
+        "    with:",
+        "      value: override",
+        "    timeout: 42",
+        "verify:",
+        "  - test -f /tmp/cocalc-demo",
+        "publish:",
+        "  label: Demo",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(modulePath, "recipe.json"),
+      JSON.stringify({
+        id: "cocalc/demo",
+        version: 1,
+        description: "Demo module",
+        inputs: {
+          value: { default: "default" },
+        },
+        run: { script: "install.sh" },
+        verify: { script: "verify.sh" },
+        contributes: {
+          metadata: { tags: ["demo"] },
+        },
+      }),
+    );
+    writeFileSync(
+      join(modulePath, "install.sh"),
+      'echo "install $VALUE" > /tmp/cocalc-demo\n',
+    );
+    writeFileSync(
+      join(modulePath, "verify.sh"),
+      'grep -q "install override" /tmp/cocalc-demo\n',
+    );
+    process.stdout.write = ((chunk: any) => {
+      stdout += String(chunk);
+      return true;
+    }) as any;
+
+    const harness = rootfsDeps({
+      projects: {
+        createProject: async () => {
+          throw new Error("dry-run must not create a project");
+        },
+      },
+      resolveProjectProjectApi: async () => {
+        throw new Error("dry-run must not execute in a project");
+      },
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+      "--module-dir",
+      moduleDir,
+      "--dry-run",
+    ]);
+
+    assert.match(stdout, /^#!\/usr\/bin\/env bash/);
+    assert.match(stdout, /# Step 1: cocalc\/demo/);
+    assert.match(stdout, /# Timeout from recipe metadata: 42s/);
+    assert.match(stdout, /VALUE='override'/);
+    assert.match(stdout, /export .*VALUE/);
+    assert.match(stdout, /echo "install \$VALUE" > \/tmp\/cocalc-demo/);
+    assert.match(stdout, /# Step 1 verify: cocalc\/demo/);
+    assert.match(stdout, /grep -q "install override" \/tmp\/cocalc-demo/);
+    assert.match(stdout, /# Top-level verify 1/);
+    assert.match(stdout, /test -f \/tmp\/cocalc-demo/);
+    assert.match(stdout, /"label": "Demo"/);
+    assert.match(stdout, /"tags": \[\n      "demo"\n    \]/);
+  } finally {
+    process.stdout.write = oldWrite;
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
 test("rootfs recipe explain parses bundled machine learning GPU recipes", async () => {
   for (const [recipe, module, slug] of [
     ["ml-pytorch-gpu.yaml", "cocalc/pytorch-gpu", "pytorch-gpu-ml"],
