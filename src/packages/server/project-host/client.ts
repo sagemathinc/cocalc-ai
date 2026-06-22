@@ -71,6 +71,14 @@ export async function getRoutedHostControlClient({
         await bridge.getRuntimeLog({ host_id, get }),
       getProjectRuntimeLog: async (get) =>
         await bridge.getProjectRuntimeLog({ host_id, get }),
+      startRootfsBuild: async (start) =>
+        await bridge.startRootfsBuild({ host_id, start }),
+      getRootfsBuildStatus: async (get) =>
+        await bridge.getRootfsBuildStatus({ host_id, get }),
+      getRootfsBuildLog: async (get) =>
+        await bridge.getRootfsBuildLog({ host_id, get }),
+      cancelRootfsBuild: async (cancel) =>
+        await bridge.cancelRootfsBuild({ host_id, cancel }),
       listRootfsImages: async () => await bridge.listRootfsImages({ host_id }),
       pullRootfsImage: async (pull) =>
         await bridge.pullRootfsImage({ host_id, pull }),
