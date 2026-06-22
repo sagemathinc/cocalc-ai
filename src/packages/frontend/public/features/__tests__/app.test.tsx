@@ -115,7 +115,6 @@ const LEGACY_INLINE_STYLE_BUDGETS: Record<string, number> = {
   "python-page.tsx": 20,
   "sage-page.tsx": 21,
   "teaching-page.tsx": 35,
-  "whiteboard-page.tsx": 20,
 };
 
 // Route accent and gradient literals are being phased into shared tokens. Until
@@ -205,18 +204,7 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#fff8e8",
     "#ffffff",
   ],
-  "whiteboard-page.tsx": [
-    "#2f6fda",
-    "#389e0d",
-    "#ad6800",
-    "#d29c3c",
-    "#d4380d",
-    "#f4f9ff",
-    "#f7fbff",
-    "#fff7e6",
-    "#fff8e8",
-    "#ffffff",
-  ],
+  "whiteboard-page.tsx": ["#2f6fda", "#389e0d", "#ad6800", "#d4380d"],
 };
 
 describe("getFeaturesRouteFromPath", () => {
@@ -1147,6 +1135,8 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Put Jupyter cells in a directed graph."),
     ).not.toBeNull();
+    expect(screen.getByText("Connected page")).not.toBeNull();
+    expect(screen.queryByText("Connected explanation")).toBeNull();
     expect(
       screen.getByText("Move board work into a slide deck when it is ready."),
     ).not.toBeNull();

@@ -23,14 +23,14 @@ function WhiteboardMock() {
     ["markdown", "Markdown note", "Proof idea + checklist", "#d4380d"],
     ["tex", "LaTeX math", "∫ sin(x²) dx", "#2f6fda"],
     ["jupyter", "Jupyter cell", "run after prerequisites", "#389e0d"],
+    ["layout", "Connected page", "lecture page 2", "#d4380d"],
   ] satisfies [IconName, string, string, string][];
 
   return (
     <div
       aria-label="Illustration of a CoCalc whiteboard with markdown, math, and Jupyter cells"
       style={{
-        background:
-          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #fff8e8 100%)",
+        background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 54%, ${PUBLIC_COLORS.brandTint} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: PUBLIC_ELEVATION.lg,
@@ -50,87 +50,30 @@ function WhiteboardMock() {
           </Flex>
         </Flex>
 
-        <div
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px dashed ${PUBLIC_COLORS.border}`,
-            borderRadius: PUBLIC_RADIUS.panel,
-            padding: 18,
-          }}
-        >
-          <Row align="middle" gutter={[14, 14]}>
-            <Col xs={24} md={10}>
-              <Flex vertical gap={10}>
-                {inputs.map(([icon, title, body, accent]) => (
-                  <div
-                    key={title}
-                    style={{
-                      background: PUBLIC_COLORS.surface,
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: PUBLIC_RADIUS.panel,
-                      boxShadow: PUBLIC_ELEVATION.compact,
-                      padding: 12,
-                    }}
-                  >
-                    <Flex align="center" gap={10}>
-                      <IconBadge accent={accent} icon={icon} />
-                      <div>
-                        <Text strong>{title}</Text>
-                        <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                          {body}
-                        </div>
-                      </div>
-                    </Flex>
-                  </div>
-                ))}
-              </Flex>
-            </Col>
-            <Col xs={24} md={12}>
+        <Row gutter={[12, 12]}>
+          {inputs.map(([icon, title, body, accent]) => (
+            <Col key={title} xs={24} sm={12}>
               <div
                 style={{
-                  background:
-                    "linear-gradient(145deg, #f7fbff 0%, #ffffff 58%, #fff8e8 100%)",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderRadius: PUBLIC_RADIUS.panel,
                   boxShadow: PUBLIC_ELEVATION.card,
-                  minHeight: 224,
-                  padding: 16,
+                  height: "100%",
+                  padding: 14,
                 }}
               >
-                <Flex vertical gap={12}>
-                  <Flex align="center" gap={10}>
-                    <IconBadge accent="#d4380d" icon="layout" />
-                    <div>
-                      <Text strong>lecture page 2</Text>
-                      <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                        one canvas frame
-                      </div>
-                    </div>
-                  </Flex>
-                  <div
-                    style={{
-                      background: PUBLIC_COLORS.surface,
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: PUBLIC_RADIUS.panel,
-                      padding: 12,
-                    }}
-                  >
-                    <Text strong>Connected explanation</Text>
-                    <Paragraph
-                      style={{
-                        color: PUBLIC_COLORS.mutedText,
-                        margin: "4px 0 0",
-                      }}
-                    >
-                      Text, math, and executable cells stay editable on the
-                      board.
-                    </Paragraph>
+                <Flex align="center" gap={12}>
+                  <IconBadge accent={accent} icon={icon} />
+                  <div>
+                    <Text strong>{title}</Text>
+                    <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
                   </div>
                 </Flex>
               </div>
             </Col>
-          </Row>
-        </div>
+          ))}
+        </Row>
       </Flex>
     </div>
   );
@@ -143,17 +86,17 @@ function GraphNode({
   label,
 }: {
   accent: string;
-  highlight?: boolean;
   icon: IconName;
   label: string;
 }) {
   return (
     <div
       style={{
-        background: highlight ? "#fff7e6" : "#f7fbff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
-        padding: 14,
+        boxShadow: PUBLIC_ELEVATION.compact,
+        padding: 12,
       }}
     >
       <Flex vertical gap={8} align="center">
@@ -196,22 +139,23 @@ function ExecutionGraph() {
               border: `1px solid ${PUBLIC_COLORS.border}`,
               borderRadius: PUBLIC_RADIUS.panel,
               boxShadow: PUBLIC_ELEVATION.panel,
-              padding: 22,
+              padding: 18,
             }}
           >
-            <Flex align="center" gap={12} wrap>
+            <Flex align="center" gap={8} justify="center" wrap>
               <GraphNode accent="#2f6fda" icon="jupyter" label="data" />
-              <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
+              <Icon
+                name="arrow-right"
+                style={{ color: PUBLIC_COLORS.warning }}
+              />
               <GraphNode accent="#2f6fda" icon="jupyter" label="clean" />
-              <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
+              <Icon
+                name="arrow-right"
+                style={{ color: PUBLIC_COLORS.warning }}
+              />
               <Flex vertical gap={12}>
                 <GraphNode accent="#2f6fda" icon="jupyter" label="fit" />
-                <GraphNode
-                  accent="#ad6800"
-                  highlight
-                  icon="line-chart"
-                  label="plot"
-                />
+                <GraphNode accent="#ad6800" icon="line-chart" label="plot" />
               </Flex>
             </Flex>
           </div>
