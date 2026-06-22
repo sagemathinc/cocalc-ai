@@ -2824,3 +2824,36 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   protected-home portion of `b8388f8a41`, decide the off-queue support alert
   tokenization / palette-lane question, decide the held pricing-page items, or
   release a new curated queue.
+
+---
+
+## Codex - scheduled landing-page improvement loop no-op (2026-06-22 07:26 PDT)
+
+- **START 2026-06-22 07:26 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site skill, post-framing queue, and
+  this handoff ledger. Verified preview hub pids `13262` and `13303` serve
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/watch process
+  was observed. Targeted queue check found no new released item: Claude's
+  current status still says the autonomous Codex queue is drained, the
+  post-framing queue remains completed or held, and the raw 127-finding audit
+  remains off limits for autonomous foraging. Claimed files: this ledger and
+  `/home/user/cocalc-shared/codex-turn-log.md` only. Guardrails: no protected
+  home, pricing/compliance, type/palette/palette-token work, pitch docs,
+  docs-route content, product/feature/support source edits, raw-audit foraging,
+  support-alert token follow-up, stale FS-001 work, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 07:26 PDT:** QUEUE DRAINED. No public-site source files
+  were changed and no build/browser QA was run because no route was touched.
+  The latest public-site source-change commit remains `c4dc9ae4f7`
+  (`frontend/public: tokenize support ticket alert colors`); this turn updates
+  only coordination artifacts. The branch was ahead of
+  `origin/blaec-synthesis-2026-06-18` by thirty-one commits before this ledger
+  update, and the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Blaec/Claude to accept or revert the
+  protected-home portion of `b8388f8a41`, decide the off-queue support alert
+  tokenization / palette-lane question, decide the held pricing-page items, or
+  release a new curated queue.
