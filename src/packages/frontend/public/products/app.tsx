@@ -151,14 +151,15 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
     <Flex vertical gap={18}>
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Choose how CoCalc should run for your team.
+          Choose how CoCalc should run for your R&D team.
         </Title>
         <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-          CoCalc has one project workspace model across hosted, local, single-VM
-          appliance, and private deployment options. Files, notebooks,
-          terminals, chats, TimeTravel history, and agent context stay with the
-          project; the first decision is where that workspace should run and who
-          will operate it.
+          For industry R&D, research, and government teams, CoCalc keeps each
+          project durable and reviewable, with files, notebooks, terminals,
+          TimeTravel history, real-time collaboration, and AI/agent work
+          together in one workspace. That same project model runs hosted, local,
+          on a single-VM appliance, or as a private deployment; the first
+          decision is where it should run and who will operate it.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("features/compare")}>
@@ -364,8 +365,9 @@ function ProductSharedProjectNote() {
       <Text strong>Same project, different operating path.</Text>{" "}
       <Text style={{ color: PUBLIC_COLORS.mutedText }}>
         The product path changes where CoCalc runs and who operates it; the
-        project remains the working context for files, notebooks, terminals,
-        chats, TimeTravel recovery, real-time collaboration, and agent context.
+        project remains the durable, reviewable working context for files,
+        notebooks, terminals, chats, TimeTravel recovery, real-time
+        collaboration, and AI/agent context.
       </Text>
     </div>
   );
@@ -475,7 +477,7 @@ function ProductNotesList({ items }: { items: ReactNode[] }) {
 function CocalcRocketPage() {
   const detailItems = [
     {
-      body: "Institutions, enterprises, and platform teams planning a broader customer-operated CoCalc deployment with governance, procurement, support, and rollout requirements.",
+      body: "Industry R&D organizations, research and national labs, enterprises, and government teams planning a broader customer-operated CoCalc deployment with governance, procurement, support, and rollout requirements.",
       icon: "rocket",
       title: "Who it fits",
     },
@@ -503,7 +505,7 @@ function CocalcRocketPage() {
           { href: appPath("pricing"), label: "Pricing and licensing" },
         ]}
         title="Planning an institutional private CoCalc deployment?"
-        body="CoCalc Rocket is the broader customer-operated private-cloud path for organizations that need CoCalc to fit infrastructure, governance, procurement, and support requirements."
+        body="CoCalc Rocket is the broader customer-operated private deployment path for industry R&D, research, and government organizations that need their durable projects — notebooks, data, analysis, terminals, and team context — running inside infrastructure they control, alongside their governance, procurement, and support requirements."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid
@@ -557,7 +559,7 @@ function CocalcStarPage() {
     "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash";
   const detailItems = [
     {
-      body: "Users, instructors, labs, and small teams that want collaborators in one browser-based CoCalc instance on a public VM.",
+      body: "Research labs, data-science teams, instructors, and small groups that want collaborators in one browser-based CoCalc instance on a public VM.",
       icon: "star",
       title: "Who it fits",
     },
@@ -592,7 +594,7 @@ function CocalcStarPage() {
           },
         ]}
         title="Run a shared CoCalc site on one Ubuntu VM."
-        body="CoCalc Star gives a lab, course, workshop, or small team a browser-based CoCalc workspace on a VM they operate, with the installer handling HTTPS, onboarding, and the first admin flow."
+        body="CoCalc Star gives a research lab, data-science team, workshop, or small group a browser-based CoCalc workspace on a VM they operate — projects, notebooks, data, terminals, and history stay together — with the installer handling HTTPS, onboarding, and the first admin flow."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
@@ -615,9 +617,9 @@ function CocalcStarPage() {
             </Button>
           </Flex>
           <Paragraph style={{ margin: 0 }}>
-            The default flow detects the public IPv4 address, uses sslip.io for
-            DNS, obtains a Let's Encrypt certificate through Caddy, and shows a
-            web onboarding page before continuing.
+            The installer automatically detects the VM's public IP address, sets
+            up a secure HTTPS certificate, and shows a web onboarding page
+            before continuing.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
             The setup guide covers the firewall, onboarding, first admin,
@@ -675,7 +677,7 @@ function CocalcLaunchpadPage() {
           },
         ]}
         title="Need a bounded private CoCalc deployment?"
-        body="CoCalc Launchpad is the customer-operated private deployment path for pilots, labs, workshops, departments, and platform teams that need more control than hosted CoCalc.ai or a single-VM Star appliance."
+        body="CoCalc Launchpad is the customer-operated private deployment path for industry R&D labs, engineering and data-science teams, and departments that need their durable projects — notebooks, data, terminals, history, and collaboration — running in infrastructure they operate, with more control than hosted CoCalc.ai or a single-VM Star appliance."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid
@@ -758,7 +760,7 @@ function CocalcPlusPage() {
           },
         ]}
         title="Need local CoCalc before choosing a shared path?"
-        body="CoCalc Plus is the local source-available runtime for one user on Linux or macOS. It is the right starting point when you want to evaluate CoCalc or work on your own machine before choosing a shared path."
+        body="CoCalc Plus is the local source-available runtime for one user on Linux or macOS. It gives you the same durable project model on your own machine — files, notebooks, terminals, and history stay together — so you can evaluate CoCalc or work locally before moving to a shared path with your projects intact."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Plus positioning" />

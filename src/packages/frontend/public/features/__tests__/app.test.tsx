@@ -1362,11 +1362,13 @@ describe("PublicFeaturesApp", () => {
     );
     expect(
       screen.getByText(
-        /Evaluate CoCalc when notebooks, code, terminals, documents, outputs, TimeTravel history/i,
+        /Evaluate CoCalc when an industry R&D, data-science, or engineering team needs notebooks, code, terminals/i,
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText(/Best fit: multi-artifact projects/i),
+      screen.getByText(
+        /Best fit: durable, reproducible, multi-artifact projects/i,
+      ),
     ).not.toBeNull();
     expect(
       screen

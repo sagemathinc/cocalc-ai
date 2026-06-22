@@ -197,8 +197,8 @@ const GUIDE_GROUPS = [
       },
     ],
     intro:
-      "Guides for instructors, local evaluation, self-hosting, collaborative projects, and architecture.",
-    title: "Teaching and operating paths",
+      "Guides for self-hosting, local evaluation, durable collaborative projects, architecture, and teaching.",
+    title: "Operating paths and teaching",
   },
 ] satisfies {
   guides: GuideCardSpec[];
@@ -360,9 +360,11 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
           }
           subtitle={
             <>
-              Narrative walkthroughs for common CoCalc workflows. Start with a
-              guide when you want a practical path through the work; use docs
-              when you need reference details for this CoCalc site.
+              Practical walkthroughs of the workflows industry R&D and
+              data-science teams run in CoCalc — keeping analysis, notebooks,
+              code, and collaboration together in one durable project. Start
+              with a guide for a hands-on path through the work; use docs when
+              you need reference details for this CoCalc site.
             </>
           }
           title="Guides"

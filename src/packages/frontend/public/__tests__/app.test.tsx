@@ -1337,7 +1337,7 @@ describe("PublicApp", () => {
     expect(screen.getAllByText("CoCalc.ai").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        /Files, notebooks, terminals, chats, TimeTravel history, and agent context stay with the project/i,
+        /CoCalc keeps each project durable and reviewable, with files, notebooks, terminals, TimeTravel history/i,
       ),
     ).not.toBeNull();
     expect(screen.getByText(/Use this as a decision guide/i)).not.toBeNull();
@@ -1446,7 +1446,7 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Choose how CoCalc should run for your team."),
+      screen.getByText("Choose how CoCalc should run for your R&D team."),
     ).not.toBeNull();
     expect(screen.getByText("Which path fits?")).not.toBeNull();
     expect(
@@ -1584,7 +1584,7 @@ describe("PublicApp", () => {
       ).not.toBeNull();
     }
     expect(
-      screen.getAllByText(/customer-operated private-cloud path/i).length,
+      screen.getAllByText(/customer-operated private deployment/i).length,
     ).toBeGreaterThan(0);
     expect(screen.getAllByText(/governance, support/i).length).toBeGreaterThan(
       0,

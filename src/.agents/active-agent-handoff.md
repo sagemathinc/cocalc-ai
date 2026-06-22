@@ -1087,3 +1087,18 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/features/octave`, `/features/more-languages`, `/features/whiteboard`, and
   `/features/slides` desktop+mobile passed 540/540. Screenshots inspected from
   `/tmp/cocalc-public-qa-4HSRZz`. Ready for commit/push/rebuild.
+- **START/END Commit 2 2026-06-22:** Applied the products + compare +
+  supporting framing-alignment group. Claimed files:
+  `products/app.tsx`, `features/compare-page.tsx`, `guides/app.tsx`,
+  `docs/app.tsx`, `support/app.tsx`, public app/feature tests, and
+  `public-site-browser-qa.mjs`. Scope stayed on public landing surfaces; no
+  protected home, pitch docs, docs content/routes, pricing/compliance, type or
+  palette work, or dedicated-compute draft touched. Updated canaries and
+  browser-QA guards for changed text. Validation passed so far: stale
+  vertical-specific scan clean for changed files; `git diff --check`; focused
+  Jest 150/150 across public app, feature compare, docs, and QA harness;
+  `pnpm -C src lint:frontend`; `pnpm -C src/packages/static build:dev`;
+  browser QA on `/products`, product detail routes, `/features/compare`,
+  `/guides`, `/docs`, and `/support` desktop+mobile passed 350/350 with
+  screenshots inspected from `/tmp/cocalc-public-qa-i0foWS`. Ready for
+  commit/push/rebuild.

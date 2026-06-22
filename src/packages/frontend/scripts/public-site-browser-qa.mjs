@@ -54,6 +54,7 @@ const ROUTE_GROUPS = {
     "/features/compare",
     "/support",
     "/support/new",
+    "/docs",
   ],
   "product-details": [
     "/products/cocalc-plus",
@@ -105,7 +106,8 @@ const ROUTE_RULES = {
   "/products": {
     requireText: [
       "Ways to Run CoCalc",
-      "Choose how CoCalc should run for your team.",
+      "Choose how CoCalc should run for your R&D team.",
+      "each project durable and reviewable",
       "CoCalc.ai",
       "CoCalc Plus",
       "CoCalc Star",
@@ -144,6 +146,8 @@ const ROUTE_RULES = {
     requireText: [
       "Compare CoCalc",
       "When is CoCalc the right fit?",
+      "industry R&D, data-science, or engineering team",
+      "durable, reproducible, multi-artifact projects",
       "Decision checklist",
       "Where to go next",
     ],
@@ -155,7 +159,11 @@ const ROUTE_RULES = {
     ],
   },
   "/support": {
-    requireText: ["CoCalc Support", "Choose an operating model"],
+    requireText: [
+      "CoCalc Support",
+      "durable, collaborative workspace for industry R&D and data-science teams",
+      "Choose an operating model",
+    ],
     requireLinks: [
       { text: "Review trust materials", hrefIncludes: "/policies/trust" },
       { text: "Compare operating models", hrefIncludes: "/products" },
@@ -169,6 +177,21 @@ const ROUTE_RULES = {
       { text: "Email CoCalc", hrefIncludes: "help@cocalc.com" },
       { text: "trust materials", hrefIncludes: "/policies/trust" },
       { text: "the privacy policy", hrefIncludes: "/policies/privacy" },
+    ],
+  },
+  "/docs": {
+    requireText: [
+      "Current docs for this CoCalc instance.",
+      "durable workspace where R&D and data-science teams keep their projects together",
+      "Project secrets",
+      "Terminal",
+    ],
+    requireLinks: [
+      { text: "Print-friendly", hrefIncludes: "/docs/print" },
+      {
+        text: "Project secrets",
+        hrefIncludes: "/docs/projects/project-secrets",
+      },
     ],
   },
   "/products/cocalc-plus": {
@@ -501,6 +524,8 @@ const ROUTE_RULES = {
   },
   "/guides": {
     requireText: [
+      "Practical walkthroughs of the workflows industry R&D and data-science teams run in CoCalc",
+      "Operating paths and teaching",
       "Find the guide by task",
       "Codex agent chat",
       "Jupyter notebooks",

@@ -24,14 +24,14 @@ const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
 const DECISION_ROWS = [
   {
     cocalc:
-      "Files, notebooks, terminals, documents, output, discussion, and TimeTravel recovery should stay with the project.",
+      "Files, notebooks, terminals, documents, output, discussion, and TimeTravel recovery should stay with the project — the way an R&D or engineering team keeps models, data, and results reviewable together.",
     other:
       "Fine to keep separate when those artifacts already live somewhere stable.",
     question: "What needs to stay together?",
   },
   {
     cocalc:
-      "Researchers, instructors, support staff, and AI agents need to inspect the same working state.",
+      "Data scientists, engineers, and researchers — plus the AI agents working alongside them — need to work in one live terminal and shared kernel, with each other's cursors visible as the work happens.",
     other: "A single surface is enough when collaboration stays in one place.",
     question: "Who needs to inspect the work?",
   },
@@ -355,10 +355,11 @@ export default function CompareFeaturePage({
                 maxWidth: "65ch",
               }}
             >
-              Evaluate CoCalc when notebooks, code, terminals, documents,
-              outputs, TimeTravel history, collaborators, and AI-assisted
-              review need to stay together. Choose a lighter tool when one
-              notebook, dashboard, editor, or report is the whole job.
+              Evaluate CoCalc when an industry R&D, data-science, or engineering
+              team needs notebooks, code, terminals, documents, outputs,
+              TimeTravel history, collaborators, and AI-assisted review to stay
+              together. Choose a lighter tool when one notebook, dashboard,
+              editor, or report is the whole job.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -373,8 +374,9 @@ export default function CompareFeaturePage({
             </Text>
             <ul className="cocalc-compare-list">
               <li>
-                Best fit: multi-artifact projects that need review, handoff,
-                and TimeTravel recovery.
+                Best fit: durable, reproducible, multi-artifact projects that
+                stay reviewable as collaborators come and go — review, handoff,
+                and TimeTravel recovery in one place.
               </li>
               <li>
                 Better elsewhere: one-off notebooks, dashboards, editors, or
