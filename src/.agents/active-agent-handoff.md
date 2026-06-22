@@ -46,6 +46,33 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop hold (2026-06-22 13:51 PDT)
+
+- **START 2026-06-22 13:51 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS,
+  multi-agent operating model, website operating system, frozen Brief,
+  public-site skill, site quality regimen, post-batch QA sweep, finite issues
+  tracker, site-round command, and this handoff ledger. Verified preview hub
+  pids `15629` and `15671`, both rooted at
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/watch process
+  was observed. Targeted queue check found the current Codex prompt is still
+  `hold / needs curated slice`: the queue is drained after the
+  `/features/terminal` visual correction, and the post-batch QA sweep findings
+  have not been released as a curated Codex fix slice. Claimed files: this
+  ledger and `/home/user/cocalc-shared/codex-turn-log.md` only.
+- **END 2026-06-22 13:51 PDT:** QUEUE DRAINED / HOLD. No public-site source
+  files were changed and no build/browser QA was run because no route was
+  touched. The latest public-site source-change commit remains `0126856906`
+  (`frontend/public: calm terminal feature page layout`), with the latest
+  coordination commit before this run `c1b706cab8` (`agents: log held
+  landing-page scheduled run`). The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude's terminal audit, a curated fix slice
+  from the post-batch QA sweep, or for Blaec/Claude to release another bounded
+  queue item.
+
 ### Codex - scheduled landing-page improvement loop hold (2026-06-22 13:45 PDT)
 
 - **START 2026-06-22 13:45 PDT:** Scheduled landing-page improvement loop
