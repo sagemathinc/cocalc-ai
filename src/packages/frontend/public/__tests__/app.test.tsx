@@ -198,6 +198,7 @@ function expectNoProductDetailStalePhrasing() {
     /air-gapped/i,
     /basically an operating system/i,
     /all open format/i,
+    /Compare with (Star|Launchpad|Rocket)/i,
   ]) {
     expect(screen.queryByText(phrase)).toBeNull();
   }
@@ -1314,6 +1315,9 @@ describe("PublicApp", () => {
         .every((link) => link.getAttribute("href") === "/pricing"),
     ).toBe(true);
     expect(
+      screen.getByRole("link", { name: "View CoCalc Star" }),
+    ).toHaveAttribute("href", "/products/cocalc-star");
+    expect(
       screen.queryByRole("link", { name: "Use hosted CoCalc.ai" }),
     ).toBeNull();
     expect(
@@ -1450,8 +1454,11 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Which path fits?")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Compare CoCalc fit" }),
-    ).toHaveAttribute("href", "/features/compare");
+      screen.queryByRole("link", { name: "Compare CoCalc fit" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Pricing and licensing" }),
+    ).toHaveAttribute("href", "/pricing");
     expect(
       screen.getByRole("link", { name: "Review trust materials" }),
     ).toHaveAttribute("href", "/policies/trust");
@@ -1525,6 +1532,9 @@ describe("PublicApp", () => {
     expect(
       screen.queryByRole("link", { name: "Compare with CoCalc Plus" }),
     ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Star" }),
+    ).toHaveAttribute("href", "/products/cocalc-star");
     expectNoProductDetailStalePhrasing();
   });
 
@@ -1560,6 +1570,12 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: "Read Star setup guide" }),
     ).toHaveAttribute("href", "/docs/self-hosting/cocalc-star");
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Launchpad" }),
+    ).toHaveAttribute("href", "/products/cocalc-launchpad");
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Rocket" }),
+    ).toHaveAttribute("href", "/products/cocalc-rocket");
     expect(screen.getByText(/setup guide covers the firewall/i)).not.toBeNull();
     expectNoProductDetailStalePhrasing();
   });
@@ -1602,39 +1618,35 @@ describe("PublicApp", () => {
       3,
       /customer-operated private-cloud|clear ownership of ongoing operations/i,
     );
-    expect(
-      screen.getAllByRole("link", {
-        name: "Talk with CoCalc about Rocket",
-      })[0],
-    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
-    expect(
-      screen.getAllByRole("link", {
-        name: "Talk with CoCalc about Rocket",
-      })[0],
-    ).toHaveAttribute(
+    const rocketTalkLinks = screen.getAllByRole("link", {
+      name: "Talk with CoCalc about Rocket",
+    });
+    expect(rocketTalkLinks).toHaveLength(1);
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("/support/new?"),
+    );
+    expect(rocketTalkLinks[0]).toHaveAttribute(
       "href",
       expect.stringContaining("context=product-cocalc-rocket"),
     );
-    expect(
-      screen.getAllByRole("link", {
-        name: "Talk with CoCalc about Rocket",
-      })[0],
-    ).toHaveAttribute("href", expect.stringContaining("operator+boundary"));
-    expect(
-      screen.getAllByRole("link", {
-        name: "Talk with CoCalc about Rocket",
-      })[0],
-    ).toHaveAttribute("href", expect.stringContaining("ongoing+operations"));
-    expect(
-      screen.getAllByRole("link", {
-        name: "Talk with CoCalc about Rocket",
-      })[0],
-    ).toHaveAttribute(
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("operator+boundary"),
+    );
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("ongoing+operations"),
+    );
+    expect(rocketTalkLinks[0]).toHaveAttribute(
       "href",
       expect.stringContaining(
         "security%2C+privacy%2C+or+data-ownership+questions",
       ),
     );
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Launchpad" }),
+    ).toHaveAttribute("href", "/products/cocalc-launchpad");
     expectNoProductDetailStalePhrasing();
   });
 });

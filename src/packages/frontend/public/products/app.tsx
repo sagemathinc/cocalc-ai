@@ -162,9 +162,6 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
           decision is where it should run and who will operate it.
         </Paragraph>
         <Flex gap={12} wrap>
-          <LinkButton href={appPath("features/compare")}>
-            Compare CoCalc fit
-          </LinkButton>
           <LinkButton href={appPath("pricing")}>
             Pricing and licensing
           </LinkButton>
@@ -534,13 +531,8 @@ function CocalcRocketPage() {
           <ProductActions
             actions={[
               {
-                href: supportProductPath("Rocket"),
-                label: "Talk with CoCalc about Rocket",
-                primary: true,
-              },
-              {
                 href: publicPath("products/cocalc-launchpad"),
-                label: "Compare with Launchpad",
+                label: "View CoCalc Launchpad",
               },
               {
                 href: publicPath("products"),
@@ -586,11 +578,11 @@ function CocalcStarPage() {
           },
           {
             href: publicPath("products/cocalc-launchpad"),
-            label: "Compare with Launchpad",
+            label: "View CoCalc Launchpad",
           },
           {
             href: publicPath("products/cocalc-rocket"),
-            label: "Compare with Rocket",
+            label: "View CoCalc Rocket",
           },
         ]}
         title="Run a shared CoCalc site on one Ubuntu VM."
@@ -673,7 +665,7 @@ function CocalcLaunchpadPage() {
           { href: appPath("pricing"), label: "Pricing and licensing" },
           {
             href: publicPath("products/cocalc-star"),
-            label: "Compare with Star",
+            label: "View CoCalc Star",
           },
         ]}
         title="Need a bounded private CoCalc deployment?"
@@ -756,7 +748,7 @@ function CocalcPlusPage() {
           { href: appPath("pricing"), label: "Review hosted plans" },
           {
             href: publicPath("products/cocalc-star"),
-            label: "Compare with Star",
+            label: "View CoCalc Star",
           },
         ]}
         title="Need local CoCalc before choosing a shared path?"

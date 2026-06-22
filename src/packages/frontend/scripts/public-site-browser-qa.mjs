@@ -116,7 +116,6 @@ const ROUTE_RULES = {
       "CoCalc Rocket",
     ],
     requireLinks: [
-      { text: "Compare CoCalc fit", hrefIncludes: "/features/compare" },
       { text: "Pricing and licensing", hrefIncludes: "/pricing" },
       { text: "View CoCalc Plus", hrefIncludes: "/products/cocalc-plus" },
       { text: "View CoCalc Star", hrefIncludes: "/products/cocalc-star" },
@@ -126,6 +125,7 @@ const ROUTE_RULES = {
       },
       { text: "View CoCalc Rocket", hrefIncludes: "/products/cocalc-rocket" },
     ],
+    forbidText: ["Compare CoCalc fit"],
   },
   "/pricing": {
     requireText: [
@@ -204,8 +204,9 @@ const ROUTE_RULES = {
     requireLinks: [
       { text: "Install CoCalc Plus", hrefIncludes: "/products/cocalc-plus" },
       { text: "Review hosted plans", hrefIncludes: "/pricing" },
-      { text: "Compare with Star", hrefIncludes: "/products/cocalc-star" },
+      { text: "View CoCalc Star", hrefIncludes: "/products/cocalc-star" },
     ],
+    forbidText: ["Compare with Star"],
   },
   "/products/cocalc-star": {
     requireText: [
@@ -216,14 +217,19 @@ const ROUTE_RULES = {
     requireLinks: [
       { text: "Install CoCalc Star", hrefIncludes: "/products/cocalc-star" },
       {
-        text: "Compare with Launchpad",
+        text: "View CoCalc Launchpad",
         hrefIncludes: "/products/cocalc-launchpad",
+      },
+      {
+        text: "View CoCalc Rocket",
+        hrefIncludes: "/products/cocalc-rocket",
       },
       {
         text: "Read Star setup guide",
         hrefIncludes: "/docs/self-hosting/cocalc-star",
       },
     ],
+    forbidText: ["Compare with Launchpad", "Compare with Rocket"],
   },
   "/products/cocalc-launchpad": {
     requireText: [
@@ -237,8 +243,9 @@ const ROUTE_RULES = {
         hrefIncludes: "context=product-cocalc-launchpad",
       },
       { text: "Pricing and licensing", hrefIncludes: "/pricing" },
-      { text: "Compare with Star", hrefIncludes: "/products/cocalc-star" },
+      { text: "View CoCalc Star", hrefIncludes: "/products/cocalc-star" },
     ],
+    forbidText: ["Compare with Star"],
   },
   "/products/cocalc-rocket": {
     requireText: [
@@ -253,10 +260,11 @@ const ROUTE_RULES = {
       },
       { text: "Pricing and licensing", hrefIncludes: "/pricing" },
       {
-        text: "Compare with Launchpad",
+        text: "View CoCalc Launchpad",
         hrefIncludes: "/products/cocalc-launchpad",
       },
     ],
+    forbidText: ["Compare with Launchpad"],
   },
   "/features": {
     requireText: [

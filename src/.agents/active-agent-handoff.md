@@ -1270,3 +1270,33 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   -C src lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
   `/features/whiteboard` and `/features/slides` desktop+mobile passed 76/76.
   Screenshots inspected from `/tmp/cocalc-public-qa-W3o2qG`.
+
+---
+
+## Codex — post-framing P2 Products CTA/link consistency (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  the Products page CTA/link consistency slice only: remove the redundant
+  overview `Compare CoCalc fit` hero link, rename product-detail cross-links
+  that route to detail pages from `Compare with X` to `View CoCalc X`, and
+  remove the duplicate Rocket primary CTA from the secondary planning card while
+  keeping the lead primary CTA. Claimed files: `products/app.tsx`,
+  `public/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`, and
+  this ledger. Guardrails: preserve product proof and all pricing/licensing
+  links; do not touch Rocket deployment claims, protected home, pitch docs,
+  docs routes/content, pricing/compliance, type/palette work, or the untracked
+  dedicated-compute draft.
+- **END 2026-06-22:** Products CTA/link consistency implemented and validated.
+  Removed the redundant overview `Compare CoCalc fit` link, changed product
+  detail cross-links that route to detail pages to `View CoCalc X`, and removed
+  the duplicate Rocket support CTA from the secondary planning card while
+  preserving the lead `Talk with CoCalc about Rocket` primary action.
+  Rocket deployment-claim wording was intentionally left untouched for the
+  separate claim-safety slice. Updated public app tests and browser-QA guards so
+  the old comparison labels cannot return. Validation passed: `git diff
+  --check`; focused public app + browser-QA harness Jest 43/43; `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+  `/products`, `/products/cocalc-plus`, `/products/cocalc-star`,
+  `/products/cocalc-launchpad`, and `/products/cocalc-rocket` desktop+mobile
+  passed 200/200. Screenshots inspected from `/tmp/cocalc-public-qa-Wmvuxx`.
