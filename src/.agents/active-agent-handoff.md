@@ -46,6 +46,31 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 16:01 PDT)
+
+- **START 2026-06-22 16:00 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site skill, multi-agent operating
+  model, current workplan, and this ledger. Verified the preview hub pid
+  `15671` serves `/home/user/cocalc-ai-synthesis/src`. The curated Codex queue
+  is still drained: feature-page consistency items 9-12 and design-polish items
+  13-15 are complete, the workplan gates the next source slice on Claude audit
+  plus a fresh vision-critique pass, and raw-audit foraging remains off limits.
+  Claimed files: this ledger and shared coordination status/logs only.
+  Guardrails: no protected home, pricing/compliance, type/palette work,
+  pitch/docs content, route source edits, raw-audit foraging, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 16:01 PDT:** QUEUE DRAINED. No public-site route source was
+  changed and no build/browser QA was run because no rendered route was
+  touched. The latest public-site source-change commit remains Blaec's
+  `ef3bed61d2`; this turn records only the queue gate in coordination
+  artifacts. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude audit / fresh vision critique or another
+  curated, non-gated queue item.
+
 ### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 15:56 PDT)
 
 - **START 2026-06-22 15:55 PDT:** Scheduled landing-page improvement loop
