@@ -5,12 +5,10 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_ELEVATION,
   PUBLIC_COLORS,
-  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -19,23 +17,22 @@ import {
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
-import { IconBadge } from "./feature-visuals";
+import {
+  ContextList,
+  FeatureFinalBand,
+  IconBadge,
+  StoryCard,
+  TerminalMock,
+} from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 
-function TerminalMock() {
-  const rows = [
-    ["alice@project", "python run.py"],
-    ["", "Running analysis..."],
-    ["", "Results written to results.csv"],
-    ["ben@project", "open notes.md"],
-    ["codex@project", "gh pr status"],
-  ];
+function TerminalEvidencePanel() {
   return (
     <div
-      aria-label="Illustration of a CoCalc collaborative terminal"
+      aria-label="Illustration of a CoCalc terminal beside project files"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
@@ -45,264 +42,28 @@ function TerminalMock() {
         padding: 20,
       }}
     >
-      <Flex vertical gap={14}>
+      <Flex vertical gap={16}>
         <Flex align="center" justify="space-between" wrap gap={10}>
           <Flex align="center" gap={10}>
             <IconBadge accent="#096dd9" icon="terminal" />
             <div>
-              <Text strong>work.term</Text>
+              <Text strong>research/runs/run.term</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                shared project terminal
+                shell, generated files, notes, and history stay together
               </div>
             </div>
           </Flex>
         </Flex>
-        <div
-          style={{
-            background: PUBLIC_DARK.terminalSurface,
-            borderRadius: PUBLIC_RADIUS.panel,
-            color: PUBLIC_DARK.mockText,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              alignItems: "center",
-              background: "rgba(255,255,255,0.08)",
-              display: "flex",
-              gap: 8,
-              padding: "12px 14px",
-            }}
-          >
-            {[
-              PUBLIC_DARK.dotRed,
-              PUBLIC_DARK.dotAmber,
-              PUBLIC_DARK.dotGreen,
-            ].map((color) => (
-              <span
-                aria-hidden="true"
-                key={color}
-                style={{
-                  background: color,
-                  borderRadius: "50%",
-                  height: 10,
-                  width: 10,
-                }}
-              />
-            ))}
-            <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
-              CoCalc Terminal
-            </Text>
-          </div>
-          <Flex
-            vertical
-            gap={10}
-            style={{
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              padding: 18,
-            }}
-          >
-            {rows.map(([prompt, command], index) => (
-              <div key={`${prompt}-${command}-${index}`}>
-                {prompt ? (
-                  <>
-                    <Text style={{ color: PUBLIC_DARK.mockTextAlt }}>
-                      {prompt}
-                    </Text>
-                    <Text style={{ color: PUBLIC_DARK.mockText }}> $ </Text>
-                  </>
-                ) : null}
-                <Text
-                  style={{
-                    color: prompt ? PUBLIC_DARK.mockTextDim : "#f8fafc",
-                  }}
-                >
-                  {command}
-                </Text>
-              </div>
-            ))}
-          </Flex>
-        </div>
-        <Row gutter={[10, 10]}>
-          {[
-            ["users", "one stream"],
-            ["history", "durable"],
-            ["robot", "agent-aware"],
-            ["folder", ".term file"],
-          ].map(([icon, label]) => (
-            <Col key={label} xs={12} sm={6}>
-              <Flex
-                align="center"
-                gap={8}
-                style={{
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: PUBLIC_RADIUS.panel,
-                  padding: "9px 10px",
-                }}
-              >
-                <Icon name={icon as IconName} />
-                <Text strong>{label}</Text>
-              </Flex>
-            </Col>
-          ))}
-        </Row>
-      </Flex>
-    </div>
-  );
-}
-
-function TermFileDiagram() {
-  return (
-    <div
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: PUBLIC_ELEVATION.panel,
-        padding: 24,
-      }}
-    >
-      <Flex vertical gap={18}>
-        <Flex align="center" gap={12}>
-          <IconBadge accent="#096dd9" icon="file" />
-          <div>
-            <Text strong>Open the file, land in its folder</Text>
-            <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              Reopen the same terminal context from the project file tree.
-            </div>
-          </div>
-        </Flex>
-        <Row align="middle" gutter={[14, 14]}>
-          <Col xs={24} md={9}>
-            <div
-              style={{
-                background: "#f7fbff",
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.panel,
-                padding: 16,
-              }}
-            >
-              <Flex vertical gap={10}>
-                <Text strong>research/</Text>
-                <Text style={{ paddingLeft: 18 }}>
-                  <Icon name="folder" /> runs/
-                </Text>
-                <Text
-                  strong
-                  style={{ color: PUBLIC_COLORS.heading, paddingLeft: 36 }}
-                >
-                  <Icon name="terminal" /> run.term
-                </Text>
-              </Flex>
-            </div>
-          </Col>
-          <Col xs={24} md={15}>
-            <Flex vertical gap={10}>
-              {[
-                ["cwd", "research/runs/"],
-                ["history", "tied to the path"],
-                ["reopen", "same terminal later"],
-                ["agent", "list / history / write"],
-              ].map(([label, value]) => (
-                <Flex
-                  align="center"
-                  gap={10}
-                  key={label}
-                  style={{
-                    background: "#fff8e8",
-                    border: "1px solid rgba(215, 155, 43, 0.3)",
-                    borderRadius: PUBLIC_RADIUS.panel,
-                    padding: "10px 12px",
-                  }}
-                >
-                  <Text
-                    strong
-                    style={{ color: PUBLIC_COLORS.heading, minWidth: 64 }}
-                  >
-                    {label}
-                  </Text>
-                  <Text>{value}</Text>
-                </Flex>
-              ))}
-            </Flex>
-          </Col>
-        </Row>
-      </Flex>
-    </div>
-  );
-}
-
-function SharedStreamDiagram() {
-  const clients = [
-    ["Researcher", "#278c83"],
-    ["Student", "#096dd9"],
-    ["Codex", "#ad6800"],
-  ];
-  return (
-    <div
-      style={{
-        background:
-          "linear-gradient(145deg, #fff 0%, #f6fbff 55%, #fff8e8 100%)",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: PUBLIC_ELEVATION.panel,
-        padding: 24,
-      }}
-    >
-      <Flex vertical gap={18}>
-        <Row gutter={[12, 12]}>
-          {clients.map(([label, accent]) => (
-            <Col key={label} xs={24} sm={8}>
-              <div
-                style={{
-                  background: `${accent}10`,
-                  border: `1px solid ${accent}33`,
-                  borderRadius: PUBLIC_RADIUS.panel,
-                  padding: 14,
-                  textAlign: "center",
-                }}
-              >
-                <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-                  {label}
-                </Text>
-                <div
-                  style={{
-                    background: PUBLIC_DARK.barSurface,
-                    borderRadius: 10,
-                    height: 46,
-                    marginTop: 10,
-                  }}
-                />
-              </div>
-            </Col>
-          ))}
-        </Row>
-        <Flex align="center" justify="center" gap={14} wrap>
-          {["durable reconnect", "shared sizing", "side chat"].map((label) => (
-            <Text key={label} style={{ color: PUBLIC_COLORS.mutedText }}>
-              {label}
-            </Text>
-          ))}
-        </Flex>
-        <div
-          style={{
-            background: PUBLIC_DARK.terminalSurface,
-            border: "1px solid rgba(255,255,255,0.18)",
-            borderRadius: PUBLIC_RADIUS.panel,
-            color: PUBLIC_DARK.mockText,
-            padding: 18,
-            textAlign: "center",
-          }}
-        >
-          <Text strong style={{ color: PUBLIC_DARK.mockText }}>
-            one shared terminal session
-          </Text>
-          <div style={{ color: "#93c5fd", marginTop: 6 }}>
-            live output, shared input, preserved scrollback
-          </div>
-        </div>
+        <TerminalMock
+          title="CoCalc terminal"
+          rows={[
+            "$ pwd",
+            "/home/user/research/runs",
+            "$ python run.py",
+            "Results written to output/results.csv",
+            "$ open notes.md",
+          ]}
+        />
       </Flex>
     </div>
   );
@@ -323,10 +84,10 @@ export default function TerminalFeaturePage({
     : "Start using CoCalc terminals";
 
   return (
-    <Flex vertical gap={18}>
+    <Flex vertical gap={22}>
       <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={11}>
+        <Row gutter={[28, 28]} align="top">
+          <Col xs={24} lg={14}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
                 A Linux terminal that lives in your project.
@@ -349,50 +110,83 @@ export default function TerminalFeaturePage({
               </Flex>
             </Flex>
           </Col>
-          <Col xs={24} lg={13}>
-            <TerminalMock />
+          <Col xs={24} lg={10}>
+            <ContextList
+              accent="#096dd9"
+              items={[
+                { icon: "file", label: ".term files sit beside the work" },
+                { icon: "users", label: "One live stream for collaborators" },
+                { icon: "layout", label: "Split panes for logs and REPLs" },
+                { icon: "robot", label: "Codex can inspect project context" },
+              ]}
+              title="Project context"
+            />
           </Col>
         </Row>
       </PublicSection>
 
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={8}>
+          <StoryCard icon="file" title="Each terminal opens in its own folder.">
+            Open <code>research/runs/run.term</code> and the shell starts in{" "}
+            <code>research/runs/</code>. Open the <code>.term</code> file and
+            the same shell context comes back with the files it reads or writes.
+          </StoryCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <StoryCard
+            accent="#278c83"
+            icon="users"
+            title="One session stays visible"
+          >
+            Collaborators can reconnect to the same terminal stream instead of
+            chasing screenshots, pasted logs, or a private shell on one person's
+            laptop.
+          </StoryCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <StoryCard
+            accent="#ad6800"
+            icon="history"
+            title="Output remains reviewable"
+          >
+            Split panes, preserved scrollback, and TimeTravel on generated files
+            keep command output close enough to inspect during the next handoff.
+          </StoryCard>
+        </Col>
+      </Row>
+
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={11}>
+          <Col xs={24} lg={12}>
+            <TerminalEvidencePanel />
+          </Col>
+          <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Each terminal opens in its own folder.
+                Put the shell beside the work it changes
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Open <code>research/runs/run.term</code> and the shell starts in{" "}
-                <code>research/runs/</code>. Reopen that file later and the same
-                terminal context comes back with its working directory and
-                command history still tied to that part of the project.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                That folder anchor keeps setup scripts, logs, generated files,
-                and notes close enough for collaborators or Codex to inspect
-                before the next handoff.
+                A terminal is useful in CoCalc because it is not separate from
+                the project. The shell sits near notebooks, source files, logs,
+                generated outputs, notes, and chat, so a teammate can review
+                what happened before continuing.
               </Paragraph>
               <BulletList
                 items={[
-                  "Put the shell beside the files it reads, creates, or modifies.",
-                  "Review generated project files with TimeTravel while the shell context stays nearby.",
+                  "Run scripts beside the files they read or create.",
+                  "Keep logs, generated outputs, and notes in the same project.",
+                  "Let Codex inspect terminal context instead of guessing from a final error.",
                 ]}
               />
             </Flex>
           </Col>
-          <Col xs={24} lg={13}>
-            <TermFileDiagram />
-          </Col>
         </Row>
       </PublicSection>
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <SharedStreamDiagram />
-          </Col>
-          <Col xs={24} lg={11}>
+        <Row gutter={[24, 24]} align="top">
+          <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
                 Collaborate in one terminal stream
@@ -409,115 +203,66 @@ export default function TerminalFeaturePage({
               </Paragraph>
             </Flex>
           </Col>
+          <Col xs={24} lg={12}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                Split the shell around the work
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Keep logs, a server process, a REPL, and a build command visible
+                in one frame. Split horizontally or vertically, drag panes into
+                place, and keep a terminal beside the editor that needs it.
+              </Paragraph>
+              <BulletList
+                items={[
+                  "Edit a script and run it in the adjacent terminal.",
+                  "Tail logs while testing a notebook or local web app.",
+                  <>
+                    Use the <code>open</code> command to pop files into the
+                    browser workspace.
+                  </>,
+                ]}
+              />
+            </Flex>
+          </Col>
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Split the shell around the work
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Keep logs, a server process, a REPL, and a build command visible
-              in one frame. Split horizontally or vertically, drag panes into
-              place, and keep a terminal beside the editor that needs it.
-            </Paragraph>
-            <BulletList
-              items={[
-                "Edit a script and run it in the adjacent terminal.",
-                "Tail logs while testing a notebook or local web app.",
-                <>
-                  Use the <code>open</code> command to pop files into the
-                  browser workspace.
-                </>,
-              ]}
-            />
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Keep heavy output usable
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Some commands produce far more output than a browser should render
-              one line at a time. CoCalc keeps the session usable by pacing
-              heavy output and preserving enough history for later inspection.
-            </Paragraph>
-            <BulletList
-              items={[
-                "Pause output when the scrollback is moving too fast.",
-                "Preserve enough terminal history for later inspection.",
-                "Let agents read the terminal context instead of guessing from a final error.",
-              ]}
-            />
-          </PublicSection>
-        </Col>
-      </Row>
-
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={14}>
-            <Title level={3} style={{ margin: 0 }}>
-              Where the terminal earns its place
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              The terminal becomes more valuable because it sits beside Jupyter
-              notebooks, LaTeX, files, Git, chat, project secrets, snapshots,
-              backups, and app servers. Use it for the exact practical moments
-              where a shell is the fastest path.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              It is also where you reach heavier compute from a real shell —
-              exploration, post-processing, and review stay in one durable
-              project even when the big solve runs elsewhere.
-            </Paragraph>
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/linux")}>
-                Linux environment
-              </Button>
-              <Button href={appPath("features/jupyter-notebook")}>
-                Jupyter notebooks
-              </Button>
-              <Button href={`${GUIDE_BASE}/software-install/`}>
-                Software install guide
-              </Button>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={10}>
-            <div
-              className="cocalc-feature-final-panel"
-              style={{
-                background: PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.panel,
-                boxShadow: PUBLIC_ELEVATION.panelStrong,
-                color: PUBLIC_COLORS.heading,
-                padding: 26,
-              }}
-            >
-              <Title
-                level={3}
-                style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
-              >
-                Ready to use terminals in CoCalc?
-              </Title>
-              <Paragraph style={{ color: PUBLIC_COLORS.mutedText }}>
+        <FeatureFinalBand
+          action={{
+            body: (
+              <>
                 Open a project, create a <code>.term</code> file, and put the
                 shell next to the document or notebook it supports.
-              </Paragraph>
-              <Flex vertical gap={10} align="start">
-                <Button type="primary" href={primaryCtaHref}>
-                  {finalCtaLabel}
-                </Button>
-                <Button href={appPath("products")}>
-                  Compare operating models
-                </Button>
-              </Flex>
-            </div>
-          </Col>
-        </Row>
+              </>
+            ),
+            href: primaryCtaHref,
+            label: finalCtaLabel,
+            title: "Ready to use terminals in CoCalc?",
+          }}
+          relatedLinks={[
+            { href: appPath("features/linux"), label: "Linux environment" },
+            {
+              href: appPath("features/jupyter-notebook"),
+              label: "Jupyter notebooks",
+            },
+            {
+              href: `${GUIDE_BASE}/software-install/`,
+              label: "Software install guide",
+            },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="Where the terminal earns its place"
+        >
+          <BulletList
+            items={[
+              "Use a real shell beside notebooks, LaTeX, files, Git, chat, project secrets, snapshots, backups, and app servers.",
+              "Reach heavier compute from the same project when exploration, post-processing, and review need to stay together.",
+              "Best fit when shell commands should remain visible to collaborators instead of disappearing into a private local terminal.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );
