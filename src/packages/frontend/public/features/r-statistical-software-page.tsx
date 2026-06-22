@@ -16,6 +16,8 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
+  LinkButton,
 } from "./page-components";
 import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
@@ -144,6 +146,12 @@ export default function RStatisticalSoftwareFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss R workflows in CoCalc. Helpful context: statistics, reporting, teaching, or research use case; packages or command-line needs; expected collaborators; and whether hosted or customer-operated CoCalc matters.",
+    context: "r-statistical-software",
+    subject: "CoCalc R workflows",
+    title: "Ask CoCalc about R workflows",
+  });
 
   return (
     <Flex vertical gap={22}>
@@ -200,10 +208,11 @@ export default function RStatisticalSoftwareFeaturePage({
                 <Button href={appPath("features/latex-editor")}>
                   LaTeX editor
                 </Button>
-                <Button href={appPath("products")}>
-                  Compare operating models
-                </Button>
+                <Button href={supportHref}>Ask about R workflows</Button>
               </Flex>
+              <LinkButton href={appPath("products")}>
+                Compare operating models
+              </LinkButton>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

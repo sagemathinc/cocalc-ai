@@ -104,6 +104,11 @@ describe("PublicFeaturesApp", () => {
       slug: "ai",
     },
     {
+      context: "feature-automations",
+      label: "Ask about project automations",
+      slug: "automations",
+    },
+    {
       context: "feature-cli",
       label: "Ask about CLI automation",
       slug: "cli",
@@ -134,9 +139,19 @@ describe("PublicFeaturesApp", () => {
       slug: "api",
     },
     {
+      context: "feature-whiteboard",
+      label: "Ask about whiteboards",
+      slug: "whiteboard",
+    },
+    {
       context: "feature-latex-editor",
       label: "Ask about LaTeX workflows",
       slug: "latex-editor",
+    },
+    {
+      context: "feature-slides",
+      label: "Ask about slides",
+      slug: "slides",
     },
     {
       context: "feature-python",
@@ -147,6 +162,21 @@ describe("PublicFeaturesApp", () => {
       context: "feature-sage",
       label: "Ask about SageMath workflows",
       slug: "sage",
+    },
+    {
+      context: "feature-r-statistical-software",
+      label: "Ask about R workflows",
+      slug: "r-statistical-software",
+    },
+    {
+      context: "feature-octave",
+      label: "Ask about Octave workflows",
+      slug: "octave",
+    },
+    {
+      context: "feature-more-languages",
+      label: "Ask about language workflows",
+      slug: "more-languages",
     },
   ] as const;
 
@@ -1332,18 +1362,13 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("link", { name: "HTTP API" }).getAttribute("href"),
     ).toBe("/features/api");
-    expect(
-      screen.queryByRole("link", { name: "Ask about project automations" }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("link", { name: "Compare operating models" }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("link", { name: "Jupyter notebooks" }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("link", { name: "Terminal workflows" }),
-    ).not.toBeNull();
+    const askLinks = screen.getAllByRole("link", {
+      name: "Ask about project automations",
+    });
+    expect(askLinks).toHaveLength(1);
+    expect(askLinks[0].getAttribute("href")).toContain(
+      "context=feature-automations",
+    );
   });
 
   it("renders the compare feature page", () => {

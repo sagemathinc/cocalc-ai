@@ -16,6 +16,7 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
 } from "./page-components";
 import { IconBadge, StartCard } from "./feature-visuals";
 
@@ -234,6 +235,16 @@ export default function SlidesFeaturePage({
                 <Button href={appPath("features/teaching")}>Teaching</Button>
                 <Button href={appPath("products")}>
                   Compare operating models
+                </Button>
+                <Button
+                  href={featureSupportPath({
+                    body: "I want to discuss CoCalc slides. Helpful context: lecture, research talk, demo, or course workflow; expected collaborators; and whether slides need math, diagrams, or notebook-backed material.",
+                    context: "slides",
+                    subject: "CoCalc slides",
+                    title: "Ask CoCalc about slides",
+                  })}
+                >
+                  Ask about slides
                 </Button>
               </Flex>
             </Flex>

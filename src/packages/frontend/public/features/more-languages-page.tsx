@@ -16,6 +16,7 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
 } from "./page-components";
 import { ContextList, IconBadge, StartCard } from "./feature-visuals";
 
@@ -146,6 +147,12 @@ export default function MoreLanguagesFeaturePage({
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalLabel = isAuthenticated ? "Open projects" : "Start a project";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss a language or command-line workflow in CoCalc. Helpful context: language, packages or compilers, whether notebooks are involved, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
+    context: "more-languages",
+    subject: "CoCalc language workflows",
+    title: "Ask CoCalc about language workflows",
+  });
 
   return (
     <Flex vertical gap={22}>
@@ -207,6 +214,7 @@ export default function MoreLanguagesFeaturePage({
               <Button href={appPath("products")}>
                 Compare operating models
               </Button>
+              <Button href={supportHref}>Ask about language workflows</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>
