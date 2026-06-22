@@ -46,6 +46,39 @@ Known risks:
 
 ---
 
+### Codex - feature-page final-band balance (2026-06-22 14:35 PDT)
+
+- **START 2026-06-22 14:35 PDT:** Continuing into design-polish item 13 after
+  the feature-page consistency guardrails landed in `72f9c41b65` and handoff
+  `b2f963bf08` was pushed. Claimed files:
+  `src/packages/frontend/public/features/feature-visuals.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Representative QA routes:
+  `/features/julia`, `/features/r-statistical-software`,
+  `/features/whiteboard`, and `/features/automations`. Do not touch protected
+  `home/**`, footer, pricing/compliance, type/palette token values, pitch/docs
+  content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 14:41 PDT:** Source slice landed in `b11e25473f`
+  (`frontend/public: balance feature final bands`). `FeatureFinalBand` now uses
+  the shared antd row `align="middle"` setting so short CTA cards are vertically
+  centered next to taller proof/bullet columns instead of top-aligned. Added a
+  feature-suite regression guard covering every route that renders
+  `FeatureFinalBand`, asserting the final-band row stays middle-aligned and not
+  top-aligned. Validation passed: Prettier on touched files; focused
+  feature/browser-QA harness Jest 132/132; `git diff --check`; `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
+  `b11e25473f` with only the existing local debug-log permission warning;
+  browser QA desktop+mobile for `/features/julia`,
+  `/features/r-statistical-software`, `/features/whiteboard`, and
+  `/features/automations` passed 158/158 at `/tmp/cocalc-public-qa-sBF2YD`.
+  Screenshot inspection: desktop final CTA cards are centered against taller
+  copy columns; mobile stacks remain readable with no overlap. The known
+  untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  draft is still untouched. Next queue item: design-polish item 14, hero
+  right-column standardization.
+
 ### Codex - feature-page prevention guardrails (2026-06-22 14:28 PDT)
 
 - **START 2026-06-22 14:28 PDT:** Continuing the curated feature-page

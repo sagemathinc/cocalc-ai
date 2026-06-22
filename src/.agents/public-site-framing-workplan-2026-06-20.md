@@ -392,6 +392,29 @@ Current disposition:
 - The existing compare-page table row font size now references
   `PUBLIC_TYPE.body` instead of a raw `16px` literal.
 
+### FS-012 - Balance shared feature final-band columns
+
+Status: `done`
+
+Evidence:
+
+- The design-polish slice identified a systemic two-column balance issue:
+  short CTA cards in the final "When X belongs" band sat top-aligned beside
+  taller bullet/proof columns, leaving a dead gap below the right card.
+- `FeatureFinalBand` owned that repeated row for language, runtime, notebook,
+  paper, board/deck, and workflow pages, so the fix belonged in the shared
+  component rather than per route.
+
+Current disposition:
+
+- `FeatureFinalBand` now uses `Row align="middle"` so the right CTA panel is
+  vertically centered against the left proof column.
+- The feature suite now renders every route that uses `FeatureFinalBand` and
+  asserts the final-band row is middle-aligned, not top-aligned.
+- Representative browser QA/screenshots covered `/features/julia`,
+  `/features/r-statistical-software`, `/features/whiteboard`, and
+  `/features/automations` on desktop and mobile.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
