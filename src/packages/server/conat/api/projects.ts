@@ -140,6 +140,13 @@ import type {
   GenerateProjectSshKeySecretResult,
   ProjectCourseInfo,
   ProjectRootfsConfig,
+  ProjectRootfsBuildCancelRequest,
+  ProjectRootfsBuildCancelResponse,
+  ProjectRootfsBuildLogRequest,
+  ProjectRootfsBuildLogResponse,
+  ProjectRootfsBuildStartRequest,
+  ProjectRootfsBuildStatusRequest,
+  ProjectRootfsBuildStatusResponse,
   ProjectRootfsPublishConfig,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
@@ -1100,6 +1107,98 @@ export async function setProjectRootfsPublishConfig({
     project_id,
     fields: ["rootfs_publish_config"],
   });
+}
+
+async function getProjectRootfsBuildClient({
+  account_id,
+  project_id,
+  timeout,
+}: {
+  account_id?: string;
+  project_id: string;
+  timeout?: number;
+}) {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const host_id = await getProjectHostId(project_id);
+  const client = await getRoutedHostControlClient({
+    host_id,
+    timeout,
+  });
+  return { host_id, client };
+}
+
+export async function startProjectRootfsBuild({
+  account_id,
+  project_id,
+  ...start
+}: ProjectRootfsBuildStartRequest): Promise<ProjectRootfsBuildStatusResponse> {
+  const { host_id, client } = await getProjectRootfsBuildClient({
+    account_id,
+    project_id,
+    timeout: 30_000,
+  });
+  const status = await client.startRootfsBuild({
+    ...start,
+    project_id,
+  });
+  return { ...status, host_id };
+}
+
+export async function getProjectRootfsBuildStatus({
+  account_id,
+  project_id,
+  build_id,
+}: ProjectRootfsBuildStatusRequest): Promise<ProjectRootfsBuildStatusResponse> {
+  const { host_id, client } = await getProjectRootfsBuildClient({
+    account_id,
+    project_id,
+    timeout: 30_000,
+  });
+  const status = await client.getRootfsBuildStatus({
+    project_id,
+    build_id,
+  });
+  return { ...status, host_id };
+}
+
+export async function getProjectRootfsBuildLog({
+  account_id,
+  project_id,
+  build_id,
+  lines,
+  byte_offset,
+  max_bytes,
+}: ProjectRootfsBuildLogRequest): Promise<ProjectRootfsBuildLogResponse> {
+  const { host_id, client } = await getProjectRootfsBuildClient({
+    account_id,
+    project_id,
+    timeout: 30_000,
+  });
+  const log = await client.getRootfsBuildLog({
+    project_id,
+    build_id,
+    lines,
+    byte_offset,
+    max_bytes,
+  });
+  return { ...log, host_id };
+}
+
+export async function cancelProjectRootfsBuild({
+  account_id,
+  project_id,
+  build_id,
+}: ProjectRootfsBuildCancelRequest): Promise<ProjectRootfsBuildCancelResponse> {
+  const { host_id, client } = await getProjectRootfsBuildClient({
+    account_id,
+    project_id,
+    timeout: 30_000,
+  });
+  const cancel = await client.cancelRootfsBuild({
+    project_id,
+    build_id,
+  });
+  return { ...cancel, host_id };
 }
 
 export async function setProjectEnv({
