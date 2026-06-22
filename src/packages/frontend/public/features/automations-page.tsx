@@ -15,7 +15,7 @@ import {
 } from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
 import { FEATURE_ACCENTS } from "./feature-accents";
-import { ContextList, IconBadge, StartCard } from "./feature-visuals";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -183,38 +183,35 @@ export default function AutomationsFeaturePage({
       <AutomationProjectFit />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>When project automation belongs in CoCalc</Title>
-            <BulletList
-              items={[
-                "A notebook or report needs to be rebuilt on a schedule.",
-                "A class or lab setup needs the same preparation every time.",
-                "A data pull or model run should write results back into a shared project.",
-                "A script should run with the same files, software, and history collaborators already use.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/terminal")}>
-                Terminal workflows
-              </Button>
-              <Button href={appPath("features/jupyter-notebook")}>
-                Jupyter notebooks
-              </Button>
-              <Button href={appPath("products")}>
-                Compare operating models
-              </Button>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and identify the recurring job, output, and review path you want to make repeatable."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start from the workflow"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and identify the recurring job, output, and review path you want to make repeatable.",
+            href: primaryHref,
+            label: finalLabel,
+            title: "Start from the workflow",
+          }}
+          relatedLinks={[
+            {
+              href: appPath("features/terminal"),
+              label: "Terminal workflows",
+            },
+            {
+              href: appPath("features/jupyter-notebook"),
+              label: "Jupyter notebooks",
+            },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="When project automation belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "A notebook or report needs to be rebuilt on a schedule.",
+              "A class or lab setup needs the same preparation every time.",
+              "A data pull or model run should write results back into a shared project.",
+              "A script should run with the same files, software, and history collaborators already use.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

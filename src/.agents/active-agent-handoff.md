@@ -875,6 +875,24 @@ Plus/Star/Launchpad`).
   desktop+mobile. Screenshot reviewed from `/tmp/cocalc-public-qa-RYvssK`. Pushed to
   `origin/blaec-synthesis-2026-06-18`; no PR. Worktree clean except known untracked
   `src/packages/frontend/public/features/dedicated-compute-page.tsx`.
+- **START 2026-06-21 18:58 PDT:** Continuing the accepted dynamically logged Wave 1 prompt with
+  `/features/automations` only. Scope: convert the existing final section from split fit block +
+  `StartCard` to `FeatureFinalBand`; keep the existing automation proof around scheduled jobs,
+  notebooks, scripts, shell commands, outputs, recurring project work, API/CLI relation, and
+  reviewable project results; keep the related links `Terminal workflows`, `Jupyter notebooks`,
+  and `Compare operating models`; do not restore `Ask about project automations`. Claimed files:
+  `src/packages/frontend/public/features/automations-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Out of scope: protected home, pitch docs, docs
+  routes/content, pricing/compliance, type/palette work, Sage, Teaching, Python, Terminal,
+  Jupyter, the untracked dedicated-compute draft, and PRs.
+- **END 2026-06-21 19:00 PDT:** Landed the Automations Wave 1 conversion in source: the final
+  section now uses `FeatureFinalBand`, keeps the existing fit bullets and primary CTA, and moves
+  `Terminal workflows`, `Jupyter notebooks`, and `Compare operating models` into the full-width
+  `Related` row. Concrete automation proof remained unchanged. Validation: `git diff --check`,
+  focused feature Jest 95/95, `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static
+  build:dev`, and browser QA for Automations/Julia/Octave/More Languages desktop+mobile 116/116.
+  Screenshots reviewed from `/tmp/cocalc-public-qa-WVAkyF`; no PR.
 
 ### Codex — platform-UI thread
 
