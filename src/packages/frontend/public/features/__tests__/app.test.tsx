@@ -878,7 +878,7 @@ describe("PublicFeaturesApp", () => {
       slug: "octave",
       title:
         "Run GNU Octave with notebooks, .m files, and shared numerical work.",
-      section: "Teach and run Octave without local setup drift.",
+      section: "Run reproducible Octave work without local setup drift.",
     },
     {
       contextLabels: ["Project context"],

@@ -428,7 +428,7 @@ const ROUTE_RULES = {
   },
   "/features/octave": {
     requireText: [
-      "Teach and run Octave without local setup drift.",
+      "Run reproducible Octave work without local setup drift.",
       "Project context",
       "Start in a project",
     ],

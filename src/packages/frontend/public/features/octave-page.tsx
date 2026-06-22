@@ -78,7 +78,7 @@ function OctaveFlow() {
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              Teach and run Octave without local setup drift.
+              Run reproducible Octave work without local setup drift.
             </Title>
             <Paragraph style={{ margin: 0 }}>
               Everyone opens the same reproducible project: notebooks,{" "}

@@ -893,6 +893,21 @@ Plus/Star/Launchpad`).
   focused feature Jest 95/95, `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static
   build:dev`, and browser QA for Automations/Julia/Octave/More Languages desktop+mobile 116/116.
   Screenshots reviewed from `/tmp/cocalc-public-qa-WVAkyF`; no PR.
+- **START 2026-06-21:** Following Blaec's approval of the logged Codex prompt at
+  `/home/user/cocalc-shared/codex-turn-log.md:4076`. Scope: one-line Octave micro-copy only,
+  changing the secondary section headline from `Teach and run Octave without local setup drift.`
+  to `Run reproducible Octave work without local setup drift.` and updating the exact route
+  canary. Preserve current Octave tool proof and do not add MATPOWER, energy, or grid-modeling
+  claims without source/runtime/docs grounding. Claimed files:
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`; no PR.
+- **END 2026-06-21:** Octave micro-copy landed in source. Updated the Octave secondary section
+  headline to `Run reproducible Octave work without local setup drift.` and updated both the
+  route canary and browser-QA required text. Did not add MATPOWER/energy/grid claims. Validation:
+  `git diff --check`, focused feature Jest 95/95, browser-QA script Jest 5/5, `pnpm lint:frontend`
+  from `src`, `pnpm -C src/packages/static build:dev`, and browser QA for `/features/octave`
+  desktop+mobile 36/36. Screenshots reviewed from `/tmp/cocalc-public-qa-ucOsFt`; no PR.
 
 ### Codex — platform-UI thread
 
