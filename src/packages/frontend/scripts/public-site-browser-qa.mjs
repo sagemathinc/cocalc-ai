@@ -384,7 +384,11 @@ const ROUTE_RULES = {
       "Ask about Jupyter workflows",
       "The browser tab is not the source of truth for execution",
     ],
-    requireSelectors: [".cocalc-feature-final-panel"],
+    requireSelectors: [
+      ".cocalc-feature-context-list",
+      ".cocalc-feature-final-band",
+      ".cocalc-feature-final-panel",
+    ],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
     requireLinks: [
       { text: "Compatibility guide", hrefIncludes: "/cocalc-for-jupyter/" },

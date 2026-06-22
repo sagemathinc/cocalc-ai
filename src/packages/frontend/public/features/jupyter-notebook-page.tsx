@@ -3,222 +3,67 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useState, type ReactNode } from "react";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Button, Col, Flex, Modal, Row, Typography } from "antd";
-
-import { type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_ELEVATION,
   PUBLIC_COLORS,
-  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   CodeBlock,
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
-import { IconBadge } from "./feature-visuals";
+import {
+  ContextList,
+  FeatureFinalBand,
+  IconBadge,
+  StoryCard,
+  TerminalMock,
+} from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
+function NotebookEvidencePanel() {
   return (
     <div
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: PUBLIC_ELEVATION.media,
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={3} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
-      </Flex>
-    </div>
-  );
-}
-
-function NotebookMock() {
-  const cells = [
-    {
-      input: "df = load_experiment('spectral-gap')",
-      output: "data loaded",
-    },
-    {
-      input: "plot_gap_distribution(df)",
-      output: "interactive widget + figure",
-    },
-    {
-      input: "fit = model(df); fit.summary()",
-      output: "model summary ready",
-    },
-  ];
-  return (
-    <div
-      aria-label="Illustration of a CoCalc Jupyter notebook inside a project"
+      aria-label="Illustration of a CoCalc Jupyter notebook beside project files"
       style={{
         background:
-          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
+          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: PUBLIC_ELEVATION.lg,
         padding: 20,
       }}
     >
-      <Flex vertical gap={14}>
-        <Flex align="center" justify="space-between" wrap gap={10}>
-          <Flex align="center" gap={10}>
-            <IconBadge accent="#f37726" icon="jupyter" />
-            <div>
-              <Text strong>analysis.ipynb</Text>
-              <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                live backend session
-              </div>
-            </div>
-          </Flex>
-        </Flex>
-        <div
-          style={{
-            background: PUBLIC_DARK.deepSurface,
-            borderRadius: PUBLIC_RADIUS.panel,
-            color: PUBLIC_DARK.mockText,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              alignItems: "center",
-              background: "rgba(255,255,255,0.08)",
-              display: "flex",
-              gap: 8,
-              padding: "12px 14px",
-            }}
-          >
-            {[
-              PUBLIC_DARK.dotRed,
-              PUBLIC_DARK.dotAmber,
-              PUBLIC_DARK.dotGreen,
-            ].map((color) => (
-              <span
-                aria-hidden="true"
-                key={color}
-                style={{
-                  background: color,
-                  borderRadius: "50%",
-                  height: 10,
-                  width: 10,
-                }}
-              />
-            ))}
-            <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
-              CoCalc Notebook
-            </Text>
-          </div>
-          <Flex vertical gap={12} style={{ padding: 16 }}>
-            {cells.map((cell, index) => (
-              <div
-                key={cell.input}
-                style={{
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  borderRadius: PUBLIC_RADIUS.panel,
-                  padding: 12,
-                }}
-              >
-                <Text style={{ color: "#93c5fd" }}>[{index + 1}]</Text>{" "}
-                <code style={{ color: "#f8fafc" }}>{cell.input}</code>
-                <div
-                  style={{
-                    background: "rgba(255,255,255,0.1)",
-                    borderRadius: PUBLIC_RADIUS.panel,
-                    color: "#bbf7d0",
-                    marginTop: 10,
-                    padding: "8px 10px",
-                  }}
-                >
-                  {cell.output}
-                </div>
-              </div>
-            ))}
-          </Flex>
-        </div>
-      </Flex>
-    </div>
-  );
-}
-
-function LiveStateDiagram() {
-  return (
-    <div
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: PUBLIC_ELEVATION.panel,
-        padding: 24,
-      }}
-    >
       <Flex vertical gap={16}>
-        <Flex align="center" gap={12}>
-          <IconBadge accent="#7c3aed" icon="robot" />
+        <Flex align="center" gap={10}>
+          <IconBadge accent="#f37726" icon="jupyter" />
           <div>
-            <Text strong>Codex sees the current notebook state</Text>
+            <Text strong>analysis.ipynb</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              Cells, outputs, errors, and runs stay visible to the agent.
+              notebook, data files, scripts, and outputs stay together
             </div>
           </div>
         </Flex>
-        <CodeBlock
-          ariaLabel="Project-scoped Jupyter commands"
-          code={`cocalc project jupyter cells --path analysis.ipynb
-cocalc project jupyter run --path analysis.ipynb --cell-index 3
-cocalc project jupyter exec --path analysis.ipynb --stdin`}
+        <TerminalMock
+          title="CoCalc notebook"
+          rows={[
+            "[1] df = load_experiment('spectral-gap')",
+            "data loaded",
+            "[2] plot_gap_distribution(df)",
+            "interactive widget + figure",
+            "[3] fit = model(df); fit.summary()",
+            "model summary ready",
+          ]}
         />
-        <Row gutter={[10, 10]}>
-          {["inspect cells", "run focused code", "summarize output"].map(
-            (label) => (
-              <Col key={label} xs={24} sm={8}>
-                <div
-                  style={{
-                    background: `${COLORS.AI_ASSISTANT_FONT}12`,
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PUBLIC_RADIUS.panel,
-                    padding: "8px 10px",
-                    width: "100%",
-                  }}
-                >
-                  <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-                    {label}
-                  </Text>
-                </div>
-              </Col>
-            ),
-          )}
-        </Row>
       </Flex>
     </div>
   );
@@ -230,7 +75,6 @@ export default function JupyterNotebookFeaturePage({
   helpEmail?: string;
   isAuthenticated?: boolean;
 }) {
-  const [showAgentDetails, setShowAgentDetails] = useState(false);
   const primaryCtaHref = isAuthenticated
     ? appPath("projects")
     : appPath("auth/sign-up");
@@ -240,10 +84,10 @@ export default function JupyterNotebookFeaturePage({
     : "Start using Jupyter in CoCalc";
 
   return (
-    <Flex vertical gap={18}>
+    <Flex vertical gap={22}>
       <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={11}>
+        <Row gutter={[28, 28]} align="top">
+          <Col xs={24} lg={14}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
                 Jupyter notebooks for work that needs to keep going
@@ -254,20 +98,29 @@ export default function JupyterNotebookFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Collaborators and Codex work from the same outputs, errors, and
-                live state.
+                kernel state.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
                   {primaryCtaLabel}
                 </Button>
-                <Button href={`${GUIDE_BASE}/jupyter-notebooks/`}>
+                <LinkButton href={`${GUIDE_BASE}/jupyter-notebooks/`}>
                   Read the Jupyter guide
-                </Button>
+                </LinkButton>
               </Flex>
             </Flex>
           </Col>
-          <Col xs={24} lg={13}>
-            <NotebookMock />
+          <Col xs={24} lg={10}>
+            <ContextList
+              accent="#f37726"
+              items={[
+                { icon: "server", label: "Kernels run beside project files" },
+                { icon: "database", label: "Data and packages stay nearby" },
+                { icon: "users", label: "Shared sessions for collaborators" },
+                { icon: "history", label: "TimeTravel records notebook edits" },
+              ]}
+              title="Notebook context"
+            />
           </Col>
         </Row>
       </PublicSection>
@@ -301,127 +154,96 @@ export default function JupyterNotebookFeaturePage({
       </Row>
 
       <PublicSection>
-        <Flex vertical gap={12} style={{ maxWidth: 860 }}>
-          <Title level={3} style={{ margin: 0 }}>
-            When the notebook depends on more than cells
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Notebooks are often the visible part of a larger analysis. CoCalc
-            keeps the surrounding work close enough that a reader, collaborator,
-            or instructor can understand what produced a result.
-          </Paragraph>
-          <BulletList
-            items={[
-              "Use terminal and Linux tools without moving the notebook elsewhere.",
-              "Keep data files, scripts, figures, and paper drafts near the computation.",
-              "Bring collaborators or instructors into the same working state, with visible cursors and shared kernel sessions.",
-            ]}
-          />
-          <Flex wrap gap={12}>
-            <Button href={appPath("features/terminal")}>
-              Terminal workflows
-            </Button>
-            <Button href={appPath("features/linux")}>Linux environment</Button>
-            <Button href={appPath("features/latex-editor")}>
-              LaTeX papers
-            </Button>
-          </Flex>
-        </Flex>
-      </PublicSection>
-
-      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
+          <Col xs={24} lg={12}>
+            <NotebookEvidencePanel />
+          </Col>
+          <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Choose the notebook path that fits
+                When the notebook depends on more than cells
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                The same notebooks stay portable — pick the path that matches
-                how your team needs to run them.
+                Notebooks are often the visible part of a larger analysis.
+                CoCalc keeps the surrounding work close enough that a reader,
+                collaborator, or instructor can understand what produced a
+                result.
               </Paragraph>
               <BulletList
                 items={[
-                  "Use CoCalc.ai for hosted notebooks with shared files and terminals.",
-                  "Use teaching workflows when notebooks become assignments in student projects.",
-                  "Compare operating models when procurement, licensing, or deployment control matters.",
+                  "Use terminal and Linux tools without moving the notebook elsewhere.",
+                  "Keep data files, scripts, figures, and paper drafts near the computation.",
+                  "Bring collaborators or instructors into the same working state, with visible cursors and shared kernel sessions.",
                 ]}
               />
-              <Flex wrap gap={12}>
-                <Button
-                  type="link"
-                  onClick={() => setShowAgentDetails(true)}
-                  style={{ minHeight: 24, paddingInline: 0 }}
-                >
-                  See agent details
-                </Button>
-                <LinkButton href={appPath("features/teaching")}>
-                  Teaching workflows
-                </LinkButton>
-                <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
-                  Compatibility guide
-                </LinkButton>
-              </Flex>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <Flex
-              className="cocalc-feature-final-panel"
-              vertical
-              gap={14}
-              style={{
-                background: PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.panel,
-                boxShadow: PUBLIC_ELEVATION.panelStrong,
-                color: PUBLIC_COLORS.heading,
-                padding: 26,
-              }}
-            >
-              <Title
-                level={3}
-                style={{ color: PUBLIC_COLORS.heading, margin: 0 }}
-              >
-                Ready to use Jupyter in CoCalc?
-              </Title>
-              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-                Open a hosted notebook on CoCalc.ai and bring your team into the
-                same workspace.
-              </Paragraph>
-              <Flex wrap gap={12}>
-                <Button type="primary" href={primaryCtaHref}>
-                  {finalCtaLabel}
-                </Button>
-                <Button href={appPath("products")}>
-                  Compare operating models
-                </Button>
-              </Flex>
             </Flex>
           </Col>
         </Row>
       </PublicSection>
-      <Modal
-        footer={null}
-        onCancel={() => setShowAgentDetails(false)}
-        open={showAgentDetails}
-        title="How Codex works with live notebooks"
-        width={760}
-      >
-        <Flex vertical gap={18}>
-          <Paragraph style={{ fontSize: PUBLIC_TYPE.body, margin: 0 }}>
-            Saving an <code>.ipynb</code> file is not the same as understanding
-            the live session. CoCalc gives Codex project-scoped notebook
-            commands, so it can inspect cells, start focused runs, and reason
-            from actual output.
-          </Paragraph>
-          <LiveStateDiagram />
-          <Flex wrap gap={12}>
-            <Button type="primary" href={appPath("features/ai")}>
-              AI workflows
-            </Button>
-          </Flex>
-        </Flex>
-      </Modal>
+
+      <PublicSection>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={12}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                Let people and Codex inspect live notebook state
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Saving an <code>.ipynb</code> file is not the same as
+                understanding the current session. CoCalc gives Codex
+                project-scoped notebook commands, so focused runs can start from
+                actual cells, outputs, and errors.
+              </Paragraph>
+              <BulletList
+                items={[
+                  "Inspect the current cells before suggesting a change.",
+                  "Run one cell or execute stdin against the notebook kernel.",
+                  "Summarize real output instead of guessing from a saved file.",
+                ]}
+              />
+            </Flex>
+          </Col>
+          <Col xs={24} lg={12}>
+            <CodeBlock
+              ariaLabel="Project-scoped Jupyter commands"
+              code={`cocalc project jupyter cells --path analysis.ipynb
+cocalc project jupyter run --path analysis.ipynb --cell-index 3
+cocalc project jupyter exec --path analysis.ipynb --stdin`}
+            />
+          </Col>
+        </Row>
+      </PublicSection>
+
+      <PublicSection>
+        <FeatureFinalBand
+          action={{
+            body: "Open a hosted notebook on CoCalc.ai and bring your team into the same workspace.",
+            href: primaryCtaHref,
+            label: finalCtaLabel,
+            title: "Ready to use Jupyter in CoCalc?",
+          }}
+          relatedLinks={[
+            {
+              href: `${GUIDE_BASE}/cocalc-for-jupyter/`,
+              label: "Compatibility guide",
+            },
+            { href: appPath("features/terminal"), label: "Terminal workflows" },
+            { href: appPath("features/linux"), label: "Linux environment" },
+            { href: appPath("features/whiteboard"), label: "Whiteboards" },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="Choose the notebook path that fits"
+        >
+          <BulletList
+            items={[
+              "Use CoCalc.ai when notebooks need shared files, terminals, packages, and review history.",
+              "Use teaching workflows when notebooks become assignments in student projects.",
+              "Use whiteboards when notebook cells need a directed graph beside diagrams or explanations.",
+              "Compare operating models when procurement, licensing, or deployment control matters.",
+            ]}
+          />
+        </FeatureFinalBand>
+      </PublicSection>
     </Flex>
   );
 }

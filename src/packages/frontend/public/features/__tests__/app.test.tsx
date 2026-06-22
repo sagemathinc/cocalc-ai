@@ -3,7 +3,7 @@
 import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import {
   combineLeak,
@@ -526,6 +526,12 @@ describe("PublicFeaturesApp", () => {
     expect(storyRow).not.toBeNull();
     expect((storyRow as HTMLElement).querySelectorAll("h3")).toHaveLength(3);
     expect((storyRow as HTMLElement).querySelectorAll("h4")).toHaveLength(0);
+    expect(
+      container.querySelector(".cocalc-feature-context-list"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(".cocalc-feature-final-band"),
+    ).not.toBeNull();
     // Closing section identity without pinning the exact headline.
     expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
     expect(
@@ -536,13 +542,10 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("model summary ready")).not.toBeNull();
     expect(screen.queryByText("42,180 rows loaded")).toBeNull();
     expect(screen.queryByText("R^2 = 0.94")).toBeNull();
-    // Agent details modal identity (aria contract).
-    fireEvent.click(screen.getByRole("button", { name: "See agent details" }));
-    expect(
-      screen.getByRole("dialog", {
-        name: "How Codex works with live notebooks",
-      }),
-    ).not.toBeNull();
+    expect(container.textContent ?? "").toContain(
+      "cocalc project jupyter cells --path analysis.ipynb",
+    );
+    expect(screen.getByText(/directed graph beside diagrams/i)).not.toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(new Set(getHeadingTexts(container)).size).toBe(
       getHeadingTexts(container).length,
