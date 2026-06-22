@@ -462,6 +462,30 @@ Current disposition:
 - Representative browser QA/screenshots covered `/features/slides` on desktop
   and mobile.
 
+### FS-015 - Polish the whiteboard feature-card residuals
+
+Status: `done`
+
+Evidence:
+
+- Design-polish item 15 called out `/features/whiteboard`: the hero mock still
+  used a bespoke nested canvas illustration, and the directed graph proof panel
+  needed to move toward the shared card treatment without losing board/code/
+  output/math proof.
+
+Current disposition:
+
+- The whiteboard hero mock now uses compact tokenized icon cards for markdown
+  notes, LaTeX math, Jupyter cells, and a connected page instead of a custom
+  nested canvas drawing.
+- The hero gradient and directed-graph proof cards now use existing
+  `PUBLIC_COLORS`/`PUBLIC_ELEVATION` tokens.
+- Directed-graph spacing was tightened so the proof stays readable on mobile.
+- Whiteboard no longer needs a legacy inline-style budget, and its raw-hex
+  allowlist is tightened to route accents only.
+- Representative browser QA/screenshots covered `/features/whiteboard` on
+  desktop and mobile.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible

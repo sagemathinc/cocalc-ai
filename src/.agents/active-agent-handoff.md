@@ -46,6 +46,38 @@ Known risks:
 
 ---
 
+### Codex - whiteboard residual polish (2026-06-22 15:08 PDT)
+
+- **START 2026-06-22 14:57 PDT:** Continuing design-polish item 15 after the
+  slides residual landed in `cee71ca3a7` and handoff `0c8ff659da` was pushed.
+  Taking the next bounded residual sub-slice: `/features/whiteboard`. Claimed
+  files: `src/packages/frontend/public/features/whiteboard-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Do not touch protected
+  `home/**`, footer, pricing/compliance, type/palette token values, pitch/docs
+  content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 15:08 PDT:** Whiteboard residual sub-slice landed in
+  `717f76707f` (`frontend/public: polish whiteboard feature cards`). The
+  whiteboard hero mock no longer uses a bespoke nested canvas illustration; it
+  now uses compact tokenized icon cards for markdown notes, LaTeX math,
+  Jupyter cells, and a connected page. The directed graph proof panel uses
+  existing public surface/elevation/warning tokens and tighter spacing so the
+  mobile graph no longer crowds the card. Whiteboard left the legacy inline
+  style budget and its raw-hex allowlist is tightened to route accents only.
+  Validation passed: Prettier on touched files; focused feature/browser-QA
+  harness Jest 133/133; `git diff --check`; `pnpm -C src lint:frontend`;
+  `pnpm -C src/packages/static build:dev` from git revision `717f76707f` with
+  only the existing local debug-log permission warning; browser QA
+  desktop+mobile for `/features/whiteboard` passed 42/42 at
+  `/tmp/cocalc-public-qa-Tn3FQc`. Screenshot inspection: hero cards and the
+  graph proof are readable on desktop/mobile with no overlap. The known
+  untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  draft is still untouched. Item 15 remains open; remaining residual
+  candidates: octave heading hierarchy, more-languages cramped pill/right-rail,
+  and sage/automations text-heavy left columns.
+
 ### Codex - slides residual polish (2026-06-22 14:50 PDT)
 
 - **START 2026-06-22 14:50 PDT:** Continuing into design-polish item 15 after
