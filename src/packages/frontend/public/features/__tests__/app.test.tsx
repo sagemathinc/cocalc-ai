@@ -766,7 +766,7 @@ describe("PublicFeaturesApp", () => {
   });
 
   it("renders the richer linux environment page", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "linux", view: "detail" }}
@@ -781,6 +781,12 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getAllByText(/administer|system packages|sudo/i).length,
     ).toBeGreaterThan(0);
+    expect(
+      container.querySelector(".cocalc-feature-context-list"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(".cocalc-feature-final-band"),
+    ).not.toBeNull();
     expect(screen.getByText(/You decide what runs/i)).not.toBeNull();
     expect(screen.queryByText(/and running the command/i)).toBeNull();
     // Closing section identity without pinning the headline.

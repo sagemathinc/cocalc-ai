@@ -448,7 +448,11 @@ const ROUTE_RULES = {
       "You decide what runs",
     ],
     forbidText: ["Ask about Linux environments", "and running the command"],
-    requireSelectors: [".cocalc-feature-final-panel"],
+    requireSelectors: [
+      ".cocalc-feature-context-list",
+      ".cocalc-feature-final-band",
+      ".cocalc-feature-final-panel",
+    ],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
   "/features/python": {
