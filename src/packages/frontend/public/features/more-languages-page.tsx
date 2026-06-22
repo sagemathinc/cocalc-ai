@@ -14,7 +14,7 @@ import {
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
-import { ContextList, IconBadge, StartCard } from "./feature-visuals";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -185,36 +185,32 @@ export default function MoreLanguagesFeaturePage({
       <MoreLanguagesFit />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>When another language belongs in CoCalc</Title>
-            <BulletList
-              items={[
-                "A course or workshop needs one shared setup for scripts, compilers, and examples.",
-                "A research project mixes notebooks with compiled code or shell tools.",
-                "Generated output needs to stay near the source files and explanation.",
-                "Collaborators need to inspect and rerun the same project workflow.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/jupyter-notebook")}>
-                Jupyter notebooks
-              </Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              <Button href={appPath("products")}>
-                Compare operating models
-              </Button>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and use the language tools that fit your source files, scripts, notebooks, and collaborators."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start in a project"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and use the language tools that fit your source files, scripts, notebooks, and collaborators.",
+            href: primaryHref,
+            label: finalLabel,
+            title: "Start in a project",
+          }}
+          relatedLinks={[
+            {
+              href: appPath("features/jupyter-notebook"),
+              label: "Jupyter notebooks",
+            },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="When another language belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "A course or workshop needs one shared setup for scripts, compilers, and examples.",
+              "A research project mixes notebooks with compiled code or shell tools.",
+              "Generated output needs to stay near the source files and explanation.",
+              "Collaborators need to inspect and rerun the same project workflow.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

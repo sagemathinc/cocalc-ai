@@ -1113,6 +1113,10 @@ describe("PublicFeaturesApp", () => {
   it.each([
     { slug: "julia", title: "When Julia belongs in CoCalc" },
     { slug: "octave", title: "When Octave belongs in CoCalc" },
+    {
+      slug: "more-languages",
+      title: "When another language belongs in CoCalc",
+    },
   ] as const)("uses the balanced final band on $slug", ({ slug, title }) => {
     const { container } = render(
       <PublicFeaturesApp
