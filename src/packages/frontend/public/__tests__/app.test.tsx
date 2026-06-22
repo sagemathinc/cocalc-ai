@@ -1602,6 +1602,10 @@ describe("PublicApp", () => {
     expect(
       screen.getAllByText(/customer-operated private deployment/i).length,
     ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/available as a VM deployment or on Kubernetes/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/preferred packaging/i)).toBeNull();
     expect(screen.getAllByText(/governance, support/i).length).toBeGreaterThan(
       0,
     );

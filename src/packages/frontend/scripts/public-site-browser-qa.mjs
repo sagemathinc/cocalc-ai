@@ -252,6 +252,7 @@ const ROUTE_RULES = {
       "CoCalc Rocket",
       "Planning an institutional private CoCalc deployment?",
       "Boundary: planned private cloud",
+      "available as a VM deployment or on Kubernetes",
     ],
     requireLinks: [
       {
@@ -264,7 +265,7 @@ const ROUTE_RULES = {
         hrefIncludes: "/products/cocalc-launchpad",
       },
     ],
-    forbidText: ["Compare with Launchpad"],
+    forbidText: ["Compare with Launchpad", "preferred packaging"],
   },
   "/features": {
     requireText: [

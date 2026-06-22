@@ -1300,3 +1300,28 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/products`, `/products/cocalc-plus`, `/products/cocalc-star`,
   `/products/cocalc-launchpad`, and `/products/cocalc-rocket` desktop+mobile
   passed 200/200. Screenshots inspected from `/tmp/cocalc-public-qa-Wmvuxx`.
+
+---
+
+## Codex — post-framing P2 Rocket deployment-claim safety (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  only the Rocket `How it runs` deployment-claim wording: replace the
+  unsupported `preferred packaging is VM-first` claim with neutral VM/Kubernetes
+  options language, preserving Rocket positioning, CTAs, product proof, and all
+  product routes. Claimed files: `products/app.tsx`,
+  `public/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`, and
+  this ledger. Guardrails: no protected home, pitch docs, docs routes/content,
+  pricing/compliance, type/palette work, or the untracked dedicated-compute
+  draft.
+- **END 2026-06-22:** Rocket claim-safety wording implemented and validated.
+  Replaced the unsupported `preferred packaging is VM-first` language with a
+  neutral, source-grounded options statement: Rocket is available as a VM
+  deployment or on Kubernetes depending on the organization's infrastructure.
+  Updated public app and browser-QA canaries to require the new wording and
+  forbid `preferred packaging`. Validation passed: `git diff --check`; focused
+  public app + browser-QA harness Jest 43/43; `pnpm -C src lint:frontend`;
+  `pnpm -C src/packages/static build:dev`; browser QA on
+  `/products/cocalc-rocket` desktop+mobile passed 40/40. Screenshots inspected
+  from `/tmp/cocalc-public-qa-TWYx1B`.

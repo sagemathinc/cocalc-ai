@@ -479,7 +479,7 @@ function CocalcRocketPage() {
       title: "Who it fits",
     },
     {
-      body: "Runs as a customer-operated private-cloud path. The preferred packaging is VM-first, with Kubernetes available for organizations that already operate that way.",
+      body: "Runs as a customer-operated private-cloud path, available as a VM deployment or on Kubernetes depending on the organization's infrastructure.",
       icon: "servers",
       title: "How it runs",
     },
