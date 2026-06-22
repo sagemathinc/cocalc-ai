@@ -85,12 +85,12 @@
 }
 
 .cc-project-create-image-option[aria-pressed="true"] {
-  box-shadow: 0 0 0 2px Highlight;
+  box-shadow: inset 0 0 0 2px Highlight;
 }
 
 .cc-project-create-image-option:focus-visible {
   outline: 2px solid Highlight;
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .cc-project-create-summary-card {
