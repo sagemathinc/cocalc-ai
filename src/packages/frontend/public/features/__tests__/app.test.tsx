@@ -1475,11 +1475,10 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.queryByRole("link", { name: "Compare workspace model" }),
     ).toBeNull();
-    expect(
-      screen.getByRole("table", {
-        name: "CoCalc compare decision rows",
-      }),
-    ).not.toBeNull();
+    const decisionTable = screen.getByRole("table", {
+      name: "CoCalc compare decision rows",
+    });
+    expect(decisionTable).not.toBeNull();
     expect(
       screen.getByRole("columnheader", { name: "Decision question" }),
     ).not.toBeNull();
@@ -1491,6 +1490,13 @@ describe("PublicFeaturesApp", () => {
         name: "Choose a lighter tool when",
       }),
     ).not.toBeNull();
+    expect(decisionTable).toHaveAttribute(
+      "aria-describedby",
+      "cocalc-compare-table-caption",
+    );
+    expect(decisionTable.querySelector("caption")?.textContent).toMatch(
+      /labelled stacked fields/,
+    );
     expect(container.textContent ?? "").not.toMatch(
       /These comparisons are intentionally high level|How CoCalc compares by category|Google Colab|Deepnote|narrower point solution|product ladder|card wall|Use CoCalc when/i,
     );

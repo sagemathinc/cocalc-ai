@@ -1409,3 +1409,29 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/features/terminal`, `/features/latex-editor`, and
   `/features/jupyter-notebook` desktop+mobile passed 130/130. Mobile
   screenshots inspected from `/tmp/cocalc-public-qa-z8ynBQ`.
+
+---
+
+## Codex — post-framing P3 compare table mobile a11y orientation (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  only the low-priority compare decision-table accessibility polish: preserve
+  the existing responsive stacked layout and `data-label` semantics while
+  adding assistive orientation for the mobile table structure. Claimed files:
+  `src/packages/frontend/public/features/compare-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, focused
+  browser-QA canaries if needed, and this ledger. Guardrails: no pricing page,
+  protected home, pitch docs, docs routes/content, compliance/trust claims,
+  type/palette work, product pages, or the untracked dedicated-compute draft.
+- **END 2026-06-22:** Compare table mobile a11y orientation implemented and
+  validated. Added a visually hidden caption to the compare decision table,
+  connected it with `aria-describedby`, and kept the existing responsive
+  stacked layout plus `data-label` visible column labels unchanged. Updated the
+  focused compare test to assert the table description wiring and mobile
+  orientation text. Validation passed: `git diff --check`; focused feature Jest
+  99/99 after fixing the local test variable; `pnpm -C src lint:frontend`;
+  `pnpm -C src/packages/static build:dev`; browser QA on `/features/compare`
+  desktop+mobile passed 42/42. Mobile screenshot inspected from
+  `/tmp/cocalc-public-qa-iEY4lo`; no visible layout change from the hidden
+  caption.

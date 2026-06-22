@@ -169,6 +169,17 @@ const COMPARE_PAGE_CSS = `
     width: 100%;
   }
 
+  .cocalc-compare-table-caption {
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
   .cocalc-compare-table th,
   .cocalc-compare-table td {
     padding: 18px 20px;
@@ -394,9 +405,18 @@ export default function CompareFeaturePage({
         title="Decision checklist"
       >
         <table
+          aria-describedby="cocalc-compare-table-caption"
           aria-label="CoCalc compare decision rows"
           className="cocalc-compare-checklist cocalc-compare-table"
         >
+          <caption
+            className="cocalc-compare-table-caption"
+            id="cocalc-compare-table-caption"
+          >
+            Each row compares the decision question, when to choose CoCalc, and
+            when a lighter tool is enough. On narrow screens, each row is shown
+            as labelled stacked fields with the same column meaning.
+          </caption>
           <thead>
             <tr>
               <th scope="col">Decision question</th>
