@@ -1900,6 +1900,10 @@ export type HostControlMethod =
   | "unmount-shared-scratch"
   | "get-runtime-log"
   | "get-project-runtime-log"
+  | "start-rootfs-build"
+  | "get-rootfs-build-status"
+  | "get-rootfs-build-log"
+  | "cancel-rootfs-build"
   | "list-rootfs-images"
   | "pull-rootfs-image"
   | "delete-rootfs-image"
@@ -2765,6 +2769,22 @@ export interface InterBayHostControlApi {
     host_id: string;
     get: HostControlArg<"getProjectRuntimeLog">;
   }) => Promise<HostProjectRuntimeLogResponse>;
+  startRootfsBuild: (opts: {
+    host_id: string;
+    start: HostControlArg<"startRootfsBuild">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["startRootfsBuild"]>>>;
+  getRootfsBuildStatus: (opts: {
+    host_id: string;
+    get: HostControlArg<"getRootfsBuildStatus">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["getRootfsBuildStatus"]>>>;
+  getRootfsBuildLog: (opts: {
+    host_id: string;
+    get: HostControlArg<"getRootfsBuildLog">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["getRootfsBuildLog"]>>>;
+  cancelRootfsBuild: (opts: {
+    host_id: string;
+    cancel: HostControlArg<"cancelRootfsBuild">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["cancelRootfsBuild"]>>>;
   listRootfsImages: (opts: {
     host_id: string;
   }) => Promise<HostRootfsCacheEntry[]>;
@@ -3370,6 +3390,10 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "unmountSharedScratch", method: "unmount-shared-scratch" },
   { name: "getRuntimeLog", method: "get-runtime-log" },
   { name: "getProjectRuntimeLog", method: "get-project-runtime-log" },
+  { name: "startRootfsBuild", method: "start-rootfs-build" },
+  { name: "getRootfsBuildStatus", method: "get-rootfs-build-status" },
+  { name: "getRootfsBuildLog", method: "get-rootfs-build-log" },
+  { name: "cancelRootfsBuild", method: "cancel-rootfs-build" },
   { name: "listRootfsImages", method: "list-rootfs-images" },
   { name: "pullRootfsImage", method: "pull-rootfs-image" },
   { name: "deleteRootfsImage", method: "delete-rootfs-image" },

@@ -2275,6 +2275,14 @@ async function startHostControlService(): Promise<void> {
       await (await getHostClient(host_id, 30_000)).getRuntimeLog(get),
     getProjectRuntimeLog: async ({ host_id, get }) =>
       await (await getHostClient(host_id, 30_000)).getProjectRuntimeLog(get),
+    startRootfsBuild: async ({ host_id, start }) =>
+      await (await getHostClient(host_id, 30_000)).startRootfsBuild(start),
+    getRootfsBuildStatus: async ({ host_id, get }) =>
+      await (await getHostClient(host_id, 30_000)).getRootfsBuildStatus(get),
+    getRootfsBuildLog: async ({ host_id, get }) =>
+      await (await getHostClient(host_id, 30_000)).getRootfsBuildLog(get),
+    cancelRootfsBuild: async ({ host_id, cancel }) =>
+      await (await getHostClient(host_id, 30_000)).cancelRootfsBuild(cancel),
     listRootfsImages: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).listRootfsImages(),
     pullRootfsImage: async ({ host_id, pull }) =>

@@ -84,6 +84,12 @@ import { readHostAgentState } from "./host-agent-state";
 import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
 import { upsertProjectStopPolicy } from "./sqlite/stop-policy";
 import { startHostPressureController } from "./host-pressure";
+import {
+  cancelRootfsBuild as cancelRootfsBuildOnHost,
+  getRootfsBuildLog as getRootfsBuildLogOnHost,
+  getRootfsBuildStatus as getRootfsBuildStatusOnHost,
+  startRootfsBuild as startRootfsBuildOnHost,
+} from "./rootfs-build-runner";
 
 const logger = getLogger("project-host:master");
 
@@ -1074,6 +1080,19 @@ export async function startMasterRegistration({
     },
     async getProjectRuntimeLog({ project_id, lines }) {
       return await readProjectRuntimeLogTail(project_id, lines);
+    },
+    async startRootfsBuild(opts) {
+      await awaitReadyForControl("startRootfsBuild", waitUntilReady);
+      return await startRootfsBuildOnHost(opts);
+    },
+    async getRootfsBuildStatus(opts) {
+      return await getRootfsBuildStatusOnHost(opts);
+    },
+    async getRootfsBuildLog(opts) {
+      return await getRootfsBuildLogOnHost(opts);
+    },
+    async cancelRootfsBuild(opts) {
+      return await cancelRootfsBuildOnHost(opts);
     },
     async listRootfsImages() {
       return await listRootfsCacheEntries();

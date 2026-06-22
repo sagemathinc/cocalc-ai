@@ -76,6 +76,68 @@ export interface HostProjectRuntimeLogResponse {
   reason?: string;
 }
 
+export type HostRootfsBuildStatus =
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceling"
+  | "canceled"
+  | "unknown";
+
+export interface HostRootfsBuildStartRequest {
+  project_id: string;
+  build_id?: string;
+  script: string;
+  recipe_ref?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  resolved_recipe_json?: unknown;
+  metadata_json?: unknown;
+}
+
+export interface HostRootfsBuildArtifactPaths {
+  dir: string;
+  script: string;
+  log: string;
+  status: string;
+  events: string;
+  resolved_recipe?: string;
+  metadata?: string;
+}
+
+export interface HostRootfsBuildStatusResponse {
+  build_id: string;
+  project_id: string;
+  status: HostRootfsBuildStatus;
+  recipe_ref?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  last_output_at?: string;
+  exit_code?: number | null;
+  signal?: string | null;
+  error?: string;
+  pid?: number;
+  paths: HostRootfsBuildArtifactPaths;
+}
+
+export interface HostRootfsBuildLogResponse {
+  build_id: string;
+  project_id: string;
+  lines: number;
+  text: string;
+  found: boolean;
+  path: string;
+}
+
+export interface HostRootfsBuildCancelResponse {
+  build_id: string;
+  project_id: string;
+  status: HostRootfsBuildStatus;
+  signaled: boolean;
+  message?: string;
+}
+
 export interface HostRootfsCacheEntry {
   image: string;
   cache_path: string;
@@ -355,6 +417,22 @@ export interface HostControlApi {
     project_id: string;
     lines?: number;
   }) => Promise<HostProjectRuntimeLogResponse>;
+  startRootfsBuild: (
+    opts: HostRootfsBuildStartRequest,
+  ) => Promise<HostRootfsBuildStatusResponse>;
+  getRootfsBuildStatus: (opts: {
+    project_id: string;
+    build_id: string;
+  }) => Promise<HostRootfsBuildStatusResponse>;
+  getRootfsBuildLog: (opts: {
+    project_id: string;
+    build_id: string;
+    lines?: number;
+  }) => Promise<HostRootfsBuildLogResponse>;
+  cancelRootfsBuild: (opts: {
+    project_id: string;
+    build_id: string;
+  }) => Promise<HostRootfsBuildCancelResponse>;
   listRootfsImages: () => Promise<HostRootfsCacheEntry[]>;
   pullRootfsImage: (opts: { image: string }) => Promise<HostRootfsCacheEntry>;
   deleteRootfsImage: (opts: { image: string }) => Promise<{ removed: boolean }>;
