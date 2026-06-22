@@ -1107,6 +1107,10 @@ describe("PublicFeaturesApp", () => {
       slug: "whiteboard",
       title: "When a board or deck belongs in CoCalc",
     },
+    {
+      slug: "r-statistical-software",
+      title: "From analysis to a shared report",
+    },
   ] as const)("uses the balanced final band on $slug", ({ slug, title }) => {
     const { container } = render(
       <PublicFeaturesApp

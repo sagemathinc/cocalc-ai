@@ -13,12 +13,8 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  LinkButton,
-} from "./page-components";
-import { ContextList, IconBadge, StartCard } from "./feature-visuals";
+import { BulletList, featureAppPath as appPath } from "./page-components";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -182,40 +178,32 @@ export default function RStatisticalSoftwareFeaturePage({
       <RProjectFitBand />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                From analysis to a shared report
-              </Title>
-              <BulletList
-                items={[
-                  "Develop the model in a notebook or script, with packages and data in the project.",
-                  "Render a Quarto or RMarkdown report to HTML or PDF from the same project.",
-                  "Collaborators and reviewers open the project and see the exact code, output, and TimeTravel history.",
-                  "Re-run it later — the environment, data, and report build are still there.",
-                ]}
-              />
-              <Flex wrap gap={12}>
-                <Button href={appPath("features/python")}>Python</Button>
-                <Button href={appPath("features/latex-editor")}>
-                  LaTeX editor
-                </Button>
-              </Flex>
-              <LinkButton href={appPath("products")}>
-                Compare operating models
-              </LinkButton>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and use R in notebooks, terminals, reports, or teaching workflows."
-              href={primaryHref}
-              label={primaryLabel}
-              title="Start in a project"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and use R in notebooks, terminals, reports, or teaching workflows.",
+            href: primaryHref,
+            label: primaryLabel,
+            title: "Start in a project",
+          }}
+          relatedLinks={[
+            { href: appPath("features/python"), label: "Python" },
+            { href: appPath("features/latex-editor"), label: "LaTeX editor" },
+            {
+              href: appPath("products"),
+              label: "Compare operating models",
+            },
+          ]}
+          title="From analysis to a shared report"
+        >
+          <BulletList
+            items={[
+              "Develop the model in a notebook or script, with packages and data in the project.",
+              "Render a Quarto or RMarkdown report to HTML or PDF from the same project.",
+              "Collaborators and reviewers open the project and see the exact code, output, and TimeTravel history.",
+              "Re-run it later — the environment, data, and report build are still there.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

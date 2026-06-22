@@ -1111,3 +1111,15 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/products`, `/features`, `/docs`, and `/support` desktop+mobile passed
   174/174. Screenshots inspected from `/tmp/cocalc-public-qa-TxCGI4`; footer
   wraps cleanly on desktop and mobile. Ready for commit/push/rebuild.
+- **START/END Wave-3 R 2026-06-22:** Assessed `/features/r-statistical-software`
+  as a clean `FeatureFinalBand` candidate. Converted only the final
+  `StartCard` section to the shared band, preserving R-specific proof:
+  notebooks/scripts, Quarto/RMarkdown, HTML/PDF reports, TimeTravel history,
+  Python/LaTeX related paths, and teaching workflows in the CTA body. No
+  protected home, pitch docs, docs content/routes, pricing/compliance,
+  type/palette, Sage, Slides, or dedicated-compute draft touched. Validation
+  passed: `git diff --check`; focused feature Jest 97/97; `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+  `/features/r-statistical-software` desktop+mobile passed 38/38. Screenshots
+  inspected from `/tmp/cocalc-public-qa-q0ji36`; mobile order is fit proof,
+  primary CTA, then Related.
