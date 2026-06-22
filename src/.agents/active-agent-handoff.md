@@ -1135,3 +1135,14 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   desktop+mobile passed 34/34. Screenshots inspected from
   `/tmp/cocalc-public-qa-hqubF5`; mobile order is fit proof, primary CTA, then
   Related.
+- **START/END Wave-3 Sage 2026-06-22:** Assessed `/features/sage` as a clean
+  custom `FeatureFinalBand` rewrite. Converted the hand-rolled final CTA panel
+  to the shared band, preserving Sage-specific proof: SageMath notebooks,
+  terminals, LaTeX documents, SageTeX, supporting files, research/teaching use,
+  course environments, and SageMath community/team roots. No protected home,
+  pitch docs, docs content/routes, pricing/compliance, type/palette, or
+  dedicated-compute draft touched. Validation passed: `git diff --check`;
+  focused feature Jest 99/99; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/features/sage` desktop+mobile
+  passed 38/38. Screenshots inspected from `/tmp/cocalc-public-qa-gv6LKO`;
+  mobile order is fit proof, primary CTA, then Related.

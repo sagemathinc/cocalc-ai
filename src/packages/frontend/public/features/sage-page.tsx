@@ -14,12 +14,8 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  LinkButton,
-} from "./page-components";
-import { IconBadge, ContextList } from "./feature-visuals";
+import { BulletList, featureAppPath as appPath } from "./page-components";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -305,66 +301,35 @@ export default function SageFeaturePage({
       <TeachingComparison />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                When SageMath belongs in CoCalc.
-              </Title>
-              <BulletList
-                items={[
-                  "When the math is one part of a larger research or engineering project, not a standalone worksheet.",
-                  "When a paper or handout needs Sage output rendered inline, with SageTeX in the collaborative LaTeX editor.",
-                  "When several people need to run, review, or continue the same computation from one shared project.",
-                  "When a course needs a shared environment students can use without installing anything.",
-                ]}
-              />
-              <Flex wrap gap={12}>
-                <Button href={appPath("features/latex-editor")}>
-                  LaTeX editor
-                </Button>
-                <Button href={appPath("features/terminal")}>
-                  Terminal workflows
-                </Button>
-              </Flex>
-              <LinkButton href={appPath("products")}>
-                Compare operating models
-              </LinkButton>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <div
-              className="cocalc-feature-final-panel"
-              style={{
-                background: PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.panel,
-                boxShadow: PUBLIC_ELEVATION.panelStrong,
-                color: PUBLIC_COLORS.heading,
-                padding: 26,
-              }}
-            >
-              <Title
-                level={3}
-                style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
-              >
-                Start using SageMath
-              </Title>
-              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-                Open a project and use Sage in notebooks, terminals, LaTeX
-                documents, courses, or long-running research jobs.
-              </Paragraph>
-              <Button
-                href={primaryCtaHref}
-                size="large"
-                style={{ marginTop: 22, width: "fit-content" }}
-                type="primary"
-              >
-                {primaryCtaLabel}
-              </Button>
-            </div>
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and use Sage in notebooks, terminals, LaTeX documents, courses, or long-running research jobs.",
+            href: primaryCtaHref,
+            label: primaryCtaLabel,
+            title: "Start using SageMath",
+          }}
+          relatedLinks={[
+            { href: appPath("features/latex-editor"), label: "LaTeX editor" },
+            {
+              href: appPath("features/terminal"),
+              label: "Terminal workflows",
+            },
+            {
+              href: appPath("products"),
+              label: "Compare operating models",
+            },
+          ]}
+          title="When SageMath belongs in CoCalc."
+        >
+          <BulletList
+            items={[
+              "When the math is one part of a larger research or engineering project, not a standalone worksheet.",
+              "When a paper or handout needs Sage output rendered inline, with SageTeX in the collaborative LaTeX editor.",
+              "When several people need to run, review, or continue the same computation from one shared project.",
+              "When a course needs a shared environment students can use without installing anything.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );
