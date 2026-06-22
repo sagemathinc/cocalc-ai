@@ -46,6 +46,37 @@ Known risks:
 
 ---
 
+### Codex - feature-page prevention guardrails (2026-06-22 14:28 PDT)
+
+- **START 2026-06-22 14:28 PDT:** Continuing the curated feature-page
+  consistency queue after the LaTeX source commit `e5451f2c01` and handoff
+  commit `17e0e75a79` were pushed. Claimed files:
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/public/features/compare-page.tsx` only if the new
+  token guard exposed an existing raw px font-size literal, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Do not touch protected
+  `home/**`, footer, pricing/compliance, type/palette token values, pitch/docs
+  content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 14:34 PDT:** Source/test slice landed in `72f9c41b65`
+  (`frontend/public: add feature page consistency guardrails`). Added Tier-1
+  guardrails to the existing public feature suite: canonical shared-primitive
+  pages must render `FeatureFinalBand` plus at least one `ContextList`; tracked
+  route pages cannot add new zero-shared-primitive surfaces outside the
+  explicit custom-page allowlist; feature page inline `style={{}}` blocks now
+  have a default budget of 15 with named legacy ceilings; raw feature-page hex
+  literals must appear on an explicit per-file allowlist; raw px font-size
+  literals are banned. The one existing compare-table `font-size: 16px` literal
+  was tokenized through `PUBLIC_TYPE.body`. Validation passed: Prettier on
+  touched files; focused feature/browser-QA harness Jest 119/119; `git diff
+  --check`; `pnpm -C src lint:frontend`. No static rebuild/browser screenshot
+  was run because the only runtime source change preserves the same computed
+  compare-page font size through an existing token. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Next queue item: design-polish item 13, shared two-column
+  band balance.
+
 ### Codex - latex feature-page consolidation (2026-06-22 14:19 PDT)
 
 - **START 2026-06-22 14:19 PDT:** Continuing the curated feature-page

@@ -364,6 +364,34 @@ Current disposition:
   Jupyter/terminal/AI paths, and the fit-decision table's caption/aria
   contract.
 
+### FS-011 - Add Tier-1 feature-page consistency guardrails
+
+Status: `done`
+
+Evidence:
+
+- After the Jupyter, Linux, and LaTeX consolidations, the feature suite needed
+  a CI tripwire for shared primitives, local inline-style sprawl, and raw token
+  drift.
+- Source inspection showed a mixed feature-page fleet: the terminal/language
+  standard plus Jupyter/Linux/LaTeX now use shared primitives, while several
+  older custom surfaces still need explicit legacy budgets or allowlists until
+  future slices convert them.
+
+Current disposition:
+
+- `public/features/__tests__/app.test.tsx` now locks the shared feature-detail
+  cohort to render `FeatureFinalBand` and at least one `ContextList`.
+- New tracked feature pages cannot ship with zero shared card primitives unless
+  they are added to the explicit custom-page allowlist.
+- Feature route files now have a default inline-style budget of 15
+  `style={{}}` blocks, with named legacy ceilings for pages still above that
+  threshold.
+- Raw feature-page hex literals must be listed in a per-file allowlist, and raw
+  px font-size literals are banned.
+- The existing compare-page table row font size now references
+  `PUBLIC_TYPE.body` instead of a raw `16px` literal.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
