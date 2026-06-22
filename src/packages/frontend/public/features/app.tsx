@@ -212,16 +212,14 @@ const FEATURE_PANEL_SHADOW = `0 14px 34px ${alpha(
 
 const FEATURE_INDEX_CSS = `
   .cocalc-feature-index-hero {
-    align-items: center;
-    display: grid;
-    gap: 42px;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
     padding: 32px 0 12px;
   }
 
   .cocalc-feature-index-title {
     font-size: 58px !important;
     line-height: 1.02 !important;
+    max-width: 900px;
+    text-wrap: balance;
   }
 
   .cocalc-feature-link-card,
@@ -250,10 +248,6 @@ const FEATURE_INDEX_CSS = `
   }
 
   @media (max-width: 920px) {
-    .cocalc-feature-index-hero {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
     .cocalc-feature-index-title {
       font-size: 42px !important;
       line-height: 1.08 !important;
@@ -665,7 +659,6 @@ function FeaturesIndex() {
               style={{
                 letterSpacing: 0,
                 margin: 0,
-                maxWidth: 640,
               }}
             >
               Keep the whole job in one durable project.

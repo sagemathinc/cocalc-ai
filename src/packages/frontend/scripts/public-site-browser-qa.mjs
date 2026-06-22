@@ -288,6 +288,11 @@ const ROUTE_RULES = {
     requireSelectors: [".cocalc-feature-link-card"],
     styleChecks: [
       {
+        selector: ".cocalc-feature-index-hero",
+        property: "display",
+        not: ["grid"],
+      },
+      {
         selector: ".cocalc-feature-link-card",
         property: "backgroundColor",
         not: ["rgb(230, 244, 255)"],
