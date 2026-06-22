@@ -329,7 +329,7 @@ export default function TerminalFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                A terminal is a live project document.
+                A Linux terminal that lives in your project.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 A real Linux shell that survives disconnects and shares one live
@@ -360,26 +360,23 @@ export default function TerminalFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                A .term file gives the shell an address
+                Each terminal opens in its own folder.
               </Title>
               <Paragraph style={{ margin: 0 }}>
                 Open <code>research/runs/run.term</code> and the shell starts in{" "}
                 <code>research/runs/</code>. Reopen that file later and the same
-                terminal context — working directory and history — comes back
-                for a collaborator, reviewer, or agent.
+                terminal context comes back with its working directory and
+                command history still tied to that part of the project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That file anchor makes terminal work part of the project context
-                instead of a private browser tab that vanishes from view; the
-                scripts, notes, and other project files around it stay available
-                for TimeTravel review.
+                That folder anchor keeps setup scripts, logs, generated files,
+                and notes close enough for collaborators or Codex to inspect
+                before the next handoff.
               </Paragraph>
               <BulletList
                 items={[
-                  "The terminal path gives the shell a stable project address.",
-                  "The working directory follows the file location.",
-                  "Terminal history is tied to the path where the session starts.",
-                  "Project files created from the shell can be reviewed with TimeTravel.",
+                  "Put the shell beside the files it reads, creates, or modifies.",
+                  "Review generated project files with TimeTravel while the shell context stays nearby.",
                 ]}
               />
             </Flex>
@@ -463,7 +460,7 @@ export default function TerminalFeaturePage({
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={14}>
             <Title level={3} style={{ margin: 0 }}>
-              Choose the terminal path that fits
+              Where the terminal earns its place
             </Title>
             <Paragraph style={{ margin: 0 }}>
               The terminal becomes more valuable because it sits beside Jupyter

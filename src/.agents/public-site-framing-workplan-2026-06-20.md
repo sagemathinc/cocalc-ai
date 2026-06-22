@@ -17,7 +17,7 @@ revise, and burn it down without losing user feedback or redoing analysis.
 
 ### FS-001 - Make feature-index cards route consistently
 
-Status: `in_progress`
+Status: `done`
 
 Evidence:
 
@@ -161,6 +161,53 @@ Plan:
 2. Do not name competitors on public pages without explicit approval.
 3. Use the research to sharpen CoCalc's own route-level value, not to publish
    comparison claims.
+
+### FS-007 - Sharpen the terminal feature page
+
+Status: `in_progress`
+
+Evidence:
+
+- Blaec requested the `/features/terminal` page improvement through Claude's
+  live queue after the features-index fix.
+- The current hero and `.term` section repeat the same "address/context"
+  point across the H1, paragraphs, and four bullets.
+- The Brief and framing system say feature pages should be tool-forward, prove
+  the durable shared-project spine, and remove repetition when the visitor
+  already understands the point.
+
+Current route frame for `/features/terminal`:
+
+```md
+Route: /features/terminal
+Visitor: technical user, champion, or reviewer who needs shell work beside
+notebooks, files, logs, and collaborators.
+Visitor question: can terminal work stay attached to the shared project instead
+of disappearing into a private browser tab?
+One-sentence promise: CoCalc gives the project a real Linux terminal that opens
+where the work lives and can be reopened, shared, and reviewed.
+Proof mechanism: .term file location, durable terminal context, shared stream,
+split panes, output handling, TimeTravel-adjacent project review, and related
+Linux/Jupyter paths.
+Primary next step: create account / open projects.
+Secondary next step: terminal field guide plus Linux, Jupyter, and software
+install routes.
+What this must not claim: no benchmark, setup-time, restore-time, managed
+compute, pricing, compliance, or broad agent-platform claim; no audience-stamp
+or vertical-specific language.
+Evidence consulted: Claude live queue item 8, frozen Brief, framing system,
+research register, current terminal page source/tests, and browser-QA canaries.
+Decision: redesign copy/structure in the hero, .term section, and closing
+fit section; keep proof surfaces and layout components.
+```
+
+Current disposition:
+
+- Hero now leads with a project-anchored Linux terminal, while preserving the
+  shell and `.term` file proof.
+- The `.term` section now explains folder co-location and review value with two
+  distinct bullets instead of four restatements.
+- The closing fit section is renamed to "Where the terminal earns its place."
 
 ## Next Recommended Burn-Down Order
 

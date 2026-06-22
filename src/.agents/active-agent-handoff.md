@@ -46,6 +46,45 @@ Known risks:
 
 ---
 
+### Codex - terminal feature improvement (START 2026-06-22 13:13 PDT)
+
+- **Task:** apply the released `/features/terminal` improvement from Claude's
+  live board: sharpen the hero around a project-anchored Linux terminal,
+  reduce the `.term` section repetition, rename the terminal-fit section, and
+  verify the shared-stream labels.
+- **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` /
+  `blaec-synthesis-2026-06-18`.
+- **Preview owner this turn:** YES. Verified hub pids `15629` and `15671`,
+  both rooted at `/home/user/cocalc-ai-synthesis/src`; no active static
+  build/watch process observed. Branch matched
+  `origin/blaec-synthesis-2026-06-18` before this start update.
+- **Claimed files/routes:** `/features/terminal` only:
+  `src/packages/frontend/public/features/terminal-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`.
+- **Route frame:** feature detail; visitor = technical user or champion;
+  question = "Can terminal work stay attached to the shared project instead of
+  disappearing into a private browser tab?"; promise = a real Linux shell that
+  opens where the project work lives; proof = `.term` file location,
+  collaborative stream, split panes, output handling, and related Linux/Jupyter
+  paths; primary next step = create account/open projects; secondary =
+  terminal guide and related feature pages.
+- **Decision / hypothesis:** redesign copy only: make the hero concrete,
+  cut repeated `.term` bullets, and rename the fit section so the page reads
+  tool-forward and at-a-glance while preserving proof.
+- **Do not touch:** protected `home/**`, pricing/compliance, docs content,
+  pitch docs, type/palette/token lanes, other feature pages, raw audit
+  foraging, support-alert follow-up, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **Validation required:** focused feature Jest/browser canaries,
+  `lint:frontend`, static build, desktop+mobile browser QA/screenshot
+  inspection for `/features/terminal`, source commit, preview rebuild, and
+  shared-log handoff.
+
+---
+
 ### Codex — consolidated adversarial fix slice (START 2026-06-22 10:46 PDT)
 
 - **Task:** apply `/home/user/cocalc-shared/consolidated-fix-slice-2026-06-22.md`

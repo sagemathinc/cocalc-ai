@@ -419,12 +419,15 @@ const ROUTE_RULES = {
   },
   "/features/terminal": {
     requireText: [
-      "A terminal is a live project document.",
-      "Choose the terminal path that fits",
+      "A Linux terminal that lives in your project.",
+      "Where the terminal earns its place",
       "Ready to use terminals in CoCalc?",
       "Open the .term file and the same shell context comes back",
     ],
     forbidText: [
+      "A terminal is a live project document.",
+      "A .term file gives the shell an address",
+      "Choose the terminal path that fits",
       "Ask about terminal workflows",
       "visible to the agents and people",
       "humans and agents a stable target",

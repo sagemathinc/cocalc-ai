@@ -167,7 +167,7 @@ describe("PublicFeaturesApp", () => {
       slug: "linux",
     },
     {
-      marker: "A terminal is a live project document.",
+      marker: "A Linux terminal that lives in your project.",
       slug: "terminal",
     },
     {
@@ -730,14 +730,16 @@ describe("PublicFeaturesApp", () => {
 
     // Hero marker = page identity anchor.
     expect(
-      screen.getByText("A terminal is a live project document."),
+      screen.getByText("A Linux terminal that lives in your project."),
     ).not.toBeNull();
-    // Mock-UI label: the .term-file address line stays in the terminal mock.
+    // Section marker: the .term-file folder anchor remains explicit.
     expect(
-      screen.getAllByText("A .term file gives the shell an address").length,
+      screen.getAllByText("Each terminal opens in its own folder.").length,
     ).toBeGreaterThan(0);
     // Closing section identity without pinning the headline.
-    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
+    expect(
+      screen.getByText("Where the terminal earns its place"),
+    ).not.toBeNull();
   });
 
   it("uses projects as the terminal CTA for authenticated users", () => {
