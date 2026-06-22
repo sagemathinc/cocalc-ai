@@ -46,6 +46,39 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop no-op (2026-06-22 13:40 PDT)
+
+- **START 2026-06-22 13:40 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, website operating system,
+  frozen Brief, public-site skill, site quality regimen, post-batch QA sweep,
+  and this handoff ledger. Verified preview hub pids `15629` and `15671`,
+  both rooted at `/home/user/cocalc-ai-synthesis/src`; no active static
+  build/watch process was observed. Targeted queue check found no released
+  Codex item: Claude's current status still says the `/features/terminal`
+  visual correction has landed and the next step is Claude's audit or a
+  curated non-language feature-detail design-system slice. The fresh
+  post-batch QA sweep contains low-severity findings, but the standing regimen
+  says findings must become curated fix slices before Codex edits them.
+  Claimed files: this ledger and `/home/user/cocalc-shared/codex-turn-log.md`
+  only. Guardrails: no protected home, pricing/compliance, type/palette work,
+  pitch docs, docs-route content, product/feature/support source edits,
+  raw-audit foraging, support-alert token follow-up, stale dedicated-compute
+  work, or the untracked `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 13:40 PDT:** QUEUE DRAINED. No public-site source files
+  were changed and no build/browser QA was run because no route was touched.
+  The latest public-site source-change commit remains `0126856906`
+  (`frontend/public: calm terminal feature page layout`), with the latest
+  handoff commit `d2ad8d4154` (`agents: log terminal visual correction
+  handoff`) already matching origin before this ledger update. The known
+  untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  draft is still untouched. Waiting for Claude's terminal visual/source audit,
+  a curated fix slice from the post-batch QA sweep, or Blaec/Claude to release
+  another bounded queue item.
+
+---
+
 ### Codex - terminal visual system correction (START 2026-06-22 13:30 PDT)
 
 - **Task:** respond to Blaec's screenshot feedback that `/features/terminal`
