@@ -855,6 +855,26 @@ Plus/Star/Launchpad`).
   Screenshots reviewed from `/tmp/cocalc-public-qa-RtWR4y`. Pushed to
   `origin/blaec-synthesis-2026-06-18`; no PR. Worktree clean except known untracked
   `src/packages/frontend/public/features/dedicated-compute-page.tsx`.
+- **START/END 2026-06-21 18:50 PDT:** Executed Blaec's extended direction (a) in two bounded
+  slices after re-reading `cocalc-shared/INDEX.md`, `claude-current-status.md`, and
+  `codex-turn-log.md`. First slice commit `9a1800e9e3` removes the remaining feature-ending
+  `Ask about X` support CTAs from Automations, Teaching, Whiteboard, Slides, SageMath, R, and
+  More Languages; Julia/Octave were already removed. Teaching's layout was preserved. Updated
+  feature route canaries and the browser-QA Teaching rule. Validation: `git diff --check`,
+  focused feature Jest 93/93, browser-QA script Jest 5/5, `pnpm lint:frontend`,
+  `pnpm -C src/packages/static build:dev`, and affected-route browser QA 264/264 across
+  Automations/Teaching/Whiteboard/Slides/Sage/R/More Languages/Octave desktop+mobile. Screenshots
+  reviewed from `/tmp/cocalc-public-qa-eQqaT6`.
+- **START/END 2026-06-21 18:50 PDT:** Continued Wave 1 with More Languages only. Commit
+  `61a12f817e` converts `/features/more-languages` from split fit block + `StartCard` to
+  `FeatureFinalBand`; keeps concrete proof (`C`, `C++`, `Fortran`, `Rust`, `Go`, `Java`, `Bash`,
+  `SQL`, `JavaScript`, `TypeScript`, compilers, scripts, notebooks, terminals) and three related
+  links (`Jupyter notebooks`, `Teaching`, `Compare operating models`). Validation: focused feature
+  Jest 94/94, `pnpm lint:frontend`, `pnpm -C src/packages/static build:dev`, post-commit rebuild
+  from `61a12f817e`, and final-band browser QA 94/94 for More Languages/Octave/Julia
+  desktop+mobile. Screenshot reviewed from `/tmp/cocalc-public-qa-RYvssK`. Pushed to
+  `origin/blaec-synthesis-2026-06-18`; no PR. Worktree clean except known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx`.
 
 ### Codex — platform-UI thread
 
