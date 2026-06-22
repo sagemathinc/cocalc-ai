@@ -75,6 +75,7 @@ const SHARED_PRIMITIVE_FEATURE_PAGES = [
   "linux",
   "more-languages",
   "octave",
+  "python",
   "r-statistical-software",
   "sage",
   "terminal",
@@ -111,7 +112,7 @@ const INLINE_STYLE_LIMIT = 15;
 const LEGACY_INLINE_STYLE_BUDGETS: Record<string, number> = {
   "ai-page.tsx": 21,
   "cli-page.tsx": 23,
-  "python-page.tsx": 31,
+  "python-page.tsx": 20,
   "sage-page.tsx": 21,
   "teaching-page.tsx": 35,
   "whiteboard-page.tsx": 20,
@@ -1108,6 +1109,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("The right interface at each stage"),
     ).not.toBeNull();
+    expect(screen.getByText("Project context")).not.toBeNull();
+    expect(
+      screen.queryByText("$ uv venv && uv pip install numpy matplotlib"),
+    ).toBeNull();
+    expect(screen.queryByText("Codex sees the surrounding work")).toBeNull();
   });
 
   it("uses projects as the python CTA for authenticated users", () => {

@@ -12,7 +12,6 @@ import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_ELEVATION,
   PUBLIC_COLORS,
-  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -21,7 +20,7 @@ import {
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
-import { FeatureFinalBand, IconBadge } from "./feature-visuals";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -57,7 +56,7 @@ function PythonProjectMock() {
 
   return (
     <div
-      aria-label="Illustration of one CoCalc Python project connecting notebooks, scripts, terminals, papers, and Codex"
+      aria-label="Illustration of one CoCalc Python project connecting notebooks, scripts, terminals, papers, and review context"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
@@ -74,7 +73,7 @@ function PythonProjectMock() {
             <div>
               <Text strong>one Python project</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                same files, runtime, collaborators, and agent context
+                same files, runtime, collaborators, and review context
               </div>
             </div>
           </Flex>
@@ -105,86 +104,6 @@ function PythonProjectMock() {
             </Col>
           ))}
         </Row>
-
-        <div
-          style={{
-            background: PUBLIC_DARK.terminalSurface,
-            borderRadius: PUBLIC_RADIUS.panel,
-            color: PUBLIC_DARK.mockText,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              alignItems: "center",
-              background: "rgba(255,255,255,0.08)",
-              display: "flex",
-              gap: 8,
-              padding: "10px 14px",
-            }}
-          >
-            {[
-              PUBLIC_DARK.dotRed,
-              PUBLIC_DARK.dotAmber,
-              PUBLIC_DARK.dotGreen,
-            ].map((color) => (
-              <span
-                aria-hidden="true"
-                key={color}
-                style={{
-                  background: color,
-                  borderRadius: "50%",
-                  height: 10,
-                  width: 10,
-                }}
-              />
-            ))}
-            <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
-              terminal
-            </Text>
-          </div>
-          <Flex
-            vertical
-            gap={8}
-            style={{
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              padding: 16,
-            }}
-          >
-            <Text style={{ color: PUBLIC_DARK.mockTextDim }}>
-              $ uv venv && uv pip install numpy matplotlib
-            </Text>
-            <Text style={{ color: PUBLIC_DARK.mockTextAlt }}>
-              installed packages
-            </Text>
-            <Text style={{ color: PUBLIC_DARK.mockTextDim }}>
-              $ python model.py
-            </Text>
-            <Text style={{ color: PUBLIC_DARK.mockTextAlt }}>
-              wrote figures/model-fit.pdf
-            </Text>
-          </Flex>
-        </div>
-
-        <Flex
-          align="center"
-          gap={12}
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PUBLIC_RADIUS.panel,
-            padding: 14,
-          }}
-        >
-          <IconBadge accent="#7c3aed" icon="robot" />
-          <div>
-            <Text strong>Codex sees the surrounding work</Text>
-            <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              files, notebooks, terminals, packages, errors, and notes
-            </div>
-          </div>
-        </Flex>
       </Flex>
     </div>
   );
@@ -274,24 +193,39 @@ function PythonWorkflowMap() {
   return (
     <PublicSection>
       <Flex vertical gap={22}>
-        <Flex align="end" justify="space-between" wrap gap={16}>
-          <div>
-            <Title level={3} style={{ margin: 0 }}>
-              The right interface at each stage
-            </Title>
-          </div>
-          <Paragraph
-            style={{
-              color: PUBLIC_COLORS.mutedText,
-              margin: 0,
-              maxWidth: 520,
-            }}
-          >
-            A live notebook, a versioned module, and a rendered paper each use
-            the interface that fits, while reading and writing the same files,
-            packages, and results in one project.
-          </Paragraph>
-        </Flex>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={12}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                The right interface at each stage
+              </Title>
+              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+                A live notebook, a versioned module, and a rendered paper each
+                use the interface that fits, while reading and writing the same
+                files, packages, and results in one project.
+              </Paragraph>
+            </Flex>
+          </Col>
+          <Col xs={24} lg={12}>
+            <ContextList
+              accent="#2f6fda"
+              items={[
+                { icon: "jupyter", label: "Explore in notebooks" },
+                { icon: "python", label: "Promote stable code to scripts" },
+                { icon: "terminal", label: "Install packages in the project" },
+                {
+                  icon: "tex",
+                  label: "Use generated figures in papers",
+                },
+                {
+                  icon: "history",
+                  label: "Review with shared files and history",
+                },
+              ]}
+              title="Project context"
+            />
+          </Col>
+        </Row>
 
         <div
           style={{
