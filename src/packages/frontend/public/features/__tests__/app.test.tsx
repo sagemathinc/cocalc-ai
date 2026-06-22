@@ -169,11 +169,6 @@ describe("PublicFeaturesApp", () => {
       slug: "r-statistical-software",
     },
     {
-      context: "feature-octave",
-      label: "Ask about Octave workflows",
-      slug: "octave",
-    },
-    {
       context: "feature-more-languages",
       label: "Ask about language workflows",
       slug: "more-languages",
@@ -210,8 +205,7 @@ describe("PublicFeaturesApp", () => {
       slug: "r-statistical-software",
     },
     {
-      marker:
-        "Use Julia in Pluto, Jupyter, and shared modeling projects.",
+      marker: "Use Julia in Pluto, Jupyter, and shared modeling projects.",
       slug: "julia",
     },
     {
@@ -945,9 +939,14 @@ describe("PublicFeaturesApp", () => {
       for (const label of contextLabels ?? []) {
         expect(screen.getByText(label)).not.toBeNull();
       }
-      if (slug === "julia") {
+      if (slug === "julia" || slug === "octave") {
         expect(
-          screen.queryByRole("link", { name: "Ask about Julia workflows" }),
+          screen.queryByRole("link", {
+            name:
+              slug === "julia"
+                ? "Ask about Julia workflows"
+                : "Ask about Octave workflows",
+          }),
         ).toBeNull();
       }
     },
@@ -1130,16 +1129,21 @@ describe("PublicFeaturesApp", () => {
     }
   });
 
-  it("uses the balanced final band on the Julia pilot page", () => {
+  it.each([
+    { slug: "julia", title: "When Julia belongs in CoCalc" },
+    { slug: "octave", title: "When Octave belongs in CoCalc" },
+  ] as const)("uses the balanced final band on $slug", ({ slug, title }) => {
     const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
-        initialRoute={{ slug: "julia", view: "detail" }}
+        initialRoute={{ slug, view: "detail" }}
       />,
     );
 
-    expect(container.querySelector(".cocalc-feature-final-band")).not.toBeNull();
-    expect(screen.getByText("When Julia belongs in CoCalc")).not.toBeNull();
+    expect(
+      container.querySelector(".cocalc-feature-final-band"),
+    ).not.toBeNull();
+    expect(screen.getByText(title)).not.toBeNull();
     expect(screen.getByText("Related")).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Compare operating models" }),

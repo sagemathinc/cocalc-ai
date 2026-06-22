@@ -12,12 +12,8 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  featureSupportPath,
-} from "./page-components";
-import { ContextList, IconBadge, StartCard } from "./feature-visuals";
+import { BulletList, featureAppPath as appPath } from "./page-components";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -127,12 +123,6 @@ export default function OctaveFeaturePage({
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalLabel = isAuthenticated ? "Open projects" : "Start using Octave";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss Octave workflows in CoCalc. Helpful context: notebooks, scripts, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
-    context: "octave",
-    subject: "CoCalc Octave workflows",
-    title: "Ask CoCalc about Octave workflows",
-  });
 
   return (
     <Flex vertical gap={22}>
@@ -171,37 +161,29 @@ export default function OctaveFeaturePage({
       <OctaveFlow />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>When Octave belongs in CoCalc</Title>
-            <BulletList
-              items={[
-                "A numerical course where students share one consistent environment.",
-                "Numerical research and prototyping that benefits from shared files and history.",
-                "Work that mixes Octave with notebooks, data, and write-ups in one project.",
-                "A team that opens each other's Octave work and reviews it together.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/linux")}>
-                Linux environment
-              </Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              <Button href={appPath("products")}>
-                Compare operating models
-              </Button>
-              <Button href={supportHref}>Ask about Octave workflows</Button>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and use Octave in notebooks, terminals, scripts, or teaching workflows."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start in a project"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and use Octave in notebooks, terminals, scripts, or teaching workflows.",
+            href: primaryHref,
+            label: finalLabel,
+            title: "Start in a project",
+          }}
+          relatedLinks={[
+            { href: appPath("features/linux"), label: "Linux environment" },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="When Octave belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "A numerical course where students share one consistent environment.",
+              "Numerical research and prototyping that benefits from shared files and history.",
+              "Work that mixes Octave with notebooks, data, and write-ups in one project.",
+              "A team that opens each other's Octave work and reviews it together.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );
