@@ -80,6 +80,22 @@ const SHARED_PRIMITIVE_FEATURE_PAGES = [
   "terminal",
 ] as const;
 
+const FINAL_BAND_FEATURE_PAGES = [
+  "automations",
+  "julia",
+  "jupyter-notebook",
+  "latex-editor",
+  "linux",
+  "more-languages",
+  "octave",
+  "python",
+  "r-statistical-software",
+  "sage",
+  "slides",
+  "terminal",
+  "whiteboard",
+] as const;
+
 const CUSTOM_FEATURE_PAGES_WITHOUT_SHARED_PRIMITIVES = new Set([
   "ai-page.tsx",
   "api-page.tsx",
@@ -274,6 +290,23 @@ describe("PublicFeaturesApp", () => {
       expect(
         container.querySelectorAll(".cocalc-feature-context-list").length,
       ).toBeGreaterThanOrEqual(1);
+    },
+  );
+
+  it.each(FINAL_BAND_FEATURE_PAGES)(
+    "keeps %s final-band columns vertically balanced",
+    (slug) => {
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      const finalBand = container.querySelector(".cocalc-feature-final-band");
+      expect(finalBand).not.toBeNull();
+      expect(finalBand?.querySelector(".ant-row-middle")).not.toBeNull();
+      expect(finalBand?.querySelector(".ant-row-top")).toBeNull();
     },
   );
 

@@ -264,7 +264,7 @@ export function FeatureFinalBand({
         padding: 24,
       }}
     >
-      <Row gutter={[24, 24]} align="top">
+      <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={15}>
           <Flex vertical gap={14}>
             <Title level={3} style={{ margin: 0 }}>
