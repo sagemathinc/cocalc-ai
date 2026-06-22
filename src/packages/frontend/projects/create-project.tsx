@@ -67,31 +67,26 @@ const PROJECT_PRESETS: {
   mode: ProjectCreateMode;
   title: string;
   description: string;
-  icon: string;
 }[] = [
   {
     mode: "standard",
     title: "Standard",
     description: "General-purpose image, automatic host.",
-    icon: "project-outlined",
   },
   {
     mode: "gpu",
     title: "GPU",
     description: "GPU-tagged image when one is available.",
-    icon: "bolt",
   },
   {
     mode: "teaching",
     title: "Teaching",
     description: "Teaching-tagged image for classes and workshops.",
-    icon: "graduation-cap",
   },
   {
     mode: "custom",
     title: "Custom",
     description: "Choose your own image and host.",
-    icon: "sliders",
   },
 ];
 
@@ -124,14 +119,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsSearch, setRootfsSearch] = useState("");
-  const [hostPickerOpen, setHostPickerOpen] = useState<boolean>(false);
   const {
     draft,
     summary,
     rootfsImages,
     rootfsLoading,
     rootfsError,
-    context,
     isAdmin,
     selectedHost,
     setHost,
@@ -196,7 +189,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setTitlePreview(draft.title);
     set_error("");
     setCreateAction(null);
-    setHostPickerOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
     setRootfsSearch("");
@@ -476,6 +468,34 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 </Tag>
               )}
             </Space>
+            <Space size={4} wrap className="cc-project-create-preset-tags">
+              {PROJECT_PRESETS.map((preset) => {
+                const active = draft.mode === preset.mode;
+                return (
+                  <button
+                    key={preset.mode}
+                    type="button"
+                    className="cc-project-create-preset-tag"
+                    aria-pressed={active}
+                    title={projectPresetDescription(preset)}
+                    disabled={saving}
+                    onClick={() => applyPreset(preset.mode)}
+                    style={{
+                      borderColor: active
+                        ? COLORS.BS_BLUE_BGRND
+                        : COLORS.GRAY_LL,
+                      background: active ? COLORS.ANTD_BG_BLUE_L : "white",
+                      color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_D,
+                      boxShadow: active
+                        ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
+                        : undefined,
+                    }}
+                  >
+                    {preset.mode}
+                  </button>
+                );
+              })}
+            </Space>
           </Space>
           {!selectedRootfsEntry && displayImage && (
             <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
@@ -492,116 +512,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           {rootfsMode === "catalog"
             ? renderRootfsCatalogSelector()
             : renderCustomRootfsSelector()}
-        </Space>
-      </Card>
-    );
-  }
-
-  function renderPresetSection(): React.JSX.Element {
-    return (
-      <div className="cc-project-create-preset-grid">
-        {PROJECT_PRESETS.map((preset) => {
-          const active = draft.mode === preset.mode;
-          return (
-            <Button
-              key={preset.mode}
-              onClick={() => applyPreset(preset.mode)}
-              disabled={saving}
-              style={{
-                borderColor: active ? COLORS.BS_BLUE_BGRND : COLORS.GRAY_LL,
-                background: active ? COLORS.ANTD_BG_BLUE_L : "white",
-                boxShadow: active
-                  ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
-                  : undefined,
-              }}
-              className="cc-project-create-preset-button"
-            >
-              <Space orientation="vertical" align="center" size={6}>
-                <span
-                  className="cc-project-create-preset-icon"
-                  style={{
-                    background: active ? "white" : COLORS.GRAY_LLL,
-                    color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
-                  }}
-                >
-                  <Icon name={preset.icon as any} />
-                </span>
-                <span>
-                  <div style={{ fontWeight: 600, color: COLORS.GRAY_D }}>
-                    {preset.title}
-                  </div>
-                  <div
-                    className="cc-project-create-preset-description"
-                    style={{
-                      color: COLORS.GRAY_M,
-                    }}
-                  >
-                    {projectPresetDescription(preset)}
-                  </div>
-                </span>
-              </Space>
-            </Button>
-          );
-        })}
-      </div>
-    );
-  }
-
-  function renderRegionFact(label: string, value: React.ReactNode) {
-    return (
-      <div>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {label}
-        </Typography.Text>
-        <div style={{ fontWeight: 600 }}>{value}</div>
-      </div>
-    );
-  }
-
-  function renderRegionExplanation(): React.JSX.Element {
-    const selectedRegionLabel = R2_REGION_LABELS[draft.region];
-    const nearbyRegionLabel = R2_REGION_LABELS[context.preferredRegion];
-    const providerRegion = selectedHost?.region?.trim();
-    const remoteFromBrowser = context.preferredRegion !== draft.region;
-
-    return (
-      <Card
-        size="small"
-        styles={{ body: { padding: "10px 12px" } }}
-        style={{ borderColor: COLORS.GRAY_LL, background: "white" }}
-      >
-        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-          <Paragraph style={{ marginBottom: 0 }}>
-            <Icon name="map" /> Host and region mainly affect interactive lag,
-            such as terminal typing and Jupyter notebook output, not your data.
-          </Paragraph>
-          <div
-            style={{
-              display: "grid",
-              gap: 14,
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
-            }}
-          >
-            {renderRegionFact("Near you", nearbyRegionLabel)}
-            {renderRegionFact("Project backups", selectedRegionLabel)}
-            {renderRegionFact(
-              "Provider region",
-              providerRegion ? <code>{providerRegion}</code> : "Automatic",
-            )}
-          </div>
-          {remoteFromBrowser && (
-            <Alert
-              type="info"
-              showIcon
-              message={`This is not your nearest detected region (${nearbyRegionLabel}). It may still be the best choice when the available hosts there are faster or less busy.`}
-            />
-          )}
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            You can change the host or region later. Cross-region moves carry
-            the current files, but older backup history is not fully carried
-            over.
-          </Paragraph>
         </Space>
       </Card>
     );
@@ -789,30 +699,19 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             />
           </Form.Item>
         </Form>
-        <div>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>
-            Choose a preset
-          </div>
-          {renderPresetSection()}
-        </div>
         {renderRootfsSection()}
         {!IS_STAR_SETUP_PROFILE && (
-          <>
-            <SelectNewHost
-              disabled={saving}
-              selectedHost={selectedHost}
-              onChange={setHost}
-              regionFilter={draft.region}
-              regionLabel={R2_REGION_LABELS[draft.region]}
-              wantsGpu={summary.gpu}
-              pickerMode="create"
-              pickerDisplay="inline"
-              pickerOpen={hostPickerOpen}
-              onPickerOpenChange={setHostPickerOpen}
-              showHelp={false}
-            />
-            {hostPickerOpen && renderRegionExplanation()}
-          </>
+          <SelectNewHost
+            disabled={saving}
+            selectedHost={selectedHost}
+            onChange={setHost}
+            regionFilter={draft.region}
+            regionLabel={R2_REGION_LABELS[draft.region]}
+            wantsGpu={summary.gpu}
+            pickerMode="create"
+            pickerDisplay="modal"
+            showHelp={false}
+          />
         )}
         {render_error()}
       </Space>

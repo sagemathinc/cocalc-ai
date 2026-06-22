@@ -36,35 +36,29 @@
   width: 100%;
 }
 
-.cc-project-create-preset-grid {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.cc-project-create-preset-tags {
+  justify-content: flex-end;
 }
 
-.cc-project-create-preset-button {
-  height: auto;
-  min-height: 96px;
-  padding: 10px 9px;
-  text-align: center;
-  white-space: normal;
-}
-
-.cc-project-create-preset-icon {
-  align-items: center;
-  border-radius: 12px;
-  display: inline-flex;
-  font-size: 18px;
-  height: 34px;
-  justify-content: center;
-  width: 34px;
-}
-
-.cc-project-create-preset-description {
+.cc-project-create-preset-tag {
+  border: 1px solid;
+  border-radius: 999px;
+  cursor: pointer;
   font-size: 12px;
+  font-weight: 600;
   line-height: 1.2;
-  max-width: 150px;
-  white-space: normal;
+  padding: 3px 9px;
+  text-transform: lowercase;
+}
+
+.cc-project-create-preset-tag:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.cc-project-create-preset-tag:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
 }
 
 .cc-project-create-image-list {
@@ -168,23 +162,8 @@
     grid-template-columns: 1fr;
   }
 
-  .cc-project-create-preset-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .cc-project-create-preset-button {
-    min-height: 86px;
-    padding: 8px 7px;
-  }
-
-  .cc-project-create-preset-icon {
-    font-size: 16px;
-    height: 28px;
-    width: 28px;
-  }
-
-  .cc-project-create-preset-description {
-    font-size: 11px;
+  .cc-project-create-preset-tags {
+    justify-content: flex-start;
   }
 
   .cc-project-create-health-card .ant-card-body {
