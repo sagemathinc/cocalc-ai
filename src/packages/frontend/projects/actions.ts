@@ -339,6 +339,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS = [
     1_000, 5_000, 15_000, 30_000, 60_000, 120_000,
   ] as const;
+  private static PROJECT_START_USER_OBSERVED_STUCK_MS = 60_000;
   private static OPTIMISTIC_PROJECT_STATE_MAX_PRESERVE_MS = 90_000;
   private static MOVE_TRANSITION_GRACE_MS = 5 * 60_000;
   private static ACTIVE_MOVE_RETENTION_MS = 8 * 60 * 60_000;
@@ -3644,6 +3645,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     op_id,
     details,
     deadline_ms = 20 * 60 * 1000,
+    stuck_after_ms = ProjectsActions.PROJECT_START_USER_OBSERVED_STUCK_MS,
   }: {
     project_id: string;
     timer: number;
@@ -3652,8 +3654,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     op_id?: string;
     details?: Record<string, unknown>;
     deadline_ms?: number;
+    stuck_after_ms?: number;
   }): void {
     const started = Date.now();
+    let stuckReported = false;
     const poll = () => {
       const state = store.getIn([
         "project_map",
@@ -3684,7 +3688,25 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
         return;
       }
-      if (Date.now() - started >= deadline_ms) {
+      const elapsedMs = Date.now() - started;
+      if (!stuckReported && elapsedMs >= stuck_after_ms) {
+        stuckReported = true;
+        recordUxLatencyEvent({
+          event_type: "project_start",
+          metric: "project_start_running_stuck",
+          duration_ms: elapsedUxMs(timer),
+          project_id,
+          client_event_id,
+          segment,
+          details: {
+            ...details,
+            observed_state: state,
+            stuck_after_ms,
+            deadline_ms,
+          },
+        });
+      }
+      if (elapsedMs >= deadline_ms) {
         recordUxLatencyEvent({
           event_type: "project_start",
           metric: "project_start_running_timeout",

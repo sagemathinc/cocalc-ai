@@ -29,28 +29,14 @@ export async function forwardRemoteStartLroProgress({
     return async () => {};
   }
 
-  let stream: DStream<LroEvent> | undefined;
-  try {
-    stream = await getLroStream({
-      op_id,
-      scope_type: "project",
-      scope_id: project_id,
-      client: conat(),
-    });
-  } catch (err) {
-    log.warn("unable to open remote start lro stream", {
-      project_id,
-      op_id,
-      source_bay_id,
-      err: `${err}`,
-    });
-    return async () => {};
-  }
-
   const bridge =
     source_bay_id && source_bay_id !== getConfiguredBayId()
       ? getInterBayBridge().projectLro(source_bay_id)
       : undefined;
+  if (!bridge) {
+    return async () => {};
+  }
+  let stream: DStream<LroEvent> | undefined;
   let lastIndex = 0;
   let lastProgressTs = -1;
   let closed = false;
@@ -126,10 +112,40 @@ export async function forwardRemoteStartLroProgress({
     closed = true;
   };
 
-  stream.on("change", onChange);
-  stream.on("reset", onReset);
-  stream.on("closed", onClosed);
-  drain();
+  const setup = async () => {
+    try {
+      const opened = await getLroStream({
+        op_id,
+        scope_type: "project",
+        scope_id: project_id,
+        client: conat(),
+      });
+      if (closed) {
+        opened.close();
+        return;
+      }
+      stream = opened;
+      stream.on("change", onChange);
+      stream.on("reset", onReset);
+      stream.on("closed", onClosed);
+      drain();
+    } catch (err) {
+      log.warn("unable to open remote start lro stream", {
+        project_id,
+        op_id,
+        source_bay_id,
+        err: `${err}`,
+      });
+    }
+  };
+  setup().catch((err) => {
+    log.warn("unable to initialize remote start lro forwarding", {
+      project_id,
+      op_id,
+      source_bay_id,
+      err: `${err}`,
+    });
+  });
 
   return async () => {
     closed = true;

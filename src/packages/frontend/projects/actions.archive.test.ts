@@ -8,6 +8,8 @@ import { getBackups } from "@cocalc/frontend/project/archive-info";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { selectHostForProjectStart } from "@cocalc/frontend/hosts/select-host-for-project-start";
 
+const mockRecordUxLatencyEvent = jest.fn();
+
 jest.mock("./store", () => ({
   store: {
     get: jest.fn(),
@@ -27,6 +29,12 @@ jest.mock("@cocalc/frontend/alerts", () => ({
 
 jest.mock("@cocalc/frontend/hosts/select-host-for-project-start", () => ({
   selectHostForProjectStart: jest.fn(),
+}));
+
+jest.mock("@cocalc/frontend/monitoring/ux-latency", () => ({
+  startUxTimer: jest.fn(() => Date.now()),
+  elapsedUxMs: jest.fn((start: number) => Date.now() - start),
+  recordUxLatencyEvent: (...args: any[]) => mockRecordUxLatencyEvent(...args),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -201,6 +209,7 @@ describe("ProjectsActions archive flow", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRecordUxLatencyEvent.mockClear();
     mockedWebappClient.async_query.mockResolvedValue({
       query: {
         account_project_index: [
@@ -955,6 +964,51 @@ describe("ProjectsActions archive flow", () => {
           duration_ms: expect.any(Number),
         }),
       );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("records a browser-observed stuck project start after the stuck threshold", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "opened",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions } = makeActions();
+      jest
+        .spyOn(actions, "ensure_host_info" as any)
+        .mockResolvedValue(undefined as any);
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+
+      await expect(actions.start_project(project_id)).resolves.toBe(true);
+
+      await jest.advanceTimersByTimeAsync(59_000);
+      expect(mockRecordUxLatencyEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ metric: "project_start_running_stuck" }),
+      );
+
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(mockRecordUxLatencyEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: "project_start",
+          metric: "project_start_running_stuck",
+          project_id,
+          details: expect.objectContaining({
+            op_id: "start-op-1",
+            stuck_after_ms: 60_000,
+          }),
+        }),
+      );
+
+      const stuckCalls = mockRecordUxLatencyEvent.mock.calls.filter(
+        ([event]) => event?.metric === "project_start_running_stuck",
+      );
+      expect(stuckCalls).toHaveLength(1);
     } finally {
       jest.useRealTimers();
     }
