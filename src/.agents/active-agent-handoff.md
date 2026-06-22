@@ -842,6 +842,19 @@ Plus/Star/Launchpad`).
   `src`, `pnpm -C src/packages/static build:dev`, and browser QA for `/features` +
   `/features/compare` desktop/mobile (88/88). Screenshots reviewed from
   `/tmp/cocalc-public-qa-cXFSHV`; no PR.
+- **START/END 2026-06-21 18:34 PDT:** Executed the latest dynamically logged final-section prompt
+  after reading `cocalc-shared/INDEX.md`, `claude-current-status.md`, and `codex-turn-log.md`.
+  Claude's newer status superseded Codex's older proposal on one point: the Octave support CTA
+  should be removed, not preserved. Landed bounded Wave 1 Octave rollout as commit
+  `b2dfb3d472`: converted `/features/octave` final section from split fit block + `StartCard` to
+  shared `FeatureFinalBand`; kept concrete proof links (`Linux environment`, `Teaching`,
+  `Compare operating models`); removed `Ask about Octave workflows`; and updated feature route
+  canaries. Validation: `git diff --check`, focused `public/features/__tests__/app.test.tsx`
+  (91/91), `pnpm lint:frontend`, `pnpm -C src/packages/static build:dev`, post-commit rebuild from
+  `b2dfb3d472`, and browser QA for `/features/octave` + `/features/julia` desktop/mobile (72/72).
+  Screenshots reviewed from `/tmp/cocalc-public-qa-RtWR4y`. Pushed to
+  `origin/blaec-synthesis-2026-06-18`; no PR. Worktree clean except known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx`.
 
 ### Codex — platform-UI thread
 
