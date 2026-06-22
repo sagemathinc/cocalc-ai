@@ -264,6 +264,56 @@ Current disposition:
   shared live state, TimeTravel, project-scoped notebook commands, and the
   directed-graph workflow pointer through whiteboards.
 
+### FS-009 - Consolidate the Linux feature page onto shared primitives
+
+Status: `done`
+
+Evidence:
+
+- The curated feature-page consistency slice names `/features/linux` as the
+  next zero-shared-primitive feature page after Jupyter.
+- Source inspection shows route-owned Linux workspace/layers/code/final-panel
+  patterns where terminal/Jupyter now use shared `ContextList`, `StoryCard`,
+  and `FeatureFinalBand` structure.
+
+Current route frame for `/features/linux`:
+
+```md
+Route: /features/linux
+Visitor: researcher, engineer, instructor, or lab/team lead who needs Linux
+tools beside notebooks, files, services, and review history.
+Visitor question: can I administer the Linux environment for this project
+without losing reproducibility or asking every teammate to rebuild it by hand?
+One-sentence promise: CoCalc gives each project an Ubuntu environment that can
+install packages, run services, preserve setup context, and return to a
+known-good state.
+Proof mechanism: Ubuntu environment, sudo/apt, language packages, services,
+terminal commands, snapshots/known-good state, reusable environment images, and
+related Terminal/Jupyter paths.
+Primary next step: create account / open projects.
+Secondary next step: software install guide, environment image guide,
+Terminal/Jupyter/product routes.
+What this must not claim: no setup-time, performance, managed compute,
+compliance, migration, root-filesystem jargon, or agent-runs-without-user-
+approval claim.
+Evidence consulted: feature-page consistency slice, frozen Brief, framing
+system/register, current Linux page source/tests, browser-QA markers, and
+terminal/Jupyter implementation patterns.
+Decision: redesign the route structure and final band around shared primitives
+while preserving concrete Linux proof.
+```
+
+Current disposition:
+
+- `/features/linux` now follows the terminal/Jupyter shared-primitive model:
+  text-first hero, compact `ContextList`, shared `StoryCard` proof cards, a
+  lower Ubuntu/apt evidence panel, shared `CodeBlock` command proof, reusable-
+  environment `ContextList`, and shared `FeatureFinalBand`.
+- Inline `style={{}}` blocks in the page are now 12.
+- Preserved Linux proof: Ubuntu environment, sudo/apt installs, system and
+  language package layers, services, snapshots/known-good state, reusable
+  environment images, and the "You decide what runs" boundary.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible

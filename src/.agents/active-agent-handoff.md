@@ -46,6 +46,60 @@ Known risks:
 
 ---
 
+### Codex - linux feature-page consolidation (2026-06-22 14:10 PDT)
+
+- **START 2026-06-22 14:10 PDT:** Continuing the curated feature-page
+  consistency queue after Jupyter landed in `fc594e14c2` and handoff commit
+  `70853c3e50` was pushed. Claimed route/files:
+  `src/packages/frontend/public/features/linux-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs` if route canaries
+  need selector updates, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Verified preview hub pids
+  `15629` and `15671`, both rooted at `/home/user/cocalc-ai-synthesis/src`;
+  no active static build/watch process observed.
+- **Route frame:** feature detail. Visitor: researcher, engineer, instructor,
+  or lab/team lead who needs Linux tools beside notebooks, files, services,
+  and review history. Visitor question: can I administer the Linux environment
+  for this project without losing reproducibility or asking every teammate to
+  rebuild it by hand? One-sentence promise: CoCalc gives each project an
+  Ubuntu environment that can install packages, run services, preserve setup
+  context, and return to a known-good state. Proof mechanism: Ubuntu
+  environment, sudo/apt, language packages, services, terminal commands,
+  snapshots/known-good state, reusable environment images, and related
+  Terminal/Jupyter paths. Primary next step: create account/open projects.
+  Secondary next step: software install guide, environment image guide,
+  Terminal/Jupyter/product routes. What this must not claim: no setup-time,
+  performance, managed compute, compliance, migration, root-filesystem jargon,
+  or agent-runs-without-user-approval claim. Decision: redesign the route
+  structure and final band around shared primitives while preserving concrete
+  Linux proof.
+- **Do not touch:** protected `home/**`, footer, pricing/compliance,
+  type/palette lanes, pitch docs, docs content, other feature pages except
+  route links from the Linux page, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 14:17 PDT:** Source slice landed in `d8df1f24c7`
+  (`frontend/public: consolidate linux feature page`). `/features/linux` now
+  follows the shared feature-detail model: text-first hero with `ContextList`,
+  shared `StoryCard` proof cards, a lower Ubuntu/apt evidence panel,
+  shared `CodeBlock` command proof, reusable-environment `ContextList`, and
+  shared `FeatureFinalBand`. Removed the route-owned layers diagram, raw
+  `<pre>` panel, and custom final panel. Inline `style={{}}` blocks are now 12.
+  Preserved Ubuntu environment, sudo/apt installs, system and language package
+  layers, services, snapshots/known-good state, reusable environment images,
+  and the "You decide what runs" boundary. Validation passed: Prettier on
+  touched source/test/QA files; `git diff --check`; focused feature/browser-QA
+  harness Jest 105/105; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev` before commit and again after commit from git
+  revision `d8df1f24c7` with the existing local debug-log permission warning
+  only; browser QA for `/features/linux` desktop+mobile 46/46, final
+  screenshots/results at `/tmp/cocalc-public-qa-glNoNR`. Screenshot inspection:
+  desktop/mobile readable with no overlap; command block remains horizontally
+  scrollable on mobile. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Next queue item: `/features/latex-editor` consolidation.
+
 ### Codex - jupyter feature-page consolidation (2026-06-22 13:59 PDT)
 
 - **START 2026-06-22 13:59 PDT:** Scheduled landing-page improvement loop
