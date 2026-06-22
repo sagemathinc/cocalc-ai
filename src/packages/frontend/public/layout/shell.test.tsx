@@ -70,7 +70,7 @@ describe("PublicPage", () => {
     const footer = screen.getByRole("contentinfo");
     expect(
       within(footer).getByText(
-        "AI-native workspaces for research, teaching, and engineering teams.",
+        /AI-native workspaces for industry R&D, research, and technical teams/i,
       ),
     ).not.toBeNull();
     expect(

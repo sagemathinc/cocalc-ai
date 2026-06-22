@@ -1102,3 +1102,12 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/guides`, `/docs`, and `/support` desktop+mobile passed 350/350 with
   screenshots inspected from `/tmp/cocalc-public-qa-i0foWS`. Ready for
   commit/push/rebuild.
+- **START/END Commit 3 2026-06-22:** Applied the approved global footer copy in
+  `public/layout/shell.tsx` and updated its layout test plus a browser-QA footer
+  canary. No protected home, pitch docs, docs content/routes, pricing/compliance,
+  type/palette work, or dedicated-compute draft touched. Validation passed:
+  `git diff --check`; focused layout + browser-QA harness Jest 18/18; `pnpm -C
+  src lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+  `/products`, `/features`, `/docs`, and `/support` desktop+mobile passed
+  174/174. Screenshots inspected from `/tmp/cocalc-public-qa-TxCGI4`; footer
+  wraps cleanly on desktop and mobile. Ready for commit/push/rebuild.

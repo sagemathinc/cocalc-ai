@@ -108,6 +108,7 @@ const ROUTE_RULES = {
       "Ways to Run CoCalc",
       "Choose how CoCalc should run for your R&D team.",
       "each project durable and reviewable",
+      "AI-native workspaces for industry R&D, research, and technical teams",
       "CoCalc.ai",
       "CoCalc Plus",
       "CoCalc Star",

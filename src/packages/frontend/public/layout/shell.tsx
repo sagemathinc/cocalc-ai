@@ -274,7 +274,9 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
           maxWidth: "34ch",
         }}
       >
-        AI-native workspaces for research, teaching, and engineering teams.
+        AI-native workspaces for industry R&D, research, and technical teams —
+        keeping code, notebooks, data, and AI work together in one durable,
+        collaborative project.
       </Paragraph>
       {defaultBrand ? (
         <Text style={{ color: PUBLIC_COLORS.footerText }}>
