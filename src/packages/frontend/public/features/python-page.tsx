@@ -16,8 +16,12 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import { featureAppPath as appPath, LinkButton } from "./page-components";
-import { IconBadge } from "./feature-visuals";
+import {
+  BulletList,
+  featureAppPath as appPath,
+  LinkButton,
+} from "./page-components";
+import { FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -419,7 +423,7 @@ export default function PythonFeaturePage({
   const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
-    : "Start using Python on CoCalc";
+    : "Start using Python";
 
   return (
     <Flex vertical gap={18}>
@@ -455,58 +459,32 @@ export default function PythonFeaturePage({
       <PythonUseCases />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={14}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Run the same Python project where you need it
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Start hosted on CoCalc.ai, or run the same project in a setup
-                your team operates — same notebooks, scripts, and Python
-                environment either way.
-              </Paragraph>
-              <Button href={appPath("products")}>
-                Compare operating models
-              </Button>
-              <Flex wrap gap={16}>
-                <LinkButton href={appPath("features/linux")}>
-                  Linux environment
-                </LinkButton>
-                <LinkButton href={appPath("features/terminal")}>
-                  Linux terminal
-                </LinkButton>
-              </Flex>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={10}>
-            <div
-              className="cocalc-feature-final-panel"
-              style={{
-                background: PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.panel,
-                boxShadow: PUBLIC_ELEVATION.panelStrong,
-                color: PUBLIC_COLORS.heading,
-                padding: 26,
-              }}
-            >
-              <Title
-                level={3}
-                style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
-              >
-                Start using Python
-              </Title>
-              <Paragraph style={{ color: PUBLIC_COLORS.mutedText }}>
-                Open a project, start with a notebook or script, and keep the
-                Python environment with the rest of your work.
-              </Paragraph>
-              <Button type="primary" href={primaryCtaHref}>
-                {finalCtaLabel}
-              </Button>
-            </div>
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project, start with a notebook or script, and keep the Python environment with the rest of your work.",
+            href: primaryCtaHref,
+            label: finalCtaLabel,
+            title: "Start using Python",
+          }}
+          relatedLinks={[
+            { href: appPath("features/linux"), label: "Linux environment" },
+            {
+              href: appPath("features/terminal"),
+              label: "Terminal workflows",
+            },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="Run the same Python project where you need it"
+        >
+          <BulletList
+            items={[
+              "Start hosted on CoCalc.ai or run the same project in a setup your team operates.",
+              "Keep notebooks, scripts, packages, generated figures, and write-ups in one project.",
+              "Move from exploratory notebooks to reusable modules without copying the work elsewhere.",
+              "Use the same project context for collaborators, review, and follow-up work.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );
