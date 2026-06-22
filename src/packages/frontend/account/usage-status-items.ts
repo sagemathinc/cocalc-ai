@@ -170,7 +170,7 @@ export function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_count",
-      label: "Root filesystems",
+      label: "Images",
       value: `${usageStatus.rootfs_count}`,
       danger: usageStatus.over_rootfs_count === true,
       progress:
@@ -179,7 +179,7 @@ export function getUsageStatusItems(
           ? {
               current: usageStatus.rootfs_count,
               limit: usageStatus.rootfs_count_limit,
-              caption: `${usageStatus.rootfs_count} of ${usageStatus.rootfs_count_limit} root filesystems`,
+              caption: `${usageStatus.rootfs_count} of ${usageStatus.rootfs_count_limit} images`,
             }
           : undefined,
     });
@@ -190,7 +190,7 @@ export function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_remaining_count",
-      label: "Remaining root filesystem slots",
+      label: "Remaining image slots",
       value:
         usageStatus.rootfs_remaining_count < 0
           ? `Over by ${Math.abs(usageStatus.rootfs_remaining_count)}`
@@ -204,7 +204,7 @@ export function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_total_storage_bytes",
-      label: "RootFS storage used",
+      label: "Image storage used",
       value: humanSize(usageStatus.rootfs_total_storage_bytes),
       danger: usageStatus.over_rootfs_total_storage === true,
       progress:
@@ -225,7 +225,7 @@ export function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_total_storage_remaining_bytes",
-      label: "RootFS storage remaining",
+      label: "Image storage remaining",
       value: humanSize(
         Math.abs(usageStatus.rootfs_total_storage_remaining_bytes),
       ),
@@ -238,7 +238,7 @@ export function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_max_storage_bytes_limit",
-      label: "RootFS per-image cap",
+      label: "Image per-image cap",
       value: humanSize(usageStatus.rootfs_max_storage_bytes_limit),
     });
   }

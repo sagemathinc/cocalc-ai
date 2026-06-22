@@ -1,6 +1,5 @@
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { R2Region } from "@cocalc/util/consts";
-import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import {
   applyProjectPreset,
@@ -52,6 +51,10 @@ function context(
         official: true,
         release_id: "release-standard",
       }),
+      image("sage", "cocalc.local/rootfs/sage", {
+        official: true,
+        release_id: "release-sage",
+      }),
       image("gpu", "cocalc.local/rootfs/gpu", {
         official: true,
         gpu: true,
@@ -70,7 +73,7 @@ function context(
 }
 
 describe("project create draft", () => {
-  it("creates a standard draft from site/account defaults", () => {
+  it("creates a standard draft that requires an explicit image choice", () => {
     const draft = createInitialProjectDraft(context());
 
     expect(draft).toEqual(
@@ -79,13 +82,29 @@ describe("project create draft", () => {
         mode: "standard",
         region: "wnam",
         start: true,
-        rootfs_image: "cocalc.local/rootfs/standard",
-        rootfs_image_id: "standard",
+        rootfs_image: "",
+        rootfs_image_id: undefined,
       }),
     );
   });
 
-  it("selects a GPU default RootFS when a GPU host is selected and RootFS is untouched", () => {
+  it("auto-selects an image only when there is one usable option", () => {
+    const draft = createInitialProjectDraft(
+      context({
+        rootfsImages: [
+          image("standard", "cocalc.local/rootfs/standard", {
+            official: true,
+            release_id: "release-standard",
+          }),
+        ],
+      }),
+    );
+
+    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/standard");
+    expect(draft.rootfs_image_id).toBe("standard");
+  });
+
+  it("requires an explicit image choice when a GPU host is selected", () => {
     const ctx = context();
     const selectedHost = host({
       id: "gpu-host",
@@ -96,14 +115,14 @@ describe("project create draft", () => {
 
     draft = setProjectDraftHost(draft, selectedHost, ctx);
 
-    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/gpu");
-    expect(draft.rootfs_image_id).toBe("gpu");
+    expect(draft.rootfs_image).toBe("");
+    expect(draft.rootfs_image_id).toBeUndefined();
     expect(projectDraftSummary(draft, context({ selectedHost })).gpu).toBe(
       true,
     );
   });
 
-  it("preserves a user-touched RootFS when the host changes", () => {
+  it("preserves a user-touched image when the host changes", () => {
     const custom = image("custom", "cocalc.local/rootfs/custom", {
       release_id: "release-custom",
     });
@@ -179,10 +198,9 @@ describe("project create draft", () => {
         title: "Untitled 2026-05-20",
         start: false,
         region: "wnam",
-        rootfs_image: "cocalc.local/rootfs/standard",
-        rootfs_image_id: "standard",
       }),
     );
+    expect(projectDraftToCreateOptions(draft).rootfs_image).toBeUndefined();
   });
 
   it("maps create and open to start true", () => {
@@ -194,7 +212,7 @@ describe("project create draft", () => {
     expect(projectDraftToCreateOptions(draft).start).toBe(true);
   });
 
-  it("does not recalculate RootFS when only the title changes", () => {
+  it("does not recalculate image when only the title changes", () => {
     const ctx = context({ isAdmin: true });
     const draft = setProjectDraftRootfs(
       createInitialProjectDraft(ctx),
@@ -209,7 +227,7 @@ describe("project create draft", () => {
     expect(renamed.rootfs_image_id).toBeUndefined();
   });
 
-  it("applies the GPU preset by recalculating an untouched RootFS", () => {
+  it("applies the GPU preset without silently choosing an image", () => {
     const draft = applyProjectPreset(
       createInitialProjectDraft(context()),
       "gpu",
@@ -217,11 +235,11 @@ describe("project create draft", () => {
     );
 
     expect(draft.mode).toBe("gpu");
-    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/gpu");
-    expect(draft.rootfs_image_id).toBe("gpu");
+    expect(draft.rootfs_image).toBe("");
+    expect(draft.rootfs_image_id).toBeUndefined();
   });
 
-  it("uses catalog preset tags for the teaching preset", () => {
+  it("does not silently choose a teaching-tagged image when other images exist", () => {
     const teaching = image("teaching", "cocalc.local/rootfs/teaching", {
       official: true,
       priority: 10,
@@ -238,11 +256,11 @@ describe("project create draft", () => {
     );
 
     expect(draft.mode).toBe("teaching");
-    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/teaching");
-    expect(draft.rootfs_image_id).toBe("teaching");
+    expect(draft.rootfs_image).toBe("");
+    expect(draft.rootfs_image_id).toBeUndefined();
   });
 
-  it("prefers preset-specific tags over generic tags", () => {
+  it("does not silently choose among multiple GPU images", () => {
     const genericGpu = image("generic-gpu", "cocalc.local/rootfs/generic-gpu", {
       official: true,
       gpu: true,
@@ -266,11 +284,11 @@ describe("project create draft", () => {
       ctx,
     );
 
-    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/preset-gpu");
-    expect(draft.rootfs_image_id).toBe("preset-gpu");
+    expect(draft.rootfs_image).toBe("");
+    expect(draft.rootfs_image_id).toBeUndefined();
   });
 
-  it("does not select hidden preset-tagged RootFS entries", () => {
+  it("does not select hidden preset-tagged image entries", () => {
     const hiddenTeaching = image(
       "hidden-teaching",
       "cocalc.local/rootfs/hidden-teaching",
@@ -304,11 +322,11 @@ describe("project create draft", () => {
       ctx,
     );
 
-    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/fallback-teaching");
-    expect(draft.rootfs_image_id).toBe("fallback-teaching");
+    expect(draft.rootfs_image).toBe("");
+    expect(draft.rootfs_image_id).toBeUndefined();
   });
 
-  it("requires a managed RootFS when no catalog image exists for ordinary users", () => {
+  it("requires a managed image when no catalog image exists for ordinary users", () => {
     const draft = createInitialProjectDraft(
       context({
         rootfsImages: [],
@@ -319,11 +337,11 @@ describe("project create draft", () => {
     expect(draft.rootfs_image).toBe("");
     expect(
       projectDraftSummary(draft, context({ rootfsImages: [] })).warnings,
-    ).toContain("Choose a managed RootFS image.");
+    ).toContain("Choose an image.");
     expect(draft.rootfs_image_id).toBeUndefined();
   });
 
-  it("falls back to the default project image when no catalog image exists for admins", () => {
+  it("requires admins to explicitly choose custom OCI images", () => {
     const draft = createInitialProjectDraft(
       context({
         isAdmin: true,
@@ -332,7 +350,7 @@ describe("project create draft", () => {
       }),
     );
 
-    expect(draft.rootfs_image).toBe(DEFAULT_PROJECT_IMAGE);
+    expect(draft.rootfs_image).toBe("");
     expect(draft.rootfs_image_id).toBeUndefined();
   });
 

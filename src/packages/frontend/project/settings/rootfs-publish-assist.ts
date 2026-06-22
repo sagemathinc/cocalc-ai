@@ -136,10 +136,10 @@ export function buildRootfsPublishAgentPrompt(opts: {
   } = opts;
   const lines = [
     publishMode === "copy" && publishCopyMode === "project"
-      ? `Publish the current RootFS of project ${projectId} as a managed CoCalc image.`
+      ? `Publish the current image of project ${projectId} as a managed CoCalc image.`
       : publishMode === "manage"
-        ? `Update the existing RootFS catalog entry for project ${projectId}.`
-        : `Save the current base image of project ${projectId} into the RootFS catalog.`,
+        ? `Update the existing image catalog entry for project ${projectId}.`
+        : `Save the current base image of project ${projectId} into the image catalog.`,
     "",
     "Use the CoCalc CLI for this action:",
     "```sh",
@@ -152,7 +152,7 @@ export function buildRootfsPublishAgentPrompt(opts: {
         : "Important: this publishes the current visible / software environment. It does not publish /root or /tmp, and it does not switch the project to the new image."
       : publishMode === "manage"
         ? `Important: update the existing catalog entry${publishSourceEntry?.label ? ` (${publishSourceEntry.label})` : ""} instead of creating another copy.`
-        : "Important: this only saves catalog metadata for the current base image. It does not create a new managed RootFS artifact from the live project state.",
+        : "Important: this only saves catalog metadata for the current base image. It does not create a new managed image artifact from the live project state.",
     "",
     "Desired metadata:",
     `- label: ${publishDraft.label}`,

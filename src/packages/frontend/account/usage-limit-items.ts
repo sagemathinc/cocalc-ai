@@ -76,7 +76,7 @@ export function getUsageLimitsItems(
   if (typeof rootfsCount === "number" && Number.isFinite(rootfsCount)) {
     items.push({
       key: "rootfs_count",
-      label: "Max root filesystems",
+      label: "Max images",
       value: `${rootfsCount}`,
     });
   }
@@ -87,7 +87,7 @@ export function getUsageLimitsItems(
   ) {
     items.push({
       key: "rootfs_total_storage_gb",
-      label: "RootFS total storage cap",
+      label: "Image total storage cap",
       value: `${rootfsTotalStorage} GB`,
     });
   }
@@ -98,7 +98,7 @@ export function getUsageLimitsItems(
   ) {
     items.push({
       key: "rootfs_max_storage_gb",
-      label: "RootFS per-image cap",
+      label: "Image per-image cap",
       value: `${rootfsMaxStorage} GB`,
     });
   }
@@ -106,7 +106,7 @@ export function getUsageLimitsItems(
   if (typeof rootfsOciImages === "boolean") {
     items.push({
       key: "rootfs_oci_images",
-      label: "Remote OCI rootfs images",
+      label: "Remote OCI images",
       value: rootfsOciImages ? "Enabled" : "Disabled",
     });
   }

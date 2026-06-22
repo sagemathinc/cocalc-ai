@@ -264,7 +264,7 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
         </Col>
         <Col sm={1}>
           <Tooltip
-            title={`Cloning ${project.get("title")} makes an exact complete copy of the project, including any customization to the root filesystem / (e.g., systemwide software install).  It has the same root filesystem image.`}
+            title={`Cloning ${project.get("title")} makes an exact complete copy of the project, including any customization to the image (e.g., systemwide software install). It has the same image.`}
           >
             <Button>
               <Icon name="fork-outlined" /> Clone

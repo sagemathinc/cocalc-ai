@@ -144,10 +144,10 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open project Settings -> Environment -> Runtime Image.",
+        description: "Open project Settings -> Environment -> Image.",
         executable: true,
         id: "settings.runtime.rootfs",
-        label: "Open runtime image",
+        label: "Open image",
         parameters: projectActionParameters(),
       },
     ],
@@ -157,22 +157,24 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     id: "projects.runtime-image",
     image: docsIcon(
       "/public/docs/runtime-image-09add8c9.webp",
-      "A layered runtime image that defines a project's software stack",
+      "A layered project image that defines a project's software stack",
     ),
     lastReviewed: "2026-05-24",
+    searchKeywords:
+      "rootfs runtime image project image software environment managed image",
     slug: "projects/runtime-image",
     status: "ready",
     summary:
       "Choose, customize, and reuse the Linux software stack for a project.",
-    title: "Runtime images and RootFS",
+    title: "Project images",
   },
   {
     actions: [
       {
-        description: "Open project Settings -> Environment -> Runtime Image.",
+        description: "Open project Settings -> Environment -> Image.",
         executable: true,
         id: "settings.runtime.rootfs.publish",
-        label: "Open RootFS publishing",
+        label: "Open image publishing",
         parameters: projectActionParameters(),
       },
     ],
@@ -182,14 +184,16 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     id: "projects.publish-rootfs",
     image: docsIcon(
       "/public/docs/runtime-image-09add8c9.webp",
-      "A RootFS catalog entry with a public landing page and app launcher",
+      "A project image catalog entry with a public landing page and app launcher",
     ),
     lastReviewed: "2026-06-17",
+    searchKeywords:
+      "rootfs publish project image runtime image managed image catalog public slug discovery app launcher cli",
     slug: "projects/publish-rootfs",
     status: "ready",
     summary:
-      "Publish RootFS images with metadata, public slugs, discovery actions, app launchers, and CLI automation.",
-    title: "Publish RootFS images",
+      "Publish project images with metadata, public slugs, discovery actions, app launchers, and CLI automation.",
+    title: "Publish project images",
   },
   {
     actions: [

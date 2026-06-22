@@ -17,6 +17,6 @@ export async function queueRootfsChangeRestart({
     await restartProject(project_id);
   } catch (err) {
     setRestartQueuedAt("");
-    throw new Error(`RootFS image changed, but project restart failed: ${err}`);
+    throw new Error(`Image changed, but project restart failed: ${err}`);
   }
 }

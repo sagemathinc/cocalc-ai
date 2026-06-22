@@ -6,6 +6,7 @@ import {
   Dropdown,
   List,
   Modal,
+  Popover,
   Radio,
   Space,
   Tag,
@@ -36,6 +37,7 @@ import {
 } from "./pressure-ui";
 import { isSpotHost, SpotHostTag } from "./spot-ui";
 import { HostReliabilityButton } from "./components/host-reliability-button";
+import { HostCurrentMetrics } from "./components/host-current-metrics";
 import { useProjectHostLatencies } from "./use-project-host-latencies";
 
 const STATUS_COLOR = {
@@ -103,6 +105,83 @@ function moveEstimate({
     size: human_readable_size(bytes),
     sameBackupRegion,
   };
+}
+
+function formatHostRam(host: Host): string | undefined {
+  const ramGb =
+    typeof host.host_ram_gb === "number"
+      ? host.host_ram_gb
+      : typeof host.host_ram_mb === "number"
+        ? Math.round(host.host_ram_mb / 1024)
+        : undefined;
+  return ramGb ? `${ramGb} GB RAM` : undefined;
+}
+
+function formatHostCpu(host: Host): string | undefined {
+  return typeof host.host_cpu_count === "number"
+    ? `${host.host_cpu_count} vCPU`
+    : undefined;
+}
+
+function formatHostGpu(host: Host): string | undefined {
+  if (!host.gpu) return undefined;
+  const count = host.machine?.gpu_count;
+  const type = host.machine?.gpu_type;
+  if (type && count) return `${count} ${type}`;
+  if (type) return type;
+  return "GPU";
+}
+
+function hostSpecTags(host: Host): string[] {
+  return [
+    host.machine?.cloud,
+    host.machine?.machine_type || host.size,
+    formatHostCpu(host),
+    formatHostRam(host),
+    formatHostGpu(host),
+  ].filter((value): value is string => !!value);
+}
+
+function hostSpecSummary(host: Host): string {
+  return hostSpecTags(host).join(" · ");
+}
+
+function hostProjectsSummary(host: Host, projectsLabel: string): string {
+  const metrics = host.metrics?.current;
+  const running = metrics?.running_project_count;
+  const assigned = metrics?.assigned_project_count;
+  if (running != null || assigned != null) {
+    return `${running ?? 0} running / ${assigned ?? 0} assigned`;
+  }
+  return `${projectsLabel}: ${host.projects ?? 0}`;
+}
+
+function HostDetailsPopover({ host }: { host: Host }) {
+  return (
+    <Popover
+      trigger="click"
+      placement="right"
+      content={
+        <Space
+          orientation="vertical"
+          size="small"
+          style={{ maxWidth: 380, minWidth: 280 }}
+        >
+          <HostPlacementSummary
+            host={host}
+            compact
+            detailMode="popover"
+            showNormal
+          />
+          <HostCurrentMetrics host={host} compact dense />
+        </Space>
+      }
+    >
+      <Button size="small" type="link" style={{ padding: 0 }}>
+        Details
+      </Button>
+    </Popover>
+  );
 }
 
 function autoSelectCompare(a: Host, b: Host): number {
@@ -642,64 +721,53 @@ export function HostPickerPanel({
                   style={{ width: "100%" }}
                   size="small"
                 >
-                  <Space
-                    align="center"
-                    style={{ width: "100%", justifyContent: "space-between" }}
-                  >
-                    <Space wrap>
-                      <Radio value={host.id} disabled={disabled}>
-                        {host.name}
-                      </Radio>
-                      {isSpotHost(host) && <SpotHostTag host={host} />}
-                      <Tooltip
-                        title={getHostStatusTooltip(
-                          host.status,
-                          Boolean(host.deleted),
-                          host.provider_observed_at,
-                        )}
-                      >
-                        <Tag color={STATUS_COLOR[host.status] ?? "default"}>
-                          {host.status}
-                        </Tag>
-                      </Tooltip>
-                      {host.tier != null && (
-                        <Tag color={host.can_place ? "blue" : "default"}>
-                          Tier {host.tier}
-                        </Tag>
+                  <Space wrap>
+                    <Radio value={host.id} disabled={disabled}>
+                      {host.name}
+                    </Radio>
+                    {isSpotHost(host) && <SpotHostTag host={host} />}
+                    <Tooltip
+                      title={getHostStatusTooltip(
+                        host.status,
+                        Boolean(host.deleted),
+                        host.provider_observed_at,
                       )}
-                      <HostPressureTag pressure={host.pressure} />
-                      {host.can_place !== false ? (
-                        <Tag color="green">Available</Tag>
-                      ) : (
-                        <Tag icon={<Icon name="lock" />} color="default">
-                          Locked
-                        </Tag>
-                      )}
-                    </Space>
-                    <Space>
-                      <Tag>{host.region}</Tag>
-                      <Tag>{host.size}</Tag>
-                      {host.gpu && <Tag color="purple">GPU</Tag>}
-                      {latency != null ? (
-                        <Tooltip title="Live browser to project-host Conat round trip. Only shown for hosts this browser is currently routed to.">
-                          <Tag color={latency < 100 ? "green" : "orange"}>
-                            {latency}ms
-                          </Tag>
-                        </Tooltip>
-                      ) : null}
-                    </Space>
+                    >
+                      <Tag color={STATUS_COLOR[host.status] ?? "default"}>
+                        {host.status}
+                      </Tag>
+                    </Tooltip>
+                    {host.tier != null && (
+                      <Tag color={host.can_place ? "blue" : "default"}>
+                        Tier {host.tier}
+                      </Tag>
+                    )}
+                    <HostPressureTag pressure={host.pressure} />
+                    {host.can_place === false ? (
+                      <Tag icon={<Icon name="lock" />} color="default">
+                        Locked
+                      </Tag>
+                    ) : null}
                   </Space>
                   <Typography.Text type="secondary">
-                    {projectsLabel}: {host.projects ?? 0}
+                    {[
+                      host.region,
+                      hostSpecSummary(host),
+                      hostProjectsSummary(host, projectsLabel),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </Typography.Text>
-                  <HostPlacementSummary
-                    host={host}
-                    compact
-                    detailMode="popover"
-                    showNormal
-                  />
-                  <Space wrap>
+                  <Space size="middle" wrap>
                     <HostReliabilityButton host={host} compact />
+                    {latency != null ? (
+                      <Tooltip title="Live browser to project-host Conat round trip. Only shown for hosts this browser is currently routed to.">
+                        <Tag color={latency < 100 ? "green" : "orange"}>
+                          {latency}ms
+                        </Tag>
+                      </Tooltip>
+                    ) : null}
+                    <HostDetailsPopover host={host} />
                   </Space>
                   {isMove && host.id === currentHostId && (
                     <Typography.Text type="secondary">

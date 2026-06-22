@@ -509,7 +509,7 @@ export default function RootFilesystemImage({
       ({
         id: "rootfs-content-preview",
         image: publishDraft.image || DEFAULT_PROJECT_IMAGE,
-        label: publishDraft.label || "RootFS image",
+        label: publishDraft.label || "Image",
         description: publishDraft.description || undefined,
         theme:
           rootfsThemeFromPublishDraft(publishDraft) ??
@@ -595,7 +595,7 @@ export default function RootFilesystemImage({
     const nextLabel =
       currentEntry?.label ||
       currentImage.split("/").slice(-1)[0] ||
-      "Custom RootFS";
+      "Custom Image";
     const nextDescription = currentEntry?.description ?? "";
     const defaultMode = opts?.publishMode ?? "copy";
     const defaultCopyMode = opts?.copyMode ?? "project";
@@ -681,7 +681,7 @@ export default function RootFilesystemImage({
 
   async function applyRootfsChange() {
     if (rootfsMode === "custom" && !canUseCustomRootfs) {
-      setError("Only admins can use advanced OCI RootFS images.");
+      setError("Only admins can use advanced OCI images.");
       return;
     }
     const nextEntry =
@@ -691,7 +691,7 @@ export default function RootFilesystemImage({
           )
         : undefined;
     if (rootfsMode === "catalog" && !nextEntry) {
-      setError("Choose a managed catalog RootFS image.");
+      setError("Choose a managed catalog image.");
       return;
     }
     const nextImage =
@@ -814,7 +814,7 @@ export default function RootFilesystemImage({
   async function saveRootfsDiscoveryConfig(): Promise<void> {
     if (publishMode === "copy" && publishCopyMode === "project") {
       message.info(
-        "Discovery config is saved into catalog metadata when you publish the live project RootFS.",
+        "Discovery config is saved into catalog metadata when you publish the live project image.",
       );
       return;
     }
@@ -905,7 +905,7 @@ export default function RootFilesystemImage({
     try {
       importRootfsConfigText(await file.text());
     } catch (err) {
-      message.error(`Could not import RootFS config: ${err}`);
+      message.error(`Could not import image config: ${err}`);
     } finally {
       if (rootfsConfigImportInputRef.current) {
         rootfsConfigImportInputRef.current.value = "";
@@ -926,9 +926,9 @@ export default function RootFilesystemImage({
         path,
       });
       importRootfsConfigText(text);
-      message.success(`Loaded RootFS config from ${path}.`);
+      message.success(`Loaded image config from ${path}.`);
     } catch (err) {
-      message.error(`Could not import RootFS config from project file: ${err}`);
+      message.error(`Could not import image config from project file: ${err}`);
     } finally {
       setRootfsConfigImportProjectLoading(false);
     }
@@ -986,7 +986,7 @@ export default function RootFilesystemImage({
 
   async function scanCurrentProjectRootfs() {
     if (!rootfsScanEnabled) {
-      setError("RootFS vulnerability scanning is disabled for this site.");
+      setError("Image vulnerability scanning is disabled for this site.");
       return;
     }
     try {
@@ -1037,7 +1037,7 @@ export default function RootFilesystemImage({
         content: buildLiveRootfsScanMarkdown(result, jsonPath),
       });
       actions?.open_file({ path: markdownPath, foreground: true });
-      message.success("Saved RootFS scan details to the project.");
+      message.success("Saved image scan details to the project.");
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -1052,7 +1052,7 @@ export default function RootFilesystemImage({
       <Space wrap size="small">
         <RootfsScanDetailsButton
           scan={result.summary}
-          title="Live project RootFS preflight scan details"
+          title="Live project image preflight scan details"
         />
         <Button
           size="small"
@@ -1081,10 +1081,10 @@ export default function RootFilesystemImage({
         prompt,
         title:
           publishMode === "copy" && publishCopyMode === "project"
-            ? "Publish RootFS"
+            ? "Publish Image"
             : publishMode === "manage"
-              ? "Update RootFS Catalog Entry"
-              : "Save RootFS Image",
+              ? "Update Image Catalog Entry"
+              : "Save Image",
         tag: "intent:rootfs-publish",
         forceCodex: true,
         openFloating: true,
@@ -1099,10 +1099,10 @@ export default function RootFilesystemImage({
           prompt,
           title:
             publishMode === "copy" && publishCopyMode === "project"
-              ? "Publish RootFS"
+              ? "Publish Image"
               : publishMode === "manage"
-                ? "Update RootFS Catalog Entry"
-                : "Save RootFS Image",
+                ? "Update Image Catalog Entry"
+                : "Save Image",
           tag: "intent:rootfs-publish",
           forceCodex: true,
           codexConfig: {
@@ -1152,7 +1152,7 @@ export default function RootFilesystemImage({
       ? canUseCustomRootfs
         ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
         : "This project uses a legacy or custom OCI image. Choose a managed catalog image; only admins can set arbitrary OCI image strings."
-      : "Loading managed catalog metadata for this project's runtime image.");
+      : "Loading managed catalog metadata for this project's image.");
   const projectIsRunning = project.getIn(["state", "state"]) == "running";
 
   return (
@@ -1289,7 +1289,7 @@ export default function RootFilesystemImage({
                   style={{ width: "100%" }}
                 >
                   <span>
-                    This keeps your current RootFS available as the rollback
+                    This keeps your current image available as the rollback
                     target.
                   </span>
                   <Space wrap size="small">
@@ -1314,7 +1314,7 @@ export default function RootFilesystemImage({
                     : "success"
               }
               showIcon
-              title="Live project RootFS preflight scan"
+              title="Live project image preflight scan"
               description={
                 <Space
                   direction="vertical"
@@ -1371,10 +1371,10 @@ export default function RootFilesystemImage({
                   }
                 />
                 <RuntimeAction
-                  title="Publish current RootFS"
+                  title="Publish current image"
                   description={
                     isCustomRootfs ? (
-                      "Save catalog metadata or publish the live project RootFS for reuse."
+                      "Save catalog metadata or publish the live project image for reuse."
                     ) : (
                       <>
                         Reuse software and <code>/</code>-filesystem
@@ -1421,8 +1421,8 @@ export default function RootFilesystemImage({
                 ) : null}
                 {rootfsScanEnabled ? (
                   <RuntimeAction
-                    title="Scan current RootFS"
-                    description="Run a vulnerability preflight against the live project RootFS before publishing or continuing to use it."
+                    title="Scan current image"
+                    description="Run a vulnerability preflight against the live project image before publishing or continuing to use it."
                     action={
                       <Button
                         disabled={open || scanningLiveRootfs}
@@ -1530,7 +1530,7 @@ export default function RootFilesystemImage({
           title={
             <>
               <Icon name="arrow-circle-up" style={{ marginRight: "12px" }} />
-              Upgrade RootFS Image
+              Upgrade Image
             </>
           }
         >
@@ -1541,10 +1541,10 @@ export default function RootFilesystemImage({
               title="This upgrades the visible / software environment"
               description={
                 <>
-                  Upgrading changes the project to a newer managed RootFS image.
-                  Your files in <code>/root</code> and <code>/tmp</code> stay
+                  Upgrading changes the project to a newer managed image. Your
+                  files in <code>/root</code> and <code>/tmp</code> stay
                   available. Packages and files you added directly under{" "}
-                  <code>/</code> belong to the previous RootFS state and only
+                  <code>/</code> belong to the previous image state and only
                   come back if you roll back.
                 </>
               }
@@ -1552,12 +1552,12 @@ export default function RootFilesystemImage({
             <Alert
               type="info"
               showIcon
-              title="Base RootFS size does not count against your project disk quota"
+              title="Base image size does not count against your project disk quota"
               description={
                 <>
-                  Managed RootFS images are shared lower directories on the
-                  host. Their base size does not count against your project
-                  quota. Only your own writable project data still counts.
+                  Managed images are shared lower directories on the host. Their
+                  base size does not count against your project quota. Only your
+                  own writable project data still counts.
                 </>
               }
             />
@@ -1612,7 +1612,7 @@ export default function RootFilesystemImage({
             {project.getIn(["state", "state"]) == "running" ? (
               <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                 The project is currently running, so CoCalc will restart it
-                after switching the RootFS image.
+                after switching the image.
               </Paragraph>
             ) : null}
           </Space>
@@ -1631,7 +1631,7 @@ export default function RootFilesystemImage({
           title={
             <>
               <Icon name="docker" style={{ marginRight: "15px" }} />
-              Change / Upgrade RootFS Image{" "}
+              Change / Upgrade Image{" "}
               {saving && (
                 <>
                   Saving...
@@ -1726,7 +1726,7 @@ export default function RootFilesystemImage({
                         )}
                       </code>
                       . After the switch, this project can still roll back to
-                      the previous RootFS state.
+                      the previous image state.
                     </>
                   }
                 />
@@ -1878,7 +1878,7 @@ export default function RootFilesystemImage({
                   title="Advanced OCI / Docker image"
                   description={
                     <>
-                      This bypasses the managed RootFS catalog. The supported
+                      This bypasses the managed image catalog. The supported
                       path today is a glibc-based Debian or Ubuntu image, or an
                       image that already includes <code>sudo</code> and CA
                       certificates. Other package-manager bootstrap paths may
@@ -1908,7 +1908,7 @@ export default function RootFilesystemImage({
                 type="warning"
                 showIcon
                 title="Advanced OCI images are admin-only"
-                description="Choose a managed catalog RootFS image instead."
+                description="Choose a managed catalog image instead."
               />
             )}
             {rootfsError && (
@@ -1930,7 +1930,7 @@ export default function RootFilesystemImage({
             publishMode === "manage"
               ? "Update Catalog Entry"
               : publishCopyMode === "project"
-                ? "Publish RootFS"
+                ? "Publish Image"
                 : "Save Metadata"
           }
           cancelText="Cancel"
@@ -1940,10 +1940,10 @@ export default function RootFilesystemImage({
           }}
           title={
             publishMode === "manage"
-              ? "Manage RootFS Catalog Entry"
+              ? "Manage Image Catalog Entry"
               : publishCopyMode === "project"
-                ? "Publish Current RootFS"
-                : "Save RootFS to My Images"
+                ? "Publish Current Image"
+                : "Save Image to My Images"
           }
         >
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -1976,13 +1976,13 @@ export default function RootFilesystemImage({
                         lineHeight: "24px",
                       }}
                     >
-                      {publishDraft.label || "Untitled RootFS image"}
+                      {publishDraft.label || "Untitled image"}
                     </span>
                     <Tag>
                       {publishMode === "manage"
                         ? "Update catalog entry"
                         : publishCopyMode === "project"
-                          ? "Publish live RootFS"
+                          ? "Publish live image"
                           : "Save base image"}
                     </Tag>
                     <Tag color="blue">{publishDraft.visibility}</Tag>
@@ -1992,7 +1992,7 @@ export default function RootFilesystemImage({
                       (publishMode === "manage"
                         ? "Update metadata for the selected catalog entry."
                         : publishCopyMode === "project"
-                          ? "Create a reusable managed RootFS from the current visible project environment."
+                          ? "Create a reusable managed image from the current visible project environment."
                           : "Save catalog metadata for the current base image string.")}
                   </Paragraph>
                   <div
@@ -2012,7 +2012,7 @@ export default function RootFilesystemImage({
                     style={{ marginTop: 10 }}
                     target="_blank"
                   >
-                    RootFS publishing docs
+                    Image publishing docs
                   </Button>
                 </div>
               </div>
@@ -2060,7 +2060,7 @@ export default function RootFilesystemImage({
                               setPublishMode("copy");
                               setPublishCopyMode("project");
                             }}
-                            title="Publish live project RootFS"
+                            title="Publish live project image"
                           />
                           <PublishOptionCard
                             active={
@@ -2111,8 +2111,8 @@ export default function RootFilesystemImage({
                             title="Publishing continues in the background"
                             description={
                               switchPublishedProject
-                                ? "After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. When the publish operation succeeds, the project is switched to the new image as part of the same background operation."
-                                : "After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. The project keeps its current runtime image when publishing finishes."
+                                ? "After you click Publish Image, this dialog closes and progress appears in image publish operations on the Image screen. When the publish operation succeeds, the project is switched to the new image as part of the same background operation."
+                                : "After you click Publish Image, this dialog closes and progress appears in image publish operations on the Image screen. The project keeps its current image when publishing finishes."
                             }
                           />
                         </Space>
@@ -2140,7 +2140,7 @@ export default function RootFilesystemImage({
                                   : "info"
                               }
                               showIcon
-                              title="Preflight scan the live project RootFS before publishing"
+                              title="Preflight scan the live project image before publishing"
                               description={
                                 <Space
                                   direction="vertical"
@@ -2149,7 +2149,7 @@ export default function RootFilesystemImage({
                                 >
                                   <div>
                                     This scans the currently mounted project
-                                    RootFS. Published images are scanned again
+                                    image. Published images are scanned again
                                     after publication, but this check catches
                                     obvious vulnerabilities before creating the
                                     image.
@@ -2169,7 +2169,7 @@ export default function RootFilesystemImage({
                                     loading={scanningLiveRootfs}
                                     onClick={scanCurrentProjectRootfs}
                                   >
-                                    Scan current RootFS now
+                                    Scan current image now
                                   </Button>
                                 </Space>
                               }
@@ -2178,8 +2178,8 @@ export default function RootFilesystemImage({
                             <Alert
                               type="info"
                               showIcon
-                              message="Preflight scan is only for publishing a live project RootFS."
-                              description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live RootFS to scan in this dialog."
+                              message="Preflight scan is only for publishing a live project image."
+                              description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live image to scan in this dialog."
                             />
                           ),
                       },
@@ -2447,7 +2447,7 @@ export default function RootFilesystemImage({
                       <RuntimePanel
                         icon="file-export"
                         title="Import / export config"
-                        subtitle="Move portable RootFS catalog metadata, theme, and discovery actions between images or projects."
+                        subtitle="Move portable image catalog metadata, theme, and discovery actions between images or projects."
                       >
                         <Space wrap>
                           <Button onClick={exportRootfsConfig}>
@@ -2490,7 +2490,7 @@ export default function RootFilesystemImage({
                           style={{ marginTop: 10, marginBottom: 0 }}
                         >
                           Import updates this draft only. Save or publish to
-                          update the RootFS catalog entry.
+                          update the image catalog entry.
                         </Paragraph>
                       </RuntimePanel>
                       <RootfsContentManifestBuilder
@@ -2653,7 +2653,7 @@ export default function RootFilesystemImage({
                               >
                                 Theme this image with a color, accent color,
                                 icon, and optional artwork so it stands out in
-                                RootFS pickers.
+                                image pickers.
                               </Paragraph>
                               <Space wrap style={{ marginTop: "8px" }}>
                                 {publishDraft.theme.color ? (
@@ -2747,9 +2747,9 @@ export default function RootFilesystemImage({
                 ? "This updates the selected catalog entry in place."
                 : publishCopyMode === "project"
                   ? switchPublishedProject
-                    ? "Publishing creates a new immutable managed RootFS reference and switches this project to that image after the publish operation succeeds."
-                    : "Publishing creates a new immutable managed RootFS reference. This project keeps its current runtime image."
-                  : "This saves catalog metadata for the current image string without creating a new managed RootFS artifact."}
+                    ? "Publishing creates a new immutable managed image reference and switches this project to that image after the publish operation succeeds."
+                    : "Publishing creates a new immutable managed image reference. This project keeps its current image."
+                  : "This saves catalog metadata for the current image string without creating a new managed image artifact."}
             </Paragraph>
           </Space>
         </Modal>
@@ -2770,7 +2770,7 @@ export default function RootFilesystemImage({
         <Modal
           open
           destroyOnHidden
-          title="Import RootFS Config"
+          title="Import Image Config"
           okText="Import selected"
           okButtonProps={{
             disabled: !rootfsConfigImportOptionsHasSelection(
@@ -2785,7 +2785,7 @@ export default function RootFilesystemImage({
               type="info"
               showIcon
               message="Choose which parts of this JSON config to import."
-              description="Import changes this draft only. Save or publish to update the RootFS catalog metadata."
+              description="Import changes this draft only. Save or publish to update the image catalog metadata."
             />
             <Checkbox
               disabled={!rootfsConfigImportCandidate.metadata}
@@ -2840,7 +2840,7 @@ export default function RootFilesystemImage({
           open
           destroyOnHidden
           width={860}
-          title="Choose RootFS path"
+          title="Choose image path"
           okText="Use this path"
           onCancel={() => setPublishContentPicker(null)}
           onOk={() => {
@@ -2873,7 +2873,7 @@ export default function RootFilesystemImage({
       )}
       <ThemeEditorModal
         open={publishThemeOpen}
-        title="Edit RootFS Theme"
+        title="Edit Image Theme"
         value={publishDraft.theme}
         onChange={(patch) =>
           setPublishDraft((cur) => ({
@@ -2908,7 +2908,7 @@ export function RootFilesystemImageModal({
       title={
         <>
           <Icon name="docker" style={{ marginRight: 10 }} />
-          Runtime Image
+          Image
         </>
       }
       width={920}
@@ -3194,7 +3194,7 @@ function absoluteRootfsPublicUrl(path?: string): string | undefined {
 async function copyRootfsPublicUrl(url?: string): Promise<void> {
   if (!url) return;
   await navigator.clipboard.writeText(url);
-  message.success("Copied RootFS landing page link.");
+  message.success("Copied image landing page link.");
 }
 
 function rootfsConfigImportOptionsFor(
@@ -3627,7 +3627,7 @@ function RootfsTechnicalDetails({
           label: "Technical Details",
           children: (
             <Space direction="vertical" size={12} style={{ width: "100%" }}>
-              <TechnicalGroup title="Current RootFS state">
+              <TechnicalGroup title="Current image state">
                 <TechnicalRow
                   label="Catalog label"
                   value={
@@ -3919,7 +3919,7 @@ function renderRootfsScan(
   return (
     <RootfsScanStatus
       entry={entry}
-      detailsTitle={`RootFS scan details: ${entry.label}`}
+      detailsTitle={`Image scan details: ${entry.label}`}
     />
   );
 }
@@ -4013,9 +4013,9 @@ function buildLiveRootfsScanMarkdown(
       )
       .join("\n") || "| _none reported_ |  |  |  |  |  |";
 
-  return `# Live Project RootFS Preflight Scan
+  return `# Live Project Image Preflight Scan
 
-This report was saved from the project settings RootFS scanner. It is a point-in-time scan of mutable project state, not the persisted official image scan.
+This report was saved from the project settings image scanner. It is a point-in-time scan of mutable project state, not the persisted official image scan.
 
 ## Summary
 
@@ -4086,7 +4086,7 @@ function renderLiveRootfsScanSummary(
         {countText ? ` (${countText})` : ""}.
       </div>
       <div>
-        Scanned live project RootFS on host <code>{result.host_id}</code> at{" "}
+        Scanned live project image on host <code>{result.host_id}</code> at{" "}
         {scannedAt}
         {tool ? ` using ${tool}` : ""}. This is a point-in-time preflight scan
         of mutable project state, not the persisted official image scan.

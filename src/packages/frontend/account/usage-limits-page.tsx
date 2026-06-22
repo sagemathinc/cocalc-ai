@@ -644,12 +644,12 @@ function AdvancedProjectStorageDetailsButton({
           {renderInfoSection({
             emptyValue: "Unavailable",
             items: usageItems,
-            label: "RootFS usage",
+            label: "Image usage",
           })}
           {renderInfoSection({
             emptyValue: "Not configured",
             items: limitItems,
-            label: "RootFS limits",
+            label: "Image limits",
           })}
         </Space>
       </Modal>

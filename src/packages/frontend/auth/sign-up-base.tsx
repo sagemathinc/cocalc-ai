@@ -247,6 +247,42 @@ export default function SignUpFormBase({
           />
         </div>
       )}
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Checkbox
+          checked={acceptedTerms}
+          style={{ cursor: "pointer" }}
+          onChange={(e) => setAcceptedTerms(e.target.checked)}
+        >
+          I accept the{" "}
+          <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
+            Terms of Service
+          </a>{" "}
+          and{" "}
+          <a href={PolicyPrivacyPageUrl} target="_blank" rel="noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </Checkbox>
+        {issues.terms && (
+          <div
+            style={{
+              color: COLORS.ANTD_RED_WARN,
+              fontSize: "13px",
+              lineHeight: "18px",
+            }}
+          >
+            {issues.terms}
+          </div>
+        )}
+        <Checkbox
+          checked={marketingConsent}
+          style={{ cursor: "pointer" }}
+          onChange={(e) => setMarketingConsent(e.target.checked)}
+        >
+          Send me occasional platform tips, onboarding help, and product
+          updates. You can change this later in Account Preferences.
+        </Checkbox>
+      </Space>
       <div>
         <div>Email address</div>
         <Input
@@ -294,42 +330,6 @@ export default function SignUpFormBase({
           onPressEnter={signUp}
         />
       </div>
-      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-        <Checkbox
-          checked={acceptedTerms}
-          style={{ cursor: "pointer" }}
-          onChange={(e) => setAcceptedTerms(e.target.checked)}
-        >
-          I accept the{" "}
-          <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
-            Terms of Service
-          </a>{" "}
-          and{" "}
-          <a href={PolicyPrivacyPageUrl} target="_blank" rel="noreferrer">
-            Privacy Policy
-          </a>
-          .
-        </Checkbox>
-        {issues.terms && (
-          <div
-            style={{
-              color: COLORS.ANTD_RED_WARN,
-              fontSize: "13px",
-              lineHeight: "18px",
-            }}
-          >
-            {issues.terms}
-          </div>
-        )}
-        <Checkbox
-          checked={marketingConsent}
-          style={{ cursor: "pointer" }}
-          onChange={(e) => setMarketingConsent(e.target.checked)}
-        >
-          Send me occasional platform tips, onboarding help, and product
-          updates. You can change this later in Account Preferences.
-        </Checkbox>
-      </Space>
       <Button
         type="primary"
         size="large"

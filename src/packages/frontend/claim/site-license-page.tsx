@@ -160,9 +160,9 @@ function SuccessDetails({
           </Descriptions.Item>
         )}
         {consumption.rootfs_id && (
-          <Descriptions.Item label="RootFS">
+          <Descriptions.Item label="Image">
             <a href={rootfsHref(consumption.rootfs_id)}>
-              Open the associated RootFS image
+              Open the associated image
             </a>
           </Descriptions.Item>
         )}
@@ -209,7 +209,7 @@ export default function SiteLicenseClaimPage() {
       <Result
         status="warning"
         title="No claim token found"
-        subTitle="Open the complete claim link from your instructor, organization, or RootFS publisher."
+        subTitle="Open the complete claim link from your instructor, organization, or image publisher."
       />
     );
   }
@@ -222,7 +222,7 @@ export default function SiteLicenseClaimPage() {
             <div>
               <Title level={2}>Claim CoCalc access</Title>
               <Paragraph>
-                This link grants your account the membership, course, or RootFS
+                This link grants your account the membership, course, or image
                 access chosen by the organization that issued it. Sign in or
                 create an account to apply the claim to your account.
               </Paragraph>
@@ -283,7 +283,7 @@ export default function SiteLicenseClaimPage() {
               </Button>
               {consumption.rootfs_id && (
                 <Button href={rootfsHref(consumption.rootfs_id)}>
-                  Open RootFS
+                  Open Image
                 </Button>
               )}
             </Space>

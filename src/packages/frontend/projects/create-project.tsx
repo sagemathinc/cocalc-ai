@@ -15,7 +15,7 @@ import {
   Form,
   Input,
   Modal,
-  Select,
+  Popover,
   Space,
   Tag,
   Typography,
@@ -40,14 +40,11 @@ import { COLORS } from "@cocalc/util/theme";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import { RootfsScanSummaryButton } from "@cocalc/frontend/rootfs/scan-status";
 import {
-  groupedRootfsOptions,
   latestRootfsVersionEntries,
   renderRootfsCatalogOption,
-  rootfsOptionSearchText,
   sectionLabel,
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
-import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { isNewProjectRootfsSelectable } from "./create-project-rootfs";
 import {
@@ -75,7 +72,7 @@ const PROJECT_PRESETS: {
   {
     mode: "standard",
     title: "Standard",
-    description: "Default or catalog-tagged base image, automatic host.",
+    description: "General-purpose image, automatic host.",
     icon: "project-outlined",
   },
   {
@@ -93,7 +90,7 @@ const PROJECT_PRESETS: {
   {
     mode: "custom",
     title: "Custom",
-    description: "Choose your own runtime image and host.",
+    description: "Choose your own image and host.",
     icon: "sliders",
   },
 ];
@@ -102,9 +99,9 @@ function projectPresetDescription(preset: (typeof PROJECT_PRESETS)[number]) {
   if (!IS_STAR_SETUP_PROFILE) return preset.description;
   switch (preset.mode) {
     case "standard":
-      return "Default or catalog-tagged base image.";
+      return "General-purpose image.";
     case "custom":
-      return "Choose your own runtime image.";
+      return "Choose your own image.";
     default:
       return preset.description;
   }
@@ -122,12 +119,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [titlePreview, setTitlePreview] = useState<string>(default_value);
   const saving = createAction != null;
   const new_project_title_ref = useRef<any>(null);
-  const [rootfsPickerOpen, setRootfsPickerOpen] = useState<boolean>(false);
   const [showOlderRootfsVersions, setShowOlderRootfsVersions] =
     useState<boolean>(false);
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
-  const [rootfsDraftId, setRootfsDraftId] = useState<string | undefined>();
   const [rootfsSearch, setRootfsSearch] = useState("");
   const [hostPickerOpen, setHostPickerOpen] = useState<boolean>(false);
   const {
@@ -145,7 +140,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     reset,
   } = useProjectCreateDraft({
     defaultValue: default_value,
-    rootfsQuery: rootfsSearch,
   });
 
   const [form] = Form.useForm();
@@ -161,15 +155,17 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     () =>
       latestRootfsVersionEntries(filteredRootfsImages, {
         showOlderVersions: showOlderRootfsVersions,
-        preserveIds: [rootfsDraftId, draft.rootfs_image_id],
+        preserveIds: [draft.rootfs_image_id],
       }),
-    [
-      draft.rootfs_image_id,
-      filteredRootfsImages,
-      rootfsDraftId,
-      showOlderRootfsVersions,
-    ],
+    [draft.rootfs_image_id, filteredRootfsImages, showOlderRootfsVersions],
   );
+  const visibleRootfsImages = useMemo(() => {
+    const query = rootfsSearch.trim().toLowerCase();
+    if (!query) return pickerRootfsImages;
+    return pickerRootfsImages.filter((entry) =>
+      rootfsEntrySearchText(entry).includes(query),
+    );
+  }, [pickerRootfsImages, rootfsSearch]);
   const selectedRootfsEntry = useMemo(() => {
     const imageId = draft.rootfs_image_id?.trim();
     if (imageId) {
@@ -179,11 +175,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     if (!image) return undefined;
     return filteredRootfsImages.find((entry) => entry.image === image);
   }, [draft.rootfs_image, draft.rootfs_image_id, filteredRootfsImages]);
-  const rootfsGroupedOptions = useMemo(
-    () => groupedRootfsOptions(pickerRootfsImages),
-    [pickerRootfsImages],
-  );
-
   useEffect(() => {
     if (!open) {
       return;
@@ -205,11 +196,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setTitlePreview(draft.title);
     set_error("");
     setCreateAction(null);
-    setRootfsPickerOpen(false);
     setHostPickerOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
-    setRootfsDraftId(undefined);
     setRootfsSearch("");
   }
 
@@ -237,6 +226,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     if (!title) {
       setCreateAction(null);
       set_error(`Please enter a title for the new ${projectLabelLower}.`);
+      return;
+    }
+    if (!draft.rootfs_image.trim()) {
+      setCreateAction(null);
+      set_error("Please choose an image for the new project.");
       return;
     }
     const opts = projectDraftToCreateOptions({
@@ -281,208 +275,145 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     }
   }
 
-  function openRootfsPicker() {
-    const current = (draft.rootfs_image?.trim() ||
-      (isAdmin ? DEFAULT_PROJECT_IMAGE : "")) as string;
-    setRootfsDraft(current);
-    const currentEntry =
-      filteredRootfsImages.find(
-        (entry) => entry.id === draft.rootfs_image_id,
-      ) ?? filteredRootfsImages.find((entry) => entry.image === current);
-    setRootfsDraftId(currentEntry?.id);
-    const isCatalog = !!currentEntry || !isAdmin;
-    setRootfsMode(isCatalog ? "catalog" : "custom");
-    setRootfsPickerOpen(true);
-  }
-
-  function applyRootfsDraft() {
+  function applyCustomRootfsDraft() {
     const trimmed = rootfsDraft.trim();
-    if (rootfsMode === "custom") {
-      if (!isAdmin) {
-        set_error("Only admins can use advanced OCI images.");
-        return;
-      }
-      setRootfs({ image: trimmed || DEFAULT_PROJECT_IMAGE });
-    } else {
-      const nextEntry =
-        filteredRootfsImages.find((entry) => entry.id === rootfsDraftId) ??
-        filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
-      setRootfs({
-        image: nextEntry?.image || draft.rootfs_image,
-        image_id: nextEntry?.id,
-      });
+    if (!isAdmin) {
+      set_error("Only admins can use advanced OCI images.");
+      return;
     }
-    setRootfsPickerOpen(false);
+    setRootfs({ image: trimmed });
+    setRootfsMode("catalog");
   }
 
-  function renderRootfsPicker() {
-    if (!rootfsPickerOpen) return null;
-    const activeEntry =
-      filteredRootfsImages.find((entry) => entry.id === rootfsDraftId) ??
-      filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
+  function renderRootfsHelp(): React.JSX.Element {
     return (
-      <Card
-        size="small"
-        styles={{ body: { padding: "10px 12px" } }}
-        style={{
-          borderColor: COLORS.GRAY_LL,
-          background: "white",
-        }}
-      >
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Pick a managed RootFS image for this project. Scan findings are
-            shown for review but do not block selection.
-          </Paragraph>
-          {rootfsMode === "catalog" ? (
-            <>
-              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                Managed catalog images are the recommended path. They carry
-                visibility, publishing, scanning, and lifecycle metadata.
-              </Paragraph>
-              <Select
-                showSearch
-                options={rootfsGroupedOptions}
-                value={rootfsDraftId}
-                placeholder="Select an image"
-                style={{ width: "100%" }}
-                listHeight={420}
-                filterOption={(input, option) =>
-                  rootfsOptionSearchText(option).includes(
-                    input.trim().toLowerCase(),
-                  )
+      <Space orientation="vertical" size="small" style={{ maxWidth: 420 }}>
+        <Paragraph style={{ marginBottom: 0 }}>
+          An image defines the software installed in the project.
+        </Paragraph>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Choose SageMath for Sage/Python/math work, R for R projects, GPU
+          images for CUDA workloads, and minimal images only when you want a
+          small base to customize yourself.
+        </Paragraph>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Managed catalog images are recommended. Scan findings are shown for
+          review but do not block selection.
+        </Paragraph>
+      </Space>
+    );
+  }
+
+  function renderRootfsCatalogSelector(): React.JSX.Element {
+    return (
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Input.Search
+          allowClear
+          value={rootfsSearch}
+          placeholder="Search images, e.g. SageMath, R, Python, GPU..."
+          onChange={(e) => setRootfsSearch(e.target.value)}
+          disabled={saving || rootfsLoading}
+        />
+        <div className="cc-project-create-image-list">
+          {visibleRootfsImages.map((entry) => {
+            const selected =
+              entry.id === draft.rootfs_image_id ||
+              entry.image === draft.rootfs_image;
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                className="cc-project-create-image-option"
+                aria-pressed={selected}
+                disabled={saving}
+                onClick={() =>
+                  setRootfs({ image: entry.image, image_id: entry.id })
                 }
-                onSearch={(value) => setRootfsSearch(value)}
-                optionRender={(option) =>
-                  renderRootfsCatalogOption((option.data as any).entry)
-                }
-                onChange={(value) => {
-                  const next = filteredRootfsImages.find(
-                    (entry) => entry.id === value,
-                  );
-                  setRootfsDraft(next?.image || "");
-                  setRootfsDraftId(next?.id);
-                }}
-                loading={rootfsLoading}
-                disabled={rootfsLoading}
-              />
-              <Space wrap>
-                <Button
-                  type="primary"
-                  onClick={applyRootfsDraft}
-                  disabled={!rootfsDraftId}
-                >
-                  Use this image
-                </Button>
-                <Button onClick={() => setRootfsPickerOpen(false)}>
-                  Cancel
-                </Button>
-              </Space>
-              <Checkbox
-                checked={showOlderRootfsVersions}
-                onChange={(e) => setShowOlderRootfsVersions(e.target.checked)}
               >
-                Show older versions
-              </Checkbox>
-              {isAdmin && (
-                <Button
-                  type="link"
-                  onClick={() => setRootfsMode("custom")}
-                  style={{ paddingLeft: 0, width: "fit-content" }}
-                >
-                  Use an advanced OCI or Docker image instead
-                </Button>
-              )}
-              {activeEntry?.description && (
-                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  {activeEntry.description}
-                </Paragraph>
-              )}
-              {activeEntry && renderRootfsWarning(activeEntry)}
-              {activeEntry && (
-                <RootfsScanSummaryButton
-                  entry={activeEntry}
-                  title={`RootFS scan details: ${activeEntry.label}`}
-                />
-              )}
-              <Space wrap>
-                {activeEntry?.section && (
-                  <Tag color={sectionTagColor(activeEntry.section)}>
-                    {sectionLabel(activeEntry.section)}
-                  </Tag>
-                )}
-                {activeEntry?.version && <Tag>{activeEntry.version}</Tag>}
-                {activeEntry?.channel && (
-                  <Tag color="cyan">{activeEntry.channel}</Tag>
-                )}
-                {activeEntry?.gpu && <Tag color="purple">GPU image</Tag>}
-                {activeEntry?.owner_name && activeEntry.section !== "mine" && (
-                  <Tag>{activeEntry.owner_name}</Tag>
-                )}
-              </Space>
-              {rootfsError && (
-                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  Catalog load issue: {rootfsError}
-                </Paragraph>
-              )}
-            </>
-          ) : (
-            <Space
-              orientation="vertical"
-              size="small"
-              style={{ width: "100%" }}
+                {renderRootfsCatalogOption(entry)}
+              </button>
+            );
+          })}
+          {!rootfsLoading && visibleRootfsImages.length === 0 && (
+            <Paragraph type="secondary" style={{ margin: 0, padding: 12 }}>
+              No matching images. Try a different search.
+            </Paragraph>
+          )}
+          {rootfsLoading && visibleRootfsImages.length === 0 && (
+            <Paragraph type="secondary" style={{ margin: 0, padding: 12 }}>
+              Loading images...
+            </Paragraph>
+          )}
+        </div>
+        <Space wrap>
+          <Checkbox
+            checked={showOlderRootfsVersions}
+            onChange={(e) => setShowOlderRootfsVersions(e.target.checked)}
+            disabled={saving}
+          >
+            Show older versions
+          </Checkbox>
+          {isAdmin && (
+            <Button
+              type="link"
+              onClick={() => setRootfsMode("custom")}
+              style={{ paddingLeft: 0, width: "fit-content" }}
+              disabled={saving}
             >
-              <Alert
-                type="warning"
-                showIcon
-                title="Advanced OCI / Docker image"
-                description={
-                  <>
-                    This bypasses the managed catalog. Some raw OCI images will
-                    break parts of CoCalc if they are missing expected runtime
-                    packages such as certificates or a normal shell/userland.
-                  </>
-                }
-              />
-              <Input
-                value={rootfsDraft}
-                placeholder="docker.io/library/ubuntu:24.04"
-                onChange={(e) => {
-                  setRootfsDraft(e.target.value);
-                  setRootfsDraftId(undefined);
-                }}
-              />
-              <Space wrap>
-                <Button
-                  type="primary"
-                  onClick={applyRootfsDraft}
-                  disabled={!rootfsDraft.trim()}
-                >
-                  Use this image
-                </Button>
-                <Button onClick={() => setRootfsPickerOpen(false)}>
-                  Cancel
-                </Button>
-              </Space>
-              <Button
-                type="link"
-                onClick={() => setRootfsMode("catalog")}
-                style={{ paddingLeft: 0, width: "fit-content" }}
-              >
-                Back to managed catalog images
-              </Button>
-            </Space>
+              Advanced OCI / Docker image
+            </Button>
           )}
         </Space>
-      </Card>
+        {rootfsError && (
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            Catalog load issue: {rootfsError}
+          </Paragraph>
+        )}
+      </Space>
+    );
+  }
+
+  function renderCustomRootfsSelector(): React.JSX.Element {
+    return (
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Alert
+          type="warning"
+          showIcon
+          message="Advanced OCI / Docker image"
+          description={
+            <>
+              This bypasses the managed catalog. Some raw OCI images will break
+              parts of CoCalc if they are missing expected runtime packages such
+              as certificates or a normal shell/userland.
+            </>
+          }
+        />
+        <Input
+          value={rootfsDraft}
+          placeholder="docker.io/library/ubuntu:24.04"
+          onChange={(e) => setRootfsDraft(e.target.value)}
+          disabled={saving}
+        />
+        <Space wrap>
+          <Button
+            type="primary"
+            onClick={applyCustomRootfsDraft}
+            disabled={saving || !rootfsDraft.trim()}
+          >
+            Use this image
+          </Button>
+          <Button onClick={() => setRootfsMode("catalog")} disabled={saving}>
+            Back to catalog images
+          </Button>
+        </Space>
+      </Space>
     );
   }
 
   function renderRootfsSection(): React.JSX.Element {
-    const displayImage =
-      draft.rootfs_image?.trim() || (isAdmin ? DEFAULT_PROJECT_IMAGE : "");
+    const displayImage = draft.rootfs_image?.trim() || "";
     const displayLabel =
-      selectedRootfsEntry?.label || displayImage || "No RootFS image selected";
+      selectedRootfsEntry?.label || displayImage || "No image selected";
     return (
       <Card
         size="small"
@@ -512,10 +443,19 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               </span>
               <span>
                 <div style={{ fontWeight: 700, color: COLORS.GRAY_D }}>
-                  {displayLabel}
+                  Image
+                  <Popover content={renderRootfsHelp()} trigger="click">
+                    <Button
+                      size="small"
+                      type="link"
+                      style={{ padding: "0 0 0 6px", height: "auto" }}
+                    >
+                      What should I choose?
+                    </Button>
+                  </Popover>
                 </div>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Runtime image
+                  {displayLabel}
                 </Typography.Text>
               </span>
               {selectedRootfsEntry?.section && (
@@ -536,9 +476,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 </Tag>
               )}
             </Space>
-            <Button size="small" onClick={openRootfsPicker} disabled={saving}>
-              {rootfsPickerOpen ? "Change image..." : "Choose image..."}
-            </Button>
           </Space>
           {!selectedRootfsEntry && displayImage && (
             <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
@@ -546,7 +483,15 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </code>
           )}
           {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
-          {renderRootfsPicker()}
+          {selectedRootfsEntry && (
+            <RootfsScanSummaryButton
+              entry={selectedRootfsEntry}
+              title={`Image scan details: ${selectedRootfsEntry.label}`}
+            />
+          )}
+          {rootfsMode === "catalog"
+            ? renderRootfsCatalogSelector()
+            : renderCustomRootfsSelector()}
         </Space>
       </Card>
     );
@@ -681,7 +626,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       },
       {
         icon: "cube",
-        label: "Runtime image",
+        label: "Image",
         value: summary.rootfsLabel,
         color: COLORS.YELL_LLL,
       },
@@ -939,6 +884,25 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
 function presetTitle(mode: ProjectCreateMode): string {
   return PROJECT_PRESETS.find((preset) => preset.mode === mode)?.title ?? mode;
+}
+
+function rootfsEntrySearchText(entry: RootfsImageEntry): string {
+  return [
+    entry.label,
+    entry.image,
+    entry.description,
+    entry.theme?.title,
+    entry.theme?.description,
+    entry.section,
+    entry.version,
+    entry.channel,
+    entry.owner_name,
+    "rootfs",
+    ...(entry.tags ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }
 
 function renderRootfsWarning(

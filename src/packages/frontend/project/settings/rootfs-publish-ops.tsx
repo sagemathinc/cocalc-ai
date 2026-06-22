@@ -36,17 +36,17 @@ const ROOTFS_PUBLISH_PHASES = [
   {
     key: "publish",
     label: "Assemble",
-    description: "Prepare the merged RootFS tree for release",
+    description: "Prepare the merged image tree for release",
   },
   {
     key: "upload",
     label: "Upload",
-    description: "Save the RootFS release into rustic storage",
+    description: "Save the image release into rustic storage",
   },
   {
     key: "catalog",
     label: "Catalog",
-    description: "Register the published RootFS image in the catalog",
+    description: "Register the published image in the catalog",
   },
   {
     key: "done",
@@ -97,7 +97,7 @@ export default function RootfsPublishOps({
       }}
     >
       <div style={{ fontWeight: 600, fontSize: "12px", marginBottom: "6px" }}>
-        RootFS publish operations
+        Image publish operations
       </div>
       {visible.map((op) => (
         <RootfsPublishRow
@@ -140,7 +140,7 @@ function RootfsPublishRow({
   return (
     <div style={{ marginBottom: "6px" }}>
       <div style={{ fontSize: "12px", marginBottom: "2px" }}>
-        {requestedLabel || "Publish current project RootFS state"}
+        {requestedLabel || "Publish current project image state"}
       </div>
       <Space size="small" align="center" wrap>
         {percent == null ? (
@@ -245,7 +245,7 @@ function RootfsPublishTimeline({
   return (
     <div style={{ width: "520px", maxWidth: "80vw" }}>
       <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-        <div style={{ fontWeight: 600 }}>RootFS publish lifecycle</div>
+        <div style={{ fontWeight: 600 }}>Image publish lifecycle</div>
         <Space wrap size={[6, 6]}>
           <Tag color={lroStatusColor(status)}>{status ?? "running"}</Tag>
           {detailText ? <Tag>{detailText}</Tag> : null}

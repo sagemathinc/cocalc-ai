@@ -67,6 +67,38 @@
   white-space: normal;
 }
 
+.cc-project-create-image-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.cc-project-create-image-option {
+  background: transparent;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  padding: 2px;
+  text-align: left;
+  width: 100%;
+}
+
+.cc-project-create-image-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.cc-project-create-image-option[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px Highlight;
+}
+
+.cc-project-create-image-option:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}
+
 .cc-project-create-summary-card {
   position: sticky;
   top: 0;

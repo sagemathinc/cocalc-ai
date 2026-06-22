@@ -380,6 +380,32 @@ describe("PublicAuthApp", () => {
     ).toBe(false);
   });
 
+  it("shows policy acceptance before Google sign-up", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+
+    render(
+      <PublicAuthApp
+        config={config({
+          terms_of_service_url: "https://example.com/terms",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+        initialSSOStrategies={[{ name: "google", display: "Google" }]}
+      />,
+    );
+
+    const termsCheckbox = await screen.findByRole("checkbox", {
+      name: /I accept the Terms of Service and Privacy Policy/,
+    });
+    const googleLink = screen.getByRole("link", {
+      name: "Sign up with Google",
+    });
+    expect(
+      termsCheckbox.compareDocumentPosition(googleLink) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(googleLink).toHaveAttribute("aria-disabled", "true");
+  });
+
   it("does not require Terms of Service acceptance when policies are not configured", async () => {
     mockedApi.mockResolvedValueOnce(false);
 

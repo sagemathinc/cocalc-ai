@@ -65,6 +65,15 @@ describe("SignUpFormBase", () => {
     expect(
       screen.getByRole("link", { name: "Privacy Policy" }).getAttribute("href"),
     ).toBe("/policies/privacy");
+    expect(
+      screen
+        .getByRole("checkbox", {
+          name: /I accept the Terms of Service and Privacy Policy/,
+        })
+        .compareDocumentPosition(
+          screen.getByPlaceholderText("you@example.com"),
+        ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows registration-token issues returned by sign-up", async () => {

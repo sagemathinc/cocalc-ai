@@ -23,12 +23,7 @@ import {
   useRedux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import {
-  Icon,
-  IconName,
-  Tooltip,
-  r_join,
-} from "@cocalc/frontend/components";
+import { Icon, IconName, Tooltip, r_join } from "@cocalc/frontend/components";
 import type { IconRotation } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
@@ -163,11 +158,11 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
   rootfs: {
     label: defineMessage({
       id: "project.page.file-tab.rootfs.label",
-      defaultMessage: "RootFS",
+      defaultMessage: "Image",
     }),
     flyoutTitle: defineMessage({
       id: "project.page.flyout.rootfs.title",
-      defaultMessage: "Root Filesystem",
+      defaultMessage: "Image",
     }),
     icon: "docker",
     flyout: RootfsFlyout,
@@ -490,10 +485,7 @@ export function FileTab(props: Readonly<Props>) {
       }}
     />
   ) : path != null ? (
-    <Icon
-      style={iconStyle}
-      name={icon}
-    />
+    <Icon style={iconStyle} name={icon} />
   ) : (
     <FixedProjectTabIcon
       name={name as FixedTab}

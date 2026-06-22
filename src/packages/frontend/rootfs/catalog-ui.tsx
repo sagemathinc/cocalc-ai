@@ -83,6 +83,7 @@ export function groupedRootfsOptions(images: RootfsImageEntry[]) {
           entry.content?.description,
           entry.content?.publisher?.name,
           entry.owner_name,
+          "rootfs",
           ...(entry.content?.highlights ?? []),
           ...(entry.tags ?? []),
         ]
@@ -270,7 +271,7 @@ export function RootfsThemePreview({
     return (
       <img
         src={imageUrl}
-        alt={`${entry?.label || entry?.image || "RootFS"} theme`}
+        alt={`${entry?.label || entry?.image || "Image"} theme`}
         onError={() => setImageFailed(true)}
         style={{
           ...boxStyle,

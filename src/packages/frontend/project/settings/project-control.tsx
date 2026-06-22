@@ -162,7 +162,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     return (
       <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
         {lifecycle.kind === "archived"
-          ? "Archived projects do not count toward active storage. Starting this project restores it from backup and may take a while if the RootFS image must be made available on the host."
+          ? "Archived projects do not count toward active storage. Starting this project restores it from backup and may take a while if the image must be made available on the host."
           : "This project has not been provisioned yet. Starting it will create the filesystem and make it available on the host."}
       </Paragraph>
     );
@@ -275,11 +275,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     }
     return (
       <section>
-        <LabeledRow
-          key="root_fs"
-          label="Root Filesystem Image"
-          vertical={isFlyout}
-        >
+        <LabeledRow key="root_fs" label="Image" vertical={isFlyout}>
           <RootFilesystemImage />
         </LabeledRow>
       </section>

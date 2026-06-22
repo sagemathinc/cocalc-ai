@@ -362,7 +362,7 @@ function RootfsLandingPage({
   const license = entry.content?.license;
 
   useEffect(() => {
-    document.title = `${title} - Rootfs image`;
+    document.title = `${title} - Project image`;
   }, [title]);
 
   return (
@@ -373,7 +373,7 @@ function RootfsLandingPage({
             <Flex vertical gap="middle">
               <Space wrap size={[8, 8]}>
                 <Tag color={entry.official ? "blue" : undefined}>
-                  {entry.official ? "Official image" : "Runtime image"}
+                  {entry.official ? "Official image" : "Project image"}
                 </Tag>
                 {entry.visibility === "public" ? (
                   <Tag color="green">Public</Tag>
@@ -448,7 +448,7 @@ function RootfsLandingPage({
       {entry.content?.actions?.length ? (
         <PublicSection
           title="Included content"
-          intro="This runtime image advertises these files, directories, or links. After creating a project, open the Rootfs panel to use project-aware actions such as copy to HOME."
+          intro="This project image advertises these files, directories, or links. After creating a project, open the Image panel to use project-aware actions such as copy to HOME."
         >
           <PublicGrid columns={2}>
             {entry.content.actions.map((action, index) => (
@@ -504,16 +504,16 @@ function RootfsIndexPage({
   loading: boolean;
 }) {
   useEffect(() => {
-    document.title = "Runtime images";
+    document.title = "Project images";
   }, []);
 
   return (
-    <PublicPage config={config} title="Runtime images">
-      <PublicSection intro="Discover project runtime images that include ready-to-use software, examples, and files. Choose an image to create a matching project.">
+    <PublicPage config={config} title="Project images">
+      <PublicSection intro="Discover project images that include ready-to-use software, examples, and files. Choose an image to create a matching project.">
         {loading ? (
           <Flex align="center" gap="middle">
             <Spin size="small" />
-            <Text>Loading runtime images...</Text>
+            <Text>Loading project images...</Text>
           </Flex>
         ) : images.length ? (
           <PublicGrid columns={3}>
@@ -523,7 +523,7 @@ function RootfsIndexPage({
           </PublicGrid>
         ) : (
           <Alert
-            message="No runtime images are available."
+            message="No project images are available."
             showIcon
             type="info"
           />
@@ -542,24 +542,24 @@ function RootfsNotFoundPage({
 }) {
   useEffect(() => {
     document.title = loading
-      ? "Loading runtime image..."
-      : "Runtime image not found";
+      ? "Loading project image..."
+      : "Project image not found";
   }, [loading]);
 
   return (
     <PublicPage
       config={config}
-      title={loading ? "Loading runtime image..." : "Runtime image not found"}
+      title={loading ? "Loading project image..." : "Project image not found"}
     >
       <PublicSection>
         {loading ? (
           <Flex align="center" gap="middle">
             <Spin size="small" />
-            <Text>Loading runtime image...</Text>
+            <Text>Loading project image...</Text>
           </Flex>
         ) : (
           <Alert
-            message="This runtime image is not available."
+            message="This project image is not available."
             description="It may be private, hidden, deleted, or not visible to this account."
             showIcon
             type="warning"
