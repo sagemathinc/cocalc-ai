@@ -1153,6 +1153,40 @@ export function PublicSignUpForm({
           />
         </div>
       )}
+      {policiesVisible ? (
+        <>
+          <label style={CHECKBOX_ROW_STYLE}>
+            <input
+              checked={acceptedTerms}
+              type="checkbox"
+              onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
+            />
+            <span>
+              I accept the{" "}
+              <a href={termsUrl} target="_blank" rel="noreferrer">
+                Terms of Service
+              </a>{" "}
+              and{" "}
+              <a href={privacyUrl} target="_blank" rel="noreferrer">
+                Privacy Policy
+              </a>
+              .
+            </span>
+          </label>
+          {issues.terms && <div style={TERMS_NOTICE_STYLE}>{issues.terms}</div>}
+        </>
+      ) : null}
+      <label style={CHECKBOX_ROW_STYLE}>
+        <input
+          checked={marketingConsent}
+          type="checkbox"
+          onChange={(e) => setMarketingConsent(e.currentTarget.checked)}
+        />
+        <span>
+          Send me occasional platform tips, onboarding help, and product
+          updates. You can change this later in Account Preferences.
+        </span>
+      </label>
       {googleStrategy != null ? (
         <>
           <SsoButton
@@ -1240,40 +1274,6 @@ export function PublicSignUpForm({
           onPressEnter={signUp}
         />
       </div>
-      {policiesVisible ? (
-        <>
-          <label style={CHECKBOX_ROW_STYLE}>
-            <input
-              checked={acceptedTerms}
-              type="checkbox"
-              onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
-            />
-            <span>
-              I accept the{" "}
-              <a href={termsUrl} target="_blank" rel="noreferrer">
-                Terms of Service
-              </a>{" "}
-              and{" "}
-              <a href={privacyUrl} target="_blank" rel="noreferrer">
-                Privacy Policy
-              </a>
-              .
-            </span>
-          </label>
-          {issues.terms && <div style={TERMS_NOTICE_STYLE}>{issues.terms}</div>}
-        </>
-      ) : null}
-      <label style={CHECKBOX_ROW_STYLE}>
-        <input
-          checked={marketingConsent}
-          type="checkbox"
-          onChange={(e) => setMarketingConsent(e.currentTarget.checked)}
-        />
-        <span>
-          Send me occasional platform tips, onboarding help, and product
-          updates. You can change this later in Account Preferences.
-        </span>
-      </label>
       <ActionButton disabled={!canSubmit} onClick={signUp}>
         {signingUp
           ? "Creating account..."
