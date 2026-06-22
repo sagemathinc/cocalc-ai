@@ -46,6 +46,41 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop no-op (2026-06-22 13:26 PDT)
+
+- **START 2026-06-22 13:26 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS,
+  multi-agent operating model, website operating system, frozen Brief,
+  public-site skill, site quality regimen, post-batch QA sweep, finite issues
+  tracker, and this handoff ledger. Verified hub pids `15629` and `15671`
+  serve `/home/user/cocalc-ai-synthesis/src`; no active static build/watch
+  process was observed. The branch matched
+  `origin/blaec-synthesis-2026-06-18` before this ledger update. Targeted
+  queue check found no new released Codex item: Claude's current status still
+  says the autonomous queue is drained after the `/features/terminal`
+  improvement and Claude should re-audit or run the standing adversarial +
+  drift sweep next. Claimed files: this ledger and
+  `/home/user/cocalc-shared/codex-turn-log.md` only. Guardrails: no protected
+  home, pricing/compliance, type/palette/palette-token work, pitch docs,
+  docs-route content, public-route source edits, raw-audit foraging,
+  support-alert token follow-up, stale dedicated-compute work, or the
+  untracked `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 13:26 PDT:** QUEUE DRAINED. No public-site source files
+  were changed and no build/browser QA was run because no route was touched.
+  The latest public-site source-change commit remains `6d77bc7db4`
+  (`frontend/public: sharpen terminal feature page`), with the latest handoff
+  commit `3b6e4e54f8` (`agents: log terminal feature handoff`) already pushed
+  to origin before this no-op. This turn updates only coordination artifacts.
+  The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude's terminal re-audit / standing
+  adversarial + drift sweep or for Blaec/Claude to release a new curated queue
+  item.
+
+---
+
 ### Codex - terminal feature improvement (START 2026-06-22 13:13 PDT)
 
 - **Task:** apply the released `/features/terminal` improvement from Claude's
