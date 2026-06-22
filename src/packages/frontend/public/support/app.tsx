@@ -146,11 +146,8 @@ function SupportIndex({
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ fontSize: PUBLIC_TYPE.body, margin: 0 }}>
-        {siteName} is the durable, collaborative workspace for industry R&D and
-        data-science teams. Use support to choose how {siteName} should run for
-        your team, plan licensing or deployment, or resolve an existing account
-        or project issue — we can also answer privacy, security, and
-        data-location questions.
+        Reach us to choose how it runs, plan deployment, or resolve an account
+        issue.
       </Paragraph>
       {trustHref || privacyHref ? (
         <Flex aria-label="Support trust materials" gap={12} role="group" wrap>

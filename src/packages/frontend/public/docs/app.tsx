@@ -64,11 +64,8 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
                 maxWidth: "72ch",
               }}
             >
-              {siteName} is the durable workspace where R&D and data-science
-              teams keep their projects together. The docs are served by the
-              workspace itself, so they evolve with the product, link to the
-              current UI, and become source material for the people and agents
-              working in your projects.
+              Served by the workspace itself, evolving with the product and
+              matching your UI.
             </Paragraph>
           </div>
           <DocsIndexContent

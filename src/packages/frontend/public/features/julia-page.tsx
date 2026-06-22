@@ -152,14 +152,12 @@ export default function JuliaFeaturePage({
                 Use Julia in Pluto, Jupyter, and shared modeling projects.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                For engineering and R&D teams running simulations and models in
-                Julia, review results together while notebooks, Pluto sessions,
-                source files, and terminals stay in one project.
+                Review results together while the whole modeling project stays
+                reproducible in one place.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                The package environment stays reproducible, so a teammate can
-                instantiate it and continue the work — a fit for research groups
-                and mixed-language technical projects.
+                A teammate can instantiate the same package environment and
+                continue the work — notebooks, source files, and history intact.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

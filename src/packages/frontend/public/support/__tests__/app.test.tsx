@@ -37,7 +37,7 @@ describe("PublicSupportApp", () => {
     expect(screen.getByText("Ticket status")).not.toBeNull();
     expect(
       screen.getByText(
-        /privacy, security, and data-location questions/,
+        /Reach us to choose how it runs, plan deployment, or resolve an account issue/,
       ),
     ).not.toBeNull();
     expect(
@@ -103,10 +103,9 @@ describe("PublicSupportApp", () => {
     expect(screen.queryByRole("button", { name: "New ticket" })).toBeNull();
     expect(screen.queryByRole("button", { name: "My tickets" })).toBeNull();
     expect(screen.getByText("Talk with Launchpad")).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Email Launchpad" })).toHaveAttribute(
-      "href",
-      "mailto:help@cocalc.com",
-    );
+    expect(
+      screen.getByRole("link", { name: "Email Launchpad" }),
+    ).toHaveAttribute("href", "mailto:help@cocalc.com");
   });
 
   it("does not describe the direct contact fallback as ticket creation", async () => {

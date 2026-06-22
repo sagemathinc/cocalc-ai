@@ -56,7 +56,7 @@ function OctaveProjectMock() {
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.control,
+                borderRadius: PUBLIC_RADIUS.panel,
                 flex: "1 1 160px",
                 padding: "10px 12px",
               }}
@@ -135,10 +135,8 @@ export default function OctaveFeaturePage({
                 work.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                For engineering and data-science teams, edit <code>.m</code>{" "}
-                files, run Octave in terminals and notebooks, and review
-                numerical work in one durable project — without every
-                collaborator maintaining a local install.
+                The numerical work lives in one durable project — no local
+                installs to maintain.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

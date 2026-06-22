@@ -191,7 +191,7 @@ const COMPARE_PAGE_CSS = `
     background: ${alpha(PUBLIC_COLORS.brandTint, 0.5)};
     border-bottom: 1px solid ${PUBLIC_COLORS.border};
     color: ${PUBLIC_COLORS.heading};
-    font-size: ${PUBLIC_TYPE.small};
+    font-size: ${PUBLIC_TYPE.caption}px;
   }
 
   .cocalc-compare-row + .cocalc-compare-row th,
@@ -279,7 +279,7 @@ const COMPARE_PAGE_CSS = `
       color: ${PUBLIC_COLORS.heading};
       content: attr(data-label);
       display: block;
-      font-size: ${PUBLIC_TYPE.small};
+      font-size: ${PUBLIC_TYPE.caption}px;
       font-weight: 600;
       margin-bottom: 3px;
     }
@@ -366,11 +366,8 @@ export default function CompareFeaturePage({
                 maxWidth: "65ch",
               }}
             >
-              Evaluate CoCalc when an industry R&D, data-science, or engineering
-              team needs notebooks, code, terminals, documents, outputs,
-              TimeTravel history, collaborators, and AI-assisted review to stay
-              together. Choose a lighter tool when one notebook, dashboard,
-              editor, or report is the whole job.
+              When a whole project must stay together — durable and reviewable
+              as collaborators change.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>

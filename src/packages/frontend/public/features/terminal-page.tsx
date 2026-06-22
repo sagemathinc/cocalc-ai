@@ -332,15 +332,12 @@ export default function TerminalFeaturePage({
                 A terminal is a live project document.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                For industry R&D, data-science, and engineering teams, a real
-                Linux shell runs in the browser next to notebooks, code, LaTeX,
-                data, and chat. CoCalc keeps terminal work durable,
-                collaborative, and connected to the rest of the project.
+                A real Linux shell that survives disconnects and shares one live
+                stream.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                It is a familiar terminal experience in the browser — a full
-                shell with durable session history — anchored in a project file
-                and connected to the rest of the workspace.
+                Open the <code>.term</code> file and the same shell context
+                comes back.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -475,8 +472,8 @@ export default function TerminalFeaturePage({
               where a shell is the fastest path.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              It is also where R&D teams reach heavier compute from a real shell
-              — exploration, post-processing, and review stay in one durable
+              It is also where you reach heavier compute from a real shell —
+              exploration, post-processing, and review stay in one durable
               project even when the big solve runs elsewhere.
             </Paragraph>
             <Flex wrap gap={12}>

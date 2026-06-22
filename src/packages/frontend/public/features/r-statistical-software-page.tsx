@@ -152,9 +152,8 @@ export default function RStatisticalSoftwareFeaturePage({
                 Use R for statistics and reproducible reporting.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                For data-science and research teams: fit statistical models,
-                build reproducible reports, and share the analysis — using R in
-                notebooks, scripts, and Quarto or RMarkdown documents.
+                Fit statistical models and share analyses others can re-run
+                later.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

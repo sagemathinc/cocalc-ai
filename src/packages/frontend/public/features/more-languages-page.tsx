@@ -154,9 +154,8 @@ export default function MoreLanguagesFeaturePage({
                 Use many other languages from the same project.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Work with C, C++, Fortran, Rust, Go, Java, Bash, SQL,
-                JavaScript, TypeScript, and many other tools in the same place
-                as notebooks, files, terminals, and collaborators.
+                Compiled, scripting, JVM, web, and data languages — all in one
+                shared project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 CoCalc is a good fit when the language is part of a broader

@@ -450,6 +450,8 @@ function FeatureGroupSection({
   group: (typeof FEATURE_GROUPS)[number];
   pages: FeaturePage[];
 }) {
+  const groupLinks =
+    "links" in group ? (group.links as { href: string; label: string }[]) : [];
   const groupCards = group.slugs
     .map((slug) => getFeatureIndexCard(slug, pages))
     .filter((card) => card != null);
@@ -495,9 +497,9 @@ function FeatureGroupSection({
                 >
                   {group.description}
                 </Paragraph>
-                {"links" in group && group.links?.length ? (
+                {groupLinks.length ? (
                   <Flex vertical gap={6} style={{ marginTop: 10 }}>
-                    {group.links.map((link) => (
+                    {groupLinks.map((link) => (
                       <a
                         href={link.href}
                         key={link.href}
@@ -666,7 +668,7 @@ function FeaturesIndex() {
                 maxWidth: 640,
               }}
             >
-              Durable, collaborative workflows for industry R&D teams
+              Durable, collaborative, reproducible workflows
             </Title>
             <Paragraph
               style={{
@@ -677,10 +679,7 @@ function FeaturesIndex() {
                 maxWidth: 600,
               }}
             >
-              For industry R&D, data-science, and engineering teams — keeping
-              notebooks, code, terminals, documents, outputs, TimeTravel
-              history, collaborators, and AI-assisted review together in one
-              reproducible project. Choose the workflow you need next.
+              Keep your notebooks, code, and history together in one project.
             </Paragraph>
           </div>
         </Flex>

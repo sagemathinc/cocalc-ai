@@ -151,15 +151,11 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
     <Flex vertical gap={18}>
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Choose how CoCalc should run for your R&D team.
+          Choose how CoCalc should run.
         </Title>
         <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-          For industry R&D, research, and government teams, CoCalc keeps each
-          project durable and reviewable, with files, notebooks, terminals,
-          TimeTravel history, real-time collaboration, and AI/agent work
-          together in one workspace. That same project model runs hosted, local,
-          on a single-VM appliance, or as a private deployment; the first
-          decision is where it should run and who will operate it.
+          Your project stays one durable, reviewable workspace — only where it
+          runs changes.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("pricing")}>
@@ -502,7 +498,7 @@ function CocalcRocketPage() {
           { href: appPath("pricing"), label: "Pricing and licensing" },
         ]}
         title="Planning an institutional private CoCalc deployment?"
-        body="CoCalc Rocket is the broader customer-operated private deployment path for industry R&D, research, and government organizations that need their durable projects — notebooks, data, analysis, terminals, and team context — running inside infrastructure they control, alongside their governance, procurement, and support requirements."
+        body="Run durable projects inside infrastructure you control and govern."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid
@@ -551,7 +547,7 @@ function CocalcStarPage() {
     "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash";
   const detailItems = [
     {
-      body: "Research labs, data-science teams, instructors, and small groups that want collaborators in one browser-based CoCalc instance on a public VM.",
+      body: "Small groups that want collaborators in one browser-based CoCalc instance on a public VM.",
       icon: "star",
       title: "Who it fits",
     },
@@ -586,7 +582,7 @@ function CocalcStarPage() {
           },
         ]}
         title="Run a shared CoCalc site on one Ubuntu VM."
-        body="CoCalc Star gives a research lab, data-science team, workshop, or small group a browser-based CoCalc workspace on a VM they operate — projects, notebooks, data, terminals, and history stay together — with the installer handling HTTPS, onboarding, and the first admin flow."
+        body="The installer sets up HTTPS and onboarding, so collaborators can start together."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
@@ -637,7 +633,7 @@ function CocalcLaunchpadPage() {
     "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
   const detailItems = [
     {
-      body: "Research labs, engineering and platform teams, workshops, and departments that need a customer-operated CoCalc environment for a bounded group, run by their own IT or operations team.",
+      body: "Workshops and departments that need a customer-operated CoCalc environment for a bounded group, run by their own IT or operations team.",
       icon: "servers",
       title: "Who it fits",
     },
@@ -669,7 +665,7 @@ function CocalcLaunchpadPage() {
           },
         ]}
         title="Need a bounded private CoCalc deployment?"
-        body="CoCalc Launchpad is the customer-operated private deployment path for industry R&D labs, engineering and data-science teams, and departments that need their durable projects — notebooks, data, terminals, history, and collaboration — running in infrastructure they operate, with more control than hosted CoCalc.ai or a single-VM Star appliance."
+        body="A lightweight private environment you operate — more control than a hosted account."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid
@@ -720,7 +716,7 @@ function CocalcPlusPage() {
     "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
   const detailItems = [
     {
-      body: "Researchers, developers, instructors, and IT evaluators who want a local CoCalc workspace before choosing hosted collaboration or a shared deployment.",
+      body: "Individual users who want a local CoCalc workspace before choosing hosted collaboration or a shared deployment.",
       icon: "laptop",
       title: "Who it fits",
     },
@@ -752,7 +748,7 @@ function CocalcPlusPage() {
           },
         ]}
         title="Need local CoCalc before choosing a shared path?"
-        body="CoCalc Plus is the local source-available runtime for one user on Linux or macOS. It gives you the same durable project model on your own machine — files, notebooks, terminals, and history stay together — so you can evaluate CoCalc or work locally before moving to a shared path with your projects intact."
+        body="Same durable project model on your machine — carry it forward, projects intact."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Plus positioning" />

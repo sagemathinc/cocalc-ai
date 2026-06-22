@@ -360,11 +360,8 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
           }
           subtitle={
             <>
-              Practical walkthroughs of the workflows industry R&D and
-              data-science teams run in CoCalc — keeping analysis, notebooks,
-              code, and collaboration together in one durable project. Start
-              with a guide for a hands-on path through the work; use docs when
-              you need reference details for this CoCalc site.
+              Hands-on walkthroughs of each workflow, end to end in one durable
+              project.
             </>
           }
           title="Guides"

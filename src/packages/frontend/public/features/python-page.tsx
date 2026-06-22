@@ -367,9 +367,8 @@ function PythonUseCases() {
               maxWidth: "72ch",
             }}
           >
-            Across research and data-science teams, the same project stays
-            exploratory, reproducible, and publishable — without copying work
-            between disconnected tools.
+            The same project stays exploratory, reproducible, and publishable —
+            without copying work between disconnected tools.
           </Paragraph>
         </div>
         <Row gutter={[14, 14]}>
@@ -400,7 +399,7 @@ function PythonUseCases() {
               accent="#389e0d"
               icon="graduation-cap"
               title="Teams and teaching"
-              body="Shared notebooks, visible cursors, side chat, and TimeTravel let a data-science team or a class work from the same Python stack."
+              body="Shared notebooks, visible cursors, side chat, and TimeTravel let a team or a class work from the same Python stack."
             />
           </Col>
         </Row>
@@ -432,10 +431,8 @@ export default function PythonFeaturePage({
                 Python that moves from notebook to script to paper.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Explore data in a notebook, harden the stable parts into scripts
-                and tests, and publish the figures in a paper — using Python in
-                Jupyter, <code>.py</code> files, and terminals that share one
-                runtime, packages, and collaborators.
+                One runtime, packages, and collaborators stay shared from first
+                cell to final figure.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>

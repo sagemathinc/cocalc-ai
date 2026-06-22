@@ -227,16 +227,12 @@ export default function LatexEditorFeaturePage({
                 Write the paper where the code, figures, and review live
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                CoCalc gives you the expected online LaTeX workflow: source, PDF
-                preview, builds, real-time collaboration with visible coauthor
-                cursors, and full TimeTravel history. It pays off most when the
-                paper depends on code, figures, and collaborators who need to
-                see how a result was produced.
+                Coauthors edit in real time, with builds and full history in one
+                project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Keep the draft, bibliography, figures, notebooks, terminal
-                commands, AI review thread, TimeTravel history, and
-                collaborators in one durable project.
+                The evidence behind every claim stays with the paper,
+                reproducible later.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>

@@ -262,13 +262,11 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByText(
-        /notebooks, code, terminals, documents, outputs, TimeTravel history/i,
+        "Keep your notebooks, code, and history together in one project.",
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText(
-        "Durable, collaborative workflows for industry R&D teams",
-      ),
+      screen.getByText("Durable, collaborative, reproducible workflows"),
     ).not.toBeNull();
     expect(container.textContent ?? "").not.toMatch(/command-line surface/i);
     expect(
@@ -1416,7 +1414,7 @@ describe("PublicFeaturesApp", () => {
     );
     expect(
       screen.getByText(
-        /Evaluate CoCalc when an industry R&D, data-science, or engineering team needs notebooks, code, terminals/i,
+        /When a whole project must stay together — durable and reviewable as collaborators change/i,
       ),
     ).not.toBeNull();
     expect(

@@ -261,13 +261,12 @@ export default function JupyterNotebookFeaturePage({
                 Jupyter notebooks for work that needs to keep going
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Run standard notebooks in CoCalc when analysis depends on data
-                files, packages, collaborators, or a course workflow.
+                Connected to the data, packages, and live kernel your analysis
+                depends on.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                For industry R&D, data-science, and research teams, the notebook
-                stays connected to the surrounding files and execution state
-                instead of living as an isolated browser session.
+                Collaborators and Codex work from the same outputs, errors, and
+                live state.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>

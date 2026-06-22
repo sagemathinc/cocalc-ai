@@ -154,14 +154,11 @@ export default function AutomationsFeaturePage({
                 Turn recurring project workflows into repeatable runs.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Schedule recurring jobs, rebuild reports, run notebooks or
-                scripts, and keep the output in the same project where people
-                review the work.
+                Output lands back in the project where collaborators review it.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Project automations are most useful when work repeats: refresh a
-                dataset, rerun an analysis or model, hand pipeline output back
-                to collaborators, or prepare teaching material.
+                Best when work repeats: refresh a dataset, rerun an analysis,
+                rebuild a report.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

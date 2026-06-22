@@ -251,17 +251,12 @@ export default function LinuxFeaturePage({
                 A Linux workspace you can actually administer.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                CoCalc projects are Ubuntu environments where you can use
-                terminals, notebooks, editors, services, and <code>sudo</code>{" "}
-                in the browser. Install software, edit configuration, run
-                servers, and keep the environment with the project.
+                Install software, run services, and keep the environment
+                reproducible with the project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Industry R&D, data-science, and engineering teams can stand up a
-                real Ubuntu environment for analysis, builds, and local
-                services. Because the environment lives in the project,
-                teammates can see how it was set up and return to a known-good
-                state instead of rebuilding it.
+                Teammates see how it was set up and return to a known-good
+                state.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>

@@ -106,8 +106,8 @@ const ROUTE_RULES = {
   "/products": {
     requireText: [
       "Ways to Run CoCalc",
-      "Choose how CoCalc should run for your R&D team.",
-      "each project durable and reviewable",
+      "Choose how CoCalc should run.",
+      "Your project stays one durable, reviewable workspace",
       "AI-native workspaces for industry R&D, research, and technical teams",
       "CoCalc.ai",
       "CoCalc Plus",
@@ -147,8 +147,8 @@ const ROUTE_RULES = {
     requireText: [
       "Compare CoCalc",
       "When is CoCalc the right fit?",
-      "industry R&D, data-science, or engineering team",
-      "durable, reproducible, multi-artifact projects",
+      "When a whole project must stay together",
+      "durable and reviewable",
       "Decision checklist",
       "Where to go next",
     ],
@@ -162,7 +162,7 @@ const ROUTE_RULES = {
   "/support": {
     requireText: [
       "CoCalc Support",
-      "durable, collaborative workspace for industry R&D and data-science teams",
+      "Reach us to choose how it runs",
       "Choose an operating model",
     ],
     requireLinks: [
@@ -183,7 +183,7 @@ const ROUTE_RULES = {
   "/docs": {
     requireText: [
       "Current docs for this CoCalc instance.",
-      "durable workspace where R&D and data-science teams keep their projects together",
+      "Served by the workspace itself",
       "Project secrets",
       "Terminal",
     ],
@@ -269,7 +269,7 @@ const ROUTE_RULES = {
   },
   "/features": {
     requireText: [
-      "Durable, collaborative workflows for industry R&D teams",
+      "Durable, collaborative, reproducible workflows",
       "Runtime",
       "Notebooks and writing",
       "AI workflows",
@@ -353,7 +353,7 @@ const ROUTE_RULES = {
   },
   "/features/automations": {
     requireText: [
-      "Project automations are most useful when work repeats",
+      "Best when work repeats",
       "scheduled analysis or model run",
       "Start a workflow",
     ],
@@ -373,7 +373,7 @@ const ROUTE_RULES = {
       "Choose the notebook path that fits",
       "Ready to use Jupyter in CoCalc?",
       "Start using Jupyter in CoCalc",
-      "For industry R&D, data-science, and research teams",
+      "Collaborators and Codex work from the same outputs",
     ],
     forbidText: [
       "Ask about Jupyter workflows",
@@ -417,7 +417,7 @@ const ROUTE_RULES = {
       "A terminal is a live project document.",
       "Choose the terminal path that fits",
       "Ready to use terminals in CoCalc?",
-      "familiar terminal experience in the browser",
+      "Open the .term file and the same shell context comes back",
     ],
     forbidText: [
       "Ask about terminal workflows",
@@ -432,7 +432,7 @@ const ROUTE_RULES = {
       "A Linux workspace you can actually administer.",
       "Choose the Linux path that fits",
       "Ready to use Linux in CoCalc?",
-      "Industry R&D, data-science, and engineering teams",
+      "Install software, run services, and keep the environment reproducible with the project",
       "You decide what runs",
     ],
     forbidText: ["Ask about Linux environments", "and running the command"],
@@ -444,7 +444,7 @@ const ROUTE_RULES = {
       "Python that moves from notebook to script to paper.",
       "The right interface at each stage",
       "Start using Python",
-      "Across research and data-science teams",
+      "The same project stays exploratory",
     ],
     forbidText: ["Ask about Python workflows"],
     requireSelectors: [".cocalc-feature-final-panel"],
@@ -456,7 +456,7 @@ const ROUTE_RULES = {
       "What stays with the paper",
       "Use computation as part of the writing process",
       "A practical writing loop",
-      "visible coauthor cursors",
+      "Coauthors edit in real time",
     ],
     requireSelectors: [".cocalc-latex-computation-list"],
     forbidText: [
@@ -484,7 +484,7 @@ const ROUTE_RULES = {
       "Keep R close to the rest of the analysis.",
       "Project context",
       "Start in a project",
-      "For data-science and research teams",
+      "Fit statistical models and share analyses others can re-run later",
     ],
     requireSelectors: [
       ".cocalc-feature-context-list",
@@ -497,7 +497,7 @@ const ROUTE_RULES = {
       "Keep Julia close to the rest of the research.",
       "Project context",
       "Start in a project",
-      "For engineering and R&D teams",
+      "Review results together while the whole modeling project stays reproducible",
     ],
     requireSelectors: [
       ".cocalc-feature-context-list",
@@ -510,7 +510,7 @@ const ROUTE_RULES = {
       "Run reproducible Octave work without local setup drift.",
       "Project context",
       "Start in a project",
-      "For engineering and data-science teams",
+      "The numerical work lives in one durable project",
     ],
     requireSelectors: [
       ".cocalc-feature-context-list",
@@ -551,14 +551,14 @@ const ROUTE_RULES = {
     requireText: [
       "Present from the same canvas where technical ideas are built.",
       "Start with a deck",
-      "For R&D and data-science teams",
+      "Live, editable slides you can run as you present",
     ],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
   "/guides": {
     requireText: [
-      "Practical walkthroughs of the workflows industry R&D and data-science teams run in CoCalc",
+      "Hands-on walkthroughs of each workflow, end to end in one durable project",
       "Operating paths and teaching",
       "Find the guide by task",
       "Codex agent chat",

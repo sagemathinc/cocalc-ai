@@ -267,9 +267,8 @@ export default function WhiteboardFeaturePage({
                 explanations together — in one durable, reviewable project.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                R&D and data-science teams use a shared canvas for editable
-                math, Jupyter cells, diagrams, and slide-sized pages. Everything
-                lives in one project, so the work stays together as it evolves.
+                Work through the problem together, then replay every change with
+                TimeTravel.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

@@ -442,7 +442,9 @@ describe("PublicApp", () => {
         .getAllByRole("link", { name: "Browse docs" })
         .every((link) => link.getAttribute("href") === "/docs"),
     ).toBe(true);
-    expect(screen.queryByRole("link", { name: "Full guide library" })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Full guide library" }),
+    ).toBeNull();
     expect(screen.queryByRole("link", { name: "Reference docs" })).toBeNull();
   });
 
@@ -1350,7 +1352,7 @@ describe("PublicApp", () => {
     expect(screen.getAllByText("CoCalc.ai").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        /CoCalc keeps each project durable and reviewable, with files, notebooks, terminals, TimeTravel history/i,
+        /Your project stays one durable, reviewable workspace — only where it runs changes/i,
       ),
     ).not.toBeNull();
     expect(screen.getByText(/Use this as a decision guide/i)).not.toBeNull();
@@ -1458,9 +1460,7 @@ describe("PublicApp", () => {
         name: "CoCalc home",
       }),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Choose how CoCalc should run for your R&D team."),
-    ).not.toBeNull();
+    expect(screen.getByText("Choose how CoCalc should run.")).not.toBeNull();
     expect(screen.getByText("Which path fits?")).not.toBeNull();
     expect(
       screen.queryByRole("link", { name: "Compare CoCalc fit" }),
@@ -1609,8 +1609,10 @@ describe("PublicApp", () => {
       ).not.toBeNull();
     }
     expect(
-      screen.getAllByText(/customer-operated private deployment/i).length,
-    ).toBeGreaterThan(0);
+      screen.getByText(
+        /Run durable projects inside infrastructure you control and govern/i,
+      ),
+    ).not.toBeNull();
     expect(
       screen.getByText(/available as a VM deployment or on Kubernetes/i),
     ).not.toBeNull();
