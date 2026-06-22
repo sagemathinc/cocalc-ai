@@ -392,6 +392,58 @@ Known risks:
   draft is still untouched. Waiting for Claude's standing adversarial + drift
   sweep or for Blaec/Claude to release a new curated queue item.
 
+---
+
+### Codex - features hero title layout fix (START 2026-06-22 13:04 PDT)
+
+- **Task:** respond to Blaec's screenshot feedback that `/features` hero title
+  "Keep the whole job in one durable project." is scrunched into the left side.
+  Fix the hero title measure/layout without changing the approved headline or
+  product claims.
+- **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` /
+  `blaec-synthesis-2026-06-18`.
+- **Preview owner this turn:** YES. Verified hub pids `15629` and `15671`, both
+  rooted at `/home/user/cocalc-ai-synthesis/src`; branch matched
+  `origin/blaec-synthesis-2026-06-18`; no active static build/watch process
+  observed.
+- **Claimed files/routes:** `/features` only:
+  `src/packages/frontend/public/features/app.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, focused
+  `/features` tests if needed, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`.
+- **Route frame:** feature index; visitor = technical team/champion; question =
+  "What work can my team keep together in one durable project?"; promise =
+  durable multi-artifact project workspace; proof = grouped feature cards and
+  overview visual; primary next step = Start on CoCalc.ai; secondary =
+  Compare operating models; must not claim new capabilities, metrics, pricing,
+  compliance, or category-collapse language.
+- **Decision / hypothesis:** redesign the hero's responsive column measure so
+  the H1 has enough horizontal room at desktop widths. Evidence is the user
+  screenshot showing a cramped left-column headline; copy itself stays approved.
+- **Do not touch:** protected `home/**`, pricing/compliance, docs content,
+  pitch docs, type/palette/token lanes, feature detail pages, raw audit
+  foraging, support-alert follow-up, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **Validation required:** focused `/features` Jest/browser canaries, frontend
+  lint, static build, desktop+mobile browser QA/screenshot inspection for
+  `/features`, commit, push, and shared-log handoff.
+- **END 2026-06-22 13:12 PDT:** Source fix landed in `56261236b4`
+  (`frontend/public: widen features hero headline measure`). `/features` hero
+  no longer uses the stale two-column grid after the old right-side visual was
+  removed; the approved H1 copy is unchanged, now capped at a wider balanced
+  measure. Added a browser-QA guard that fails if the `/features` hero regresses
+  to `display: grid`. Validation: prettier passed on the touched files; focused
+  Jest `public/features/__tests__/app.test.tsx` +
+  `public/__tests__/public-site-browser-qa-script.test.ts` passed 105/105;
+  `pnpm -C src lint:frontend` passed; `pnpm -C src/packages/static build:dev`
+  passed; browser QA for `/features` desktop+mobile passed 56/56 with
+  screenshots/results at `/tmp/cocalc-public-qa-89bQP7`. Screenshot inspection:
+  desktop H1 now reads as a broad two-line title instead of being confined to
+  the left column; mobile still fits without overflow. Protected home, pricing,
+  docs content, palette/type lanes, feature detail pages, and the untracked
+  `dedicated-compute-page.tsx` draft stayed untouched. Next: commit/push this
+  handoff closeout and rebuild preview from the final branch head.
+
 ## Current state (2026-06-18)
 
 ### Claude — now ASSISTANT / observer (role change 2026-06-20)
