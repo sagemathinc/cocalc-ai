@@ -31,8 +31,7 @@ function AutomationFlowMock() {
     <div
       aria-label="Illustration of an automated CoCalc project workflow"
       style={{
-        background:
-          "linear-gradient(145deg, #ffffff 0%, #f4fbff 50%, #f8fbf4 100%)",
+        background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 50%, ${PUBLIC_COLORS.pageBackground} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: PUBLIC_ELEVATION.lg,
@@ -94,12 +93,8 @@ function AutomationProjectFit() {
             <Paragraph style={{ margin: 0 }}>
               A useful automation in CoCalc leaves a project in a better state:
               refreshed data, rebuilt notebooks, updated reports, or generated
-              files that teammates can inspect and continue from.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              That is different from the HTTP API reference. The API is one way
-              to drive automation; this workflow is about the recurring project
-              tasks you want to make reliable.
+              files teammates can inspect. The API can drive it; this page is
+              about the recurring project tasks you want to make reliable.
             </Paragraph>
           </Flex>
         </Col>

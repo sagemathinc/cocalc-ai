@@ -133,7 +133,6 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#fff8e8",
     "#ffffff",
   ],
-  "automations-page.tsx": ["#f4fbff", "#f8fbf4", "#ffffff"],
   "cli-page.tsx": [
     "#101820",
     "#cbd5e1",

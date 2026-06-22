@@ -182,14 +182,9 @@ function TeachingComparison() {
               An open computational mathematics environment for courses.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              For many undergraduate math courses, SageMath supports symbolic
-              computation, calculus, linear algebra, data work, and 2D or 3D
-              plotting. SageMath is free, open source, and built as a large
-              Python library.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              In CoCalc, students can use Sage without local installation, and
-              instructors can pair it with course projects, assignments,
+              SageMath covers symbolic computation, calculus, linear algebra,
+              data work, and 2D or 3D plotting as a free, open-source Python
+              library. CoCalc pairs it with course projects, assignments,
               nbgrader, TimeTravel, and shared environments.
             </Paragraph>
           </Flex>
@@ -234,9 +229,9 @@ export default function SageFeaturePage({
                 terminals together in one project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Use SageMath for computational mathematics while keeping the
-                surrounding work close enough for collaborators, reviewers, and
-                students to follow in real time.
+                Use SageMath for computational mathematics while collaborators,
+                reviewers, and students follow the surrounding work in real
+                time.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -263,21 +258,15 @@ export default function SageFeaturePage({
                 Use Sage with the surrounding project.
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Some Sage workflows need more than an interactive worksheet:
-                source files, terminal commands, generated figures, logs, and
-                notes.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                A CoCalc project keeps those materials beside the notebooks, so
-                the work can be picked up and continued later without rebuilding
-                the setup.
+                Some Sage workflows need source files, terminal commands,
+                generated figures, logs, and notes beside the notebook so the
+                setup can be picked up later.
               </Paragraph>
               <BulletList
                 items={[
-                  "Keep Sage notebooks, source files, logs, and notes together in one project.",
-                  "Use visible cursors and shared kernel sessions when several people review the same computation in a notebook.",
-                  "Run package tools, scripts, and generated outputs from the project terminal.",
-                  "Continue a long-running computation later — its output and history stay with the work.",
+                  "Keep Sage notebooks, source files, logs, generated figures, and notes together.",
+                  "Review notebook computations with visible cursors and shared kernel sessions.",
+                  "Run package tools, scripts, generated outputs, and long jobs from the project terminal.",
                   "Let a collaborator or Codex inspect an error with the surrounding context.",
                 ]}
               />
