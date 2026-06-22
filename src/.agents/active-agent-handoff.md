@@ -1194,3 +1194,26 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   src/packages/static build:dev`; browser QA on `/features/ai` and
   `/features/automations` desktop+mobile passed 86/86. Screenshots inspected
   from `/tmp/cocalc-public-qa-vRXSoX`.
+
+---
+
+## Codex — post-framing P1 Linux agent claim grounding (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  slice 3 only: adjust the Linux page's agent/package-install paragraph so it is
+  assistive and user-bounded, not a guarantee of autonomous diagnosis/execution.
+  Claimed files: `features/linux-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, and this ledger. Guardrails: preserve
+  Linux package-manager/tool proof and layout; no protected home, pitch docs,
+  docs content/routes, pricing/compliance, type/palette work, final-band rollout,
+  or dedicated-compute draft.
+- **END 2026-06-22:** Replaced the Linux agent paragraph with bounded assistive
+  language: Codex can help read errors, suggest a layer, and propose a command
+  or verification check; the user decides what runs. Preserved the surrounding
+  package-manager proof and layout. Updated feature and browser-QA canaries to
+  require `You decide what runs` and forbid the old `and running the command`
+  phrase. Validation passed: `git diff --check`; focused feature + QA harness
+  Jest 104/104; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/features/linux` desktop+mobile
+  passed 42/42. Screenshots inspected from `/tmp/cocalc-public-qa-ptFW0V`.

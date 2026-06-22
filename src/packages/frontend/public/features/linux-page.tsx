@@ -360,10 +360,10 @@ PY`}</code>
                 can understand.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                A shell-capable agent like Codex can help — reading the exact
-                error, suggesting the right layer, and running the command —
-                while the work stays in the project where your team can see and
-                adjust it.
+                A shell-capable agent like Codex can help read the exact error,
+                suggest the right layer, and propose a command or verification
+                check. You decide what runs, and the work stays in the project
+                where your team can see, adjust, and document it.
               </Paragraph>
             </Flex>
           </Col>

@@ -764,6 +764,8 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getAllByText(/administer|system packages|sudo/i).length,
     ).toBeGreaterThan(0);
+    expect(screen.getByText(/You decide what runs/i)).not.toBeNull();
+    expect(screen.queryByText(/and running the command/i)).toBeNull();
     // Closing section identity without pinning the headline.
     expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
     // Mock-UI label stays qualitative, never an invented version string.
