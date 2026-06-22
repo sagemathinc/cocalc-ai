@@ -2,6 +2,7 @@
   "id": "cocalc/sagemath",
   "version": 1,
   "description": "Build SageMath from source, install Sage/Python Jupyter kernels, and expose Sage's Python as the default Python.",
+  "timeout": 28800,
   "inputs": {
     "method": { "type": "string", "default": "source" },
     "version": { "type": "string", "default": "10.9" },

@@ -62,6 +62,7 @@ type RootfsRecipeModule = {
   id: string;
   version?: number;
   description?: string;
+  timeout?: number;
   inputs?: Record<
     string,
     {
@@ -427,7 +428,7 @@ function moduleAsRecipe(module: RootfsRecipeModule): RootfsRecipe {
   return {
     version: 1,
     name: module.id,
-    steps: [{ uses: module.id }],
+    steps: [{ uses: module.id, timeout: module.timeout }],
     verify: [],
   };
 }
@@ -454,6 +455,7 @@ export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {
         name: step.name ?? `step ${index + 1}`,
         kind: "run",
         run: typeof step.run === "string" ? step.run : step.run?.command,
+        timeout: step.timeout,
       };
     }
     const loaded = loadRecipeModule(step.uses, baseModuleDir);
@@ -465,6 +467,7 @@ export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {
       module_dir: loaded.dir,
       description: loaded.module.description,
       inputs: applyModuleInputDefaults(loaded.module, step.with ?? {}),
+      timeout: step.timeout,
       contributes: loaded.module.contributes ?? {},
     };
   });
