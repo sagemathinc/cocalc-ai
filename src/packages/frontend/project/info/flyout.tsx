@@ -133,7 +133,7 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
         pagination={false}
         style={{
           width: "100%",
-          overflowX: "hidden",
+          overflow: "hidden",
         }}
         loading={disconnected || loading}
       >
