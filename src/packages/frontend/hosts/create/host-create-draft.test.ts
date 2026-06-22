@@ -853,6 +853,89 @@ describe("host-create-draft", () => {
     });
   });
 
+  it("keeps Nebius Standard GPU on a GPU shape when only spot GPU pricing is loaded", () => {
+    const context: HostCreateDraftContext = {
+      enabledProviders: ["nebius"],
+      billing,
+      catalogByProvider: {
+        nebius: catalog("nebius", [
+          {
+            kind: "regions",
+            scope: "global",
+            payload: [{ name: "us-central1" }],
+          },
+          {
+            kind: "instance_types",
+            scope: "global",
+            payload: [
+              {
+                name: "16vcpu-64gb",
+                platform: "cpu-platform",
+                platform_label: "CPU platform",
+                regions: ["us-central1"],
+                vcpus: 16,
+                memory_gib: 64,
+                gpus: 0,
+              },
+              {
+                name: "1gpu-24vcpu-218gb",
+                platform: "gpu-rtx6000",
+                platform_label: "NVIDIA RTX PRO 6000",
+                regions: ["us-central1"],
+                vcpus: 24,
+                memory_gib: 218,
+                gpus: 1,
+                gpu_label: "NVIDIA RTX PRO 6000",
+                allowed_for_preemptibles: true,
+              },
+            ],
+          },
+          {
+            kind: "prices",
+            scope: "global",
+            payload: [
+              {
+                product: "Non-GPU CPU platform. CPU",
+                region: "us-central1",
+                price_usd: "0.01",
+                unit: "vCPU hour",
+              },
+              {
+                product: "Non-GPU CPU platform. RAM",
+                region: "us-central1",
+                price_usd: "0.002",
+                unit: "GiB hour",
+              },
+              {
+                product: "Preemptible NVIDIA RTX PRO 6000",
+                region: "us-central1",
+                price_usd: "0.95",
+                unit: "GPU hour",
+              },
+            ],
+          },
+        ]),
+      },
+    };
+    const base = {
+      ...buildDefaultDraft(context),
+      region: "us-central1",
+      machine_type: "16vcpu-64gb",
+    };
+
+    expect(
+      getAvailablePresets(base, context).find(
+        (preset) => preset.id === "gpu-workstation",
+      )?.disabled,
+    ).toBeFalsy();
+    expect(applyPreset("gpu-workstation", base, context)).toMatchObject({
+      provider: "nebius",
+      region: "us-central1",
+      machine_type: "1gpu-24vcpu-218gb",
+      pricing_model: "on_demand",
+    });
+  });
+
   it("keeps GCP CPU presets on exactly 16 GiB machines", () => {
     const context = providerContext("gcp");
     const base = {
