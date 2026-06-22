@@ -826,6 +826,56 @@ test("rootfs recipe explain treats bundled modules as one-step recipes", async (
   }
 });
 
+test("rootfs recipe run executes bundled module scripts from the embedded registry", async () => {
+  const execCalls: any[] = [];
+  const harness = rootfsDeps({
+    globals: { json: true, quiet: true },
+    projects: {
+      start: async () => ({ op_id: "start-op" }),
+    },
+    waitForLro: async () => ({ status: "succeeded" }),
+    resolveProjectFromArgOrContext: async (_ctx: any, project: string) => ({
+      project_id: project,
+    }),
+    resolveProjectProjectApi: async (_ctx: any, project_id: string) => ({
+      project: { project_id },
+      api: {
+        waitUntilReady: async () => undefined,
+        system: {
+          exec: async (opts: any) => {
+            execCalls.push(opts);
+            return {
+              type: "blocking",
+              stdout: "",
+              stderr: "",
+              exit_code: 0,
+            };
+          },
+        },
+      },
+    }),
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "run",
+    "cocalc/content-actions",
+    "--project",
+    "existing-project",
+  ]);
+
+  assert.equal(harness.captured.project_id, "existing-project");
+  assert.equal(harness.captured.created_project, false);
+  assert.equal(execCalls.length, 2);
+  assert.match(execCalls[0].command, /RootFS content action/);
+  assert.match(execCalls[1].command, /cocalc-content-actions/);
+});
+
 test("rootfs recipe explain parses bundled machine learning GPU recipes", async () => {
   for (const [recipe, module, slug] of [
     ["ml-pytorch-gpu.yaml", "cocalc/pytorch-gpu", "pytorch-gpu-ml"],
