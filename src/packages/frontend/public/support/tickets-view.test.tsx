@@ -42,7 +42,12 @@ describe("SupportTicketsView", () => {
 
     render(<SupportTicketsView config={{ zendesk: true }} />);
 
-    expect(await screen.findByText("First ticket")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "First ticket",
+      }),
+    ).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     await waitFor(() => expect(mockApi).toHaveBeenCalledTimes(2));
     expect(mockApi).toHaveBeenCalledTimes(2);

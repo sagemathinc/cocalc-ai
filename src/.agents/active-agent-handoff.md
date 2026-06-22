@@ -1146,3 +1146,25 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   src/packages/static build:dev`; browser QA on `/features/sage` desktop+mobile
   passed 38/38. Screenshots inspected from `/tmp/cocalc-public-qa-gv6LKO`;
   mobile order is fit proof, primary CTA, then Related.
+
+---
+
+## Codex — post-framing P0 support ticket headings (2026-06-22)
+
+- **START 2026-06-22:** Working in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Scope is the first post-framing punch-list item
+  only: make support ticket subjects semantic headings in
+  `src/packages/frontend/public/support/tickets-view.tsx` and update the focused
+  ticket-view test. Guardrails: preserve visual weight and ticket fallback text;
+  no protected home, pitch docs, docs content/routes, pricing/compliance,
+  type/palette work, feature-page work, or dedicated-compute draft. Known
+  unrelated untracked file remains
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx`.
+- **END 2026-06-22:** Replaced the rendered support-ticket subject `div` with a
+  semantic `h2` while preserving the existing 18px/bold visual treatment and
+  fallback label. Updated `tickets-view.test.tsx` to assert the ticket subject
+  by heading role and level. Validation passed: `git diff --check`; focused
+  support + QA harness Jest 13/13; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/support` and `/support/tickets`
+  desktop+mobile passed 58/58. Screenshots inspected from
+  `/tmp/cocalc-public-qa-3oy0dt`.

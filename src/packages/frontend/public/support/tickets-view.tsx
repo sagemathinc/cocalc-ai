@@ -59,6 +59,13 @@ const TICKET_BODY_STYLE: CSSProperties = {
   maxHeight: "30vh",
 } as const;
 
+const TICKET_SUBJECT_HEADING_STYLE: CSSProperties = {
+  fontWeight: 700,
+  fontSize: "18px",
+  lineHeight: 1.3,
+  margin: 0,
+} as const;
+
 const ticketMarkdown = new MarkdownIt({
   breaks: true,
   html: false,
@@ -284,9 +291,9 @@ export default function SupportTickets({ config }: { config: SupportConfig }) {
               flexWrap: "wrap",
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: "18px" }}>
+            <h2 style={TICKET_SUBJECT_HEADING_STYLE}>
               {ticket.subject ?? `Ticket ${ticket.id ?? i + 1}`}
-            </div>
+            </h2>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <StatusPill status={ticket.status} />
               <TypePill type={ticket.type} />
