@@ -46,6 +46,43 @@ Known risks:
 
 ---
 
+### Codex - python hero standardization (2026-06-22 14:42 PDT)
+
+- **START 2026-06-22 14:42 PDT:** Continuing into design-polish item 14 after
+  the shared final-band balance landed in `b11e25473f` and handoff
+  `4e52f4fb1f` was pushed. Claimed files:
+  `src/packages/frontend/public/features/python-page.tsx`,
+  `src/packages/frontend/public/features/r-statistical-software-page.tsx` only
+  if source inspection showed R still violated the Julia/Octave hero template,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Representative QA routes:
+  `/features/python` and `/features/r-statistical-software`. Do not touch
+  protected `home/**`, footer, pricing/compliance, type/palette token values,
+  pitch/docs content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 14:49 PDT:** Source slice landed in `6431a4eab6`
+  (`frontend/public: standardize python hero composition`). Python's hero right
+  column now stays to one project/product card; the extra dark terminal mock
+  and Codex card were removed from the hero. The notebook/script/terminal/
+  package/paper/review proof remains split between the compact project card,
+  the new `Project context` `ContextList` in the workflow band, the existing
+  workflow cards, and the package-heavy use-case card. Python now participates
+  in the shared-primitive guardrail, and its inline-style budget is tightened
+  from 31 to 20. R was source- and screenshot-audited and already matched the
+  template: one R project card plus a `Project context` checklist, so no R
+  source edit was needed. Validation passed: Prettier on touched files;
+  focused feature/browser-QA harness Jest 133/133; `git diff --check`; `pnpm
+  -C src lint:frontend`; `pnpm -C src/packages/static build:dev` from git
+  revision `6431a4eab6` with only the existing local debug-log permission
+  warning; browser QA desktop+mobile for `/features/python` and
+  `/features/r-statistical-software` passed 76/76 at
+  `/tmp/cocalc-public-qa-FzLboQ`. Screenshot inspection: Python no longer
+  over-stacks the hero right column, Python/R desktop heroes are balanced, and
+  mobile stacks remain readable with no overlap. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Next queue item: design-polish item 15, per-page residuals.
+
 ### Codex - feature-page final-band balance (2026-06-22 14:35 PDT)
 
 - **START 2026-06-22 14:35 PDT:** Continuing into design-polish item 13 after

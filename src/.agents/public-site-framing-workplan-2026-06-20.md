@@ -415,6 +415,31 @@ Current disposition:
   `/features/r-statistical-software`, `/features/whiteboard`, and
   `/features/automations` on desktop and mobile.
 
+### FS-013 - Standardize the Python hero right column
+
+Status: `done`
+
+Evidence:
+
+- The design-polish slice called out Python as over-stacked: its hero right
+  column combined a project card, dark terminal mock, and Codex context card.
+- R was listed in the same polish item, but current source/render already
+  follows the target pattern: one R project card plus a nearby `Project
+  context` checklist.
+
+Current disposition:
+
+- `/features/python` now keeps the hero right column to one compact project
+  card.
+- The removed hero proof was preserved in standard composition: terminal and
+  package proof remain in the project card/context checklist and package-heavy
+  use-case card; notebook/script/paper/review proof remain in the workflow band.
+- Python now uses shared `ContextList` and is included in the shared-primitive
+  guardrail.
+- Python's inline-style budget was tightened from 31 to 20.
+- Representative browser QA/screenshots covered `/features/python` and
+  `/features/r-statistical-software` on desktop and mobile.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
