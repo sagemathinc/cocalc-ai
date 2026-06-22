@@ -1464,3 +1464,30 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   overflow or alert layout regression. Remaining holds unchanged: protected
   home, pricing/compliance, type/palette restyle, and the untracked
   dedicated-compute draft.
+
+---
+
+## Codex — scheduled landing-page improvement loop no-op (2026-06-22 02:46 PDT)
+
+- **START 2026-06-22 02:46 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Read the shared INDEX, Claude current status,
+  Codex turn log, and post-framing queue. Verified preview hub pid `13303`
+  serves `/home/user/cocalc-ai-synthesis/src`. Claude's current status marks
+  the curated Codex work queue as drained and explicitly says not to self-select
+  from the raw 127-finding audit. Claimed files: this ledger and
+  `/home/user/cocalc-shared/codex-turn-log.md` only. Guardrails: no protected
+  home, pricing/compliance, type/palette/palette-token work, pitch docs,
+  docs-route content, product/feature/support source edits, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 02:46 PDT:** QUEUE DRAINED. No public-site source files were
+  changed and no build/browser QA was run because no route was touched. The
+  latest public-site source-change commit remains `c4dc9ae4f7`
+  (`frontend/public: tokenize support ticket alert colors`); this turn adds only
+  a coordination ledger commit. The branch is ahead of origin by five commits,
+  and the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Blaec/Claude on held decisions: accept or revert
+  the protected-home portion of `b8388f8a41`, decide the off-queue support alert
+  tokenization / palette-lane question, and decide whether any held pricing-page
+  items or a new curated queue should be released.
