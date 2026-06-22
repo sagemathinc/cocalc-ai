@@ -47,6 +47,28 @@ link_executable() {
   fi
 }
 
+pin_python_venv_link() {
+  local python_path="$1"
+  local target
+  local resolved
+  if [ ! -L "$python_path" ]; then
+    return
+  fi
+  target="$(readlink "$python_path")"
+  case "$target" in
+    /usr/local/bin/python | /usr/local/bin/python3 | /usr/local/bin/python3.*)
+      resolved="$(readlink -f "$python_path")"
+      if [ -z "$resolved" ] || [ ! -x "$resolved" ]; then
+        echo "Cannot resolve Sage Python link: $python_path -> $target" >&2
+        exit 1
+      fi
+      log "Retargeting Sage Python venv link ${python_path} from ${target} to ${resolved}"
+      $SUDO rm -f "$python_path"
+      $SUDO ln -s "$resolved" "$python_path"
+      ;;
+  esac
+}
+
 apt_install_available() {
   local packages=()
   local package
@@ -183,6 +205,7 @@ install_source_sage() {
     echo "Sage Python is not executable: $sage_python" >&2
     exit 1
   fi
+  pin_python_venv_link "$sage_python"
   sage_python_bin="$(dirname "$sage_python")"
 
   log "Installing Jupyter packages into Sage Python"
