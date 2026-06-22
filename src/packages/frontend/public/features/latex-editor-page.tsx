@@ -17,7 +17,6 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
-  featureSupportPath,
   LinkButton,
 } from "./page-components";
 import { IconBadge } from "./feature-visuals";
@@ -341,16 +340,6 @@ export default function LatexEditorFeaturePage({
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
                   {finalCtaLabel}
-                </Button>
-                <Button
-                  href={featureSupportPath({
-                    body: "I want to discuss LaTeX workflows in CoCalc. Helpful context: paper, course, or research-group use case; need for computation-backed figures or tables; collaborators; and current writing tools.",
-                    context: "latex-editor",
-                    subject: "CoCalc LaTeX workflows",
-                    title: "Ask CoCalc about LaTeX workflows",
-                  })}
-                >
-                  Ask about LaTeX workflows
                 </Button>
                 <Button href={appPath("products")}>
                   Compare operating models

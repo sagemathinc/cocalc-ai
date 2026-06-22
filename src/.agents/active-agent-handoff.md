@@ -1031,3 +1031,27 @@ public-site changes and main's in-app changes didn't overlap). Rebuilt via `stat
 (new bundle `app-408615…` embeds the merge commit + #71's `no-files.tsx`) and restarted
 the synthesis hub. **Public content canary: 0 failures.** #71 is a project/in-app change —
 verify its spacing in the logged-in explorer view, NOT on the public landing pages. NOT pushed.
+
+---
+
+## Codex — decision-(a) support-CTA extension (2026-06-22)
+
+- **START 2026-06-22:** Working in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Scope is the Blaec-confirmed support-CTA removal
+  extension only: remove final `Ask about X` support CTAs and unused
+  `featureSupportPath` plumbing from `ai`, `latex-editor`, `python`, `linux`,
+  `terminal`, and `jupyter-notebook`; update route canaries and browser-QA
+  guards. No layout/band conversion, no copy rewrite, no cli/api/dedicated-
+  compute, no protected home/pitch/docs routes/pricing/compliance/type-palette.
+  Known unrelated untracked file remains
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx`.
+- **END 2026-06-22:** Decision-(a) extension implemented and validated. Removed
+  the six remaining support-ask CTAs and dangling support-link plumbing; CLI/API
+  contextual support CTAs intentionally remain. Updated feature tests and
+  browser-QA forbidText guards. Validation passed: `git diff --check`; focused
+  feature Jest 96/96; browser-QA harness Jest 5/5; `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+  `/features/ai`, `/features/latex-editor`, `/features/python`,
+  `/features/linux`, `/features/terminal`, `/features/jupyter-notebook`
+  desktop+mobile 228/228. Screenshots inspected. Ready to commit/push/rebuild
+  preview; next queued slice is framing-alignment, one cluster at a time.

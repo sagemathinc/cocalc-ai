@@ -16,11 +16,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  featureAppPath as appPath,
-  featureSupportPath,
-  LinkButton,
-} from "./page-components";
+import { featureAppPath as appPath, LinkButton } from "./page-components";
 import { IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
@@ -424,12 +420,6 @@ export default function PythonFeaturePage({
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
     : "Start using Python on CoCalc";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss Python workflows in CoCalc. Helpful context: notebooks, scripts, package environments, reports, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
-    context: "python",
-    subject: "CoCalc Python workflows",
-    title: "Ask CoCalc about Python workflows",
-  });
 
   return (
     <Flex vertical gap={18}>
@@ -487,9 +477,6 @@ export default function PythonFeaturePage({
                 </LinkButton>
                 <LinkButton href={appPath("features/terminal")}>
                   Linux terminal
-                </LinkButton>
-                <LinkButton href={supportHref}>
-                  Ask about Python workflows
                 </LinkButton>
               </Flex>
             </Flex>

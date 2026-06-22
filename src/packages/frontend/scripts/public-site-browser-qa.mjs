@@ -266,6 +266,7 @@ const ROUTE_RULES = {
       "Ready to use Codex in CoCalc?",
       "Built-in provider support",
       "Other agents can still run in terminals.",
+      "Ask about AI workflows",
     ],
     requireSelectors: [".cocalc-ai-workflow-panel"],
     styleChecks: [
@@ -319,6 +320,7 @@ const ROUTE_RULES = {
       "Choose the notebook path that fits",
       "Ready to use Jupyter in CoCalc?",
     ],
+    forbidText: ["Ask about Jupyter workflows"],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
     requireLinks: [
@@ -358,6 +360,7 @@ const ROUTE_RULES = {
       "Choose the terminal path that fits",
       "Ready to use terminals in CoCalc?",
     ],
+    forbidText: ["Ask about terminal workflows"],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
@@ -367,6 +370,7 @@ const ROUTE_RULES = {
       "Choose the Linux path that fits",
       "Ready to use Linux in CoCalc?",
     ],
+    forbidText: ["Ask about Linux environments"],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
@@ -376,6 +380,7 @@ const ROUTE_RULES = {
       "The right interface at each stage",
       "Start using Python",
     ],
+    forbidText: ["Ask about Python workflows"],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
@@ -387,7 +392,7 @@ const ROUTE_RULES = {
       "A practical writing loop",
     ],
     requireSelectors: [".cocalc-latex-computation-list"],
-    forbidText: ["PDF build"],
+    forbidText: ["PDF build", "Ask about LaTeX workflows"],
   },
   "/features/sage": {
     requireText: [

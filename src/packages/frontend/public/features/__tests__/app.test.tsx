@@ -99,44 +99,14 @@ describe("PublicFeaturesApp", () => {
 
   const contextualSupportLinks = [
     {
-      context: "feature-ai",
-      label: "Ask about AI workflows",
-      slug: "ai",
-    },
-    {
       context: "feature-cli",
       label: "Ask about CLI automation",
       slug: "cli",
     },
     {
-      context: "feature-jupyter-notebook",
-      label: "Ask about Jupyter workflows",
-      slug: "jupyter-notebook",
-    },
-    {
-      context: "feature-terminal",
-      label: "Ask about terminal workflows",
-      slug: "terminal",
-    },
-    {
-      context: "feature-linux",
-      label: "Ask about Linux environments",
-      slug: "linux",
-    },
-    {
       context: "feature-api",
       label: "Ask about API integration",
       slug: "api",
-    },
-    {
-      context: "feature-latex-editor",
-      label: "Ask about LaTeX workflows",
-      slug: "latex-editor",
-    },
-    {
-      context: "feature-python",
-      label: "Ask about Python workflows",
-      slug: "python",
     },
   ] as const;
 
@@ -150,6 +120,12 @@ describe("PublicFeaturesApp", () => {
     { label: "Ask about Julia workflows", slug: "julia" },
     { label: "Ask about Octave workflows", slug: "octave" },
     { label: "Ask about language workflows", slug: "more-languages" },
+    { label: "Ask about AI workflows", slug: "ai" },
+    { label: "Ask about LaTeX workflows", slug: "latex-editor" },
+    { label: "Ask about Python workflows", slug: "python" },
+    { label: "Ask about Linux environments", slug: "linux" },
+    { label: "Ask about terminal workflows", slug: "terminal" },
+    { label: "Ask about Jupyter workflows", slug: "jupyter-notebook" },
   ] as const;
 
   const auditedFeaturePages = [
@@ -1247,12 +1223,6 @@ describe("PublicFeaturesApp", () => {
           initialRoute={{ slug, view: "detail" }}
         />,
       );
-
-      if (slug === "jupyter-notebook") {
-        fireEvent.click(
-          screen.getByRole("button", { name: "See agent details" }),
-        );
-      }
 
       const hrefs = screen
         .getAllByRole("link", { name: label })

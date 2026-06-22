@@ -16,7 +16,6 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
-  featureSupportPath,
   LinkButton,
 } from "./page-components";
 import { IconBadge } from "./feature-visuals";
@@ -257,12 +256,6 @@ export default function AIFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss AI agent workflows in CoCalc. Helpful context: the kind of project, who will review agent work, notebook or terminal needs, and any deployment or policy constraints.",
-    context: "ai",
-    subject: "CoCalc AI workflows",
-    title: "Ask CoCalc about AI workflows",
-  });
 
   return (
     <Flex vertical gap={22}>
@@ -368,9 +361,6 @@ export default function AIFeaturePage({
                 <Flex wrap gap={16}>
                   <LinkButton href={appPath("features/terminal")}>
                     Terminal workflows
-                  </LinkButton>
-                  <LinkButton href={supportHref}>
-                    Ask about AI workflows
                   </LinkButton>
                 </Flex>
               </Flex>

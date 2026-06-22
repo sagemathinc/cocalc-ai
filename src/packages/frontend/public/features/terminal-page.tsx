@@ -17,7 +17,6 @@ import {
 import {
   BulletList,
   featureAppPath as appPath,
-  featureSupportPath,
   LinkButton,
 } from "./page-components";
 import { IconBadge } from "./feature-visuals";
@@ -483,16 +482,6 @@ export default function TerminalFeaturePage({
               </Button>
               <Button href={`${GUIDE_BASE}/software-install/`}>
                 Software install guide
-              </Button>
-              <Button
-                href={featureSupportPath({
-                  body: "I want to discuss CoCalc terminal workflows. Helpful context: who will use shared terminals, expected software or service needs, and whether this is for research, teaching, or an organizational deployment.",
-                  context: "terminal",
-                  subject: "CoCalc terminal workflows",
-                  title: "Ask CoCalc about terminal workflows",
-                })}
-              >
-                Ask about terminal workflows
               </Button>
             </Flex>
           </Col>

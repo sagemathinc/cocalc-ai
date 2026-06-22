@@ -21,7 +21,6 @@ import {
   BulletList,
   CodeBlock,
   featureAppPath as appPath,
-  featureSupportPath,
   LinkButton,
 } from "./page-components";
 import { IconBadge } from "./feature-visuals";
@@ -236,12 +235,6 @@ export default function JupyterNotebookFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
-  const supportHref = featureSupportPath({
-    body: "I want to discuss Jupyter notebook workflows in CoCalc. Helpful context: research, teaching, or team use case; expected collaborators; notebook size or runtime needs; and whether AI assistance, course workflows, or private deployment matters.",
-    context: "jupyter-notebook",
-    subject: "CoCalc Jupyter notebook workflows",
-    title: "Ask CoCalc about Jupyter notebook workflows",
-  });
 
   return (
     <Flex vertical gap={18}>
@@ -435,7 +428,6 @@ export default function JupyterNotebookFeaturePage({
             <Button type="primary" href={appPath("features/ai")}>
               AI workflows
             </Button>
-            <Button href={supportHref}>Ask about Jupyter workflows</Button>
           </Flex>
         </Flex>
       </Modal>

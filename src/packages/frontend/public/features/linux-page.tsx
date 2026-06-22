@@ -18,7 +18,6 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
-  featureSupportPath,
   LinkButton,
 } from "./page-components";
 import { IconBadge } from "./feature-visuals";
@@ -409,16 +408,6 @@ PY`}</code>
               </Button>
               <Button href={appPath("features/jupyter-notebook")}>
                 Jupyter notebooks
-              </Button>
-              <Button
-                href={featureSupportPath({
-                  body: "I want to discuss CoCalc Linux environments. Helpful context: software stack, teaching or research use case, expected users, and whether a hosted or customer-operated product path is being evaluated.",
-                  context: "linux",
-                  subject: "CoCalc Linux environments",
-                  title: "Ask CoCalc about Linux environments",
-                })}
-              >
-                Ask about Linux environments
               </Button>
             </Flex>
           </Col>
