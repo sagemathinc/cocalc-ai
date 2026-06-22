@@ -1,4 +1,12 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 
 import type { ExecuteCodeOutput } from "@cocalc/util/types/execute-code";
@@ -81,6 +89,7 @@ type RootfsRecipeModule = {
 export type RootfsRecipeRunOptions = {
   browserId?: string;
   configOut?: string;
+  here?: boolean;
   moduleDir?: string;
   project?: string;
   publish?: boolean;
@@ -99,6 +108,7 @@ export type RootfsRecipeRunResult = {
   steps: RootfsRecipeStepResult[];
   verify: RootfsRecipeStepResult[];
   config: RootfsConfigExport;
+  config_path?: string;
   publish?: unknown;
 };
 
@@ -129,6 +139,13 @@ type RootfsRecipeStepResult = {
 type RecipeProjectApiRef = {
   api: any;
 };
+
+type RecipeCommandExecutor = (opts: {
+  env: Record<string, string>;
+  name: string;
+  script: string;
+  timeout?: number;
+}) => Promise<RootfsRecipeStepResult>;
 
 type RootfsRecipeRunnerDeps = {
   resolveProjectFromArgOrContext: (
@@ -426,6 +443,17 @@ export async function runRootfsRecipe({
   );
 
   return await withRecipeTransportTimeout(ctx, recipeTimeoutMs, async () => {
+    if (options.here) {
+      return await runRootfsRecipeHere({
+        ctx,
+        deps,
+        defaultCommandTimeout,
+        loadedRecipe,
+        moduleDir,
+        options,
+      });
+    }
+    emitCurrentProjectHint(ctx, options);
     const project = await resolveOrCreateRecipeProject({
       ctx,
       deps,
@@ -467,12 +495,16 @@ export async function runRootfsRecipe({
           }`,
         );
         const result = await runRecipeStep({
-          apiRef,
-          ctx,
-          defaultCommandTimeout,
+          execCommand: (opts) =>
+            execRemoteRecipeCommand({
+              apiRef,
+              ctx,
+              defaultTimeout: defaultCommandTimeout,
+              refreshProjectApi,
+              ...opts,
+            }),
           moduleDir,
           recipeDir: loadedRecipe.recipeDir,
-          refreshProjectApi,
           step,
           stepIndex: i + 1,
         });
@@ -497,11 +529,11 @@ export async function runRootfsRecipe({
         ctx,
         `running top-level verification ${i + 1}/${recipe.verify!.length}`,
       );
-      const result = await execRecipeCommand({
+      const result = await execRemoteRecipeCommand({
+        env: {},
         apiRef,
         ctx,
         defaultTimeout: defaultCommandTimeout,
-        env: {},
         name: `verify ${i + 1}`,
         refreshProjectApi,
         script: typeof verify === "string" ? verify : verify.command,
@@ -564,6 +596,155 @@ export async function runRootfsRecipe({
       publish: publishResult,
     };
   });
+}
+
+async function runRootfsRecipeHere({
+  ctx,
+  deps,
+  defaultCommandTimeout,
+  loadedRecipe,
+  moduleDir,
+  options,
+}: {
+  ctx: any;
+  deps: RootfsRecipeRunnerDeps;
+  defaultCommandTimeout: number;
+  loadedRecipe: LoadedRecipe;
+  moduleDir: string;
+  options: RootfsRecipeRunOptions;
+}): Promise<RootfsRecipeRunResult> {
+  if (options.project) {
+    throw new Error("--here cannot be combined with --project");
+  }
+  const project_id = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  if (!project_id) {
+    throw new Error(
+      "--here requires running inside a CoCalc project with COCALC_PROJECT_ID set",
+    );
+  }
+  const { recipe } = loadedRecipe;
+  emitRecipeProgress(
+    ctx,
+    `using current project ${project_id}; recipe commands run as local subprocesses`,
+  );
+
+  const stepResults: RootfsRecipeStepResult[] = [];
+  const contributionConfig = emptyRecipeConfig(recipe);
+  if (!options.verifyOnly) {
+    for (let i = 0; i < (recipe.steps ?? []).length; i += 1) {
+      const step = recipe.steps![i];
+      emitRecipeProgress(
+        ctx,
+        `running local step ${i + 1}/${recipe.steps!.length}: ${
+          step.name ?? step.uses ?? "run"
+        }`,
+      );
+      const result = await runRecipeStep({
+        execCommand: (opts) =>
+          execLocalRecipeCommand({
+            ctx,
+            defaultTimeout: defaultCommandTimeout,
+            ...opts,
+          }),
+        moduleDir,
+        recipeDir: loadedRecipe.recipeDir,
+        step,
+        stepIndex: i + 1,
+      });
+      stepResults.push(result);
+      if (result.exit_code !== 0) {
+        throw new Error(
+          `recipe step failed: ${result.name} exit_code=${result.exit_code}\n${result.stderr ?? ""}`,
+        );
+      }
+      mergeRecipeConfig(
+        contributionConfig,
+        resultContribution(step, moduleDir),
+      );
+    }
+    mergeRecipeConfig(contributionConfig, emptyRecipeConfig(recipe));
+  }
+
+  const verifyResults: RootfsRecipeStepResult[] = [];
+  for (let i = 0; i < (recipe.verify ?? []).length; i += 1) {
+    const verify = recipe.verify![i];
+    emitRecipeProgress(
+      ctx,
+      `running local top-level verification ${i + 1}/${recipe.verify!.length}`,
+    );
+    const result = await execLocalRecipeCommand({
+      ctx,
+      defaultTimeout: defaultCommandTimeout,
+      env: {},
+      name: `verify ${i + 1}`,
+      script: typeof verify === "string" ? verify : verify.command,
+      timeout: typeof verify === "string" ? undefined : verify.timeout,
+    });
+    verifyResults.push(result);
+    if (result.exit_code !== 0) {
+      throw new Error(
+        `recipe verification failed: ${result.name} exit_code=${result.exit_code}\n${result.stderr ?? ""}`,
+      );
+    }
+  }
+
+  const configPath =
+    options.configOut != null
+      ? resolve(options.configOut)
+      : writeDefaultLocalRecipeConfig(loadedRecipe, contributionConfig);
+  if (options.configOut == null) {
+    emitRecipeProgress(ctx, `wrote RootFS config JSON to ${configPath}`);
+  }
+
+  let publishResult: unknown;
+  if (options.publish && !options.verifyOnly) {
+    emitRecipeProgress(ctx, "publishing current project RootFS");
+    const payload = recipeConfigToCatalogPayload(contributionConfig);
+    const op = await ctx.hub.system.publishProjectRootfsImage({
+      project_id,
+      browser_id: `${options.browserId ?? ""}`.trim() || undefined,
+      ...payload,
+      switch_project: options.switchProject ? true : undefined,
+    });
+    if (options.wait) {
+      const waited = await deps.waitForLro(ctx, op.op_id, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+      });
+      if (waited.timedOut) {
+        throw new Error(
+          `rootfs recipe publish timed out (op=${op.op_id}, last_status=${waited.status})`,
+        );
+      }
+      const summary = await ctx.hub.lro.get({ op_id: op.op_id });
+      if (summary?.status && summary.status !== "succeeded") {
+        throw new Error(
+          `rootfs recipe publish failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+        );
+      }
+      publishResult = summary ? deps.serializeLroSummary(summary) : waited;
+    } else {
+      publishResult = {
+        op_id: op.op_id,
+        scope_type: op.scope_type,
+        scope_id: op.scope_id,
+        stream_name: op.stream_name,
+        status: "queued",
+      };
+    }
+  }
+
+  return {
+    recipe: recipe.name ?? loadedRecipe.recipePath,
+    recipe_path: loadedRecipe.recipePath,
+    project_id,
+    created_project: false,
+    steps: stepResults,
+    verify: verifyResults,
+    config: contributionConfig,
+    config_path: configPath,
+    publish: publishResult,
+  };
 }
 
 async function phase<T>(name: string, fn: () => Promise<T>): Promise<T> {
@@ -692,21 +873,15 @@ async function startProject(
 }
 
 async function runRecipeStep({
-  apiRef,
-  ctx,
-  defaultCommandTimeout,
+  execCommand,
   moduleDir,
   recipeDir,
-  refreshProjectApi,
   step,
   stepIndex,
 }: {
-  apiRef: RecipeProjectApiRef;
-  ctx: any;
-  defaultCommandTimeout: number;
+  execCommand: RecipeCommandExecutor;
   moduleDir: string;
   recipeDir: string;
-  refreshProjectApi: () => Promise<void>;
   step: RootfsRecipeStep;
   stepIndex: number;
 }): Promise<RootfsRecipeStepResult> {
@@ -715,13 +890,9 @@ async function runRecipeStep({
     if (!run) {
       throw new Error(`recipe step ${stepIndex} must specify uses or run`);
     }
-    return await execRecipeCommand({
-      apiRef,
-      ctx,
-      defaultTimeout: defaultCommandTimeout,
+    return await execCommand({
       env: {},
       name: step.name ?? `step ${stepIndex}`,
-      refreshProjectApi,
       script: typeof run === "string" ? run : run.command,
       timeout:
         step.timeout ?? (typeof run === "string" ? undefined : run.timeout),
@@ -740,13 +911,9 @@ async function runRecipeStep({
   const script = run.script
     ? readFileSync(join(loaded.dir, run.script), "utf8")
     : run.command!;
-  const result = await execRecipeCommand({
-    apiRef,
-    ctx,
-    defaultTimeout: defaultCommandTimeout,
+  const result = await execCommand({
     env: recipeEnv(inputs, step.uses),
     name: step.name ?? step.uses,
-    refreshProjectApi,
     script,
     timeout: step.timeout,
   });
@@ -756,13 +923,9 @@ async function runRecipeStep({
     const verifyScript = verify.script
       ? readFileSync(join(loaded.dir, verify.script), "utf8")
       : verify.command!;
-    const verifyResult = await execRecipeCommand({
-      apiRef,
-      ctx,
-      defaultTimeout: defaultCommandTimeout,
+    const verifyResult = await execCommand({
       env: recipeEnv(inputs, step.uses),
       name: `${step.name ?? step.uses} verify`,
-      refreshProjectApi,
       script: verifyScript,
       timeout: step.timeout,
     });
@@ -771,7 +934,7 @@ async function runRecipeStep({
   return result;
 }
 
-async function execRecipeCommand({
+async function execRemoteRecipeCommand({
   apiRef,
   ctx,
   defaultTimeout,
@@ -853,6 +1016,148 @@ async function execRecipeCommand({
       last.type === "async" ? last.status : "completed"
     }`,
   );
+}
+
+async function execLocalRecipeCommand({
+  ctx,
+  defaultTimeout,
+  env,
+  name,
+  script,
+  timeout,
+}: {
+  ctx: any;
+  defaultTimeout: number;
+  env: Record<string, string>;
+  name: string;
+  script: string;
+  timeout?: number;
+}): Promise<RootfsRecipeStepResult> {
+  const commandTimeout = timeout ?? defaultTimeout;
+  emitRecipeProgress(
+    ctx,
+    `${name}: started local subprocess (timeout ${commandTimeout}s)`,
+  );
+  return await new Promise<RootfsRecipeStepResult>((resolve, reject) => {
+    const child = spawn("bash", ["-lc", script], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        ...env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    let killedForTimeout = false;
+    const timer = setTimeout(() => {
+      killedForTimeout = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!finished) {
+          child.kill("SIGKILL");
+        }
+      }, 5_000).unref?.();
+    }, commandTimeout * 1000);
+    timer.unref?.();
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      stdout = appendCapped(stdout, text);
+      emitRecipeTextOutput(ctx, name, text);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr = appendCapped(stderr, text);
+      emitRecipeTextOutput(ctx, name, text);
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      finished = true;
+      reject(err);
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      finished = true;
+      if (killedForTimeout) {
+        resolve({
+          name,
+          exit_code: 124,
+          stdout,
+          stderr: appendCapped(
+            stderr,
+            `\n${name}: timed out after ${commandTimeout}s${
+              signal ? `; signal=${signal}` : ""
+            }\n`,
+          ),
+        });
+        return;
+      }
+      resolve({
+        name,
+        exit_code: code ?? (signal ? 128 : 1),
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+function emitRecipeTextOutput(ctx: any, name: string, text: string): void {
+  if (
+    ctx.globals?.quiet ||
+    ctx.globals?.json ||
+    ctx.globals?.output === "json"
+  ) {
+    return;
+  }
+  emitPrefixedLines(name, text);
+}
+
+function appendCapped(current: string, next: string): string {
+  const max = 200_000;
+  const joined = current + next;
+  if (joined.length <= max) return joined;
+  return joined.slice(joined.length - max);
+}
+
+function emitCurrentProjectHint(
+  ctx: any,
+  options: RootfsRecipeRunOptions,
+): void {
+  if (options.project || options.here) return;
+  const projectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  if (!projectId) return;
+  emitRecipeProgress(
+    ctx,
+    `detected current project ${projectId}; creating a clean builder project. Use --here to run this recipe in the current project.`,
+  );
+}
+
+function writeDefaultLocalRecipeConfig(
+  loadedRecipe: LoadedRecipe,
+  config: RootfsConfigExport,
+): string {
+  const home = process.env.HOME || process.cwd();
+  const dir = join(home, ".cocalc", "rootfs-recipes");
+  mkdirSync(dir, { recursive: true });
+  const name = safeRecipeFilenamePart(
+    loadedRecipe.recipe.name ??
+      basenameWithoutRecipeExtension(loadedRecipe.recipePath),
+  );
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const path = join(dir, `${name}-${stamp}.rootfs-config.json`);
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  return path;
+}
+
+function safeRecipeFilenamePart(value: string): string {
+  const safe = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return safe || "rootfs-recipe";
 }
 
 function isRetryableProjectApiError(err: unknown): boolean {

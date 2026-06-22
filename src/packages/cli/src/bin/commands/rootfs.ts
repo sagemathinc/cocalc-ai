@@ -81,6 +81,9 @@ function formatRootfsRecipeRunHuman(result: RootfsRecipeRunResult): string {
     `project_id: ${result.project_id}`,
     `created_project: ${result.created_project}`,
   ];
+  if (result.config_path) {
+    lines.push(`config_path: ${result.config_path}`);
+  }
   if (result.steps.length > 0) {
     lines.push("steps:");
     for (const step of result.steps) {
@@ -951,6 +954,10 @@ export function registerRootfsCommand(
       "run a RootFS recipe file, bundled example, or module in a clean builder project or existing project",
     )
     .option("-w, --project <project>", "existing project id or name to use")
+    .option(
+      "--here",
+      "run in the current CoCalc project using local subprocesses; requires COCALC_PROJECT_ID",
+    )
     .option("--module-dir <path>", "local recipe module registry directory")
     .option("--title <title>", "title for a new builder project")
     .option("--publish", "publish the resulting project RootFS after running")
@@ -1047,6 +1054,10 @@ export function registerRootfsCommand(
       "build a RootFS recipe in a clean builder project or existing project and save publish defaults on the project",
     )
     .option("-w, --project <project>", "existing project id or name to use")
+    .option(
+      "--here",
+      "build in the current CoCalc project using local subprocesses; requires COCALC_PROJECT_ID",
+    )
     .option("--module-dir <path>", "local recipe module registry directory")
     .option(
       "--title <title>",

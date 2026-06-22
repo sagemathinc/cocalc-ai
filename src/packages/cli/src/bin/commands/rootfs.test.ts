@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1032,6 +1039,143 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
       switch_project: undefined,
     });
   } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs recipe run --here executes locally and writes config metadata", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-here-"));
+  const recipePath = join(dir, "recipe.json");
+  const oldProjectId = process.env.COCALC_PROJECT_ID;
+  const oldHome = process.env.HOME;
+  const oldCwd = process.cwd();
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "local-demo",
+        steps: [
+          {
+            name: "local install",
+            run: 'test "$COCALC_PROJECT_ID" = here-project && echo local > marker.txt',
+          },
+        ],
+        verify: ["test -f marker.txt"],
+        publish: {
+          label: "Local demo",
+          slug: "local-demo",
+          tags: ["local"],
+        },
+      }),
+    );
+    process.env.COCALC_PROJECT_ID = "here-project";
+    process.env.HOME = dir;
+    process.chdir(dir);
+
+    const harness = rootfsDeps({
+      globals: { quiet: true },
+      projects: {
+        createProject: async () => {
+          throw new Error("should not create a builder project for --here");
+        },
+      },
+      resolveProjectProjectApi: async () => {
+        throw new Error("should not use project-host exec for --here");
+      },
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+      "--here",
+    ]);
+
+    assert.equal(existsSync(join(dir, "marker.txt")), true);
+    assert.match(harness.captured, /project_id: here-project/);
+    assert.match(harness.captured, /created_project: false/);
+    assert.match(
+      harness.captured,
+      /config_path: .*local-demo.*\.rootfs-config\.json/,
+    );
+    const match = `${harness.captured}`.match(/^config_path: (.*)$/m);
+    assert.ok(match?.[1]);
+    const config = JSON.parse(readFileSync(match[1], "utf8"));
+    assert.equal(config.metadata.label, "Local demo");
+  } finally {
+    process.chdir(oldCwd);
+    if (oldProjectId == null) {
+      delete process.env.COCALC_PROJECT_ID;
+    } else {
+      process.env.COCALC_PROJECT_ID = oldProjectId;
+    }
+    if (oldHome == null) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = oldHome;
+    }
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs recipe run hints about --here inside a project shell", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-hint-"));
+  const recipePath = join(dir, "recipe.json");
+  const oldProjectId = process.env.COCALC_PROJECT_ID;
+  const oldWrite = process.stderr.write;
+  let stderr = "";
+  try {
+    writeFileSync(
+      recipePath,
+      JSON.stringify({
+        version: 1,
+        name: "hint-demo",
+        steps: [{ name: "install", run: "true" }],
+        publish: { label: "Hint demo" },
+      }),
+    );
+    process.env.COCALC_PROJECT_ID = "current-project";
+    process.stderr.write = ((chunk: any, ...args: any[]) => {
+      stderr += `${chunk}`;
+      return oldWrite.call(process.stderr, chunk, ...args);
+    }) as typeof process.stderr.write;
+    const harness = rootfsDeps({
+      projects: {
+        createProject: async () => "builder-project",
+        start: async () => ({ op_id: "start-op" }),
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "run",
+      recipePath,
+    ]);
+
+    assert.match(
+      stderr,
+      /Use --here to run this recipe in the current project/,
+    );
+    assert.match(harness.captured, /created_project: true/);
+  } finally {
+    process.stderr.write = oldWrite;
+    if (oldProjectId == null) {
+      delete process.env.COCALC_PROJECT_ID;
+    } else {
+      process.env.COCALC_PROJECT_ID = oldProjectId;
+    }
     rmSync(dir, { force: true, recursive: true });
   }
 });
