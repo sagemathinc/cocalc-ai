@@ -1123,3 +1123,15 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/features/r-statistical-software` desktop+mobile passed 38/38. Screenshots
   inspected from `/tmp/cocalc-public-qa-q0ji36`; mobile order is fit proof,
   primary CTA, then Related.
+- **START/END Wave-3 Slides 2026-06-22:** Assessed `/features/slides` as a
+  clean `FeatureFinalBand` candidate. Converted only the final `StartCard`
+  section to the shared band, preserving slide-specific proof: slide-sized
+  whiteboards, markdown, math, diagrams, Jupyter cells, code, deck flow,
+  collaborative editing, and TimeTravel history. No protected home, pitch docs,
+  docs content/routes, pricing/compliance, type/palette, Sage, or
+  dedicated-compute draft touched. Validation passed: `git diff --check`;
+  focused feature Jest 98/98; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/features/slides`
+  desktop+mobile passed 34/34. Screenshots inspected from
+  `/tmp/cocalc-public-qa-hqubF5`; mobile order is fit proof, primary CTA, then
+  Related.

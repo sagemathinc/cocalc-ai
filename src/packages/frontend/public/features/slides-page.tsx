@@ -14,7 +14,7 @@ import {
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
-import { IconBadge, StartCard } from "./feature-visuals";
+import { FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -211,40 +211,35 @@ export default function SlidesFeaturePage({
       <SlideFlow />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                When slides belong in CoCalc
-              </Title>
-              <BulletList
-                items={[
-                  "Present technical walkthroughs from the same editable canvas where the material was built.",
-                  "Keep slides close to notebooks, files, data, and terminal work.",
-                  "Use math, diagrams, markdown, and code in technical talks.",
-                  "Collaborate on the deck and keep TimeTravel history around it.",
-                ]}
-              />
-              <Flex wrap gap={12}>
-                <Button href={appPath("features/whiteboard")}>
-                  Whiteboards and slides overview
-                </Button>
-                <Button href={appPath("features/teaching")}>Teaching</Button>
-                <Button href={appPath("products")}>
-                  Compare operating models
-                </Button>
-              </Flex>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and create a slide deck for a technical presentation."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start with a deck"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and create a slide deck for a technical presentation.",
+            href: primaryHref,
+            label: finalLabel,
+            title: "Start with a deck",
+          }}
+          relatedLinks={[
+            {
+              href: appPath("features/whiteboard"),
+              label: "Whiteboards and slides overview",
+            },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            {
+              href: appPath("products"),
+              label: "Compare operating models",
+            },
+          ]}
+          title="When slides belong in CoCalc"
+        >
+          <BulletList
+            items={[
+              "Present technical walkthroughs from the same editable canvas where the material was built.",
+              "Keep slides close to notebooks, files, data, and terminal work.",
+              "Use math, diagrams, markdown, and code in technical talks.",
+              "Collaborate on the deck and keep TimeTravel history around it.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

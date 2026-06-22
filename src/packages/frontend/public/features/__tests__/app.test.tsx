@@ -1111,6 +1111,10 @@ describe("PublicFeaturesApp", () => {
       slug: "r-statistical-software",
       title: "From analysis to a shared report",
     },
+    {
+      slug: "slides",
+      title: "When slides belong in CoCalc",
+    },
   ] as const)("uses the balanced final band on $slug", ({ slug, title }) => {
     const { container } = render(
       <PublicFeaturesApp
