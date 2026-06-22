@@ -46,6 +46,69 @@ Known risks:
 
 ---
 
+### Codex - terminal visual system correction (START 2026-06-22 13:30 PDT)
+
+- **Task:** respond to Blaec's screenshot feedback that `/features/terminal`
+  visually looks bad and that non-language feature pages lack a consistent
+  design system. Apply one bounded visual/structure pass to `/features/terminal`
+  only; treat broader feature-page consistency as the next curated slice.
+- **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` /
+  `blaec-synthesis-2026-06-18`.
+- **Preview owner this turn:** YES. Verified hub pids `15629` and `15671`,
+  both rooted at `/home/user/cocalc-ai-synthesis/src`; no active static
+  build/watch process observed.
+- **Claimed files/routes:** `/features/terminal` only:
+  `src/packages/frontend/public/features/terminal-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`.
+- **Route frame:** feature detail; visitor = technical user/champion; question =
+  "Can shell work live inside the shared project without turning the page into
+  a decorative mockup?"; promise = a real Linux terminal anchored to project
+  files and review context; proof = `.term` file location, shared terminal
+  stream, split panes/output handling, and nearby Linux/Jupyter paths; primary
+  next step = create account/open projects; secondary = terminal guide and
+  related feature pages.
+- **Evidence / hypothesis:** human screenshot feedback plus source inspection
+  show the terminal page has a heavy bespoke hero mock and one-off visual
+  treatment. Hypothesis: a calmer text-first hero, lighter route-owned proof,
+  and the shared `FeatureFinalBand` pattern will make the page feel more like
+  the rest of the site without broad feature-page churn.
+- **Do not touch:** protected `home/**`, pricing/compliance, docs content,
+  pitch docs, type/palette/token lanes, other feature pages, raw audit
+  foraging, support-alert follow-up, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **Validation required:** focused feature Jest/browser-QA harness, frontend
+  lint, static build, desktop+mobile browser QA/screenshot inspection for
+  `/features/terminal`, source commit, preview rebuild, shared-log handoff.
+- **END 2026-06-22 13:36 PDT:** Source fix landed in `0126856906`
+  (`frontend/public: calm terminal feature page layout`). `/features/terminal`
+  now uses a text-first hero with a compact `ContextList`, shared `StoryCard`
+  proof cards, a lower route-specific terminal evidence panel, and the shared
+  `FeatureFinalBand` closing pattern. Removed the heavy bespoke hero mock plus
+  the custom `.term` and shared-stream diagram components. Validation:
+  Prettier passed on touched public-site files; `git diff --check` passed;
+  package-level focused Jest passed 100/100 for
+  `public/features/__tests__/app.test.tsx` (with existing React/antd jsdom
+  act/getComputedStyle warnings); browser-QA harness Jest passed 5/5; `pnpm -C
+  src lint:frontend` passed; `pnpm -C src/packages/static build:dev` passed
+  before commit and again after source commit from git revision `0126856906`
+  with the existing local debug-log permission warning only; final browser QA
+  for `/features/terminal` desktop+mobile passed 48/48 with screenshots/results
+  at `/tmp/cocalc-public-qa-ORYoLS`. Screenshot inspection: desktop and mobile
+  are readable, no text overflow, hero no longer dominated by the custom mock,
+  and the final CTA/related-links band stays coherent. The top-level
+  `pnpm -C src test ...` wrapper was not usable because its doc-url precheck
+  fails before Jest with missing Python module `requests`; package-level Jest
+  was used instead. Protected home, pricing/compliance, docs content,
+  palette/type lanes, other feature pages, and the untracked
+  `dedicated-compute-page.tsx` draft stayed untouched. Remaining product/design
+  issue: non-language feature pages still need a curated design-system slice;
+  do not continue page-by-page one-off redesigns without Blaec/Claude releasing
+  that slice.
+
+---
+
 ### Codex - scheduled landing-page improvement loop no-op (2026-06-22 13:26 PDT)
 
 - **START 2026-06-22 13:26 PDT:** Scheduled landing-page improvement loop
