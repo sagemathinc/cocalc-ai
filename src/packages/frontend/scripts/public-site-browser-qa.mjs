@@ -363,6 +363,7 @@ const ROUTE_RULES = {
       "When the notebook depends on more than cells",
       "Choose the notebook path that fits",
       "Ready to use Jupyter in CoCalc?",
+      "Start using Jupyter in CoCalc",
       "For industry R&D, data-science, and research teams",
     ],
     forbidText: ["Ask about Jupyter workflows"],

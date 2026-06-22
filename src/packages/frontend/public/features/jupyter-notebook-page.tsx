@@ -235,6 +235,9 @@ export default function JupyterNotebookFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalCtaLabel = isAuthenticated
+    ? "Open projects"
+    : "Start using Jupyter in CoCalc";
 
   return (
     <Flex vertical gap={18}>
@@ -399,7 +402,7 @@ export default function JupyterNotebookFeaturePage({
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
-                  {primaryCtaLabel}
+                  {finalCtaLabel}
                 </Button>
                 <Button href={appPath("products")}>
                   Compare operating models

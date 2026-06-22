@@ -530,6 +530,9 @@ describe("PublicFeaturesApp", () => {
     expect((storyRow as HTMLElement).querySelectorAll("h4")).toHaveLength(0);
     // Closing section identity without pinning the exact headline.
     expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Start using Jupyter in CoCalc" }),
+    ).toHaveAttribute("href", "/auth/sign-up");
     // Mock-UI output labels stay qualitative (never invented metrics).
     expect(screen.getByText("data loaded")).not.toBeNull();
     expect(screen.getByText("model summary ready")).not.toBeNull();
@@ -577,7 +580,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start using Jupyter on CoCalc")).toBeNull();
+    expect(screen.queryByText("Start using Jupyter in CoCalc")).toBeNull();
   });
 
   it("renders the richer latex feature page", () => {

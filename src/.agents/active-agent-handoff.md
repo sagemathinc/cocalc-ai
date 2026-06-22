@@ -1217,3 +1217,30 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   Jest 104/104; `pnpm -C src lint:frontend`; `pnpm -C
   src/packages/static build:dev`; browser QA on `/features/linux` desktop+mobile
   passed 42/42. Screenshots inspected from `/tmp/cocalc-public-qa-ptFW0V`.
+
+---
+
+## Codex — post-framing P2 final CTA label consistency (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  the final-CTA wording consistency slice for Terminal, Linux, Jupyter, and
+  LaTeX. Source inspection showed Terminal/Linux/LaTeX already have
+  feature-specific unauthenticated final labels and authenticated `Open
+  projects`; Jupyter still reuses `Create account` in the final section. Claimed
+  files: `features/jupyter-notebook-page.tsx`,
+  `features/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`, and
+  this ledger. Guardrails: preserve technical proof, layout, and authenticated
+  behavior; no protected home, pitch docs, docs content/routes,
+  pricing/compliance, type/palette work, final-band rollout, or
+  dedicated-compute draft.
+- **END 2026-06-22:** Added a Jupyter-specific unauthenticated final CTA label:
+  `Start using Jupyter in CoCalc`. Left Terminal, Linux, and LaTeX unchanged
+  because they already had feature-specific final labels; left authenticated
+  behavior as `Open projects`. Updated feature and browser-QA canaries for the
+  new Jupyter label. Validation passed: `git diff --check`; focused feature +
+  QA harness Jest 104/104; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev`; browser QA on `/features/terminal`,
+  `/features/linux`, `/features/jupyter-notebook`, and `/features/latex-editor`
+  desktop+mobile passed 162/162. Screenshots inspected from
+  `/tmp/cocalc-public-qa-Gd3jP7`.
