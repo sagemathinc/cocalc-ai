@@ -206,6 +206,24 @@ Known risks:
 - **Validation required:** focused features Jest, `lint:frontend`,
   `packages/static build:dev`, browser QA/screenshot for `/features`
   desktop+mobile, commit, push, and handoff log.
+- **END 2026-06-22 11:52 PDT:** Source fix landed in
+  `5a66628ca1` (`frontend/public: sharpen features index headline`): `/features`
+  H1 now reads "Keep the whole job in one durable project."; the supporting
+  sentence, page structure, route grouping, and protected home stayed
+  untouched. Validation before source commit: `git diff --check` passed;
+  focused Jest `public/features/__tests__/app.test.tsx` +
+  `public/__tests__/public-site-browser-qa-script.test.ts` passed 105/105
+  with existing React/AntD jsdom warnings; `pnpm -C src lint:frontend` passed;
+  `pnpm -C src/packages/static build:dev` passed; browser QA for `/features`
+  desktop+mobile passed 52/52 assertions with screenshots/results at
+  `/tmp/cocalc-public-qa-ShXlDS`. Desktop/mobile screenshot inspection:
+  headline fits, no overflow, page rhythm unchanged. Known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft
+  remains untouched. Final preview rebuild after the handoff commit passed from
+  git revision `98aa1f7337` with the existing local debug-log permission
+  warning only; final `/features` browser QA passed 52/52 desktop+mobile at
+  `/tmp/cocalc-public-qa-ofMb61`. Next: push, then Claude runs the standing
+  adversarial + drift sweep.
 
 ## Current state (2026-06-18)
 
