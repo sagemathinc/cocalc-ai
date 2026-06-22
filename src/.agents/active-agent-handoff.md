@@ -46,6 +46,36 @@ Known risks:
 
 ---
 
+### Codex - more-languages residual polish (2026-06-22 15:21 PDT)
+
+- **START 2026-06-22 15:16 PDT:** Continuing design-polish item 15 after the
+  Octave hierarchy residual landed in `7283d4fa67` and handoff `b7f6c104df`
+  was pushed. Taking the next bounded residual sub-slice:
+  `/features/more-languages`. Claimed files:
+  `src/packages/frontend/public/features/more-languages-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Do not touch protected
+  `home/**`, footer, pricing/compliance, type/palette token values, pitch/docs
+  content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 15:21 PDT:** More-languages residual sub-slice landed in
+  `6527bc867a` (`frontend/public: polish more-languages feature cards`). The
+  language-stack visual now uses existing public surface/elevation tokens, the
+  repeated language tiles are rendered through one local `LanguageStackCard`
+  treatment, dense explanatory copy was tightened, and the page's raw-hex
+  allowlist entry was removed because no raw color literals remain. Validation
+  passed: Prettier on touched files; focused feature/browser-QA harness Jest
+  134/134; `git diff --check`; `pnpm -C src lint:frontend`; `pnpm -C
+  src/packages/static build:dev` from git revision `6527bc867a` with only the
+  existing local debug-log permission warning; browser QA desktop+mobile for
+  `/features/more-languages` passed 36/36 at
+  `/tmp/cocalc-public-qa-VAoPQ0`. Screenshot inspection: stack cards are
+  consistent and mobile copy wraps cleanly with no overlap. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Item 15 remains open; remaining residual candidate:
+  sage/automations text-heavy left columns.
+
 ### Codex - octave hierarchy polish (2026-06-22 15:15 PDT)
 
 - **START 2026-06-22 15:09 PDT:** Continuing design-polish item 15 after the

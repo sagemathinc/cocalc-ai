@@ -507,6 +507,30 @@ Current disposition:
 - Representative browser QA/screenshots covered `/features/octave` on desktop
   and mobile.
 
+### FS-017 - Polish the more-languages feature-card residuals
+
+Status: `done`
+
+Evidence:
+
+- Design-polish item 15 called out `/features/more-languages`: the previous
+  render had cramped language selection/stack treatments and inconsistent
+  right-rail box styling. Current source had already removed the old pill strip
+  but still carried bespoke route colors and repeated card styling.
+
+Current disposition:
+
+- The language-stack visual now uses existing public surface/elevation tokens
+  instead of route-owned gradient/color literals.
+- The repeated language tiles are rendered through one local
+  `LanguageStackCard` treatment.
+- Dense explanatory copy was tightened so the page reads more like the
+  language-page baseline on desktop and mobile.
+- The more-languages raw-hex allowlist entry was removed; the route now has no
+  raw color literals.
+- Representative browser QA/screenshots covered `/features/more-languages` on
+  desktop and mobile.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
