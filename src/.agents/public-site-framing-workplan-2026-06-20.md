@@ -531,6 +531,44 @@ Current disposition:
 - Representative browser QA/screenshots covered `/features/more-languages` on
   desktop and mobile.
 
+### FS-018 - Tighten Sage and automations left-column density
+
+Status: `done`
+
+Evidence:
+
+- Design-polish item 15 called out `/features/sage` and
+  `/features/automations`: left columns were text-heavy relative to their
+  clean right-side context cards.
+
+Current disposition:
+
+- Sage's hero, project-context, and course-context copy was shortened while
+  preserving SageMath, notebook, source-file, terminal, long-job, error,
+  collaborator, Codex, and course proof.
+- Automations' project-fit proof copy was tightened into one paragraph while
+  preserving the API distinction and recurring project-task proof.
+- The automations mock background now uses existing public surface tokens, and
+  the route's raw-hex allowlist entry was removed because no raw route colors
+  remain.
+- Representative browser QA/screenshots covered `/features/sage` and
+  `/features/automations` on desktop and mobile.
+
+### FS-019 - Design-polish item 15 residual queue
+
+Status: `done`
+
+Current disposition:
+
+- Item 15 landed as bounded sub-slices:
+  - slides residuals: `cee71ca3a7`;
+  - whiteboard residuals: `717f76707f`;
+  - Octave heading hierarchy: `7283d4fa67`;
+  - more-languages feature-card residuals: `6527bc867a`;
+  - Sage/automations text-density residuals: `1cb96b354d`.
+- Next validation step from the slice spec: Claude audit and a fresh
+  vision-critique pass to confirm the route scores moved up.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible

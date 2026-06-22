@@ -46,6 +46,38 @@ Known risks:
 
 ---
 
+### Codex - sage/automations residual polish (2026-06-22 15:28 PDT)
+
+- **START 2026-06-22 15:22 PDT:** Continuing design-polish item 15 after the
+  more-languages residual landed in `6527bc867a` and handoff `494586b5fb` was
+  pushed. Taking the final bounded residual sub-slice:
+  `/features/sage` and `/features/automations`. Claimed files:
+  `src/packages/frontend/public/features/sage-page.tsx`,
+  `src/packages/frontend/public/features/automations-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Do not touch protected
+  `home/**`, footer, pricing/compliance, type/palette token values, pitch/docs
+  content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 15:28 PDT:** Final item-15 residual sub-slice landed in
+  `1cb96b354d` (`frontend/public: tighten sage and automation feature copy`).
+  Sage's dense left-column prose and proof bullets were shortened while
+  preserving notebook/source/terminal/long-job/error/course proof. Automations'
+  proof paragraph was tightened, its mock background moved to existing public
+  tokens, and its raw-hex allowlist entry was removed because no raw route
+  colors remain. Validation passed: Prettier on touched files; focused
+  feature/browser-QA harness Jest 134/134; `git diff --check`; `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
+  `1cb96b354d` with only the existing local debug-log permission warning;
+  browser QA desktop+mobile for `/features/sage` and `/features/automations`
+  passed 78/78 at `/tmp/cocalc-public-qa-DvWPrx`. Screenshot inspection:
+  Sage/automations left columns are lighter and desktop/mobile layouts have no
+  overlap. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Design-polish item 15 is now complete; next step is Claude
+  audit / fresh vision-critique pass per the slice instructions.
+
 ### Codex - more-languages residual polish (2026-06-22 15:21 PDT)
 
 - **START 2026-06-22 15:16 PDT:** Continuing design-polish item 15 after the
