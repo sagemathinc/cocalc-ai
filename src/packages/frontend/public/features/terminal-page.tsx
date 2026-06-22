@@ -162,47 +162,47 @@ export default function TerminalFeaturePage({
             <TerminalEvidencePanel />
           </Col>
           <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Put the shell beside the work it changes
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                A terminal is useful in CoCalc because it is not separate from
-                the project. The shell sits near notebooks, source files, logs,
-                generated outputs, notes, and chat, so a teammate can review
-                what happened before continuing.
-              </Paragraph>
-              <BulletList
-                items={[
-                  "Run scripts beside the files they read or create.",
-                  "Keep logs, generated outputs, and notes in the same project.",
-                  "Let Codex inspect terminal context instead of guessing from a final error.",
-                ]}
-              />
+            <Flex vertical gap={22}>
+              <Flex vertical gap={12}>
+                <Title level={3} style={{ margin: 0 }}>
+                  Put the shell beside the work it changes
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  A terminal is useful in CoCalc because it is not separate from
+                  the project. The shell sits near notebooks, source files,
+                  logs, generated outputs, notes, and chat, so a teammate can
+                  review what happened before continuing.
+                </Paragraph>
+                <BulletList
+                  items={[
+                    "Run scripts beside the files they read or create.",
+                    "Keep logs, generated outputs, and notes in the same project.",
+                    "Let Codex inspect terminal context instead of guessing from a final error.",
+                  ]}
+                />
+              </Flex>
+              <Flex vertical gap={12}>
+                <Title level={3} style={{ margin: 0 }}>
+                  Collaborate in one terminal stream
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  CoCalc terminals are durable like tmux and collaborative like
+                  the rest of the workspace. Close the browser, reopen the
+                  project, and the session can still be there.
+                </Paragraph>
+                <Paragraph style={{ margin: 0 }}>
+                  Shared terminals include output pause, shared sizing, side
+                  chat, and controls for inactive viewers when another browser
+                  is holding the session too small.
+                </Paragraph>
+              </Flex>
             </Flex>
           </Col>
         </Row>
       </PublicSection>
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="top">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Collaborate in one terminal stream
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc terminals are durable like tmux and collaborative like
-                the rest of the workspace. Close the browser, reopen the
-                project, and the session can still be there.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Shared terminals have real operational details: output pause,
-                shared sizing, side chat, and controls for inactive viewers when
-                another browser is holding the session too small.
-              </Paragraph>
-            </Flex>
-          </Col>
+        <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
@@ -213,17 +213,32 @@ export default function TerminalFeaturePage({
                 in one frame. Split horizontally or vertically, drag panes into
                 place, and keep a terminal beside the editor that needs it.
               </Paragraph>
-              <BulletList
-                items={[
-                  "Edit a script and run it in the adjacent terminal.",
-                  "Tail logs while testing a notebook or local web app.",
-                  <>
-                    Use the <code>open</code> command to pop files into the
-                    browser workspace.
-                  </>,
-                ]}
-              />
             </Flex>
+          </Col>
+          <Col xs={24} lg={12}>
+            <ContextList
+              accent="#096dd9"
+              items={[
+                {
+                  icon: "file-code",
+                  label: "Edit a script and run it in the adjacent terminal",
+                },
+                {
+                  icon: "terminal",
+                  label: "Tail logs while testing a notebook or local web app",
+                },
+                {
+                  icon: "layout",
+                  label: (
+                    <>
+                      Use <code>open</code> to pop files into the browser
+                      workspace
+                    </>
+                  ),
+                },
+              ]}
+              title="Pane workflow"
+            />
           </Col>
         </Row>
       </PublicSection>
