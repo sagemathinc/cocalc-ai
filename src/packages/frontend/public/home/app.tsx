@@ -1049,7 +1049,7 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
           <Button href={appPath("products")}>Compare operating models</Button>
-          <Button href={appPath("support")}>Talk to CoCalc</Button>
+          <Button href={appPath("support")}>Talk with CoCalc</Button>
         </div>
       </div>
     </section>

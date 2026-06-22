@@ -364,7 +364,7 @@ describe("PublicHomeApp", () => {
       within(path).getByRole("link", { name: "Compare operating models" }),
     ).toHaveAttribute("href", "/products");
     expect(
-      within(path).getByRole("link", { name: "Talk to CoCalc" }),
+      within(path).getByRole("link", { name: "Talk with CoCalc" }),
     ).toHaveAttribute("href", "/support");
     expect(within(path).queryByText("Hosted CoCalc")).toBeNull();
     expect(within(path).queryByText("CoCalc Plus")).toBeNull();

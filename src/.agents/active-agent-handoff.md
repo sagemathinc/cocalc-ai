@@ -1349,3 +1349,31 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   harness Jest 43/43; `pnpm -C src lint:frontend`; `pnpm -C
   src/packages/static build:dev`; browser QA on `/guides` desktop+mobile passed
   60/60. Screenshots inspected from `/tmp/cocalc-public-qa-13mPlu`.
+
+---
+
+## Codex — post-framing P2 Talk-with-CoCalc CTA wording (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  only the site-wide CTA wording normalization from `Talk to CoCalc` to the
+  canonical `Talk with CoCalc` in the shared closing band and home closing band,
+  plus the matching home test expectation. Claimed files:
+  `src/packages/frontend/public/common.tsx`,
+  `src/packages/frontend/public/home/app.tsx`,
+  `src/packages/frontend/public/home/__tests__/app.test.tsx`, and this ledger.
+  Guardrails: preserve hrefs, layout, route structure, and protected home hero;
+  no pitch docs, docs routes/content, pricing/compliance, type/palette work,
+  feature/product pages, or the untracked dedicated-compute draft.
+- **END 2026-06-22:** CTA wording normalization implemented and validated.
+  Changed the shared `PublicNextStep` closing-band support CTA and home closing
+  CTA from `Talk to CoCalc` to the canonical `Talk with CoCalc`, preserving the
+  `/support` hrefs and all surrounding layout. Updated the home test
+  expectation; `rg` confirms the old phrase is gone from public source and
+  browser-QA rules. Validation passed: `git diff --check`; focused home +
+  public app Jest 40/40 (with existing React/AntD act warnings); `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on the
+  conversion spine desktop+mobile passed 264/264, and direct common-component
+  routes `/guides`, `/about`, `/news`, `/policies`, `/support/community`
+  desktop+mobile passed 148/148. Screenshots inspected from
+  `/tmp/cocalc-public-qa-jU1SnF` and `/tmp/cocalc-public-qa-1JHK87`.
