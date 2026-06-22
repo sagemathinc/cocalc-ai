@@ -46,6 +46,59 @@ Known risks:
 
 ---
 
+### Codex - latex feature-page consolidation (2026-06-22 14:19 PDT)
+
+- **START 2026-06-22 14:19 PDT:** Continuing the curated feature-page
+  consistency queue after Linux landed in `d8df1f24c7` and handoff commit
+  `069a70d412` was pushed. Claimed route/files:
+  `src/packages/frontend/public/features/latex-editor-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs` if route canaries
+  need selector updates, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Preview hub remains rooted at
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/watch process
+  observed.
+- **Route frame:** feature detail. Visitor: researcher, author, collaborator,
+  or reviewer whose LaTeX paper depends on code, figures, build logs,
+  coauthors, and history. Visitor question: can the paper stay connected to
+  its source, generated evidence, collaborators, and review context? One-
+  sentence promise: CoCalc keeps LaTeX source, PDF builds, coauthors,
+  TimeTravel, SageTeX/computation, and related project files together in one
+  reviewable project. Proof mechanism: source/PDF/builds, real-time coauthors
+  with visible cursors, TimeTravel, SageTeX/computation, fit-decision table,
+  and related Jupyter/terminal/AI paths. Primary next step: create account/
+  open projects. Secondary next step: LaTeX guide, paper-polishing workflow,
+  related feature/product routes. What this must not claim: no competitor
+  superiority, compliance/trust claims, paper-quality guarantee, invented build
+  metrics, or AI-as-author claim. Decision: redesign the route structure and
+  final band around shared primitives while preserving the fit-decision table
+  and concrete LaTeX proof.
+- **Do not touch:** protected `home/**`, footer, pricing/compliance,
+  type/palette lanes, pitch docs, docs content, other feature pages except
+  route links from the LaTeX page, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 14:27 PDT:** Source slice landed in `e5451f2c01`
+  (`frontend/public: consolidate latex feature page`). `/features/latex-editor`
+  now follows the shared feature-detail model: text-first hero with
+  `ContextList`, shared `StoryCard` proof cards, lower source/PDF/build-log
+  evidence panel, computation-loop `ContextList`, preserved fit-decision table,
+  and shared `FeatureFinalBand`. Removed the route-owned large mock,
+  hand-rolled context/computation panels, and custom CTA ending. Inline
+  `style={{}}` blocks are now 5. Preserved source/PDF output, build logs,
+  real-time coauthors with visible cursors, TimeTravel, SageTeX/computed
+  figures, related Jupyter/terminal/AI paths, and the fit-decision table's
+  caption/aria contract. Validation passed: Prettier on touched source/test/QA
+  files; `git diff --check`; focused feature/browser-QA harness Jest 105/105;
+  `pnpm -C src lint:frontend`; `pnpm -C src/packages/static build:dev` before
+  commit and again after commit from git revision `e5451f2c01` with the
+  existing local debug-log permission warning only; browser QA for
+  `/features/latex-editor` desktop+mobile 48/48, final screenshots/results at
+  `/tmp/cocalc-public-qa-ZfyES1`. Screenshot inspection: desktop/mobile
+  readable with no overlap; fit table remains legible. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Next queue item: Tier-1 prevention tests.
+
 ### Codex - linux feature-page consolidation (2026-06-22 14:10 PDT)
 
 - **START 2026-06-22 14:10 PDT:** Continuing the curated feature-page

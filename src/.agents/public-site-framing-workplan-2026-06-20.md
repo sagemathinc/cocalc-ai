@@ -314,6 +314,56 @@ Current disposition:
   language package layers, services, snapshots/known-good state, reusable
   environment images, and the "You decide what runs" boundary.
 
+### FS-010 - Consolidate the LaTeX feature page onto shared primitives
+
+Status: `done`
+
+Evidence:
+
+- The curated feature-page consistency slice names `/features/latex-editor` as
+  the remaining hand-rolled feature page after Jupyter and Linux.
+- Source inspection shows route-owned mock/context/computation/final-section
+  patterns and zero shared feature-detail primitives, while the fit-decision
+  table is a grounded section that must remain.
+
+Current route frame for `/features/latex-editor`:
+
+```md
+Route: /features/latex-editor
+Visitor: researcher, author, collaborator, or reviewer whose LaTeX paper
+depends on code, figures, build logs, coauthors, and history.
+Visitor question: can the paper stay connected to its source, generated
+evidence, collaborators, and review context?
+One-sentence promise: CoCalc keeps LaTeX source, PDF builds, coauthors,
+TimeTravel, SageTeX/computation, and related project files together in one
+reviewable project.
+Proof mechanism: source/PDF/builds, real-time coauthors with visible cursors,
+TimeTravel, SageTeX/computation, fit-decision table, and related
+Jupyter/terminal/AI paths.
+Primary next step: create account / open projects.
+Secondary next step: LaTeX guide, paper-polishing workflow, related
+feature/product routes.
+What this must not claim: no competitor superiority, compliance/trust claims,
+paper-quality guarantee, invented build metrics, or AI-as-author claim.
+Evidence consulted: feature-page consistency slice, frozen Brief, framing
+system/register, current LaTeX page source/tests, browser-QA markers, and
+terminal/Jupyter/Linux implementation patterns.
+Decision: redesign the route structure and final band around shared primitives
+while preserving the fit-decision table and concrete LaTeX proof.
+```
+
+Current disposition:
+
+- `/features/latex-editor` now follows the terminal/Jupyter/Linux shared-
+  primitive model: text-first hero, compact `ContextList`, shared `StoryCard`
+  proof cards, lower source/PDF/build-log evidence panel, computation-loop
+  `ContextList`, preserved fit-decision table, and shared `FeatureFinalBand`.
+- Inline `style={{}}` blocks in the page are now 5.
+- Preserved LaTeX proof: source/PDF output, build logs, real-time coauthors
+  with visible cursors, TimeTravel, SageTeX/computed figures, related
+  Jupyter/terminal/AI paths, and the fit-decision table's caption/aria
+  contract.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
