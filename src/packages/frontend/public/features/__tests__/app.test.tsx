@@ -39,6 +39,24 @@ function trackedFeatureSources(): { file: string; source: string }[] {
     .map((file) => ({ file, source: readFileSync(file, "utf8") }));
 }
 
+function trackedFeaturePageSources(): {
+  file: string;
+  name: string;
+  source: string;
+}[] {
+  return execFileSync("git", ["ls-files", "public/features/*-page.tsx"], {
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((file) => ({
+      file,
+      name: file.split("/").pop() ?? file,
+      source: readFileSync(file, "utf8"),
+    }));
+}
+
 // Internal/implementation language that must never leak into feature copy.
 // The shared INTERNAL_IMPLEMENTATION_TERMS floor supplies the cross-surface
 // bans (serious technical work, project hosts, multi-bay, control plane,
@@ -48,6 +66,148 @@ const INTERNAL_CONTEXT_LEAKAGE = combineLeak(
   INTERNAL_IMPLEMENTATION_TERMS,
   "Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious Linux|strongest|workspace model|internal planning|\\bstale\\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool|Use CoCalc when|competitor comparison|proof packet|evidence register|pitch docs|AGENTS\\.md|CLAUDE\\.md|GEMINI\\.md|public-site cohesion audit|agent operating",
 );
+
+const SHARED_PRIMITIVE_FEATURE_PAGES = [
+  "automations",
+  "julia",
+  "jupyter-notebook",
+  "latex-editor",
+  "linux",
+  "more-languages",
+  "octave",
+  "r-statistical-software",
+  "sage",
+  "terminal",
+] as const;
+
+const CUSTOM_FEATURE_PAGES_WITHOUT_SHARED_PRIMITIVES = new Set([
+  "ai-page.tsx",
+  "api-page.tsx",
+  "cli-page.tsx",
+  "compare-page.tsx",
+  "teaching-page.tsx",
+]);
+
+const SHARED_CARD_PRIMITIVE =
+  /\b(?:ContextList|FeatureFinalBand|StartCard|StoryCard)\b/;
+
+const INLINE_STYLE_LIMIT = 15;
+const LEGACY_INLINE_STYLE_BUDGETS: Record<string, number> = {
+  "ai-page.tsx": 21,
+  "cli-page.tsx": 23,
+  "python-page.tsx": 31,
+  "sage-page.tsx": 21,
+  "teaching-page.tsx": 35,
+  "whiteboard-page.tsx": 20,
+};
+
+// Route accent and gradient literals are being phased into shared tokens. Until
+// then, every remaining raw hex literal must be explicit here so new colors are
+// a conscious design-system decision rather than accidental local styling.
+const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
+  string,
+  readonly string[]
+> = {
+  "ai-page.tsx": [
+    "#278c83",
+    "#2f6fda",
+    "#7c3aed",
+    "#f59e0b",
+    "#f7f4ff",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "automations-page.tsx": ["#f4fbff", "#f8fbf4", "#ffffff"],
+  "cli-page.tsx": [
+    "#101820",
+    "#cbd5e1",
+    "#f4f9ff",
+    "#fde68a",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "julia-page.tsx": ["#f4fff8", "#f7f4ff", "#ffffff"],
+  "jupyter-notebook-page.tsx": [
+    "#389e0d",
+    "#7c3aed",
+    "#f37726",
+    "#f4f9ff",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "latex-editor-page.tsx": [
+    "#278c83",
+    "#7c3aed",
+    "#ad6800",
+    "#f4f9ff",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "linux-page.tsx": [
+    "#096dd9",
+    "#278c83",
+    "#ad6800",
+    "#f4f9ff",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "more-languages-page.tsx": ["#4b5563", "#f5f9ff", "#f7faf7", "#ffffff"],
+  "octave-page.tsx": ["#d4380d", "#f4f9ff", "#fff7f1", "#ffffff"],
+  "python-page.tsx": [
+    "#278c83",
+    "#2f6fda",
+    "#389e0d",
+    "#7c3aed",
+    "#ad6800",
+    "#f4f9ff",
+    "#f5fbff",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "r-statistical-software-page.tsx": [
+    "#386cb0",
+    "#f4f9ff",
+    "#f6fff4",
+    "#ffffff",
+  ],
+  "sage-page.tsx": [
+    "#2f6fda",
+    "#389e0d",
+    "#7c3aed",
+    "#ad6800",
+    "#f3fbf3",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "slides-page.tsx": [
+    "#d46b08",
+    "#f7fbff",
+    "#ffd591",
+    "#fff7e6",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "terminal-page.tsx": [
+    "#096dd9",
+    "#278c83",
+    "#ad6800",
+    "#f4f9ff",
+    "#fff8e8",
+    "#ffffff",
+  ],
+  "whiteboard-page.tsx": [
+    "#2f6fda",
+    "#389e0d",
+    "#ad6800",
+    "#d29c3c",
+    "#d4380d",
+    "#f4f9ff",
+    "#f7fbff",
+    "#fff7e6",
+    "#fff8e8",
+    "#ffffff",
+  ],
+};
 
 describe("getFeaturesRouteFromPath", () => {
   it("supports the features index and detail routes", () => {
@@ -93,6 +253,81 @@ describe("PublicFeaturesApp", () => {
       legacyFeatureShadow.test(source)
         ? [`${file}: legacy feature shadow literal`]
         : [],
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it.each(SHARED_PRIMITIVE_FEATURE_PAGES)(
+    "keeps %s on the shared feature-detail primitives",
+    (slug) => {
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      expect(
+        container.querySelector(".cocalc-feature-final-band"),
+      ).not.toBeNull();
+      expect(
+        container.querySelectorAll(".cocalc-feature-context-list").length,
+      ).toBeGreaterThanOrEqual(1);
+    },
+  );
+
+  it("keeps new route pages from shipping without shared card primitives", () => {
+    const offenders = trackedFeaturePageSources().flatMap(
+      ({ file, name, source }) =>
+        SHARED_CARD_PRIMITIVE.test(source) ||
+        CUSTOM_FEATURE_PAGES_WITHOUT_SHARED_PRIMITIVES.has(name)
+          ? []
+          : [`${file}: no shared feature card primitive`],
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps feature pages within the inline-style budget", () => {
+    const offenders = trackedFeaturePageSources().flatMap(
+      ({ file, name, source }) => {
+        const limit = LEGACY_INLINE_STYLE_BUDGETS[name] ?? INLINE_STYLE_LIMIT;
+        const count = source.match(/style=\{\{/g)?.length ?? 0;
+        return count > limit
+          ? [`${file}: ${count} inline style blocks, limit ${limit}`]
+          : [];
+      },
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps raw feature-page hex colors on the explicit allowlist", () => {
+    const offenders = trackedFeaturePageSources().flatMap(
+      ({ file, name, source }) => {
+        const allowed = new Set(
+          (ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE[name] ?? []).map((hex) =>
+            hex.toLowerCase(),
+          ),
+        );
+        return [...source.matchAll(/#[0-9a-f]{3,8}\b/gi)]
+          .map((match) => match[0].toLowerCase())
+          .filter((hex) => !allowed.has(hex))
+          .map((hex) => `${file}: raw hex ${hex}`);
+      },
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps feature-page font sizes tokenized outside numeric icon glyphs", () => {
+    const rawFontSizePx =
+      /(?:fontSize:\s*["'][0-9]+px["']|font-size:\s*[0-9]+px)/gi;
+    const offenders = trackedFeaturePageSources().flatMap(({ file, source }) =>
+      [...source.matchAll(rawFontSizePx)].map(
+        (match) => `${file}: raw px font-size ${match[0]}`,
+      ),
     );
 
     expect(offenders).toEqual([]);

@@ -201,7 +201,7 @@ const COMPARE_PAGE_CSS = `
 
   .cocalc-compare-row-question {
     color: ${PUBLIC_COLORS.heading};
-    font-size: 16px;
+    font-size: ${PUBLIC_TYPE.body}px;
     width: 26%;
   }
 
