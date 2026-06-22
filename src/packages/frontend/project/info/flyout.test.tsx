@@ -131,8 +131,11 @@ describe("project info flyout", () => {
 
     expect(wrap).toHaveBeenCalled();
     expect(screen.getByTestId("outer-scroll")).toBeTruthy();
-    expect(
-      document.querySelector(".ant-table")?.getAttribute("style") ?? "",
-    ).not.toContain("overflow-y");
+    const styledTableWrapper = document
+      .querySelector(".ant-table")
+      ?.closest("[style]");
+    expect(styledTableWrapper?.getAttribute("style") ?? "").toContain(
+      "overflow: hidden",
+    );
   });
 });
