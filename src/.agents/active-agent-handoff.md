@@ -82,6 +82,25 @@ Known risks:
   `lint:frontend`, static build, desktop+mobile browser QA/screenshot
   inspection for `/features/terminal`, source commit, preview rebuild, and
   shared-log handoff.
+- **END 2026-06-22 13:18 PDT:** Source fix landed in `6d77bc7db4`
+  (`frontend/public: sharpen terminal feature page`). `/features/terminal` now
+  leads with "A Linux terminal that lives in your project.", the `.term`
+  section explains folder co-location with two distinct bullets, and the
+  closing fit section is "Where the terminal earns its place." The
+  `SharedStreamDiagram` label was already `Codex`, so no label code change was
+  needed. Validation before source commit: `git diff --check` passed; focused
+  Jest `public/features/__tests__/app.test.tsx` passed 100/100; browser-QA
+  harness Jest passed 5/5; `pnpm -C src lint:frontend` passed;
+  `pnpm -C src/packages/static build:dev` passed with the existing local
+  debug-log permission warning only; browser QA for `/features/terminal`
+  desktop+mobile passed 48/48 with screenshots/results at
+  `/tmp/cocalc-public-qa-40Ewqn`. Screenshot inspection: desktop and mobile
+  hero/sections fit without overflow; shared-stream labels read Researcher,
+  Student, Codex; protected home, pricing, docs content, palette/type lanes,
+  other feature pages, and the untracked `dedicated-compute-page.tsx` draft
+  stayed untouched. Final post-commit preview rebuild from git revision
+  `6d77bc7db4` passed, and final `/features/terminal` desktop+mobile browser
+  QA passed 48/48 with screenshots/results at `/tmp/cocalc-public-qa-Le4UiQ`.
 
 ---
 
