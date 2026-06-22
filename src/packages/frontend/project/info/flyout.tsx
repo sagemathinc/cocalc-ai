@@ -134,7 +134,6 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
         style={{
           width: "100%",
           overflowX: "hidden",
-          overflowY: "auto",
         }}
         loading={disconnected || loading}
       >
@@ -216,7 +215,7 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
           flex: "1 1 auto",
           display: "flex",
           flexDirection: "column",
-          overflow: "hidden",
+          overflow: "auto",
           height: "100%",
         }}
       >
