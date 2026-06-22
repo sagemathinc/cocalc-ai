@@ -1635,6 +1635,142 @@ test("software history shows unknown for unsealed started deployments", async ()
   assert.equal(payload.data.deployments[0].status, "unknown");
 });
 
+test("software history uses narrow human columns by default", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-history-narrow-"));
+  const localStore = join(dir, "store");
+  const deploymentIndex = {
+    schema: "cocalc-software-deployment-index-v1",
+    component: "hub",
+    profile_or_channel: "prod",
+    generated_at: "2026-06-15T00:00:00.000Z",
+    deployments: [
+      {
+        deployment_id: "20260615T000000Z-artifact",
+        component: "hub",
+        artifact_component: "hub",
+        profile_or_channel: "prod",
+        started_at: "2026-06-15T00:00:00.000Z",
+        updated_at: "2026-06-15T00:00:00.000Z",
+        artifact_id: "artifact",
+        tag: "release-tag",
+        git: { commit: "abcdef", short: "abcdef", dirty: false },
+        deployed_by: { user: "alice", host: "workstation" },
+        target: { kind: "rocket-bay", profile: "prod" },
+        status: "succeeded",
+        duration_ms: 1234,
+        record_key: "software/deployments/prod/hub/record.json",
+        record_url:
+          "https://software.example.test/software/deployments/prod/hub/record.json",
+      },
+    ],
+  };
+  const r2 = makeR2Client(
+    new Map([
+      [
+        "software/deployments/prod/hub/index.json",
+        Buffer.from(JSON.stringify(deploymentIndex), "utf8"),
+      ],
+    ]),
+  );
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "software",
+      "history",
+      "hub",
+      "prod",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const output = logs.join("\n");
+  assert.match(output, /deployed_at/);
+  assert.match(output, /deployed_by/);
+  assert.match(output, /release-tag/);
+  assert.doesNotMatch(output, /artifact_id/);
+  assert.doesNotMatch(output, /profile_or_channel/);
+  assert.doesNotMatch(output, /duration/);
+});
+
+test("software history --wide keeps full human columns", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-history-wide-"));
+  const localStore = join(dir, "store");
+  const deploymentIndex = {
+    schema: "cocalc-software-deployment-index-v1",
+    component: "hub",
+    profile_or_channel: "prod",
+    generated_at: "2026-06-15T00:00:00.000Z",
+    deployments: [
+      {
+        deployment_id: "20260615T000000Z-artifact",
+        component: "hub",
+        artifact_component: "hub",
+        profile_or_channel: "prod",
+        started_at: "2026-06-15T00:00:00.000Z",
+        updated_at: "2026-06-15T00:00:00.000Z",
+        artifact_id: "artifact",
+        tag: "release-tag",
+        git: { commit: "abcdef", short: "abcdef", dirty: false },
+        deployed_by: { user: "alice", host: "workstation" },
+        target: { kind: "rocket-bay", profile: "prod" },
+        status: "succeeded",
+        duration_ms: 1234,
+        record_key: "software/deployments/prod/hub/record.json",
+        record_url:
+          "https://software.example.test/software/deployments/prod/hub/record.json",
+      },
+    ],
+  };
+  const r2 = makeR2Client(
+    new Map([
+      [
+        "software/deployments/prod/hub/index.json",
+        Buffer.from(JSON.stringify(deploymentIndex), "utf8"),
+      ],
+    ]),
+  );
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "software",
+      "history",
+      "hub",
+      "prod",
+      "--wide",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const output = logs.join("\n");
+  assert.match(output, /artifact_id/);
+  assert.match(output, /profile_or_channel/);
+  assert.match(output, /duration/);
+});
+
 test("software rollback redeploys a successful historical artifact", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-rollback-static-"));
   const artifactId = "20260614T235912Z-e882d124-old-static";

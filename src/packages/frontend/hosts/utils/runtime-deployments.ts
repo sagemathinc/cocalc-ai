@@ -7,6 +7,13 @@ import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
 
 const MANAGED_COMPONENT_ARTIFACT: HostRuntimeArtifact = "project-host";
 
+export const PROJECT_HOST_RUNTIME_STACK_COMPONENTS: ManagedComponentKind[] = [
+  "project-host",
+  "conat-router",
+  "conat-persist",
+  "acp-worker",
+];
+
 function normalizeSoftwareArtifact(
   artifact: string | HostSoftwareArtifact | undefined,
 ): HostSoftwareArtifact | undefined {

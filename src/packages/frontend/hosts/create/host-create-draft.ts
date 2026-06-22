@@ -516,14 +516,12 @@ export function normalizeDraft(
 
 const optionLooksGpu = (option: HostFieldOption) => {
   const meta = (option.meta ?? {}) as Record<string, any>;
-  return (
-    (typeof meta.gpus === "number" && meta.gpus > 0) ||
-    (typeof meta.gpu_count === "number" && meta.gpu_count > 0) ||
-    (typeof meta.gpu === "string" && meta.gpu !== "none") ||
-    /gpu|nvidia|rtx|a10|a40|a100|h100|h200|b200|b300|l4/i.test(
-      `${option.value} ${option.label}`,
-    )
-  );
+  if (typeof meta.gpus === "number") return meta.gpus > 0;
+  if (typeof meta.gpu_count === "number") return meta.gpu_count > 0;
+  if (typeof meta.gpu === "string") return meta.gpu !== "none";
+  const label = `${option.value} ${option.label}`;
+  if (/non[\s-]*gpu/i.test(label)) return false;
+  return /gpu|nvidia|rtx|a10|a40|a100|h100|h200|b200|b300|l4/i.test(label);
 };
 
 const optionRamGiB = (option: HostFieldOption): number | undefined => {
