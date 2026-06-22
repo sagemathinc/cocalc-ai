@@ -853,7 +853,7 @@ describe("host-create-draft", () => {
     });
   });
 
-  it("keeps Nebius Standard GPU on a GPU shape when only spot GPU pricing is loaded", () => {
+  it("does not let Nebius Non-GPU CPU labels satisfy the Standard GPU preset", () => {
     const context: HostCreateDraftContext = {
       enabledProviders: ["nebius"],
       billing,
@@ -871,21 +871,22 @@ describe("host-create-draft", () => {
               {
                 name: "16vcpu-64gb",
                 platform: "cpu-platform",
-                platform_label: "CPU platform",
+                platform_label: "Non-GPU AMD Epyc Genoa",
                 regions: ["us-central1"],
                 vcpus: 16,
                 memory_gib: 64,
                 gpus: 0,
+                gpu_label: "Non-GPU AMD Epyc Genoa",
               },
               {
                 name: "1gpu-24vcpu-218gb",
                 platform: "gpu-rtx6000",
-                platform_label: "NVIDIA RTX PRO 6000",
+                platform_label: "NVIDIA® RTX PRO™ 6000",
                 regions: ["us-central1"],
                 vcpus: 24,
                 memory_gib: 218,
                 gpus: 1,
-                gpu_label: "NVIDIA RTX PRO 6000",
+                gpu_label: "NVIDIA® RTX PRO™ 6000",
                 allowed_for_preemptibles: true,
               },
             ],
@@ -895,22 +896,28 @@ describe("host-create-draft", () => {
             scope: "global",
             payload: [
               {
-                product: "Non-GPU CPU platform. CPU",
+                product: "Non-GPU AMD Epyc Genoa. CPU",
                 region: "us-central1",
                 price_usd: "0.01",
                 unit: "vCPU hour",
               },
               {
-                product: "Non-GPU CPU platform. RAM",
+                product: "Non-GPU AMD Epyc Genoa. RAM",
                 region: "us-central1",
                 price_usd: "0.002",
                 unit: "GiB hour",
               },
               {
-                product: "Preemptible NVIDIA RTX PRO 6000",
+                product: "NVIDIA® RTX PRO™ 6000",
                 region: "us-central1",
-                price_usd: "0.95",
+                price_usd: "1.80",
                 unit: "GPU hour",
+              },
+              {
+                product: "Network SSD IO M3 disk",
+                region: "us-central1",
+                price_usd: "0.00016164383561643835",
+                unit: "GiB hour",
               },
             ],
           },

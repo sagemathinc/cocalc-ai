@@ -516,14 +516,12 @@ export function normalizeDraft(
 
 const optionLooksGpu = (option: HostFieldOption) => {
   const meta = (option.meta ?? {}) as Record<string, any>;
-  return (
-    (typeof meta.gpus === "number" && meta.gpus > 0) ||
-    (typeof meta.gpu_count === "number" && meta.gpu_count > 0) ||
-    (typeof meta.gpu === "string" && meta.gpu !== "none") ||
-    /gpu|nvidia|rtx|a10|a40|a100|h100|h200|b200|b300|l4/i.test(
-      `${option.value} ${option.label}`,
-    )
-  );
+  if (typeof meta.gpus === "number") return meta.gpus > 0;
+  if (typeof meta.gpu_count === "number") return meta.gpu_count > 0;
+  if (typeof meta.gpu === "string") return meta.gpu !== "none";
+  const label = `${option.value} ${option.label}`;
+  if (/non[\s-]*gpu/i.test(label)) return false;
+  return /gpu|nvidia|rtx|a10|a40|a100|h100|h200|b200|b300|l4/i.test(label);
 };
 
 const optionRamGiB = (option: HostFieldOption): number | undefined => {
@@ -543,19 +541,6 @@ const optionIsAvailable = (option: HostFieldOption) => {
     !option.disabled &&
     option.stateLabel !== "unavailable" &&
     option.stateLabel !== "price unavailable" &&
-    meta.compatible !== false
-  );
-};
-
-const optionIsSelectable = (
-  option: HostFieldOption,
-  { allowPriceUnavailable = false }: { allowPriceUnavailable?: boolean } = {},
-) => {
-  const meta = (option.meta ?? {}) as Record<string, any>;
-  return (
-    !option.disabled &&
-    option.stateLabel !== "unavailable" &&
-    (allowPriceUnavailable || option.stateLabel !== "price unavailable") &&
     meta.compatible !== false
   );
 };
@@ -673,15 +658,9 @@ const selectNebiusCpuMachineType = (options: HostFieldOption[] | undefined) =>
 
 const selectNebiusGpuMachineType = (
   options: HostFieldOption[] | undefined,
-  opts?: { requireSpot?: boolean; allowPriceUnavailable?: boolean },
+  opts?: { requireSpot?: boolean },
 ) =>
-  (options ?? [])
-    .filter((option) => {
-      const ramGiB = optionRamGiB(option);
-      return (
-        optionIsSelectable(option, opts) && (ramGiB == null || ramGiB >= 16)
-      );
-    })
+  availableOptionsWithAtLeast16GiBRam(options)
     .filter(optionLooksGpu)
     .filter(
       (option) =>
@@ -764,7 +743,6 @@ const setPrimaryComputeOption = (
         ? selectNebiusCpuMachineType(nebiusOptions)
         : selectNebiusGpuMachineType(nebiusOptions, {
             requireSpot: draft.pricing_model === "spot",
-            allowPriceUnavailable: draft.pricing_model !== "spot",
           });
     if (selected) draft[field] = selected;
     return;
@@ -818,9 +796,7 @@ export function getAvailablePresets(
           (option) => option.value !== "none",
         )
       : draft.provider === "nebius"
-        ? !!selectNebiusGpuMachineType(fieldOptions.machine_type, {
-            allowPriceUnavailable: true,
-          })
+        ? !!selectNebiusGpuMachineType(fieldOptions.machine_type)
         : !!selectFirstByPredicate(
             fieldOptions[
               draft.provider === "hyperstack" ? "size" : "machine_type"
