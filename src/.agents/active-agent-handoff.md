@@ -46,6 +46,37 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 16:45 PDT)
+
+- **START 2026-06-22 16:45 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site skill, multi-agent operating
+  model, and this ledger. Dry-run fetch showed no update to
+  `origin/blaec-synthesis-2026-06-18`; local HEAD matched origin at
+  `2bd2f2ace9`. The released Codex source queue remains drained: feature-page
+  consistency items 9-12 and design-polish items 13-15 are complete, the next
+  source slice is still gated on Claude audit plus a fresh vision-critique pass,
+  and the post-batch QA sweep's low findings have not been promoted into the
+  active Codex queue. Preview ownership drift observed: the only visible hub
+  process was pid `238`, rooted at `/home/user/cocalc-ai/src`, not the synthesis
+  worktree; no static build/watch process or `:9100` listener was observed via
+  available port tools. Claimed files: this ledger and shared coordination
+  status/logs only. Guardrails: no protected home, pricing/compliance,
+  type/palette work, pitch/docs content, route source edits, raw-audit foraging,
+  preview rebuild/restart, or the untracked `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 16:45 PDT:** QUEUE DRAINED / PREVIEW OWNER DRIFT. No
+  public-site route source was changed and no build/browser QA was run because
+  no rendered route was touched and the preview is not currently rooted in the
+  synthesis worktree. The latest public-site source-change commit remains
+  Blaec's `ef3bed61d2`; this turn records only the queue gate and preview-owner
+  risk in coordination artifacts. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude audit / fresh vision critique or another
+  curated, non-gated queue item; before source/preview work, restore/verify
+  `blaec.cocalc.ai` ownership from `/home/user/cocalc-ai-synthesis/src`.
+
 ### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 16:35 PDT)
 
 - **START 2026-06-22 16:35 PDT:** Scheduled landing-page improvement loop
