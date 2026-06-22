@@ -6321,6 +6321,174 @@ describe("hosts.listHosts bootstrap normalization", () => {
     expect(hosts).toHaveLength(1);
     expect(hosts[0].scope).toBe("collab");
   });
+
+  it("does not include tier pool hosts in the non-admin management list prefilter", async () => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_host_runtime_deployments",
+        ) ||
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_host_runtime_deployments_host_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("FROM project_host_runtime_deployments") ||
+        sql.includes("COUNT(*) AS total")
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { listHosts } = await import("./hosts");
+    await listHosts({
+      account_id: ACCOUNT_ID,
+      show_all: true,
+    });
+
+    const hostListSql = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("SELECT * FROM project_hosts"),
+    )?.[0];
+    expect(hostListSql).toContain("metadata->>'owner' = $1::text");
+    expect(hostListSql).not.toContain("OR tier IS NOT NULL");
+  });
+
+  it("includes but redacts tier pool hosts in catalog host lists", async () => {
+    isAdminMock = jest.fn(async () => false);
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {
+        features: {
+          project_host_tier: 0,
+        },
+      },
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_host_runtime_deployments",
+        ) ||
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_host_runtime_deployments_host_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "tier-pool-host",
+              region: "us-west1",
+              status: "running",
+              last_seen: new Date(),
+              tier: 0,
+              deleted: null,
+              public_url: "https://host.example.com",
+              internal_url: "http://10.0.0.1",
+              ssh_server: "203.0.113.10:2222",
+              capacity: {
+                projects: 12,
+              },
+              metadata: {
+                owner: "other-owner",
+                size: "t2d-standard-2",
+                host_cpu_count: 2,
+                host_ram_gb: 8,
+                gpu: false,
+                pricing_model: "spot",
+                interruption_restore_policy: "immediate",
+                runtime: {
+                  instance_id: "provider-instance-secret",
+                  public_ip: "203.0.113.10",
+                  observed_at: "2026-04-01T20:00:00Z",
+                },
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "t2d-standard-2",
+                  disk_gb: 256,
+                  disk_type: "balanced",
+                  metadata: {
+                    shared_disk_id: "shared-disk-secret",
+                  },
+                },
+                metrics: {
+                  current: {
+                    running_project_count: 3,
+                    assigned_project_count: 12,
+                    memory_total_bytes: 8 * 1024 ** 3,
+                    disk_device_total_bytes: 256 * 1024 ** 3,
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_host_runtime_deployments") ||
+        sql.includes("COUNT(*) AS total")
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      catalog: true,
+    });
+
+    const hostListSql = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("SELECT * FROM project_hosts"),
+    )?.[0];
+    expect(hostListSql).toContain("OR tier IS NOT NULL");
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toEqual(
+      expect.objectContaining({
+        id: HOST_ID,
+        name: "tier-pool-host",
+        owner: "",
+        scope: "pool",
+        access_role: "pool",
+        can_place: true,
+        tier: 0,
+        region: "us-west1",
+        size: "t2d-standard-2",
+        host_cpu_count: 2,
+        host_ram_gb: 8,
+        pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        projects: 12,
+      }),
+    );
+    expect(hosts[0].provider_instance_id).toBeUndefined();
+    expect(hosts[0].public_ip).toBeUndefined();
+    expect(hosts[0].public_url).toBeUndefined();
+    expect(hosts[0].internal_url).toBeUndefined();
+    expect(hosts[0].ssh_server).toBeUndefined();
+    expect(hosts[0].billing_owner_account_id).toBeUndefined();
+    expect(hosts[0].runtime_exception_summary).toBeUndefined();
+    expect(hosts[0].machine).toEqual(
+      expect.objectContaining({
+        cloud: "gcp",
+        machine_type: "t2d-standard-2",
+        disk_gb: 256,
+        disk_type: "balanced",
+      }),
+    );
+    expect(hosts[0].machine?.metadata).toBeUndefined();
+    expect(hosts[0].metrics?.current?.running_project_count).toBe(3);
+    expect(hosts[0].metrics?.current?.assigned_project_count).toBe(12);
+  });
 });
 
 describe("hosts.refreshHostCloudState", () => {

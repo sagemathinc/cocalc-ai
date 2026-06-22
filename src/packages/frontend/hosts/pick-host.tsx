@@ -36,6 +36,7 @@ import {
 } from "./pressure-ui";
 import { isSpotHost, SpotHostTag } from "./spot-ui";
 import { HostReliabilityButton } from "./components/host-reliability-button";
+import { HostCurrentMetrics } from "./components/host-current-metrics";
 import { useProjectHostLatencies } from "./use-project-host-latencies";
 
 const STATUS_COLOR = {
@@ -103,6 +104,41 @@ function moveEstimate({
     size: human_readable_size(bytes),
     sameBackupRegion,
   };
+}
+
+function formatHostRam(host: Host): string | undefined {
+  const ramGb =
+    typeof host.host_ram_gb === "number"
+      ? host.host_ram_gb
+      : typeof host.host_ram_mb === "number"
+        ? Math.round(host.host_ram_mb / 1024)
+        : undefined;
+  return ramGb ? `${ramGb} GB RAM` : undefined;
+}
+
+function formatHostCpu(host: Host): string | undefined {
+  return typeof host.host_cpu_count === "number"
+    ? `${host.host_cpu_count} vCPU`
+    : undefined;
+}
+
+function formatHostGpu(host: Host): string | undefined {
+  if (!host.gpu) return undefined;
+  const count = host.machine?.gpu_count;
+  const type = host.machine?.gpu_type;
+  if (type && count) return `${count} ${type}`;
+  if (type) return type;
+  return "GPU";
+}
+
+function hostSpecTags(host: Host): string[] {
+  return [
+    host.machine?.cloud,
+    host.machine?.machine_type || host.size,
+    formatHostCpu(host),
+    formatHostRam(host),
+    formatHostGpu(host),
+  ].filter((value): value is string => !!value);
 }
 
 function autoSelectCompare(a: Host, b: Host): number {
@@ -689,9 +725,11 @@ export function HostPickerPanel({
                       ) : null}
                     </Space>
                   </Space>
-                  <Typography.Text type="secondary">
-                    {projectsLabel}: {host.projects ?? 0}
-                  </Typography.Text>
+                  <Space size={[6, 4]} wrap>
+                    {hostSpecTags(host).map((label) => (
+                      <Tag key={label}>{label}</Tag>
+                    ))}
+                  </Space>
                   <HostPlacementSummary
                     host={host}
                     compact
@@ -701,6 +739,13 @@ export function HostPickerPanel({
                   <Space wrap>
                     <HostReliabilityButton host={host} compact />
                   </Space>
+                  {host.metrics?.current ? (
+                    <HostCurrentMetrics host={host} compact dense />
+                  ) : (
+                    <Typography.Text type="secondary">
+                      {projectsLabel}: {host.projects ?? 0}
+                    </Typography.Text>
+                  )}
                   {isMove && host.id === currentHostId && (
                     <Typography.Text type="secondary">
                       This {projectLabel.toLowerCase()} is already on this host.

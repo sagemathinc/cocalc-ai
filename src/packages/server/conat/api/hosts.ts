@@ -827,6 +827,35 @@ async function loadHostForListing(
   return row;
 }
 
+async function loadHostForAvailability(
+  id: string,
+  account_id?: string,
+): Promise<{ row: any; full_view: boolean }> {
+  const actor = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  const role = await resolveLoadedHostAccessRole({ row, account_id: actor });
+  if (hostAccessRoleCan(role, "view")) {
+    return { row, full_view: true };
+  }
+  const tier = normalizeHostTier(row.tier);
+  if (tier == null) {
+    throw new Error("not authorized");
+  }
+  const membership = await loadMembership(actor);
+  const userTier = getUserHostTier(membership.entitlements);
+  if (userTier < tier) {
+    throw new Error("not authorized");
+  }
+  return { row, full_view: false };
+}
+
 function isHostNotFoundError(err: unknown): boolean {
   return err instanceof Error && err.message === "host not found";
 }
@@ -2913,6 +2942,105 @@ type ListHostsOptions = {
   trusted_admin_view?: boolean;
 };
 
+function sanitizeMachineForPlacement(
+  machine?: HostMachine,
+): HostMachine | undefined {
+  if (!machine) return undefined;
+  return {
+    cloud: machine.cloud,
+    machine_type: machine.machine_type,
+    gpu_type: machine.gpu_type,
+    gpu_count: machine.gpu_count,
+    storage_mode: machine.storage_mode,
+    disk_gb: machine.disk_gb,
+    disk_type: machine.disk_type,
+    shared_disk_gb: machine.shared_disk_gb,
+    shared_disk_type: machine.shared_disk_type,
+    zone: machine.zone,
+  };
+}
+
+function sanitizeHostForPlacement(host: Host): Host {
+  return {
+    id: host.id,
+    name: host.name,
+    owner: "",
+    bay_id: host.bay_id,
+    region: host.region,
+    size: host.size,
+    host_cpu_count: host.host_cpu_count,
+    host_ram_gb: host.host_ram_gb,
+    host_ram_mb: host.host_ram_mb,
+    project_ram_limit_mb: host.project_ram_limit_mb,
+    gpu: host.gpu,
+    status: host.status,
+    updated: host.updated,
+    metrics: host.metrics,
+    pressure: host.pressure,
+    machine: sanitizeMachineForPlacement(host.machine),
+    projects: host.projects,
+    last_seen: host.last_seen,
+    tier: host.tier,
+    scope: host.scope,
+    access_role: host.access_role,
+    can_start: false,
+    can_place: host.can_place,
+    reason_unavailable: host.reason_unavailable,
+    starred: host.starred,
+    pricing_model: host.pricing_model,
+    desired_pricing_model: host.desired_pricing_model,
+    effective_pricing_model: host.effective_pricing_model,
+    interruption_restore_policy: host.interruption_restore_policy,
+    spot_recovery_policy: host.spot_recovery_policy,
+    spot_recovery_state: host.spot_recovery_state,
+    recovery_phase: host.recovery_phase,
+    desired_state: host.desired_state,
+    provider_observed_at: host.provider_observed_at,
+    deleted: host.deleted,
+  };
+}
+
+function sanitizeAvailabilityEventForPlacement(
+  event: HostAvailabilityEvent,
+): HostAvailabilityEvent {
+  return {
+    id: event.id,
+    host_id: event.host_id,
+    started_at: event.started_at,
+    ended_at: event.ended_at,
+    state: event.state,
+    planned: event.planned,
+    category: event.category,
+    source: event.source,
+    summary: event.summary,
+    ...(event.admin_note_visibility === "public" && event.admin_note
+      ? {
+          admin_note: event.admin_note,
+          admin_note_visibility: "public" as const,
+        }
+      : {}),
+  };
+}
+
+function sanitizeAvailabilityReportForPlacement(
+  report: HostAvailabilityReport,
+): HostAvailabilityReport {
+  return {
+    ...report,
+    summary: {
+      ...report.summary,
+      current_event: report.summary.current_event
+        ? sanitizeAvailabilityEventForPlacement(report.summary.current_event)
+        : undefined,
+    },
+    days: report.days.map((day) => ({
+      ...day,
+      events: day.events.map(sanitizeAvailabilityEventForPlacement),
+    })),
+    events: report.events.map(sanitizeAvailabilityEventForPlacement),
+  };
+}
+
 export async function listHostsLocal({
   account_id,
   admin_view,
@@ -2929,6 +3057,7 @@ export async function listHostsLocal({
   }
   const filters: string[] = [];
   const params: any[] = [owner];
+  const includePoolHosts = !!catalog;
   if (!admin_view) {
     filters.push(
       `(metadata->>'owner' = $1::text
@@ -2939,7 +3068,7 @@ export async function listHostsLocal({
             AND access.account_id::text = $1::text
             AND access.revoked_at IS NULL
         )
-        OR tier IS NOT NULL)`,
+        ${includePoolHosts ? "OR tier IS NOT NULL" : ""})`,
     );
   }
   if (!include_deleted) {
@@ -3010,6 +3139,9 @@ export async function listHostsLocal({
       accessRole,
       hasDedicatedAccess: delegatedRole != null,
     });
+    if (!hostAccessRoleCan(accessRole, "view") && !placement.can_place) {
+      continue;
+    }
     const availability = computeHostOperationalAvailability(row);
     const can_place = placement.can_place && availability.operational;
     const reason_unavailable =
@@ -3081,8 +3213,8 @@ export async function listHostsLocal({
       can_start,
       reason_unavailable,
       starred,
-    }) =>
-      parseRow(row, {
+    }) => {
+      const host = parseRow(row, {
         scope,
         access_role,
         can_place,
@@ -3109,7 +3241,11 @@ export async function listHostsLocal({
         metrics_history: metricsHistory.get(row.id),
         runtime_exception_summary: runtimeExceptionSummaries.get(row.id),
         runtime_desired_artifacts: runtimeDesiredArtifactSummaries.get(row.id),
-      }),
+      });
+      return hostAccessRoleCan(access_role, "view")
+        ? host
+        : sanitizeHostForPlacement(host);
+    },
   );
 }
 
@@ -4322,8 +4458,9 @@ export async function getHostAvailability({
         days,
       });
   }
-  await loadHostForView(id, account_id);
-  return await getHostAvailabilityReport({ host_id: id, days });
+  const { full_view } = await loadHostForAvailability(id, account_id);
+  const report = await getHostAvailabilityReport({ host_id: id, days });
+  return full_view ? report : sanitizeAvailabilityReportForPlacement(report);
 }
 
 export async function annotateHostAvailabilityEvent({
