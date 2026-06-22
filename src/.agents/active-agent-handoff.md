@@ -1377,3 +1377,35 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   routes `/guides`, `/about`, `/news`, `/policies`, `/support/community`
   desktop+mobile passed 148/148. Screenshots inspected from
   `/tmp/cocalc-public-qa-jU1SnF` and `/tmp/cocalc-public-qa-1JHK87`.
+
+---
+
+## Codex — post-framing P3 feature-page density cleanup (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  only the residual idea-repetition slice for `/features/terminal`,
+  `/features/latex-editor`, and `/features/jupyter-notebook`: trim repeated
+  prose while preserving each page's concrete workflow proof, structure, CTAs,
+  and routes. Claimed files:
+  `src/packages/frontend/public/features/terminal-page.tsx`,
+  `src/packages/frontend/public/features/latex-editor-page.tsx`,
+  `src/packages/frontend/public/features/jupyter-notebook-page.tsx`,
+  focused feature tests/browser-QA canaries if needed, and this ledger.
+  Guardrails: no protected home, pitch docs, docs routes/content,
+  pricing/compliance, type/palette work, product pages, or the untracked
+  dedicated-compute draft.
+- **END 2026-06-22:** Feature-page density cleanup implemented and validated.
+  Trimmed repeated agent-readable terminal context from the Terminal hero and
+  terminal-path bullet while preserving the concrete agent-context proof in the
+  heavy-output section. Reworked the LaTeX working-tree and computation-writing
+  paragraphs so they advance collaboration and rebuild/review outcomes instead
+  of restating the project premise. Replaced Jupyter's repeated browser-tab
+  framing in the `Keep runs alive` story card with durable run/output review
+  wording. Added browser-QA forbidden-text canaries for the removed phrases.
+  Validation passed: `git diff --check`; focused feature Jest 99/99 (with
+  existing React/AntD jsdom warnings); browser-QA script Jest 5/5; `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+  `/features/terminal`, `/features/latex-editor`, and
+  `/features/jupyter-notebook` desktop+mobile passed 130/130. Mobile
+  screenshots inspected from `/tmp/cocalc-public-qa-z8ynBQ`.

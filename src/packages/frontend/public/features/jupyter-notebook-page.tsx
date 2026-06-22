@@ -289,7 +289,8 @@ export default function JupyterNotebookFeaturePage({
         <Col xs={24} md={8}>
           <StoryCard icon="stopwatch" title="Keep runs alive">
             Start a long cell, disconnect, and return to the captured output.
-            The browser tab is not the source of truth for execution.
+            CoCalc keeps the run and output available for review when you
+            reconnect.
           </StoryCard>
         </Col>
         <Col xs={24} md={8}>

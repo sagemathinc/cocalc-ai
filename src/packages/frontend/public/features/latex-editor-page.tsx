@@ -270,9 +270,9 @@ export default function LatexEditorFeaturePage({
                 figures, scripts, notebooks, generated tables, and discussions.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                CoCalc makes that whole working tree collaborative. The LaTeX
-                editor is one part of a project that also contains terminals,
-                Jupyter, Python, Sage, R, chat, TimeTravel, and Codex.
+                CoCalc makes that working tree collaborative. Coauthors can
+                edit, discuss, and review those assets without splitting the
+                paper workflow across separate tools.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button href={appPath("features/jupyter-notebook")}>
@@ -301,8 +301,7 @@ export default function LatexEditorFeaturePage({
               <Paragraph style={{ margin: 0 }}>
                 CoCalc is a strong fit when figures or tables come from code.
                 Regenerate evidence in a notebook or script, rebuild the PDF,
-                and keep the source of the result close to the paragraph that
-                cites it.
+                and check the result while the draft is still open.
               </Paragraph>
               <Button
                 href={appPath("features/ai")}

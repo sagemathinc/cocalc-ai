@@ -335,8 +335,7 @@ export default function TerminalFeaturePage({
                 For industry R&D, data-science, and engineering teams, a real
                 Linux shell runs in the browser next to notebooks, code, LaTeX,
                 data, and chat. CoCalc keeps terminal work durable,
-                collaborative, and visible to the agents and people working in
-                the same project.
+                collaborative, and connected to the rest of the project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 It is a familiar terminal experience in the browser — a full
@@ -380,7 +379,7 @@ export default function TerminalFeaturePage({
               </Paragraph>
               <BulletList
                 items={[
-                  "The terminal path gives humans and agents a stable target.",
+                  "The terminal path gives the shell a stable project address.",
                   "The working directory follows the file location.",
                   "Terminal history is tied to the path where the session starts.",
                   "Project files created from the shell can be reviewed with TimeTravel.",

@@ -375,7 +375,10 @@ const ROUTE_RULES = {
       "Start using Jupyter in CoCalc",
       "For industry R&D, data-science, and research teams",
     ],
-    forbidText: ["Ask about Jupyter workflows"],
+    forbidText: [
+      "Ask about Jupyter workflows",
+      "The browser tab is not the source of truth for execution",
+    ],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
     requireLinks: [
@@ -416,7 +419,11 @@ const ROUTE_RULES = {
       "Ready to use terminals in CoCalc?",
       "familiar terminal experience in the browser",
     ],
-    forbidText: ["Ask about terminal workflows"],
+    forbidText: [
+      "Ask about terminal workflows",
+      "visible to the agents and people",
+      "humans and agents a stable target",
+    ],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
@@ -452,7 +459,12 @@ const ROUTE_RULES = {
       "visible coauthor cursors",
     ],
     requireSelectors: [".cocalc-latex-computation-list"],
-    forbidText: ["PDF build", "Ask about LaTeX workflows"],
+    forbidText: [
+      "PDF build",
+      "Ask about LaTeX workflows",
+      "project that also contains terminals",
+      "keep the source of the result close",
+    ],
   },
   "/features/sage": {
     requireText: [
