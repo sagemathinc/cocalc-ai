@@ -16,10 +16,44 @@ then answer from that page instead of guessing from source code or memory.
 Prefer these paths in this order:
 
 1. `cocalc docs ...` when the user asks a CoCalc usage question or explicitly asks to use docs
-2. `cocalc exec-api` + `cocalc exec`
-3. `cocalc project jupyter ...` for notebook cell listing, mutation, execution, and live-run inspection
-4. `cocalc export ...` / `cocalc import ...`
-5. `cocalc browser exec-api` + `cocalc browser exec`
+2. `cocalc rootfs recipe ls` / `cocalc rootfs recipe explain ...` / `cocalc rootfs recipe run ... --here` when asked to install software, language stacks, Jupyter kernels, app launchers, IDEs, or project-wide tooling
+3. `cocalc exec-api` + `cocalc exec`
+4. `cocalc project jupyter ...` for notebook cell listing, mutation, execution, and live-run inspection
+5. `cocalc export ...` / `cocalc import ...`
+6. `cocalc browser exec-api` + `cocalc browser exec`
+
+## Software Installs: Check RootFS Recipes First
+
+When asked to install software, language runtimes, Jupyter kernels, app launchers,
+IDEs, or larger toolchains in a CoCalc project, check the built-in RootFS recipes
+before hand-writing `apt`, `pip`, `curl`, or similar install commands:
+
+```bash
+cocalc rootfs recipe ls
+cocalc rootfs recipe explain <recipe-or-module>
+```
+
+If a matching recipe exists and the user wants it installed into the current
+project, prefer:
+
+```bash
+cocalc rootfs recipe run <recipe-or-module> --here
+```
+
+This runs recipe commands locally in the current project and writes portable
+RootFS publish metadata under `/home/user/.cocalc/rootfs-recipes/`.
+
+Use explicit filesystem recipes or module registries when needed:
+
+```bash
+cocalc rootfs recipe run ./recipe.yaml --here
+cocalc rootfs recipe run my/module --module-dir ./rootfs-recipes --here
+```
+
+Fall back to manual installs only when no recipe fits, the recipe is unsuitable
+for the request, or the user explicitly asks for a custom/manual installation. If
+a recipe fails, inspect its output and fix the immediate issue before abandoning
+it.
 
 This is the key rule:
 

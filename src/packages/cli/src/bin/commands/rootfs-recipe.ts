@@ -13,6 +13,7 @@ import type { ExecuteCodeOutput } from "@cocalc/util/types/execute-code";
 
 import type { RootfsConfigExport } from "@cocalc/util/rootfs-images";
 import { parse as parseYaml } from "yaml";
+import { BUILTIN_ROOTFS_RECIPES } from "./rootfs-recipes-builtin.generated";
 
 type JsonObject = Record<string, any>;
 
@@ -61,6 +62,7 @@ type RootfsRecipeModule = {
   id: string;
   version?: number;
   description?: string;
+  timeout?: number;
   inputs?: Record<
     string,
     {
@@ -167,6 +169,7 @@ type RootfsRecipeRunnerDeps = {
 type LoadedModule = {
   dir: string;
   module: RootfsRecipeModule;
+  readFile: (path: string) => string;
 };
 
 type LoadedRecipe = {
@@ -177,6 +180,7 @@ type LoadedRecipe = {
 };
 
 const DEFAULT_RECIPE_COMMAND_TIMEOUT_SECONDS = 900;
+const BUILTIN_RECIPE_MODULE_DIR = "builtin:/rootfs-recipes";
 
 export function loadRootfsRecipe(recipePath: string): RootfsRecipe {
   const resolved = resolve(recipePath);
@@ -189,6 +193,11 @@ export function loadRootfsRecipe(recipePath: string): RootfsRecipe {
     );
   }
   return normalizeRecipe(parsed, resolved);
+}
+
+function loadRootfsRecipePath(recipePath: string): RootfsRecipe {
+  const parsed = parseRecipeText(recipePath, readRootfsRecipeText(recipePath));
+  return normalizeRecipe(parsed, recipePath);
 }
 
 function loadRootfsRecipeSource(
@@ -224,7 +233,7 @@ function loadRootfsRecipeSource(
   if (examplePath) {
     return {
       moduleDir,
-      recipe: loadRootfsRecipe(examplePath),
+      recipe: loadRootfsRecipePath(examplePath),
       recipeDir: dirname(examplePath),
       recipePath: examplePath,
     };
@@ -258,6 +267,26 @@ export function listRootfsRecipes(moduleDir?: string): RootfsRecipeListResult {
 function listRootfsRecipeExamples(
   moduleDir: string,
 ): RootfsRecipeListResult["examples"] {
+  if (isBuiltinRecipeModuleDir(moduleDir)) {
+    return Object.keys(BUILTIN_ROOTFS_RECIPES.files)
+      .filter((path) => path.startsWith("examples/"))
+      .filter((path) => [".json", ".yaml", ".yml"].includes(extname(path)))
+      .map((path) => {
+        const fullPath = builtinRecipePath(path);
+        const recipe = normalizeRecipe(
+          parseRecipeText(fullPath, readRootfsRecipeText(fullPath)),
+          fullPath,
+        );
+        return {
+          name: recipe.name ?? basenameWithoutRecipeExtension(path),
+          path: fullPath,
+          label: recipe.publish?.label,
+          description: recipe.publish?.description,
+          steps: recipe.steps?.length ?? 0,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
   const examplesDir = join(moduleDir, "examples");
   if (!existsSync(examplesDir)) return [];
   return readdirSync(examplesDir, { withFileTypes: true })
@@ -280,6 +309,24 @@ function listRootfsRecipeExamples(
 function listRootfsRecipeModules(
   moduleDir: string,
 ): RootfsRecipeListResult["modules"] {
+  if (isBuiltinRecipeModuleDir(moduleDir)) {
+    return Object.keys(BUILTIN_ROOTFS_RECIPES.files)
+      .filter((path) => /^[^/]+\/[^/]+\/recipe\.json$/.test(path))
+      .map((path) => {
+        const fullPath = builtinRecipePath(path);
+        const parsed = JSON.parse(readRootfsRecipeText(fullPath));
+        if (!isRecipeModule(parsed)) {
+          throw new Error(`recipe module file '${fullPath}' is invalid`);
+        }
+        return {
+          id: parsed.id,
+          name: parsed.id.split("/").at(-1) ?? parsed.id,
+          path: fullPath,
+          description: parsed.description,
+        };
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
   if (!existsSync(moduleDir)) return [];
   return readdirSync(moduleDir, { withFileTypes: true })
     .filter((namespace) => namespace.isDirectory())
@@ -326,6 +373,17 @@ function resolveBundledExamplePath(
   moduleDir: string,
 ): string | undefined {
   if (recipe.includes("/") || recipe.includes("\\")) return;
+  if (isBuiltinRecipeModuleDir(moduleDir)) {
+    const candidates = extname(recipe)
+      ? [`examples/${recipe}`]
+      : [
+          `examples/${recipe}.yaml`,
+          `examples/${recipe}.yml`,
+          `examples/${recipe}.json`,
+        ];
+    const match = candidates.find((path) => hasBuiltinRecipeFile(path));
+    return match ? builtinRecipePath(match) : undefined;
+  }
   const examplesDir = join(moduleDir, "examples");
   const candidates = extname(recipe)
     ? [join(examplesDir, recipe)]
@@ -347,9 +405,11 @@ function resolveRecipeModuleId(
   } else if (/^[a-z0-9][a-z0-9_-]*$/i.test(recipe)) {
     candidates.push(`cocalc/${recipe}`);
   }
-  return candidates.find((id) =>
-    existsSync(join(moduleDir, ...id.split("/"), "recipe.json")),
-  );
+  return candidates.find((id) => {
+    const path = `${id}/recipe.json`;
+    if (isBuiltinRecipeModuleDir(moduleDir)) return hasBuiltinRecipeFile(path);
+    return existsSync(join(moduleDir, ...id.split("/"), "recipe.json"));
+  });
 }
 
 function isRecipeModule(value: unknown): value is RootfsRecipeModule {
@@ -368,7 +428,7 @@ function moduleAsRecipe(module: RootfsRecipeModule): RootfsRecipe {
   return {
     version: 1,
     name: module.id,
-    steps: [{ uses: module.id }],
+    steps: [{ uses: module.id, timeout: module.timeout }],
     verify: [],
   };
 }
@@ -395,6 +455,7 @@ export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {
         name: step.name ?? `step ${index + 1}`,
         kind: "run",
         run: typeof step.run === "string" ? step.run : step.run?.command,
+        timeout: step.timeout,
       };
     }
     const loaded = loadRecipeModule(step.uses, baseModuleDir);
@@ -406,6 +467,7 @@ export function explainRootfsRecipe(recipePath: string, moduleDir?: string) {
       module_dir: loaded.dir,
       description: loaded.module.description,
       inputs: applyModuleInputDefaults(loaded.module, step.with ?? {}),
+      timeout: step.timeout,
       contributes: loaded.module.contributes ?? {},
     };
   });
@@ -908,9 +970,7 @@ async function runRecipeStep({
   if (!run?.script && !run?.command) {
     throw new Error(`recipe module ${step.uses} has no run script or command`);
   }
-  const script = run.script
-    ? readFileSync(join(loaded.dir, run.script), "utf8")
-    : run.command!;
+  const script = run.script ? loaded.readFile(run.script) : run.command!;
   const result = await execCommand({
     env: recipeEnv(inputs, step.uses),
     name: step.name ?? step.uses,
@@ -921,7 +981,7 @@ async function runRecipeStep({
   const verify = loaded.module.verify;
   if (verify?.script || verify?.command) {
     const verifyScript = verify.script
-      ? readFileSync(join(loaded.dir, verify.script), "utf8")
+      ? loaded.readFile(verify.script)
       : verify.command!;
     const verifyResult = await execCommand({
       env: recipeEnv(inputs, step.uses),
@@ -1230,23 +1290,41 @@ function recipeEnv(
 
 function resolveRecipeModuleDir(
   requested: string | undefined,
-  recipeDir: string,
+  _recipeDir: string,
 ): string {
   if (requested) return resolve(requested);
   const envDir = `${process.env.COCALC_ROOTFS_RECIPE_MODULES ?? ""}`.trim();
   if (envDir) return resolve(envDir);
-  let cur = recipeDir;
-  while (cur !== dirname(cur)) {
-    const candidate = join(cur, "src", "packages", "rootfs-recipes");
-    if (existsSync(candidate)) return candidate;
-    cur = dirname(cur);
-  }
-  return resolve(process.cwd(), "src", "packages", "rootfs-recipes");
+  return BUILTIN_RECIPE_MODULE_DIR;
 }
 
 function loadRecipeModule(id: string, moduleDir: string): LoadedModule {
   if (!/^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*$/i.test(id)) {
     throw new Error(`invalid recipe module id '${id}'`);
+  }
+  if (isBuiltinRecipeModuleDir(moduleDir)) {
+    const path = `${id}/recipe.json`;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readBuiltinRecipeFile(path));
+    } catch (err) {
+      throw new Error(
+        `failed to load built-in recipe module '${id}' from ${builtinRecipePath(
+          path,
+        )}: ${err}`,
+      );
+    }
+    const module = validateLoadedRecipeModule(
+      parsed,
+      id,
+      builtinRecipePath(path),
+    );
+    return {
+      dir: builtinRecipePath(id),
+      module,
+      readFile: (relativePath) =>
+        readBuiltinRecipeFile(`${id}/${relativePath}`),
+    };
   }
   const dir = join(moduleDir, ...id.split("/"));
   const path = join(dir, "recipe.json");
@@ -1258,6 +1336,18 @@ function loadRecipeModule(id: string, moduleDir: string): LoadedModule {
       `failed to load recipe module '${id}' from ${path}: ${err}`,
     );
   }
+  return {
+    dir,
+    module: validateLoadedRecipeModule(parsed, id, path),
+    readFile: (relativePath) => readFileSync(join(dir, relativePath), "utf8"),
+  };
+}
+
+function validateLoadedRecipeModule(
+  parsed: unknown,
+  id: string,
+  path: string,
+): RootfsRecipeModule {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`recipe module '${id}' must be a JSON object`);
   }
@@ -1267,7 +1357,41 @@ function loadRecipeModule(id: string, moduleDir: string): LoadedModule {
       `recipe module ${path} has id '${module.id}', expected '${id}'`,
     );
   }
-  return { dir, module };
+  return module;
+}
+
+function isBuiltinRecipeModuleDir(moduleDir: string): boolean {
+  return moduleDir === BUILTIN_RECIPE_MODULE_DIR;
+}
+
+function builtinRecipePath(relativePath: string): string {
+  return `${BUILTIN_RECIPE_MODULE_DIR}/${normalizeBuiltinRecipePath(relativePath)}`;
+}
+
+function isBuiltinRecipePath(path: string): boolean {
+  return path.startsWith(`${BUILTIN_RECIPE_MODULE_DIR}/`);
+}
+
+function normalizeBuiltinRecipePath(path: string): string {
+  return path.replace(/^builtin:\/rootfs-recipes\//, "").replace(/^\/+/, "");
+}
+
+function hasBuiltinRecipeFile(path: string): boolean {
+  return BUILTIN_ROOTFS_RECIPES.files[normalizeBuiltinRecipePath(path)] != null;
+}
+
+function readBuiltinRecipeFile(path: string): string {
+  const normalized = normalizeBuiltinRecipePath(path);
+  const text = BUILTIN_ROOTFS_RECIPES.files[normalized];
+  if (text == null) {
+    throw new Error(`built-in RootFS recipe file '${normalized}' not found`);
+  }
+  return text;
+}
+
+function readRootfsRecipeText(path: string): string {
+  if (isBuiltinRecipePath(path)) return readBuiltinRecipeFile(path);
+  return readFileSync(path, "utf8");
 }
 
 function applyModuleInputDefaults(

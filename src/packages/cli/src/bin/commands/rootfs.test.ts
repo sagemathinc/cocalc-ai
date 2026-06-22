@@ -826,6 +826,93 @@ test("rootfs recipe explain treats bundled modules as one-step recipes", async (
   }
 });
 
+test("rootfs recipe explain includes direct module timeout", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-module-timeout-"));
+  const moduleDir = join(dir, "modules");
+  const modulePath = join(moduleDir, "cocalc", "demo");
+  try {
+    mkdirSync(modulePath, { recursive: true });
+    writeFileSync(
+      join(modulePath, "recipe.json"),
+      JSON.stringify({
+        id: "cocalc/demo",
+        version: 1,
+        timeout: 42,
+        run: { script: "install.sh" },
+      }),
+    );
+    writeFileSync(join(modulePath, "install.sh"), "true\n");
+    const harness = rootfsDeps();
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "explain",
+      "cocalc/demo",
+      "--module-dir",
+      moduleDir,
+    ]);
+
+    assert.equal(harness.captured.steps[0].timeout, 42);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs recipe run executes bundled module scripts from the embedded registry", async () => {
+  const execCalls: any[] = [];
+  const harness = rootfsDeps({
+    globals: { json: true, quiet: true },
+    projects: {
+      start: async () => ({ op_id: "start-op" }),
+    },
+    waitForLro: async () => ({ status: "succeeded" }),
+    resolveProjectFromArgOrContext: async (_ctx: any, project: string) => ({
+      project_id: project,
+    }),
+    resolveProjectProjectApi: async (_ctx: any, project_id: string) => ({
+      project: { project_id },
+      api: {
+        waitUntilReady: async () => undefined,
+        system: {
+          exec: async (opts: any) => {
+            execCalls.push(opts);
+            return {
+              type: "blocking",
+              stdout: "",
+              stderr: "",
+              exit_code: 0,
+            };
+          },
+        },
+      },
+    }),
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "run",
+    "cocalc/content-actions",
+    "--project",
+    "existing-project",
+  ]);
+
+  assert.equal(harness.captured.project_id, "existing-project");
+  assert.equal(harness.captured.created_project, false);
+  assert.equal(execCalls.length, 2);
+  assert.match(execCalls[0].command, /RootFS content action/);
+  assert.match(execCalls[1].command, /cocalc-content-actions/);
+});
+
 test("rootfs recipe explain parses bundled machine learning GPU recipes", async () => {
   for (const [recipe, module, slug] of [
     ["ml-pytorch-gpu.yaml", "cocalc/pytorch-gpu", "pytorch-gpu-ml"],
@@ -1119,6 +1206,53 @@ test("rootfs recipe run --here executes locally and writes config metadata", asy
       delete process.env.HOME;
     } else {
       process.env.HOME = oldHome;
+    }
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs recipe run --here honors direct module timeout", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-here-timeout-"));
+  const moduleDir = join(dir, "modules");
+  const modulePath = join(moduleDir, "cocalc", "demo");
+  const oldProjectId = process.env.COCALC_PROJECT_ID;
+  try {
+    mkdirSync(modulePath, { recursive: true });
+    writeFileSync(
+      join(modulePath, "recipe.json"),
+      JSON.stringify({
+        id: "cocalc/demo",
+        version: 1,
+        timeout: 1,
+        run: { shell: "bash", script: "install.sh" },
+      }),
+    );
+    writeFileSync(join(modulePath, "install.sh"), "sleep 2\n");
+    process.env.COCALC_PROJECT_ID = "here-project";
+
+    const harness = rootfsDeps({ globals: { quiet: true } });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "test",
+        "rootfs",
+        "recipe",
+        "run",
+        "cocalc/demo",
+        "--module-dir",
+        moduleDir,
+        "--here",
+      ]),
+      /timed out after 1s/,
+    );
+  } finally {
+    if (oldProjectId == null) {
+      delete process.env.COCALC_PROJECT_ID;
+    } else {
+      process.env.COCALC_PROJECT_ID = oldProjectId;
     }
     rmSync(dir, { force: true, recursive: true });
   }

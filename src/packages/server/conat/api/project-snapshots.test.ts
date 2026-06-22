@@ -202,7 +202,6 @@ describe("project-snapshots.restoreSnapshot", () => {
     const { restoreSnapshot } = await import("./project-snapshots");
     const result = await restoreSnapshot({
       account_id: "acct-1",
-      session_hash: "session-1",
       project_id: "proj-1",
       snapshot: "before-upgrade",
       mode: "rootfs",
@@ -213,10 +212,7 @@ describe("project-snapshots.restoreSnapshot", () => {
       account_id: "acct-1",
       project_id: "proj-1",
     });
-    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      session_hash: "session-1",
-    });
+    expect(requireDangerousProjectMutationAuthMock).not.toHaveBeenCalled();
     expect(
       assertProjectOwnerCanIncreaseAccountStorageMock,
     ).toHaveBeenCalledWith({
