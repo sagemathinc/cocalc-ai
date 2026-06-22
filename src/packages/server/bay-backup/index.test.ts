@@ -16,6 +16,7 @@ let execFileMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let getSingleBayInfoMock: jest.Mock;
+let installSandboxBinaryMock: jest.Mock;
 let ensureRusticInitializedMock: jest.Mock;
 let whichMock: jest.Mock;
 let listObjectsMock: jest.Mock;
@@ -66,6 +67,7 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 
 jest.mock("@cocalc/backend/sandbox/install", () => ({
   __esModule: true,
+  install: (...args: any[]) => installSandboxBinaryMock(...args),
   rustic: "rustic-bin",
 }));
 
@@ -439,6 +441,7 @@ describe("bay-backup runner", () => {
       })),
     }));
     getServerSettingsMock = jest.fn(async () => ({}));
+    installSandboxBinaryMock = jest.fn(async () => undefined);
     getSingleBayInfoMock = jest.fn(() => ({
       bay_id: "bay-0",
       label: "bay-0",
@@ -512,6 +515,7 @@ describe("bay-backup runner", () => {
     expect(backup.storage_backend).toBe("rustic");
     expect(backup.remote_snapshot_id).toBe("snap-1");
     expect(backup.rustic_repo_selector).toBe("r2:bay-backups:wnam");
+    expect(installSandboxBinaryMock).toHaveBeenCalledWith("rustic");
 
     await rm(backup.local_manifest_path, { force: true });
     await rm(

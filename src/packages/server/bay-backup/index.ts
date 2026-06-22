@@ -74,7 +74,10 @@ import {
 } from "@cocalc/backend/data";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
-import { rustic as rusticBinary } from "@cocalc/backend/sandbox/install";
+import {
+  install as installSandboxBinary,
+  rustic as rusticBinary,
+} from "@cocalc/backend/sandbox/install";
 import { ensureInitialized as ensureRusticInitialized } from "@cocalc/backend/sandbox/rustic";
 import { which } from "@cocalc/backend/which";
 import getPool from "@cocalc/database/pool";
@@ -1192,6 +1195,7 @@ async function execRustic({
   cwd?: string;
   timeout?: number;
 }): Promise<string> {
+  await installSandboxBinary("rustic");
   const { stdout } = await execFile(
     rusticBinary,
     [...rusticCommonArgs(repoProfilePath), ...args],
@@ -1460,6 +1464,16 @@ async function assertControlPlaneBackupToolsAvailable(): Promise<void> {
   }
   if (needsSyncArchive && (await treeContainsSqliteDatabase(syncFiles.local))) {
     await requireBinary("sqlite3");
+  }
+}
+
+async function assertRemoteBackupToolsAvailable({
+  rusticRepoProfilePath,
+}: {
+  rusticRepoProfilePath: string | null;
+}): Promise<void> {
+  if (rusticRepoProfilePath) {
+    await installSandboxBinary("rustic");
   }
 }
 
@@ -3667,6 +3681,7 @@ export async function runBayBackup({
         current_storage_backend,
       });
       await assertControlPlaneBackupToolsAvailable();
+      await assertRemoteBackupToolsAvailable({ rusticRepoProfilePath });
       const actual_strategy = await runBackupCommand({
         strategy: postgres.preferred_strategy,
         staging_dir,

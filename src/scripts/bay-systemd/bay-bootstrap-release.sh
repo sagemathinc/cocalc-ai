@@ -754,6 +754,7 @@ EOF
   run "${INSTALL_CMD[@]}"
 
   run mkdir -p "${BAY_ROOT}/secrets" "${BAY_ROOT}/projects"
+  run mkdir -p "${BAY_ROOT}/bin"
   run chown -R "${BAY_USER}:${BAY_GROUP}" "$BAY_ROOT" "${INSTALL_BASE}"
 
   if [[ ! -f "${BAY_ROOT}/secrets/conat-password" ]]; then
@@ -784,6 +785,7 @@ COCALC_BAY_STATE_DIR=${BAY_ROOT}/state
 COCALC_BAY_RUN_DIR=${BAY_ROOT}/run
 COCALC_BAY_LOG_DIR=${BAY_ROOT}/logs
 COCALC_BAY_BACKUP_DIR=${BAY_ROOT}/backups
+COCALC_BIN_PATH=${BAY_ROOT}/bin
 
 COCALC_BAY_POSTGRES_HOST=127.0.0.1
 COCALC_BAY_POSTGRES_PORT=5432
