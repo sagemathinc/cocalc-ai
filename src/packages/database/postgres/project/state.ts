@@ -63,6 +63,7 @@ export interface SetProjectStateOptions {
   time?: Date;
   error?: string;
   ip?: string; // optional ip address
+  runtime_started?: boolean;
 }
 
 export async function setProjectState(
@@ -91,15 +92,41 @@ export async function setProjectState(
   if (opts.ip) {
     state.ip = opts.ip;
   }
+  const runtimeStarted =
+    opts.runtime_started === true && opts.state === "running";
+  const startedAt = runtimeStarted
+    ? (opts.time ?? new Date()).toISOString()
+    : undefined;
 
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     await client.query(
       `UPDATE projects
-          SET state = $2::JSONB
+          SET state = $2::jsonb || CASE
+            WHEN $3::boolean THEN jsonb_build_object(
+              'runtime_generation',
+              CASE
+                WHEN state->>'runtime_generation' ~ '^[0-9]+$'
+                  THEN (state->>'runtime_generation')::bigint + 1
+                ELSE 1
+              END,
+              'started_at',
+              $4::text
+            )
+            ELSE jsonb_strip_nulls(jsonb_build_object(
+              'runtime_generation',
+              CASE
+                WHEN state->>'runtime_generation' ~ '^[0-9]+$'
+                  THEN (state->>'runtime_generation')::bigint
+                ELSE NULL
+              END,
+              'started_at',
+              state->>'started_at'
+            ))
+          END
         WHERE project_id = $1::UUID`,
-      [opts.project_id, JSON.stringify(state)],
+      [opts.project_id, JSON.stringify(state), runtimeStarted, startedAt],
     );
     await appendProjectOutboxEventForProject({
       db: client,

@@ -5,15 +5,18 @@ import { Map } from "immutable";
 
 function loadTerminalModule({
   projectState = "running",
+  runtimeGeneration,
   project,
 }: {
   projectState?: string;
+  runtimeGeneration?: number;
   project?: any;
 } = {}) {
   class MockProjectStore extends EventEmitter {
     private data = Map({
       status: Map({
         state: projectState,
+        runtime_generation: runtimeGeneration,
       }),
       project_map: Map(project ? { "project-1": Map(project) } : {}),
     });
@@ -21,8 +24,18 @@ function loadTerminalModule({
     get = (key: string) => this.data.get(key);
     getIn = (path: string[]) => this.data.getIn(path);
     get_state = () => this.data.getIn(["status", "state"]);
-    setStatus = (state: string) => {
-      this.data = this.data.set("status", Map({ state }));
+    get_runtime_generation = () =>
+      this.data.getIn(["status", "runtime_generation"]);
+    setStatus = (state: string, nextRuntimeGeneration?: number) => {
+      this.data = this.data.set(
+        "status",
+        Map({
+          state,
+          runtime_generation:
+            nextRuntimeGeneration ??
+            this.data.getIn(["status", "runtime_generation"]),
+        }),
+      );
       this.emit("change", this.data);
     };
   }
@@ -725,6 +738,55 @@ describe("connected terminal resizing", () => {
         "term-1",
         "disconnected",
       );
+    } finally {
+      terminal?.close();
+    }
+  });
+
+  it("reconnects immediately when running project runtime generation changes", async () => {
+    let terminal: any;
+    try {
+      const { Terminal, ptys, projectStore, reconnectResources } =
+        loadTerminalModule({
+          projectState: "running",
+          runtimeGeneration: 1,
+        });
+      const parent = document.createElement("div");
+      document.body.appendChild(parent);
+      const actions = {
+        project_id: "project-1",
+        path: "/tmp/example.term",
+        get_term_env: jest.fn(() => ({})),
+        set_connection_status: jest.fn(),
+        set_title: jest.fn(),
+        set_error: jest.fn(),
+        _tree_is_single_leaf: jest.fn(() => false),
+        close_frame: jest.fn(),
+        open_code_editor_frame: jest.fn(),
+        _get_project_actions: jest.fn(() => ({
+          flag_file_activity: jest.fn(),
+          open_file: jest.fn(),
+          close_tab: jest.fn(),
+          isTabClosed: jest.fn(() => false),
+          open_directory: jest.fn(),
+        })),
+      } as any;
+
+      terminal = new Terminal(actions, 0, "term-1", parent);
+      await terminal.connect();
+      expect(ptys[0].close).not.toHaveBeenCalled();
+
+      projectStore.setStatus("running", 2);
+
+      expect(ptys[0].close).toHaveBeenCalled();
+      expect(actions.set_connection_status).toHaveBeenCalledWith(
+        "term-1",
+        "disconnected",
+      );
+      expect(reconnectResources[0].requestReconnect).toHaveBeenCalledWith({
+        reason: "project_runtime_changed",
+        resetBackoff: true,
+      });
     } finally {
       terminal?.close();
     }
