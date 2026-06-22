@@ -295,6 +295,18 @@ Pass \`--project <project_id>\` to run in an existing project instead of creatin
 a clean builder project. Pass \`--config-out rootfs-config.json\` to save the
 generated portable RootFS config JSON for inspection or reuse.
 
+From inside a running CoCalc project, pass \`--here\` to apply a recipe directly
+to that project using local subprocesses instead of remote project-host exec:
+
+~~~sh
+cocalc rootfs recipe run cocalc/r --here
+~~~
+
+This is useful when a recipe is acting as a reusable software installer rather
+than as a clean image build. The command writes portable RootFS publish metadata
+into \`/home/user/.cocalc/rootfs-recipes/*.rootfs-config.json\` by default; the
+Runtime Image publish dialog can import that JSON directly from a project file.
+
 The repository also includes a minimal CoCalc site base recipe with basic shell
 tools, LaTeX, Python, JupyterLab, scientific Python packages, uv, SFTP support,
 and both Python and bash Jupyter kernels:

@@ -179,6 +179,12 @@ export default function RootFilesystemImage({
   const rootfsConfigImportInputRef = useRef<HTMLInputElement | null>(null);
   const [rootfsConfigImportCandidate, setRootfsConfigImportCandidate] =
     useState<RootfsConfigExport | null>(null);
+  const [rootfsConfigImportProjectPath, setRootfsConfigImportProjectPath] =
+    useState<string>("");
+  const [
+    rootfsConfigImportProjectLoading,
+    setRootfsConfigImportProjectLoading,
+  ] = useState<boolean>(false);
   const [rootfsConfigImportOptions, setRootfsConfigImportOptions] =
     useState<RootfsConfigImportOptions>(() => ({
       metadata: true,
@@ -889,17 +895,42 @@ export default function RootFilesystemImage({
     );
   }
 
+  function importRootfsConfigText(text: string): void {
+    const candidate = parseRootfsConfigExport(JSON.parse(text));
+    setRootfsConfigImportCandidate(candidate);
+    setRootfsConfigImportOptions(rootfsConfigImportOptionsFor(candidate));
+  }
+
   async function importRootfsConfigFile(file: File): Promise<void> {
     try {
-      const candidate = parseRootfsConfigExport(JSON.parse(await file.text()));
-      setRootfsConfigImportCandidate(candidate);
-      setRootfsConfigImportOptions(rootfsConfigImportOptionsFor(candidate));
+      importRootfsConfigText(await file.text());
     } catch (err) {
       message.error(`Could not import RootFS config: ${err}`);
     } finally {
       if (rootfsConfigImportInputRef.current) {
         rootfsConfigImportInputRef.current.value = "";
       }
+    }
+  }
+
+  async function importRootfsConfigProjectFile(): Promise<void> {
+    const path = rootfsConfigImportProjectPath.trim();
+    if (!path) {
+      message.error("Enter a project file path.");
+      return;
+    }
+    try {
+      setRootfsConfigImportProjectLoading(true);
+      const text = await webapp_client.project_client.read_text_file({
+        project_id,
+        path,
+      });
+      importRootfsConfigText(text);
+      message.success(`Loaded RootFS config from ${path}.`);
+    } catch (err) {
+      message.error(`Could not import RootFS config from project file: ${err}`);
+    } finally {
+      setRootfsConfigImportProjectLoading(false);
     }
   }
 
@@ -2430,6 +2461,30 @@ export default function RootFilesystemImage({
                             Import JSON
                           </Button>
                         </Space>
+                        <Space.Compact
+                          style={{
+                            marginTop: 10,
+                            maxWidth: 720,
+                            width: "100%",
+                          }}
+                        >
+                          <Input
+                            value={rootfsConfigImportProjectPath}
+                            onChange={(e) =>
+                              setRootfsConfigImportProjectPath(e.target.value)
+                            }
+                            onPressEnter={() =>
+                              void importRootfsConfigProjectFile()
+                            }
+                            placeholder="/home/user/.cocalc/rootfs-recipes/name.rootfs-config.json"
+                          />
+                          <Button
+                            loading={rootfsConfigImportProjectLoading}
+                            onClick={() => void importRootfsConfigProjectFile()}
+                          >
+                            Import from project
+                          </Button>
+                        </Space.Compact>
                         <Paragraph
                           type="secondary"
                           style={{ marginTop: 10, marginBottom: 0 }}
