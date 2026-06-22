@@ -38,9 +38,9 @@ jest.mock("@cocalc/file-server/btrfs/subvolume-snapshots", () => ({
 }));
 
 jest.mock("./last-edited", () => ({
-  resetProjectLastEditedRunning: jest.fn(),
-  shouldCheckProjectLastEditedRunning: jest.fn(() => false),
-  touchProjectLastEditedRunning: jest.fn(),
+  markProjectLastChangedRunning: jest.fn(),
+  resetProjectLastChangedRunning: jest.fn(),
+  shouldCheckProjectLastChangedRunning: jest.fn(() => false),
 }));
 
 jest.mock("./file-server", () => ({

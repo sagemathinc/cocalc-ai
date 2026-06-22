@@ -24,6 +24,51 @@ log() {
   echo "[cocalc/sagemath] $*"
 }
 
+write_exec_wrapper() {
+  local target="$1"
+  local command="$2"
+  $SUDO mkdir -p "$(dirname "$target")"
+  # Replace the path itself instead of following an existing symlink into the
+  # base image, e.g. /usr/local/bin/python -> /opt/cocalc-jupyter/bin/python.
+  $SUDO rm -f "$target"
+  $SUDO tee "$target" >/dev/null <<EOF
+#!/usr/bin/env bash
+exec $command "\$@"
+EOF
+  $SUDO chmod 755 "$target"
+}
+
+link_executable() {
+  local source="$1"
+  local target="$2"
+  if [ -x "$source" ]; then
+    $SUDO rm -f "$target"
+    $SUDO ln -s "$source" "$target"
+  fi
+}
+
+pin_python_venv_link() {
+  local python_path="$1"
+  local target
+  local resolved
+  if [ ! -L "$python_path" ]; then
+    return
+  fi
+  target="$(readlink "$python_path")"
+  case "$target" in
+    /usr/local/bin/python | /usr/local/bin/python3 | /usr/local/bin/python3.*)
+      resolved="$(readlink -f "$python_path")"
+      if [ -z "$resolved" ] || [ ! -x "$resolved" ]; then
+        echo "Cannot resolve Sage Python link: $python_path -> $target" >&2
+        exit 1
+      fi
+      log "Retargeting Sage Python venv link ${python_path} from ${target} to ${resolved}"
+      $SUDO rm -f "$python_path"
+      $SUDO ln -s "$resolved" "$python_path"
+      ;;
+  esac
+}
+
 apt_install_available() {
   local packages=()
   local package
@@ -70,25 +115,11 @@ install_micromamba_sage() {
   $SUDO chown -R "$(id -u):$(id -g)" "$prefix" "$micromamba_prefix"
   "$micromamba_prefix/bin/micromamba" create -y -p "$prefix" -c conda-forge $conda_packages
 
-  $SUDO tee /usr/local/bin/sage >/dev/null <<EOF
-#!/usr/bin/env bash
-exec "$micromamba_prefix/bin/micromamba" run -p "$prefix" sage "\$@"
-EOF
-  $SUDO chmod 755 /usr/local/bin/sage
+  write_exec_wrapper /usr/local/bin/sage "\"$micromamba_prefix/bin/micromamba\" run -p \"$prefix\" sage"
 
   $SUDO chown -R "$owner_uid:$owner_gid" "$prefix" "$micromamba_prefix"
   $SUDO chmod -R u+rwX,go+rX "$prefix" "$micromamba_prefix"
   $SUDO rm -rf /var/lib/apt/lists/*
-}
-
-write_exec_wrapper() {
-  local target="$1"
-  local command="$2"
-  $SUDO tee "$target" >/dev/null <<EOF
-#!/usr/bin/env bash
-exec $command "\$@"
-EOF
-  $SUDO chmod 755 "$target"
 }
 
 install_source_sage() {
@@ -169,35 +200,39 @@ install_source_sage() {
   make
 
   sage_bin="$prefix/sage"
-  log "Installing SageMath entry points"
-  write_exec_wrapper /usr/local/bin/sage "\"$sage_bin\""
-  write_exec_wrapper /usr/local/bin/sagemath "\"$sage_bin\""
-  write_exec_wrapper /usr/local/bin/python "\"$sage_bin\" -python"
-  write_exec_wrapper /usr/local/bin/python3 "\"$sage_bin\" -python"
-  write_exec_wrapper /usr/local/bin/pip "\"$sage_bin\" -python -m pip"
-  write_exec_wrapper /usr/local/bin/pip3 "\"$sage_bin\" -python -m pip"
+  sage_python="$("$sage_bin" -python -c 'import sys; print(sys.executable)')"
+  if [ ! -x "$sage_python" ]; then
+    echo "Sage Python is not executable: $sage_python" >&2
+    exit 1
+  fi
+  pin_python_venv_link "$sage_python"
+  sage_python_bin="$(dirname "$sage_python")"
 
   log "Installing Jupyter packages into Sage Python"
-  "$sage_bin" -python -m pip install --no-cache-dir --upgrade pip setuptools wheel
-  "$sage_bin" -python -m pip install --no-cache-dir \
+  "$sage_python" -m pip install --no-cache-dir --upgrade pip setuptools wheel
+  "$sage_python" -m pip install --no-cache-dir \
     ipykernel \
     jupyter-console \
     jupyterlab \
     notebook
 
-  sage_python="$("$sage_bin" -python -c 'import sys; print(sys.executable)')"
-  sage_python_bin="$(dirname "$sage_python")"
+  log "Installing SageMath entry points"
+  write_exec_wrapper /usr/local/bin/sage "\"$sage_bin\""
+  write_exec_wrapper /usr/local/bin/sagemath "\"$sage_bin\""
+  write_exec_wrapper /usr/local/bin/python "\"$sage_python\""
+  write_exec_wrapper /usr/local/bin/python3 "\"$sage_python\""
+  write_exec_wrapper /usr/local/bin/pip "\"$sage_python\" -m pip"
+  write_exec_wrapper /usr/local/bin/pip3 "\"$sage_python\" -m pip"
+
   for executable in jupyter jupyter-lab jupyter-notebook jupyter-console ipython; do
-    if [ -x "$sage_python_bin/$executable" ]; then
-      $SUDO ln -sf "$sage_python_bin/$executable" "/usr/local/bin/$executable"
-    fi
+    link_executable "$sage_python_bin/$executable" "/usr/local/bin/$executable"
   done
 
   log "Installing Python Jupyter kernel"
-  $SUDO "$sage_bin" -python -m ipykernel install --prefix=/usr/local --name python3 --display-name "Python 3 (Sage)"
+  $SUDO "$sage_python" -m ipykernel install --prefix=/usr/local --name python3 --display-name "Python 3 (Sage)"
 
   log "Installing Sage Jupyter kernel"
-  if ! $SUDO "$sage_bin" -python - <<'PY'
+  if ! $SUDO "$sage_python" - <<'PY'
 from sage.repl.ipython_kernel.install import SageKernelSpec
 
 SageKernelSpec.update(prefix="/usr/local")

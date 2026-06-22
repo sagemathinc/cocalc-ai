@@ -65,6 +65,7 @@ import {
   cleanupRestoreStaging as cleanupRestoreStagingBtrfs,
 } from "@cocalc/file-server/btrfs/restore-staging";
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
+import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
@@ -1210,6 +1211,7 @@ async function fetchBackupConfig(
 async function reportBackupSuccess(
   project_id: string,
   time: Date,
+  generation?: number | null,
 ): Promise<void> {
   const client = getMasterConatClient();
   if (!client) {
@@ -1224,7 +1226,7 @@ async function reportBackupSuccess(
     client,
     host_id: hostId,
     name: "hosts.recordProjectBackup",
-    args: [{ project_id, time }],
+    args: [{ project_id, time, generation }],
     timeout: 30000,
   });
 }
@@ -3540,7 +3542,10 @@ async function createBackup({
     summary: result.summary,
   });
   try {
-    await reportBackupSuccess(project_id, result.time);
+    const generation = await getGeneration(projectMountpoint(project_id)).catch(
+      () => null,
+    );
+    await reportBackupSuccess(project_id, result.time, generation);
   } catch (err) {
     logger.warn("backup success report failed", { project_id, err });
   }
@@ -3852,7 +3857,10 @@ async function updateBackups({
   }
   if (createdBackupIds.size > 0 && reportTime) {
     try {
-      await reportBackupSuccess(project_id, reportTime);
+      const generation = await getGeneration(
+        projectMountpoint(project_id),
+      ).catch(() => null);
+      await reportBackupSuccess(project_id, reportTime, generation);
     } catch (err) {
       logger.warn("scheduled backup success report failed", {
         project_id,

@@ -521,6 +521,7 @@ export interface HostProjectRow {
   state: string;
   provisioned: boolean | null;
   last_edited: string | null;
+  last_changed: string | null;
   last_backup: string | null;
   needs_backup: boolean;
   collab_count: number;
@@ -1256,6 +1257,7 @@ export const hosts = {
   syncProjectBackupIndexes: authFirstRequireHost,
   deleteProjectBackupIndex: authFirstRequireHost,
   touchProject: authFirstRequireHost,
+  markProjectChanged: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   getProjectStartMetadata: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
@@ -1509,6 +1511,7 @@ export interface Hosts {
     host_id?: string;
     project_id: string;
     time: Date;
+    generation?: number | null;
   }) => Promise<void>;
   recordProjectBackupIndex: (opts: {
     host_id?: string;
@@ -1543,6 +1546,12 @@ export interface Hosts {
     project_id: string;
     account_id?: string;
     account_ids?: string[];
+  }) => Promise<void>;
+  markProjectChanged: (opts: {
+    host_id?: string;
+    project_id: string;
+    changed_at?: Date | string | null;
+    generation?: number | null;
   }) => Promise<void>;
   claimPendingCopies: (opts: {
     host_id?: string;

@@ -75,8 +75,9 @@ import { publishLroEvent, publishLroSummary } from "../lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { applyPendingCopies } from "../pending-copies";
 import {
-  resetProjectLastEditedRunning,
-  touchProjectLastEditedRunning,
+  markProjectLastChangedRunning,
+  reportPendingProjectTouches,
+  resetProjectLastChangedRunning,
 } from "../last-edited";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import {
@@ -1611,16 +1612,15 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         const base = getMountPoint();
         const projectPath = join(base, `project-${project_id}`);
         const generation = await getGeneration(projectPath);
-        await touchProjectLastEditedRunning(project_id, generation, "stop", {
-          force: true,
-        });
+        markProjectLastChangedRunning(project_id, generation, { force: true });
+        await reportPendingProjectTouches();
       } catch (err) {
-        logger.debug("stop last_edited check failed", {
+        logger.debug("stop last_changed check failed", {
           project_id,
           err: `${err}`,
         });
       } finally {
-        resetProjectLastEditedRunning(project_id);
+        resetProjectLastChangedRunning(project_id);
       }
       logger.debug("stop: project-host request finished", {
         project_id,

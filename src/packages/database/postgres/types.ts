@@ -359,6 +359,7 @@ export interface PostgreSQLMethods extends EventEmitter {
     time?: Date;
     error?: string;
     ip?: string;
+    runtime_started?: boolean;
     cb: CB;
   }): void;
   get_project_state(opts: { project_id: string; cb: CB }): void;

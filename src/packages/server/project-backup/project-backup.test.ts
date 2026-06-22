@@ -440,6 +440,18 @@ describe("project-backup", () => {
       if (sql.includes("FROM buckets WHERE name=$1")) {
         return { rows: [bucketRow(params?.[0])] };
       }
+      if (
+        sql.includes("ALTER TABLE projects") &&
+        sql.includes("ADD COLUMN IF NOT EXISTS last_")
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("UPDATE projects") &&
+        sql.includes("SET last_backup =")
+      ) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
   });
@@ -683,7 +695,7 @@ describe("project-backup", () => {
       time: when.toISOString(),
     });
     const updateCall = queryMock.mock.calls.find(([sql]) =>
-      sql.startsWith("UPDATE projects SET last_backup"),
+      sql.trimStart().startsWith("UPDATE projects"),
     );
     expect(updateCall).toBeDefined();
     const params = updateCall?.[1] as [string, Date];

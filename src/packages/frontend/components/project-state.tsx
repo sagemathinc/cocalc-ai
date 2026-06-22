@@ -13,6 +13,7 @@ import { PLATFORM_MODE_CLOUD } from "@cocalc/util/db-schema/site-defaults";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { Gap } from "./gap";
 import { Icon, isIconName } from "./icon";
+import { TimeAgo } from "./time-ago";
 
 interface Props {
   state?: ProjectStatus;
@@ -56,6 +57,22 @@ export const ProjectState: React.FC<Props> = (props: Props) => {
     );
   }
 
+  function renderStartedAt() {
+    const startedAt = state?.get("started_at");
+    if (current_state !== "running" || startedAt == null) {
+      return;
+    }
+    const date = new Date(startedAt);
+    if (!Number.isFinite(date.getTime())) {
+      return;
+    }
+    return (
+      <span style={{ fontSize: "11pt", marginLeft: "8px" }}>
+        Project started <TimeAgo date={date} live />
+      </span>
+    );
+  }
+
   const current_state = state?.get("state") ?? "";
   const s: ComputeState = COMPUTE_STATES[current_state];
   if (s == null) {
@@ -69,6 +86,7 @@ export const ProjectState: React.FC<Props> = (props: Props) => {
       <Gap />
       {!stable && renderSpinner()}
       {renderDescription(s)}
+      {renderStartedAt()}
     </span>
   );
 };

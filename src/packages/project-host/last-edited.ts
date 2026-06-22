@@ -8,12 +8,15 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("project-host:last-edited");
 const TOUCH_TTL_MS = 30_000;
-const RUNNING_TOUCH_TTL_MS = 5 * 60_000;
+const RUNNING_CHANGE_TTL_MS = 5 * 60_000;
 const touchCache = new TTL<string, true>({ ttl: TOUCH_TTL_MS });
-const runningTouchCache = new TTL<string, true>({ ttl: RUNNING_TOUCH_TTL_MS });
-const runningGeneration = new Map<string, number>();
+const runningChangeCache = new TTL<string, true>({
+  ttl: RUNNING_CHANGE_TTL_MS,
+});
 const pendingProjectTouches = new Set<string>();
 const pendingProjectTouchAccounts = new Map<string, Set<string>>();
+const pendingProjectChanges = new Map<string, number | null>();
+const runningGeneration = new Map<string, number>();
 
 export async function touchProjectLastEdited(
   project_id: string,
@@ -48,6 +51,7 @@ export async function reportPendingProjectTouches(): Promise<void> {
   if (!client || !host_id) {
     logger.debug("project touch flush skipped (missing client/host)", {
       pending: pendingProjectTouches.size,
+      pendingChanges: pendingProjectChanges.size,
     });
     return;
   }
@@ -88,47 +92,95 @@ export async function reportPendingProjectTouches(): Promise<void> {
       });
     }
   }
+  for (const [project_id, generation] of Array.from(pendingProjectChanges)) {
+    const request =
+      generation == null ? { project_id } : { project_id, generation };
+    const started = Date.now();
+    try {
+      await callHub({
+        client,
+        host_id,
+        name: "hosts.markProjectChanged",
+        args: [request],
+        timeout: 5000,
+      });
+      recordProjectHostRpcTraffic({
+        channel: "hub-api",
+        method: "hosts.markProjectChanged",
+        args: [request],
+        duration_ms: Date.now() - started,
+      });
+      pendingProjectChanges.delete(project_id);
+    } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "hub-api",
+        method: "hosts.markProjectChanged",
+        args: [request],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
+      logger.debug("markProjectChanged flush failed", {
+        project_id,
+        err: `${err}`,
+      });
+    }
+  }
 }
 
-export async function touchProjectLastEditedRunning(
+export function markProjectLastChanged(
+  project_id: string,
+  generation?: number | null,
+): void {
+  const normalizedGeneration =
+    generation == null || !Number.isFinite(generation)
+      ? null
+      : Math.max(0, Math.floor(generation));
+  const previous = pendingProjectChanges.get(project_id);
+  if (
+    previous == null ||
+    (normalizedGeneration != null && normalizedGeneration > previous)
+  ) {
+    pendingProjectChanges.set(project_id, normalizedGeneration);
+  }
+}
+
+export function markProjectLastChangedRunning(
   project_id: string,
   generation: number,
-  reason = "running",
   opts?: { force?: boolean },
-): Promise<void> {
+): void {
   if (!Number.isFinite(generation)) {
     return;
   }
-  if (!opts?.force && runningTouchCache.has(project_id)) {
+  const normalizedGeneration = Math.max(0, Math.floor(generation));
+  if (!opts?.force && runningChangeCache.has(project_id)) {
     return;
   }
-  runningTouchCache.set(project_id, true);
+  runningChangeCache.set(project_id, true);
   const previous = runningGeneration.get(project_id);
-  runningGeneration.set(project_id, generation);
-  if (previous == null) {
-    logger.debug("running generation baseline", { project_id, generation });
+  runningGeneration.set(project_id, normalizedGeneration);
+  if (previous != null && normalizedGeneration <= previous) {
+    logger.debug("running generation unchanged", {
+      project_id,
+      generation: normalizedGeneration,
+    });
     return;
   }
-  if (generation <= previous) {
-    logger.debug("running generation unchanged", { project_id, generation });
-    return;
-  }
-  logger.debug("running generation updated", {
+  logger.debug("running generation changed", {
     project_id,
     previous,
-    generation,
-    delta: generation - previous,
+    generation: normalizedGeneration,
   });
-  await touchProjectLastEdited(project_id, reason, { force: opts?.force });
+  markProjectLastChanged(project_id, normalizedGeneration);
 }
 
-export function shouldCheckProjectLastEditedRunning(
+export function shouldCheckProjectLastChangedRunning(
   project_id: string,
 ): boolean {
-  return !runningTouchCache.has(project_id);
+  return !runningChangeCache.has(project_id);
 }
 
-export function resetProjectLastEditedRunning(project_id: string): void {
-  runningTouchCache.delete(project_id);
+export function resetProjectLastChangedRunning(project_id: string): void {
+  runningChangeCache.delete(project_id);
   runningGeneration.delete(project_id);
 }

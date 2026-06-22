@@ -273,6 +273,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private title?: string;
   private projectsStore?;
   private lastProjectState?: string;
+  private lastProjectRuntimeGeneration?: number;
   private projectStartingRetryTimer?: ReturnType<typeof setTimeout>;
   private autoStartProjectOnNextConnect = false;
 
@@ -585,6 +586,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
     this.projectsStore = projectsStore;
     this.lastProjectState = projectsStore.get_state(this.project_id);
+    this.lastProjectRuntimeGeneration = projectsStore.get_runtime_generation?.(
+      this.project_id,
+    );
     projectsStore.on("change", this.handleProjectsStoreChange);
   };
 
@@ -593,11 +597,38 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       return;
     }
     const nextState = this.projectsStore?.get_state(this.project_id);
-    if (nextState === this.lastProjectState) {
+    const nextRuntimeGeneration = this.projectsStore?.get_runtime_generation?.(
+      this.project_id,
+    );
+    if (
+      nextState === this.lastProjectState &&
+      nextRuntimeGeneration === this.lastProjectRuntimeGeneration
+    ) {
       return;
     }
     const prevState = this.lastProjectState;
+    const prevRuntimeGeneration = this.lastProjectRuntimeGeneration;
     this.lastProjectState = nextState;
+    this.lastProjectRuntimeGeneration = nextRuntimeGeneration;
+
+    if (
+      prevState === "running" &&
+      nextState === "running" &&
+      nextRuntimeGeneration != null &&
+      nextRuntimeGeneration !== prevRuntimeGeneration
+    ) {
+      this.pty?.close();
+      this.pty = null;
+      this.set_connection_status("disconnected");
+      this.ptyExited = false;
+      this.clearProjectStartingRetry();
+      void this.connect();
+      this.reconnectResource?.requestReconnect({
+        reason: "project_runtime_changed",
+        resetBackoff: true,
+      });
+      return;
+    }
 
     if (prevState === "running" && nextState !== "running") {
       this.pty?.close();

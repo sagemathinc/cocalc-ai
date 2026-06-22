@@ -7,9 +7,9 @@ import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { DEFAULT_PROJECT_PROXY_PORT } from "@cocalc/project-runner/run/env";
 import { listProjects, upsertProject } from "./sqlite/projects";
 import {
-  resetProjectLastEditedRunning,
-  shouldCheckProjectLastEditedRunning,
-  touchProjectLastEditedRunning,
+  markProjectLastChangedRunning,
+  resetProjectLastChangedRunning,
+  shouldCheckProjectLastChangedRunning,
 } from "./last-edited";
 import { getMountPoint } from "./file-server";
 
@@ -178,7 +178,7 @@ export async function reconcileOnce() {
     }
     upsertProject(row);
     if (info.state === "running") {
-      if (shouldCheckProjectLastEditedRunning(info.project_id)) {
+      if (shouldCheckProjectLastChangedRunning(info.project_id)) {
         const base = resolveMountPoint();
         if (!base) {
           if (mountPointError && !loggedMountPointError) {
@@ -192,7 +192,7 @@ export async function reconcileOnce() {
         try {
           const projectPath = join(base, `project-${info.project_id}`);
           const generation = await getGeneration(projectPath);
-          await touchProjectLastEditedRunning(info.project_id, generation);
+          markProjectLastChangedRunning(info.project_id, generation);
         } catch (err) {
           logger.debug("running generation check failed", {
             project_id: info.project_id,
@@ -201,7 +201,7 @@ export async function reconcileOnce() {
         }
       }
     } else {
-      resetProjectLastEditedRunning(info.project_id);
+      resetProjectLastChangedRunning(info.project_id);
     }
   }
 
@@ -233,7 +233,7 @@ export async function reconcileOnce() {
         updated_at: now,
         last_seen: now,
       });
-      resetProjectLastEditedRunning(row.project_id);
+      resetProjectLastChangedRunning(row.project_id);
     }
   }
 }

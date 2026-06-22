@@ -123,6 +123,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "hosts.markProjectChanged": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
   "hosts.pullHostRootfsImage": {
     decision: "fresh-auth-required",
     reason: "host RootFS image import can consume storage",

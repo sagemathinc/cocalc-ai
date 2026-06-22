@@ -168,6 +168,95 @@ describe("project state and storage request methods", () => {
       expect(new Date(result.time).getTime()).toBe(now.getTime());
     });
 
+    it("starts runtime generation at 1 when a running runtime starts", async () => {
+      const pool = getPool();
+      const projectId = uuid();
+
+      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
+        projectId,
+      ]);
+
+      const startedAt = new Date("2026-06-21T12:00:00Z");
+      await callback_opts(database.set_project_state.bind(database))({
+        project_id: projectId,
+        state: "running",
+        time: startedAt,
+        runtime_started: true,
+      });
+
+      const result = await callback_opts(
+        database.get_project_state.bind(database),
+      )({
+        project_id: projectId,
+      });
+
+      expect(result.state).toBe("running");
+      expect(result.runtime_generation).toBe(1);
+      expect(new Date(result.started_at).getTime()).toBe(startedAt.getTime());
+    });
+
+    it("increments runtime generation on each started running runtime", async () => {
+      const pool = getPool();
+      const projectId = uuid();
+
+      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
+        projectId,
+      ]);
+
+      await callback_opts(database.set_project_state.bind(database))({
+        project_id: projectId,
+        state: "running",
+        runtime_started: true,
+      });
+      const secondStart = new Date("2026-06-21T12:05:00Z");
+      await callback_opts(database.set_project_state.bind(database))({
+        project_id: projectId,
+        state: "running",
+        time: secondStart,
+        runtime_started: true,
+      });
+
+      const result = await callback_opts(
+        database.get_project_state.bind(database),
+      )({
+        project_id: projectId,
+      });
+
+      expect(result.runtime_generation).toBe(2);
+      expect(new Date(result.started_at).getTime()).toBe(secondStart.getTime());
+    });
+
+    it("preserves runtime fields across non-start state writes", async () => {
+      const pool = getPool();
+      const projectId = uuid();
+
+      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
+        projectId,
+      ]);
+
+      const startedAt = new Date("2026-06-21T12:00:00Z");
+      await callback_opts(database.set_project_state.bind(database))({
+        project_id: projectId,
+        state: "running",
+        time: startedAt,
+        runtime_started: true,
+      });
+      await callback_opts(database.set_project_state.bind(database))({
+        project_id: projectId,
+        state: "opened",
+      });
+
+      const result = await callback_opts(
+        database.get_project_state.bind(database),
+      )({
+        project_id: projectId,
+      });
+
+      expect(result.state).toBe("opened");
+      expect(result.runtime_generation).toBe(1);
+      expect(new Date(result.started_at).getTime()).toBe(startedAt.getTime());
+    });
+
     it("sets state with error message", async () => {
       const pool = getPool();
       const projectId = uuid();

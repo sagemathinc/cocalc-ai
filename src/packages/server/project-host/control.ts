@@ -270,6 +270,7 @@ async function filterRowsPlaceableByAccount<T extends HostRegistryRow>({
 async function saveProjectStateSnapshot(
   project_id: string,
   state: string | { state?: string; time?: string | Date } | undefined,
+  opts?: { runtime_started?: boolean },
 ): Promise<void> {
   if (!state) return;
   const stateObj =
@@ -285,6 +286,11 @@ async function saveProjectStateSnapshot(
   if (!stateObj.state) {
     return;
   }
+  const runtimeStarted =
+    opts?.runtime_started === true && stateObj.state === "running";
+  const startedAt = runtimeStarted
+    ? new Date(stateObj.time).toISOString()
+    : undefined;
   const defaultBayId = getConfiguredBayId();
   const client = await pool().connect();
   let changed = false;
@@ -292,10 +298,54 @@ async function saveProjectStateSnapshot(
     await client.query("BEGIN");
     const result = await client.query(
       `UPDATE projects
-          SET state=$2::jsonb
+          SET state=$2::jsonb || CASE
+            WHEN $3::boolean THEN jsonb_build_object(
+              'runtime_generation',
+              CASE
+                WHEN state->>'runtime_generation' ~ '^[0-9]+$'
+                  THEN (state->>'runtime_generation')::bigint + 1
+                ELSE 1
+              END,
+              'started_at',
+              $4::text
+            )
+            ELSE jsonb_strip_nulls(jsonb_build_object(
+              'runtime_generation',
+              CASE
+                WHEN state->>'runtime_generation' ~ '^[0-9]+$'
+                  THEN (state->>'runtime_generation')::bigint
+                ELSE NULL
+              END,
+              'started_at',
+              state->>'started_at'
+            ))
+          END
         WHERE project_id=$1
-          AND state IS DISTINCT FROM $2::jsonb`,
-      [project_id, stateObj],
+          AND state IS DISTINCT FROM (
+            $2::jsonb || CASE
+              WHEN $3::boolean THEN jsonb_build_object(
+                'runtime_generation',
+                CASE
+                  WHEN state->>'runtime_generation' ~ '^[0-9]+$'
+                    THEN (state->>'runtime_generation')::bigint + 1
+                  ELSE 1
+                END,
+                'started_at',
+                $4::text
+              )
+              ELSE jsonb_strip_nulls(jsonb_build_object(
+                'runtime_generation',
+                CASE
+                  WHEN state->>'runtime_generation' ~ '^[0-9]+$'
+                    THEN (state->>'runtime_generation')::bigint
+                  ELSE NULL
+                END,
+                'started_at',
+                state->>'started_at'
+              ))
+            END
+          )`,
+      [project_id, stateObj, runtimeStarted, startedAt],
     );
     changed = (result.rowCount ?? 0) > 0;
     if (changed) {
@@ -934,7 +984,9 @@ export async function startProjectOnHost(
           ? { managed_egress_override: opts.managed_egress_override }
           : {}),
       });
-      await saveProjectStateSnapshot(project_id, response.state ?? "running");
+      await saveProjectStateSnapshot(project_id, response.state ?? "running", {
+        runtime_started: true,
+      });
       if (opts?.lro_op_id && response.phase_timings_ms) {
         mergeStartProjectTimings(opts.lro_op_id, response.phase_timings_ms);
       }
@@ -961,7 +1013,9 @@ export async function startProjectOnHost(
             ? { managed_egress_override: opts.managed_egress_override }
             : {}),
         });
-        await saveProjectStateSnapshot(project_id, retry.state ?? "running");
+        await saveProjectStateSnapshot(project_id, retry.state ?? "running", {
+          runtime_started: true,
+        });
         if (opts?.lro_op_id && retry.phase_timings_ms) {
           mergeStartProjectTimings(opts.lro_op_id, retry.phase_timings_ms);
         }
@@ -1004,41 +1058,9 @@ export async function stopProjectOnHost(
     project_id,
     timeout: opts?.timeout_ms ?? STOP_PROJECT_TIMEOUT_MS,
   });
-  let wasRunning = false;
-  try {
-    const { rows } = await pool().query<{ state: { state?: string } | null }>(
-      "SELECT state FROM projects WHERE project_id=$1",
-      [project_id],
-    );
-    const rawState = rows[0]?.state ?? null;
-    const parsedState =
-      typeof rawState === "string" ? JSON.parse(rawState) : rawState;
-    const stateValue = parsedState?.state;
-    wasRunning = stateValue === "running" || stateValue === "starting";
-  } catch (err) {
-    log.debug("stopProjectOnHost unable to read project state", {
-      project_id,
-      err: `${err}`,
-    });
-  }
   try {
     const response = await client.stopProject({ project_id });
     await saveProjectStateSnapshot(project_id, response.state ?? "opened");
-    if (wasRunning) {
-      await pool().query(
-        "UPDATE projects SET last_edited=NOW() WHERE project_id=$1",
-        [project_id],
-      );
-      await appendProjectOutboxEventForProject({
-        event_type: "project.summary_changed",
-        project_id,
-        default_bay_id: getConfiguredBayId(),
-      });
-      await publishProjectAccountFeedEventsBestEffort({
-        project_id,
-        default_bay_id: getConfiguredBayId(),
-      });
-    }
   } catch (err) {
     log.warn("stopProjectOnHost failed", { project_id, host_id, err });
     throw err;

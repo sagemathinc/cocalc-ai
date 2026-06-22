@@ -162,6 +162,18 @@ export class ProjectsStore extends Store<ProjectsState> {
     return this.getIn(["project_map", project_id, "state", "state"]);
   }
 
+  public get_runtime_generation(project_id: string): number | undefined {
+    const value = this.getIn([
+      "project_map",
+      project_id,
+      "state",
+      "runtime_generation",
+    ]);
+    return typeof value === "number" && Number.isFinite(value)
+      ? value
+      : undefined;
+  }
+
   getRunningProjects = (): string[] => {
     return this.getProjectsWithState("running");
   };

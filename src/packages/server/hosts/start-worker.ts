@@ -97,6 +97,7 @@ const progressSteps: Record<string, number> = {
 type HostProjectRow = {
   project_id: string;
   last_edited: Date | null;
+  last_changed: Date | null;
   last_backup: Date | null;
   state: { state?: string } | null;
   provisioned?: boolean | null;
@@ -112,6 +113,7 @@ type HostBackupProjectRow = {
   state?: string;
   provisioned?: boolean | null;
   last_edited?: Date | string | null;
+  last_changed?: Date | string | null;
   last_backup?: Date | string | null;
   needs_backup?: boolean | null;
 };
@@ -433,7 +435,13 @@ async function waitForHostHeartbeat({
 async function loadHostProjects(host_id: string): Promise<HostProjectRow[]> {
   const { rows } = await getPool().query<HostProjectRow>(
     `
-      SELECT project_id, last_edited, last_backup, state, provisioned
+      SELECT
+        project_id,
+        last_edited,
+        (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
+        last_backup,
+        state,
+        provisioned
       FROM projects
       WHERE host_id=$1
         AND deleted IS NOT true
@@ -704,12 +712,16 @@ function needsBackup(row: HostProjectRow): BackupCandidate | undefined {
   if (!row.provisioned) {
     return undefined;
   }
-  const lastEdited = row.last_edited ? new Date(row.last_edited).getTime() : 0;
+  const lastChanged = row.last_changed
+    ? new Date(row.last_changed).getTime()
+    : row.last_edited
+      ? new Date(row.last_edited).getTime()
+      : 0;
   const lastBackup = row.last_backup ? new Date(row.last_backup).getTime() : 0;
-  if (!lastEdited) {
+  if (!lastChanged) {
     return { project_id: row.project_id, reason: "dirty" };
   }
-  if (!lastBackup || lastEdited > lastBackup) {
+  if (!lastBackup || lastChanged > lastBackup) {
     return { project_id: row.project_id, reason: "dirty" };
   }
   return undefined;
@@ -948,9 +960,13 @@ function hostBackupSkipReason(
   if (row.needs_backup === true) {
     return undefined;
   }
-  const lastEdited = row.last_edited ? new Date(row.last_edited).getTime() : 0;
+  const lastChanged = row.last_changed
+    ? new Date(row.last_changed).getTime()
+    : row.last_edited
+      ? new Date(row.last_edited).getTime()
+      : 0;
   const lastBackup = row.last_backup ? new Date(row.last_backup).getTime() : 0;
-  if (lastBackup && (!lastEdited || lastEdited <= lastBackup)) {
+  if (lastBackup && (!lastChanged || lastChanged <= lastBackup)) {
     return "up-to-date";
   }
   return undefined;

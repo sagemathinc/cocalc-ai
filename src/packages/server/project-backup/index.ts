@@ -9,6 +9,7 @@ import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { markProjectBackedUp } from "@cocalc/server/projects/change-tracking";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -1429,10 +1430,12 @@ export async function recordProjectBackup({
   host_id,
   project_id,
   time,
+  generation,
 }: {
   host_id?: string;
   project_id: string;
   time?: Date | string;
+  generation?: number | null;
 }): Promise<void> {
   if (!host_id || !isValidUUID(host_id)) {
     throw new Error("invalid host_id");
@@ -1446,10 +1449,11 @@ export async function recordProjectBackup({
   if (Number.isNaN(recordedAt.getTime())) {
     recordedAt = new Date();
   }
-  await pool().query("UPDATE projects SET last_backup=$2 WHERE project_id=$1", [
+  await markProjectBackedUp({
     project_id,
-    recordedAt,
-  ]);
+    backed_up_at: recordedAt,
+    generation,
+  });
 }
 
 function mapProjectBackupIndexRow(
@@ -2271,14 +2275,20 @@ export async function getProjectBackupInfrastructureStatus({
             WHERE provisioned IS TRUE
               AND COALESCE(state->>'state', '') NOT IN ('running', 'starting')
               AND last_backup IS NOT NULL
-              AND (last_edited IS NULL OR last_edited <= last_backup)
+              AND (
+                COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) IS NULL
+                OR COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) <= last_backup
+              )
           )::INTEGER AS provisioned_up_to_date,
           COUNT(*) FILTER (
             WHERE provisioned IS TRUE
               AND COALESCE(state->>'state', '') NOT IN ('running', 'starting')
               AND (
                 last_backup IS NULL
-                OR (last_edited IS NOT NULL AND last_edited > last_backup)
+                OR (
+                  COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) IS NOT NULL
+                  AND COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) > last_backup
+                )
               )
           )::INTEGER AS provisioned_needs_backup,
           COUNT(*) FILTER (
