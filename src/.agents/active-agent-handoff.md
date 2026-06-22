@@ -46,6 +46,36 @@ Known risks:
 
 ---
 
+### Codex - slides residual polish (2026-06-22 14:50 PDT)
+
+- **START 2026-06-22 14:50 PDT:** Continuing into design-polish item 15 after
+  the Python hero standardization landed in `6431a4eab6` and handoff
+  `7783dd0b11` was pushed. Taking the first bounded residual sub-slice:
+  `/features/slides`. Claimed files:
+  `src/packages/frontend/public/features/slides-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and
+  `/home/user/cocalc-shared/codex-turn-log.md`. Do not touch protected
+  `home/**`, footer, pricing/compliance, type/palette token values, pitch/docs
+  content, raw-audit findings, or the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 14:56 PDT:** Slides residual sub-slice landed in
+  `cee71ca3a7` (`frontend/public: polish slides feature cards`). The slides
+  hero mock no longer uses bespoke cream/yellow inner slide boxes; its gradient
+  and flow-card backgrounds now use existing public tokens, and the slide
+  thumbnails use the compact icon-card treatment used by the other feature
+  mocks. The slides raw-hex allowlist is tightened to the remaining route
+  accent only. Validation passed: Prettier on touched files; focused
+  feature/browser-QA harness Jest 133/133; `git diff --check`; `pnpm -C src
+  lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
+  `cee71ca3a7` with only the existing local debug-log permission warning;
+  browser QA desktop+mobile for `/features/slides` passed 34/34 at
+  `/tmp/cocalc-public-qa-RpX724`. Screenshot inspection: hero mock and deck
+  flow cards are visually consistent on desktop/mobile, with no overlap. The
+  known untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  draft is still untouched. Item 15 remains open; next residual candidate:
+  whiteboard bespoke graphics.
+
 ### Codex - python hero standardization (2026-06-22 14:42 PDT)
 
 - **START 2026-06-22 14:42 PDT:** Continuing into design-polish item 14 after

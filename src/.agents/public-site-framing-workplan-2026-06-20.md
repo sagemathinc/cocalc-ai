@@ -440,6 +440,28 @@ Current disposition:
 - Representative browser QA/screenshots covered `/features/python` and
   `/features/r-statistical-software` on desktop and mobile.
 
+### FS-014 - Polish the slides feature-card residuals
+
+Status: `done`
+
+Evidence:
+
+- Design-polish item 15 called out `/features/slides`: the hero mock's
+  cream/yellow code boxes clashed with the shared light system, and the
+  bespoke 2x2 illustration needed to move toward the shared card treatment.
+
+Current disposition:
+
+- The slides hero mock now uses existing public color tokens for its gradient
+  instead of raw white/blue/cream literals.
+- Slide thumbnails now use compact icon cards with `IconBadge`, matching the
+  surrounding feature mock pattern instead of nested cream/yellow boxes.
+- The deck-flow cards now use `PUBLIC_COLORS.surfaceMuted` instead of a raw
+  blue literal.
+- The slides raw-hex allowlist now contains only the remaining route accent.
+- Representative browser QA/screenshots covered `/features/slides` on desktop
+  and mobile.
+
 ## Next Recommended Burn-Down Order
 
 1. Finish FS-001 because it is already in progress and fixes a visible
