@@ -57,7 +57,6 @@ import {
   writeManagedAuthorizedKeys,
   getVolume,
   ensureVolume,
-  getMountPoint,
   resolveProjectContainerPath,
 } from "../file-server";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
@@ -74,11 +73,6 @@ import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { publishLroEvent, publishLroSummary } from "../lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { applyPendingCopies } from "../pending-copies";
-import {
-  resetProjectLastEditedRunning,
-  touchProjectLastEditedRunning,
-} from "../last-edited";
-import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import {
   startCodexDeviceAuth,
   getCodexDeviceAuthStatus,
@@ -1606,21 +1600,6 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         throw new Error(
           `project stop did not converge; runner still reports state='${finalState}'`,
         );
-      }
-      try {
-        const base = getMountPoint();
-        const projectPath = join(base, `project-${project_id}`);
-        const generation = await getGeneration(projectPath);
-        await touchProjectLastEditedRunning(project_id, generation, "stop", {
-          force: true,
-        });
-      } catch (err) {
-        logger.debug("stop last_edited check failed", {
-          project_id,
-          err: `${err}`,
-        });
-      } finally {
-        resetProjectLastEditedRunning(project_id);
       }
       logger.debug("stop: project-host request finished", {
         project_id,

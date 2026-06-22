@@ -1058,41 +1058,9 @@ export async function stopProjectOnHost(
     project_id,
     timeout: opts?.timeout_ms ?? STOP_PROJECT_TIMEOUT_MS,
   });
-  let wasRunning = false;
-  try {
-    const { rows } = await pool().query<{ state: { state?: string } | null }>(
-      "SELECT state FROM projects WHERE project_id=$1",
-      [project_id],
-    );
-    const rawState = rows[0]?.state ?? null;
-    const parsedState =
-      typeof rawState === "string" ? JSON.parse(rawState) : rawState;
-    const stateValue = parsedState?.state;
-    wasRunning = stateValue === "running" || stateValue === "starting";
-  } catch (err) {
-    log.debug("stopProjectOnHost unable to read project state", {
-      project_id,
-      err: `${err}`,
-    });
-  }
   try {
     const response = await client.stopProject({ project_id });
     await saveProjectStateSnapshot(project_id, response.state ?? "opened");
-    if (wasRunning) {
-      await pool().query(
-        "UPDATE projects SET last_edited=NOW() WHERE project_id=$1",
-        [project_id],
-      );
-      await appendProjectOutboxEventForProject({
-        event_type: "project.summary_changed",
-        project_id,
-        default_bay_id: getConfiguredBayId(),
-      });
-      await publishProjectAccountFeedEventsBestEffort({
-        project_id,
-        default_bay_id: getConfiguredBayId(),
-      });
-    }
   } catch (err) {
     log.warn("stopProjectOnHost failed", { project_id, host_id, err });
     throw err;
