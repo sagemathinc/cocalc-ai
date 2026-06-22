@@ -44,7 +44,7 @@ export function getUsageStatusAlerts(
       key: "over-rootfs-count",
       type: "warning",
       title:
-        "Your account is over the RootFS image count limit. Publishing or saving new RootFS images is blocked until you delete images or upgrade membership.",
+        "Your account is over the image count limit. Publishing or saving new images is blocked until you delete images or upgrade membership.",
     });
   }
   if (usageStatus.over_rootfs_total_storage) {
@@ -52,7 +52,7 @@ export function getUsageStatusAlerts(
       key: "over-rootfs-storage",
       type: "warning",
       title:
-        "Your account is over the RootFS storage limit. Publishing or saving larger RootFS images is blocked until you delete images or upgrade membership.",
+        "Your account is over the image storage limit. Publishing or saving larger images is blocked until you delete images or upgrade membership.",
     });
   }
   if (

@@ -39,10 +39,8 @@ function defaultTitle(): string {
 
 export function useProjectCreateDraft({
   defaultValue,
-  rootfsQuery,
 }: {
   defaultValue: string;
-  rootfsQuery?: string;
 }) {
   const cloudflareCountry = useTypedRedux("customize", "country");
   const cloudflareRegionCode = useTypedRedux(
@@ -68,8 +66,7 @@ export function useProjectCreateDraft({
     loading: rootfsLoading,
     error: rootfsError,
   } = useRootfsImages([managedRootfsCatalogUrl()], {
-    query: rootfsQuery,
-    limit: 200,
+    limit: 1000,
   });
   const [selectedHost, setSelectedHost] = useState<Host | undefined>();
 

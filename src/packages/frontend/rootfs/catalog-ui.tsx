@@ -270,7 +270,7 @@ export function RootfsThemePreview({
     return (
       <img
         src={imageUrl}
-        alt={`${entry?.label || entry?.image || "RootFS"} theme`}
+        alt={`${entry?.label || entry?.image || "Image"} theme`}
         onError={() => setImageFailed(true)}
         style={{
           ...boxStyle,

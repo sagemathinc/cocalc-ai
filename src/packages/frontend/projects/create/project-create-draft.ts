@@ -221,11 +221,7 @@ function defaultRootfsForDraft({
     fallbackImage: DEFAULT_PROJECT_IMAGE,
   });
   return {
-    image:
-      entry?.image ||
-      (context.isAdmin
-        ? clean(context.siteDefaultRootfs) || DEFAULT_PROJECT_IMAGE
-        : ""),
+    image: entry?.image || "",
     image_id: entry?.id,
   };
 }
@@ -422,11 +418,11 @@ export function projectDraftSummary(
     warnings.push(
       context.isAdmin
         ? "This project uses a custom OCI image."
-        : "This project is using an unavailable RootFS image; choose a managed catalog image.",
+        : "This project is using an unavailable image; choose a managed catalog image.",
     );
   }
   if (!clean(draft.rootfs_image)) {
-    warnings.push("Choose a managed RootFS image.");
+    warnings.push("Choose an image.");
   }
   return {
     title: draft.title,
@@ -436,9 +432,7 @@ export function projectDraftSummary(
     rootfs_image: draft.rootfs_image,
     rootfs_image_id: draft.rootfs_image_id,
     rootfsLabel:
-      rootfsEntry?.label ||
-      draft.rootfs_image ||
-      (context.isAdmin ? DEFAULT_PROJECT_IMAGE : "No RootFS image selected"),
+      rootfsEntry?.label || draft.rootfs_image || "No image selected",
     rootfsEntry,
     host_id: draft.host_id,
     hostName: selectedHost?.name,

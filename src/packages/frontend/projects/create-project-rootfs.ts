@@ -38,7 +38,7 @@ export function chooseNewProjectRootfsDefault({
   const selectable = images.filter((entry) =>
     isNewProjectRootfsSelectable({ entry, isGpu, isAdmin }),
   );
-  if (selectable.length === 0) {
+  if (selectable.length !== 1) {
     return undefined;
   }
 

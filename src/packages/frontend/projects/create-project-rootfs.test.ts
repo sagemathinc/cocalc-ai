@@ -18,7 +18,7 @@ function image(
   };
 }
 
-describe("new project RootFS selection", () => {
+describe("new project image selection", () => {
   it("excludes hidden images from the user-facing picker", () => {
     expect(
       isNewProjectRootfsSelectable({
@@ -83,6 +83,26 @@ describe("new project RootFS selection", () => {
       isGpu: false,
       preferredImages: ["buildpack-deps:noble-scm"],
       fallbackImage: "buildpack-deps:noble-scm",
+    });
+
+    expect(selected).toBeUndefined();
+  });
+
+  it("does not choose a default when multiple managed images are available", () => {
+    const selected = chooseNewProjectRootfsDefault({
+      images: [
+        image("standard", "cocalc.local/rootfs/standard", {
+          official: true,
+          release_id: "release-standard",
+        }),
+        image("sage", "cocalc.local/rootfs/sage", {
+          official: true,
+          release_id: "release-sage",
+        }),
+      ],
+      isGpu: false,
+      preferredImages: ["cocalc.local/rootfs/standard"],
+      fallbackImage: "cocalc.local/rootfs/standard",
     });
 
     expect(selected).toBeUndefined();

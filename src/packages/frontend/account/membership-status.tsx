@@ -257,7 +257,7 @@ function getUsageLimitsItems(
   if (typeof rootfsCount === "number" && Number.isFinite(rootfsCount)) {
     items.push({
       key: "rootfs_count",
-      label: "Max root filesystems",
+      label: "Max images",
       value: `${rootfsCount}`,
     });
   }
@@ -268,7 +268,7 @@ function getUsageLimitsItems(
   ) {
     items.push({
       key: "rootfs_total_storage_gb",
-      label: "RootFS total storage cap",
+      label: "Image total storage cap",
       value: `${rootfsTotalStorage} GB`,
     });
   }
@@ -279,7 +279,7 @@ function getUsageLimitsItems(
   ) {
     items.push({
       key: "rootfs_max_storage_gb",
-      label: "RootFS per-image cap",
+      label: "Image per-image cap",
       value: `${rootfsMaxStorage} GB`,
     });
   }
@@ -287,7 +287,7 @@ function getUsageLimitsItems(
   if (typeof rootfsOciImages === "boolean") {
     items.push({
       key: "rootfs_oci_images",
-      label: "Remote OCI rootfs images",
+      label: "Remote OCI images",
       value: rootfsOciImages ? "Enabled" : "Disabled",
     });
   }
@@ -449,7 +449,7 @@ function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_count",
-      label: "Root filesystems",
+      label: "Images",
       value: `${usageStatus.rootfs_count}`,
       danger: usageStatus.over_rootfs_count === true,
       progress:
@@ -458,7 +458,7 @@ function getUsageStatusItems(
           ? {
               current: usageStatus.rootfs_count,
               limit: usageStatus.rootfs_count_limit,
-              caption: `${usageStatus.rootfs_count} of ${usageStatus.rootfs_count_limit} root filesystems`,
+              caption: `${usageStatus.rootfs_count} of ${usageStatus.rootfs_count_limit} images`,
             }
           : undefined,
     });
@@ -469,7 +469,7 @@ function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_remaining_count",
-      label: "Remaining root filesystem slots",
+      label: "Remaining image slots",
       value:
         usageStatus.rootfs_remaining_count < 0
           ? `Over by ${Math.abs(usageStatus.rootfs_remaining_count)}`
@@ -483,7 +483,7 @@ function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_total_storage_bytes",
-      label: "RootFS storage used",
+      label: "Image storage used",
       value: humanSize(usageStatus.rootfs_total_storage_bytes),
       danger: usageStatus.over_rootfs_total_storage === true,
       progress:
@@ -504,7 +504,7 @@ function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_total_storage_remaining_bytes",
-      label: "RootFS storage remaining",
+      label: "Image storage remaining",
       value: humanSize(
         Math.abs(usageStatus.rootfs_total_storage_remaining_bytes),
       ),
@@ -517,7 +517,7 @@ function getUsageStatusItems(
   ) {
     items.push({
       key: "rootfs_max_storage_bytes_limit",
-      label: "RootFS per-image cap",
+      label: "Image per-image cap",
       value: humanSize(usageStatus.rootfs_max_storage_bytes_limit),
     });
   }
@@ -641,7 +641,7 @@ function getUsageStatusAlerts(
       key: "over-rootfs-count",
       type: "warning",
       title:
-        "Your account is over the RootFS image count limit. Publishing or saving new RootFS images is blocked until you delete images or upgrade membership.",
+        "Your account is over the image count limit. Publishing or saving new images is blocked until you delete images or upgrade membership.",
     });
   }
   if (usageStatus.over_rootfs_total_storage) {
@@ -649,7 +649,7 @@ function getUsageStatusAlerts(
       key: "over-rootfs-storage",
       type: "warning",
       title:
-        "Your account is over the RootFS storage limit. Publishing or saving larger RootFS images is blocked until you delete images or upgrade membership.",
+        "Your account is over the image storage limit. Publishing or saving larger images is blocked until you delete images or upgrade membership.",
     });
   }
   if (

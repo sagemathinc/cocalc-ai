@@ -150,7 +150,7 @@ function findingActionabilityTag(finding: RootfsScanFinding): ReactNode {
       return <Tag>review</Tag>;
     case "container-context":
       return (
-        <Tooltip title="This looks like a Linux kernel package inside the root filesystem. Containers run on the host kernel, so this may not be the active runtime kernel.">
+        <Tooltip title="This looks like a Linux kernel package inside the image. Containers run on the host kernel, so this may not be the active runtime kernel.">
           <Tag style={{ marginInlineEnd: 0 }}>container-context</Tag>
         </Tooltip>
       );
@@ -407,7 +407,7 @@ function RootfsScanDetails({ scan }: { scan: RootfsScanSummary }) {
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {kernelFindingCount} listed finding
               {kernelFindingCount === 1 ? "" : "s"} appear to be for Linux
-              kernel packages inside the RootFS. CoCalc project containers use
+              kernel packages inside the image. CoCalc project containers use
               the host kernel, so these are often not the runtime kernel, but
               they are still shown until scan metadata can classify them
               precisely.
@@ -436,9 +436,9 @@ function RootfsScanDetails({ scan }: { scan: RootfsScanSummary }) {
                   <Space wrap size={4}>
                     <span>{finding.package_name ?? ""}</span>
                     {isLikelyKernelPackage(finding) ? (
-                      <Tooltip title="This is still part of the rootfs package inventory, but usually not the active kernel used by the project container.">
+                      <Tooltip title="This is still part of the image package inventory, but usually not the active kernel used by the project container.">
                         <Tag style={{ marginInlineEnd: 0 }}>
-                          rootfs kernel package
+                          image kernel package
                         </Tag>
                       </Tooltip>
                     ) : null}
@@ -477,7 +477,7 @@ function RootfsScanDetails({ scan }: { scan: RootfsScanSummary }) {
 
 export function RootfsScanDetailsButton({
   scan,
-  title = "RootFS scan details",
+  title = "Image scan details",
   onDownloadReport,
 }: {
   scan?: RootfsScanSummary;
@@ -517,7 +517,7 @@ export function RootfsScanDetailsButton({
 
 export function RootfsScanSummaryButton({
   entry,
-  title = "RootFS scan details",
+  title = "Image scan details",
   onDownloadReport,
 }: {
   entry: Pick<RootfsImageEntry, "scan" | "official">;
