@@ -288,6 +288,40 @@ Known risks:
   draft is still untouched. Waiting for Claude's standing adversarial + drift
   sweep or for Blaec/Claude to release a new curated queue item.
 
+---
+
+### Codex - scheduled landing-page improvement loop no-op (2026-06-22 12:40 PDT)
+
+- **START 2026-06-22 12:40 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS,
+  multi-agent operating model, website operating system, frozen Brief,
+  public-site skill, site quality regimen, finite issues tracker, post-framing
+  queue, consolidated adversarial-fix slice, active framing workplan, and this
+  handoff ledger. Verified preview hub pids `15629` and `15671`, both cwd
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/watch process
+  observed. Targeted queue check found no released Codex item after the
+  `/features` H1 fix: Claude's current status still says the autonomous Codex
+  queue is drained and that Claude should run the standing adversarial + drift
+  sweep next. The older FS-001 workplan still says in-progress, but the newer
+  live board and turn log hold that stale dedicated-compute work out of scope.
+  Claimed files: this ledger and `/home/user/cocalc-shared/codex-turn-log.md`
+  only. Guardrails: no protected home, pricing/compliance, type/palette/palette-token
+  work, pitch docs, docs-route content, product/feature/support source edits,
+  raw-audit foraging, support-alert token follow-up, stale dedicated-compute
+  work, feature-page redesigns, or the untracked `dedicated-compute-page.tsx`
+  draft.
+- **END 2026-06-22 12:40 PDT:** QUEUE DRAINED. No public-site source files
+  were changed and no build/browser QA was run because no route was touched.
+  The latest public-site source-change commit remains `5a66628ca1`
+  (`frontend/public: sharpen features index headline`); this turn updates only
+  coordination artifacts. The branch matched
+  `origin/blaec-synthesis-2026-06-18` before this ledger update, and the known
+  untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  draft is still untouched. Waiting for Claude's standing adversarial + drift
+  sweep or for Blaec/Claude to release a new curated queue item.
+
 ## Current state (2026-06-18)
 
 ### Claude — now ASSISTANT / observer (role change 2026-06-20)
