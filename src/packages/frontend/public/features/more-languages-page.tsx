@@ -142,7 +142,7 @@ export default function MoreLanguagesFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalLabel = isAuthenticated ? "Open projects" : "Start a project";
+  const finalLabel = isAuthenticated ? "Open projects" : "Start in a project";
 
   return (
     <Flex vertical gap={22}>

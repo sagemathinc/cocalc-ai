@@ -141,6 +141,7 @@ export default function JuliaFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalLabel = isAuthenticated ? "Open projects" : "Start using Julia";
 
   return (
     <Flex vertical gap={22}>
@@ -185,7 +186,7 @@ export default function JuliaFeaturePage({
           action={{
             body: "Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows.",
             href: primaryHref,
-            label: primaryLabel,
+            label: finalLabel,
             title: "Start in a project",
           }}
           relatedLinks={[

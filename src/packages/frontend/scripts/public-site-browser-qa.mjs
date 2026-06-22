@@ -169,7 +169,7 @@ const ROUTE_RULES = {
       { text: "Review trust materials", hrefIncludes: "/policies/trust" },
       { text: "Compare operating models", hrefIncludes: "/products" },
       { text: "Review pricing", hrefIncludes: "/pricing" },
-      { text: "Read the docs", hrefIncludes: "/docs" },
+      { text: "Browse docs", hrefIncludes: "/docs" },
     ],
   },
   "/support/new": {
@@ -483,7 +483,7 @@ const ROUTE_RULES = {
     requireText: [
       "Keep R close to the rest of the analysis.",
       "Project context",
-      "Start in a project",
+      "Start using R",
       "Fit statistical models and share analyses others can re-run later",
     ],
     requireSelectors: [
@@ -496,7 +496,7 @@ const ROUTE_RULES = {
     requireText: [
       "Keep Julia close to the rest of the research.",
       "Project context",
-      "Start in a project",
+      "Start using Julia",
       "Review results together while the whole modeling project stays reproducible",
     ],
     requireSelectors: [

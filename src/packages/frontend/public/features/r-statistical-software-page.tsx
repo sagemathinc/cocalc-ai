@@ -141,6 +141,7 @@ export default function RStatisticalSoftwareFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalLabel = isAuthenticated ? "Open projects" : "Start using R";
 
   return (
     <Flex vertical gap={22}>
@@ -181,7 +182,7 @@ export default function RStatisticalSoftwareFeaturePage({
           action={{
             body: "Open a project and use R in notebooks, terminals, reports, or teaching workflows.",
             href: primaryHref,
-            label: primaryLabel,
+            label: finalLabel,
             title: "Start in a project",
           }}
           relatedLinks={[

@@ -216,6 +216,9 @@ export default function SageFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalCtaLabel = isAuthenticated
+    ? "Open projects"
+    : "Start using SageMath";
 
   return (
     <Flex vertical gap={22}>
@@ -302,7 +305,7 @@ export default function SageFeaturePage({
           action={{
             body: "Open a project and use Sage in notebooks, terminals, LaTeX documents, courses, or long-running research jobs.",
             href: primaryCtaHref,
-            label: primaryCtaLabel,
+            label: finalCtaLabel,
             title: "Start using SageMath",
           }}
           relatedLinks={[

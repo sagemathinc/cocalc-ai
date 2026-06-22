@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { CSSProperties } from "react";
+
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -24,6 +26,23 @@ import { IconBadge } from "./feature-visuals";
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
+
+const VISUALLY_HIDDEN_STYLE: CSSProperties = {
+  border: 0,
+  clip: "rect(0 0 0 0)",
+  clipPath: "inset(50%)",
+  height: 1,
+  overflow: "hidden",
+  position: "absolute",
+  whiteSpace: "nowrap",
+  width: 1,
+};
+
+const FIT_DECISION_ROWS = [
+  ["Hosted paper collaboration", "Dedicated LaTeX editor"],
+  ["Local editor craft", "Local TeX editor"],
+  ["Paper as technical project", "CoCalc"],
+] as const;
 
 function LatexEditorMock() {
   return (
@@ -107,9 +126,17 @@ shows concentration after normalization.
                     padding: 16,
                   }}
                 >
-                  <Title level={5} style={{ margin: "0 0 10px" }}>
+                  <div
+                    style={{
+                      color: PUBLIC_COLORS.heading,
+                      fontSize: PUBLIC_TYPE.body,
+                      fontWeight: 600,
+                      lineHeight: 1.4,
+                      margin: "0 0 10px",
+                    }}
+                  >
                     Spectral gap
-                  </Title>
+                  </div>
                   <Paragraph style={{ margin: 0 }}>
                     The normalized operator has a stable gap across the sampled
                     family...
@@ -177,6 +204,78 @@ function PaperProjectContext() {
         />
       </Flex>
     </div>
+  );
+}
+
+function LatexFitTable() {
+  return (
+    <table
+      aria-describedby="cocalc-latex-fit-table-caption"
+      aria-label="LaTeX environment fit decisions"
+      style={{
+        borderCollapse: "separate",
+        borderSpacing: "0 10px",
+        width: "100%",
+      }}
+    >
+      <caption
+        id="cocalc-latex-fit-table-caption"
+        style={VISUALLY_HIDDEN_STYLE}
+      >
+        Each row compares a writing task with the environment that best fits it.
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col" style={VISUALLY_HIDDEN_STYLE}>
+            Writing task
+          </th>
+          <th scope="col" style={VISUALLY_HIDDEN_STYLE}>
+            Best fit
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {FIT_DECISION_ROWS.map(([task, fit]) => {
+          const isCocalc = fit === "CoCalc";
+          const background = isCocalc
+            ? PUBLIC_COLORS.surfaceMuted
+            : PUBLIC_COLORS.surface;
+          const cellStyle: CSSProperties = {
+            background,
+            borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+            borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+            padding: 12,
+            textAlign: "left",
+          };
+
+          return (
+            <tr key={task}>
+              <th
+                scope="row"
+                style={{
+                  ...cellStyle,
+                  borderLeft: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: `${PUBLIC_RADIUS.panel}px 0 0 ${PUBLIC_RADIUS.panel}px`,
+                  fontWeight: 400,
+                }}
+              >
+                <Text>{task}</Text>
+              </th>
+              <td
+                style={{
+                  ...cellStyle,
+                  borderLeft: 0,
+                  borderRadius: `0 ${PUBLIC_RADIUS.panel}px ${PUBLIC_RADIUS.panel}px 0`,
+                  borderRight: `1px solid ${PUBLIC_COLORS.border}`,
+                }}
+              >
+                <Text strong>{fit}</Text>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -262,8 +361,9 @@ export default function LatexEditorFeaturePage({
               </Title>
               <Paragraph style={{ margin: 0 }}>
                 A mathematical or scientific paper usually has more structure
-                than the final PDF shows: `.tex` files, bibliography entries,
-                figures, scripts, notebooks, generated tables, and discussions.
+                than the final PDF shows: <code>.tex</code> files, bibliography
+                entries, figures, scripts, notebooks, generated tables, and
+                discussions.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 CoCalc makes that working tree collaborative. Coauthors can
@@ -353,32 +453,7 @@ export default function LatexEditorFeaturePage({
                 padding: 24,
               }}
             >
-              <Flex vertical gap={12}>
-                {[
-                  ["Hosted paper collaboration", "Dedicated LaTeX editor"],
-                  ["Local editor craft", "Local TeX editor"],
-                  ["Paper as technical project", "CoCalc"],
-                ].map(([task, fit]) => (
-                  <div
-                    key={task}
-                    style={{
-                      background:
-                        fit === "CoCalc"
-                          ? PUBLIC_COLORS.surfaceMuted
-                          : PUBLIC_COLORS.surface,
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: PUBLIC_RADIUS.panel,
-                      display: "grid",
-                      gap: 10,
-                      gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-                      padding: 12,
-                    }}
-                  >
-                    <Text>{task}</Text>
-                    <Text strong>{fit}</Text>
-                  </div>
-                ))}
-              </Flex>
+              <LatexFitTable />
             </div>
           </Col>
         </Row>

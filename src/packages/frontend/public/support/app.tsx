@@ -216,7 +216,7 @@ function SupportIndex({
           description="Browse user and admin documentation."
           title="Documentation"
         >
-          <Button href={appPath("/docs")}>Read the docs</Button>
+          <Button href={appPath("/docs")}>Browse docs</Button>
         </SupportCard>
         <SupportCard
           description="Reach the team directly by email."

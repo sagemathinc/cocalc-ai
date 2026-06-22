@@ -582,7 +582,7 @@ describe("PublicFeaturesApp", () => {
   });
 
   it("renders the richer latex feature page", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "latex-editor", view: "detail" }}
@@ -599,6 +599,17 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText(/writing loop/i)).not.toBeNull();
     // Mock-UI label ban: the agent panel reads "AI review thread", not "Codex".
     expect(screen.queryByText("Codex review thread")).toBeNull();
+    // Decorative PDF mock text should not pollute the document heading outline.
+    expect(screen.queryByRole("heading", { name: "Spectral gap" })).toBeNull();
+    const fitTable = within(container).getByRole("table", {
+      name: "LaTeX environment fit decisions",
+    });
+    expect(fitTable.getAttribute("aria-describedby")).toBe(
+      "cocalc-latex-fit-table-caption",
+    );
+    expect(fitTable.querySelector("caption")?.textContent).toMatch(
+      /Each row compares a writing task/i,
+    );
   });
 
   it("uses projects as the latex CTA for authenticated users", () => {
@@ -1062,14 +1073,14 @@ describe("PublicFeaturesApp", () => {
   });
 
   it.each([
-    { finalCta: "Start using SageMath on CoCalc", slug: "sage" },
+    { finalCta: "Start using SageMath", slug: "sage" },
     { finalCta: "Create account", slug: "whiteboard" },
     { finalCta: "Start making slides", slug: "slides" },
     { finalCta: "Start using R", slug: "r-statistical-software" },
     { finalCta: "Start using Octave", slug: "octave" },
     { finalCta: "Start using Julia", slug: "julia" },
     { finalCta: "Start a workflow", slug: "automations" },
-    { finalCta: "Start a project", slug: "more-languages" },
+    { finalCta: "Start in a project", slug: "more-languages" },
   ])(
     "uses projects as the $slug CTA for authenticated users",
     ({ finalCta, slug }) => {
@@ -1091,7 +1102,7 @@ describe("PublicFeaturesApp", () => {
       for (const link of projectLinks) {
         expect(link.getAttribute("href")).toBe("/projects");
       }
-      expect(screen.queryByText(finalCta)).toBeNull();
+      expect(screen.queryByRole("link", { name: finalCta })).toBeNull();
     },
   );
 
@@ -1145,6 +1156,10 @@ describe("PublicFeaturesApp", () => {
     {
       slug: "r-statistical-software",
       title: "From analysis to a shared report",
+    },
+    {
+      slug: "python",
+      title: "Run the same Python project where you need it",
     },
     {
       slug: "slides",

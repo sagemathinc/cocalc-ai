@@ -245,18 +245,6 @@ export default function JupyterNotebookFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Text
-                strong
-                style={{
-                  alignSelf: "flex-start",
-                  color: PUBLIC_COLORS.heading,
-                  fontSize: PUBLIC_TYPE.eyebrow,
-                  letterSpacing: 0,
-                  textTransform: "uppercase",
-                }}
-              >
-                Jupyter notebooks
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Jupyter notebooks for work that needs to keep going
               </Title>
@@ -421,10 +409,10 @@ export default function JupyterNotebookFeaturePage({
       >
         <Flex vertical gap={18}>
           <Paragraph style={{ fontSize: PUBLIC_TYPE.body, margin: 0 }}>
-            Saving an `.ipynb` file is not the same as understanding the live
-            session. CoCalc gives Codex project-scoped notebook commands, so it
-            can inspect cells, start focused runs, and reason from actual
-            output.
+            Saving an <code>.ipynb</code> file is not the same as understanding
+            the live session. CoCalc gives Codex project-scoped notebook
+            commands, so it can inspect cells, start focused runs, and reason
+            from actual output.
           </Paragraph>
           <LiveStateDiagram />
           <Flex wrap gap={12}>
