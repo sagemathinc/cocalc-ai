@@ -46,6 +46,48 @@ Known risks:
 
 ---
 
+### Codex — consolidated adversarial fix slice (START 2026-06-22 10:46 PDT)
+
+- **Task:** apply `/home/user/cocalc-shared/consolidated-fix-slice-2026-06-22.md`
+  in three bounded commits: copy de-stamp + v3 hero subheads, Python
+  `FeatureFinalBand`, then CTA normalization + a11y cleanup.
+- **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` /
+  `blaec-synthesis-2026-06-18`.
+- **Preview owner this turn:** YES. Verified hub pid `13303`, cwd
+  `/home/user/cocalc-ai-synthesis/src`; no active static/build process observed.
+- **Claimed files/routes:** public feature/product/guide/docs/support copy
+  surfaces named by the consolidated slice; likely tests under
+  `packages/frontend/public/features/__tests__/app.test.tsx`,
+  `packages/frontend/public/__tests__/app.test.tsx`, and route-specific public
+  tests; this ledger and `/home/user/cocalc-shared/codex-turn-log.md`.
+- **Do not touch:** `packages/frontend/public/home/**`, footer/global chrome
+  copy, pricing money/compliance claims, palette/type visual lanes, pitch docs,
+  and the untracked `dedicated-compute-page.tsx` draft except as read-only
+  context.
+- **Validation required:** per commit focused Jest, `lint:frontend`, frontend
+  build/typecheck as relevant, static preview rebuild, desktop+mobile browser
+  QA screenshots for changed routes, push, rebuild preview, log completion.
+- **Last commit:** `3521e3e9b2` before this slice.
+- **Known risks:** worktree already had relevant uncommitted partial copy edits
+  in docs/features/compare/guides/products/support; fold these into Commit 1 by
+  correcting to the consolidated final text, not by reverting unrelated work.
+- **END 2026-06-22 11:26 PDT:** QUEUE DRAINED for the consolidated
+  adversarial-fix slice. Landed 3 bounded commits: copy de-stamp + v3 hero
+  subheads (`643576e9c8`), Python `FeatureFinalBand` (`990b5fd97a`), and CTA
+  normalization + a11y cleanup (`1c5f296324`). Validation: focused Jest
+  `public/__tests__/app.test.tsx` + `public/features/__tests__/app.test.tsx` +
+  `public/support/__tests__/app.test.tsx` passed during the slice; final
+  focused feature/support run passed 106/106; `pnpm -C src lint:frontend`
+  passed; `pnpm -C src/packages/static build:dev` passed; browser QA passed
+  1176/1176 assertions on desktop+mobile for feature-details,
+  conversion-spine, guides, and product-details. Screenshot/results artifact:
+  `/tmp/cocalc-public-qa-2QS0eT`. Preview owner restored to synthesis hub pid
+  `15671`, cwd `/home/user/cocalc-ai-synthesis/src`; `blaec.cocalc.ai`
+  returns 200 and serves the rebuilt bundle at git revision `1c5f296324`.
+  Known untracked draft `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  remains untouched. STOP: do not forage raw audits; wait for Claude audit or
+  a new curated queue item.
+
 ## Current state (2026-06-18)
 
 ### Claude — now ASSISTANT / observer (role change 2026-06-20)
