@@ -98,15 +98,15 @@ function Alert({
     kind === "error"
       ? {
           ...ALERT_BASE_STYLE,
-          background: "#fff2f0",
-          border: "1px solid #ffccc7",
-          color: "#a8071a",
+          background: PUBLIC_COLORS.errorTint,
+          border: `1px solid ${PUBLIC_COLORS.errorBorder}`,
+          color: PUBLIC_COLORS.error,
         }
       : {
           ...ALERT_BASE_STYLE,
-          background: "#e6f4ff",
-          border: "1px solid #91caff",
-          color: "#0958d9",
+          background: PUBLIC_COLORS.infoTint,
+          border: `1px solid ${PUBLIC_COLORS.infoBorder}`,
+          color: PUBLIC_COLORS.info,
         };
   return <div style={style}>{children}</div>;
 }

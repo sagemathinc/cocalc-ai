@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { PUBLIC_COLORS } from "../theme";
 import SupportTicketsView from "./tickets-view";
 
 const mockApi = jest.fn();
@@ -83,5 +84,26 @@ describe("SupportTicketsView", () => {
 
     const dates = screen.getByText(/Created .* updated/i);
     expect(dates.style.color).not.toBe("rgb(128, 128, 128)");
+  });
+
+  it("uses public color tokens for ticket alert states", () => {
+    render(<SupportTicketsView config={{ zendesk: false }} />);
+
+    expect(screen.getByText("Support tickets are not configured.")).toHaveStyle(
+      {
+        background: PUBLIC_COLORS.errorTint,
+        border: `1px solid ${PUBLIC_COLORS.errorBorder}`,
+        color: PUBLIC_COLORS.error,
+      },
+    );
+
+    mockApi.mockReturnValue(new Promise(() => {}));
+    render(<SupportTicketsView config={{ zendesk: true }} />);
+
+    expect(screen.getByText("Loading support tickets...")).toHaveStyle({
+      background: PUBLIC_COLORS.infoTint,
+      border: `1px solid ${PUBLIC_COLORS.infoBorder}`,
+      color: PUBLIC_COLORS.info,
+    });
   });
 });

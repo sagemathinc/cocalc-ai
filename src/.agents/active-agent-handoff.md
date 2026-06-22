@@ -1435,3 +1435,32 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   desktop+mobile passed 42/42. Mobile screenshot inspected from
   `/tmp/cocalc-public-qa-iEY4lo`; no visible layout change from the hidden
   caption.
+
+---
+
+## Codex — support ticket alert tokenization (2026-06-22)
+
+- **START 2026-06-22:** Scheduled landing-page improvement loop found one
+  remaining current, non-protected P0 from the master audit: `/support/tickets`
+  alert boxes still use hardcoded Ant Design hex colors for error/info states.
+  Scope is only tokenizing those alert colors through the public design system
+  while preserving behavior, copy, layout, and the existing ticket heading
+  semantics. Claimed files: `src/packages/frontend/public/theme.ts`,
+  `src/packages/frontend/public/support/tickets-view.tsx`,
+  `src/packages/frontend/public/support/tickets-view.test.tsx`,
+  focused browser-QA canaries if needed, and this ledger. Guardrails: no
+  protected home, pricing/compliance, pitch docs, docs routes/content,
+  type/palette restyle, product/feature pages, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22:** Support ticket alert tokenization implemented and
+  validated. Added public `error*` and `info*` color tokens, replaced the
+  `/support/tickets` Alert component's hardcoded error/info hex literals with
+  those tokens, and added a focused regression test for both alert states. Text
+  contrast checks passed manually: error 4.87:1, info 6.03:1. Validation passed:
+  `git diff --check`; focused support Jest 9/9; `pnpm -C src lint:frontend`;
+  `pnpm -C src/packages/static build:dev`; browser QA on `/support/tickets`
+  desktop+mobile passed 22/22.
+  Screenshots inspected from `/tmp/cocalc-public-qa-grXxB4`; no visible
+  overflow or alert layout regression. Remaining holds unchanged: protected
+  home, pricing/compliance, type/palette restyle, and the untracked
+  dedicated-compute draft.
