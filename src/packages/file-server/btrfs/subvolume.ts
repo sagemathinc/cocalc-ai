@@ -131,8 +131,16 @@ export async function subvolume(
 export async function getSubvolumeField(
   path: string,
   field: string,
+  opts?: { cache?: boolean },
 ): Promise<string> {
-  const { stdout } = await cachedBtrfsSubvolumeShow(path);
+  const { stdout } =
+    opts?.cache === false
+      ? await btrfs({
+          args: ["subvolume", "show", path],
+          err_on_exit: true,
+          verbose: false,
+        })
+      : await cachedBtrfsSubvolumeShow(path);
   // Avoid relying on positional splits; scan lines for the field name.
   const re = new RegExp(`^\\s*${field}\\s*:\\s*(.+)$`, "im");
   const match = stdout.match(re);

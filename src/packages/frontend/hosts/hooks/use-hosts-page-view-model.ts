@@ -42,6 +42,7 @@ import {
   getHostFundingModeOptions,
 } from "../utils/funding-mode";
 import {
+  PROJECT_HOST_RUNTIME_STACK_COMPONENTS,
   runtimeDeploymentsForManagedComponentVersion,
   shouldAlignRuntimeStackForSoftwareArtifacts,
 } from "../utils/runtime-deployments";
@@ -1239,7 +1240,9 @@ export const useHostsPageViewModel = () => {
                   deployment.target === artifact) ||
                 (artifact === "project-host" &&
                   deployment.target_type === "component" &&
-                  deployment.target === "project-host")
+                  PROJECT_HOST_RUNTIME_STACK_COMPONENTS.includes(
+                    deployment.target as ManagedComponentKind,
+                  ))
               ),
           )
           .map((deployment) => ({

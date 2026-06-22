@@ -853,6 +853,96 @@ describe("host-create-draft", () => {
     });
   });
 
+  it("does not let Nebius Non-GPU CPU labels satisfy the Standard GPU preset", () => {
+    const context: HostCreateDraftContext = {
+      enabledProviders: ["nebius"],
+      billing,
+      catalogByProvider: {
+        nebius: catalog("nebius", [
+          {
+            kind: "regions",
+            scope: "global",
+            payload: [{ name: "us-central1" }],
+          },
+          {
+            kind: "instance_types",
+            scope: "global",
+            payload: [
+              {
+                name: "16vcpu-64gb",
+                platform: "cpu-platform",
+                platform_label: "Non-GPU AMD Epyc Genoa",
+                regions: ["us-central1"],
+                vcpus: 16,
+                memory_gib: 64,
+                gpus: 0,
+                gpu_label: "Non-GPU AMD Epyc Genoa",
+              },
+              {
+                name: "1gpu-24vcpu-218gb",
+                platform: "gpu-rtx6000",
+                platform_label: "NVIDIA® RTX PRO™ 6000",
+                regions: ["us-central1"],
+                vcpus: 24,
+                memory_gib: 218,
+                gpus: 1,
+                gpu_label: "NVIDIA® RTX PRO™ 6000",
+                allowed_for_preemptibles: true,
+              },
+            ],
+          },
+          {
+            kind: "prices",
+            scope: "global",
+            payload: [
+              {
+                product: "Non-GPU AMD Epyc Genoa. CPU",
+                region: "us-central1",
+                price_usd: "0.01",
+                unit: "vCPU hour",
+              },
+              {
+                product: "Non-GPU AMD Epyc Genoa. RAM",
+                region: "us-central1",
+                price_usd: "0.002",
+                unit: "GiB hour",
+              },
+              {
+                product: "NVIDIA® RTX PRO™ 6000",
+                region: "us-central1",
+                price_usd: "1.80",
+                unit: "GPU hour",
+              },
+              {
+                product: "Network SSD IO M3 disk",
+                region: "us-central1",
+                price_usd: "0.00016164383561643835",
+                unit: "GiB hour",
+              },
+            ],
+          },
+        ]),
+      },
+    };
+    const base = {
+      ...buildDefaultDraft(context),
+      region: "us-central1",
+      machine_type: "16vcpu-64gb",
+    };
+
+    expect(
+      getAvailablePresets(base, context).find(
+        (preset) => preset.id === "gpu-workstation",
+      )?.disabled,
+    ).toBeFalsy();
+    expect(applyPreset("gpu-workstation", base, context)).toMatchObject({
+      provider: "nebius",
+      region: "us-central1",
+      machine_type: "1gpu-24vcpu-218gb",
+      pricing_model: "on_demand",
+    });
+  });
+
   it("keeps GCP CPU presets on exactly 16 GiB machines", () => {
     const context = providerContext("gcp");
     const base = {

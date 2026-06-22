@@ -340,7 +340,9 @@ export class SubvolumeSnapshots {
       }
       return true;
     }
-    const pathGen = await getGeneration(this.subvolume.path);
+    const pathGen = await getGeneration(this.subvolume.path, {
+      cache: false,
+    });
     const snapGen = await getGeneration(
       join(this.snapshotsDir, s[s.length - 1]),
     );
@@ -391,6 +393,9 @@ export class SubvolumeSnapshots {
   };
 }
 
-export async function getGeneration(path: string): Promise<number> {
-  return parseInt(await getSubvolumeField(path, "Generation"));
+export async function getGeneration(
+  path: string,
+  opts?: { cache?: boolean },
+): Promise<number> {
+  return parseInt(await getSubvolumeField(path, "Generation", opts));
 }

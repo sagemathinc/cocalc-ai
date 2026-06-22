@@ -421,6 +421,21 @@ function alertCandidates(
     });
   }
 
+  const stuckStarts = rowByMetric(
+    summary.metrics,
+    "project_start_running_stuck",
+  );
+  if (stuckStarts && stuckStarts.count >= 1) {
+    alerts.push({
+      subject: "project start appears stuck",
+      body: latencyBody(
+        stuckStarts,
+        "At least one browser-observed project start was still not running after the user-visible stuck threshold.",
+        sla.project_start_overall_p95_ms,
+      ),
+    });
+  }
+
   const startTimeouts = rowByMetric(
     summary.metrics,
     "project_start_running_timeout",

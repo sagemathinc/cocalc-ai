@@ -362,7 +362,7 @@ test("bay backup calls the hub run-bay-backup API", async () => {
 
   await program.parseAsync(["node", "test", "bay", "backup", "bay-0"]);
 
-  assert.deepEqual(callOpts, { bay_id: "bay-0" });
+  assert.deepEqual(callOpts, { bay_id: "bay-0", timeout: 10 * 60 * 1000 });
   assert.equal(captured?.backup_set_id, "backup-1");
 });
 
