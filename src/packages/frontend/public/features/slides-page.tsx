@@ -20,18 +20,17 @@ const { Paragraph, Text, Title } = Typography;
 
 export function SlideDeckMock() {
   const slides = [
-    ["1", "Problem", "markdown + math"],
-    ["2", "Computation", "Jupyter cell"],
-    ["3", "Result", "plot + explanation"],
-    ["4", "Discussion", "questions"],
-  ];
+    ["markdown", "1", "Problem", "markdown + math"],
+    ["jupyter", "2", "Computation", "Jupyter cell"],
+    ["line-chart", "3", "Result", "plot + explanation"],
+    ["users", "4", "Discussion", "questions"],
+  ] satisfies [IconName, string, string, string][];
 
   return (
     <div
       aria-label="Illustration of CoCalc slides as slide-sized whiteboard pages"
       style={{
-        background:
-          "linear-gradient(145deg, #ffffff 0%, #f7fbff 56%, #fff8e8 100%)",
+        background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 56%, ${PUBLIC_COLORS.brandTint} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
         boxShadow: PUBLIC_ELEVATION.lg,
@@ -52,38 +51,28 @@ export function SlideDeckMock() {
         </Flex>
 
         <Row gutter={[12, 12]}>
-          {slides.map(([number, title, body]) => (
+          {slides.map(([icon, number, title, body]) => (
             <Col key={number} xs={24} sm={12}>
               <div
                 style={{
-                  aspectRatio: "16 / 9",
                   background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
                   borderRadius: PUBLIC_RADIUS.panel,
                   boxShadow: PUBLIC_ELEVATION.card,
+                  height: "100%",
                   padding: 14,
                 }}
               >
-                <Flex
-                  vertical
-                  justify="space-between"
-                  style={{ height: "100%" }}
-                >
-                  <Flex justify="space-between" align="center">
-                    <Text strong>{title}</Text>
-                    <Text style={{ color: "#d46b08" }} strong>
-                      {number}
-                    </Text>
-                  </Flex>
-                  <div
-                    style={{
-                      background: "#fff7e6",
-                      border: "1px solid #ffd591",
-                      borderRadius: PUBLIC_RADIUS.panel,
-                      padding: 12,
-                    }}
-                  >
-                    <Text>{body}</Text>
+                <Flex align="center" gap={12}>
+                  <IconBadge accent="#d46b08" icon={icon} />
+                  <div>
+                    <Flex align="center" gap={8} wrap>
+                      <Text strong>{title}</Text>
+                      <Text style={{ color: PUBLIC_COLORS.mutedText }} strong>
+                        {number}
+                      </Text>
+                    </Flex>
+                    <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
                   </div>
                 </Flex>
               </div>
@@ -140,7 +129,7 @@ function SlideFlow() {
                       align="center"
                       gap={12}
                       style={{
-                        background: "#f7fbff",
+                        background: PUBLIC_COLORS.surfaceMuted,
                         border: `1px solid ${PUBLIC_COLORS.border}`,
                         borderRadius: PUBLIC_RADIUS.panel,
                         height: "100%",

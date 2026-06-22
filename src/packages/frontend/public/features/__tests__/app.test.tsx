@@ -196,14 +196,7 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#fff8e8",
     "#ffffff",
   ],
-  "slides-page.tsx": [
-    "#d46b08",
-    "#f7fbff",
-    "#ffd591",
-    "#fff7e6",
-    "#fff8e8",
-    "#ffffff",
-  ],
+  "slides-page.tsx": ["#d46b08"],
   "terminal-page.tsx": [
     "#096dd9",
     "#278c83",
