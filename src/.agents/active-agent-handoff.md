@@ -1724,3 +1724,33 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   the protected-home portion of `b8388f8a41`, decide the off-queue support
   alert tokenization / palette-lane question, decide the held pricing-page
   items, or release a new curated queue.
+
+---
+
+## Codex - scheduled landing-page improvement loop no-op (2026-06-22 03:51 PDT)
+
+- **START 2026-06-22 03:51 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the public-site guardrails, frozen
+  Brief, operating system, public-site skill, current handoff ledger, shared
+  INDEX, Claude current status, Codex turn log, and post-framing queue.
+  Verified preview hub pid `13303` still serves
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/watch was
+  observed. Current shared status still says the curated Codex queue is drained
+  and explicitly says not to self-select from the raw 127-finding audit.
+  Claimed files: this ledger and `/home/user/cocalc-shared/codex-turn-log.md`
+  only. Guardrails: no protected home, pricing/compliance,
+  type/palette/palette-token work, pitch docs, docs-route content,
+  product/feature/support source edits, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 03:51 PDT:** QUEUE DRAINED. No public-site source files were
+  changed and no build/browser QA was run because no route was touched. The
+  latest public-site source-change commit remains `c4dc9ae4f7`
+  (`frontend/public: tokenize support ticket alert colors`); this turn updates
+  only coordination artifacts. The branch was ahead of origin by thirteen
+  commits before this ledger update, and the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Blaec/Claude on held decisions: accept or revert
+  the protected-home portion of `b8388f8a41`, decide the off-queue support
+  alert tokenization / palette-lane question, decide the held pricing-page
+  items, or release a new curated queue.
