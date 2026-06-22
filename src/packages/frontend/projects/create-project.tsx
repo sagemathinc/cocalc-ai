@@ -289,8 +289,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           small base to customize yourself.
         </Paragraph>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Managed catalog images are recommended. Scan findings are shown for
-          review but do not block selection.
+          Managed catalog images are recommended.
         </Paragraph>
       </Space>
     );

@@ -33,6 +33,8 @@ type RootfsImageLoadOptions = {
 const manifestCache = new Map<string, Promise<RootfsImageEntry[]>>();
 let manifestRevision = 0;
 const manifestListeners = new Set<() => void>();
+const MANAGED_CATALOG_RPC_TIMEOUT_MS = 12_000;
+const MANIFEST_FETCH_TIMEOUT_MS = 12_000;
 
 function subscribeManifestInvalidation(listener: () => void): () => void {
   manifestListeners.add(listener);
@@ -58,8 +60,13 @@ function normalizeUrls(urls: string[]): string[] {
 }
 
 async function fetchManifest(url: string): Promise<RootfsImageManifest | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    MANIFEST_FETCH_TIMEOUT_MS,
+  );
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -74,6 +81,28 @@ async function fetchManifest(url: string): Promise<RootfsImageManifest | null> {
   } catch (err) {
     console.warn(`Failed to load RootFS manifest ${url}:`, err);
     return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(label)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout != null) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -101,11 +130,14 @@ async function loadManagedCatalogManifest(
     webapp_client.conat_client.is_signed_in();
   if (hasAccountContext) {
     try {
-      const page =
-        await webapp_client.conat_client.hub.system.getRootfsCatalogPage({
+      const page = await withTimeout(
+        webapp_client.conat_client.hub.system.getRootfsCatalogPage({
           limit: opts.limit ?? 200,
           query: opts.query?.trim() || undefined,
-        });
+        }),
+        MANAGED_CATALOG_RPC_TIMEOUT_MS,
+        "RootFS catalog RPC timed out",
+      );
       const manifest: RootfsImageManifest = {
         version: page.version,
         generated_at: page.generated_at,
