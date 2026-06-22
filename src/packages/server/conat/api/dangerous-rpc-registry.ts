@@ -517,8 +517,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
       "collaborator-authorized restore of backup files into a project; same impact class as normal project file writes",
   },
   "projects.restoreSnapshot": {
-    decision: "fresh-auth-required",
-    reason: "project snapshot restore",
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized snapshot/rootfs restore; recoverable project state mutation with same impact class as normal project file writes",
   },
   "projects.setProjectEnv": {
     decision: "fresh-auth-not-required",
