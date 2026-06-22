@@ -441,8 +441,10 @@ Known risks:
   desktop H1 now reads as a broad two-line title instead of being confined to
   the left column; mobile still fits without overflow. Protected home, pricing,
   docs content, palette/type lanes, feature detail pages, and the untracked
-  `dedicated-compute-page.tsx` draft stayed untouched. Next: commit/push this
-  handoff closeout and rebuild preview from the final branch head.
+  `dedicated-compute-page.tsx` draft stayed untouched. Final post-closeout
+  rebuild from git revision `13590b8824` passed, and final `/features`
+  desktop+mobile browser QA passed 56/56 with screenshots/results at
+  `/tmp/cocalc-public-qa-Myu5Rt`.
 
 ## Current state (2026-06-18)
 
