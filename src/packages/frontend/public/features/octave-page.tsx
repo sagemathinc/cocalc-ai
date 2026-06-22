@@ -17,6 +17,12 @@ import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
+const OCTAVE_SECTION_TITLE_STYLE = {
+  fontSize: PUBLIC_TYPE.subhead,
+  lineHeight: 1.25,
+  margin: 0,
+} as const;
+
 function OctaveProjectMock() {
   const projectItems = [
     ["solver.m", "source file"],
@@ -77,7 +83,7 @@ function OctaveFlow() {
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
-            <Title level={3} style={{ margin: 0 }}>
+            <Title level={3} style={OCTAVE_SECTION_TITLE_STYLE}>
               Run reproducible Octave work without local setup drift.
             </Title>
             <Paragraph style={{ margin: 0 }}>

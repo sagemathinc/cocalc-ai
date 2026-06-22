@@ -21,7 +21,7 @@ import {
   SECTION_H2_MAX,
   textLength,
 } from "../../__tests__/test-helpers";
-import { PUBLIC_DARK } from "../../theme";
+import { PUBLIC_DARK, PUBLIC_TYPE } from "../../theme";
 import PublicFeaturesApp from "../app";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
 
@@ -1220,6 +1220,26 @@ describe("PublicFeaturesApp", () => {
       }
     },
   );
+
+  it("keeps the Octave hero visually dominant over its first proof section", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "octave", view: "detail" }}
+      />,
+    );
+
+    const heroTitle = screen.getByText(
+      "Run GNU Octave with notebooks, .m files, and shared numerical work.",
+    );
+    const proofTitle = screen.getByText(
+      "Run reproducible Octave work without local setup drift.",
+    );
+
+    expect(heroTitle.tagName).toBe("H2");
+    expect(proofTitle.tagName).toBe("H3");
+    expect(proofTitle).toHaveStyle(`font-size: ${PUBLIC_TYPE.subhead}px`);
+  });
 
   it.each(removedFinalSupportLinks)(
     "keeps the $slug final support CTA removed",
