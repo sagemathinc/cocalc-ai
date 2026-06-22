@@ -219,10 +219,10 @@ Known risks:
   `/tmp/cocalc-public-qa-ShXlDS`. Desktop/mobile screenshot inspection:
   headline fits, no overflow, page rhythm unchanged. Known untracked
   `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft
-  remains untouched. Final preview rebuild after the handoff commit passed from
-  git revision `98aa1f7337` with the existing local debug-log permission
+  remains untouched. Final preview rebuild after the handoff closeout passed
+  from git revision `a9899e4b01` with the existing local debug-log permission
   warning only; final `/features` browser QA passed 52/52 desktop+mobile at
-  `/tmp/cocalc-public-qa-ofMb61`. Next: push, then Claude runs the standing
+  `/tmp/cocalc-public-qa-dNnosJ`. Next: push, then Claude runs the standing
   adversarial + drift sweep.
 
 ## Current state (2026-06-18)
