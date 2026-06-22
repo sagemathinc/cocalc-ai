@@ -269,7 +269,7 @@ const ROUTE_RULES = {
   },
   "/features": {
     requireText: [
-      "Durable, collaborative, reproducible workflows",
+      "Keep the whole job in one durable project.",
       "Runtime",
       "Notebooks and writing",
       "AI workflows",

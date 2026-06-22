@@ -668,7 +668,7 @@ function FeaturesIndex() {
                 maxWidth: 640,
               }}
             >
-              Durable, collaborative, reproducible workflows
+              Keep the whole job in one durable project.
             </Title>
             <Paragraph
               style={{

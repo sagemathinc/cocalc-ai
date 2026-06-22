@@ -266,7 +266,7 @@ describe("PublicFeaturesApp", () => {
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText("Durable, collaborative, reproducible workflows"),
+      screen.getByText("Keep the whole job in one durable project."),
     ).not.toBeNull();
     expect(container.textContent ?? "").not.toMatch(/command-line surface/i);
     expect(

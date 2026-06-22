@@ -183,6 +183,30 @@ Known risks:
   draft is still untouched. Waiting for Claude's audit or for Blaec/Claude to
   release a new curated queue item or decide held items.
 
+---
+
+### Codex - features index headline fix (START 2026-06-22 11:53 PDT)
+
+- **Task:** apply the queued features-index headline fix from Claude's live
+  board after Blaec's "main feature pages are bad" feedback: replace the weak
+  adjective-pile H1 with "Keep the whole job in one durable project."
+- **Worktree / Branch:** `/home/user/cocalc-ai-synthesis` /
+  `blaec-synthesis-2026-06-18`.
+- **Preview owner this turn:** YES. Verified hub pids `15629` and `15671`, both
+  cwd `/home/user/cocalc-ai-synthesis/src`; no active static build/watch
+  process observed.
+- **Claimed files/routes:** `/features` only:
+  `packages/frontend/public/features/app.tsx`,
+  `packages/frontend/public/features/__tests__/app.test.tsx`,
+  `packages/frontend/scripts/public-site-browser-qa.mjs`, this ledger, and
+  `/home/user/cocalc-shared/codex-turn-log.md`.
+- **Do not touch:** protected `home/**`, pricing/compliance, type/palette,
+  pitch docs, docs route content, feature detail pages beyond this H1 canary,
+  raw-audit foraging, or the untracked `dedicated-compute-page.tsx` draft.
+- **Validation required:** focused features Jest, `lint:frontend`,
+  `packages/static build:dev`, browser QA/screenshot for `/features`
+  desktop+mobile, commit, push, and handoff log.
+
 ## Current state (2026-06-18)
 
 ### Claude — now ASSISTANT / observer (role change 2026-06-20)
