@@ -74,6 +74,8 @@ function metricLabel(metric: string): string {
   switch (metric) {
     case "project_start_running":
       return "Project lifecycle to running";
+    case "project_start_running_stuck":
+      return "Project start appears stuck";
     case "project_start_running_timeout":
       return "Project start timeout";
     case "project_start_request_failed":
@@ -133,6 +135,8 @@ function metricHelp(metric: string, segment?: string): string {
   switch (metric) {
     case "project_start_running":
       return "Observed in the user's browser from pressing Start, or an automatic start request, until the project lifecycle state is running. This means the container/lifecycle is running; terminal, Jupyter, and exec readiness are measured separately. The aggregate row includes restore/dearchive cases; use the segment rows to separate them.";
+    case "project_start_running_stuck":
+      return "Observed in the user's browser when a project start request has not reached lifecycle state running after the user-visible stuck threshold. This is meant to catch starts that look stuck to users before the hard monitoring timeout.";
     case "project_start_running_timeout":
       return "Observed in the user's browser when a project start request did not reach lifecycle state running before the monitoring timeout.";
     case "project_start_request_failed":
