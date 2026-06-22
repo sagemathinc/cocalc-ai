@@ -1244,3 +1244,29 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `/features/linux`, `/features/jupyter-notebook`, and `/features/latex-editor`
   desktop+mobile passed 162/162. Screenshots inspected from
   `/tmp/cocalc-public-qa-Gd3jP7`.
+
+---
+
+## Codex — post-framing P2 Whiteboard slide-deck dedup (2026-06-22)
+
+- **START 2026-06-22:** Continuing the post-framing queue in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
+  the Whiteboard duplicate SlideDeckSection cleanup only: preserve the
+  `slide-decks` anchor and wayfinding to Slides/Teaching, remove the duplicated
+  full `SlideDeckMock` and parallel slide-deck pitch from the Whiteboard page,
+  and leave the Whiteboard hero, execution graph, final band, and slides page
+  untouched. Claimed files: `features/whiteboard-page.tsx`,
+  `features/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`, and
+  this ledger. Guardrails: preserve concrete whiteboard proof and layout; no
+  protected home, pitch docs, docs routes/content, pricing/compliance,
+  type/palette work, or dedicated-compute draft.
+- **END 2026-06-22:** Replaced the duplicated Whiteboard slide-deck mock section
+  with a concise pointer that preserves the `slide-decks` anchor, keeps the
+  `More about slide decks` and `Teaching` wayfinding buttons, and links users to
+  the canonical Slides route for the full deck workflow. Removed the unused
+  `SlideDeckMock` import. Updated feature and browser-QA canaries, including a
+  guard that the slide mock label/text does not return on Whiteboard. Validation
+  passed: `git diff --check`; focused feature + QA harness Jest 104/104; `pnpm
+  -C src lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+  `/features/whiteboard` and `/features/slides` desktop+mobile passed 76/76.
+  Screenshots inspected from `/tmp/cocalc-public-qa-W3o2qG`.

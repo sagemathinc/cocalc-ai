@@ -512,14 +512,19 @@ const ROUTE_RULES = {
   "/features/whiteboard": {
     requireText: [
       "Whiteboards and slides that keep the code, math, and explanations together",
-      "Slide decks stay close to the project.",
+      "Move board work into a slide deck when it is ready.",
       "Start with a board or deck",
     ],
+    forbidText: ["talk.slides"],
     requireSelectors: [
       ".cocalc-feature-final-band",
       ".cocalc-feature-final-panel",
     ],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+    requireLinks: [
+      { text: "More about slide decks", hrefIncludes: "/features/slides" },
+      { text: "Teaching", hrefIncludes: "/features/teaching" },
+    ],
   },
   "/features/slides": {
     requireText: [

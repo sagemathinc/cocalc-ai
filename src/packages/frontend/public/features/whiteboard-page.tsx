@@ -15,7 +15,6 @@ import {
 } from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
 import { FeatureFinalBand, IconBadge } from "./feature-visuals";
-import { SlideDeckMock } from "./slides-page";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -225,35 +224,23 @@ function ExecutionGraph() {
 function SlideDeckSection() {
   return (
     <PublicSection ariaLabel="Slide deck workflows">
-      <Row gutter={[24, 24]} align="middle">
-        <Col xs={24} lg={12}>
-          <SlideDeckMock />
-        </Col>
-        <Col xs={24} lg={12}>
-          <Flex vertical gap={12}>
-            <Title level={3} style={{ margin: 0 }}>
-              Slide decks stay close to the project.
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Use slide-sized pages for ordered presentations built from the
-              same editable material as the board: markdown, math, diagrams,
-              drawings, and notebook-backed explanations.
-            </Paragraph>
-            <BulletList
-              items={[
-                "Move from exploratory board work into an ordered presentation without leaving the project.",
-                "Keep slides near the notebooks, data, files, and terminal work behind the presentation.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/slides")}>
-                More about slide decks
-              </Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-            </Flex>
-          </Flex>
-        </Col>
-      </Row>
+      <Flex vertical gap={12} style={{ maxWidth: 820 }}>
+        <Title level={3} style={{ margin: 0 }}>
+          Move board work into a slide deck when it is ready.
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          For ordered presentations, use the dedicated slide decks workflow. It
+          keeps slide-sized pages close to the same editable math, diagrams,
+          Jupyter cells, files, and explanations without repeating the full deck
+          workflow here.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <Button href={appPath("features/slides")}>
+            More about slide decks
+          </Button>
+          <Button href={appPath("features/teaching")}>Teaching</Button>
+        </Flex>
+      </Flex>
     </PublicSection>
   );
 }

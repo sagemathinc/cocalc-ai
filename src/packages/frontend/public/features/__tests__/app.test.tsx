@@ -855,8 +855,16 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Put Jupyter cells in a directed graph."),
     ).not.toBeNull();
     expect(
-      screen.getByText("Slide decks stay close to the project."),
+      screen.getByText("Move board work into a slide deck when it is ready."),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "More about slide decks" }),
+    ).toHaveAttribute("href", "/features/slides");
+    expect(
+      screen.queryByLabelText(
+        "Illustration of CoCalc slides as slide-sized whiteboard pages",
+      ),
+    ).toBeNull();
   });
 
   it.each([
