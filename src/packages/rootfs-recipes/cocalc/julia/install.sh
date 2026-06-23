@@ -6,9 +6,18 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 version="${VERSION:-1.12.6}"
 prefix="${INSTALL_PREFIX:-/opt/julia}"
 julia_depot="${JULIA_DEPOT:-/opt/julia-depot}"
+jupyter_prefix="${JUPYTER_PREFIX:-/opt/cocalc-julia-jupyter}"
 ijulia_version="${IJULIA_VERSION:-1.34.4}"
 kernel_name="${KERNEL_NAME:-julia}"
 kernel_display_name="${KERNEL_DISPLAY_NAME:-Julia}"
@@ -26,6 +35,17 @@ archive="julia-${version}-linux-${julia_archive_arch}.tar.gz"
 url="https://julialang-s3.julialang.org/bin/linux/${julia_path_arch}/${major_minor}/${archive}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+$SUDO apt-get update
+run_noninteractive apt-get install -y --no-install-recommends \
+  ca-certificates curl python3 python3-venv tar
+
+$SUDO mkdir -p "$jupyter_prefix"
+$SUDO chown -R "$(id -u):$(id -g)" "$jupyter_prefix"
+python3 -m venv --clear "$jupyter_prefix"
+"$jupyter_prefix/bin/pip" install --no-cache-dir --upgrade pip setuptools wheel
+"$jupyter_prefix/bin/pip" install --no-cache-dir jupyter_client
+$SUDO ln -sf "$jupyter_prefix/bin/jupyter" /usr/local/bin/jupyter
 
 curl -fsSL "$url" -o "$tmp/$archive"
 $SUDO mkdir -p "$prefix"
@@ -76,6 +96,7 @@ $SUDO tee "$kernel_dir/kernel.json" >/dev/null <<EOF
 }
 EOF
 
-$SUDO chown -R "$owner_uid:$owner_gid" "$prefix" "$julia_depot"
-$SUDO chmod -R u+rwX,go+rX "$prefix" "$julia_depot"
+$SUDO chown -R "$owner_uid:$owner_gid" "$prefix" "$julia_depot" "$jupyter_prefix"
+$SUDO chmod -R u+rwX,go+rX "$prefix" "$julia_depot" "$jupyter_prefix"
 $SUDO chmod -R go+rX "$kernel_dir"
+$SUDO rm -rf /var/lib/apt/lists/*
