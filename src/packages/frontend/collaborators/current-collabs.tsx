@@ -29,10 +29,11 @@ interface Props {
   project: Project;
   user_map?: any;
   mode?: "project" | "flyout";
+  readOnly?: boolean;
 }
 
 export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
-  const { project, user_map, mode = "project" } = props;
+  const { project, user_map, mode = "project", readOnly = false } = props;
   const isFlyout = mode === "flyout";
   const intl = useIntl();
   const current_account_id = useRedux("account", "account_id");
@@ -91,6 +92,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   }
 
   function user_remove_button(account_id: string, group?: string) {
+    if (readOnly) return null;
     const isSelf = account_id === current_account_id;
     if (student.disableCollaborators && !isSelf) return;
     const text = user_remove_confirm_text(account_id);
@@ -150,6 +152,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     group?: string,
     read_policy?: ProjectViewerReadPolicy | null,
   ) {
+    if (readOnly) return null;
     if (!currentCanManageCollaborators || group === "owner") {
       return null;
     }

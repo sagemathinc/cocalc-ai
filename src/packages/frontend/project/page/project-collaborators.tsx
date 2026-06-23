@@ -65,18 +65,11 @@ export function ProjectCollaboratorsContent({
   let content: React.JSX.Element;
   if (project == null) {
     content = <Loading theme="medium" transparent={isFlyout} />;
-  } else if (disableCollaborators) {
-    content = (
-      <Alert
-        type="warning"
-        showIcon
-        title="Collaborator configuration is disabled."
-      />
-    );
   } else {
     const ownerOnly = project.get("manage_users_owner_only") === true;
     const canManageCollaborators =
-      canManageAsOwnerOrAdmin || (group === "collaborator" && !ownerOnly);
+      !disableCollaborators &&
+      (canManageAsOwnerOrAdmin || (group === "collaborator" && !ownerOnly));
     const inviteControls = (
       <AddCollaborators
         project_id={project.get("project_id")}
@@ -84,20 +77,32 @@ export function ProjectCollaboratorsContent({
         mode={componentMode}
       />
     );
+    const disabledCollaboratorConfiguration = disableCollaborators ? (
+      <Alert
+        type="warning"
+        showIcon
+        message="Collaborator configuration is disabled."
+        description="Current collaborators are shown for visibility, but adding, removing, and changing collaborators is disabled for this project."
+      />
+    ) : null;
     content = isFlyout ? (
       <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+        {disabledCollaboratorConfiguration}
         <CurrentCollaboratorsPanel
           key="current-collabs"
           project={project}
           user_map={user_map}
           mode={componentMode}
+          readOnly={disableCollaborators}
         />
-        <CollaboratorManagementPolicy
-          canManageCollaborators={canManageCollaborators}
-          canToggle={canManageAsOwnerOrAdmin}
-          ownerOnly={ownerOnly}
-          project_id={project.get("project_id")}
-        />
+        {!disableCollaborators && (
+          <CollaboratorManagementPolicy
+            canManageCollaborators={canManageCollaborators}
+            canToggle={canManageAsOwnerOrAdmin}
+            ownerOnly={ownerOnly}
+            project_id={project.get("project_id")}
+          />
+        )}
         {canManageCollaborators && inviteControls}
         {canManageCollaborators && (
           <AccessRequestsPanel project_id={project.get("project_id")} />
@@ -112,17 +117,21 @@ export function ProjectCollaboratorsContent({
       </Space>
     ) : (
       <div>
+        {disabledCollaboratorConfiguration}
         <CurrentCollaboratorsPanel
           key="current-collabs"
           project={project}
           user_map={user_map}
+          readOnly={disableCollaborators}
         />
-        <CollaboratorManagementPolicy
-          canManageCollaborators={canManageCollaborators}
-          canToggle={canManageAsOwnerOrAdmin}
-          ownerOnly={ownerOnly}
-          project_id={project.get("project_id")}
-        />
+        {!disableCollaborators && (
+          <CollaboratorManagementPolicy
+            canManageCollaborators={canManageCollaborators}
+            canToggle={canManageAsOwnerOrAdmin}
+            ownerOnly={ownerOnly}
+            project_id={project.get("project_id")}
+          />
+        )}
         {canManageCollaborators && (
           <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
             {inviteControls}
