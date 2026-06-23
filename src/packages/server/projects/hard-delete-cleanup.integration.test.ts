@@ -250,6 +250,13 @@ async function seedCleanupRows(): Promise<void> {
     [PROJECT_ID],
   );
   await getPool().query(
+    `INSERT INTO project_rootfs_builds
+       (build_id, project_id, account_id, status, recipe_ref, created_at, updated)
+     VALUES
+       ('rb-hard-delete-test', $1, $2, 'succeeded', 'cocalc/test', NOW(), NOW())`,
+    [PROJECT_ID, ACCOUNT_ID],
+  );
+  await getPool().query(
     `INSERT INTO notification_events
        (event_id, kind, source_bay_id, source_project_id, payload_json,
         created_at)
@@ -333,6 +340,7 @@ describe("hard delete project cleanup", () => {
         project_backup_repo_assignments,
         project_events_outbox,
         project_labels,
+        project_rootfs_builds,
         project_rehome_operations,
         project_runtime_slots,
         project_rootfs_states,
@@ -367,6 +375,7 @@ describe("hard delete project cleanup", () => {
         "project_backup_repo_assignments",
         "project_events_outbox",
         "project_labels",
+        "project_rootfs_builds",
         "project_runtime_slots",
         "project_rootfs_states",
         "project_secrets",
@@ -389,6 +398,9 @@ describe("hard delete project cleanup", () => {
       countRows("project_app_public_subdomains", "project_id=$1"),
     ).resolves.toBe(0);
     await expect(countRows("project_labels", "project_id=$1")).resolves.toBe(0);
+    await expect(
+      countRows("project_rootfs_builds", "project_id=$1"),
+    ).resolves.toBe(0);
     expect(deleteAppSubdomainDnsMock).toHaveBeenCalledWith({
       record_id: "dns-1",
       hostname: "server.example.com",
