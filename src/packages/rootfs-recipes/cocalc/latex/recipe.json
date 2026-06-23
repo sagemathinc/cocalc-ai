@@ -1,0 +1,41 @@
+{
+  "id": "cocalc/latex",
+  "version": 1,
+  "description": "Install a broad LaTeX publishing environment with TeX Live language packs, extra packages, fonts, bibliography tools, and latexmk.",
+  "inputs": {
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "latex",
+      "tags": ["latex", "texlive", "publishing", "pdf"]
+    },
+    "theme": {
+      "icon": "file-tex",
+      "color": "#ffffff",
+      "accent_color": "#008080"
+    },
+    "content": {
+      "version": 1,
+      "title": "LaTeX",
+      "subtitle": "A broad TeX Live publishing environment for compiling uploaded papers.",
+      "highlights": [
+        "TeX Live language packs",
+        "latexmk",
+        "BibTeX and biber",
+        "extra LaTeX packages",
+        "common fonts and graphics tools"
+      ],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "TeX Live documentation",
+          "url": "https://www.tug.org/texlive/doc.html"
+        }
+      ]
+    }
+  }
+}

@@ -736,6 +736,7 @@ test("rootfs recipe ls lists bundled examples and modules", () => {
   assert.ok(
     result.modules.some((module) => module.id === "cocalc/jupyter-python"),
   );
+  assert.ok(result.modules.some((module) => module.id === "cocalc/latex"));
   assert.ok(result.modules.some((module) => module.id === "cocalc/apt"));
 });
 
@@ -1226,26 +1227,6 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
         project: { project_id: "builder-project" },
         api: {
           system: {
-            listRootfsBuilds: async (opts: any) => {
-              calls.push(["direct-list", opts]);
-              return [
-                {
-                  build_id: "build-1",
-                  project_id: "builder-project",
-                  status: "succeeded",
-                  recipe_ref: "cocalc/demo",
-                  created_at: "2026-06-22T00:00:00.000Z",
-                  heartbeat_at: new Date().toISOString(),
-                  pid: 12345,
-                  paths: {
-                    log: ".cocalc/rootfs-builds/build-1/build.log",
-                    events: ".cocalc/rootfs-builds/build-1/events.ndjson",
-                    runner: ".cocalc/rootfs-builds/build-1/runner.sh",
-                    script: ".cocalc/rootfs-builds/build-1/run.sh",
-                  },
-                },
-              ];
-            },
             readRootfsBuildLog: async (opts: any) => {
               calls.push(["direct-log", opts]);
               return {
@@ -1287,6 +1268,27 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
       },
       getProjectRootfsBuildLog: async () => {
         throw new Error("hub log API should not be used");
+      },
+      listProjectRootfsBuilds: async (opts: any) => {
+        calls.push(["hub-list", opts]);
+        return [
+          {
+            build_id: "build-1",
+            project_id: "builder-project",
+            host_id: "host-1",
+            status: "succeeded",
+            recipe_ref: "cocalc/demo",
+            created_at: "2026-06-22T00:00:00.000Z",
+            heartbeat_at: new Date().toISOString(),
+            pid: 12345,
+            paths: {
+              log: ".cocalc/rootfs-builds/build-1/build.log",
+              events: ".cocalc/rootfs-builds/build-1/events.ndjson",
+              runner: ".cocalc/rootfs-builds/build-1/runner.sh",
+              script: ".cocalc/rootfs-builds/build-1/run.sh",
+            },
+          },
+        ];
       },
       cancelProjectRootfsBuild: async (opts: any) => {
         calls.push(["cancel", opts]);
@@ -1375,11 +1377,9 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
         },
       ],
       ["resolve", "Builder"],
-      ["project-api", "builder-project"],
-      ["direct-list", { limit: 7 }],
+      ["hub-list", { project_id: "builder-project", limit: 7 }],
       ["resolve", "builder-project"],
-      ["project-api", "builder-project"],
-      ["direct-list", { limit: 50 }],
+      ["hub-list", { project_id: "builder-project", limit: 50 }],
       ["resolve", "Builder"],
       ["cancel", { project_id: "builder-project", build_id: "build-1" }],
     ]);
