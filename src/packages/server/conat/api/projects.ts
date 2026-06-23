@@ -148,11 +148,15 @@ import type {
   ProjectRootfsBuildLogRequest,
   ProjectRootfsBuildLogResponse,
   ProjectRootfsBuildListRequest,
+  ProjectRootfsBuildPublishRecordRequest,
+  ProjectRootfsBuildPublishRecordResponse,
   ProjectRootfsBuildRecord,
   ProjectRootfsBuildStartRequest,
   ProjectRootfsBuildStatusRequest,
   ProjectRootfsBuildStatusResponse,
   ProjectRootfsPublishConfig,
+  ProjectLabelPatch,
+  ProjectLabels,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   CourseStudentInviteAccountRepairInput,
@@ -189,6 +193,10 @@ import {
   upsertProjectSshKeyInDb,
 } from "@cocalc/server/projects/project-ssh-keys";
 import {
+  getProjectLabels as getProjectLabelsInDb,
+  setProjectLabels as setProjectLabelsInDb,
+} from "@cocalc/server/projects/labels";
+import {
   getAssignedProjectHostInfo,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
@@ -205,6 +213,7 @@ import {
   getProjectRootfsBuildRecord,
   listProjectRootfsBuildRecords,
   markProjectRootfsBuildFailed,
+  recordProjectRootfsBuildPublish as recordProjectRootfsBuildPublishInDb,
   syncProjectRootfsBuildLro,
   upsertProjectRootfsBuildStatus,
 } from "@cocalc/server/rootfs/build-index";
@@ -1240,6 +1249,35 @@ export async function setProjectRootfsPublishConfig({
   });
 }
 
+export async function getProjectLabels({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectLabels> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  return await getProjectLabelsInDb({ project_id });
+}
+
+export async function setProjectLabels({
+  account_id,
+  project_id,
+  labels,
+}: {
+  account_id?: string;
+  project_id: string;
+  labels: ProjectLabelPatch;
+}): Promise<ProjectLabels> {
+  const actor = requireAccountId(account_id);
+  await assertCollab({ account_id: actor, project_id });
+  return await setProjectLabelsInDb({
+    account_id: actor,
+    project_id,
+    labels,
+  });
+}
+
 async function getProjectRootfsBuildClient({
   account_id,
   project_id,
@@ -1265,6 +1303,23 @@ function generateProjectRootfsBuildId(): string {
     .replace(".", "")
     .replace("Z", "");
   return `rb-${timestamp}-${randomUUID().slice(0, 8)}`;
+}
+
+function mergeProjectRootfsBuildRecordFields(
+  status: ProjectRootfsBuildStatusResponse,
+  record?: ProjectRootfsBuildRecord,
+): ProjectRootfsBuildStatusResponse {
+  if (!record) return status;
+  return {
+    ...status,
+    op_id: record.op_id,
+    publish_op_id: record.publish_op_id,
+    publish_status: record.publish_status,
+    publish_image_id: record.publish_image_id,
+    publish_error: record.publish_error,
+    publish_started_at: record.publish_started_at,
+    publish_finished_at: record.publish_finished_at,
+  };
 }
 
 export async function startProjectRootfsBuild({
@@ -1301,7 +1356,7 @@ export async function startProjectRootfsBuild({
       op_id: record.op_id,
       status,
     });
-    return { ...status, host_id, op_id: record.op_id };
+    return mergeProjectRootfsBuildRecordFields({ ...status, host_id }, record);
   } catch (err) {
     const failed = await markProjectRootfsBuildFailed({
       account_id,
@@ -1370,7 +1425,7 @@ export async function getProjectRootfsBuildStatus({
     op_id: record.op_id,
     status,
   });
-  return { ...status, host_id, op_id: record.op_id };
+  return mergeProjectRootfsBuildRecordFields({ ...status, host_id }, record);
 }
 
 export async function getProjectRootfsBuildLog({
@@ -1403,6 +1458,60 @@ export async function listProjectRootfsBuilds({
 }: ProjectRootfsBuildListRequest): Promise<ProjectRootfsBuildRecord[]> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   return await listProjectRootfsBuildRecords({ project_id, limit });
+}
+
+export async function recordProjectRootfsBuildPublish({
+  account_id,
+  project_id,
+  build_id,
+  publish_op_id,
+}: ProjectRootfsBuildPublishRecordRequest): Promise<ProjectRootfsBuildPublishRecordResponse> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const build = await getProjectRootfsBuildRecord({ project_id, build_id });
+  if (!build) {
+    throw new Error(`RootFS build not found: ${build_id}`);
+  }
+  if (build.status !== "succeeded") {
+    throw new Error(
+      `RootFS build ${build_id} is not publishable: status=${build.status}`,
+    );
+  }
+  const lro = await getLro(publish_op_id);
+  if (!lro) {
+    throw new Error(`RootFS publish LRO not found: ${publish_op_id}`);
+  }
+  if (
+    lro.kind !== "project-rootfs-publish" ||
+    lro.scope_type !== "project" ||
+    lro.scope_id !== project_id
+  ) {
+    throw new Error(
+      `LRO ${publish_op_id} is not a RootFS publish for project ${project_id}`,
+    );
+  }
+  const updated = await recordProjectRootfsBuildPublishInDb({
+    project_id,
+    build_id,
+    publish_op_id,
+    publish_status: lro.status,
+    publish_image_id: lro.result?.image_id ?? null,
+    publish_error: lro.error ?? null,
+    publish_started_at: lro.started_at,
+    publish_finished_at: lro.finished_at,
+  });
+  if (!updated) {
+    throw new Error(`RootFS build not found: ${build_id}`);
+  }
+  return {
+    build: updated,
+    publish: {
+      op_id: lro.op_id,
+      scope_type: "project",
+      scope_id: project_id,
+      service: PERSIST_SERVICE,
+      stream_name: lroStreamName(lro.op_id),
+    },
+  };
 }
 
 export async function cancelProjectRootfsBuild({

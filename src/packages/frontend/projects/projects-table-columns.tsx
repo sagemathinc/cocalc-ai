@@ -79,6 +79,7 @@ export interface ProjectTableRecord {
   theme?: ProjectTheme | null;
   title: string;
   description: string;
+  labels?: Record<string, string>;
   rootfs_image_id?: string;
   host?: string;
   last_edited?: Date;

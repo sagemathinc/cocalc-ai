@@ -27,6 +27,12 @@ export type ProjectRootfsBuildRecord = Omit<
   host_id: string;
   account_id?: string | null;
   op_id?: string | null;
+  publish_op_id?: string | null;
+  publish_status?: string | null;
+  publish_image_id?: string | null;
+  publish_error?: string | null;
+  publish_started_at?: string;
+  publish_finished_at?: string;
   paths?: HostRootfsBuildArtifactPaths;
   updated?: string;
 };
@@ -42,18 +48,24 @@ export async function ensureProjectRootfsBuildsSchema(): Promise<void> {
           account_id UUID,
           host_id UUID,
           op_id UUID,
+          publish_op_id UUID,
           status TEXT NOT NULL,
+          publish_status TEXT,
           recipe_ref TEXT,
           paths JSONB DEFAULT '{}'::jsonb,
           pid INTEGER,
           exit_code INTEGER,
           signal TEXT,
           error TEXT,
+          publish_image_id TEXT,
+          publish_error TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           started_at TIMESTAMPTZ,
           finished_at TIMESTAMPTZ,
           heartbeat_at TIMESTAMPTZ,
           last_output_at TIMESTAMPTZ,
+          publish_started_at TIMESTAMPTZ,
+          publish_finished_at TIMESTAMPTZ,
           updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
@@ -62,6 +74,24 @@ export async function ensureProjectRootfsBuildsSchema(): Promise<void> {
       );
       await pool.query(
         "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS op_id UUID",
+      );
+      await pool.query(
+        "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS publish_op_id UUID",
+      );
+      await pool.query(
+        "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS publish_status TEXT",
+      );
+      await pool.query(
+        "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS publish_image_id TEXT",
+      );
+      await pool.query(
+        "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS publish_error TEXT",
+      );
+      await pool.query(
+        "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS publish_started_at TIMESTAMPTZ",
+      );
+      await pool.query(
+        "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS publish_finished_at TIMESTAMPTZ",
       );
       await pool.query(
         "ALTER TABLE project_rootfs_builds ADD COLUMN IF NOT EXISTS paths JSONB DEFAULT '{}'::jsonb",
@@ -79,7 +109,13 @@ export async function ensureProjectRootfsBuildsSchema(): Promise<void> {
         "CREATE INDEX IF NOT EXISTS project_rootfs_builds_op_idx ON project_rootfs_builds(op_id)",
       );
       await pool.query(
+        "CREATE INDEX IF NOT EXISTS project_rootfs_builds_publish_op_idx ON project_rootfs_builds(publish_op_id)",
+      );
+      await pool.query(
         "CREATE INDEX IF NOT EXISTS project_rootfs_builds_status_idx ON project_rootfs_builds(status)",
+      );
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS project_rootfs_builds_publish_status_idx ON project_rootfs_builds(publish_status)",
       );
       await pool.query(
         "CREATE INDEX IF NOT EXISTS project_rootfs_builds_project_created_idx ON project_rootfs_builds(project_id, created_at DESC)",
@@ -290,6 +326,53 @@ export async function listProjectRootfsBuildRecords({
   return rows.map(rowToRecord);
 }
 
+export async function recordProjectRootfsBuildPublish({
+  project_id,
+  build_id,
+  publish_op_id,
+  publish_status,
+  publish_image_id,
+  publish_error,
+  publish_started_at,
+  publish_finished_at,
+}: {
+  project_id: string;
+  build_id: string;
+  publish_op_id: string;
+  publish_status?: string | null;
+  publish_image_id?: string | null;
+  publish_error?: string | null;
+  publish_started_at?: string | Date | null;
+  publish_finished_at?: string | Date | null;
+}): Promise<ProjectRootfsBuildRecord | undefined> {
+  await ensureProjectRootfsBuildsSchema();
+  const { rows } = await getPool("medium").query(
+    `
+      UPDATE project_rootfs_builds
+      SET publish_op_id=$3,
+          publish_status=$4,
+          publish_image_id=$5,
+          publish_error=$6,
+          publish_started_at=COALESCE($7, publish_started_at),
+          publish_finished_at=$8,
+          updated=NOW()
+      WHERE project_id=$1 AND build_id=$2
+      RETURNING *
+    `,
+    [
+      project_id,
+      build_id,
+      publish_op_id,
+      publish_status ?? null,
+      publish_image_id ?? null,
+      publish_error ?? null,
+      dateOrNull(publish_started_at),
+      dateOrNull(publish_finished_at),
+    ],
+  );
+  return rows[0] ? rowToRecord(rows[0]) : undefined;
+}
+
 export async function syncProjectRootfsBuildLro({
   op_id,
   status,
@@ -376,6 +459,10 @@ function rowToRecord(row: any): ProjectRootfsBuildRecord {
     host_id: row.host_id,
     account_id: row.account_id,
     op_id: row.op_id,
+    publish_op_id: row.publish_op_id,
+    publish_status: row.publish_status,
+    publish_image_id: row.publish_image_id,
+    publish_error: row.publish_error,
     status: row.status,
     recipe_ref: row.recipe_ref ?? undefined,
     paths: row.paths ?? undefined,
@@ -388,6 +475,8 @@ function rowToRecord(row: any): ProjectRootfsBuildRecord {
     finished_at: isoOrUndefined(row.finished_at),
     heartbeat_at: isoOrUndefined(row.heartbeat_at),
     last_output_at: isoOrUndefined(row.last_output_at),
+    publish_started_at: isoOrUndefined(row.publish_started_at),
+    publish_finished_at: isoOrUndefined(row.publish_finished_at),
     updated: isoOrUndefined(row.updated),
   };
 }

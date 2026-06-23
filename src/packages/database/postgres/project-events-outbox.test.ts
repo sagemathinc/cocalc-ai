@@ -22,7 +22,7 @@ describe("project events outbox", () => {
 
   afterEach(async () => {
     await getPool().query(
-      "TRUNCATE project_events_outbox, projects, accounts CASCADE",
+      "TRUNCATE project_events_outbox, project_labels, projects, accounts CASCADE",
     );
   });
 
@@ -59,6 +59,14 @@ describe("project events outbox", () => {
         }),
       ],
     );
+    await getPool().query(
+      `INSERT INTO project_labels
+         (project_id, key, value, created_at, updated_at)
+       VALUES
+         ($1, 'cocalc.com/project-kind', 'rootfs-build', NOW(), NOW()),
+         ($1, 'cocalc.com/rootfs-recipe', 'cocalc/sagemath', NOW(), NOW())`,
+      [PROJECT_ID],
+    );
 
     await expect(
       loadProjectOutboxPayload({
@@ -72,6 +80,10 @@ describe("project events outbox", () => {
       title: "Phase 2 Project",
       description: "seeded for projector",
       rootfs_image_id: "official-minimal",
+      labels: {
+        "cocalc.com/project-kind": "rootfs-build",
+        "cocalc.com/rootfs-recipe": "cocalc/sagemath",
+      },
       users_summary: {
         [ACCOUNT_ID]: { group: "owner" },
       },
@@ -107,6 +119,10 @@ describe("project events outbox", () => {
           title: "Phase 2 Project",
           description: "seeded for projector",
           rootfs_image_id: "official-minimal",
+          labels: {
+            "cocalc.com/project-kind": "rootfs-build",
+            "cocalc.com/rootfs-recipe": "cocalc/sagemath",
+          },
           users_summary: {
             [ACCOUNT_ID]: { group: "owner" },
           },

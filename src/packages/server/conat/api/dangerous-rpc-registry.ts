@@ -540,6 +540,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "collaborator-authorized snapshot/rootfs restore; recoverable project state mutation with same impact class as normal project file writes",
   },
+  "projects.repairAcceptedCourseStudentInviteAccounts": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized course invite/account repair for existing accepted students",
+  },
   "projects.setProjectEnv": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -552,6 +557,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "collaborator-authorized RootFS publish metadata defaults for the project",
+  },
+  "projects.setProjectLabels": {
+    decision: "fresh-auth-not-required",
+    reason: "collaborator-authorized project metadata labels",
+  },
+  "projects.recordProjectRootfsBuildPublish": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "records an existing RootFS publish LRO on a collaborator-authorized build; publish creation enforces fresh auth separately",
   },
   "projects.setLocalProjectManageUsersOwnerOnly": {
     decision: "internal-auth-only",
