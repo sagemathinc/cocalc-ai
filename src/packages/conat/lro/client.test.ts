@@ -86,4 +86,58 @@ describe("lro client explicit routing", () => {
 
     expect(stream.close).toHaveBeenCalled();
   });
+
+  it("can finish from a durable summary fallback when stream open fails", async () => {
+    const { waitForCompletion } = await import("./client");
+    const client = {
+      sync: {
+        dstream: jest.fn(async () => {
+          throw new Error("stream unavailable");
+        }),
+      },
+    } as any;
+    const summary = {
+      op_id: "op-1",
+      kind: "project-backup",
+      scope_type: "project",
+      scope_id: "00000000-1000-4000-8000-000000000000",
+      status: "succeeded",
+    } as any;
+
+    await expect(
+      waitForCompletion({
+        op_id: "op-1",
+        scope_type: "project",
+        scope_id: "00000000-1000-4000-8000-000000000000",
+        client,
+        getSummary: jest.fn(async () => summary),
+      }),
+    ).resolves.toBe(summary);
+  });
+
+  it("can finish from a durable summary fallback when stream open hangs", async () => {
+    const { waitForCompletion } = await import("./client");
+    const client = {
+      sync: {
+        dstream: jest.fn(() => new Promise(() => {})),
+      },
+    } as any;
+    const summary = {
+      op_id: "op-1",
+      kind: "project-backup",
+      scope_type: "project",
+      scope_id: "00000000-1000-4000-8000-000000000000",
+      status: "succeeded",
+    } as any;
+
+    await expect(
+      waitForCompletion({
+        op_id: "op-1",
+        scope_type: "project",
+        scope_id: "00000000-1000-4000-8000-000000000000",
+        client,
+        getSummary: jest.fn(async () => summary),
+      }),
+    ).resolves.toBe(summary);
+  });
 });
