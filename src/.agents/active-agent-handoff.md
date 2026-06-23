@@ -83,6 +83,16 @@ Known risks:
   /features/ai --viewport desktop --viewport mobile` (46/46) passed. Screenshot
   artifact inspected at `/tmp/cocalc-public-qa-Mn0ri5`. Next: commit, rebuild so
   the static bundle embeds the new commit, rerun AI browser QA, then push.
+- **POST-COMMIT 2026-06-22 20:41 PDT:** Source/ledger commit
+  `f12451b753` (`frontend/public: polish AI feature page layout`) created.
+  Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
+  `COCALC_GIT_REVISION = f12451b753961ecec14df99e00641bb034ce47ef`.
+  Post-commit browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/ai --viewport desktop --viewport mobile` passed 46/46 at
+  `/tmp/cocalc-public-qa-iMKcfO`. Desktop/mobile screenshots inspected; no
+  overlap or obvious layout regression. Next: push branch and update shared
+  status logs.
 
 ### Codex - language education-secondary cleanup (2026-06-22 20:24 PDT)
 
