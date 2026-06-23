@@ -60,6 +60,7 @@ function LatexEvidencePanel() {
   return (
     <div
       aria-label="Illustration of a CoCalc LaTeX project with source, PDF preview, and build log"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
@@ -69,7 +70,7 @@ function LatexEvidencePanel() {
         padding: 20,
       }}
     >
-      <Flex vertical gap={16}>
+      <Flex aria-hidden="true" vertical gap={16}>
         <Flex align="center" gap={10}>
           <IconBadge accent="#ad6800" icon="tex" />
           <div>

@@ -30,6 +30,7 @@ function AutomationFlowMock() {
   return (
     <div
       aria-label="Illustration of an automated CoCalc project workflow"
+      role="img"
       style={{
         background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 50%, ${PUBLIC_COLORS.pageBackground} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
@@ -38,7 +39,7 @@ function AutomationFlowMock() {
         padding: 20,
       }}
     >
-      <Flex vertical gap={16}>
+      <Flex aria-hidden="true" vertical gap={16}>
         <Flex align="center" gap={10} wrap>
           <IconBadge accent={FEATURE_ACCENTS.automations} icon="sync" />
           <div>

@@ -46,6 +46,46 @@ Known risks:
 
 ---
 
+### Codex - round-2 systemic a11y batch A (2026-06-22 23:18 PDT)
+
+- **START 2026-06-22 23:18 PDT:** Continuing the scheduled landing-page
+  improvement loop on Round-2 item 22 Batch A systemic a11y in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Current
+  head is `26c5c2b7b6`, matching `origin/blaec-synthesis-2026-06-18`; preview
+  hub pid `27431` remains rooted at `/home/user/cocalc-ai-synthesis/src`.
+  Claimed files/routes: about/news/policies/pricing/support/feature a11y source
+  and focused public/feature tests as needed, this ledger, and shared
+  coordination logs if the slice completes. Scope: promoted Batch A only:
+  heading-order fixes, decorative mock `role="img"`/hidden inner text, widget
+  aria, policy TOC focus and GDPR iframe title, support status link semantics,
+  pricing comparison cell aria, and news link/filter accessibility. Guardrails:
+  no protected home edits, no pricing money/compliance copy, no bio fact
+  changes, no type/palette 2e, no pitch/docs content, no raw-audit foraging
+  outside this promoted batch, no LaTeX/dedicated-compute draft.
+- **END 2026-06-22 23:32 PDT:** Round-2 item 22 Batch A source edit complete.
+  Addressed only promoted systemic a11y items: news/about heading-order fixes;
+  feature mock panels now expose one named `role="img"` while hiding inner mock
+  UI from the accessibility tree; news filter has a label and news markdown
+  links use existing public link tokens; policy TOC clicks move focus to the
+  target section and the GDPR badge iframe has a title; support status
+  pseudo-links now have hrefs; pricing comparison boolean/empty cells have
+  screen-reader names and table header content no longer adds extra heading
+  levels. Added focused coverage in public app and feature app tests. Validation
+  passed: focused Jest
+  `public/__tests__/app.test.tsx public/support/__tests__/new-view.test.tsx public/features/__tests__/app.test.tsx --runInBand --silent`
+  (181/181); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
+  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+  debug-log permission warning; and browser QA for `/news`,
+  `/about/team/william-stein`, `/policies/privacy`, `/policies/trust`,
+  `/pricing`, `/support/new`, `/features/ai`, `/features/automations`,
+  `/features/python`, and `/features/latex-editor` desktop+mobile passed
+  334/334 at `/tmp/cocalc-public-qa-yAC1eV`. Screenshots inspected clean. Home
+  contrast item intentionally left untouched per current zero-home guardrail.
+  Next: commit, rebuild post-commit so the static bundle embeds the new
+  revision, rerun browser QA, push, then update shared logs/status.
+
+---
+
 ### Codex - round-2 support form a11y (2026-06-22 23:11 PDT)
 
 - **START 2026-06-22 23:11 PDT:** Scheduled landing-page improvement loop

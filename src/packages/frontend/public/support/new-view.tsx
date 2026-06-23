@@ -538,6 +538,7 @@ export default function SupportNew({
   const feedbackRef = useRef<HTMLDivElement | null>(null);
   const formLocked = !!successUrl;
   const privacyHref = builtinPolicyPath(config, "privacy");
+  const supportTicketsHref = joinUrlPath(appBasePath, "support/tickets");
   const trustHref = builtinPolicyPath(config, "trust");
 
   const hasRequired = !initial.required || !body.includes(initial.required);
@@ -705,6 +706,7 @@ export default function SupportNew({
             <Paragraph style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}>
               Create a new support ticket below or{" "}
               <a
+                href={supportTicketsHref}
                 onClick={(e) => {
                   e.preventDefault();
                   onNavigate("tickets");
@@ -986,6 +988,7 @@ export default function SupportNew({
                     <div>
                       You can also{" "}
                       <a
+                        href={supportTicketsHref}
                         onClick={(e) => {
                           e.preventDefault();
                           onNavigate("tickets");

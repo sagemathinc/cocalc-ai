@@ -98,7 +98,11 @@ function asNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-const EMPTY_COMPARISON_VALUE = <Text type="secondary">—</Text>;
+const EMPTY_COMPARISON_VALUE = (
+  <Text aria-label="Not available" role="text" type="secondary">
+    —
+  </Text>
+);
 
 type ComparisonRow = {
   label: string;
@@ -143,9 +147,11 @@ function formatCpuPriority(value: unknown): ReactNode {
 
 function formatBooleanValue(value: unknown): ReactNode {
   return value === true ? (
-    <Text aria-label="Yes">✓</Text>
+    <Text aria-label="Yes" role="text">
+      ✓
+    </Text>
   ) : (
-    <Text aria-label="No" type="secondary">
+    <Text aria-label="No" role="text" type="secondary">
       —
     </Text>
   );
@@ -381,9 +387,7 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
               <th style={headerCellStyle} />
               {tiers.map((tier) => (
                 <th key={tier.id} scope="col" style={headerCellStyle}>
-                  <Title level={4} style={{ margin: 0 }}>
-                    {tier.label ?? tier.id}
-                  </Title>
+                  <Text strong>{tier.label ?? tier.id}</Text>
                 </th>
               ))}
             </tr>
@@ -397,9 +401,7 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
                     scope="colgroup"
                     style={groupCellStyle}
                   >
-                    <Title level={4} style={{ margin: 0 }}>
-                      {group.title}
-                    </Title>
+                    <Text strong>{group.title}</Text>
                   </th>
                 </tr>
                 {group.rows.map((row) => (
@@ -642,8 +644,8 @@ export default function PricingPage({
               </Title>
               <Paragraph style={{ margin: 0 }}>
                 Use a compute host when hosted CoCalc.ai projects need more
-                isolated or larger compute. This is hosted infrastructure, not
-                a private deployment path.
+                isolated or larger compute. This is hosted infrastructure, not a
+                private deployment path.
               </Paragraph>
               <Button
                 href={

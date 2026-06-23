@@ -30,12 +30,22 @@ import { publicPath } from "../routes";
 import type { PublicNewsRoute } from "./routes";
 import { contentNewsPath, formatNewsDate, newsHistoryPath } from "./utils";
 import { PublicGrid, PublicSection } from "../layout/shell";
-import { PUBLIC_TYPE } from "../theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "../theme";
 
 const StaticMarkdown = lazy(
   () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
 );
 const { Paragraph, Text, Title } = Typography;
+
+const NEWS_PAGE_CSS = `
+  .cocalc-news-markdown a {
+    color: ${PUBLIC_COLORS.linkHover};
+  }
+
+  .cocalc-news-markdown a:hover {
+    color: ${PUBLIC_COLORS.brandActive};
+  }
+`;
 
 // CHANNELS_DESCRIPTIONS is shared with the in-app news admin; override the
 // less-clear public-facing wording here so the filter tooltips read naturally.
@@ -69,15 +79,17 @@ function NewsMarkdown({
   value: string;
 }) {
   return (
-    <Suspense fallback={<div>Loading content…</div>}>
-      <StaticMarkdown
-        style={{
-          fontSize: preview ? PUBLIC_TYPE.body : undefined,
-          overflowX: "auto",
-        }}
-        value={value}
-      />
-    </Suspense>
+    <div className="cocalc-news-markdown">
+      <Suspense fallback={<div>Loading content…</div>}>
+        <StaticMarkdown
+          style={{
+            fontSize: preview ? PUBLIC_TYPE.body : undefined,
+            overflowX: "auto",
+          }}
+          value={value}
+        />
+      </Suspense>
+    </div>
   );
 }
 
@@ -88,7 +100,7 @@ function NewsCard({ item }: { item: NewsItem }) {
         <Tag color="blue">{capitalize(item.channel)}</Tag>
         <Text type="secondary">{formatNewsDate(item.date)}</Text>
       </Flex>
-      <Title level={3} style={{ margin: 0 }}>
+      <Title level={2} style={{ margin: 0 }}>
         {item.title}
       </Title>
       <NewsMarkdown preview value={item.text} />
@@ -158,6 +170,7 @@ function NewsListPage({ isAdmin }: { isAdmin?: boolean }) {
         </PublicSection>
       ) : null}
       <Segmented
+        aria-label="Filter news by channel"
         block
         onChange={(value) => setChannel(value as Channel | "all")}
         options={[
@@ -300,6 +313,7 @@ export default function PublicNewsApp({
 
   return (
     <PublicSectionShell active="news" config={config} title={title}>
+      <style>{NEWS_PAGE_CSS}</style>
       {initialRoute.view === "news-detail" ||
       initialRoute.view === "news-history" ? (
         <>

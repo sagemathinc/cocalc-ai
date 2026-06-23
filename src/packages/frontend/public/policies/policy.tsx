@@ -120,7 +120,7 @@ export function A(props: Record<string, any>) {
 
 export function PolicySection({ children, id, title }: PolicyHeadingProps) {
   return (
-    <section id={id}>
+    <section id={id} tabIndex={-1}>
       <Title level={2}>{title}</Title>
       {children}
     </section>
@@ -129,7 +129,7 @@ export function PolicySection({ children, id, title }: PolicyHeadingProps) {
 
 export function PolicySubsection({ children, id, title }: PolicyHeadingProps) {
   return (
-    <section id={id}>
+    <section id={id} tabIndex={-1}>
       <Title level={3}>{title}</Title>
       {children}
     </section>

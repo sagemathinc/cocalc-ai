@@ -623,6 +623,15 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("table", { name: "Hosted CoCalc.ai plan comparison" }),
     ).not.toBeNull();
+    const comparisonTable = screen.getByRole("table", {
+      name: "Hosted CoCalc.ai plan comparison",
+    });
+    expect(
+      within(comparisonTable).getAllByLabelText("Yes").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(comparisonTable).getAllByLabelText("No").length,
+    ).toBeGreaterThan(0);
     expect(
       screen.getByRole("heading", { name: "Compare hosted plans" }),
     ).not.toBeNull();
@@ -871,6 +880,7 @@ describe("PublicApp", () => {
         anchor.href.includes("trust.cocalc.com"),
       ),
     ).toBe(false);
+    expect(screen.getByTitle("GDPR Local verification badge")).not.toBeNull();
   });
 
   it("renders the team page", async () => {
@@ -982,6 +992,7 @@ describe("PublicApp", () => {
       fireEvent.click(
         within(policyToc).getByRole("link", { name: "1 Purpose" }),
       );
+      expect(document.activeElement).toHaveAttribute("id", "purpose");
       expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
     } finally {
       HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
@@ -1192,6 +1203,7 @@ describe("PublicApp", () => {
       await screen.findByRole("heading", { name: "Launchpad News" }),
     ).not.toBeNull();
     expect(await screen.findByText("Launchpad update")).not.toBeNull();
+    expect(screen.getByLabelText("Filter news by channel")).not.toBeNull();
     expect(screen.getByText("#launchpad")).not.toBeNull();
   });
 

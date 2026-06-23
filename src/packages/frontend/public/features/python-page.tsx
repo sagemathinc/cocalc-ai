@@ -57,6 +57,7 @@ function PythonProjectMock() {
   return (
     <div
       aria-label="Illustration of one CoCalc Python project connecting notebooks, scripts, terminals, papers, and review context"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
@@ -66,7 +67,7 @@ function PythonProjectMock() {
         padding: 20,
       }}
     >
-      <Flex vertical gap={16}>
+      <Flex aria-hidden="true" vertical gap={16}>
         <Flex align="center" justify="space-between" wrap gap={10}>
           <Flex align="center" gap={10}>
             <IconBadge accent="#2f6fda" icon="python" />

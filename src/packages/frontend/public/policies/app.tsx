@@ -413,6 +413,7 @@ function scrollToPolicySection(
     "",
     `${window.location.pathname}${window.location.search}#${id}`,
   );
+  element.focus({ preventScroll: true });
   element.scrollIntoView({ block: "start" });
 }
 

@@ -643,6 +643,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText(/edit Markdown notes or documentation/i),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("img", {
+        name: /CoCalc agent thread connected to files/i,
+      }),
+    ).not.toBeNull();
     // Mock-UI labels (not headings): the agent panel says "Agent thread" /
     // "Durable agent thread", never the prior "Codex"/"chat history" labels.
     expect(screen.getByText("Agent thread")).not.toBeNull();
@@ -851,6 +856,11 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       container.querySelector(".cocalc-feature-final-band"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("img", {
+        name: /CoCalc LaTeX project with source, PDF preview, and build log/i,
+      }),
     ).not.toBeNull();
     // Route-specific body keyword (LaTeX writing loop) instead of pinned prose.
     expect(screen.getByText(/writing loop/i)).not.toBeNull();
@@ -1094,6 +1104,11 @@ describe("PublicFeaturesApp", () => {
     // Route-specific section keyword instead of pinned heading prose.
     expect(
       screen.getByText("The right interface at each stage"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("img", {
+        name: /CoCalc Python project connecting notebooks/i,
+      }),
     ).not.toBeNull();
     expect(screen.getByText("Project context")).not.toBeNull();
     expect(
@@ -1745,6 +1760,11 @@ describe("PublicFeaturesApp", () => {
       screen.getByText(
         "Turn recurring project workflows into repeatable runs.",
       ),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("img", {
+        name: /automated CoCalc project workflow/i,
+      }),
     ).not.toBeNull();
     expect(
       screen.queryByRole("link", { name: "API documentation" }),

@@ -75,8 +75,9 @@ function ThreadMock() {
     <div
       aria-label="Illustration of a CoCalc agent thread connected to files, notebooks, and terminals"
       className="feature-ai-thread-panel"
+      role="img"
     >
-      <Flex vertical gap={16}>
+      <Flex aria-hidden="true" vertical gap={16}>
         <Flex align="center" justify="space-between" wrap gap={10}>
           <Flex align="center" gap={10}>
             <IconBadge accent={AI_ACCENT} icon="robot" />
