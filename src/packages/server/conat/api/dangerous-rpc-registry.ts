@@ -431,6 +431,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.cancelProjectRootfsBuild": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized cancellation of an in-project durable RootFS build",
+  },
   "projects.cleanupRestoreStaging": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -578,6 +583,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "ordinary endpoint authorization is intended; admin/internal-only managed egress overrides are gated in the implementation",
+  },
+  "projects.startProjectRootfsBuild": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized in-project durable RootFS build; publishing remains separately gated",
   },
   "projects.startFromHost": {
     decision: "fresh-auth-not-required",
