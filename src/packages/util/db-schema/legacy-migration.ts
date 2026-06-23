@@ -288,6 +288,7 @@ Table({
       "owner_account_id",
       "status",
       "restore_status",
+      "restore_claimed_until",
       "updated",
     ],
     user_query: {
@@ -300,6 +301,12 @@ Table({
           status: null,
           restore_status: null,
           restore_error: null,
+          restore_attempts: null,
+          restore_worker_id: null,
+          restore_claimed_until: null,
+          restore_started: null,
+          restore_finished: null,
+          restore_result: null,
           rootfs_image: null,
           rootfs_image_id: null,
           created: null,
@@ -316,6 +323,12 @@ Table({
           status: null,
           restore_status: null,
           restore_error: null,
+          restore_attempts: null,
+          restore_worker_id: null,
+          restore_claimed_until: null,
+          restore_started: null,
+          restore_finished: null,
+          restore_result: null,
           rootfs_image: null,
           rootfs_image_id: null,
         },
@@ -351,6 +364,31 @@ Table({
     restore_error: {
       type: "string",
       desc: "Last file restore error, if any.",
+    },
+    restore_attempts: {
+      type: "integer",
+      desc: "Number of file restore worker attempts.",
+    },
+    restore_worker_id: {
+      type: "string",
+      pg_type: "VARCHAR(64)",
+      desc: "Worker id currently or most recently handling file restore.",
+    },
+    restore_claimed_until: {
+      type: "timestamp",
+      desc: "Restore worker lease expiration time.",
+    },
+    restore_started: {
+      type: "timestamp",
+      desc: "When the current or most recent restore attempt started.",
+    },
+    restore_finished: {
+      type: "timestamp",
+      desc: "When the restore finished or failed.",
+    },
+    restore_result: {
+      type: "map",
+      desc: "Host-side restore result metadata, including archive bytes and checksum.",
     },
     rootfs_image: {
       type: "string",

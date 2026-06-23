@@ -17,6 +17,7 @@ import { startMoveLroWorker } from "@cocalc/server/projects/move-worker";
 import { startRootfsPublishLroWorker } from "@cocalc/server/projects/rootfs-publish-worker";
 import { startRestoreLroWorker } from "@cocalc/server/projects/restore-worker";
 import { startHostLroWorker } from "@cocalc/server/hosts/start-worker";
+import { startLegacyMigrationProjectRestoreWorker } from "@cocalc/server/legacy-migration/restore-worker";
 import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 import { startRootfsReleaseGcMaintenance } from "@cocalc/server/rootfs/gc-maintenance";
 import { startRootfsScanMaintenance } from "@cocalc/server/rootfs/scan-maintenance";
@@ -106,6 +107,7 @@ export async function initConatApi() {
   startRootfsReleaseGcMaintenance();
   startRootfsScanMaintenance();
   startRestoreLroWorker();
+  startLegacyMigrationProjectRestoreWorker();
   startHostLroWorker();
   startAccountProjectIndexProjectionMaintenance();
   startAccountCollaboratorIndexProjectionMaintenance();
