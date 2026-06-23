@@ -532,4 +532,96 @@ describe("projects.copyPathBetweenProjects", () => {
       }),
     );
   });
+
+  it("creates a base-relative course assignment patch copy LRO", async () => {
+    const { sendCourseAssignmentPatch } = await import("./projects");
+    const result = await sendCourseAssignmentPatch({
+      account_id: "acct-1",
+      course_project_id: "course-project",
+      assignment_id: "assignment-1",
+      src_base_path: "Homework 1/student",
+      dest_base_path: "Homework 1",
+      relative_paths: ["lesson.ipynb", "data/input.csv", "lesson.ipynb"],
+      dests: [
+        {
+          student_id: "student-1",
+          student_project_id: "student-project-1",
+        },
+      ],
+    });
+
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "course-project",
+    });
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "student-project-1",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "copy-path-between-projects",
+        scope_type: "project",
+        scope_id: "course-project",
+        created_by: "acct-1",
+        routing: "hub",
+        input: {
+          src: {
+            project_id: "course-project",
+            base_path: "Homework 1/student",
+            path: [
+              "Homework 1/student/lesson.ipynb",
+              "Homework 1/student/data/input.csv",
+            ],
+          },
+          dests: [
+            {
+              project_id: "student-project-1",
+              path: "Homework 1",
+              metadata: {
+                student_id: "student-1",
+                course_item_id: "assignment-1",
+              },
+            },
+          ],
+          options: {
+            recursive: true,
+            force: false,
+            errorOnExist: false,
+          },
+        },
+        status: "queued",
+      }),
+    );
+    expect(triggerCopyLroWorkerMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      op_id: "op-1",
+      scope_type: "project",
+      scope_id: "course-project",
+      service: "persist-service",
+      stream_name: "stream:op-1",
+    });
+  });
+
+  it("rejects course assignment patch paths that escape the assignment", async () => {
+    const { sendCourseAssignmentPatch } = await import("./projects");
+    await expect(
+      sendCourseAssignmentPatch({
+        account_id: "acct-1",
+        course_project_id: "course-project",
+        assignment_id: "assignment-1",
+        src_base_path: "Homework 1",
+        dest_base_path: "Homework 1",
+        relative_paths: ["../answers.txt"],
+        dests: [
+          {
+            student_id: "student-1",
+            student_project_id: "student-project-1",
+          },
+        ],
+      }),
+    ).rejects.toThrow("relative paths must stay inside the assignment");
+
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
 });

@@ -13,6 +13,7 @@ import {
 let projectRoot: string;
 let mockCallHub: jest.Mock;
 let mockCpExec: jest.Mock;
+let mockRustic: jest.Mock;
 let mockStatusUpdates: any[];
 
 jest.mock("@cocalc/backend/logger", () => {
@@ -42,9 +43,7 @@ jest.mock("@cocalc/backend/sandbox", () => ({
     }
 
     async rustic(args: string[]): Promise<void> {
-      const dest = await this.safeAbsPath(args[2]);
-      await mkdir(path.dirname(dest), { recursive: true });
-      await writeFile(dest, "notebook payload");
+      return await mockRustic(args, this.root);
     }
   },
 }));
@@ -110,6 +109,11 @@ describe("project-host pending copies", () => {
       await mkdir(path.dirname(dest), { recursive: true });
       await copyFile(src, dest);
     });
+    mockRustic = jest.fn(async (args: string[], root: string) => {
+      const dest = path.join(root, args[2].replace(/^\/+/, ""));
+      await mkdir(path.dirname(dest), { recursive: true });
+      await writeFile(dest, "notebook payload");
+    });
   });
 
   afterEach(async () => {
@@ -143,6 +147,30 @@ describe("project-host pending copies", () => {
         recursive: true,
         reflink: true,
       }),
+    );
+  });
+
+  it("retries a transient missing snapshot during restore", async () => {
+    mockRustic
+      .mockRejectedValueOnce(new Error("no snapshot with id snap-1"))
+      .mockImplementationOnce(async (args: string[], root: string) => {
+        const dest = path.join(root, args[2].replace(/^\/+/, ""));
+        await mkdir(path.dirname(dest), { recursive: true });
+        await writeFile(dest, "notebook payload");
+      });
+
+    const { applyPendingCopies } = await import("./pending-copies");
+    await expect(applyPendingCopies({ limit: 1 })).resolves.toBe(1);
+
+    expect(mockRustic).toHaveBeenCalledTimes(2);
+    expect(mockStatusUpdates).toEqual([
+      expect.objectContaining({
+        copy_id: "copy-1",
+        status: "done",
+      }),
+    ]);
+    await expect(readFile(path.join(projectRoot, "foo"), "utf8")).resolves.toBe(
+      "notebook payload",
     );
   });
 });

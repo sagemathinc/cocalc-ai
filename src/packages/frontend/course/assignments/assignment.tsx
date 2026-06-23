@@ -26,6 +26,7 @@ import {
   MarkdownInput,
   Tip,
 } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { course, labels } from "@cocalc/frontend/i18n";
 import { capitalize, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -51,6 +52,7 @@ import {
 import { StudentListForAssignment } from "./assignment-student-list";
 import { ConfigurePeerGrading } from "./configure-peer";
 import { STUDENT_SUBDIR } from "./consts";
+import { SendSelectedAssignmentFilesModal } from "./selected-update-modal";
 import { SkipCopy } from "./skip";
 
 interface AssignmentProps {
@@ -114,6 +116,8 @@ export function Assignment({
   ] = useState<string>("");
   const [student_search, set_student_search] = useState<string>("");
   const [copy_confirm, set_copy_confirm] = useState<boolean>(false);
+  const [selected_update_open, set_selected_update_open] =
+    useState<boolean>(false);
 
   const { copy_confirm: copy_confirm_state, set: set_copy_confirm_state } =
     useCopyConfirmState();
@@ -410,8 +414,20 @@ export function Assignment({
         <Row key="header2-copy">
           <Col md={20} offset={4}>
             {render_copy_confirms(status)}
+            {render_assignment_update_history()}
           </Col>
         </Row>,
+      );
+      v.push(
+        <SendSelectedAssignmentFilesModal
+          key="selected-assignment-update-modal"
+          open={selected_update_open}
+          onClose={() => set_selected_update_open(false)}
+          assignment={assignment}
+          actions={actions}
+          project_id={project_id}
+          status={status}
+        />,
       );
     }
     /* The whiteSpace:'normal' here is because we put this in an
@@ -501,7 +517,43 @@ export function Assignment({
     actions.assignments.update_listing(assignment_id);
   }
 
+  async function show_selected_update(): Promise<void> {
+    const assignment_id: string | undefined = assignment.get("assignment_id");
+    if (assignment_id) {
+      await actions.assignments.update_listing(assignment_id);
+    }
+    set_selected_update_open(true);
+  }
+
+  function open_assignment_update_docs(): void {
+    openProjectDocs({
+      projectId: project_id,
+      slug: "teaching/create-assignment",
+    });
+  }
+
   function render_assignment_button(status) {
+    if (status.assignment > 0) {
+      return [
+        <Button
+          key="selected-update"
+          type="primary"
+          size={size}
+          onClick={show_selected_update}
+          disabled={copy_confirm}
+        >
+          <Icon name="files" /> Send Selected Files...
+        </Button>,
+        <Progress
+          key="progress"
+          done={status.assignment}
+          not_done={status.not_assignment}
+          step="assigned"
+          skipped={assignment.get("skip_assignment")}
+        />,
+      ];
+    }
+
     const last_assignment = assignment.get("last_assignment");
     // Primary if it hasn't been assigned before or if it hasn't started assigning.
     let type;
@@ -557,6 +609,30 @@ export function Assignment({
         skipped={assignment.get("skip_assignment")}
       />,
     ];
+  }
+
+  function render_assignment_update_history() {
+    const updates0 = assignment.get("assignment_updates");
+    const updates = updates0?.toJS != null ? updates0.toJS() : updates0;
+    const recent = Object.values(updates ?? {})
+      .sort((a: any, b: any) => b.created_at - a.created_at)
+      .slice(0, 3) as any[];
+    if (!recent.length) return;
+    return (
+      <div style={{ color: "#666", fontSize: "12px", marginTop: "8px" }}>
+        Recent selected file sends:{" "}
+        {recent.map((update, index) => (
+          <span key={update.update_id}>
+            {index ? "; " : ""}
+            <BigTime date={update.created_at} />{" "}
+            {update.status === "running" ? "running" : update.status}:{" "}
+            {update.success_count ?? 0}/{update.target_student_count ?? 0}{" "}
+            students,{" "}
+            {trunc_middle(update.relative_paths?.join(", ") ?? "", 60)}
+          </span>
+        ))}
+      </div>
+    );
   }
 
   function render_copy_confirms(status) {
@@ -753,16 +829,19 @@ export function Assignment({
       case "assignment":
         return (
           <span>
-            This will recopy all of the files to them. CAUTION: if you update a
-            file that a student has also worked on, their work will get
-            overwritten. They can use TimeTravel to get it back.
-            <a
-              target="_blank"
-              href="https://github.com/sagemathinc/cocalc/wiki/CourseCopy"
+            This sends the entire assignment again. If a selected destination
+            file already exists, student work can be replaced. Prefer{" "}
+            <b>Send Selected Files</b> for ordinary fixes, and use overwrite
+            only when that is intentional. TimeTravel can recover previous file
+            versions.{" "}
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={open_assignment_update_docs}
             >
-              (more details)
-            </a>
-            .
+              More about updating assignments
+            </Button>
           </span>
         );
       case "collect":

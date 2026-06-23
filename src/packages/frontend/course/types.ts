@@ -49,6 +49,19 @@ export interface SyncDBRecordSettings {
 
 // This is closely related to store.AssignmentRecord...
 
+export interface AssignmentUpdateRecord {
+  update_id: string;
+  created_at: number;
+  status: "running" | "done" | "failed";
+  relative_paths: string[];
+  include_not_assigned: boolean;
+  overwrite: boolean;
+  target_student_count: number;
+  success_count?: number;
+  failed_count?: number;
+  error?: string;
+}
+
 export interface SyncDBRecordAssignment {
   table: string;
   assignment_id?: string;
@@ -76,6 +89,7 @@ export interface SyncDBRecordAssignment {
   auto_collect_op_id?: string | null;
   auto_collect_run_at?: string | null;
   auto_collect_error?: string | null;
+  assignment_updates?: { [update_id: string]: AssignmentUpdateRecord };
   status?: {
     [student_id: string]: { start?: number; time?: number; error?: string };
   };

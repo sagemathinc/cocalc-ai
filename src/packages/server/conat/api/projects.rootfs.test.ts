@@ -7,6 +7,10 @@ let queryMock: jest.Mock;
 let assertCollabAllowRemoteProjectAccessMock: jest.Mock;
 let getAssignedProjectHostInfoMock: jest.Mock;
 let getRoutedHostControlClientMock: jest.Mock;
+let createLroMock: jest.Mock;
+let updateLroMock: jest.Mock;
+let publishLroSummaryMock: jest.Mock;
+let publishLroEventMock: jest.Mock;
 let hostControlClientMock: {
   startRootfsBuild: jest.Mock;
   getRootfsBuildStatus: jest.Mock;
@@ -52,6 +56,18 @@ jest.mock("@cocalc/server/project-host/client", () => ({
     getRoutedHostControlClientMock(...args),
 }));
 
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  __esModule: true,
+  createLro: (...args: any[]) => createLroMock(...args),
+  updateLro: (...args: any[]) => updateLroMock(...args),
+}));
+
+jest.mock("@cocalc/server/lro/stream", () => ({
+  __esModule: true,
+  publishLroSummary: (...args: any[]) => publishLroSummaryMock(...args),
+  publishLroEvent: (...args: any[]) => publishLroEventMock(...args),
+}));
+
 describe("project rootfs helpers", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
@@ -63,23 +79,111 @@ describe("project rootfs helpers", () => {
       async () => "local-collaborator",
     );
     isAdminMock = jest.fn(async () => false);
-    queryMock = jest.fn(async () => ({
-      rows: [
-        {
-          region: null,
-          created: null,
-          env: null,
-          rootfs_image: "buildpack-deps:noble-scm",
-          rootfs_image_id: "official-cocalc-base",
-          snapshots: null,
-          backups: null,
-          run_quota: null,
-          settings: null,
-          course: null,
-        },
-      ],
-    }));
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("project_rootfs_builds")) {
+        if (sql.includes("SELECT *")) {
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO")) {
+          return {
+            rows: [
+              {
+                build_id: params?.[0],
+                project_id: params?.[1],
+                account_id: params?.[2],
+                host_id: params?.[3],
+                op_id: params?.[4],
+                status: params?.[5],
+                recipe_ref: params?.[6],
+                paths: params?.[7],
+                pid: params?.[8],
+                exit_code: params?.[9],
+                signal: params?.[10],
+                error: params?.[11],
+                created_at: params?.[12],
+                started_at: params?.[13],
+                finished_at: params?.[14],
+                heartbeat_at: params?.[15],
+                last_output_at: params?.[16],
+                updated: new Date("2026-06-22T00:00:01.000Z"),
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      }
+      return {
+        rows: [
+          {
+            region: null,
+            created: null,
+            env: null,
+            rootfs_image: "buildpack-deps:noble-scm",
+            rootfs_image_id: "official-cocalc-base",
+            snapshots: null,
+            backups: null,
+            run_quota: null,
+            settings: null,
+            course: null,
+          },
+        ],
+      };
+    });
     getPoolMock = jest.fn(() => ({ query: queryMock }));
+    createLroMock = jest.fn(async ({ build_id }) => ({
+      op_id: "33333333-3333-4333-8333-333333333333",
+      kind: "project-rootfs-build",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "queued",
+      created_by: ACCOUNT_ID,
+      owner_type: "host",
+      owner_id: "host-1",
+      routing: "project-host",
+      input: { build_id },
+      result: {},
+      error: null,
+      progress_summary: {},
+      attempt: 0,
+      heartbeat_at: null,
+      created_at: new Date("2026-06-22T00:00:00.000Z"),
+      started_at: null,
+      finished_at: null,
+      dismissed_at: null,
+      dismissed_by: null,
+      updated_at: new Date("2026-06-22T00:00:00.000Z"),
+      expires_at: new Date("2026-07-06T00:00:00.000Z"),
+      dedupe_key: null,
+      parent_id: null,
+    }));
+    updateLroMock = jest.fn(async ({ op_id, status }) => ({
+      op_id,
+      kind: "project-rootfs-build",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status,
+      created_by: ACCOUNT_ID,
+      owner_type: "host",
+      owner_id: "host-1",
+      routing: "project-host",
+      input: {},
+      result: {},
+      error: null,
+      progress_summary: {},
+      attempt: 0,
+      heartbeat_at: null,
+      created_at: new Date("2026-06-22T00:00:00.000Z"),
+      started_at: null,
+      finished_at: null,
+      dismissed_at: null,
+      dismissed_by: null,
+      updated_at: new Date("2026-06-22T00:00:01.000Z"),
+      expires_at: new Date("2026-07-06T00:00:00.000Z"),
+      dedupe_key: null,
+      parent_id: null,
+    }));
+    publishLroSummaryMock = jest.fn(async () => undefined);
+    publishLroEventMock = jest.fn(async () => undefined);
     getAssignedProjectHostInfoMock = jest.fn(async () => ({
       host_id: "host-1",
       ssh_server: null,
@@ -229,5 +333,114 @@ describe("project rootfs helpers", () => {
       byte_offset: 100,
       max_bytes: 4096,
     });
+  });
+
+  it("creates a project-scoped LRO and indexes rootfs build starts", async () => {
+    const { startProjectRootfsBuild } = await import("./projects");
+    const result = await startProjectRootfsBuild({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      build_id: "build-1",
+      recipe_ref: "cocalc/julia",
+      script: "echo hi",
+    });
+
+    expect(result).toMatchObject({
+      build_id: "build-1",
+      project_id: PROJECT_ID,
+      host_id: "host-1",
+      op_id: "33333333-3333-4333-8333-333333333333",
+      status: "running",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "project-rootfs-build",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+        created_by: ACCOUNT_ID,
+        owner_type: "host",
+        owner_id: "host-1",
+        routing: "project-host",
+        status: "queued",
+      }),
+    );
+    expect(hostControlClientMock.startRootfsBuild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        build_id: "build-1",
+        recipe_ref: "cocalc/julia",
+      }),
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_rootfs_builds"),
+      expect.arrayContaining([
+        "build-1",
+        PROJECT_ID,
+        ACCOUNT_ID,
+        "host-1",
+        "33333333-3333-4333-8333-333333333333",
+        "running",
+      ]),
+    );
+    expect(updateLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        op_id: "33333333-3333-4333-8333-333333333333",
+        status: "running",
+      }),
+    );
+  });
+
+  it("lists rootfs builds from the hub index", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("project_rootfs_builds") && sql.includes("SELECT *")) {
+        return {
+          rows: [
+            {
+              build_id: "build-1",
+              project_id: PROJECT_ID,
+              account_id: ACCOUNT_ID,
+              host_id: "host-1",
+              op_id: "33333333-3333-4333-8333-333333333333",
+              status: "succeeded",
+              recipe_ref: "cocalc/julia",
+              paths: {
+                dir: ".cocalc/rootfs-builds/build-1",
+                script: ".cocalc/rootfs-builds/build-1/run.sh",
+                log: ".cocalc/rootfs-builds/build-1/build.log",
+                status: ".cocalc/rootfs-builds/build-1/status.json",
+                events: ".cocalc/rootfs-builds/build-1/events.ndjson",
+              },
+              created_at: new Date("2026-06-22T00:00:00.000Z"),
+              finished_at: new Date("2026-06-22T00:00:10.000Z"),
+              updated: new Date("2026-06-22T00:00:10.000Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    getPoolMock = jest.fn(() => ({ query: queryMock }));
+
+    const { listProjectRootfsBuilds } = await import("./projects");
+    await expect(
+      listProjectRootfsBuilds({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        build_id: "build-1",
+        project_id: PROJECT_ID,
+        host_id: "host-1",
+        op_id: "33333333-3333-4333-8333-333333333333",
+        status: "succeeded",
+        recipe_ref: "cocalc/julia",
+      }),
+    ]);
+    expect(assertCollabAllowRemoteProjectAccessMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(getRoutedHostControlClientMock).not.toHaveBeenCalled();
   });
 });

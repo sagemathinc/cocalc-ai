@@ -10,6 +10,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon, Tip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { openAppDocs, openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { labels } from "@cocalc/frontend/i18n";
 import { NotebookScores } from "@cocalc/frontend/jupyter/nbgrader/autograde";
@@ -17,6 +18,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import { BigTime } from ".";
 import { CourseActions } from "../actions";
+import { SendSelectedAssignmentFilesModal } from "../assignments/selected-update-modal";
 import { NbgraderScores } from "../nbgrader/scores";
 import {
   AssignmentRecord,
@@ -103,6 +105,8 @@ export function StudentAssignmentInfo({
   const actions = useActions<CourseActions>({ name });
   const size = useButtonSize();
   const [recopy, set_recopy] = useRecopy();
+  const [selected_update_open, set_selected_update_open] =
+    useState<boolean>(false);
   const [commentDraft, setCommentDraft] = useState(comments || "");
   const assignment_id = assignment.get("assignment_id");
   const student_id = student.get("student_id");
@@ -128,6 +132,24 @@ export function StudentAssignmentInfo({
     student_id: string,
   ) {
     return actions.assignments.copy_assignment(type, assignment_id, student_id);
+  }
+
+  async function show_selected_update(): Promise<void> {
+    if (assignment_id) {
+      await actions.assignments.update_listing(assignment_id);
+    }
+    set_selected_update_open(true);
+  }
+
+  function open_assignment_update_docs(): void {
+    if (course_project_id) {
+      openProjectDocs({
+        projectId: course_project_id,
+        slug: "teaching/create-assignment",
+      });
+    } else {
+      openAppDocs("teaching/create-assignment");
+    }
   }
 
   function stop(
@@ -423,14 +445,19 @@ export function StudentAssignmentInfo({
             key="what-happens"
             style={{ margin: "5px", display: "inline-block" }}
           >
-            <a target="_blank" href="/app-docs/teaching/create-assignment">
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={open_assignment_update_docs}
+            >
               {intl.formatMessage({
                 id: "course.student-assignment-info.recopy.what_happens",
                 defaultMessage: "What happens when I assign again?",
                 description:
                   "Asking the question, what happens if all files are transferred to all students in an online course once again.",
               })}
-            </a>
+            </Button>
           </div>,
         );
       }
@@ -463,6 +490,24 @@ export function StudentAssignmentInfo({
     open_tip: string,
   ) {
     const placement = step === "Return" ? "left" : "right";
+    if (step === "Assign") {
+      return (
+        <Space key="open_recopy" wrap size={[6, 6]}>
+          <Button
+            key="selected-update"
+            size={size}
+            onClick={show_selected_update}
+          >
+            <Icon name="files" /> Send Selected Files...
+          </Button>
+          <Button key="open" size={size} onClick={open}>
+            <Tip title="Open assignment" placement={placement} tip={open_tip}>
+              <Icon name="folder-open" /> {intl.formatMessage(labels.open)}
+            </Tip>
+          </Button>
+        </Space>
+      );
+    }
     return (
       <Space key="open_recopy" wrap size={[6, 6]}>
         {render_open_recopy_confirm(step, copy, copy_tip, placement)}
@@ -900,6 +945,15 @@ export function StudentAssignmentInfo({
 
   return (
     <div>
+      <SendSelectedAssignmentFilesModal
+        open={selected_update_open}
+        onClose={() => set_selected_update_open(false)}
+        assignment={assignment}
+        actions={actions}
+        project_id={course_project_id ?? ""}
+        studentIds={[info.student_id]}
+        targetLabel="this student"
+      />
       <Row
         style={{
           borderTop: `1px solid ${COLORS.GRAY_L}`,

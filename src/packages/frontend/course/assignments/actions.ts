@@ -49,6 +49,7 @@ import {
   NBgraderRunInfo,
 } from "../store";
 import {
+  AssignmentUpdateRecord,
   AssignmentCopyType,
   copy_type_to_last,
   LastAssignmentCopyType,
@@ -73,6 +74,7 @@ import {
 import { DUE_DATE_FILENAME } from "../common/consts";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
+  CourseAssignmentPatchDestination,
   CourseCollectAssignmentItem,
   ProjectCopyDestination,
 } from "@cocalc/conat/hub/api/projects";
@@ -89,6 +91,25 @@ const TERMINAL_LRO_STATUSES = new Set([
   "canceled",
   "expired",
 ]);
+
+function plainAssignmentUpdates(updates: any): {
+  [update_id: string]: AssignmentUpdateRecord;
+} {
+  if (updates?.toJS != null) {
+    return updates.toJS();
+  }
+  return { ...(updates ?? {}) };
+}
+
+function limitAssignmentUpdates(updates: {
+  [update_id: string]: AssignmentUpdateRecord;
+}): { [update_id: string]: AssignmentUpdateRecord } {
+  return Object.fromEntries(
+    Object.entries(updates)
+      .sort((a, b) => b[1].created_at - a[1].created_at)
+      .slice(0, 25),
+  );
+}
 
 export class AssignmentsActions {
   private course_actions: CourseActions;
@@ -1319,6 +1340,200 @@ ${details}
     }
 
     finish(errors);
+  };
+
+  private record_assignment_update = (
+    assignment_id: string,
+    update: AssignmentUpdateRecord,
+  ): void => {
+    const { assignment } = this.course_actions.resolve({ assignment_id });
+    const existing = plainAssignmentUpdates(
+      assignment?.get("assignment_updates"),
+    );
+    this.course_actions.set({
+      table: "assignments",
+      assignment_id,
+      assignment_updates: limitAssignmentUpdates({
+        ...existing,
+        [update.update_id]: update,
+      }),
+    });
+  };
+
+  send_selected_assignment_paths_to_students = async ({
+    assignment_id,
+    relative_paths,
+    student_ids,
+    include_not_assigned = false,
+    overwrite = false,
+  }: {
+    assignment_id: string;
+    relative_paths: string[];
+    student_ids?: string[];
+    include_not_assigned?: boolean;
+    overwrite?: boolean;
+  }): Promise<void> => {
+    const normalizedRelativePaths = Array.from(
+      new Set(relative_paths.map((path) => path.trim()).filter(Boolean)),
+    );
+    if (!normalizedRelativePaths.length) {
+      this.course_actions.set_error("Select at least one assignment file.");
+      return;
+    }
+    await this.update_listing(assignment_id);
+    if (this.course_actions.is_closed()) return;
+    const { store, assignment } = this.course_actions.resolve({
+      assignment_id,
+    });
+    if (!assignment) return;
+
+    const update_id = uuid();
+    const activity_id = this.course_actions.set_activity({
+      desc: "Sending selected assignment files...",
+    });
+    const update: AssignmentUpdateRecord = {
+      update_id,
+      created_at: webapp_client.server_time(),
+      status: "running",
+      relative_paths: normalizedRelativePaths,
+      include_not_assigned,
+      overwrite,
+      target_student_count: 0,
+    };
+    this.record_assignment_update(assignment_id, update);
+    let currentUpdate = update;
+
+    const saveUpdate = (patch: Partial<AssignmentUpdateRecord>) => {
+      currentUpdate = { ...currentUpdate, ...patch };
+      this.record_assignment_update(assignment_id, currentUpdate);
+    };
+    const finish = (patch: Partial<AssignmentUpdateRecord>, err?: any) => {
+      this.course_actions.clear_activity(activity_id);
+      saveUpdate(patch);
+      if (err) {
+        this.course_actions.set_error(`selected assignment update: ${err}`);
+      }
+    };
+
+    try {
+      const patchDests: CourseAssignmentPatchDestination[] = [];
+      const courseCopyDests: CourseCopyDestination[] = [];
+      let errors = "";
+      const explicitStudentIds = student_ids?.length
+        ? Array.from(new Set(student_ids))
+        : undefined;
+      const targetStudentIds =
+        explicitStudentIds ?? store.get_student_ids({ deleted: false });
+      for (const student_id of targetStudentIds) {
+        if (!explicitStudentIds && !include_not_assigned) {
+          const alreadyCopied = !!store.last_copied(
+            "assignment",
+            assignment_id,
+            student_id,
+            true,
+          );
+          if (!alreadyCopied) {
+            continue;
+          }
+        }
+        const { student } = this.course_actions.resolve({
+          assignment_id,
+          student_id,
+        });
+        if (!student) {
+          continue;
+        }
+        let student_project_id: string | undefined = student.get("project_id");
+        if (
+          student_project_id == null &&
+          (include_not_assigned || explicitStudentIds)
+        ) {
+          const student_name = store.get_student_name(student_id);
+          this.course_actions.set_activity({
+            id: activity_id,
+            desc: `${student_name}'s project doesn't exist, so creating it.`,
+          });
+          student_project_id =
+            await this.course_actions.student_projects.create_student_project(
+              student_id,
+            );
+        }
+        if (!student_project_id) {
+          errors += `\n ${store.get_student_name(student_id)}: no student project`;
+          continue;
+        }
+        patchDests.push({ student_id, student_project_id });
+        courseCopyDests.push({ student_id, project_id: student_project_id });
+      }
+
+      if (!patchDests.length) {
+        finish(
+          {
+            status: "failed",
+            target_student_count: 0,
+            success_count: 0,
+            failed_count: 0,
+            error: "No target students matched this update.",
+          },
+          "No target students matched this update.",
+        );
+        return;
+      }
+
+      saveUpdate({
+        target_student_count: patchDests.length,
+      });
+      const src_base_path = this.assignment_src_path(assignment);
+      const dest_base_path = assignment.get("target_path") ?? "";
+      const op = await webapp_client.project_client.sendCourseAssignmentPatch({
+        course_project_id: store.get("course_project_id"),
+        assignment_id,
+        src_base_path,
+        dest_base_path,
+        relative_paths: normalizedRelativePaths,
+        dests: patchDests,
+        options: {
+          recursive: true,
+          force: overwrite,
+          errorOnExist: false,
+        },
+      });
+      const result = await waitForCourseCopyLro({
+        op,
+        dests: courseCopyDests,
+        onSummary: (summary) => {
+          const progress = summary.progress_summary;
+          if (progress?.total) {
+            this.course_actions.set_activity({
+              id: activity_id,
+              desc: `Sending selected assignment files (${progress.done ?? 0}/${progress.total} done)`,
+            });
+          }
+        },
+      });
+      let failed_count = 0;
+      for (const dest of courseCopyDests) {
+        if (result[dest.student_id]) {
+          failed_count += 1;
+          errors += `\n ${store.get_student_name(dest.student_id)}: ${
+            result[dest.student_id]
+          }`;
+        }
+      }
+      const success_count = courseCopyDests.length - failed_count;
+      finish(
+        {
+          status: failed_count ? "failed" : "done",
+          target_student_count: patchDests.length,
+          success_count,
+          failed_count,
+          ...(errors ? { error: errors.trim() } : {}),
+        },
+        errors || undefined,
+      );
+    } catch (err) {
+      finish({ status: "failed", error: `${err}` }, err);
+    }
   };
 
   private build_collect_assignment_items = ({

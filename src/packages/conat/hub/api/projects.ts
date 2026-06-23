@@ -73,6 +73,12 @@ export interface ProjectCopyDestination {
   };
 }
 
+export interface ProjectCopySource {
+  project_id: string;
+  path: string | string[];
+  base_path?: string;
+}
+
 export interface CourseCollectAssignmentItem {
   student_id: string;
   student_project_id: string;
@@ -90,6 +96,13 @@ export interface CourseCollectAssignmentResult {
   service: string;
   stream_name: string;
 }
+
+export interface CourseAssignmentPatchDestination {
+  student_id: string;
+  student_project_id: string;
+}
+
+export type CourseAssignmentPatchResult = CourseCollectAssignmentResult;
 
 export interface BackupFindResult {
   id: string;
@@ -670,12 +683,14 @@ export interface ProjectRootfsPublishConfig {
 }
 export type ProjectRootfsBuildStatusResponse = HostRootfsBuildStatusResponse & {
   host_id: string;
+  op_id?: string | null;
 };
 export type ProjectRootfsBuildLogResponse = HostRootfsBuildLogResponse & {
   host_id: string;
 };
 export type ProjectRootfsBuildCancelResponse = HostRootfsBuildCancelResponse & {
   host_id: string;
+  op_id?: string | null;
 };
 export type ProjectRootfsBuildStartRequest = Omit<
   HostRootfsBuildStartRequest,
@@ -695,6 +710,19 @@ export interface ProjectRootfsBuildLogRequest extends ProjectRootfsBuildStatusRe
   max_bytes?: number;
 }
 export type ProjectRootfsBuildCancelRequest = ProjectRootfsBuildStatusRequest;
+export type ProjectRootfsBuildRecord = Omit<
+  ProjectRootfsBuildStatusResponse,
+  "paths"
+> & {
+  paths?: HostRootfsBuildStatusResponse["paths"];
+  account_id?: string | null;
+  updated?: string;
+};
+export interface ProjectRootfsBuildListRequest {
+  account_id?: string;
+  project_id: string;
+  limit?: number;
+}
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
@@ -703,6 +731,7 @@ export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
   collectAssignment: authFirstRequireAccount,
+  sendCourseAssignmentPatch: authFirstRequireAccount,
   inspectPublicPath: authFirstRequireAccount,
   importPublicUrl: authFirstRequireAccount,
   importPublicPath: authFirstRequireAccount,
@@ -744,6 +773,7 @@ export const projects = {
   startProjectRootfsBuild: authFirstRequireAccount,
   getProjectRootfsBuildStatus: authFirstRequireAccount,
   getProjectRootfsBuildLog: authFirstRequireAccount,
+  listProjectRootfsBuilds: authFirstRequireAccount,
   cancelProjectRootfsBuild: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
   getProjectRuntimeSponsorStatus: authFirstRequireAccount,
@@ -839,7 +869,7 @@ export interface Projects {
   createProject: (opts: CreateProjectOptions) => Promise<string>;
 
   copyPathBetweenProjects: (opts: {
-    src: { project_id: string; path: string | string[] };
+    src: ProjectCopySource;
     src_home?: string;
     dest?: ProjectCopyDestination;
     dests?: ProjectCopyDestination[];
@@ -860,6 +890,17 @@ export interface Projects {
     options?: CopyOptions;
     run_at?: string;
   }) => Promise<CourseCollectAssignmentResult>;
+
+  sendCourseAssignmentPatch: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    assignment_id: string;
+    src_base_path: string;
+    dest_base_path: string;
+    relative_paths: string[];
+    dests: CourseAssignmentPatchDestination[];
+    options?: CopyOptions;
+  }) => Promise<CourseAssignmentPatchResult>;
 
   inspectPublicPath: (opts: {
     account_id?: string;
@@ -980,6 +1021,10 @@ export interface Projects {
   getProjectRootfsBuildLog: (
     opts: ProjectRootfsBuildLogRequest,
   ) => Promise<ProjectRootfsBuildLogResponse>;
+
+  listProjectRootfsBuilds: (
+    opts: ProjectRootfsBuildListRequest,
+  ) => Promise<ProjectRootfsBuildRecord[]>;
 
   cancelProjectRootfsBuild: (
     opts: ProjectRootfsBuildCancelRequest,

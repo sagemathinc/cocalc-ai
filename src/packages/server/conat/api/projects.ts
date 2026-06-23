@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
 import execProject from "@cocalc/server/projects/exec";
@@ -115,6 +116,8 @@ import { resolveProjectAccessAllowRemote } from "@cocalc/server/conat/project-re
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 import type {
   ChatStoreScope,
+  CourseAssignmentPatchDestination,
+  CourseAssignmentPatchResult,
   CourseStudentAccessStatus,
   CourseCollectAssignmentItem,
   CourseCollectAssignmentResult,
@@ -144,6 +147,8 @@ import type {
   ProjectRootfsBuildCancelResponse,
   ProjectRootfsBuildLogRequest,
   ProjectRootfsBuildLogResponse,
+  ProjectRootfsBuildListRequest,
+  ProjectRootfsBuildRecord,
   ProjectRootfsBuildStartRequest,
   ProjectRootfsBuildStatusRequest,
   ProjectRootfsBuildStatusResponse,
@@ -155,6 +160,7 @@ import type {
   ProjectCollabInviteAction,
   ProjectCollabInviteDirection,
   ProjectCollabInviteStatus,
+  ProjectCopySource,
   ProjectInviteEmailBlockedReason,
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
@@ -194,6 +200,14 @@ import {
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import {
+  createProjectRootfsBuildLro,
+  getProjectRootfsBuildRecord,
+  listProjectRootfsBuildRecords,
+  markProjectRootfsBuildFailed,
+  syncProjectRootfsBuildLro,
+  upsertProjectRootfsBuildStatus,
+} from "@cocalc/server/rootfs/build-index";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 import {
@@ -358,7 +372,7 @@ export async function copyPathBetweenProjects({
   options,
   account_id,
 }: {
-  src: { project_id: string; path: string | string[] };
+  src: ProjectCopySource;
   src_home?: string;
   dest?: ProjectCopyDestination;
   dests?: ProjectCopyDestination[];
@@ -567,6 +581,121 @@ export async function collectAssignment({
   }
   triggerCourseCollectLroWorker();
   return courseCollectLroResponse(op);
+}
+
+const MAX_COURSE_ASSIGNMENT_PATCH_PATHS = 500;
+
+function normalizeCourseAssignmentPatchRelativePaths(
+  relative_paths: string[],
+): string[] {
+  if (!Array.isArray(relative_paths) || relative_paths.length === 0) {
+    throw new Error("at least one relative path is required");
+  }
+  if (relative_paths.length > MAX_COURSE_ASSIGNMENT_PATCH_PATHS) {
+    throw new Error(
+      `too many paths; maximum is ${MAX_COURSE_ASSIGNMENT_PATCH_PATHS}`,
+    );
+  }
+  const deduped = new Set<string>();
+  for (const raw of relative_paths) {
+    const trimmed = `${raw ?? ""}`.trim().replace(/\\/g, "/");
+    if (!trimmed) {
+      throw new Error("relative path is required");
+    }
+    if (posix.isAbsolute(trimmed)) {
+      throw new Error("relative paths must not be absolute");
+    }
+    if (trimmed.split("/").some((part) => part === "..")) {
+      throw new Error("relative paths must stay inside the assignment");
+    }
+    const normalized = posix.normalize(trimmed);
+    if (!normalized || normalized === ".") {
+      throw new Error("relative path is required");
+    }
+    deduped.add(normalized);
+  }
+  return Array.from(deduped);
+}
+
+function normalizeCourseAssignmentPatchDests(
+  dests: CourseAssignmentPatchDestination[],
+): CourseAssignmentPatchDestination[] {
+  if (!Array.isArray(dests) || dests.length === 0) {
+    throw new Error("at least one student is required");
+  }
+  if (dests.length > MAX_COURSE_COLLECT_ITEMS) {
+    throw new Error(
+      `too many students; maximum is ${MAX_COURSE_COLLECT_ITEMS}`,
+    );
+  }
+  const deduped = new Map<string, CourseAssignmentPatchDestination>();
+  for (const raw of dests) {
+    const student_id = `${raw?.student_id ?? ""}`.trim();
+    const student_project_id = `${raw?.student_project_id ?? ""}`.trim();
+    if (!student_id) throw new Error("student_id is required");
+    if (!student_project_id) throw new Error("student_project_id is required");
+    const key = `${student_id}\n${student_project_id}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, { student_id, student_project_id });
+    }
+  }
+  return Array.from(deduped.values());
+}
+
+export async function sendCourseAssignmentPatch({
+  account_id,
+  course_project_id,
+  assignment_id,
+  src_base_path,
+  dest_base_path,
+  relative_paths,
+  dests,
+  options,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  assignment_id: string;
+  src_base_path: string;
+  dest_base_path: string;
+  relative_paths: string[];
+  dests: CourseAssignmentPatchDestination[];
+  options?: CopyOptions;
+}): Promise<CourseAssignmentPatchResult> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const normalizedRelativePaths =
+    normalizeCourseAssignmentPatchRelativePaths(relative_paths);
+  const normalizedDests = normalizeCourseAssignmentPatchDests(dests);
+
+  await assertCollab({ account_id, project_id: course_project_id });
+  for (const project_id of new Set(
+    normalizedDests.map((dest) => dest.student_project_id),
+  )) {
+    await assertCollab({ account_id, project_id });
+  }
+
+  return await copyPathBetweenProjects({
+    account_id,
+    src: {
+      project_id: course_project_id,
+      base_path: src_base_path,
+      path: normalizedRelativePaths.map((relativePath) =>
+        posix.join(src_base_path, relativePath),
+      ),
+    },
+    dests: normalizedDests.map((dest) => ({
+      project_id: dest.student_project_id,
+      path: dest_base_path,
+      metadata: { student_id: dest.student_id, course_item_id: assignment_id },
+    })),
+    options: {
+      force: false,
+      errorOnExist: false,
+      ...options,
+      recursive: true,
+    },
+  });
 }
 
 const MAX_COPY_DESTINATIONS = 500;
@@ -1129,6 +1258,15 @@ async function getProjectRootfsBuildClient({
   return { host_id, client };
 }
 
+function generateProjectRootfsBuildId(): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(".", "")
+    .replace("Z", "");
+  return `rb-${timestamp}-${randomUUID().slice(0, 8)}`;
+}
+
 export async function startProjectRootfsBuild({
   account_id,
   project_id,
@@ -1139,11 +1277,69 @@ export async function startProjectRootfsBuild({
     project_id,
     timeout: 30_000,
   });
-  const status = await client.startRootfsBuild({
-    ...start,
+  const build_id = start.build_id ?? generateProjectRootfsBuildId();
+  const op = await createProjectRootfsBuildLro({
+    account_id,
     project_id,
+    host_id,
+    build_id,
+    recipe_ref: start.recipe_ref,
   });
-  return { ...status, host_id };
+  try {
+    const status = await client.startRootfsBuild({
+      ...start,
+      build_id,
+      project_id,
+    });
+    const record = await upsertProjectRootfsBuildStatus({
+      account_id,
+      host_id,
+      op_id: op.op_id,
+      status,
+    });
+    await syncProjectRootfsBuildLro({
+      op_id: record.op_id,
+      status,
+    });
+    return { ...status, host_id, op_id: record.op_id };
+  } catch (err) {
+    const failed = await markProjectRootfsBuildFailed({
+      account_id,
+      project_id,
+      host_id,
+      build_id,
+      op_id: op.op_id,
+      recipe_ref: start.recipe_ref,
+      error: err,
+    });
+    await syncProjectRootfsBuildLro({
+      op_id: failed.op_id,
+      status: {
+        build_id,
+        project_id,
+        status: "failed",
+        recipe_ref: start.recipe_ref,
+        created_at: failed.created_at,
+        finished_at: failed.finished_at,
+        error: `${err}`,
+        paths: failed.paths ?? {
+          dir: "",
+          script: "",
+          log: "",
+          status: "",
+          events: "",
+        },
+      },
+    }).catch((syncErr) => {
+      log.warn("failed to sync rootfs build LRO after start failure", {
+        project_id,
+        build_id,
+        op_id: op.op_id,
+        err: syncErr,
+      });
+    });
+    throw err;
+  }
 }
 
 export async function getProjectRootfsBuildStatus({
@@ -1160,7 +1356,21 @@ export async function getProjectRootfsBuildStatus({
     project_id,
     build_id,
   });
-  return { ...status, host_id };
+  const existing = await getProjectRootfsBuildRecord({
+    project_id,
+    build_id,
+  });
+  const record = await upsertProjectRootfsBuildStatus({
+    account_id: existing?.account_id ?? account_id,
+    host_id,
+    op_id: existing?.op_id,
+    status,
+  });
+  await syncProjectRootfsBuildLro({
+    op_id: record.op_id,
+    status,
+  });
+  return { ...status, host_id, op_id: record.op_id };
 }
 
 export async function getProjectRootfsBuildLog({
@@ -1186,6 +1396,15 @@ export async function getProjectRootfsBuildLog({
   return { ...log, host_id };
 }
 
+export async function listProjectRootfsBuilds({
+  account_id,
+  project_id,
+  limit,
+}: ProjectRootfsBuildListRequest): Promise<ProjectRootfsBuildRecord[]> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  return await listProjectRootfsBuildRecords({ project_id, limit });
+}
+
 export async function cancelProjectRootfsBuild({
   account_id,
   project_id,
@@ -1200,7 +1419,37 @@ export async function cancelProjectRootfsBuild({
     project_id,
     build_id,
   });
-  return { ...cancel, host_id };
+  let op_id = (
+    await getProjectRootfsBuildRecord({
+      project_id,
+      build_id,
+    })
+  )?.op_id;
+  try {
+    const status = await client.getRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    const record = await upsertProjectRootfsBuildStatus({
+      account_id,
+      host_id,
+      op_id,
+      status,
+    });
+    op_id = record.op_id;
+    await syncProjectRootfsBuildLro({
+      op_id,
+      status,
+    });
+  } catch (err) {
+    log.warn("failed to refresh rootfs build status after cancel", {
+      project_id,
+      build_id,
+      host_id,
+      err,
+    });
+  }
+  return { ...cancel, host_id, op_id };
 }
 
 export async function setProjectEnv({

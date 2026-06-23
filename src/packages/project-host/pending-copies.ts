@@ -1,6 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, stat } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
@@ -26,6 +27,15 @@ const logger = getLogger("project-host:pending-copies");
 
 const COPY_STAGING_DIR = ".copy-staging";
 const RESTORE_TIMEOUT_MS = 30 * 60 * 1000;
+const RESTORE_SNAPSHOT_NOT_FOUND_RETRY_DELAY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_COPY_RESTORE_SNAPSHOT_NOT_FOUND_RETRY_DELAY_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 5000),
+);
+const RESTORE_SNAPSHOT_NOT_FOUND_RETRIES = Math.max(
+  0,
+  Number(process.env.COCALC_COPY_RESTORE_SNAPSHOT_NOT_FOUND_RETRIES) || 3,
+);
 
 function normalizeCopyPath(raw: string, label: string): string {
   if (typeof raw !== "string") {
@@ -65,6 +75,53 @@ async function statIfExists(p: string) {
       return undefined;
     }
     throw err;
+  }
+}
+
+function isSnapshotNotFoundError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err}`.toLowerCase();
+  return (
+    message.includes("no snapshot with id") ||
+    (message.includes("snapshot") && message.includes("not found"))
+  );
+}
+
+async function restoreSnapshotWithRetry({
+  restoreFs,
+  row,
+  srcPath,
+  stagingRel,
+}: {
+  restoreFs: SandboxedFilesystem;
+  row: ProjectCopyRow;
+  srcPath: string;
+  stagingRel: string;
+}): Promise<void> {
+  const source = `${row.snapshot_id}${srcPath ? ":" + srcPath : ""}`;
+  for (let retry = 0; ; retry += 1) {
+    try {
+      await restoreFs.rustic(["restore", source, stagingRel], {
+        timeout: RESTORE_TIMEOUT_MS,
+      });
+      return;
+    } catch (err) {
+      if (
+        retry >= RESTORE_SNAPSHOT_NOT_FOUND_RETRIES ||
+        !isSnapshotNotFoundError(err)
+      ) {
+        throw err;
+      }
+      logger.warn("copy snapshot not visible yet; retrying restore", {
+        copy_id: row.copy_id,
+        src_project_id: row.src_project_id,
+        dest_project_id: row.dest_project_id,
+        snapshot_id: row.snapshot_id,
+        retry: retry + 1,
+        retry_delay_ms: RESTORE_SNAPSHOT_NOT_FOUND_RETRY_DELAY_MS,
+        err: `${err}`,
+      });
+      await delay(RESTORE_SNAPSHOT_NOT_FOUND_RETRY_DELAY_MS);
+    }
   }
 }
 
@@ -140,14 +197,7 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
   });
 
   try {
-    await restoreFs.rustic(
-      [
-        "restore",
-        `${row.snapshot_id}${srcPath ? ":" + srcPath : ""}`,
-        stagingRel,
-      ],
-      { timeout: RESTORE_TIMEOUT_MS },
-    );
+    await restoreSnapshotWithRetry({ restoreFs, row, srcPath, stagingRel });
     const stagingAbs = await restoreFs.safeAbsPath(stagingRel);
     if (!(await exists(stagingAbs))) {
       throw new Error(`restore produced no data at ${stagingRel}`);
