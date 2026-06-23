@@ -39,7 +39,11 @@ import {
   getProjectUserRole,
   isViewerProjectRole,
 } from "@cocalc/frontend/project/realtime-access";
-import { recordUxLatencyEvent } from "@cocalc/frontend/monitoring/ux-latency";
+import {
+  elapsedUxMs,
+  recordUxLatencyEvent,
+  startUxTimer,
+} from "@cocalc/frontend/monitoring/ux-latency";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
 // preloaded, even background tabs.  This can make the UI much more responsive,
@@ -725,7 +729,10 @@ interface OpenTiming {
   id: string;
   project_id: string;
   path: string;
-  start: number;
+  wallStart: number;
+  uxStart: number;
+  visibilityEpoch: number;
+  startedHidden: boolean;
   marks: Partial<Record<OpenPhase, number>>;
   lastPhase?: OpenPhase;
   lastPhaseDetails?: OpenPhaseDetails;
@@ -739,6 +746,27 @@ interface OpenTiming {
 }
 
 const log_open_time: { [path: string]: OpenTiming } = {};
+const FILE_OPEN_STALE_AFTER_MS = 60_000;
+const FILE_OPEN_WALL_CLOCK_SKEW_MS = 10_000;
+let visibilityEpoch = 0;
+let visibilityListenerInstalled = false;
+
+function getVisibilityEpoch(): number {
+  if (typeof document === "undefined") return visibilityEpoch;
+  if (!visibilityListenerInstalled) {
+    visibilityListenerInstalled = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        visibilityEpoch += 1;
+      }
+    });
+  }
+  return visibilityEpoch;
+}
+
+function isDocumentHidden(): boolean {
+  return typeof document !== "undefined" && document.hidden;
+}
 
 function openTimingKey(project_id: string, path: string): string {
   return `${project_id}-${normalize(path)}`;
@@ -821,10 +849,24 @@ function recordFileOpenUxLatency(
   const flag = metric === "file_open_visible" ? "visible" : "sync_ready";
   if (data.ux_latency_logged[flag]) return;
   data.ux_latency_logged[flag] = true;
+  const wallElapsedMs = Date.now() - data.wallStart;
+  const hiddenDuringOpen =
+    data.startedHidden ||
+    isDocumentHidden() ||
+    getVisibilityEpoch() !== data.visibilityEpoch;
+  const wallClockSkewMs = wallElapsedMs - elapsed_ms;
+  const staleReason =
+    elapsed_ms > FILE_OPEN_STALE_AFTER_MS
+      ? "elapsed_exceeded_cap"
+      : hiddenDuringOpen
+        ? "page_hidden"
+        : wallClockSkewMs > FILE_OPEN_WALL_CLOCK_SKEW_MS
+          ? "wall_clock_skew"
+          : undefined;
   const ext = filename_extension(data.path).toLowerCase();
   recordUxLatencyEvent({
     event_type: "file_open",
-    metric,
+    metric: staleReason == null ? metric : `${metric}_stale`,
     duration_ms: elapsed_ms,
     project_id: data.project_id,
     client_event_id: data.id,
@@ -833,6 +875,14 @@ function recordFileOpenUxLatency(
     details: {
       phase,
       marks: data.marks,
+      ...(staleReason == null
+        ? {}
+        : {
+            stale_reason: staleReason,
+            raw_duration_ms: elapsed_ms,
+            wall_elapsed_ms: wallElapsedMs,
+            wall_clock_skew_ms: wallClockSkewMs,
+          }),
       ...(data.lastPhaseDetails ?? {}),
     },
   });
@@ -845,7 +895,10 @@ export function restart_open_timer(
 ): void {
   const data = getOpenTiming(project_id, path);
   if (data == null) return;
-  data.start = Date.now();
+  data.wallStart = Date.now();
+  data.uxStart = startUxTimer();
+  data.visibilityEpoch = getVisibilityEpoch();
+  data.startedHidden = isDocumentHidden();
   data.marks = {};
   data.lastPhase = undefined;
   data.lastPhaseDetails = details;
@@ -863,8 +916,7 @@ export function mark_open_phase(
   path = normalize(path);
   const data = getOpenTiming(project_id, path);
   if (data == null) return;
-  const now = Date.now();
-  const elapsed_ms = now - data.start;
+  const elapsed_ms = elapsedUxMs(data.uxStart);
   data.marks[phase] = elapsed_ms;
   data.lastPhase = phase;
   if (details != null) {
@@ -915,7 +967,10 @@ export function log_file_open(
       id,
       project_id,
       path,
-      start: Date.now(),
+      wallStart: Date.now(),
+      uxStart: startUxTimer(),
+      visibilityEpoch: getVisibilityEpoch(),
+      startedHidden: isDocumentHidden(),
       marks: { open_start: 0 },
       lastPhaseDetails: undefined,
       lastPhase: undefined,
@@ -941,9 +996,9 @@ export function log_opened_time(project_id: string, path: string): void {
   if (data.opened_time_logged) {
     return;
   }
-  const { id, start } = data;
+  const { id } = data;
   const actions = redux.getProjectActions(project_id);
-  const time = Date.now() - start;
+  const time = elapsedUxMs(data.uxStart);
   data.opened_time_logged = true;
   data.opened_time_ms = time;
   recordFileOpenUxLatency(data, "file_open_visible", time, data.lastPhase);
