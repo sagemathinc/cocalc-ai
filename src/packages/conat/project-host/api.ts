@@ -97,6 +97,7 @@ export interface HostRootfsBuildStartRequest {
 
 export interface HostRootfsBuildArtifactPaths {
   dir: string;
+  runner?: string;
   script: string;
   log: string;
   status: string;
@@ -113,6 +114,7 @@ export interface HostRootfsBuildStatusResponse {
   created_at: string;
   started_at?: string;
   finished_at?: string;
+  heartbeat_at?: string;
   last_output_at?: string;
   exit_code?: number | null;
   signal?: string | null;
