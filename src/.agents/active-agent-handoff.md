@@ -46,6 +46,37 @@ Known risks:
 
 ---
 
+### Codex - Compliance/legal copy protection item 48 (2026-06-23 03:43 PDT)
+
+- **START 2026-06-23 03:43 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 48 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `403dd5ed1b`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `public/__tests__/compliance-copy.test.ts` plus this ledger and shared
+  queue/turn logs if the slice lands. Task frame: add canary coverage for
+  load-bearing compliance/legal/security tokens in built-in policies
+  (`trust`, `dpa`, `privacy`, `ferpa`, `terms`, `accessibility`) and the
+  pricing compliance/support sentences, without changing the policy or pricing
+  copy itself. Guardrails: do not edit protected home/theme/gate files, do not
+  rewrite legal text, and keep the canary focused on exact current public copy.
+- **END 2026-06-23 03:46 PDT:** Landed the item 48 compliance/legal copy
+  canary. Added `public/__tests__/compliance-copy.test.ts`, a source-level
+  normalized-whitespace canary covering load-bearing terms in built-in
+  `trust`, `dpa`, `privacy`, `ferpa`, `terms`, and `accessibility` policy
+  files plus the pricing compliance/support sentences. No policy, pricing,
+  home, theme, or protected-gate source copy was changed. Validation passed:
+  focused compliance-copy Jest 7/7, public/features Jest 206/206, `pnpm -C src
+  tsc`, `pnpm -C src lint:frontend`, `git diff --check`, and `pnpm --dir
+  src/packages/static build:dev` (known local static-build debug-log EACCES
+  warning only; Node emitted the existing localStorage ExperimentalWarning
+  during the node-env canary). No route UI changed, so no route-specific browser
+  QA was run.
+
 ### Codex - Protected gate self-bypass hardening item 47 (2026-06-23 03:33 PDT)
 
 - **START 2026-06-23 03:33 PDT:** Continuing the manual landing-page
