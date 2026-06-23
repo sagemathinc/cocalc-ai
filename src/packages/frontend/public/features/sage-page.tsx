@@ -165,42 +165,6 @@ function SageWorkspaceMock() {
   );
 }
 
-function TeachingComparison() {
-  const tools = [
-    ["calculator", "symbolic math"],
-    ["line-chart", "2D and 3D plotting"],
-    ["python", "Python libraries"],
-    ["graduation-cap", "course workflows"],
-  ] satisfies [IconName, string][];
-
-  return (
-    <PublicSection>
-      <Row gutter={[24, 24]} align="middle">
-        <Col xs={24} lg={11}>
-          <Flex vertical gap={12}>
-            <Title level={3} style={{ margin: 0 }}>
-              An open computational mathematics environment for courses.
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              SageMath covers symbolic computation, calculus, linear algebra,
-              data work, and 2D or 3D plotting as a free, open-source Python
-              library. CoCalc pairs it with course projects, assignments,
-              nbgrader, TimeTravel, and shared environments.
-            </Paragraph>
-          </Flex>
-        </Col>
-        <Col xs={24} lg={13}>
-          <ContextList
-            accent="#389e0d"
-            items={tools.map(([icon, label]) => ({ icon, label }))}
-            title="Course context"
-          />
-        </Col>
-      </Row>
-    </PublicSection>
-  );
-}
-
 export default function SageFeaturePage({
   isAuthenticated,
 }: {
@@ -229,9 +193,8 @@ export default function SageFeaturePage({
                 terminals together in one project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Use SageMath for computational mathematics while collaborators,
-                reviewers, and students follow the surrounding work in real
-                time.
+                Use SageMath for computational mathematics while collaborators
+                and reviewers follow the surrounding work in real time.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -240,7 +203,6 @@ export default function SageFeaturePage({
                 <Button href={appPath("features/jupyter-notebook")}>
                   Jupyter notebooks
                 </Button>
-                <Button href={appPath("features/teaching")}>Teaching</Button>
               </Flex>
             </Flex>
           </Col>
@@ -287,12 +249,10 @@ export default function SageFeaturePage({
         </Row>
       </PublicSection>
 
-      <TeachingComparison />
-
       <PublicSection>
         <FeatureFinalBand
           action={{
-            body: "Open a project and use Sage in notebooks, terminals, LaTeX documents, courses, or long-running research jobs.",
+            body: "Open a project and use Sage in notebooks, terminals, LaTeX documents, or long-running research jobs.",
             href: primaryCtaHref,
             label: finalCtaLabel,
             title: "Start using SageMath",
@@ -315,7 +275,7 @@ export default function SageFeaturePage({
               "When the math is one part of a larger research or engineering project, not a standalone worksheet.",
               "When a paper or handout needs Sage output rendered inline, with SageTeX in the collaborative LaTeX editor.",
               "When several people need to run, review, or continue the same computation from one shared project.",
-              "When a course needs a shared environment students can use without installing anything.",
+              "When a course needs free, open-source mathematics software in a shared environment students can use without installing anything.",
             ]}
           />
         </FeatureFinalBand>

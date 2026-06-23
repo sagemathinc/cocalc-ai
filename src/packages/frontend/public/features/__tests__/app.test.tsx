@@ -1156,7 +1156,7 @@ describe("PublicFeaturesApp", () => {
       section: "Automate the work, not just the request.",
     },
     {
-      contextLabels: ["Course context", "Project context"],
+      contextLabels: ["Project context"],
       slug: "sage",
       title: "Use SageMath inside collaborative mathematics projects.",
       section: "Use Sage with the surrounding project.",
@@ -1215,6 +1215,13 @@ describe("PublicFeaturesApp", () => {
       expect(screen.getByText(section)).not.toBeNull();
       for (const label of contextLabels ?? []) {
         expect(screen.getByText(label)).not.toBeNull();
+      }
+      if (slug === "sage") {
+        expect(
+          screen.getByText(/free, open-source mathematics software/),
+        ).not.toBeNull();
+        expect(screen.queryByText(/open-source Python library/)).toBeNull();
+        expect(screen.queryByText("Course context")).toBeNull();
       }
     },
   );

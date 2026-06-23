@@ -490,10 +490,11 @@ const ROUTE_RULES = {
   "/features/sage": {
     requireText: [
       "Use Sage with the surrounding project.",
-      "Course context",
       "Project context",
       "Start using SageMath",
+      "free, open-source mathematics software",
     ],
+    forbidText: ["open-source Python library"],
     requireSelectors: [
       ".cocalc-feature-context-list",
       ".cocalc-feature-final-panel",

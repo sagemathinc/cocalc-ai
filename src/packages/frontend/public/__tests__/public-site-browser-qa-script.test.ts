@@ -67,7 +67,8 @@ describe("public-site browser QA script", () => {
     expect(scriptSource).toContain('"What stays with the paper"');
     expect(scriptSource).toContain('"PDF build"');
     expect(scriptSource).toContain('"Project context"');
-    expect(scriptSource).toContain('"Course context"');
+    expect(scriptSource).toContain('"free, open-source mathematics software"');
+    expect(scriptSource).toContain('"open-source Python library"');
     expect(scriptSource).toContain('".cocalc-feature-context-list"');
     expect(scriptSource).toContain('".cocalc-guide-link-compact"');
   });

@@ -46,6 +46,38 @@ Known risks:
 
 ---
 
+### Codex - Sage P0 factual + education-weight cleanup (2026-06-22 20:17 PDT)
+
+- **START 2026-06-22 20:17 PDT:** Continuing the scheduled landing-page
+  improvement loop with promoted adversarial-fix queue item 17 from
+  `/home/user/cocalc-shared/feature-page-adversarial-fix-slice-2026-06-22.md`.
+  Worktree verified as `/home/user/cocalc-ai-synthesis/src` on
+  `blaec-synthesis-2026-06-18`; preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed route/files:
+  `/features/sage`,
+  `src/packages/frontend/public/features/sage-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, the browser-QA
+  script test, and this ledger. Scope: fix the SageMath factual wording and
+  collapse the equal-weight teaching section so education remains secondary.
+  Do not touch protected home, pricing/compliance, type/palette, pitch/docs
+  content, raw audit findings beyond the promoted item, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 20:22 PDT:** Sage P0 cleanup implemented as scoped. Removed
+  the standalone equal-weight course section, removed the hero Teaching CTA and
+  student stamp, and kept teaching as a single final-band use-case bullet with
+  the corrected phrase "free, open-source mathematics software"; the stale
+  "open-source Python library" wording is now test- and browser-QA-forbidden.
+  Validation passed: `pnpm -C src tsc`; focused feature/browser-QA-script Jest
+  134/134 with existing Ant Design React `act(...)` warnings; `pnpm -C src
+  lint:frontend`; `pnpm --dir src/packages/static build:dev`; and browser QA
+  for `/features/sage` desktop+mobile 40/40 with screenshots in
+  `/tmp/cocalc-public-qa-bR36pd`. Screenshots inspected clean. Protected home,
+  pricing/compliance, type/palette, pitch/docs content, unpromoted raw audit
+  findings, and the known untracked `dedicated-compute-page.tsx` draft were
+  left untouched. Next curated queue item is adversarial-fix item 18:
+  education-secondary cleanup for Octave, Julia, and R.
+
 ### Codex - whiteboard TypeScript bug fast-track (2026-06-22 20:11 PDT)
 
 - **START 2026-06-22 20:11 PDT:** Scheduled landing-page improvement loop
