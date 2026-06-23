@@ -28,6 +28,11 @@ const MAX_WINDOW_MINUTES = 30 * 24 * 60;
 const ALERT_WINDOW_MINUTES = 15;
 const ALERT_INTERVAL_MS = 5 * 60 * 1000;
 const ALERT_INITIAL_DELAY_MS = 60 * 1000;
+const DEFAULT_LATENCY_ALERT_MIN_SAMPLES = 25;
+const FILE_OPEN_LATENCY_ALERT_MIN_SAMPLES = 50;
+const PROJECT_START_LATENCY_ALERT_MIN_SAMPLES = 10;
+const LATENCY_ALERT_MIN_SLOW_SAMPLES = 3;
+const EXPLICIT_FAILURE_ALERT_MIN_SAMPLES = 2;
 
 export type UxLatencySlaThresholds = {
   project_start_warm_p95_ms: number;
@@ -363,6 +368,7 @@ function latencyBody(
   row: UxLatencyMetricSummary,
   expectation: string,
   thresholdMs: number,
+  slowSamples?: number,
 ): string {
   return [
     expectation,
@@ -371,6 +377,9 @@ function latencyBody(
     row.segment ? `Segment: ${row.segment}` : undefined,
     `Configured SLA P95: ${formatMs(thresholdMs)}`,
     `Samples: ${row.count}`,
+    slowSamples == null
+      ? undefined
+      : `Samples over SLA among recent slow events: ${slowSamples}`,
     `P50: ${formatMs(row.p50_ms)}`,
     `P95: ${formatMs(row.p95_ms)}`,
     `P99: ${formatMs(row.p99_ms)}`,
@@ -378,6 +387,45 @@ function latencyBody(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function recentSlowSampleCount({
+  summary,
+  row,
+  thresholdMs,
+}: {
+  summary: UxLatencySummary;
+  row: UxLatencyMetricSummary;
+  thresholdMs: number;
+}): number {
+  return summary.recent_slow_events.filter((event) => {
+    if (event.metric !== row.metric) return false;
+    if (row.segment != null && event.segment !== row.segment) return false;
+    return event.duration_ms > thresholdMs;
+  }).length;
+}
+
+function shouldAlertOnLatencySla({
+  summary,
+  row,
+  thresholdMs,
+  minSamples = DEFAULT_LATENCY_ALERT_MIN_SAMPLES,
+  minSlowSamples = LATENCY_ALERT_MIN_SLOW_SAMPLES,
+}: {
+  summary: UxLatencySummary;
+  row: UxLatencyMetricSummary | undefined;
+  thresholdMs: number;
+  minSamples?: number;
+  minSlowSamples?: number;
+}): { alert: boolean; slowSamples: number } {
+  if (!row || row.count < minSamples || row.p95_ms <= thresholdMs) {
+    return { alert: false, slowSamples: 0 };
+  }
+  const slowSamples = recentSlowSampleCount({ summary, row, thresholdMs });
+  return {
+    alert: slowSamples >= minSlowSamples,
+    slowSamples,
+  };
 }
 
 function alertCandidates(
@@ -390,33 +438,39 @@ function alertCandidates(
     "project_start_running",
     "warm_provisioned",
   );
-  if (
-    warmStart &&
-    warmStart.count >= 5 &&
-    warmStart.p95_ms > sla.project_start_warm_p95_ms
-  ) {
+  const warmStartAlert = shouldAlertOnLatencySla({
+    summary,
+    row: warmStart,
+    thresholdMs: sla.project_start_warm_p95_ms,
+    minSamples: PROJECT_START_LATENCY_ALERT_MIN_SAMPLES,
+  });
+  if (warmStartAlert.alert && warmStart) {
     alerts.push({
       subject: "warm project starts are slow",
       body: latencyBody(
         warmStart,
         "Warm provisioned project starts violated the configured P95 SLA.",
         sla.project_start_warm_p95_ms,
+        warmStartAlert.slowSamples,
       ),
     });
   }
 
   const allStarts = rowByMetric(summary.metrics, "project_start_running");
-  if (
-    allStarts &&
-    allStarts.count >= 5 &&
-    allStarts.p95_ms > sla.project_start_overall_p95_ms
-  ) {
+  const allStartsAlert = shouldAlertOnLatencySla({
+    summary,
+    row: allStarts,
+    thresholdMs: sla.project_start_overall_p95_ms,
+    minSamples: PROJECT_START_LATENCY_ALERT_MIN_SAMPLES,
+  });
+  if (allStartsAlert.alert && allStarts) {
     alerts.push({
       subject: "project starts are slow",
       body: latencyBody(
         allStarts,
         "Overall project start latency violated the configured P95 SLA. Restore/dearchive paths may be expected outliers; check segment rows before treating this as a warm-start regression.",
         sla.project_start_overall_p95_ms,
+        allStartsAlert.slowSamples,
       ),
     });
   }
@@ -425,7 +479,7 @@ function alertCandidates(
     summary.metrics,
     "project_start_running_stuck",
   );
-  if (stuckStarts && stuckStarts.count >= 1) {
+  if (stuckStarts && stuckStarts.count >= EXPLICIT_FAILURE_ALERT_MIN_SAMPLES) {
     alerts.push({
       subject: "project start appears stuck",
       body: latencyBody(
@@ -440,7 +494,10 @@ function alertCandidates(
     summary.metrics,
     "project_start_running_timeout",
   );
-  if (startTimeouts && startTimeouts.count >= 1) {
+  if (
+    startTimeouts &&
+    startTimeouts.count >= EXPLICIT_FAILURE_ALERT_MIN_SAMPLES
+  ) {
     alerts.push({
       subject: "project starts timed out",
       body: latencyBody(
@@ -452,81 +509,93 @@ function alertCandidates(
   }
 
   const visible = rowByMetric(summary.metrics, "file_open_visible");
-  if (
-    visible &&
-    visible.count >= 10 &&
-    visible.p95_ms > sla.file_open_visible_p95_ms
-  ) {
+  const visibleAlert = shouldAlertOnLatencySla({
+    summary,
+    row: visible,
+    thresholdMs: sla.file_open_visible_p95_ms,
+    minSamples: FILE_OPEN_LATENCY_ALERT_MIN_SAMPLES,
+  });
+  if (visibleAlert.alert && visible) {
     alerts.push({
       subject: "file open visible latency is high",
       body: latencyBody(
         visible,
         "File-open visible latency violated the configured P95 SLA.",
         sla.file_open_visible_p95_ms,
+        visibleAlert.slowSamples,
       ),
     });
   }
 
   const syncReady = rowByMetric(summary.metrics, "file_open_sync_ready");
-  if (
-    syncReady &&
-    syncReady.count >= 10 &&
-    syncReady.p95_ms > sla.file_open_sync_ready_p95_ms
-  ) {
+  const syncReadyAlert = shouldAlertOnLatencySla({
+    summary,
+    row: syncReady,
+    thresholdMs: sla.file_open_sync_ready_p95_ms,
+    minSamples: FILE_OPEN_LATENCY_ALERT_MIN_SAMPLES,
+  });
+  if (syncReadyAlert.alert && syncReady) {
     alerts.push({
       subject: "file open sync-ready latency is high",
       body: latencyBody(
         syncReady,
         "File-open sync-ready latency violated the configured P95 SLA.",
         sla.file_open_sync_ready_p95_ms,
+        syncReadyAlert.slowSamples,
       ),
     });
   }
 
   const terminalReady = rowByMetric(summary.metrics, "project_terminal_ready");
-  if (
-    terminalReady &&
-    terminalReady.count >= 3 &&
-    terminalReady.p95_ms > sla.project_terminal_ready_p95_ms
-  ) {
+  const terminalReadyAlert = shouldAlertOnLatencySla({
+    summary,
+    row: terminalReady,
+    thresholdMs: sla.project_terminal_ready_p95_ms,
+  });
+  if (terminalReadyAlert.alert && terminalReady) {
     alerts.push({
       subject: "terminal ready latency is high",
       body: latencyBody(
         terminalReady,
         "Terminal readiness violated the configured P95 SLA.",
         sla.project_terminal_ready_p95_ms,
+        terminalReadyAlert.slowSamples,
       ),
     });
   }
 
   const jupyterReady = rowByMetric(summary.metrics, "project_jupyter_ready");
-  if (
-    jupyterReady &&
-    jupyterReady.count >= 3 &&
-    jupyterReady.p95_ms > sla.project_jupyter_ready_p95_ms
-  ) {
+  const jupyterReadyAlert = shouldAlertOnLatencySla({
+    summary,
+    row: jupyterReady,
+    thresholdMs: sla.project_jupyter_ready_p95_ms,
+  });
+  if (jupyterReadyAlert.alert && jupyterReady) {
     alerts.push({
       subject: "Jupyter ready latency is high",
       body: latencyBody(
         jupyterReady,
         "Jupyter readiness violated the configured P95 SLA.",
         sla.project_jupyter_ready_p95_ms,
+        jupyterReadyAlert.slowSamples,
       ),
     });
   }
 
   const execReady = rowByMetric(summary.metrics, "project_exec_ready");
-  if (
-    execReady &&
-    execReady.count >= 3 &&
-    execReady.p95_ms > sla.project_exec_ready_p95_ms
-  ) {
+  const execReadyAlert = shouldAlertOnLatencySla({
+    summary,
+    row: execReady,
+    thresholdMs: sla.project_exec_ready_p95_ms,
+  });
+  if (execReadyAlert.alert && execReady) {
     alerts.push({
       subject: "project exec ready latency is high",
       body: latencyBody(
         execReady,
         "Project exec readiness violated the configured P95 SLA.",
         sla.project_exec_ready_p95_ms,
+        execReadyAlert.slowSamples,
       ),
     });
   }
