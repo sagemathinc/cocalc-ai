@@ -8,6 +8,7 @@ let upsertMock: jest.Mock;
 let insertMock: jest.Mock;
 let createBackupMock: jest.Mock;
 let waitLroMock: jest.Mock;
+let getLroMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
 let applyPendingCopiesMock: jest.Mock;
 let getRoutedHostControlClientMock: jest.Mock;
@@ -56,6 +57,11 @@ jest.mock("@cocalc/server/conat/api/project-backups", () => ({
 jest.mock("@cocalc/conat/lro/client", () => ({
   __esModule: true,
   waitForCompletion: (...args: any[]) => waitLroMock(...args),
+}));
+
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  __esModule: true,
+  getLro: (...args: any[]) => getLroMock(...args),
 }));
 
 jest.mock("./copy-db", () => ({
@@ -140,6 +146,7 @@ describe("projects.copyProjectFiles", () => {
       status: "succeeded",
       result: { id: "snap-1" },
     }));
+    getLroMock = jest.fn(async () => undefined);
     queryMock = makeProjectQuery({});
   });
 
@@ -429,10 +436,17 @@ describe("projects.copyProjectFiles", () => {
         mtime: Date.parse("2026-03-31T19:59:56.000Z"),
       },
     ]);
-    waitLroMock = jest.fn(async () => ({
+    getLroMock = jest.fn(async () => ({
+      op_id: "op",
+      scope_type: "project",
+      scope_id: "p1",
       status: "succeeded",
       result: { id: "snap-new" },
     }));
+    waitLroMock = jest.fn(async ({ getSummary }) => {
+      expect(typeof getSummary).toBe("function");
+      return await getSummary();
+    });
 
     const { copyProjectFiles } = await import("./copy");
     const result = await copyProjectFiles({
@@ -448,6 +462,16 @@ describe("projects.copyProjectFiles", () => {
       snapshot_id: "snap-new",
     });
     expect(createBackupMock).toHaveBeenCalledTimes(1);
+    expect(waitLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        op_id: "op",
+        scope_type: "project",
+        scope_id: "p1",
+        timeout_ms: 30 * 60 * 1000,
+        getSummary: expect.any(Function),
+      }),
+    );
+    expect(getLroMock).toHaveBeenCalledWith("op");
   });
 
   it("falls back to creating a new backup when the reused snapshot lacks the requested path", async () => {
