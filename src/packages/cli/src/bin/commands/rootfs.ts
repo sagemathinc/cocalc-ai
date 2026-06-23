@@ -295,6 +295,26 @@ const ROOTFS_BUILD_TERMINAL_STATUSES = new Set([
   "canceled",
   "unknown",
 ]);
+const ROOTFS_BUILD_FRESH_HEARTBEAT_MS = 120_000;
+
+function ageSeconds(iso?: string): number | undefined {
+  if (!iso) return undefined;
+  const time = Date.parse(iso);
+  if (!Number.isFinite(time)) return undefined;
+  return Math.max(0, Math.floor((Date.now() - time) / 1000));
+}
+
+function formatAge(iso?: string): string | undefined {
+  const age = ageSeconds(iso);
+  return age == null ? undefined : `${age}s ago`;
+}
+
+function heartbeatFresh(status: any): boolean | undefined {
+  if (!status?.heartbeat_at) return undefined;
+  const time = Date.parse(status.heartbeat_at);
+  if (!Number.isFinite(time)) return undefined;
+  return Date.now() - time <= ROOTFS_BUILD_FRESH_HEARTBEAT_MS;
+}
 
 async function followRootfsBuildLog({
   ctx,
@@ -381,10 +401,93 @@ async function readRootfsBuildLogDirect({
   }
 }
 
+async function readRootfsBuildEventsDirect({
+  api,
+  build_id,
+  lines,
+  byte_offset,
+  max_bytes,
+}: {
+  api: any;
+  build_id: string;
+  lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
+}) {
+  return await api.system.readRootfsBuildEvents({
+    build_id,
+    lines,
+    byte_offset,
+    max_bytes,
+  });
+}
+
 function isMissingDirectRootfsBuildLogApi(err: unknown): boolean {
   return /unknown function 'system\.readRootfsBuildLog'|readRootfsBuildLog is not a function/i.test(
     `${err}`,
   );
+}
+
+function parseNdjson(text: string): unknown[] {
+  const events: unknown[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed));
+    } catch (err) {
+      events.push({ parse_error: `${err}`, raw: line });
+    }
+  }
+  return events;
+}
+
+async function followRootfsBuildEvents({
+  ctx,
+  deps,
+  project_id,
+  build_id,
+  byte_offset = 0,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  project_id: string;
+  build_id: string;
+  byte_offset?: number;
+}) {
+  let byteOffset = byte_offset;
+  const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
+  while (true) {
+    const chunk = await readRootfsBuildEventsDirect({
+      api,
+      build_id,
+      byte_offset: byteOffset,
+      max_bytes: 64 * 1024,
+    });
+    if (
+      chunk.text &&
+      !ctx.globals?.quiet &&
+      !ctx.globals?.json &&
+      ctx.globals?.output !== "json"
+    ) {
+      process.stderr.write(chunk.text);
+      if (!chunk.text.endsWith("\n")) {
+        process.stderr.write("\n");
+      }
+    }
+    byteOffset = chunk.next_byte_offset ?? byteOffset;
+    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    const status = current.status ?? "unknown";
+    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+      return current;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
+    );
+  }
 }
 
 function formatRootfsBuildStartHuman(result: {
@@ -436,8 +539,24 @@ function formatRootfsBuildStatusHuman(status: any): string {
   if (status.finished_at) {
     lines.push(`finished_at: ${status.finished_at}`);
   }
+  if (status.heartbeat_at) {
+    const heartbeatAge = formatAge(status.heartbeat_at);
+    const fresh = heartbeatFresh(status);
+    lines.push(
+      `heartbeat_at: ${status.heartbeat_at}${heartbeatAge ? ` (${heartbeatAge})` : ""}`,
+    );
+    if (fresh != null) {
+      lines.push(`heartbeat_fresh: ${fresh}`);
+    }
+  }
   if (status.last_output_at) {
-    lines.push(`last_output_at: ${status.last_output_at}`);
+    const outputAge = formatAge(status.last_output_at);
+    lines.push(
+      `last_output_at: ${status.last_output_at}${outputAge ? ` (${outputAge})` : ""}`,
+    );
+  }
+  if (status.pid != null) {
+    lines.push(`pid: ${status.pid}`);
   }
   if (status.exit_code != null) {
     lines.push(`exit_code: ${status.exit_code}`);
@@ -450,6 +569,12 @@ function formatRootfsBuildStatusHuman(status: any): string {
   }
   if (status.paths?.log) {
     lines.push(`log_path: ${status.paths.log}`);
+  }
+  if (status.paths?.events) {
+    lines.push(`events_path: ${status.paths.events}`);
+  }
+  if (status.paths?.runner) {
+    lines.push(`runner_path: ${status.paths.runner}`);
   }
   if (status.paths?.script) {
     lines.push(`script_path: ${status.paths.script}`);
@@ -470,6 +595,13 @@ function formatRootfsBuildListHuman({
       build.build_id,
       build.status,
       build.recipe_ref ? `recipe=${build.recipe_ref}` : undefined,
+      build.pid != null ? `pid=${build.pid}` : undefined,
+      build.heartbeat_at
+        ? `heartbeat=${formatAge(build.heartbeat_at) ?? build.heartbeat_at}`
+        : undefined,
+      heartbeatFresh(build) != null
+        ? `fresh=${heartbeatFresh(build)}`
+        : undefined,
       build.created_at ? `created=${build.created_at}` : undefined,
       build.finished_at ? `finished=${build.finished_at}` : undefined,
       build.paths?.log ? `log=${build.paths.log}` : undefined,
@@ -1558,6 +1690,65 @@ export function registerRootfsCommand(
             project_id: project.project_id,
             builds,
           });
+        });
+      },
+    );
+
+  rootfs
+    .command("build-events <build>")
+    .description("show or follow durable RootFS build lifecycle events")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--tail <lines>", "line count to show before following", "100")
+    .option("--follow", "continue following new events")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string; tail?: string; follow?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-events", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const events = await readRootfsBuildEventsDirect({
+            api,
+            build_id,
+            lines: parseLimit(opts.tail, 100),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return {
+              ...events,
+              events: parseNdjson(events.text ?? ""),
+            };
+          }
+          if (events.text && !ctx.globals?.quiet) {
+            process.stderr.write(events.text);
+            if (!events.text.endsWith("\n")) {
+              process.stderr.write("\n");
+            }
+          }
+          if (opts.follow) {
+            const finalStatus = await followRootfsBuildEvents({
+              ctx,
+              deps: {
+                withContext,
+                resolveProjectFromArgOrContext,
+                resolveProjectProjectApi,
+                waitForLro,
+                serializeLroSummary,
+              },
+              project_id: project.project_id,
+              build_id,
+              byte_offset: events.next_byte_offset,
+            });
+            return formatRootfsBuildStatusHuman(finalStatus);
+          }
+          return "";
         });
       },
     );

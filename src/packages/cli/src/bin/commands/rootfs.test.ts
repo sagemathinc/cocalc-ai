@@ -63,6 +63,18 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
               found: true,
               path: ".cocalc/rootfs-builds/build-1/build.log",
             }),
+            readRootfsBuildEvents: async (opts: any) => ({
+              build_id: opts.build_id,
+              project_id,
+              lines: opts.lines ?? 0,
+              byte_offset: opts.byte_offset ?? 0,
+              next_byte_offset: opts.byte_offset ?? 0,
+              bytes: 0,
+              eof: true,
+              text: "",
+              found: true,
+              path: ".cocalc/rootfs-builds/build-1/events.ndjson",
+            }),
             listRootfsBuilds: async () => [],
           },
         },
@@ -1183,8 +1195,12 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
                   status: "succeeded",
                   recipe_ref: "cocalc/demo",
                   created_at: "2026-06-22T00:00:00.000Z",
+                  heartbeat_at: new Date().toISOString(),
+                  pid: 12345,
                   paths: {
                     log: ".cocalc/rootfs-builds/build-1/build.log",
+                    events: ".cocalc/rootfs-builds/build-1/events.ndjson",
+                    runner: ".cocalc/rootfs-builds/build-1/runner.sh",
                     script: ".cocalc/rootfs-builds/build-1/run.sh",
                   },
                 },
@@ -1219,8 +1235,12 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
           host_id: "host-1",
           status: "succeeded",
           created_at: "2026-06-22T00:00:00.000Z",
+          heartbeat_at: new Date().toISOString(),
+          pid: 12345,
           paths: {
             log: ".cocalc/rootfs-builds/build-1/build.log",
+            events: ".cocalc/rootfs-builds/build-1/events.ndjson",
+            runner: ".cocalc/rootfs-builds/build-1/runner.sh",
             script: ".cocalc/rootfs-builds/build-1/run.sh",
           },
         };
@@ -1252,6 +1272,10 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
     "Builder",
   ]);
   assert.match(harness.captured, /status: succeeded/);
+  assert.match(harness.captured, /heartbeat_fresh: true/);
+  assert.match(harness.captured, /pid: 12345/);
+  assert.match(harness.captured, /events_path:/);
+  assert.match(harness.captured, /runner_path:/);
 
   await program.parseAsync([
     "node",
@@ -1277,6 +1301,7 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
   ]);
   assert.match(harness.captured, /build-1  succeeded/);
   assert.match(harness.captured, /recipe=cocalc\/demo/);
+  assert.match(harness.captured, /fresh=true/);
 
   await program.parseAsync([
     "node",
@@ -1400,6 +1425,99 @@ test("rootfs build attach tails direct logs and follows to terminal status", asy
         lines: undefined,
         byte_offset: 10,
         max_bytes: 131072,
+      },
+    ],
+    ["status", { project_id: "builder-project", build_id: "build-1" }],
+  ]);
+});
+
+test("rootfs build events tails direct events and follows to terminal status", async () => {
+  const calls: any[] = [];
+  const harness = rootfsDeps({
+    globals: { quiet: true },
+    resolveProjectFromArgOrContext: async (_ctx: any, project: string) => {
+      calls.push(["resolve", project]);
+      return { project_id: "builder-project" };
+    },
+    resolveProjectProjectApi: async (_ctx: any, project: string) => {
+      calls.push(["project-api", project]);
+      return {
+        project: { project_id: "builder-project" },
+        api: {
+          system: {
+            readRootfsBuildEvents: async (opts: any) => {
+              calls.push(["direct-events", opts]);
+              return {
+                build_id: opts.build_id,
+                project_id: "builder-project",
+                lines: opts.lines ?? 0,
+                byte_offset: opts.byte_offset ?? 0,
+                next_byte_offset:
+                  opts.byte_offset == null ? 20 : opts.byte_offset,
+                bytes: 0,
+                eof: true,
+                text: "",
+                found: true,
+                path: ".cocalc/rootfs-builds/build-1/events.ndjson",
+              };
+            },
+          },
+        },
+      };
+    },
+    projects: {
+      getProjectRootfsBuildStatus: async (opts: any) => {
+        calls.push(["status", opts]);
+        return {
+          build_id: opts.build_id,
+          project_id: opts.project_id,
+          status: "succeeded",
+          created_at: "2026-06-22T00:00:00.000Z",
+          paths: {
+            events: ".cocalc/rootfs-builds/build-1/events.ndjson",
+            log: ".cocalc/rootfs-builds/build-1/build.log",
+          },
+        };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "build-events",
+    "build-1",
+    "--project",
+    "Builder",
+    "--tail",
+    "3",
+    "--follow",
+  ]);
+
+  assert.match(harness.captured, /status: succeeded/);
+  assert.deepEqual(calls, [
+    ["resolve", "Builder"],
+    ["project-api", "builder-project"],
+    [
+      "direct-events",
+      {
+        build_id: "build-1",
+        lines: 3,
+        byte_offset: undefined,
+        max_bytes: undefined,
+      },
+    ],
+    ["project-api", "builder-project"],
+    [
+      "direct-events",
+      {
+        build_id: "build-1",
+        lines: undefined,
+        byte_offset: 20,
+        max_bytes: 65536,
       },
     ],
     ["status", { project_id: "builder-project", build_id: "build-1" }],

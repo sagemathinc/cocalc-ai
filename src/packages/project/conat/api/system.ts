@@ -76,13 +76,15 @@ export async function readTextFileFromProject({
   return (await readFile(path)).toString();
 }
 
-export async function readRootfsBuildLog({
+async function readRootfsBuildTextFile({
   build_id,
+  filename,
   lines,
   byte_offset,
   max_bytes,
 }: {
   build_id: string;
+  filename: string;
   lines?: number;
   byte_offset?: number;
   max_bytes?: number;
@@ -91,7 +93,7 @@ export async function readRootfsBuildLog({
     throw new Error("invalid build_id");
   }
   const project_id = `${process.env.COCALC_PROJECT_ID ?? ""}`;
-  const relativePath = join(ROOTFS_BUILD_DIR, build_id, "build.log");
+  const relativePath = join(ROOTFS_BUILD_DIR, build_id, filename);
   const path = join(process.env.HOME || "/home/user", relativePath);
   const limit = Math.max(
     1,
@@ -181,6 +183,46 @@ export async function readRootfsBuildLog({
     found: true,
     path: relativePath,
   };
+}
+
+export async function readRootfsBuildLog({
+  build_id,
+  lines,
+  byte_offset,
+  max_bytes,
+}: {
+  build_id: string;
+  lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
+}): Promise<HostRootfsBuildLogResponse> {
+  return await readRootfsBuildTextFile({
+    build_id,
+    filename: "build.log",
+    lines,
+    byte_offset,
+    max_bytes,
+  });
+}
+
+export async function readRootfsBuildEvents({
+  build_id,
+  lines,
+  byte_offset,
+  max_bytes,
+}: {
+  build_id: string;
+  lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
+}): Promise<HostRootfsBuildLogResponse> {
+  return await readRootfsBuildTextFile({
+    build_id,
+    filename: "events.ndjson",
+    lines,
+    byte_offset,
+    max_bytes,
+  });
 }
 
 export async function listRootfsBuilds({

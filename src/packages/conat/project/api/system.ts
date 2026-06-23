@@ -24,6 +24,7 @@ export const system = {
   writeTextFileToProject: true,
   readTextFileFromProject: true,
   readRootfsBuildLog: true,
+  readRootfsBuildEvents: true,
   listRootfsBuilds: true,
 
   configuration: true,
@@ -59,6 +60,12 @@ export interface System {
   }) => Promise<void>;
   readTextFileFromProject: (opts: { path: string }) => Promise<string>;
   readRootfsBuildLog: (opts: {
+    build_id: string;
+    lines?: number;
+    byte_offset?: number;
+    max_bytes?: number;
+  }) => Promise<HostRootfsBuildLogResponse>;
+  readRootfsBuildEvents: (opts: {
     build_id: string;
     lines?: number;
     byte_offset?: number;
