@@ -46,6 +46,44 @@ Known risks:
 
 ---
 
+### Codex - AI feature P2 design polish (2026-06-22 20:29 PDT)
+
+- **START 2026-06-22 20:29 PDT:** Continuing the scheduled landing-page
+  improvement loop with promoted adversarial-fix queue item 19, first bounded
+  page group: `/features/ai` polish from
+  `/home/user/cocalc-shared/feature-page-adversarial-fix-slice-2026-06-22.md`.
+  Source commit `637edab853` (language education-secondary cleanup) has been
+  pushed, and post-commit browser QA passed 126/126 at
+  `/tmp/cocalc-public-qa-PPcZr3`. Worktree verified as
+  `/home/user/cocalc-ai-synthesis/src` on `blaec-synthesis-2026-06-18`;
+  preview hub pid `27431` is rooted at `/home/user/cocalc-ai-synthesis/src`.
+  Claimed route/files: `/features/ai`,
+  `src/packages/frontend/public/features/ai-page.tsx`, focused tests/QA
+  canaries if needed, and this ledger. Scope: fix the AI page's warm
+  hand-built hero panel, sparse final CTA column, and ragged review/context
+  balance using existing tokens and shared primitives only. Do not touch
+  protected home, pricing/compliance, type/palette, pitch/docs content, raw
+  audit findings beyond the promoted item, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 20:39 PDT:** `/features/ai` source edit complete and
+  pre-commit validation passed. Replaced the warm hero thread shell with a
+  light tokenized surface, moved the review context list into the shared
+  `ContextList` primitive inside a balanced panel, and upgraded the final CTA
+  column to a framed final-panel treatment without changing the Codex-guide
+  first CTA order. Guardrail fixes kept the route at its inline-style budget
+  and avoided leaking `cocalc-ai-*` selectors into rendered style text.
+  Validation: `pnpm -C src prettier --write
+  packages/frontend/public/features/ai-page.tsx` (unchanged after final pass),
+  `pnpm -C src tsc`, focused Jest
+  `pnpm exec jest public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
+  existing React/AntD `act(...)` warnings), `pnpm -C src lint:frontend`,
+  `pnpm --dir src/packages/static build:dev`, and browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/ai --viewport desktop --viewport mobile` (46/46) passed. Screenshot
+  artifact inspected at `/tmp/cocalc-public-qa-Mn0ri5`. Next: commit, rebuild so
+  the static bundle embeds the new commit, rerun AI browser QA, then push.
+
 ### Codex - language education-secondary cleanup (2026-06-22 20:24 PDT)
 
 - **START 2026-06-22 20:24 PDT:** Continuing the scheduled landing-page
