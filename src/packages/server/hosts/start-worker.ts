@@ -5,7 +5,6 @@ import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { HostBackupAllResult } from "@cocalc/conat/hub/api/hosts";
-import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import {
   claimLroOps,
   createLro,
@@ -13,6 +12,7 @@ import {
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
+import { waitForDurableLroCompletion } from "@cocalc/server/lro/wait";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import {
@@ -904,7 +904,7 @@ async function ensureHostBackups({
           project_id: next.project_id,
           account_id,
         });
-        const summary = await waitForLroCompletion({
+        const summary = await waitForDurableLroCompletion({
           op_id: backupOp.op_id,
           scope_type: backupOp.scope_type,
           scope_id: backupOp.scope_id,
@@ -1096,7 +1096,7 @@ async function runHostBackupAll({
           project_id,
           account_id,
         });
-        const summary = await waitForLroCompletion({
+        const summary = await waitForDurableLroCompletion({
           op_id: backupOp.op_id,
           scope_type: backupOp.scope_type,
           scope_id: backupOp.scope_id,

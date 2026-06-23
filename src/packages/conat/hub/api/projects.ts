@@ -331,6 +331,16 @@ export interface ProjectCollabInviteRow {
   prior_invites_declined?: number;
 }
 
+export interface CourseStudentInviteAccountRepairInput {
+  student_id: string;
+  student_project_id: string;
+}
+
+export interface CourseStudentInviteAccountRepairRow extends CourseStudentInviteAccountRepairInput {
+  accepted_account_id: string;
+  invite_id: string;
+}
+
 export interface ProjectCollabInviteBlockRow {
   blocker_account_id: string;
   blocker_name?: string | null;
@@ -704,6 +714,7 @@ export const projects = {
   addCollaborator: authFirstRequireAccount,
   createCollabInvite: authFirstRequireAccount,
   listCollabInvites: authFirstRequireAccount,
+  repairAcceptedCourseStudentInviteAccounts: authFirstRequireAccount,
   respondCollabInvite: authFirstRequireAccount,
   getProjectAccessLandingInfo: authFirstRequireAccount,
   requestProjectAccess: authFirstRequireAccount,
@@ -1057,6 +1068,12 @@ export interface Projects {
     limit?: number;
     projectWide?: boolean;
   }) => Promise<ProjectCollabInviteRow[]>;
+
+  repairAcceptedCourseStudentInviteAccounts: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    students: CourseStudentInviteAccountRepairInput[];
+  }) => Promise<CourseStudentInviteAccountRepairRow[]>;
 
   respondCollabInvite: (opts: {
     account_id?: string;

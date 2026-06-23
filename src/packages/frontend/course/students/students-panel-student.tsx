@@ -134,6 +134,13 @@ export function Student({
     ProjectCollabInviteRow | undefined
   >();
   const [inviteDetailsOpen, setInviteDetailsOpen] = useState<boolean>(false);
+  const acceptedInviteAccountId =
+    courseInvite?.status === "accepted"
+      ? courseInvite.accepted_account_id
+      : undefined;
+  const effectiveStudentAccountId =
+    studentAccountId ?? acceptedInviteAccountId ?? undefined;
+  const hasLinkedAccount = effectiveStudentAccountId != null;
 
   const size = useButtonSize();
 
@@ -179,11 +186,18 @@ export function Student({
     }
     setInviteStatusLoading(true);
     try {
-      setCourseInvite(
-        await actions.student_projects.get_student_course_invite({
+      const invite = await actions.student_projects.get_student_course_invite({
+        student_id,
+      });
+      setCourseInvite(invite);
+      if (invite?.status === "accepted" && invite.accepted_account_id != null) {
+        actions.set({
+          account_id: invite.accepted_account_id,
+          deleted_account: false,
           student_id,
-        }),
-      );
+          table: "students",
+        });
+      }
     } catch (_err) {
       // Invite status is helpful, but failure should not break the student row.
       setCourseInvite(undefined);
@@ -237,7 +251,7 @@ export function Student({
   }
 
   function render_student_name() {
-    const account_id = student.get("account_id");
+    const account_id = effectiveStudentAccountId;
     if (account_id != null) {
       return (
         <User
@@ -286,7 +300,7 @@ export function Student({
         />
       );
     }
-    if (!hasAccount) {
+    if (!hasLinkedAccount) {
       return (
         <span style={{ color: COLORS.GRAY_M }}>
           <FormattedMessage
@@ -306,7 +320,7 @@ export function Student({
       return;
     }
     const u = p.get("last_active");
-    const last_active = u != null ? u.get(student.get("account_id")) : null;
+    const last_active = u != null ? u.get(effectiveStudentAccountId) : null;
     if (last_active) {
       // student has definitely been active (and we know about this project).
       return (
@@ -579,7 +593,7 @@ export function Student({
         when: string;
       }
     | undefined {
-    if (hasAccount) return;
+    if (hasLinkedAccount) return;
     const lastEmailInviteDate = valid_date(student.get("last_email_invite"));
     const hasInvite =
       courseInvite != null || student.get("last_email_invite") != null;
@@ -734,6 +748,15 @@ export function Student({
               <b>Email:</b> {courseInvite.target_email}
             </div>
           )}
+          {courseInvite.accepted_account_id && (
+            <div>
+              <b>Accepted by:</b>{" "}
+              <User
+                account_id={courseInvite.accepted_account_id}
+                user_map={user_map}
+              />
+            </div>
+          )}
           {created && (
             <div>
               <b>Created:</b> {created}
@@ -796,6 +819,11 @@ export function Student({
   function render_resend_invitation() {
     // don't invite student if there is already an account
     if (hasAccount) return;
+    if (courseInvite?.status === "accepted") {
+      return (
+        <div style={{ marginTop: "10px" }}>{render_course_invite_status()}</div>
+      );
+    }
     const inviteButton = getInviteButtonState();
     if (!inviteButton) return;
     if (courseInvite != null) {
@@ -1104,7 +1132,11 @@ export function Student({
     return (
       <Space size={[8, 6]} wrap>
         <Tag color={hasAccount ? "success" : "processing"}>
-          {hasAccount ? "Account linked" : "Invite pending"}
+          {hasAccount
+            ? "Account linked"
+            : acceptedInviteAccountId
+              ? "Invite accepted"
+              : "Invite pending"}
         </Tag>
         <Tag color={studentProjectId ? "blue" : "default"}>
           {studentProjectId ? "Project created" : "No project"}
