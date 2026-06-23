@@ -8,6 +8,7 @@ let assertCollabAllowRemoteProjectAccessMock: jest.Mock;
 let getAssignedProjectHostInfoMock: jest.Mock;
 let getRoutedHostControlClientMock: jest.Mock;
 let createLroMock: jest.Mock;
+let getLroMock: jest.Mock;
 let updateLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
@@ -59,6 +60,7 @@ jest.mock("@cocalc/server/project-host/client", () => ({
 jest.mock("@cocalc/server/lro/lro-db", () => ({
   __esModule: true,
   createLro: (...args: any[]) => createLroMock(...args),
+  getLro: (...args: any[]) => getLroMock(...args),
   updateLro: (...args: any[]) => updateLroMock(...args),
 }));
 
@@ -152,6 +154,32 @@ describe("project rootfs helpers", () => {
       dismissed_at: null,
       dismissed_by: null,
       updated_at: new Date("2026-06-22T00:00:00.000Z"),
+      expires_at: new Date("2026-07-06T00:00:00.000Z"),
+      dedupe_key: null,
+      parent_id: null,
+    }));
+    getLroMock = jest.fn(async () => ({
+      op_id: "44444444-4444-4444-8444-444444444444",
+      kind: "project-rootfs-publish",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      created_by: ACCOUNT_ID,
+      owner_type: null,
+      owner_id: null,
+      routing: "hub",
+      input: {},
+      result: { image_id: "published-rootfs" },
+      error: null,
+      progress_summary: {},
+      attempt: 0,
+      heartbeat_at: null,
+      created_at: new Date("2026-06-22T00:00:00.000Z"),
+      started_at: new Date("2026-06-22T00:00:01.000Z"),
+      finished_at: new Date("2026-06-22T00:00:10.000Z"),
+      dismissed_at: null,
+      dismissed_by: null,
+      updated_at: new Date("2026-06-22T00:00:10.000Z"),
       expires_at: new Date("2026-07-06T00:00:00.000Z"),
       dedupe_key: null,
       parent_id: null,
@@ -442,5 +470,93 @@ describe("project rootfs helpers", () => {
       project_id: PROJECT_ID,
     });
     expect(getRoutedHostControlClientMock).not.toHaveBeenCalled();
+  });
+
+  it("records a verified project rootfs publish LRO on a successful build", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("project_rootfs_builds") && sql.includes("SELECT *")) {
+        return {
+          rows: [
+            {
+              build_id: "build-1",
+              project_id: PROJECT_ID,
+              account_id: ACCOUNT_ID,
+              host_id: "host-1",
+              op_id: "33333333-3333-4333-8333-333333333333",
+              status: "succeeded",
+              recipe_ref: "cocalc/julia",
+              paths: {},
+              created_at: new Date("2026-06-22T00:00:00.000Z"),
+              updated: new Date("2026-06-22T00:00:10.000Z"),
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("project_rootfs_builds") &&
+        sql.includes("UPDATE project_rootfs_builds")
+      ) {
+        return {
+          rows: [
+            {
+              build_id: params?.[1],
+              project_id: params?.[0],
+              account_id: ACCOUNT_ID,
+              host_id: "host-1",
+              op_id: "33333333-3333-4333-8333-333333333333",
+              publish_op_id: params?.[2],
+              publish_status: params?.[3],
+              publish_image_id: params?.[4],
+              publish_error: params?.[5],
+              publish_started_at: params?.[6],
+              publish_finished_at: params?.[7],
+              status: "succeeded",
+              recipe_ref: "cocalc/julia",
+              paths: {},
+              created_at: new Date("2026-06-22T00:00:00.000Z"),
+              updated: new Date("2026-06-22T00:00:10.000Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    getPoolMock = jest.fn(() => ({ query: queryMock }));
+
+    const { recordProjectRootfsBuildPublish } = await import("./projects");
+    await expect(
+      recordProjectRootfsBuildPublish({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        build_id: "build-1",
+        publish_op_id: "44444444-4444-4444-8444-444444444444",
+      }),
+    ).resolves.toMatchObject({
+      build: {
+        build_id: "build-1",
+        project_id: PROJECT_ID,
+        publish_op_id: "44444444-4444-4444-8444-444444444444",
+        publish_status: "succeeded",
+        publish_image_id: "published-rootfs",
+      },
+      publish: {
+        op_id: "44444444-4444-4444-8444-444444444444",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      },
+    });
+    expect(getLroMock).toHaveBeenCalledWith(
+      "44444444-4444-4444-8444-444444444444",
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE project_rootfs_builds"),
+      expect.arrayContaining([
+        PROJECT_ID,
+        "build-1",
+        "44444444-4444-4444-8444-444444444444",
+        "succeeded",
+        "published-rootfs",
+      ]),
+    );
   });
 });

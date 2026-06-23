@@ -1177,7 +1177,7 @@ test("rootfs build runs recipe and saves publish config on the project", async (
     assert.match(buildRequest.script, /Step 1: install/);
     assert.match(
       harness.captured,
-      /next: cocalc rootfs publish --project=builder-project/,
+      /next: cocalc rootfs build-publish build-1 --project=builder-project/,
     );
     assert.match(
       harness.captured,
@@ -1382,6 +1382,192 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
       ["hub-list", { project_id: "builder-project", limit: 50 }],
       ["resolve", "Builder"],
       ["cancel", { project_id: "builder-project", build_id: "build-1" }],
+    ]);
+  } finally {
+    if (oldStateFile == null) {
+      delete process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
+    } else {
+      process.env.COCALC_ROOTFS_BUILD_STATE_FILE = oldStateFile;
+    }
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs build-publish starts publish and records the child LRO", async () => {
+  const calls: any[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-build-publish-"));
+  const stateFile = join(dir, "last-rootfs-build.json");
+  const oldStateFile = process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
+  process.env.COCALC_ROOTFS_BUILD_STATE_FILE = stateFile;
+  writeFileSync(
+    stateFile,
+    JSON.stringify({
+      version: 1,
+      api: "https://test.cocalc.invalid",
+      account_id: "account-id",
+      project_id: "builder-project",
+      build_id: "build-1",
+      recipe: "cocalc/demo",
+      saved_at: "2026-06-22T00:00:00.000Z",
+    }),
+  );
+  const harness = rootfsDeps({
+    globals: { quiet: true },
+    resolveProjectFromArgOrContext: async (_ctx: any, project: string) => {
+      calls.push(["resolve", project]);
+      return { project_id: "builder-project" };
+    },
+    waitForLro: async (_ctx: any, op_id: string) => {
+      calls.push(["wait", op_id]);
+      return { status: "succeeded" };
+    },
+    lro: {
+      get: async (opts: any) => {
+        calls.push(["lro-get", opts]);
+        return {
+          op_id: opts.op_id,
+          status: "succeeded",
+          result: { image_id: "published-rootfs" },
+        };
+      },
+    },
+    projects: {
+      getProjectRootfsPublishConfig: async (opts: any) => {
+        calls.push(["publish-config", opts]);
+        return {
+          kind: "cocalc-project-rootfs-publish-config",
+          version: 1,
+          updated_at: "2026-06-22T00:00:00.000Z",
+          config: {
+            kind: "cocalc-rootfs-config",
+            version: 1,
+            metadata: {
+              label: "Build demo",
+              slug: "build-demo",
+              visibility: "public",
+              tags: ["demo"],
+            },
+          },
+        };
+      },
+      getProjectRootfsBuildStatus: async (opts: any) => {
+        calls.push(["status", opts]);
+        return {
+          build_id: opts.build_id,
+          project_id: opts.project_id,
+          host_id: "host-1",
+          status: "succeeded",
+          created_at: "2026-06-22T00:00:00.000Z",
+          paths: {
+            log: ".cocalc/rootfs-builds/build-1/build.log",
+            events: ".cocalc/rootfs-builds/build-1/events.ndjson",
+            runner: ".cocalc/rootfs-builds/build-1/runner.sh",
+            script: ".cocalc/rootfs-builds/build-1/run.sh",
+          },
+        };
+      },
+      recordProjectRootfsBuildPublish: async (opts: any) => {
+        calls.push(["record-publish", opts]);
+        return {
+          publish: {
+            op_id: opts.publish_op_id,
+            scope_type: "project",
+            scope_id: opts.project_id,
+            service: "persist",
+            stream_name: `lro.${opts.publish_op_id}`,
+          },
+          build: {
+            build_id: opts.build_id,
+            project_id: opts.project_id,
+            host_id: "host-1",
+            status: "succeeded",
+            publish_op_id: opts.publish_op_id,
+            publish_status: calls.filter((x) => x[0] === "record-publish")
+              .length
+              ? "succeeded"
+              : "queued",
+            publish_image_id: calls.filter((x) => x[0] === "record-publish")
+              .length
+              ? "published-rootfs"
+              : null,
+            created_at: "2026-06-22T00:00:00.000Z",
+          },
+        };
+      },
+    },
+    system: {
+      publishProjectRootfsImage: async (opts: any) => {
+        calls.push(["publish", opts]);
+        return {
+          op_id: "publish-op",
+          scope_type: "project",
+          scope_id: opts.project_id,
+          service: "persist",
+          stream_name: "lro.publish-op",
+        };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "build-publish",
+      "--wait",
+    ]);
+    assert.match(harness.captured, /publish_op_id: publish-op/);
+    assert.match(harness.captured, /publish_status: succeeded/);
+    assert.match(harness.captured, /publish_image_id: published-rootfs/);
+    assert.deepEqual(calls, [
+      ["resolve", "builder-project"],
+      ["status", { project_id: "builder-project", build_id: "build-1" }],
+      ["publish-config", { project_id: "builder-project" }],
+      [
+        "publish",
+        {
+          project_id: "builder-project",
+          browser_id: undefined,
+          label: "Build demo",
+          slug: "build-demo",
+          family: undefined,
+          version: undefined,
+          channel: undefined,
+          supersedes_image_id: undefined,
+          description: undefined,
+          visibility: "public",
+          tags: ["demo"],
+          theme: undefined,
+          arch: undefined,
+          gpu: undefined,
+          size_gb: undefined,
+          official: undefined,
+          prepull: undefined,
+          hidden: undefined,
+          switch_project: undefined,
+        },
+      ],
+      [
+        "record-publish",
+        {
+          project_id: "builder-project",
+          build_id: "build-1",
+          publish_op_id: "publish-op",
+        },
+      ],
+      ["wait", "publish-op"],
+      [
+        "record-publish",
+        {
+          project_id: "builder-project",
+          build_id: "build-1",
+          publish_op_id: "publish-op",
+        },
+      ],
+      ["lro-get", { op_id: "publish-op" }],
     ]);
   } finally {
     if (oldStateFile == null) {
