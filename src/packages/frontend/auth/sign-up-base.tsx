@@ -72,6 +72,8 @@ export default function SignUpFormBase({
   });
   const emailDomainPolicyViolation =
     isValidEmailAddress(email) && !emailAllowedByDomainPolicy;
+  const passwordTooShort =
+    password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
 
   const bootstrap = useMemo(() => getQueryParam("bootstrap") === "1", []);
 
@@ -277,6 +279,18 @@ export default function SignUpFormBase({
           onChange={(e) => setPassword(e.target.value)}
           onPressEnter={signUp}
         />
+        {passwordTooShort ? (
+          <div
+            style={{
+              color: COLORS.FG_RED,
+              fontSize: "13px",
+              lineHeight: "18px",
+              marginTop: "6px",
+            }}
+          >
+            Password must be at least {MIN_PASSWORD_LENGTH} characters.
+          </div>
+        ) : null}
       </div>
       <div>
         <div>Name</div>

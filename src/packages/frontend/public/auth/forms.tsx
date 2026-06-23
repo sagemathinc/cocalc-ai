@@ -965,6 +965,8 @@ export function PublicSignUpForm({
   });
   const emailDomainPolicyViolation =
     isValidEmailAddress(email) && !emailAllowedByDomainPolicy;
+  const passwordTooShort =
+    password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
 
   const bootstrap = useMemo(
     () => new URL(window.location.href).searchParams.get("bootstrap") === "1",
@@ -1220,6 +1222,11 @@ export function PublicSignUpForm({
           onChange={setPassword}
           onPressEnter={signUp}
         />
+        {passwordTooShort ? (
+          <div style={{ ...TERMS_NOTICE_STYLE, color: COLORS.FG_RED }}>
+            Password must be at least {MIN_PASSWORD_LENGTH} characters.
+          </div>
+        ) : null}
       </div>
       <div style={FIELD_STYLE}>
         <div style={LABEL_STYLE}>Confirm password</div>

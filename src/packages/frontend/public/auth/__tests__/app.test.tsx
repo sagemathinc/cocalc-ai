@@ -324,8 +324,17 @@ describe("PublicAuthApp", () => {
     expect(password).toHaveAttribute("name", "new-password");
     expect(password).toHaveAttribute("autocomplete", "new-password");
     fireEvent.change(password, {
+      target: { value: "short" },
+    });
+    expect(
+      screen.getByText("Password must be at least 8 characters."),
+    ).not.toBeNull();
+    fireEvent.change(password, {
       target: { value: "correct horse battery staple 12345!" },
     });
+    expect(
+      screen.queryByText("Password must be at least 8 characters."),
+    ).toBeNull();
     const confirmPassword = screen.getByPlaceholderText(
       "Enter the same password again",
     );

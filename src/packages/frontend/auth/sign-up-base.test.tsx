@@ -108,6 +108,23 @@ describe("SignUpFormBase", () => {
     ).not.toBeNull();
   });
 
+  it("explains that sign-up passwords must be at least 8 characters", () => {
+    render(
+      <SignUpFormBase initialRequiresToken={false} onNavigate={jest.fn()} />,
+    );
+
+    const password = screen.getByPlaceholderText("At least 8 characters");
+    fireEvent.change(password, { target: { value: "short" } });
+    expect(
+      screen.getByText("Password must be at least 8 characters."),
+    ).not.toBeNull();
+
+    fireEvent.change(password, { target: { value: "long enough" } });
+    expect(
+      screen.queryByText("Password must be at least 8 characters."),
+    ).toBeNull();
+  });
+
   it("sends marketing consent only when the optional checkbox is selected", async () => {
     mockedPostAuthApi.mockResolvedValueOnce({
       account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
