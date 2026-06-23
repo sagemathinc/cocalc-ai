@@ -93,12 +93,8 @@ export default function JupyterNotebookFeaturePage({
                 Jupyter notebooks for work that needs to keep going
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Connected to the data, packages, and live kernel your analysis
-                depends on.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Collaborators and Codex work from the same outputs, errors, and
-                kernel state.
+                Connected to the data, packages, live kernel, and shared outputs
+                your collaborators and Codex use.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -116,8 +112,6 @@ export default function JupyterNotebookFeaturePage({
               items={[
                 { icon: "server", label: "Kernels run beside project files" },
                 { icon: "database", label: "Data and packages stay nearby" },
-                { icon: "users", label: "Shared sessions for collaborators" },
-                { icon: "history", label: "TimeTravel records notebook edits" },
               ]}
               title="Notebook context"
             />
@@ -165,17 +159,10 @@ export default function JupyterNotebookFeaturePage({
               </Title>
               <Paragraph style={{ margin: 0 }}>
                 Notebooks are often the visible part of a larger analysis.
-                CoCalc keeps the surrounding work close enough that a reader,
-                collaborator, or instructor can understand what produced a
-                result.
+                CoCalc keeps terminal and Linux tools, data files, scripts,
+                figures, paper drafts, collaborators, and instructors close
+                enough to understand what produced a result.
               </Paragraph>
-              <BulletList
-                items={[
-                  "Use terminal and Linux tools without moving the notebook elsewhere.",
-                  "Keep data files, scripts, figures, and paper drafts near the computation.",
-                  "Bring collaborators or instructors into the same working state, with visible cursors and shared kernel sessions.",
-                ]}
-              />
             </Flex>
           </Col>
         </Row>
@@ -192,15 +179,9 @@ export default function JupyterNotebookFeaturePage({
                 Saving an <code>.ipynb</code> file is not the same as
                 understanding the current session. CoCalc gives Codex
                 project-scoped notebook commands, so focused runs can start from
-                actual cells, outputs, and errors.
+                actual cells, outputs, and errors, then summarize real output
+                instead of guessing from a saved file.
               </Paragraph>
-              <BulletList
-                items={[
-                  "Inspect the current cells before suggesting a change.",
-                  "Run one cell or execute stdin against the notebook kernel.",
-                  "Summarize real output instead of guessing from a saved file.",
-                ]}
-              />
             </Flex>
           </Col>
           <Col xs={24} lg={12}>

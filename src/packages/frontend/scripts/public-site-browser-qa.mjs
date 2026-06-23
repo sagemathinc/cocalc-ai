@@ -380,7 +380,7 @@ const ROUTE_RULES = {
       "Choose the notebook path that fits",
       "Ready to use Jupyter in CoCalc?",
       "Start using Jupyter in CoCalc",
-      "Collaborators and Codex work from the same outputs",
+      "shared outputs your collaborators and Codex use",
     ],
     forbidText: [
       "Ask about Jupyter workflows",

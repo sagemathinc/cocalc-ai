@@ -46,6 +46,46 @@ Known risks:
 
 ---
 
+### Codex - Density /features/jupyter-notebook item 40 (2026-06-23 02:50 PDT)
+
+- **START 2026-06-23 02:50 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 40 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `e09ffe5955`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/jupyter-notebook-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/jupyter-notebook` browser
+  QA, this ledger, and shared queue/turn logs if the slice lands. Route frame:
+  visitor asks whether Jupyter work can stay connected to files, packages,
+  collaborators, kernels, terminal/Linux tools, and review history; promise is
+  a notebook that keeps going in the surrounding project; proof mechanism is
+  the three StoryCards, `NotebookEvidencePanel`, and project-scoped Jupyter
+  `CodeBlock`; primary next step is start/open a project; secondary next steps
+  are compatibility guide, terminal, Linux, whiteboard, and products links.
+  Must not claim invented notebook metrics or generic JupyterHub replacement.
+  Decision: preserve the test-pinned skeleton while cutting the middle
+  BulletLists and trimming hero context to the essential proof points.
+- **END 2026-06-23 03:00 PDT:** Landed the density cut for
+  `/features/jupyter-notebook`: source now measures 230 lines versus 249 at
+  `e09ffe5955`. Trimmed hero support copy to one line, reduced hero context
+  from four items to two, removed the two middle `BulletList` blocks, and kept
+  the three StoryCards, `NotebookEvidencePanel`, project-scoped Jupyter
+  `CodeBlock`, terminal/Linux mention, final directed-graph bullet, and final
+  related-link routing. Updated the feature smoke test and browser QA canary
+  for the preserved terminal/Linux and hero-copy assertions. Validation passed:
+  focused feature/browser-QA Jest 140/140, public/features Jest 196/196,
+  `pnpm -C src tsc`, `pnpm -C src lint:frontend`, `git diff --check`, and
+  `pnpm --dir src/packages/static build:dev && node
+  src/packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/jupyter-notebook --viewport desktop --viewport mobile`
+  (50/50 assertions, artifact `/tmp/cocalc-public-qa-SO8Jy0`). Desktop and
+  mobile screenshots inspected clean. Known local static-build debug-log
+  EACCES warning only.
+
 ### Codex - Density /features/terminal item 39 (2026-06-23 02:44 PDT)
 
 - **START 2026-06-23 02:44 PDT:** Continuing the manual landing-page

@@ -776,6 +776,7 @@ describe("PublicFeaturesApp", () => {
     expect(container.textContent ?? "").toContain(
       "cocalc project jupyter cells --path analysis.ipynb",
     );
+    expect(screen.getByText(/terminal and Linux tools/i)).not.toBeNull();
     expect(screen.getByText(/directed graph beside diagrams/i)).not.toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(new Set(getHeadingTexts(container)).size).toBe(
