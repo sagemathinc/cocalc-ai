@@ -494,7 +494,7 @@ const ROUTE_RULES = {
       "Start using SageMath",
       "free, open-source mathematics software",
     ],
-    forbidText: ["open-source Python library"],
+    forbidText: ["open-source Python library", "sage: factor", "sage: plot"],
     requireSelectors: [
       ".cocalc-feature-context-list",
       ".cocalc-feature-final-panel",

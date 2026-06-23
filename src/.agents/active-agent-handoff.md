@@ -46,6 +46,36 @@ Known risks:
 
 ---
 
+### Codex - Sage hero P2 redundancy polish (2026-06-22 20:46 PDT)
+
+- **START 2026-06-22 20:46 PDT:** Continuing the scheduled landing-page
+  improvement loop with adversarial-fix queue item 19, next bounded P2 design
+  sub-slice: `/features/sage` redundant hero `TerminalMock` removal. Current
+  branch head `a31dc2f0ec` has been pushed after the AI polish handoff; known
+  untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  remains untouched. Claimed route/files: `/features/sage`,
+  `src/packages/frontend/public/features/sage-page.tsx`, focused tests/QA
+  canaries if needed, and this ledger. Scope: simplify the Sage hero by removing
+  the redundant terminal mock while preserving Sage proof, the heritage/open-
+  source positioning from item 17, education-secondary framing, and existing
+  public tokens/shared primitives. Do not touch protected home, pricing/
+  compliance, type/palette, pitch/docs content, raw audit findings, or the
+  dedicated-compute draft.
+- **END 2026-06-22 20:51 PDT:** Sage hero redundancy sub-slice complete.
+  Removed the dark hand-built Sage prompt block from the hero and dropped its
+  `PUBLIC_DARK` import, leaving the four light hero proof cards as the primary
+  visual. Added canaries so `sage: factor` / `sage: plot` prompt text does not
+  return. Validation: Prettier on touched files, `pnpm -C src tsc`, focused Jest
+  `pnpm exec jest public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
+  existing React/AntD `act(...)` warnings), `pnpm -C src lint:frontend`,
+  `git diff --check`, `pnpm --dir src/packages/static build:dev`, and browser
+  QA `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/sage --viewport desktop --viewport mobile` (44/44) passed.
+  Desktop/mobile screenshots inspected at `/tmp/cocalc-public-qa-mFXigR`; no
+  overlap or obvious visual regression. Next: commit, rebuild so the static
+  bundle embeds the Sage commit, rerun Sage browser QA, then push.
+
 ### Codex - AI feature P2 design polish (2026-06-22 20:29 PDT)
 
 - **START 2026-06-22 20:29 PDT:** Continuing the scheduled landing-page

@@ -1222,6 +1222,8 @@ describe("PublicFeaturesApp", () => {
         ).not.toBeNull();
         expect(screen.queryByText(/open-source Python library/)).toBeNull();
         expect(screen.queryByText("Course context")).toBeNull();
+        expect(screen.queryByText(/sage: factor/)).toBeNull();
+        expect(screen.queryByText(/sage: plot/)).toBeNull();
       }
     },
   );

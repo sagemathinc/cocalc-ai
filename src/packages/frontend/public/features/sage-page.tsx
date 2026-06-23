@@ -10,7 +10,6 @@ import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_ELEVATION,
   PUBLIC_COLORS,
-  PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
@@ -102,64 +101,6 @@ function SageWorkspaceMock() {
             </Col>
           ))}
         </Row>
-
-        <div
-          style={{
-            background: PUBLIC_DARK.terminalSurface,
-            borderRadius: PUBLIC_RADIUS.panel,
-            color: PUBLIC_DARK.mockText,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              alignItems: "center",
-              background: "rgba(255,255,255,0.08)",
-              display: "flex",
-              gap: 8,
-              padding: "10px 14px",
-            }}
-          >
-            {[
-              PUBLIC_DARK.dotRed,
-              PUBLIC_DARK.dotAmber,
-              PUBLIC_DARK.dotGreen,
-            ].map((color) => (
-              <span
-                aria-hidden="true"
-                key={color}
-                style={{
-                  background: color,
-                  borderRadius: "50%",
-                  height: 10,
-                  width: 10,
-                }}
-              />
-            ))}
-            <Text style={{ color: PUBLIC_DARK.mockText, marginLeft: 8 }}>
-              sage
-            </Text>
-          </div>
-          <Flex
-            vertical
-            gap={8}
-            style={{
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              padding: 16,
-            }}
-          >
-            <Text style={{ color: PUBLIC_DARK.mockTextDim }}>
-              sage: factor(x^8 - 1)
-            </Text>
-            <Text style={{ color: PUBLIC_DARK.mockTextAlt }}>
-              (x - 1)*(x + 1)*(x^2 + 1)*(x^4 + 1)
-            </Text>
-            <Text style={{ color: PUBLIC_DARK.mockTextDim }}>
-              sage: plot(sin(x^2), (x, -4, 4))
-            </Text>
-          </Flex>
-        </div>
       </Flex>
     </div>
   );
