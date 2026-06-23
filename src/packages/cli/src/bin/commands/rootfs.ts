@@ -1563,6 +1563,68 @@ export function registerRootfsCommand(
     );
 
   rootfs
+    .command("build-attach <build>")
+    .description("show status, tail logs, and follow a durable RootFS build")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--tail <lines>", "line count to show before following", "100")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string; tail?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-attach", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const status = await ctx.hub.projects.getProjectRootfsBuildStatus({
+            project_id: project.project_id,
+            build_id,
+          });
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const log = await readRootfsBuildLogDirect({
+            api,
+            ctx,
+            project_id: project.project_id,
+            build_id,
+            lines: parseLimit(opts.tail, 100),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return { status, log };
+          }
+          if (!ctx.globals?.quiet) {
+            process.stderr.write(formatRootfsBuildStatusHuman(status));
+            process.stderr.write("\n\n");
+            if (log.text) {
+              process.stderr.write(log.text);
+              if (!log.text.endsWith("\n")) {
+                process.stderr.write("\n");
+              }
+            }
+          }
+          const finalStatus = await followRootfsBuildLog({
+            ctx,
+            deps: {
+              withContext,
+              resolveProjectFromArgOrContext,
+              resolveProjectProjectApi,
+              waitForLro,
+              serializeLroSummary,
+            },
+            project_id: project.project_id,
+            build_id,
+            byte_offset: log.next_byte_offset,
+          });
+          return formatRootfsBuildStatusHuman(finalStatus);
+        });
+      },
+    );
+
+  rootfs
     .command("build-cancel <build>")
     .description("cancel a durable RootFS build for a project")
     .requiredOption("-w, --project <project>", "project id or name")

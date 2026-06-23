@@ -1310,6 +1310,102 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
   ]);
 });
 
+test("rootfs build attach tails direct logs and follows to terminal status", async () => {
+  const calls: any[] = [];
+  const harness = rootfsDeps({
+    globals: { quiet: true },
+    resolveProjectFromArgOrContext: async (_ctx: any, project: string) => {
+      calls.push(["resolve", project]);
+      return { project_id: "builder-project" };
+    },
+    resolveProjectProjectApi: async (_ctx: any, project: string) => {
+      calls.push(["project-api", project]);
+      return {
+        project: { project_id: "builder-project" },
+        api: {
+          system: {
+            readRootfsBuildLog: async (opts: any) => {
+              calls.push(["direct-log", opts]);
+              return {
+                build_id: opts.build_id,
+                project_id: "builder-project",
+                lines: opts.lines ?? 0,
+                byte_offset: opts.byte_offset ?? 0,
+                next_byte_offset:
+                  opts.byte_offset == null ? 10 : opts.byte_offset,
+                bytes: 0,
+                eof: true,
+                text: "",
+                found: true,
+                path: ".cocalc/rootfs-builds/build-1/build.log",
+              };
+            },
+          },
+        },
+      };
+    },
+    projects: {
+      getProjectRootfsBuildStatus: async (opts: any) => {
+        calls.push(["status", opts]);
+        return {
+          build_id: opts.build_id,
+          project_id: opts.project_id,
+          status: "succeeded",
+          created_at: "2026-06-22T00:00:00.000Z",
+          paths: {
+            log: ".cocalc/rootfs-builds/build-1/build.log",
+            script: ".cocalc/rootfs-builds/build-1/run.sh",
+          },
+        };
+      },
+      getProjectRootfsBuildLog: async () => {
+        throw new Error("hub log API should not be used");
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "build-attach",
+    "build-1",
+    "--project",
+    "Builder",
+    "--tail",
+    "5",
+  ]);
+
+  assert.match(harness.captured, /status: succeeded/);
+  assert.deepEqual(calls, [
+    ["resolve", "Builder"],
+    ["status", { project_id: "builder-project", build_id: "build-1" }],
+    ["project-api", "builder-project"],
+    [
+      "direct-log",
+      {
+        build_id: "build-1",
+        lines: 5,
+        byte_offset: undefined,
+        max_bytes: undefined,
+      },
+    ],
+    ["project-api", "builder-project"],
+    [
+      "direct-log",
+      {
+        build_id: "build-1",
+        lines: undefined,
+        byte_offset: 10,
+        max_bytes: 131072,
+      },
+    ],
+    ["status", { project_id: "builder-project", build_id: "build-1" }],
+  ]);
+});
+
 test("rootfs recipe run creates project, executes modules, and publishes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-run-"));
   const recipePath = join(dir, "recipe.json");
