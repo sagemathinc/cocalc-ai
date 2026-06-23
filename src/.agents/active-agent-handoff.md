@@ -75,6 +75,15 @@ Known risks:
   Desktop/mobile screenshots inspected at `/tmp/cocalc-public-qa-mFXigR`; no
   overlap or obvious visual regression. Next: commit, rebuild so the static
   bundle embeds the Sage commit, rerun Sage browser QA, then push.
+- **POST-COMMIT 2026-06-22 20:52 PDT:** Source/ledger commit
+  `4457a9dfcb` (`frontend/public: remove redundant Sage hero terminal`)
+  created. Post-commit `pnpm --dir src/packages/static build:dev` passed and
+  embedded `COCALC_GIT_REVISION =
+  4457a9dfcb153658de45c7b6332dfa568fc51ee2`. Post-commit browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/sage --viewport desktop --viewport mobile` passed 44/44 at
+  `/tmp/cocalc-public-qa-f7V3Fh`. Next: push branch and update shared status
+  logs.
 
 ### Codex - AI feature P2 design polish (2026-06-22 20:29 PDT)
 
