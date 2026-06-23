@@ -52,7 +52,7 @@ function HeroPoint({ children }: { children: ReactNode }) {
         style={{
           color: CLI_ACCENT,
           flex: "0 0 auto",
-          fontSize: 14,
+          fontSize: PUBLIC_TYPE.caption,
         }}
       />
       <Text strong>{children}</Text>
@@ -93,7 +93,7 @@ function CliHeroWorkflow() {
             color: PUBLIC_DARK.mockText,
             fontFamily:
               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-            fontSize: 14,
+            fontSize: PUBLIC_TYPE.caption,
             lineHeight: 1.6,
             overflow: "hidden",
           }}
@@ -108,7 +108,7 @@ function CliHeroWorkflow() {
               padding: "10px 14px",
             }}
           >
-            <Icon name="terminal" style={{ fontSize: 14 }} />
+            <Icon name="terminal" style={{ fontSize: PUBLIC_TYPE.caption }} />
             <span>reviewable notebook workflow</span>
           </Flex>
           <div style={{ padding: "16px 18px" }}>
@@ -189,7 +189,7 @@ function CliFitSection() {
                 <Text
                   style={{
                     color: CLI_ACCENT,
-                    fontSize: 12,
+                    fontSize: PUBLIC_TYPE.eyebrow,
                     fontWeight: PUBLIC_WEIGHT.bold,
                     letterSpacing: 0,
                     textTransform: "uppercase",
