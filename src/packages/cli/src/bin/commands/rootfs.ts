@@ -1,4 +1,12 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { Command } from "commander";
 import type { ProjectRootfsPublishConfig } from "@cocalc/conat/hub/api/projects";
 import type {
@@ -38,6 +46,154 @@ export type RootfsCommandDeps = {
 
 function parseLimit(value?: string, fallback = 100): number {
   return Math.max(1, Math.min(10_000, Number(value ?? fallback) || fallback));
+}
+
+function shouldEmitHumanProgress(globals: any): boolean {
+  return !globals?.quiet && !globals?.json && globals?.output !== "json";
+}
+
+function emitRootfsBuildProgress(ctx: any, message: string): void {
+  if (!shouldEmitHumanProgress(ctx?.globals)) return;
+  console.error(`[rootfs build] ${message}`);
+}
+
+function emitRootfsBuildProgressForCommand(
+  command: Command,
+  message: string,
+): void {
+  const globals = command.optsWithGlobals?.() ?? {};
+  if (!shouldEmitHumanProgress(globals)) return;
+  console.error(`[rootfs build] ${message}`);
+}
+
+type LastRootfsBuild = {
+  version: 1;
+  api?: string;
+  account_id?: string;
+  project_id: string;
+  build_id: string;
+  recipe?: string;
+  host_id?: string;
+  saved_at: string;
+};
+
+function rootfsBuildStateFile(): string {
+  const explicit = process.env.COCALC_ROOTFS_BUILD_STATE_FILE?.trim();
+  if (explicit) return explicit;
+  return join(
+    homedir() || process.cwd(),
+    ".local",
+    "share",
+    "cocalc",
+    "rootfs-builds",
+    "last.json",
+  );
+}
+
+function contextScope(ctx: any): { api?: string; account_id?: string } {
+  return {
+    api: `${ctx?.apiBaseUrl ?? ""}`.trim() || undefined,
+    account_id: `${ctx?.accountId ?? ""}`.trim() || undefined,
+  };
+}
+
+function readLastRootfsBuild(ctx: any): LastRootfsBuild | undefined {
+  const path = rootfsBuildStateFile();
+  try {
+    if (!existsSync(path)) return undefined;
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.project_id !== "string" ||
+      typeof parsed.build_id !== "string"
+    ) {
+      return undefined;
+    }
+    const scope = contextScope(ctx);
+    if (scope.api && parsed.api && scope.api !== parsed.api) {
+      return undefined;
+    }
+    if (
+      scope.account_id &&
+      parsed.account_id &&
+      scope.account_id !== parsed.account_id
+    ) {
+      return undefined;
+    }
+    return parsed as LastRootfsBuild;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeLastRootfsBuild({
+  ctx,
+  project_id,
+  build,
+  recipe,
+}: {
+  ctx: any;
+  project_id: string;
+  build: any;
+  recipe: string;
+}): void {
+  const build_id = `${build?.build_id ?? ""}`.trim();
+  if (!project_id || !build_id) return;
+  const path = rootfsBuildStateFile();
+  const row: LastRootfsBuild = {
+    version: 1,
+    ...contextScope(ctx),
+    project_id,
+    build_id,
+    recipe,
+    host_id: `${build?.host_id ?? ""}`.trim() || undefined,
+    saved_at: new Date().toISOString(),
+  };
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tmp, `${JSON.stringify(row, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  renameSync(tmp, path);
+}
+
+function resolveLastRootfsBuildProject(ctx: any, project?: string): string {
+  const explicit = `${project ?? ""}`.trim();
+  if (explicit) return explicit;
+  const last = readLastRootfsBuild(ctx);
+  if (last?.project_id) return last.project_id;
+  throw new Error(
+    "--project is required; or first run `cocalc rootfs build ...` to record the last build",
+  );
+}
+
+function resolveLastRootfsBuildId(ctx: any, build_id?: string): string {
+  const explicit = `${build_id ?? ""}`.trim();
+  if (explicit) return explicit;
+  const last = readLastRootfsBuild(ctx);
+  if (last?.build_id) return last.build_id;
+  throw new Error(
+    "build id is required; or first run `cocalc rootfs build ...` to record the last build",
+  );
+}
+
+async function resolveRootfsBuildProject({
+  ctx,
+  resolveProjectFromArgOrContext,
+  project,
+}: {
+  ctx: any;
+  resolveProjectFromArgOrContext: any;
+  project?: string;
+}): Promise<{ project_id: string }> {
+  return await resolveProjectFromArgOrContext(
+    ctx,
+    resolveLastRootfsBuildProject(ctx, project),
+  );
 }
 
 function bytes(value: unknown): string {
@@ -245,13 +401,19 @@ async function startRootfsBuilderProject({
   plan: RootfsRecipeBuildPlan;
 }): Promise<{ project_id: string; created_project: boolean }> {
   if (options.project) {
+    emitRootfsBuildProgress(ctx, `using existing project ${options.project}`);
     const project = await deps.resolveProjectFromArgOrContext(
       ctx,
       options.project,
     );
+    emitRootfsBuildProgress(ctx, `starting project ${project.project_id}`);
     await waitForProjectStart({ ctx, deps, project_id: project.project_id });
     return { project_id: project.project_id, created_project: false };
   }
+  emitRootfsBuildProgress(
+    ctx,
+    `creating builder project for recipe ${plan.recipe}`,
+  );
   const project_id = await ctx.hub.projects.createProject({
     title: options.title ?? `RootFS build: ${plan.recipe}`,
     rootfs_image: plan.base?.image,
@@ -259,6 +421,8 @@ async function startRootfsBuilderProject({
     run_quota: plan.builder?.run_quota,
     start: false,
   });
+  emitRootfsBuildProgress(ctx, `created builder project ${project_id}`);
+  emitRootfsBuildProgress(ctx, `starting project ${project_id}`);
   await waitForProjectStart({ ctx, deps, project_id });
   return { project_id, created_project: true };
 }
@@ -515,6 +679,8 @@ function formatRootfsBuildStartHuman(result: {
   }
   lines.push(
     `saved_rootfs_publish_config: ${result.saved_rootfs_publish_config}`,
+    `status: cocalc rootfs build-status ${result.build.build_id}`,
+    `logs: cocalc rootfs build-logs ${result.build.build_id} --follow`,
     `next: cocalc rootfs publish --project=${result.project_id}`,
   );
   return lines.join("\n");
@@ -609,14 +775,6 @@ function formatRootfsBuildListHuman({
     lines.push(parts.join("  "));
   }
   return lines.join("\n");
-}
-
-function requireProjectOption(project?: string): string {
-  const trimmed = `${project ?? ""}`.trim();
-  if (!trimmed) {
-    throw new Error("--project is required");
-  }
-  return trimmed;
 }
 
 async function rootfsPublishConfigForProject({
@@ -1486,6 +1644,10 @@ export function registerRootfsCommand(
         opts: RootfsRecipeRunOptions,
         command: Command,
       ) => {
+        emitRootfsBuildProgressForCommand(
+          command,
+          `preparing recipe ${recipePath}`,
+        );
         await withContext(command, "rootfs build", async (ctx) => {
           const deps = {
             withContext,
@@ -1495,6 +1657,10 @@ export function registerRootfsCommand(
             serializeLroSummary,
           };
           if (opts.here) {
+            emitRootfsBuildProgress(
+              ctx,
+              "running recipe in the current project",
+            );
             const result = await runRootfsRecipe({
               ctx,
               deps,
@@ -1529,7 +1695,12 @@ export function registerRootfsCommand(
               `next: cocalc rootfs publish --project=${result.project_id}`,
             ].join("\n");
           }
+          emitRootfsBuildProgress(ctx, `resolving recipe ${recipePath}`);
           const plan = resolveRootfsRecipeBuildPlan(recipePath, opts);
+          emitRootfsBuildProgress(
+            ctx,
+            `resolved recipe ${plan.recipe} from ${plan.recipe_path}`,
+          );
           const project = await startRootfsBuilderProject({
             ctx,
             deps,
@@ -1541,6 +1712,10 @@ export function registerRootfsCommand(
             project_id: project.project_id,
             config: publishConfig,
           });
+          emitRootfsBuildProgress(
+            ctx,
+            `starting durable build in project ${project.project_id}`,
+          );
           const build = await ctx.hub.projects.startProjectRootfsBuild({
             project_id: project.project_id,
             script: plan.script,
@@ -1548,11 +1723,15 @@ export function registerRootfsCommand(
             resolved_recipe_json: plan.resolved_recipe,
             metadata_json: plan.config,
           });
+          emitRootfsBuildProgress(ctx, `started build ${build.build_id}`);
           if (opts.configOut) {
             writeFileSync(
               opts.configOut,
               `${JSON.stringify(plan.config, null, 2)}\n`,
             );
+          }
+          if (!opts.detach) {
+            emitRootfsBuildProgress(ctx, `following build ${build.build_id}`);
           }
           const finalBuild = opts.detach
             ? build
@@ -1562,6 +1741,12 @@ export function registerRootfsCommand(
                 project_id: project.project_id,
                 build_id: build.build_id,
               });
+          writeLastRootfsBuild({
+            ctx,
+            project_id: project.project_id,
+            build: finalBuild,
+            recipe: plan.recipe,
+          });
           const result = {
             recipe: plan.recipe,
             recipe_path: plan.recipe_path,
@@ -1580,23 +1765,25 @@ export function registerRootfsCommand(
     );
 
   rootfs
-    .command("build-status <build>")
+    .command("build-status [build]")
     .description("show durable RootFS build status for a project")
-    .requiredOption("-w, --project <project>", "project id or name")
+    .option("-w, --project <project>", "project id or name")
     .action(
       async (
-        build_id: string,
+        build_id: string | undefined,
         opts: { project?: string },
         command: Command,
       ) => {
         await withContext(command, "rootfs build-status", async (ctx) => {
-          const project = await resolveProjectFromArgOrContext(
+          const resolvedBuildId = resolveLastRootfsBuildId(ctx, build_id);
+          const project = await resolveRootfsBuildProject({
             ctx,
-            requireProjectOption(opts.project),
-          );
+            resolveProjectFromArgOrContext,
+            project: opts.project,
+          });
           const status = await ctx.hub.projects.getProjectRootfsBuildStatus({
             project_id: project.project_id,
-            build_id,
+            build_id: resolvedBuildId,
           });
           if (ctx.globals?.json || ctx.globals?.output === "json") {
             return status;
@@ -1607,22 +1794,24 @@ export function registerRootfsCommand(
     );
 
   rootfs
-    .command("build-logs <build>")
+    .command("build-logs [build]")
     .description("show or follow durable RootFS build logs for a project")
-    .requiredOption("-w, --project <project>", "project id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--tail <lines>", "line count to show before following", "100")
     .option("--follow", "continue following new log output")
     .action(
       async (
-        build_id: string,
+        build_id: string | undefined,
         opts: { project?: string; tail?: string; follow?: boolean },
         command: Command,
       ) => {
         await withContext(command, "rootfs build-logs", async (ctx) => {
-          const project = await resolveProjectFromArgOrContext(
+          const resolvedBuildId = resolveLastRootfsBuildId(ctx, build_id);
+          const project = await resolveRootfsBuildProject({
             ctx,
-            requireProjectOption(opts.project),
-          );
+            resolveProjectFromArgOrContext,
+            project: opts.project,
+          });
           const { api } = await resolveProjectProjectApi(
             ctx,
             project.project_id,
@@ -1631,7 +1820,7 @@ export function registerRootfsCommand(
             api,
             ctx,
             project_id: project.project_id,
-            build_id,
+            build_id: resolvedBuildId,
             lines: parseLimit(opts.tail, 100),
           });
           if (ctx.globals?.json || ctx.globals?.output === "json") {
@@ -1654,7 +1843,7 @@ export function registerRootfsCommand(
                 serializeLroSummary,
               },
               project_id: project.project_id,
-              build_id,
+              build_id: resolvedBuildId,
               byte_offset: log.next_byte_offset,
             });
             return formatRootfsBuildStatusHuman(finalStatus);
@@ -1667,15 +1856,16 @@ export function registerRootfsCommand(
   rootfs
     .command("build-list")
     .description("list durable RootFS builds recorded in a project")
-    .requiredOption("-w, --project <project>", "project id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--limit <n>", "max rows", "50")
     .action(
       async (opts: { project?: string; limit?: string }, command: Command) => {
         await withContext(command, "rootfs build-list", async (ctx) => {
-          const project = await resolveProjectFromArgOrContext(
+          const project = await resolveRootfsBuildProject({
             ctx,
-            requireProjectOption(opts.project),
-          );
+            resolveProjectFromArgOrContext,
+            project: opts.project,
+          });
           const { api } = await resolveProjectProjectApi(
             ctx,
             project.project_id,
@@ -1695,29 +1885,31 @@ export function registerRootfsCommand(
     );
 
   rootfs
-    .command("build-events <build>")
+    .command("build-events [build]")
     .description("show or follow durable RootFS build lifecycle events")
-    .requiredOption("-w, --project <project>", "project id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--tail <lines>", "line count to show before following", "100")
     .option("--follow", "continue following new events")
     .action(
       async (
-        build_id: string,
+        build_id: string | undefined,
         opts: { project?: string; tail?: string; follow?: boolean },
         command: Command,
       ) => {
         await withContext(command, "rootfs build-events", async (ctx) => {
-          const project = await resolveProjectFromArgOrContext(
+          const resolvedBuildId = resolveLastRootfsBuildId(ctx, build_id);
+          const project = await resolveRootfsBuildProject({
             ctx,
-            requireProjectOption(opts.project),
-          );
+            resolveProjectFromArgOrContext,
+            project: opts.project,
+          });
           const { api } = await resolveProjectProjectApi(
             ctx,
             project.project_id,
           );
           const events = await readRootfsBuildEventsDirect({
             api,
-            build_id,
+            build_id: resolvedBuildId,
             lines: parseLimit(opts.tail, 100),
           });
           if (ctx.globals?.json || ctx.globals?.output === "json") {
@@ -1743,7 +1935,7 @@ export function registerRootfsCommand(
                 serializeLroSummary,
               },
               project_id: project.project_id,
-              build_id,
+              build_id: resolvedBuildId,
               byte_offset: events.next_byte_offset,
             });
             return formatRootfsBuildStatusHuman(finalStatus);
@@ -1754,24 +1946,26 @@ export function registerRootfsCommand(
     );
 
   rootfs
-    .command("build-attach <build>")
+    .command("build-attach [build]")
     .description("show status, tail logs, and follow a durable RootFS build")
-    .requiredOption("-w, --project <project>", "project id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--tail <lines>", "line count to show before following", "100")
     .action(
       async (
-        build_id: string,
+        build_id: string | undefined,
         opts: { project?: string; tail?: string },
         command: Command,
       ) => {
         await withContext(command, "rootfs build-attach", async (ctx) => {
-          const project = await resolveProjectFromArgOrContext(
+          const resolvedBuildId = resolveLastRootfsBuildId(ctx, build_id);
+          const project = await resolveRootfsBuildProject({
             ctx,
-            requireProjectOption(opts.project),
-          );
+            resolveProjectFromArgOrContext,
+            project: opts.project,
+          });
           const status = await ctx.hub.projects.getProjectRootfsBuildStatus({
             project_id: project.project_id,
-            build_id,
+            build_id: resolvedBuildId,
           });
           const { api } = await resolveProjectProjectApi(
             ctx,
@@ -1781,7 +1975,7 @@ export function registerRootfsCommand(
             api,
             ctx,
             project_id: project.project_id,
-            build_id,
+            build_id: resolvedBuildId,
             lines: parseLimit(opts.tail, 100),
           });
           if (ctx.globals?.json || ctx.globals?.output === "json") {
@@ -1807,7 +2001,7 @@ export function registerRootfsCommand(
               serializeLroSummary,
             },
             project_id: project.project_id,
-            build_id,
+            build_id: resolvedBuildId,
             byte_offset: log.next_byte_offset,
           });
           return formatRootfsBuildStatusHuman(finalStatus);
@@ -1816,23 +2010,25 @@ export function registerRootfsCommand(
     );
 
   rootfs
-    .command("build-cancel <build>")
+    .command("build-cancel [build]")
     .description("cancel a durable RootFS build for a project")
-    .requiredOption("-w, --project <project>", "project id or name")
+    .option("-w, --project <project>", "project id or name")
     .action(
       async (
-        build_id: string,
+        build_id: string | undefined,
         opts: { project?: string },
         command: Command,
       ) => {
         await withContext(command, "rootfs build-cancel", async (ctx) => {
-          const project = await resolveProjectFromArgOrContext(
+          const resolvedBuildId = resolveLastRootfsBuildId(ctx, build_id);
+          const project = await resolveRootfsBuildProject({
             ctx,
-            requireProjectOption(opts.project),
-          );
+            resolveProjectFromArgOrContext,
+            project: opts.project,
+          });
           const result = await ctx.hub.projects.cancelProjectRootfsBuild({
             project_id: project.project_id,
-            build_id,
+            build_id: resolvedBuildId,
           });
           if (ctx.globals?.json || ctx.globals?.output === "json") {
             return result;

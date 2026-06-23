@@ -6,18 +6,26 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 download_url="${DOWNLOAD_URL:-https://rstudio.org/download/latest/stable/server/jammy/rstudio-server-latest-amd64.deb}"
 owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
 
 $SUDO apt-get update
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+run_noninteractive apt-get install -y --no-install-recommends \
   ca-certificates curl gdebi-core libclang-dev libssl-dev psmisc r-base \
   r-cran-rmarkdown r-cran-shiny
 
 tmp="$(mktemp --suffix=.deb)"
 curl -fL "$download_url" -o "$tmp"
-$SUDO DEBIAN_FRONTEND=noninteractive gdebi -n "$tmp"
+run_noninteractive gdebi -n "$tmp"
 rm -f "$tmp"
 
 $SUDO ln -sf /usr/lib/rstudio-server/bin/rserver /usr/local/bin/rserver

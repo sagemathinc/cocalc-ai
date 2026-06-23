@@ -29,12 +29,7 @@ import type {
   HostRootfsBuildStatusResponse,
 } from "@cocalc/conat/project-host/api";
 import { isValidUUID } from "@cocalc/util/misc";
-import {
-  DEFAULT_PROJECT_RUNTIME_GID,
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  DEFAULT_PROJECT_RUNTIME_UID,
-  DEFAULT_PROJECT_RUNTIME_USER,
-} from "@cocalc/util/project-runtime";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
 import { getVolume } from "./file-server";
 
@@ -47,6 +42,9 @@ const BUILD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const STALE_HEARTBEAT_MS = HEARTBEAT_INTERVAL_MS * 4;
+const ROOTFS_BUILD_USER = "0:0";
+const ROOTFS_BUILD_HOME = "/root";
+const ROOTFS_BUILD_LOGNAME = "root";
 
 interface BuildPaths {
   hostDir: string;
@@ -219,13 +217,13 @@ function podmanExecArgs(
     "exec",
     "-i",
     "-u",
-    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+    ROOTFS_BUILD_USER,
     "-e",
-    `HOME=${DEFAULT_PROJECT_RUNTIME_HOME}`,
+    `HOME=${ROOTFS_BUILD_HOME}`,
     "-e",
-    `USER=${DEFAULT_PROJECT_RUNTIME_USER}`,
+    `USER=${ROOTFS_BUILD_LOGNAME}`,
     "-e",
-    `LOGNAME=${DEFAULT_PROJECT_RUNTIME_USER}`,
+    `LOGNAME=${ROOTFS_BUILD_LOGNAME}`,
   ];
   for (const [key, value] of Object.entries(normalizedEnv(opts.env))) {
     args.push("-e", `${key}=${value}`);
@@ -274,6 +272,7 @@ LOG=${shellQuote(posix.join(paths.containerDir, "build.log"))}
 STATUS=${shellQuote(posix.join(paths.containerDir, "status.json"))}
 EVENTS=${shellQuote(posix.join(paths.containerDir, "events.ndjson"))}
 HEARTBEAT_SECONDS=${heartbeatSeconds}
+PACKAGE_MANAGER_WAIT_SECONDS="\${ROOTFS_BUILD_PACKAGE_MANAGER_WAIT_SECONDS:-600}"
 main_pid=""
 heartbeat_pid=""
 
@@ -303,6 +302,61 @@ append_event() {
   local event="$1"
   local status="$2"
   printf '{"time":"%s","event":"%s","status":"%s"}\\n' "$(now)" "$event" "$status" >> "$EVENTS"
+}
+
+package_manager_processes() {
+  local comm
+  local name
+  local pid
+  for comm in /proc/[0-9]*/comm; do
+    [ -r "$comm" ] || continue
+    name="$(cat "$comm" 2>/dev/null || true)"
+    case "$name" in
+      apt|apt-get|dpkg|unattended-upgr)
+        pid="\${comm#/proc/}"
+        pid="\${pid%%/*}"
+        echo "$pid/$name"
+        ;;
+    esac
+  done
+}
+
+package_manager_pids() {
+  package_manager_processes | cut -d/ -f1
+}
+
+describe_package_manager_processes() {
+  local pids="$1"
+  local csv
+  csv="$(printf '%s\n' "$pids" | tr ' ' ',' | sed 's/,,*/,/g; s/^,//; s/,$//')"
+  if [ -z "$csv" ]; then
+    return
+  fi
+  echo "Blocking package-manager process details:"
+  ps -ww -o pid=,ppid=,etimes=,stat=,comm=,args= -p "$csv" 2>/dev/null \
+    | sed 's/^/  /' || true
+}
+
+wait_for_package_manager() {
+  local deadline
+  local blockers
+  local pids
+  deadline=$(( $(date +%s) + PACKAGE_MANAGER_WAIT_SECONDS ))
+  while true; do
+    blockers="$(package_manager_processes | xargs echo)"
+    if [ -z "$blockers" ]; then
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "Timed out waiting for existing package-manager process(es) to finish before running this rootfs build: $blockers" >&2
+      return 1
+    fi
+    echo "Waiting for existing package-manager process(es) to finish before running this rootfs build: $blockers"
+    pids="$(package_manager_pids | xargs echo)"
+    describe_package_manager_processes "$pids"
+    append_event "waiting_for_package_manager" "running"
+    sleep 5
+  done
 }
 
 write_status() {
@@ -368,6 +422,13 @@ trap cancel_build TERM INT HUP
 touch "$LOG" "$EVENTS"
 append_event "runner_started" "running"
 write_status "running" "null" "null" "null" "null"
+
+wait_for_package_manager >> "$LOG" 2>&1 || {
+  exit_code="$?"
+  write_status "failed" "$exit_code" "null" '"package manager lock wait failed"' "$(json_string "$(now)")"
+  append_event "finished" "failed"
+  exit "$exit_code"
+}
 
 if command -v setsid >/dev/null 2>&1; then
   setsid /bin/bash "$SCRIPT" >> "$LOG" 2>&1 &
@@ -475,7 +536,7 @@ async function signalRootfsBuildProcess({
     "exec",
     "-i",
     "-u",
-    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+    ROOTFS_BUILD_USER,
     `project-${project_id}`,
     "/bin/bash",
     "-lc",

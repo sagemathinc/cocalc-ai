@@ -4,7 +4,13 @@
   "description": "Install Julia from the official binary tarball.",
   "inputs": {
     "version": { "type": "string", "default": "1.12.6" },
-    "install_prefix": { "type": "string", "default": "/opt/julia" }
+    "install_prefix": { "type": "string", "default": "/opt/julia" },
+    "julia_depot": { "type": "string", "default": "/opt/julia-depot" },
+    "ijulia_version": { "type": "string", "default": "1.34.4" },
+    "kernel_name": { "type": "string", "default": "julia" },
+    "kernel_display_name": { "type": "string", "default": "Julia" },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" }
   },
   "run": { "shell": "bash", "script": "install.sh" },
   "verify": { "shell": "bash", "script": "verify.sh" },

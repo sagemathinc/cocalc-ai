@@ -6,13 +6,21 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 toolchain="${TOOLCHAIN:-leanprover/lean4:stable}"
 prefix="${PREFIX:-/opt/elan}"
 owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
 
 $SUDO apt-get update
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl git zstd
+run_noninteractive apt-get install -y --no-install-recommends ca-certificates curl git zstd
 
 $SUDO mkdir -p "$prefix"
 $SUDO chown -R "$(id -u):$(id -g)" "$prefix"
