@@ -456,12 +456,13 @@ it in v1.
 ## Open Questions
 
 - Should selected-file sends target only students who previously received the
-  assignment by default? Recommendation: yes.
+  assignment by default? Recommendation: yes.  (ANS: by default, but there can be a checkbox)
 - Should skipped existing files count as success or warning? Recommendation:
-  success with a visible skipped count.
+  success with a visible skipped count. (ANS: success)
 - Should the initial full send use `force: true` or safer `force: false`?
   Recommendation: keep existing behavior initially, but clarify copy text. A
   separate follow-up could make first-send safer if historical course workflows
-  allow it.
+  allow it. (ANS: force:true -- it's important for students to get the initial assignment, they have a dedicated project just for this course, and there are a lot of snapshots and backups and timetravel).
 - Should selected-file patch history be visible to students? Recommendation:
-  no for v1; it is instructor/support metadata.
+  no for v1; it is instructor/support metadata.  (ANS: no -- students shouldn't need this, and we don't have any special .student UI at all yet)
+

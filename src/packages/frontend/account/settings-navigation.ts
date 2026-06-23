@@ -68,6 +68,12 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
   },
   {
     type: "page",
+    page: "legacy-migration",
+    overview: "primary",
+    visible: ({ isLite }) => !isLite,
+  },
+  {
+    type: "page",
     page: "usage-limits",
     overview: "primary",
     visible: ({ isLite }) => !isLite,
