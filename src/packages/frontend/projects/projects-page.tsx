@@ -489,14 +489,14 @@ export const ProjectsPage: React.FC = () => {
             background: "white",
             padding: mobileProjectsList ? "8px 8px 0 8px" : "16px 0 0 15px",
             minHeight: 0,
-            overflow: "auto",
+            overflow: mobileProjectsList ? "auto" : "hidden",
             zIndex: 1,
           }}
         >
           <div
             ref={containerRef}
             className={"smc-vfill"}
-            style={{ overflowY: "auto" }}
+            style={{ overflowY: mobileProjectsList ? "auto" : "hidden" }}
           >
             <>
               {emailVerificationRequired ? (

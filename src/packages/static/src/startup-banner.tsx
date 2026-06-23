@@ -24,53 +24,35 @@ export default function StartupBanner() {
   const customize = useCustomize();
 
   return (
-    <div
-      className="cocalc-fade-in"
-      style={{
-        left: 0,
-        top: 0,
-        zIndex: 100,
-        height: "100vh",
-        width: "100vw",
-        position: "fixed",
-        display: "flex",
-        justifyContent: "center" /* horizontally center */,
-        alignItems: "center" /* vertically center */,
-      }}
-    >
-      {customize.logo_rectangular ? (
-        <img style={{ maxWidth: "50%" }} src={customize.logo_rectangular} />
-      ) : (
-        <div
-          style={{
-            backgroundColor: "#4474c0",
-            borderRadius: "5px",
-            padding: "15px",
-            height: "75vh",
-            width: "90%",
-            maxWidth: "300px",
-            maxHeight: "300px",
-            textAlign: "center",
-          }}
-        >
-          <img
-            src={cocalc_circle}
-            className={"cocalc-spin"}
-            style={{
-              height: "70%",
-              maxWidth: "75%",
-            }}
-          />
-          <br />
-          <img
-            src={cocalc_word}
-            style={{
-              height: "30%",
-              width: "100%",
-            }}
-          />
+    <div className="cocalc-startup-shell">
+      <div className="cocalc-startup-card">
+        <div className="cocalc-startup-brand">
+          <div className="cocalc-startup-mark">
+            <div className="cocalc-startup-halo" />
+            <div className="cocalc-startup-orbit" />
+            {customize.logo_rectangular ? (
+              <img
+                alt=""
+                className="cocalc-startup-custom-logo"
+                src={customize.logo_rectangular}
+              />
+            ) : (
+              <img alt="" className="cocalc-startup-logo" src={cocalc_circle} />
+            )}
+          </div>
+          {customize.logo_rectangular ? null : (
+            <img alt="" className="cocalc-startup-wordmark" src={cocalc_word} />
+          )}
         </div>
-      )}
+        <div className="cocalc-startup-progress" aria-hidden="true">
+          <div className="cocalc-startup-progress-bar" />
+        </div>
+        <div className="cocalc-startup-status" aria-live="polite">
+          <span>Connecting...</span>
+          <span>Loading workspace...</span>
+          <span>Starting CoCalc...</span>
+        </div>
+      </div>
     </div>
   );
 }

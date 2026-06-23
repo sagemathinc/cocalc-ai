@@ -1,32 +1,260 @@
-/* From https://stackoverflow.com/questions/17029384/rotating-a-svg-with-css-animation/17031363 */
-
-.cocalc-spin {
-  animation-name: ckw;
-  animation-duration: 20s;
-  animation-iteration-count: infinite;
-  transform-origin: 50% 50%;
-  display: inline-block;
+.cocalc-startup-shell {
+  align-items: center;
+  background:
+    radial-gradient(
+      circle at 35% 28%,
+      rgba(68, 116, 192, 0.18),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 70% 75%,
+      rgba(88, 164, 156, 0.16),
+      transparent 30%
+    ),
+    linear-gradient(135deg, #f7fbff 0%, #eef5fb 48%, #f9faf6 100%);
+  display: flex;
+  height: 100vh;
+  justify-content: center;
+  left: 0;
+  overflow: hidden;
+  position: fixed;
+  top: 0;
+  width: 100vw;
+  z-index: 100;
 }
-@keyframes ckw {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
+
+.cocalc-startup-card {
+  align-items: center;
+  animation: cocalc-card-enter 420ms ease-out both;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(68, 116, 192, 0.16);
+  border-radius: 28px;
+  box-shadow:
+    0 24px 70px rgba(35, 65, 110, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: min(360px, 84vw);
+  padding: 34px 38px 30px;
+  position: relative;
 }
 
-.cocalc-fade-in {
+.cocalc-startup-card::before {
+  animation: cocalc-card-sheen 3.6s ease-in-out infinite;
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.56) 42%,
+    transparent 58%
+  );
+  border-radius: inherit;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-42%);
+}
+
+.cocalc-startup-brand {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.cocalc-startup-mark {
+  align-items: center;
+  display: flex;
+  height: 118px;
+  justify-content: center;
+  position: relative;
+  width: 118px;
+}
+
+.cocalc-startup-halo,
+.cocalc-startup-orbit {
+  border-radius: 999px;
+  position: absolute;
+}
+
+.cocalc-startup-halo {
+  animation: cocalc-halo-breathe 2.4s ease-in-out infinite;
+  background: radial-gradient(
+    circle,
+    rgba(68, 116, 192, 0.18) 0%,
+    rgba(68, 116, 192, 0.1) 38%,
+    transparent 70%
+  );
+  inset: -16px;
+}
+
+.cocalc-startup-orbit {
+  animation: cocalc-orbit-glow 2.1s ease-in-out infinite;
+  border: 1px solid rgba(68, 116, 192, 0.24);
+  box-shadow: 0 0 28px rgba(68, 116, 192, 0.16);
+  inset: 4px;
+}
+
+.cocalc-startup-logo {
+  height: 88px;
+  position: relative;
+  width: 88px;
+  z-index: 1;
+}
+
+.cocalc-startup-custom-logo {
+  max-height: 88px;
+  max-width: min(260px, 62vw);
+  position: relative;
+  z-index: 1;
+}
+
+.cocalc-startup-wordmark {
+  height: 44px;
+  max-width: 210px;
+}
+
+.cocalc-startup-progress {
+  background: rgba(68, 116, 192, 0.1);
+  border-radius: 999px;
+  height: 4px;
+  overflow: hidden;
+  position: relative;
+  width: min(240px, 64vw);
+  z-index: 1;
+}
+
+.cocalc-startup-progress-bar {
+  animation: cocalc-progress-sweep 1.6s ease-in-out infinite;
+  background: linear-gradient(90deg, #4474c0, #58a49c, #4474c0);
+  border-radius: inherit;
+  height: 100%;
+  width: 46%;
+}
+
+.cocalc-startup-status {
+  color: #4f647c;
+  font:
+    500 14px/1.4 system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  height: 20px;
+  letter-spacing: 0.01em;
+  min-width: 190px;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+
+.cocalc-startup-status span {
+  animation: cocalc-status-cycle 4.8s linear infinite;
+  inset: 0;
   opacity: 0;
-  animation-duration: 4s;
-  animation-name: cocalc-fadein;
+  position: absolute;
 }
 
-@keyframes cocalc-fadein {
+.cocalc-startup-status span:nth-child(2) {
+  animation-delay: 1.6s;
+}
+
+.cocalc-startup-status span:nth-child(3) {
+  animation-delay: 3.2s;
+}
+
+@keyframes cocalc-card-enter {
   from {
     opacity: 0;
+    transform: translateY(10px) scale(0.985);
   }
   to {
     opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cocalc-card-sheen {
+  0%,
+  42% {
+    opacity: 0;
+    transform: translateX(-42%);
+  }
+  58% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(42%);
+  }
+}
+
+@keyframes cocalc-halo-breathe {
+  0%,
+  100% {
+    opacity: 0.68;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes cocalc-orbit-glow {
+  0%,
+  100% {
+    opacity: 0.58;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes cocalc-progress-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(230%);
+  }
+}
+
+@keyframes cocalc-status-cycle {
+  0%,
+  9% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  14%,
+  28% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  34%,
+  100% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cocalc-startup-card,
+  .cocalc-startup-card::before,
+  .cocalc-startup-halo,
+  .cocalc-startup-orbit,
+  .cocalc-startup-progress-bar,
+  .cocalc-startup-status span {
+    animation: none;
+  }
+
+  .cocalc-startup-status span:first-child {
+    opacity: 1;
+    transform: none;
   }
 }
