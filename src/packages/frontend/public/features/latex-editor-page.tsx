@@ -320,11 +320,7 @@ export default function LatexEditorFeaturePage({
           ]}
           title="Where LaTeX belongs in the project"
         >
-          <Paragraph style={NO_MARGIN_STYLE}>
-            Use this workflow when the paper depends on code, generated figures,
-            SageTeX, notebooks, terminals, coauthors, and review history in the
-            same workspace.
-          </Paragraph>
+          {null}
         </FeatureFinalBand>
       </PublicSection>
     </Flex>

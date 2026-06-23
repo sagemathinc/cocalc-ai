@@ -46,6 +46,35 @@ Known risks:
 
 ---
 
+### Codex - Restraint/dedup /features/latex item 49 (2026-06-23 05:22 PDT)
+
+- **START 2026-06-23 05:22 PDT:** Continuing the scheduled landing-page
+  improvement loop on live queue item 49 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `750f301a5c`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/latex-editor-page.tsx`, `/features/latex-editor` browser QA,
+  this ledger, and shared queue/turn logs if the slice lands. Route frame:
+  visitor asks whether a paper that depends on code, figures, review history,
+  and computation belongs in CoCalc rather than a dedicated LaTeX editor;
+  promise is keeping the paper beside the work that supports it. Change budget:
+  remove the duplicated closing-band paragraph only, preserving the fit panel,
+  related links, CTAs, SageTeX proof, and accessibility scaffolding.
+- **END 2026-06-23 05:24 PDT:** Landed the item 49 restraint cut for
+  `/features/latex-editor`. Removed the final-band child paragraph that
+  repeated the fit-panel/workspace wedge; preserved the final-band title,
+  action panel, related links, fit panel, SageTeX proof, route CTAs, and
+  accessibility scaffolding. Validation passed: focused LaTeX Jest 6/6,
+  `pnpm -C src lint:frontend`, `pnpm -C src/packages/static build:dev` (known
+  local debug-log EACCES warning only), and `/features/latex-editor` browser QA
+  desktop+mobile 56/56 at `/tmp/cocalc-public-qa-fleBly`; screenshots inspected
+  clean. No protected surfaces, pricing, policy, or compliance copy were
+  touched.
+
 ### Codex - Compliance/legal copy protection item 48 (2026-06-23 03:43 PDT)
 
 - **START 2026-06-23 03:43 PDT:** Continuing the manual landing-page
