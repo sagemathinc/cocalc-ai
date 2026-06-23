@@ -2,8 +2,13 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import * as zlib from "node:zlib";
 import { dirname, join } from "node:path";
 import {
   chmod,
@@ -24,8 +29,10 @@ import {
   type CopyOptions,
   type LroRef,
   type ManagedBackupEgressOverride,
+  type ProjectArchiveRestoreResult,
   type RestoreMode,
   type RestoreStagingHandle,
+  type SignedProjectArchiveDownload,
   type SnapshotRestoreMode,
   type SnapshotUsage,
 } from "@cocalc/conat/files/file-server";
@@ -183,6 +190,10 @@ const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
 const ROOTFS_PUBLISH_TIMEOUT_S = 60 * 60;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const PROJECT_RUSTIC_TIMEOUT_MS = 30 * 60 * 1000;
+const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
+  60 * 60 * 1000,
+  envToInt("COCALC_PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS", 6 * 60 * 60 * 1000),
+);
 const PROJECT_ROOTS_CACHE = join(data, "cache", "project-roots");
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
@@ -3692,6 +3703,407 @@ async function restoreBackup({
   void touchProjectLastEdited(project_id, "restore-backup");
 }
 
+function archiveRestoreTmpRoot(): string {
+  return join(data, "tmp", "legacy-project-restore");
+}
+
+function assertSafeArchivePath(raw: string): void {
+  const value = raw.trim();
+  if (!value || value === ".") return;
+  if (value.includes("\0")) {
+    throw new Error("archive contains a path with a NUL byte");
+  }
+  const slashPath = value.replace(/\\/g, "/");
+  if (slashPath.split("/").includes("..")) {
+    throw new Error(`archive contains a parent-directory path: ${value}`);
+  }
+  const normalized = path.posix.normalize(slashPath);
+  if (path.posix.isAbsolute(value) || path.posix.isAbsolute(normalized)) {
+    throw new Error(`archive contains an absolute path: ${value}`);
+  }
+  const parts = normalized.split("/");
+  if (parts.includes("..")) {
+    throw new Error(`archive contains a parent-directory path: ${value}`);
+  }
+}
+
+function normalizeProjectArchiveMemberPath(raw: string): string {
+  return normalizeArchivePath(raw).replace(/\/+$/, "");
+}
+
+function normalizeProjectArchivePathRoots(
+  paths?: string[],
+): string[] | undefined {
+  const normalized = Array.from(
+    new Set(
+      (paths ?? [])
+        .map((entry) => normalizeProjectArchiveMemberPath(entry))
+        .filter(Boolean),
+    ),
+  );
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function archivePathMatchesRoot(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+function shouldRestoreArchivePath({
+  archivePath,
+  include,
+  exclude,
+}: {
+  archivePath: string;
+  include?: string[];
+  exclude?: string[];
+}): boolean {
+  const normalized = normalizeProjectArchiveMemberPath(archivePath);
+  if (!normalized) return true;
+  if (exclude?.some((root) => archivePathMatchesRoot(normalized, root))) {
+    return false;
+  }
+  if (include == null) return true;
+  return include.some((root) => archivePathMatchesRoot(normalized, root));
+}
+
+function runProjectArchiveTarCommand({
+  archivePath,
+  args,
+  onStdoutLine,
+}: {
+  archivePath: string;
+  args: string[];
+  onStdoutLine?: (line: string) => void;
+}): Promise<{ stderr: string }> {
+  const createZstdDecompress = (zlib as any).createZstdDecompress;
+  return new Promise((resolve, reject) => {
+    const child = spawn("tar", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdin = child.stdin;
+    if (stdin == null) {
+      reject(new Error("tar stdin pipe was not created"));
+      return;
+    }
+    let stdoutBuffer = "";
+    let stderr = "";
+    let settled = false;
+    let inputError: Error | undefined;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGTERM");
+      reject(new Error("tar command timed out"));
+    }, PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS);
+    timeout.unref?.();
+
+    child.stdout.on("data", (chunk) => {
+      if (onStdoutLine == null) return;
+      stdoutBuffer += chunk.toString("utf8");
+      const lines = stdoutBuffer.split(/\r?\n/g);
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        try {
+          onStdoutLine(line);
+        } catch (err) {
+          inputError = err instanceof Error ? err : new Error(`${err}`);
+          child.kill("SIGTERM");
+          return;
+        }
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+      if (stderr.length > 20_000) {
+        stderr = stderr.slice(stderr.length - 20_000);
+      }
+    });
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (stdoutBuffer && onStdoutLine != null && inputError == null) {
+        try {
+          onStdoutLine(stdoutBuffer);
+        } catch (err) {
+          inputError = err instanceof Error ? err : new Error(`${err}`);
+        }
+      }
+      if (code !== 0) {
+        reject(
+          new Error(
+            `tar failed with code ${code ?? "null"} signal ${signal ?? "null"}: ${stderr.trim() || inputError?.message || "unknown error"}`,
+          ),
+        );
+        return;
+      }
+      if (inputError) {
+        reject(inputError);
+        return;
+      }
+      resolve({ stderr });
+    });
+
+    const failInput = (err: unknown) => {
+      if (settled) return;
+      inputError ??= err instanceof Error ? err : new Error(`${err}`);
+      child.kill("SIGTERM");
+    };
+    if (typeof createZstdDecompress !== "function") {
+      failInput(
+        new Error(
+          "Node runtime does not provide zstd decompression for project archive restore",
+        ),
+      );
+      return;
+    }
+    const decompressor = createZstdDecompress();
+    pipeline(createReadStream(archivePath), decompressor, stdin).catch(
+      failInput,
+    );
+  });
+}
+
+function parseTarVerboseLine(
+  line: string,
+): { path: string; size: number } | undefined {
+  const match = line.match(
+    /^\S+\s+\S+\s+(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?\s+(.+)$/,
+  );
+  if (!match) return;
+  const size = Number(match[1]);
+  if (!Number.isFinite(size) || size < 0) return;
+  const name = match[2]
+    .replace(/\s+->\s+.*$/, "")
+    .replace(/\s+link to\s+.*$/, "");
+  return { path: name, size };
+}
+
+async function validateProjectArchiveTar({
+  archivePath,
+  include,
+  exclude,
+  member_list_path,
+  max_uncompressed_bytes,
+}: {
+  archivePath: string;
+  include?: string[];
+  exclude?: string[];
+  member_list_path?: string;
+  max_uncompressed_bytes?: number;
+}): Promise<{ file_count: number; uncompressed_bytes: number }> {
+  let file_count = 0;
+  let uncompressed_bytes = 0;
+  const memberList =
+    member_list_path != null ? createWriteStream(member_list_path) : undefined;
+  const closeMemberList = async () => {
+    if (memberList == null) return;
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: Error) => reject(err);
+      memberList.once("error", onError);
+      memberList.end(() => {
+        memberList.off("error", onError);
+        resolve();
+      });
+    });
+  };
+  try {
+    await runProjectArchiveTarCommand({
+      archivePath,
+      args: ["-tvf", "-"],
+      onStdoutLine: (line) => {
+        const parsed = parseTarVerboseLine(line);
+        if (parsed == null) {
+          if (line.trim()) {
+            throw new Error(`unable to parse tar listing line: ${line}`);
+          }
+          return;
+        }
+        assertSafeArchivePath(parsed.path);
+        if (
+          !shouldRestoreArchivePath({
+            archivePath: parsed.path,
+            include,
+            exclude,
+          })
+        ) {
+          return;
+        }
+        if (parsed.path.trim()) {
+          file_count += 1;
+          memberList?.write(`${parsed.path}\n`);
+        }
+        uncompressed_bytes += parsed.size;
+        if (
+          max_uncompressed_bytes != null &&
+          uncompressed_bytes > max_uncompressed_bytes
+        ) {
+          throw new Error(
+            `legacy project archive is too large for current storage quota (${uncompressed_bytes} > ${max_uncompressed_bytes} bytes)`,
+          );
+        }
+      },
+    });
+  } finally {
+    await closeMemberList();
+  }
+  return { file_count, uncompressed_bytes };
+}
+
+async function extractProjectArchiveTar({
+  archivePath,
+  dest,
+  member_list_path,
+}: {
+  archivePath: string;
+  dest: string;
+  member_list_path?: string;
+}): Promise<void> {
+  const args = [
+    "--delay-directory-restore",
+    "--no-overwrite-dir",
+    "-xf",
+    "-",
+    "-C",
+    dest,
+  ];
+  if (member_list_path != null) {
+    args.push(
+      "--verbatim-files-from",
+      "--no-recursion",
+      "-T",
+      member_list_path,
+    );
+  }
+  await runProjectArchiveTarCommand({
+    archivePath,
+    args,
+  });
+}
+
+async function downloadSignedProjectArchive({
+  download,
+  dest,
+}: {
+  download: SignedProjectArchiveDownload;
+  dest: string;
+}): Promise<{ bytes: number; sha256: string }> {
+  const response = await fetch(download.url, {
+    headers: download.headers ?? {},
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `project archive download failed (${response.status}): ${response.statusText || "unknown error"}`,
+    );
+  }
+  const hash = createHash("sha256");
+  const expectedBytes =
+    typeof download.bytes === "number" && Number.isFinite(download.bytes)
+      ? download.bytes
+      : undefined;
+  let bytes = 0;
+  const monitor = new Transform({
+    transform(chunk: Buffer, _encoding, cb) {
+      bytes += chunk.length;
+      if (expectedBytes != null && bytes > expectedBytes) {
+        cb(new Error("project archive exceeded expected byte count"));
+        return;
+      }
+      hash.update(chunk);
+      cb(null, chunk);
+    },
+  });
+  await pipeline(
+    Readable.fromWeb(response.body as NodeReadableStream),
+    monitor,
+    createWriteStream(dest),
+  );
+  const sha256 = hash.digest("hex");
+  if (expectedBytes != null && bytes !== expectedBytes) {
+    throw new Error(
+      `project archive byte count mismatch: expected ${expectedBytes}, got ${bytes}`,
+    );
+  }
+  const expectedSha256 = `${download.sha256 ?? ""}`.trim().toLowerCase();
+  if (expectedSha256 && sha256 !== expectedSha256) {
+    throw new Error(
+      `project archive sha256 mismatch: expected ${expectedSha256}, got ${sha256}`,
+    );
+  }
+  return { bytes, sha256 };
+}
+
+async function restoreProjectArchive({
+  project_id,
+  download,
+  include_paths,
+  exclude_paths,
+  max_uncompressed_bytes,
+}: {
+  project_id: string;
+  download: SignedProjectArchiveDownload;
+  include_paths?: string[];
+  exclude_paths?: string[];
+  max_uncompressed_bytes?: number;
+}): Promise<ProjectArchiveRestoreResult> {
+  const started = Date.now();
+  await getOrEnsureVolume(project_id);
+  const home = projectMountpoint(project_id);
+  const tmpRoot = archiveRestoreTmpRoot();
+  await mkdir(tmpRoot, { recursive: true });
+  const tmpDir = await mkdtemp(join(tmpRoot, `${project_id}-`));
+  const archivePath = join(tmpDir, "project.tar.zst");
+  try {
+    const downloaded = await downloadSignedProjectArchive({
+      download,
+      dest: archivePath,
+    });
+    const include = normalizeProjectArchivePathRoots(include_paths);
+    const exclude = normalizeProjectArchivePathRoots(exclude_paths);
+    const useSelection = include != null || exclude != null;
+    const member_list_path = useSelection
+      ? join(tmpDir, "selected-members.txt")
+      : undefined;
+    const { file_count, uncompressed_bytes } = await validateProjectArchiveTar({
+      archivePath,
+      include,
+      exclude,
+      member_list_path,
+      max_uncompressed_bytes,
+    });
+    if (useSelection && file_count === 0) {
+      throw new Error("selected archive paths matched no files");
+    }
+    await extractProjectArchiveTar({
+      archivePath,
+      dest: home,
+      member_list_path,
+    });
+    invalidateProjectFsServer(project_id);
+    void touchProjectLastEdited(project_id, "legacy-migration-restore");
+    return {
+      ...downloaded,
+      file_count,
+      uncompressed_bytes,
+      duration_ms: Date.now() - started,
+    };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch((err) => {
+      logger.warn("legacy project archive temp cleanup failed", {
+        project_id,
+        tmpDir,
+        err: `${err}`,
+      });
+    });
+  }
+}
+
 async function beginRestoreStaging({
   project_id,
   home,
@@ -4338,6 +4750,7 @@ export async function initFileServer({
     // backups
     createBackup: reuseInFlight(createBackup),
     restoreBackup: reuseInFlight(restoreBackup),
+    restoreProjectArchive: reuseInFlight(restoreProjectArchive),
     beginRestoreStaging,
     ensureRestoreStaging,
     finalizeRestoreStaging,

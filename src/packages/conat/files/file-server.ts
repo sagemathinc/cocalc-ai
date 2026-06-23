@@ -63,6 +63,23 @@ export interface LroRef {
 export type ManagedProjectEgressOverride = "admin-host-drain";
 export type ManagedBackupEgressOverride = ManagedProjectEgressOverride;
 
+export interface SignedProjectArchiveDownload {
+  url: string;
+  headers?: Record<string, string>;
+  bucket?: string | null;
+  key?: string | null;
+  sha256?: string | null;
+  bytes?: number | null;
+}
+
+export interface ProjectArchiveRestoreResult {
+  bytes: number;
+  sha256: string;
+  file_count: number;
+  uncompressed_bytes?: number;
+  duration_ms: number;
+}
+
 export interface FileTextPreview {
   content: string;
   truncated: boolean;
@@ -146,6 +163,16 @@ export interface Fileserver {
     dest?: string;
     lro?: LroRef;
   }) => Promise<void>;
+  // Download a signed project archive directly on the project host and extract
+  // it into the project home. This keeps large legacy migrations off the hub.
+  restoreProjectArchive: (opts: {
+    project_id: string;
+    download: SignedProjectArchiveDownload;
+    include_paths?: string[];
+    exclude_paths?: string[];
+    max_uncompressed_bytes?: number;
+    lro?: LroRef;
+  }) => Promise<ProjectArchiveRestoreResult>;
   // staged restore helpers (filesystem-specific implementation)
   beginRestoreStaging: (opts: {
     project_id: string;

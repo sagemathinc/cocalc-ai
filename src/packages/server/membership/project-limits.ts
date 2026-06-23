@@ -541,6 +541,70 @@ export async function assertCanIncreaseAccountStorage({
   }
 }
 
+export async function getAccountStorageRemainingBytes({
+  account_id,
+  resolution,
+  fresh = false,
+}: {
+  account_id: string;
+  resolution?: MembershipResolution;
+  fresh?: boolean;
+}): Promise<number | undefined> {
+  const effectiveResolution =
+    resolution ?? (await resolveMembershipForAccount(account_id));
+  const total_storage_soft_bytes =
+    extractTotalStorageSoftBytes(effectiveResolution);
+  const total_storage_hard_bytes =
+    extractTotalStorageHardBytes(effectiveResolution);
+  if (total_storage_soft_bytes == null && total_storage_hard_bytes == null) {
+    return undefined;
+  }
+  const usage = await getMembershipUsageStatusForAccount({
+    account_id,
+    resolution: effectiveResolution,
+    fresh,
+  });
+  const remaining = [
+    usage.total_storage_soft_remaining_bytes,
+    usage.total_storage_hard_remaining_bytes,
+  ].filter((value): value is number => typeof value === "number");
+  if (remaining.length === 0) {
+    return undefined;
+  }
+  return Math.min(...remaining);
+}
+
+export async function assertCanAddAccountStorage({
+  account_id,
+  additional_bytes,
+  resolution,
+  fresh = false,
+  reason = "storage-increasing operation",
+}: {
+  account_id: string;
+  additional_bytes: number;
+  resolution?: MembershipResolution;
+  fresh?: boolean;
+  reason?: string;
+}): Promise<void> {
+  if (!Number.isFinite(additional_bytes) || additional_bytes <= 0) {
+    return;
+  }
+  const remaining = await getAccountStorageRemainingBytes({
+    account_id,
+    resolution,
+    fresh,
+  });
+  if (remaining == null) {
+    return;
+  }
+  if (additional_bytes > remaining) {
+    throw new Error(
+      `${reason} requires ${humanSize(additional_bytes)}, but this account only has ${humanSize(Math.max(0, remaining))} storage remaining; delete data or upgrade membership`,
+    );
+  }
+}
+
 export async function assertProjectOwnerCanIncreaseAccountStorage({
   project_id,
   resolution,

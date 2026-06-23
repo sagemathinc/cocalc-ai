@@ -7,6 +7,10 @@ import getPool from "@cocalc/database/pool";
 import createProject from "@cocalc/server/projects/create";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import {
+  assertCanAddAccountStorage,
+  assertCanIncreaseAccountStorage,
+} from "@cocalc/server/membership/project-limits";
 import type {
   LegacyMigrationImportProjectResult,
   LegacyMigrationImportProjectsOptions,
@@ -80,6 +84,70 @@ function restoreStatusForProject(
   return row.artifact_status === "available" && !!row.artifact_key
     ? "pending"
     : "skipped";
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+function nestedValue(obj: any, path: string[]): unknown {
+  let cur = obj;
+  for (const key of path) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
+export function legacyProjectArchiveUncompressedBytes(
+  manifest: Record<string, any> | null | undefined,
+): number | undefined {
+  if (manifest == null || typeof manifest !== "object") return undefined;
+  const paths = [
+    ["uncompressed_bytes"],
+    ["uncompressed_size_bytes"],
+    ["total_uncompressed_bytes"],
+    ["expanded_bytes"],
+    ["logical_bytes"],
+    ["file_bytes"],
+    ["files_bytes"],
+    ["total_file_bytes"],
+    ["project_size_bytes"],
+    ["project_uncompressed_bytes"],
+    ["archive_uncompressed_bytes"],
+    ["tar_bytes"],
+    ["tar", "bytes"],
+    ["tar", "uncompressed_bytes"],
+    ["archive", "uncompressed_bytes"],
+    ["archive", "tar_bytes"],
+    ["stats", "uncompressed_bytes"],
+    ["stats", "total_file_bytes"],
+  ];
+  for (const path of paths) {
+    const value = positiveInteger(nestedValue(manifest, path));
+    if (value != null) return value;
+  }
+  return undefined;
+}
+
+async function assertLegacyProjectArchiveFitsAccount({
+  account_id,
+  legacy,
+}: {
+  account_id: string;
+  legacy: LegacyProjectRow;
+}): Promise<void> {
+  if (restoreStatusForProject(legacy) !== "pending") return;
+  await assertCanIncreaseAccountStorage({ account_id });
+  const bytes = legacyProjectArchiveUncompressedBytes(legacy.artifact_manifest);
+  if (bytes == null) return;
+  await assertCanAddAccountStorage({
+    account_id,
+    additional_bytes: bytes,
+    fresh: true,
+    reason: `legacy project '${projectTitle(legacy)}' import`,
+  });
 }
 
 function importStatus(row: LegacyProjectRow): LegacyMigrationProjectSummary {
@@ -346,6 +414,15 @@ async function importOneProject({
       error: "legacy project is not available for this account",
     };
   }
+  try {
+    await assertLegacyProjectArchiveFitsAccount({ account_id, legacy });
+  } catch (err) {
+    return {
+      legacy_project_id,
+      status: "failed",
+      error: `${err}`,
+    };
+  }
 
   const pool = getPool();
   const created = await pool.query<{ legacy_project_id: string }>(
@@ -414,6 +491,7 @@ async function importOneProject({
       description: projectDescription(legacy),
       rootfs_image,
       rootfs_image_id,
+      skip_project_count_limit: true,
       start: false,
     });
     const restore_status = restoreStatusForProject(legacy);
