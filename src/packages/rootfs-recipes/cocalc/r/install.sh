@@ -6,13 +6,21 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 cran="${CRAN:-https://cloud.r-project.org}"
 owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
 jupyter_prefix="${JUPYTER_PREFIX:-/opt/cocalc-r-jupyter}"
 
 $SUDO apt-get update
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+run_noninteractive apt-get install -y --no-install-recommends \
   ca-certificates curl gfortran libcurl4-openssl-dev libssl-dev libxml2-dev \
   python3 python3-venv r-base r-base-dev
 

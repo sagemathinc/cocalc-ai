@@ -6,6 +6,14 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 method="${METHOD:-source}"
 version="${VERSION:-10.9}"
 source_url="${SOURCE_URL:-https://github.com/sagemath/sage.git}"
@@ -80,13 +88,13 @@ apt_install_available() {
     fi
   done
   if [ "${#packages[@]}" -gt 0 ]; then
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+    run_noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
   fi
 }
 
 install_apt_sage() {
   $SUDO apt-get update
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${PACKAGES:?packages are required}
+  run_noninteractive apt-get install -y --no-install-recommends ${PACKAGES:?packages are required}
   $SUDO rm -rf /var/lib/apt/lists/*
 }
 

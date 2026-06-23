@@ -155,7 +155,13 @@ describe("rootfs build runner", () => {
         "exec",
         "-i",
         "-u",
-        "2001:2001",
+        "0:0",
+        "-e",
+        "HOME=/root",
+        "-e",
+        "USER=root",
+        "-e",
+        "LOGNAME=root",
         "project-00000000-0000-4000-8000-000000000001",
       ]),
       expect.objectContaining({ detached: true }),
@@ -181,6 +187,8 @@ describe("rootfs build runner", () => {
       fs.readFile(path.join(buildDir, "run.sh"), "utf8"),
     ).resolves.toBe("echo hello\n");
     const runner = await fs.readFile(path.join(buildDir, "runner.sh"), "utf8");
+    expect(runner).toContain("wait_for_package_manager");
+    expect(runner).toContain("waiting_for_package_manager");
     expect(runner).toContain('/bin/bash "$SCRIPT" >> "$LOG" 2>&1');
     await expect(
       fs.readFile(path.join(buildDir, "resolved-recipe.json"), "utf8"),
@@ -367,6 +375,7 @@ describe("rootfs build runner", () => {
     );
     spawnMock.mockImplementation((_cmd: string, args: string[]) => {
       expect(args).toContain("rootfs-build-signal");
+      expect(args).toContain("0:0");
       expect(args).toContain("45678");
       const signalChild = new EventEmitter() as EventEmitter & {
         pid: number;

@@ -6,6 +6,14 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 version="${VERSION:-latest}"
 arch="$(dpkg --print-architecture)"
 case "$arch" in
@@ -14,7 +22,7 @@ case "$arch" in
 esac
 
 $SUDO apt-get update
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+run_noninteractive apt-get install -y --no-install-recommends \
   ca-certificates curl python3
 
 asset_url="$(VERSION="$version" ARCH="$arch" python3 - <<'PY'
@@ -43,6 +51,6 @@ PY
 
 tmp="$(mktemp --suffix=.deb)"
 curl -fsSL "$asset_url" -o "$tmp"
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y "$tmp"
+run_noninteractive apt-get install -y "$tmp"
 rm -f "$tmp"
 $SUDO rm -rf /var/lib/apt/lists/*

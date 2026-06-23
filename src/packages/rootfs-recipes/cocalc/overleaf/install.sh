@@ -6,6 +6,14 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 repo_url="${REPO_URL:-https://github.com/sagemathinc/overleaf}"
 ref="${REF:-main}"
 prefix="${PREFIX:-/opt/overleaf}"
@@ -17,12 +25,12 @@ owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
 
 $SUDO apt-get update
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+run_noninteractive apt-get install -y --no-install-recommends \
   ca-certificates curl git gnupg make sudo
 
 if [ ! -x /usr/bin/node ] || ! /usr/bin/node -e "process.exit(Number(process.versions.node.split('.')[0]) >= Number('$node_major') ? 0 : 1)"; then
   curl -fsSL "https://deb.nodesource.com/setup_${node_major}.x" | $SUDO bash -
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs
+  run_noninteractive apt-get install -y --no-install-recommends nodejs
 fi
 
 npm_bin="/usr/bin/npm"

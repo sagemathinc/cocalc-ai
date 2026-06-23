@@ -7,8 +7,16 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 $SUDO apt-get update
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl python3
+run_noninteractive apt-get install -y --no-install-recommends ca-certificates curl python3
 $SUDO mkdir -p "$prefix"
 $SUDO tee "$prefix/hello-server.py" >/dev/null <<'PY'
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
