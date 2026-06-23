@@ -46,6 +46,34 @@ Known risks:
 
 ---
 
+### Codex - regenerate feature-page vision-critique renders (2026-06-22 18:03 PDT)
+
+- **START 2026-06-22 18:02 PDT:** User relayed Claude's request to verify
+  synthesis preview ownership and regenerate fresh feature-page screenshots for
+  the post-polish vision critique. Verified preview hub pid `27431` is already
+  rooted at `/home/user/cocalc-ai-synthesis/src`; no restart or rebuild needed.
+  Current source HEAD is `22a6c015f1` (`frontend/public: give Linux page middle
+  sections room`). Claimed files: this ledger and shared coordination
+  status/logs only. Routes/render targets: `/features/julia`,
+  `/features/octave`, `/features/r-statistical-software`, `/features/sage`,
+  `/features/more-languages`, `/features/python`, `/features/terminal`,
+  `/features/linux`, `/features/jupyter-notebook`, `/features/latex-editor`,
+  `/features/whiteboard`, `/features/slides`, `/features/automations`, and
+  `/features/ai` at desktop and mobile. Do not touch route source, protected
+  home, pricing/compliance, type/palette gates, pitch/docs content, raw audit
+  findings, or the untracked `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 18:03 PDT:** Fresh feature-page render set regenerated for
+  Claude's vision critique. Browser QA against `https://blaec.cocalc.ai`
+  covered all 14 requested routes at desktop and mobile, passed 580/580
+  assertions, and wrote 28 screenshots plus `results.json` to
+  `/tmp/cocalc-public-qa-CJKOCP`. Preview ownership remains correct: hub pid
+  `27431` is rooted at `/home/user/cocalc-ai-synthesis/src`. No public-site
+  route source changed; the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Next action is Claude's fresh vision design critique against
+  `/tmp/cocalc-public-qa-CJKOCP`; Codex source queue remains drained until a
+  curated result is promoted.
+
 ### Codex - Linux page middle-section breathing room (2026-06-22 17:49 PDT)
 
 - **START 2026-06-22 17:49 PDT:** User flagged the online Linux environment
