@@ -542,9 +542,11 @@ async function inviteUrl({
 }
 
 function isAlreadyCollaboratorError(err: unknown): boolean {
-  return `${(err as any)?.message ?? err ?? ""}`
-    .toLowerCase()
-    .includes("already a collaborator");
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    message.includes("already a collaborator") ||
+    message.includes("already has full project access")
+  );
 }
 
 async function syncProjectUsersOnHostBestEffort(

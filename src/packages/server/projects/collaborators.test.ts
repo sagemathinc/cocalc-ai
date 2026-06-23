@@ -564,6 +564,37 @@ describe("project collaborators local bay access", () => {
     });
   });
 
+  it("treats inviting an existing full-access collaborator as idempotent", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
+      if (sql.includes("AS existing_group")) {
+        return { rows: [{ existing_group: "collaborator" }] };
+      }
+      return { rows: [] };
+    });
+
+    const { inviteCollaborator } = await import("./collaborators");
+    await expect(
+      inviteCollaborator({
+        account_id: ACCOUNT_ID,
+        opts: {
+          account_id: TARGET_ACCOUNT_ID,
+          project_id: PROJECT_ID,
+        },
+      }),
+    ).resolves.toEqual({
+      email_available: true,
+      email_blocked_reason: null,
+      email_sent: false,
+      in_app_notification_sent: false,
+      manual_delivery_required: false,
+    });
+  });
+
   it("rejects email invites from collaborators when owner-only management is enabled", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("AS actor_group")) {
