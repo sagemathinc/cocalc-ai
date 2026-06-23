@@ -19,7 +19,7 @@ export const PROTECTED_SURFACE_OVERRIDES: readonly ProtectedSurfaceOverride[] =
     {
       surface: "home/",
       reason:
-        "Blaec-directed round-4 home H1 override; queue item 34, 2026-06-23",
+        "Blaec-directed home H1 micro-correction; queue item 45, 2026-06-23",
       approvedBy: "Blaec",
     },
   ];

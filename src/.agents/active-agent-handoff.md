@@ -46,6 +46,42 @@ Known risks:
 
 ---
 
+### Codex - HOME H1 micro-correction item 45 (2026-06-23 02:16 PDT)
+
+- **START 2026-06-23 02:16 PDT:** Manual landing-page improvement loop on
+  live queue item 45 in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Current head is `afc65d6afe`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner verified: hub pids `27390` and `27431` are rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `home/app.tsx`, `home/__tests__/app.test.tsx`,
+  `home/__tests__/visual-quality.test.tsx`,
+  `__tests__/protected-overrides.ts`,
+  `scripts/public-site-browser-qa.mjs`, `/` browser QA, this ledger, and
+  shared queue/turn logs if the slice lands. Scope: exactly the
+  Blaec-directed H1 micro-correction from
+  "Your tools, your AI agents, and your team — together in one project." to
+  "Your tools, AI agents, and team — together in one project."; leave the
+  subhead and the rest of home unchanged. Guardrails: no other home edits, no
+  pricing money/compliance, no type/palette edits, no pitch docs, no raw-audit
+  foraging, no dedicated-compute draft.
+- **END 2026-06-23 02:21 PDT:** Item 45 source edit complete. Home H1 now
+  reads exactly "Your tools, AI agents, and team — together in one project.";
+  the subhead and the rest of the home page are unchanged. Updated home app
+  and visual-quality H1 canaries, added an absence canary for the item-34 H1,
+  updated the `/` browser-QA required text, and refreshed the home protected
+  override reason to queue item 45. Validation passed: focused home/protected
+  Jest
+  `public/home/__tests__/app.test.tsx public/home/__tests__/visual-quality.test.tsx public/__tests__/protected-surfaces.test.ts public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+  (15/15); public/features Jest `public/__tests__ public/features/__tests__
+  --runInBand --silent` (196/196); `pnpm -C src tsc`; `pnpm -C src
+  lint:frontend`; `git diff --check`; `pnpm --dir src/packages/static
+  build:dev` (known debug-log EACCES warning only); and `/` browser QA
+  desktop+mobile (34/34) with screenshots in
+  `/tmp/cocalc-public-qa-sQspWR` inspected.
+
 ### Codex - re-freeze theme.ts item 36 (2026-06-23 02:03 PDT)
 
 - **START 2026-06-23 02:03 PDT:** Continuing the manual landing-page

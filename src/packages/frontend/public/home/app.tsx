@@ -515,7 +515,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Your tools, your AI agents, and your team — together in one project.
+            Your tools, AI agents, and team — together in one project.
           </Title>
           <Paragraph
             style={{

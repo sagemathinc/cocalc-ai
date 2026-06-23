@@ -102,9 +102,14 @@ describe("PublicHomeApp", () => {
     const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
     expect(heroHeadings).toHaveLength(1);
     expect(heroHeadings[0]).toHaveTextContent(
-      "Your tools, your AI agents, and your team — together in one project.",
+      "Your tools, AI agents, and team — together in one project.",
     );
     expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
+    expect(
+      within(hero).queryByText(
+        "Your tools, your AI agents, and your team — together in one project.",
+      ),
+    ).toBeNull();
     expect(
       within(hero).queryByText("One shared project for the whole job."),
     ).toBeNull();

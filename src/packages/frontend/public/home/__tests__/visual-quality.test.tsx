@@ -186,7 +186,7 @@ describe("PublicHomeApp visual quality contract", () => {
     const h1 = container.querySelectorAll("h1");
     expect(h1).toHaveLength(1);
     expect(h1[0]).toHaveTextContent(
-      "Your tools, your AI agents, and your team — together in one project.",
+      "Your tools, AI agents, and team — together in one project.",
     );
     expect(textLength(h1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
 
