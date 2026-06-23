@@ -102,9 +102,7 @@
   background: linear-gradient(90deg, #4474c0 0%, #58a49c 50%, #4474c0 100%);
   border-radius: inherit;
   height: 100%;
-  transform: scaleX(0);
-  transform-origin: left center;
-  width: 100%;
+  width: 36%;
   will-change: transform;
 }
 
@@ -164,10 +162,10 @@
 
 @keyframes cocalc-progress-sweep {
   0% {
-    transform: scaleX(0);
+    transform: translateX(0);
   }
   100% {
-    transform: scaleX(1);
+    transform: translateX(178%);
   }
 }
 
@@ -192,7 +190,6 @@
 @media (prefers-reduced-motion: reduce) {
   .cocalc-startup-card,
   .cocalc-startup-halo,
-  .cocalc-startup-progress-bar,
   .cocalc-startup-status span {
     animation: none;
   }
