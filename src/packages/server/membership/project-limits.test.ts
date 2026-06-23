@@ -149,7 +149,7 @@ describe("project membership limits", () => {
   });
 
   it("returns collaborator and pending invite usage for a project", async () => {
-    getProjectUsageAccountIdMock.mockResolvedValue("owner-1");
+    getProjectOwnerAccountIdMock.mockResolvedValue("owner-1");
     resolveMembershipForAccountMock.mockResolvedValue({
       class: "member",
       source: "subscription",
@@ -170,6 +170,39 @@ describe("project membership limits", () => {
       limit: 6,
       remaining: 1,
     });
+  });
+
+  it("checks collaborator limits against project owner, not student usage account", async () => {
+    getProjectOwnerAccountIdMock.mockResolvedValue("instructor-1");
+    getProjectUsageAccountIdMock.mockResolvedValue("student-1");
+    resolveMembershipForAccountMock.mockImplementation(
+      async (account_id: string) => ({
+        class: account_id === "instructor-1" ? "instructor" : "free",
+        source: "membership",
+        entitlements: {},
+        effective_limits: {
+          project_max_collaborators_and_pending_invites:
+            account_id === "instructor-1" ? 250 : 10,
+        },
+      }),
+    );
+    queryMock.mockResolvedValue({
+      rows: [{ collaborators: 10, pending_invites: 2 }],
+    });
+    const { assertProjectCollaboratorInviteLimit } =
+      await import("./project-limits");
+    await expect(
+      assertProjectCollaboratorInviteLimit({
+        project_id: "student-project-1",
+        additional: 1,
+      }),
+    ).resolves.toBeUndefined();
+    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith(
+      "instructor-1",
+    );
+    expect(resolveMembershipForAccountMock).not.toHaveBeenCalledWith(
+      "student-1",
+    );
   });
 
   it("returns student and pending invite usage for a course", async () => {
