@@ -22,6 +22,7 @@ const STUDENT_STATUS_UPDATE_MS = 60 * 1000;
 export class StudentsActions {
   private course_actions: CourseActions;
   private updateInterval?;
+  private acceptedInviteAccountsRepaired = false;
 
   constructor(course_actions: CourseActions) {
     this.course_actions = course_actions;
@@ -207,6 +208,61 @@ export class StudentsActions {
     }
   };
 
+  repairAcceptedInviteAccounts = async (): Promise<void> => {
+    if (this.acceptedInviteAccountsRepaired) {
+      return;
+    }
+    this.acceptedInviteAccountsRepaired = true;
+    const store = this.get_store();
+    const course_project_id = store.get("course_project_id");
+    if (!course_project_id) {
+      return;
+    }
+    const students: { student_id: string; student_project_id: string }[] = [];
+    store.get_students().map((student: StudentRecord, student_id: string) => {
+      if (student.get("account_id") || student.get("deleted")) {
+        return;
+      }
+      const student_project_id = student.get("project_id");
+      if (student_project_id) {
+        students.push({ student_id, student_project_id });
+      }
+    });
+    if (students.length === 0) {
+      return;
+    }
+    try {
+      const rows =
+        await webapp_client.project_collaborators.repair_accepted_course_student_invite_accounts(
+          {
+            course_project_id,
+            students,
+          },
+        );
+      for (const row of rows) {
+        const student = store.get_student(row.student_id);
+        if (student == null || student.get("account_id")) {
+          continue;
+        }
+        this.course_actions.set(
+          {
+            student_id: row.student_id,
+            account_id: row.accepted_account_id,
+            deleted_account: false,
+            table: "students",
+          },
+          false,
+        );
+      }
+      if (rows.length > 0) {
+        this.course_actions.syncdb.commit();
+      }
+    } catch (err) {
+      // Non-fatal; expanded student rows still repair individually.
+      console.warn(`repairAcceptedInviteAccounts: error -- ${err}`);
+    }
+  };
+
   // For every student with a known account_id, verify that their
   // account still exists, and if not, mark it as deleted.  This is rare, but happens
   // despite all attempts otherwise: https://github.com/sagemathinc/cocalc/issues/3243
@@ -248,6 +304,7 @@ export class StudentsActions {
       delete this.updateInterval;
       return;
     }
+    await this.repairAcceptedInviteAccounts();
     await this.lookupNonregisteredStudents();
     await this.updateDeletedAccounts();
   };

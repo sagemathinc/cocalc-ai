@@ -28,6 +28,7 @@ import {
   requestProjectAccess as requestProjectAccessLocal,
   respondEmailProjectInvite as respondEmailProjectInviteLocal,
   removeCollaborator as removeCollaboratorLocal,
+  repairAcceptedCourseStudentInviteAccountsLocal,
   respondCollabInvite as respondCollabInviteLocal,
   respondProjectAccessRequest as respondProjectAccessRequestLocal,
   setProjectUserRole as setProjectUserRoleLocal,
@@ -149,6 +150,8 @@ import type {
   ProjectRootfsPublishConfig,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
+  CourseStudentInviteAccountRepairInput,
+  CourseStudentInviteAccountRepairRow,
   ProjectCollabInviteAction,
   ProjectCollabInviteDirection,
   ProjectCollabInviteStatus,
@@ -2105,6 +2108,109 @@ export async function listCollabInvites({
       projectWide,
     });
   return result.map((invite) => collabInviteFromWire(invite));
+}
+
+export async function repairAcceptedCourseStudentInviteAccounts({
+  account_id,
+  course_project_id,
+  students,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  students: CourseStudentInviteAccountRepairInput[];
+}): Promise<CourseStudentInviteAccountRepairRow[]> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  if (!isValidUUID(course_project_id)) {
+    throw new Error("invalid course_project_id");
+  }
+  if (!Array.isArray(students)) {
+    throw new Error("students must be an array");
+  }
+  await assertCollabAllowRemoteProjectAccess({
+    account_id,
+    project_id: course_project_id,
+  });
+
+  const localStudents: CourseStudentInviteAccountRepairInput[] = [];
+  const remoteStudentsByBay = new Map<
+    string,
+    CourseStudentInviteAccountRepairInput[]
+  >();
+  const seen = new Set<string>();
+  const normalizedStudents: CourseStudentInviteAccountRepairInput[] = [];
+  for (const student of students) {
+    if (
+      !isValidUUID(student?.student_id) ||
+      !isValidUUID(student?.student_project_id)
+    ) {
+      throw new Error("invalid student repair input");
+    }
+    const key = `${student.student_id}:${student.student_project_id}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalizedStudents.push(student);
+  }
+
+  const localOwnershipByProject = new Map<string, string>();
+  const studentProjectIds = [
+    ...new Set(normalizedStudents.map((student) => student.student_project_id)),
+  ];
+  if (studentProjectIds.length > 0) {
+    const { rows } = await getPool().query<{
+      project_id: string;
+      bay_id: string;
+    }>(
+      `SELECT project_id::text, COALESCE(owning_bay_id, $2)::text AS bay_id
+         FROM projects
+        WHERE project_id = ANY($1::uuid[])`,
+      [studentProjectIds, getConfiguredBayId()],
+    );
+    for (const row of rows) {
+      localOwnershipByProject.set(row.project_id, row.bay_id);
+    }
+  }
+
+  for (const student of normalizedStudents) {
+    const bay_id =
+      localOwnershipByProject.get(student.student_project_id) ??
+      (await resolveProjectBay(student.student_project_id))?.bay_id;
+    if (bay_id == null || bay_id === getConfiguredBayId()) {
+      localStudents.push(student);
+      continue;
+    }
+    remoteStudentsByBay.set(bay_id, [
+      ...(remoteStudentsByBay.get(bay_id) ?? []),
+      student,
+    ]);
+  }
+
+  const results: CourseStudentInviteAccountRepairRow[] = [];
+  if (localStudents.length > 0) {
+    results.push(
+      ...(await repairAcceptedCourseStudentInviteAccountsLocal({
+        account_id,
+        course_project_id,
+        students: localStudents,
+        trustedCourseAccess: true,
+      })),
+    );
+  }
+  for (const [bay_id, remoteStudents] of remoteStudentsByBay.entries()) {
+    results.push(
+      ...(await getInterBayBridge()
+        .projectCollabInvite(bay_id)
+        .repairAcceptedCourseStudentInviteAccounts({
+          account_id,
+          course_project_id,
+          students: remoteStudents,
+        })),
+    );
+  }
+  return results;
 }
 
 export async function removeCollaborator({
