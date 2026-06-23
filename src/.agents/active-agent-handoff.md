@@ -73,6 +73,15 @@ Known risks:
   `dedicated-compute-page.tsx` draft were left untouched. Next curated queue
   item is adversarial-fix item 17: Sage factual wording plus education-weight
   cleanup.
+- **POST-PUSH 2026-06-22 20:16 PDT:** Source commit `1fc690df2f`
+  (`frontend/public: fix whiteboard graph node props`) was pushed to
+  `origin/blaec-synthesis-2026-06-18`. After that commit, rebuilt the static
+  preview bundle; it embeds git revision `1fc690df2f50a02f1580c933c4237aaa1ad56da8`.
+  Final post-commit browser QA for `/features/whiteboard` desktop+mobile
+  passed 42/42 with artifacts in `/tmp/cocalc-public-qa-l0ebHH`. Preview hub
+  pid `27431` remains rooted at `/home/user/cocalc-ai-synthesis/src`. This
+  follow-up is coordination-only; no rendered route source changed after the
+  rebuilt preview.
 
 ### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 18:06 PDT)
 
