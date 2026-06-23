@@ -88,6 +88,16 @@ Known risks:
   overlap or obvious layout regression. Next: commit, rebuild so the static
   bundle embeds the new commit, rerun AI browser QA, then push/update handoff
   logs.
+- **POST-COMMIT 2026-06-22 21:51 PDT:** Source/workplan commit
+  `94f47b7599` (`frontend/public: move AI close to final band`) created.
+  Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
+  `COCALC_GIT_REVISION =
+  94f47b7599fe9d7b11ebefad38a7639a23e17109`. Post-commit browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/ai --viewport desktop --viewport mobile` passed 48/48 at
+  `/tmp/cocalc-public-qa-Bvhtf1`. Desktop/mobile screenshots inspected; no
+  overlap or obvious layout regression. Next: push branch and update shared
+  status logs.
 
 ### Codex - teaching final-band polish (2026-06-22 21:22 PDT)
 
