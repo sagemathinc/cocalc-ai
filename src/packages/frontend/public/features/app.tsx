@@ -155,7 +155,7 @@ const FEATURE_META = {
   julia: { accent: FEATURE_ACCENTS.julia, icon: "julia" },
   "latex-editor": { accent: COLORS.YELL_D, icon: "tex" },
   linux: {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    accent: FEATURE_ACCENTS.linux,
     icon: "linux",
   },
   "more-languages": { accent: COLORS.GRAY_D, icon: "code" },

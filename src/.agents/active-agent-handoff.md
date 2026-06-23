@@ -46,6 +46,41 @@ Known risks:
 
 ---
 
+### Codex - Restraint/dedup /features/linux item 50 (2026-06-23 06:01 PDT)
+
+- **START 2026-06-23 06:01 PDT:** Continuing the scheduled landing-page
+  improvement loop on live queue item 50 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `879b3d9945`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/linux-page.tsx`, `features/feature-accents.ts`,
+  `features/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`,
+  `/features/linux` browser QA, this ledger, and shared turn logs if the slice
+  lands. Route frame: visitor asks whether a project Linux environment can be
+  administered, verified, and shared without turning setup into detached
+  operations work. Change budget: dedup the hero lead vs. context list,
+  preserve one co-location/durability carrier in section two, fix the
+  `graphviz version reported` code line so it is not an invalid pasted command,
+  move the Linux accent literals into `FEATURE_ACCENTS.linux`, and remove the
+  duplicate software-install related link. Excluded: Blaec-gated services proof
+  restoration.
+- **END 2026-06-23 06:10 PDT:** Landed the item 50 Linux restraint pass.
+  Replaced the hero lead so it no longer repeats the context list or the
+  unsubstantiated services cue, kept the single project-location carrier in
+  section two, changed the Graphviz output marker into a shell comment, moved
+  Linux page accent literals into `FEATURE_ACCENTS`, trimmed the final related
+  links to three, and added canaries against the removed services wording. No
+  protected home/theme, pricing, policy, or compliance copy was touched.
+  Validation passed before commit: public/features Jest 206/206 including
+  protected surfaces, `pnpm -C src tsc`, `pnpm -C src lint:frontend`, `git diff
+  --check`, `pnpm -C src/packages/static build:dev` (known local debug-log
+  EACCES warning only), and `/features/linux` browser QA desktop+mobile 58/58
+  at `/tmp/cocalc-public-qa-Vl4Jjf`; screenshots inspected clean.
+
 ### Codex - Restraint/dedup /features/latex item 49 (2026-06-23 05:22 PDT)
 
 - **START 2026-06-23 05:22 PDT:** Continuing the scheduled landing-page

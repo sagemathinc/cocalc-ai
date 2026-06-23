@@ -11,6 +11,8 @@ export const FEATURE_ACCENTS = {
   ai: COLORS.AI_ASSISTANT_FONT,
   automations: "#096dd9",
   julia: "#9558b2",
+  linux: "#096dd9",
+  linuxSecondary: "#278c83",
   octave: COLORS.FG_RED,
   teaching: COLORS.RUN,
 } as const;

@@ -459,7 +459,7 @@ const ROUTE_RULES = {
       "A Linux workspace you can actually administer.",
       "Choose the Linux path that fits",
       "Ready to use Linux in CoCalc?",
-      "Install software, run services, and keep the environment reproducible with the project",
+      "Diagnose setup problems, install the missing pieces, and leave a trail the next person can check.",
       "you decide what runs",
       "graphviz version reported",
       "Reusable environments",
@@ -468,6 +468,8 @@ const ROUTE_RULES = {
       "Ask about Linux environments",
       "and running the command",
       "Administer Ubuntu packages",
+      "Install software, run services, and keep the environment reproducible with the project",
+      "Services run beside files",
       "Run services beside the work",
     ],
     requireSelectors: [

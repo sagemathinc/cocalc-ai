@@ -135,7 +135,6 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#ffffff",
   ],
   "latex-editor-page.tsx": ["#ad6800", "#f4f9ff", "#fff8e8", "#ffffff"],
-  "linux-page.tsx": ["#096dd9", "#278c83"],
   "octave-page.tsx": ["#f4f9ff", "#fff7f1", "#ffffff"],
   "python-page.tsx": [
     "#278c83",
@@ -1065,6 +1064,8 @@ describe("PublicFeaturesApp", () => {
     // Mock-UI label stays qualitative, never an invented version string.
     expect(screen.getByText(/graphviz version reported/)).not.toBeNull();
     expect(screen.queryByText("graphviz version 2.43.0")).toBeNull();
+    expect(screen.queryByText(/run services/i)).toBeNull();
+    expect(screen.queryByText("Services run beside files")).toBeNull();
     // Linux-surface-unique leakage ban (root-filesystem implementation talk).
     expect(screen.queryByText(/root filesystem/i)).toBeNull();
   });
