@@ -46,6 +46,34 @@ Known risks:
 
 ---
 
+### Codex - whiteboard TypeScript bug fast-track (2026-06-22 20:11 PDT)
+
+- **START 2026-06-22 20:11 PDT:** Scheduled landing-page improvement loop
+  picked up the promoted adversarial-fix queue item 16 from
+  `/home/user/cocalc-shared/feature-page-adversarial-fix-slice-2026-06-22.md`.
+  Worktree verified as `/home/user/cocalc-ai-synthesis/src` on
+  `blaec-synthesis-2026-06-18` at `c93d635e82`; preview hub pid `27431` is
+  rooted at `/home/user/cocalc-ai-synthesis/src`. Claimed route/file:
+  `/features/whiteboard` and
+  `src/packages/frontend/public/features/whiteboard-page.tsx`, plus this
+  ledger and shared coordination logs. Scope is one correctness fix only:
+  remove the unused/non-typed `highlight` destructure from `GraphNode` and
+  verify with `pnpm -C src tsc`. Do not touch protected home,
+  pricing/compliance, type/palette, pitch/docs content, raw audit findings, or
+  the untracked `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 20:15 PDT:** Whiteboard TypeScript bug fixed as scoped:
+  `GraphNode` no longer destructures the missing/unused `highlight` prop.
+  Validation passed: `pnpm -C src tsc`; focused public feature Jest
+  129/129 with existing Ant Design React `act(...)` warnings; frontend lint
+  (`pnpm -C src lint:frontend`); `pnpm --dir src/packages/static build:dev`;
+  and browser QA for `/features/whiteboard` desktop+mobile 42/42 with screenshots in
+  `/tmp/cocalc-public-qa-8hYZz8`. Screenshots inspected clean; no visible page
+  change intended. Protected home, pricing/compliance, type/palette,
+  pitch/docs content, raw audit findings, and the known untracked
+  `dedicated-compute-page.tsx` draft were left untouched. Next curated queue
+  item is adversarial-fix item 17: Sage factual wording plus education-weight
+  cleanup.
+
 ### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 18:06 PDT)
 
 - **START 2026-06-22 18:06 PDT:** Scheduled landing-page improvement loop

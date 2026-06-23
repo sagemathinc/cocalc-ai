@@ -81,7 +81,6 @@ function WhiteboardMock() {
 
 function GraphNode({
   accent,
-  highlight,
   icon,
   label,
 }: {
