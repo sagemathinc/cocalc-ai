@@ -324,6 +324,102 @@ describe("projects.copyProjectFiles", () => {
     );
   });
 
+  it("queues base-relative cross-host destinations without flattening nested paths", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    getBackupFilesMock.mockResolvedValue([
+      { name: "lesson.ipynb" },
+      { name: "data.csv" },
+    ]);
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: {
+        project_id: "src",
+        base_path: "/root/assignments/hw1/student",
+        path: [
+          "/root/assignments/hw1/student/lesson.ipynb",
+          "/root/assignments/hw1/student/data/data.csv",
+        ],
+      },
+      dests: [{ project_id: "dest", path: "/root/hw1" }],
+      snapshot_id: "snap-existing",
+    });
+
+    expect(result).toEqual({
+      queued: 2,
+      local: 0,
+      snapshot_id: "snap-existing",
+    });
+    expect(upsertMock).toHaveBeenCalledTimes(2);
+    expect(upsertMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        src_path: "assignments/hw1/student/lesson.ipynb",
+        dest_path: "hw1/lesson.ipynb",
+      }),
+    );
+    expect(upsertMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        src_path: "assignments/hw1/student/data/data.csv",
+        dest_path: "hw1/data/data.csv",
+      }),
+    );
+  });
+
+  it("copies base-relative same-host destinations without flattening nested paths", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h1" });
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: {
+        project_id: "src",
+        base_path: "/root/hw1",
+        path: ["/root/hw1/a.txt", "/root/hw1/nested/b.txt"],
+      },
+      dests: [{ project_id: "dest", path: "/root/submitted" }],
+      options: { recursive: true, force: false },
+    });
+
+    expect(result).toEqual({ queued: 0, local: 2, snapshot_id: undefined });
+    expect(cpMock).toHaveBeenCalledTimes(2);
+    expect(cpMock).toHaveBeenNthCalledWith(1, {
+      src: { project_id: "src", path: "/root/hw1/a.txt" },
+      dest: { project_id: "dest", path: "submitted/a.txt" },
+      options: { recursive: true, force: false },
+    });
+    expect(cpMock).toHaveBeenNthCalledWith(2, {
+      src: { project_id: "src", path: "/root/hw1/nested/b.txt" },
+      dest: { project_id: "dest", path: "submitted/nested/b.txt" },
+      options: { recursive: true, force: false },
+    });
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(createBackupMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects base-relative copies outside the declared base path", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    const { copyProjectFiles } = await import("./copy");
+    await expect(
+      copyProjectFiles({
+        account_id: "acct",
+        timeout_ms: 0,
+        src: {
+          project_id: "src",
+          base_path: "/root/hw1",
+          path: ["/root/hw2/a.txt"],
+        },
+        dests: [{ project_id: "dest", path: "/root/out" }],
+      }),
+    ).rejects.toThrow("src.path must be inside src.base_path");
+
+    expect(cpMock).not.toHaveBeenCalled();
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(createBackupMock).not.toHaveBeenCalled();
+  });
+
   it("uses src_home to normalize absolute source paths instead of hardcoding /root", async () => {
     queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
     getBackupFilesMock.mockResolvedValue([{ name: "x.py" }]);

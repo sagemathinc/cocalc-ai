@@ -27,7 +27,11 @@ import type {
 export const PARALLEL_DEFAULT = 5;
 export const MAX_COPY_PARALLEL = 25;
 
-import { AssignmentCopyStep, AssignmentStatus } from "./types";
+import {
+  AssignmentCopyStep,
+  AssignmentStatus,
+  type AssignmentUpdateRecord,
+} from "./types";
 
 import { NotebookScores } from "../jupyter/nbgrader/autograde";
 
@@ -88,6 +92,7 @@ export type AssignmentRecord = TypedMap<{
   last_peer_assignment?: { [student_id: string]: LastCopyInfo };
   last_peer_collect?: { [student_id: string]: LastCopyInfo };
   last_return_graded?: { [student_id: string]: LastCopyInfo };
+  assignment_updates?: { [update_id: string]: AssignmentUpdateRecord };
 
   skip_assignment: boolean;
   skip_collect: boolean;

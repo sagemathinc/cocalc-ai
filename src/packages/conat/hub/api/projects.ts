@@ -73,6 +73,12 @@ export interface ProjectCopyDestination {
   };
 }
 
+export interface ProjectCopySource {
+  project_id: string;
+  path: string | string[];
+  base_path?: string;
+}
+
 export interface CourseCollectAssignmentItem {
   student_id: string;
   student_project_id: string;
@@ -90,6 +96,13 @@ export interface CourseCollectAssignmentResult {
   service: string;
   stream_name: string;
 }
+
+export interface CourseAssignmentPatchDestination {
+  student_id: string;
+  student_project_id: string;
+}
+
+export type CourseAssignmentPatchResult = CourseCollectAssignmentResult;
 
 export interface BackupFindResult {
   id: string;
@@ -718,6 +731,7 @@ export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
   collectAssignment: authFirstRequireAccount,
+  sendCourseAssignmentPatch: authFirstRequireAccount,
   inspectPublicPath: authFirstRequireAccount,
   importPublicUrl: authFirstRequireAccount,
   importPublicPath: authFirstRequireAccount,
@@ -855,7 +869,7 @@ export interface Projects {
   createProject: (opts: CreateProjectOptions) => Promise<string>;
 
   copyPathBetweenProjects: (opts: {
-    src: { project_id: string; path: string | string[] };
+    src: ProjectCopySource;
     src_home?: string;
     dest?: ProjectCopyDestination;
     dests?: ProjectCopyDestination[];
@@ -876,6 +890,17 @@ export interface Projects {
     options?: CopyOptions;
     run_at?: string;
   }) => Promise<CourseCollectAssignmentResult>;
+
+  sendCourseAssignmentPatch: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    assignment_id: string;
+    src_base_path: string;
+    dest_base_path: string;
+    relative_paths: string[];
+    dests: CourseAssignmentPatchDestination[];
+    options?: CopyOptions;
+  }) => Promise<CourseAssignmentPatchResult>;
 
   inspectPublicPath: (opts: {
     account_id?: string;

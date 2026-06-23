@@ -512,6 +512,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.sendCourseAssignmentPatch": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "course collaborator-authorized selected assignment file distribution",
+  },
   "projects.repairAcceptedCourseStudentInviteAccounts": {
     decision: "fresh-auth-not-required",
     reason:

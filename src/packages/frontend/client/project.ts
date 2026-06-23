@@ -51,6 +51,8 @@ import { throttle } from "lodash";
 import { type ProjectApi } from "@cocalc/conat/project/api";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import type {
+  CourseAssignmentPatchDestination,
+  CourseAssignmentPatchResult,
   CourseCollectAssignmentItem,
   CourseCollectAssignmentResult,
   ProjectCopyDestination,
@@ -138,7 +140,7 @@ export class ProjectClient {
   };
 
   copyPathBetweenProjects = async (opts: {
-    src: { project_id: string; path: string | string[] };
+    src: { project_id: string; path: string | string[]; base_path?: string };
     src_home?: string;
     dest?: ProjectCopyDestination;
     dests?: ProjectCopyDestination[];
@@ -169,6 +171,20 @@ export class ProjectClient {
     run_at?: string;
   }): Promise<CourseCollectAssignmentResult> => {
     return await this.client.conat_client.hub.projects.collectAssignment(opts);
+  };
+
+  sendCourseAssignmentPatch = async (opts: {
+    course_project_id: string;
+    assignment_id: string;
+    src_base_path: string;
+    dest_base_path: string;
+    relative_paths: string[];
+    dests: CourseAssignmentPatchDestination[];
+    options?: CopyOptions;
+  }): Promise<CourseAssignmentPatchResult> => {
+    return await this.client.conat_client.hub.projects.sendCourseAssignmentPatch(
+      opts,
+    );
   };
 
   websocket = async (project_id: string): Promise<any> => {

@@ -31,10 +31,19 @@ type CopyStep = {
 
 type CopyProgress = (update: CopyStep) => void;
 
-type CopySource = { project_id: string; path: string | string[] };
+type CopySource = {
+  project_id: string;
+  path: string | string[];
+  base_path?: string;
+};
 type CopyDest = { project_id: string; path: string };
 type CopyDestWithHost = CopyDest & { host_id: string };
 type QueueMode = "upsert" | "insert";
+type SourcePlan = {
+  srcPath: string;
+  backupSrcPath: string;
+  relativePath?: string;
+};
 
 export const COPY_CANCELED_CODE = "copy-canceled";
 
@@ -116,6 +125,53 @@ function normalizeSrcPaths(src: CopySource): string[] {
     normalizeCopyPath(p, `src.path[${idx}]`),
   );
   return normalized;
+}
+
+function canonicalRelativeAnchor(raw: string): string {
+  if (raw === "/") return "/";
+  return raw.replace(/\/+$/, "");
+}
+
+function relativePathUnderBase({
+  basePath,
+  srcPath,
+}: {
+  basePath: string;
+  srcPath: string;
+}): string {
+  const base = canonicalRelativeAnchor(basePath);
+  const source = canonicalRelativeAnchor(srcPath);
+  const relative = base
+    ? path.posix.relative(base, source)
+    : source.replace(/^\/+/, "");
+  if (!relative || relative === ".") {
+    throw new Error("src.path must be inside src.base_path, not equal to it");
+  }
+  if (relative === ".." || relative.startsWith("../")) {
+    throw new Error("src.path must be inside src.base_path");
+  }
+  if (path.posix.isAbsolute(relative)) {
+    throw new Error("src.path must use the same path form as src.base_path");
+  }
+  return normalizeCopyPath(relative, "src.path relative to src.base_path");
+}
+
+function buildSourcePlans({
+  srcPaths,
+  backupSrcPaths,
+  basePath,
+}: {
+  srcPaths: string[];
+  backupSrcPaths: string[];
+  basePath?: string;
+}): SourcePlan[] {
+  return srcPaths.map((srcPath, idx) => ({
+    srcPath,
+    backupSrcPath: backupSrcPaths[idx],
+    ...(basePath != null
+      ? { relativePath: relativePathUnderBase({ basePath, srcPath }) }
+      : {}),
+  }));
 }
 
 function viewerCopyDenied(path: string): NodeJS.ErrnoException {
@@ -568,6 +624,10 @@ export async function copyProjectFiles({
 
   const srcPaths = normalizeSrcPaths(src);
   const normalizedSrcHome = normalizeHomePath(src_home);
+  const normalizedBasePath =
+    src.base_path != null
+      ? normalizeCopyPath(src.base_path, "src.base_path")
+      : undefined;
   if (srcPaths.length > 1 && srcPaths.some((p) => !p)) {
     throw new Error("empty src path not allowed when copying multiple paths");
   }
@@ -583,9 +643,15 @@ export async function copyProjectFiles({
       "empty backup source path not allowed when copying multiple paths",
     );
   }
+  const sourcePlans = buildSourcePlans({
+    srcPaths,
+    backupSrcPaths,
+    basePath: normalizedBasePath,
+  });
   const normalizedSrc: CopySource = {
     project_id: src.project_id,
     path: Array.isArray(src.path) ? srcPaths : srcPaths[0],
+    ...(normalizedBasePath != null ? { base_path: normalizedBasePath } : {}),
   };
   if (shouldAbort && (await shouldAbort())) {
     throw copyCanceledError();
@@ -747,18 +813,20 @@ export async function copyProjectFiles({
         if (shouldAbort && (await shouldAbort())) {
           throw copyCanceledError();
         }
-        if (srcPaths.length > 1) {
-          for (const srcPath of backupSrcPaths) {
-            const base = path.posix.basename(srcPath);
+        if (normalizedBasePath != null || srcPaths.length > 1) {
+          for (const sourcePlan of sourcePlans) {
+            const destLeaf =
+              sourcePlan.relativePath ??
+              path.posix.basename(sourcePlan.backupSrcPath);
             const destPath = normalizeCopyPath(
-              path.posix.join(dest.path, base),
+              path.posix.join(dest.path, destLeaf),
               "dest.path",
             );
             const inserted =
               queue_mode === "insert"
                 ? await insertCopyRowIfMissing({
                     src_project_id: src.project_id,
-                    src_path: srcPath,
+                    src_path: sourcePlan.backupSrcPath,
                     dest_project_id: dest.project_id,
                     dest_path: destPath,
                     op_id,
@@ -768,7 +836,7 @@ export async function copyProjectFiles({
                   })
                 : await upsertCopyRow({
                     src_project_id: src.project_id,
-                    src_path: srcPath,
+                    src_path: sourcePlan.backupSrcPath,
                     dest_project_id: dest.project_id,
                     dest_path: destPath,
                     op_id,
@@ -860,8 +928,25 @@ export async function copyProjectFiles({
     });
     const client = srcProjectClient;
     for (const dest of localDests) {
-      await client.cp({ src: normalizedSrc, dest, options });
-      localCount += srcPaths.length;
+      if (normalizedBasePath == null) {
+        await client.cp({ src: normalizedSrc, dest, options });
+        localCount += srcPaths.length;
+        continue;
+      }
+      for (const sourcePlan of sourcePlans) {
+        await client.cp({
+          src: { project_id: src.project_id, path: sourcePlan.srcPath },
+          dest: {
+            project_id: dest.project_id,
+            path: normalizeDestPath(
+              path.posix.join(dest.path, sourcePlan.relativePath!),
+              "dest.path",
+            ),
+          },
+          options,
+        });
+        localCount += 1;
+      }
     }
   }
 
