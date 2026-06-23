@@ -286,6 +286,76 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "deletion_protection"])).toBe(true);
   });
 
+  it("reconciles hidden projected rows for already-known projects", async () => {
+    projectMap = ImmutableMap<string, any>([
+      [
+        "project-hidden",
+        ImmutableMap({
+          project_id: "project-hidden",
+          title: "Hidden Course Project",
+          state: ImmutableMap({
+            state: "starting",
+            time: new Date("2026-04-05T03:01:00.000Z"),
+          }),
+        }),
+      ],
+    ]);
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: "project-hidden",
+            title: "Hidden Course Project",
+            description: "targeted hidden reconcile",
+            theme: null,
+            host_id: "host-1",
+            owning_bay_id: "bay-0",
+            users_summary: {
+              "acct-1": { group: "owner", hide: true },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            last_edited: "2026-04-05T03:00:00.000Z",
+            last_backup: null,
+            updated_at: "2026-04-05T03:00:00.000Z",
+            is_hidden: true,
+          },
+        ],
+      },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    await actions.repairProjectProjection({
+      kind: "project-ids",
+      project_ids: ["project-hidden"],
+      reason: "project-start",
+    });
+
+    expect(projectMap.getIn(["project-hidden", "state", "state"])).toBe(
+      "running",
+    );
+    expect(
+      projectMap.getIn(["project-hidden", "users", "acct-1", "hide"]),
+    ).toBe(true);
+  });
+
   it("repairs visible project window rows from explicit project ids", async () => {
     mockedWebappClient.async_query.mockResolvedValueOnce({
       query: {
