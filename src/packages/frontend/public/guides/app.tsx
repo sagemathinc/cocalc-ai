@@ -133,7 +133,7 @@ const GUIDE_GROUPS = [
       },
     ],
     intro:
-      "Guides for papers, notebooks, code-backed figures, and long-running research work.",
+      "Papers, notebooks, code-backed figures, and long-running research work.",
     title: "Research and writing",
   },
   {
@@ -164,7 +164,7 @@ const GUIDE_GROUPS = [
       },
     ],
     intro:
-      "Guides for software setup, Git workflows, agent review, and repeatable project environments.",
+      "Software setup, Git workflows, agent review, and repeatable project environments.",
     title: "Runtime and code",
   },
   {
@@ -201,7 +201,7 @@ const GUIDE_GROUPS = [
       },
     ],
     intro:
-      "Guides for self-hosting, local evaluation, durable collaborative projects, and architecture.",
+      "Self-hosting, local evaluation, durable collaborative projects, and architecture.",
     title: "Operating paths",
   },
 ] satisfies {
@@ -267,8 +267,8 @@ function GuideDirectory() {
                 <Paragraph
                   style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}
                 >
-                  Start with the workflow you are evaluating. Open the full
-                  guide library when you want the complete illustrated set.
+                  Pick the task that matches the work in front of you. The full
+                  guide library has the longer illustrated walkthroughs.
                 </Paragraph>
                 <Flex gap={10} wrap>
                   <Button
@@ -364,8 +364,8 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
           }
           subtitle={
             <>
-              Hands-on walkthroughs of each workflow, end to end in one durable
-              project.
+              Plan setup, notebooks, terminals, code review, and deployment
+              paths around durable CoCalc projects.
             </>
           }
           title="Guides"

@@ -440,7 +440,7 @@ function HostedPlansFallback({
     ? `No ${intervalLabel} hosted plan prices are published here yet.`
     : "Hosted plan prices are not published here yet.";
   const description = hasPublicTiers
-    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare operating models or talk with CoCalc about hosted memberships and organizational buying."
+    ? "The available hosted plans do not include pricing for the selected billing interval yet. Compare operating models or talk with CoCalc about hosted memberships and organizational buying."
     : "Hosted memberships are the managed CoCalc.ai account path. Compare operating models for hosted, local, and customer-operated choices, or talk with CoCalc about memberships, site licensing, and quotes.";
 
   return (
@@ -512,7 +512,13 @@ export default function PricingPage({
           <Title level={2} style={{ margin: 0 }}>
             Hosted CoCalc.ai plans
           </Title>
-          <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+          <Paragraph
+            style={{
+              fontSize: PUBLIC_TYPE.lead,
+              margin: 0,
+              maxWidth: "70ch",
+            }}
+          >
             Hosted CoCalc.ai plans let teams share projects, review work
             together in real time, recover context with TimeTravel, and keep
             building — hosted and operated by CoCalc, with no infrastructure to
@@ -573,7 +579,7 @@ export default function PricingPage({
         <Title level={2} style={{ margin: 0 }}>
           Buying paths for groups and deployments
         </Title>
-        <Paragraph style={{ margin: 0 }}>
+        <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
           For teams, courses, labs, and institutions, pricing is usually two
           decisions: where CoCalc runs, and what purchasing or support wrapper
           the group needs.

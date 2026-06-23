@@ -94,8 +94,9 @@ function AutomationProjectFit() {
             <Paragraph style={{ margin: 0 }}>
               A useful automation in CoCalc leaves a project in a better state:
               refreshed data, rebuilt notebooks, updated reports, or generated
-              files teammates can inspect. The API can drive it; this page is
-              about the recurring project tasks you want to make reliable.
+              files teammates can inspect. Use the API or CLI to trigger the
+              run, while CoCalc keeps the task attached to the files, software,
+              outputs, and review path.
             </Paragraph>
           </Flex>
         </Col>

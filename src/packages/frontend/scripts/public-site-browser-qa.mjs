@@ -603,7 +603,7 @@ const ROUTE_RULES = {
   },
   "/guides": {
     requireText: [
-      "Hands-on walkthroughs of each workflow, end to end in one durable project",
+      "Plan setup, notebooks, terminals, code review, and deployment paths around durable CoCalc projects",
       "Operating paths",
       "Find the guide by task",
       "Codex agent chat",

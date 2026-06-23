@@ -329,7 +329,10 @@ function PoliciesHome({ config }: { config: PublicConfig }) {
         <PublicGrid columns={3}>
           {POLICY_EVALUATION_LINKS.map((item) => (
             <PublicCard href={item.href} key={item.href} title={item.title}>
-              <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+              <Flex vertical gap={8}>
+                <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+                <Text strong>{item.label}</Text>
+              </Flex>
             </PublicCard>
           ))}
         </PublicGrid>

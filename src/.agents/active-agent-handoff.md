@@ -46,6 +46,48 @@ Known risks:
 
 ---
 
+### Codex - round-2 copy batch D (2026-06-23 00:21 PDT)
+
+- **START 2026-06-23 00:05 PDT:** Continuing the scheduled landing-page
+  improvement loop on Round-2 item 25 Batch D content/copy in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Current
+  head is `77b734e410`, matching `origin/blaec-synthesis-2026-06-18`; only the
+  known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  present. Claimed files/routes: `about/team-data.ts`, `news/app.tsx`,
+  `policies/app.tsx`, `pricing/page.tsx`, `features/automations-page.tsx`,
+  `guides/app.tsx`, focused public/feature canaries, browser-QA route canaries,
+  this ledger, and shared coordination logs if the slice completes. Scope:
+  de-puff promoted team bio copy; render-or-delete dead public data fields;
+  make `/news` list cards excerpts with a loading state; cap pricing lead and
+  buying-path intro copy while removing the public fallback phrase "in this
+  environment"; trim automations/guides self-referential meta copy. Guardrails:
+  no home edits, no pricing money/compliance changes, no type/palette 2e, no
+  pitch docs, no raw-audit foraging outside this batch, no
+  LaTeX/dedicated-compute draft.
+- **END 2026-06-23 00:21 PDT:** Round-2 item 25 Batch D source edit complete.
+  William's top bio now uses the concrete role wording; Harald's promoted
+  puffery and back-end overreach were replaced with front-end/UI, Linux ops,
+  deployment infrastructure, and SageMath contributor language; unused
+  `summary`, `role`, `personal`, `position`, and `positionTimeframe` profile
+  fields were deleted. Policy evaluation cards now render their `label` text.
+  `/news` list cards now render bounded text excerpts and a loading state while
+  fetching. Pricing lead and buying-path intro copy are capped at 70ch, and the
+  fallback no longer says "in this environment." Automations and guides
+  self-referential meta copy was tightened, with the `/guides` browser-QA
+  canary updated. Validation passed: focused Jest
+  `public/__tests__/app.test.tsx public/features/__tests__/app.test.tsx public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+  (179/179); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
+  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+  debug-log permission warning; and browser QA for `/guides`, `/about`,
+  `/about/team/william-stein`, `/about/team/harald-schilly`, `/news`,
+  `/policies`, `/pricing`, and `/features/automations` desktop+mobile passed
+  246/246 at `/tmp/cocalc-public-qa-SmcuGp`. Screenshots inspected clean. Next:
+  commit, rebuild post-commit so the static bundle embeds the new revision,
+  rerun browser QA, push, then update shared logs/status.
+
+---
+
 ### Codex - round-2 education-secondary batch C (2026-06-22 23:53 PDT)
 
 - **START 2026-06-22 23:53 PDT:** Continuing the scheduled landing-page

@@ -30,12 +30,21 @@ import { publicPath } from "../routes";
 import type { PublicNewsRoute } from "./routes";
 import { contentNewsPath, formatNewsDate, newsHistoryPath } from "./utils";
 import { PublicGrid, PublicSection } from "../layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "../theme";
+import { PUBLIC_COLORS } from "../theme";
 
 const StaticMarkdown = lazy(
   () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
 );
 const { Paragraph, Text, Title } = Typography;
+
+const NEWS_EXCERPT_MAX_CHARS = 220;
+const NEWS_EXCERPT_STYLE = {
+  display: "-webkit-box",
+  margin: 0,
+  overflow: "hidden",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 4,
+} as const;
 
 const NEWS_PAGE_CSS = `
   .cocalc-news-markdown a {
@@ -71,19 +80,12 @@ interface NewsDetailPayload {
 
 type PublicNewsDetailRoute = Exclude<PublicNewsRoute, { view: "news" }>;
 
-function NewsMarkdown({
-  preview,
-  value,
-}: {
-  preview?: boolean;
-  value: string;
-}) {
+function NewsMarkdown({ value }: { value: string }) {
   return (
     <div className="cocalc-news-markdown">
       <Suspense fallback={<div>Loading content…</div>}>
         <StaticMarkdown
           style={{
-            fontSize: preview ? PUBLIC_TYPE.body : undefined,
             overflowX: "auto",
           }}
           value={value}
@@ -91,6 +93,31 @@ function NewsMarkdown({
       </Suspense>
     </div>
   );
+}
+
+function truncateAtWord(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+
+  const candidate = value.slice(0, maxLength).trimEnd();
+  const wordBreak = candidate.lastIndexOf(" ");
+  const truncated =
+    wordBreak > Math.floor(maxLength * 0.6)
+      ? candidate.slice(0, wordBreak)
+      : candidate;
+  return `${truncated.trimEnd()}...`;
+}
+
+function newsExcerpt(markdown: string): string {
+  const text = markdown
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}[-*+]\s+/gm, "")
+    .replace(/[`*_~>#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return truncateAtWord(text, NEWS_EXCERPT_MAX_CHARS);
 }
 
 function NewsCard({ item }: { item: NewsItem }) {
@@ -103,7 +130,7 @@ function NewsCard({ item }: { item: NewsItem }) {
       <Title level={2} style={{ margin: 0 }}>
         {item.title}
       </Title>
-      <NewsMarkdown preview value={item.text} />
+      <Paragraph style={NEWS_EXCERPT_STYLE}>{newsExcerpt(item.text)}</Paragraph>
       {item.tags?.length ? (
         <Flex gap={8} wrap>
           {item.tags.map((tag) => (
@@ -183,7 +210,9 @@ function NewsListPage({ isAdmin }: { isAdmin?: boolean }) {
         ]}
         value={channel}
       />
-      {!loading && visible.length === 0 ? (
+      {loading ? (
+        <LoadingSection label="Loading news…" />
+      ) : visible.length === 0 ? (
         <EmptySection label="No news items match the selected filter." />
       ) : (
         <PublicGrid columns={3}>

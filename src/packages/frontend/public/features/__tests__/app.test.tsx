@@ -1255,6 +1255,12 @@ describe("PublicFeaturesApp", () => {
         expect(screen.queryByText(/sage: factor/)).toBeNull();
         expect(screen.queryByText(/sage: plot/)).toBeNull();
       }
+      if (slug === "automations") {
+        expect(
+          screen.getByText(/Use the API or CLI to trigger/),
+        ).not.toBeNull();
+        expect(screen.queryByText(/this page is about/i)).toBeNull();
+      }
     },
   );
 

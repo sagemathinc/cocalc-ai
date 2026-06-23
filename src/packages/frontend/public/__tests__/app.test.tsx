@@ -614,7 +614,9 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Hosted CoCalc.ai plans" }),
     ).not.toBeNull();
-    expect(screen.getByText(/hosted and operated by CoCalc/i)).not.toBeNull();
+    expect(screen.getByText(/hosted and operated by CoCalc/i)).toHaveStyle({
+      maxWidth: "70ch",
+    });
     expect(screen.queryByText(/operated by us/i)).toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
@@ -666,6 +668,9 @@ describe("PublicApp", () => {
         name: "Buying paths for groups and deployments",
       }),
     ).not.toBeNull();
+    expect(screen.getByText(/pricing is usually two decisions/i)).toHaveStyle({
+      maxWidth: "70ch",
+    });
     expect(
       screen.getByRole("link", { name: "Review trust materials" }),
     ).toHaveAttribute("href", "/policies/trust");
@@ -767,6 +772,7 @@ describe("PublicApp", () => {
     expect(
       screen.queryByText(/No public hosted plans are currently configured/i),
     ).toBeNull();
+    expect(screen.queryByText(/in this environment/i)).toBeNull();
     expect(
       screen.queryByText(/membership tiers are currently configured/i),
     ).toBeNull();
@@ -828,11 +834,35 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Continue the evaluation")).not.toBeNull();
     expect(
-      screen.getByText("Ask about policy review").closest("a"),
-    ).toHaveAttribute(
-      "href",
-      expect.stringContaining("context=policy-evidence-review"),
-    );
+      screen
+        .getAllByText("Compare operating models")
+        .some(
+          (element) =>
+            element.tagName.toLowerCase() === "strong" &&
+            element.closest("a")?.getAttribute("href") === "/products",
+        ),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByText("Review pricing")
+        .some(
+          (element) =>
+            element.tagName.toLowerCase() === "strong" &&
+            element.closest("a")?.getAttribute("href") === "/pricing",
+        ),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByText("Ask about policy review")
+        .some(
+          (element) =>
+            element.tagName.toLowerCase() === "strong" &&
+            element
+              .closest("a")
+              ?.getAttribute("href")
+              ?.includes("context=policy-evidence-review"),
+        ),
+    ).toBe(true);
     expect(screen.getByText("Terms of Service")).not.toBeNull();
     expect(screen.getByText("Privacy Policy")).not.toBeNull();
     expect(screen.getByText("Trust and Compliance")).not.toBeNull();
@@ -897,6 +927,10 @@ describe("PublicApp", () => {
 
     expect(screen.getByText("William Stein, Founder and CEO")).not.toBeNull();
     expect(screen.getByText("Harald Schilly, CTO")).not.toBeNull();
+    expect(screen.queryByText(/life-long dedication/i)).toBeNull();
+    expect(
+      screen.getByText(/Harald is CoCalc's CTO and a long-time SageMath/i),
+    ).not.toBeNull();
   });
 
   it("renders an individual team profile", async () => {
@@ -915,9 +949,10 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByText(
-        /William is both the CEO and a lead software developer for both the front and back end of CoCalc/i,
+        /William is both the CEO and a lead software developer across the front and back end of CoCalc/i,
       ),
     ).not.toBeNull();
+    expect(screen.queryByText(/at the helm/i)).toBeNull();
     expect(screen.getByText("Previous Experience")).not.toBeNull();
     expect(screen.queryByText("Back to team")).toBeNull();
     expect(screen.queryByText("TEAM")).toBeNull();
@@ -1208,10 +1243,11 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(await screen.findByText("Launchpad update")).not.toBeNull();
     expect(screen.getByLabelText("Filter news by channel")).not.toBeNull();
+    expect(screen.queryByText(/Loading news/)).toBeNull();
     expect(screen.getByText("#launchpad")).not.toBeNull();
   });
 
-  it("renders rich markdown in public news cards", async () => {
+  it("renders bounded excerpts in public news cards", async () => {
     const initialNews: NewsItem[] = [
       {
         channel: "feature",
@@ -1240,10 +1276,25 @@ describe("PublicApp", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("img", { name: "Image" })).not.toBeNull(),
+      expect(screen.getByText("Markdown update")).not.toBeNull(),
     );
-    expect(screen.getByText("foo")).not.toBeNull();
-    expect(screen.getByText("bar")).not.toBeNull();
+    expect(screen.getByText(/This is a test\. foo bar/)).not.toBeNull();
+    expect(screen.queryByRole("img", { name: "Image" })).toBeNull();
+  });
+
+  it("shows a loading state while the public news list is fetching", async () => {
+    global.fetch = jest.fn(
+      () => new Promise<Response>(() => undefined),
+    ) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={newsRoute({ view: "news" })}
+      />,
+    );
+
+    expect(screen.getByText(/Loading news/)).not.toBeNull();
   });
 
   it("shows admin news actions on the public news page for admins", async () => {
