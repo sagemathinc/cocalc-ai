@@ -22,6 +22,8 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
     withContext: async (_command: unknown, _label: string, fn: any) => {
       const ctx = {
         globals: overrides.globals ?? {},
+        apiBaseUrl: overrides.apiBaseUrl ?? "https://test.cocalc.invalid",
+        accountId: overrides.accountId ?? "account-id",
         hub: {
           lro: overrides.lro ?? {},
           projects: {},
@@ -1070,9 +1072,12 @@ test("rootfs recipe explain parses bundled machine learning GPU recipes", async 
 test("rootfs build runs recipe and saves publish config on the project", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-build-"));
   const recipePath = join(dir, "recipe.json");
+  const stateFile = join(dir, "last-rootfs-build.json");
+  const oldStateFile = process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
   let savedConfig: any;
   let buildRequest: any;
   try {
+    process.env.COCALC_ROOTFS_BUILD_STATE_FILE = stateFile;
     writeFileSync(
       recipePath,
       JSON.stringify({
@@ -1149,6 +1154,12 @@ test("rootfs build runs recipe and saves publish config on the project", async (
 
     await program.parseAsync(["node", "test", "rootfs", "build", recipePath]);
 
+    const lastBuild = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.equal(lastBuild.api, "https://test.cocalc.invalid");
+    assert.equal(lastBuild.account_id, "account-id");
+    assert.equal(lastBuild.project_id, "builder-project");
+    assert.equal(lastBuild.build_id, "build-1");
+    assert.equal(lastBuild.recipe, "build-demo");
     assert.equal(savedConfig.project_id, "builder-project");
     assert.equal(
       savedConfig.config.kind,
@@ -1167,13 +1178,42 @@ test("rootfs build runs recipe and saves publish config on the project", async (
       harness.captured,
       /next: cocalc rootfs publish --project=builder-project/,
     );
+    assert.match(
+      harness.captured,
+      /status: cocalc rootfs build-status build-1/,
+    );
+    assert.match(
+      harness.captured,
+      /logs: cocalc rootfs build-logs build-1 --follow/,
+    );
   } finally {
+    if (oldStateFile == null) {
+      delete process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
+    } else {
+      process.env.COCALC_ROOTFS_BUILD_STATE_FILE = oldStateFile;
+    }
     rmSync(dir, { force: true, recursive: true });
   }
 });
 
 test("rootfs build status logs and cancel use project build APIs", async () => {
   const calls: any[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-build-last-"));
+  const stateFile = join(dir, "last-rootfs-build.json");
+  const oldStateFile = process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
+  process.env.COCALC_ROOTFS_BUILD_STATE_FILE = stateFile;
+  writeFileSync(
+    stateFile,
+    JSON.stringify({
+      version: 1,
+      api: "https://test.cocalc.invalid",
+      account_id: "account-id",
+      project_id: "builder-project",
+      build_id: "build-1",
+      recipe: "cocalc/demo",
+      saved_at: "2026-06-22T00:00:00.000Z",
+    }),
+  );
   const harness = rootfsDeps({
     globals: { quiet: true },
     resolveProjectFromArgOrContext: async (_ctx: any, project: string) => {
@@ -1262,77 +1302,95 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
   const program = new Command();
   registerRootfsCommand(program, harness.deps as any);
 
-  await program.parseAsync([
-    "node",
-    "test",
-    "rootfs",
-    "build-status",
-    "build-1",
-    "--project",
-    "Builder",
-  ]);
-  assert.match(harness.captured, /status: succeeded/);
-  assert.match(harness.captured, /heartbeat_fresh: true/);
-  assert.match(harness.captured, /pid: 12345/);
-  assert.match(harness.captured, /events_path:/);
-  assert.match(harness.captured, /runner_path:/);
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "build-status",
+      "build-1",
+      "--project",
+      "Builder",
+    ]);
+    assert.match(harness.captured, /status: succeeded/);
+    assert.match(harness.captured, /heartbeat_fresh: true/);
+    assert.match(harness.captured, /pid: 12345/);
+    assert.match(harness.captured, /events_path:/);
+    assert.match(harness.captured, /runner_path:/);
 
-  await program.parseAsync([
-    "node",
-    "test",
-    "rootfs",
-    "build-logs",
-    "build-1",
-    "--project",
-    "Builder",
-    "--tail",
-    "25",
-  ]);
+    await program.parseAsync(["node", "test", "rootfs", "build-status"]);
 
-  await program.parseAsync([
-    "node",
-    "test",
-    "rootfs",
-    "build-list",
-    "--project",
-    "Builder",
-    "--limit",
-    "7",
-  ]);
-  assert.match(harness.captured, /build-1  succeeded/);
-  assert.match(harness.captured, /recipe=cocalc\/demo/);
-  assert.match(harness.captured, /fresh=true/);
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "build-logs",
+      "build-1",
+      "--project",
+      "Builder",
+      "--tail",
+      "25",
+    ]);
 
-  await program.parseAsync([
-    "node",
-    "test",
-    "rootfs",
-    "build-cancel",
-    "build-1",
-    "--project",
-    "Builder",
-  ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "build-list",
+      "--project",
+      "Builder",
+      "--limit",
+      "7",
+    ]);
+    assert.match(harness.captured, /build-1  succeeded/);
+    assert.match(harness.captured, /recipe=cocalc\/demo/);
+    assert.match(harness.captured, /fresh=true/);
 
-  assert.deepEqual(calls, [
-    ["resolve", "Builder"],
-    ["status", { project_id: "builder-project", build_id: "build-1" }],
-    ["resolve", "Builder"],
-    ["project-api", "builder-project"],
-    [
-      "direct-log",
-      {
-        build_id: "build-1",
-        lines: 25,
-        byte_offset: undefined,
-        max_bytes: undefined,
-      },
-    ],
-    ["resolve", "Builder"],
-    ["project-api", "builder-project"],
-    ["direct-list", { limit: 7 }],
-    ["resolve", "Builder"],
-    ["cancel", { project_id: "builder-project", build_id: "build-1" }],
-  ]);
+    await program.parseAsync(["node", "test", "rootfs", "build-list"]);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "build-cancel",
+      "build-1",
+      "--project",
+      "Builder",
+    ]);
+
+    assert.deepEqual(calls, [
+      ["resolve", "Builder"],
+      ["status", { project_id: "builder-project", build_id: "build-1" }],
+      ["resolve", "builder-project"],
+      ["status", { project_id: "builder-project", build_id: "build-1" }],
+      ["resolve", "Builder"],
+      ["project-api", "builder-project"],
+      [
+        "direct-log",
+        {
+          build_id: "build-1",
+          lines: 25,
+          byte_offset: undefined,
+          max_bytes: undefined,
+        },
+      ],
+      ["resolve", "Builder"],
+      ["project-api", "builder-project"],
+      ["direct-list", { limit: 7 }],
+      ["resolve", "builder-project"],
+      ["project-api", "builder-project"],
+      ["direct-list", { limit: 50 }],
+      ["resolve", "Builder"],
+      ["cancel", { project_id: "builder-project", build_id: "build-1" }],
+    ]);
+  } finally {
+    if (oldStateFile == null) {
+      delete process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
+    } else {
+      process.env.COCALC_ROOTFS_BUILD_STATE_FILE = oldStateFile;
+    }
+    rmSync(dir, { force: true, recursive: true });
+  }
 });
 
 test("rootfs build attach tails direct logs and follows to terminal status", async () => {
