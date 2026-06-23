@@ -88,6 +88,16 @@ Known risks:
   overlap or obvious visual regression. Next: commit, rebuild so the static
   bundle embeds the new commit, rerun teaching browser QA, then push/update
   handoff logs.
+- **POST-COMMIT 2026-06-22 21:33 PDT:** Source/ledger commit
+  `a34ea86b8d` (`frontend/public: move teaching close to final band`) created.
+  Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
+  `COCALC_GIT_REVISION =
+  a34ea86b8dd88f909d81d6df34f738290539f9b4`. Post-commit browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/teaching --viewport desktop --viewport mobile` passed 56/56 at
+  `/tmp/cocalc-public-qa-6BkXPW`. Desktop/mobile screenshots inspected; no
+  overlap or obvious layout regression. Next: push branch and update shared
+  status logs.
 
 ### Codex - Python workflow-panel P2 redundancy polish (2026-06-22 20:52 PDT)
 
