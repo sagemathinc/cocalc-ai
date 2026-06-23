@@ -2,14 +2,13 @@ import path from "node:path";
 import { conat } from "@cocalc/backend/conat";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import { type Fileserver } from "@cocalc/conat/files/file-server";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
-import { getLro as getLroSummary } from "@cocalc/server/lro/lro-db";
+import { waitForDurableLroCompletion } from "@cocalc/server/lro/wait";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
@@ -63,13 +62,12 @@ async function createBackupAndWait({
     { account_id, project_id, tags },
     { skip_rootfs_portability_check: true },
   );
-  const summary = await waitForLroCompletion({
+  const summary = await waitForDurableLroCompletion({
     op_id: op.op_id,
     scope_type: op.scope_type,
     scope_id: op.scope_id,
     client: conat(),
     timeout_ms: COPY_FILES_TIMEOUT_MS,
-    getSummary: async () => await getLroSummary(op.op_id),
   });
   if (summary.status !== "succeeded") {
     const reason = summary.error ?? summary.status;
