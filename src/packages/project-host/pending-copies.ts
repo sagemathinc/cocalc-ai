@@ -57,12 +57,14 @@ function normalizeBackupPath(raw: string): string {
   return normalized;
 }
 
-async function pathExists(p: string): Promise<boolean> {
+async function statIfExists(p: string) {
   try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
+    return await stat(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return undefined;
+    }
+    throw err;
   }
 }
 
@@ -89,13 +91,26 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
     scratch: getScratchMountpoint(row.dest_project_id),
     homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
-  const destAbs = await destFs.safeAbsPath(destPath);
+  let destAbs = await destFs.safeAbsPath(destPath);
   if (destAbs === projectRoot) {
     throw new Error("dest_path cannot be project root");
   }
 
+  let destStat = await statIfExists(destAbs);
+  if (destStat?.isDirectory() && srcPath) {
+    destPath = normalizeCopyPath(
+      path.posix.join(destPath, path.posix.basename(srcPath)),
+      "dest_path",
+    );
+    destAbs = await destFs.safeAbsPath(destPath);
+    if (destAbs === projectRoot) {
+      throw new Error("dest_path cannot be project root");
+    }
+    destStat = await statIfExists(destAbs);
+  }
+
   const force = row.options?.force ?? true;
-  const destExists = await pathExists(destAbs);
+  const destExists = destStat != null;
   if (destExists && !force) {
     if (row.options?.errorOnExist) {
       throw new Error("destination already exists");
