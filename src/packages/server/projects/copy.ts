@@ -9,6 +9,7 @@ import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { getLro as getLroSummary } from "@cocalc/server/lro/lro-db";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
@@ -67,6 +68,8 @@ async function createBackupAndWait({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
     client: conat(),
+    timeout_ms: COPY_FILES_TIMEOUT_MS,
+    getSummary: async () => await getLroSummary(op.op_id),
   });
   if (summary.status !== "succeeded") {
     const reason = summary.error ?? summary.status;
