@@ -1804,12 +1804,12 @@ describe("PublicFeaturesApp", () => {
     );
     expect(
       screen.getByText(
-        /When a whole project must stay together — durable and reviewable as collaborators change/i,
+        /When the project must stay together — durable and reviewable as collaborators change/i,
       ),
     ).not.toBeNull();
     expect(
       screen.getByText(
-        /Best fit: durable, reproducible, multi-artifact projects/i,
+        /Best fit: durable projects with files, code, notebooks/i,
       ),
     ).not.toBeNull();
     expect(

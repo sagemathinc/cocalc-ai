@@ -24,35 +24,31 @@ const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
 const DECISION_ROWS = [
   {
     cocalc:
-      "Files, notebooks, terminals, documents, output, discussion, and TimeTravel recovery should stay with the project — the way an R&D or engineering team keeps models, data, and results reviewable together.",
-    other:
-      "Fine to keep separate when those artifacts already live somewhere stable.",
+      "R&D teams need files, notebooks, terminals, output, discussion, and TimeTravel in one reviewable project.",
+    other: "Those artifacts already live somewhere stable.",
     question: "What needs to stay together?",
   },
   {
     cocalc:
-      "Data scientists, engineers, and researchers — plus the AI agents working alongside them — need to work in one live terminal and shared kernel, with each other's cursors visible as the work happens.",
-    other: "A single surface is enough when collaboration stays in one place.",
+      "Data scientists, engineers, researchers, and AI agents need shared kernels, terminals, and visible cursors during live work.",
+    other: "Collaboration stays on one surface.",
     question: "Who needs to inspect the work?",
   },
   {
-    cocalc:
-      "Teammates review, explain, and hand off work while it is still active.",
-    other: "A lighter tool works when review only happens at the end.",
+    cocalc: "Review and handoff happen while the work is still active.",
+    other: "Review waits until the end.",
     question: "When does collaboration happen?",
   },
   {
     cocalc:
-      "Assignments, grading, lab support, or workshops need the same environment as the computation.",
-    other:
-      "Use an LMS or lightweight notebook host when course administration and computation can stay separate.",
+      "Courses, labs, or workshops need the same environment as the computation.",
+    other: "Administration and computation can stay separate.",
     question: "Is teaching part of the workflow?",
   },
   {
     cocalc:
-      "The group may need hosted use, local evaluation, a single VM, or a customer-operated deployment.",
-    other:
-      "A fixed setup is fine when hosting and operations are already decided.",
+      "Teams need hosted, local, single-VM, or customer-operated deployment choices.",
+    other: "Hosting and operations are already decided.",
     question: "Who operates it?",
   },
 ] as const;
@@ -366,8 +362,8 @@ export default function CompareFeaturePage({
                 maxWidth: "65ch",
               }}
             >
-              When a whole project must stay together — durable and reviewable
-              as collaborators change.
+              When the project must stay together — durable and reviewable as
+              collaborators change.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -382,15 +378,13 @@ export default function CompareFeaturePage({
             </Text>
             <ul className="cocalc-compare-list">
               <li>
-                Best fit: durable, reproducible, multi-artifact projects that
-                stay reviewable as collaborators come and go — review, handoff,
-                and TimeTravel recovery in one place.
+                Best fit: durable projects with files, code, notebooks, review,
+                handoff, and TimeTravel together.
               </li>
               <li>
                 Better elsewhere: one-off notebooks, dashboards, editors, or
                 isolated reports.
               </li>
-              <li>Next question: who operates the workspace?</li>
             </ul>
           </div>
         </div>
@@ -398,7 +392,7 @@ export default function CompareFeaturePage({
 
       <PublicSection
         ariaLabel="CoCalc compare decision checklist"
-        intro="Start with the shape of the work, not the names of competing tools. These questions decide whether CoCalc belongs in the evaluation before pricing, procurement, or deployment details take over."
+        intro="Start with the shape of the work before pricing, procurement, or deployment takes over."
         title="Decision checklist"
       >
         <table
@@ -431,7 +425,7 @@ export default function CompareFeaturePage({
 
       <PublicSection
         ariaLabel="CoCalc compare next routes"
-        intro="Follow the route that matches the question your group is trying to answer next."
+        intro="Pick the next evaluation question."
         title="Where to go next"
       >
         <div className="cocalc-compare-route-panel">

@@ -46,6 +46,48 @@ Known risks:
 
 ---
 
+### Codex - Density /features/compare item 41 (2026-06-23 02:59 PDT)
+
+- **START 2026-06-23 02:59 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 41 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `7c62d9110f`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/compare-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/compare` browser QA, this
+  ledger, and shared queue/turn logs if the slice lands. Route frame: visitor
+  asks whether CoCalc is worth evaluating instead of a narrower notebook,
+  dashboard, editor, LMS, or fixed hosted setup; promise is a project-centered
+  fit decision for teams with files, kernels, terminals, history, collaborators,
+  AI agents, teaching, or operating-model questions. Must preserve the five-row
+  decision table, both columns, visually hidden caption, `scope` headers,
+  `data-label` mobile labels, responsive CSS, both hero CTAs with support
+  deep-link context, and a light R&D/roles signal in the first two rows.
+  Decision: keep structure unchanged while tightening quick-read copy, table
+  cells, and section intros.
+- **END 2026-06-23 03:07 PDT:** Landed the density cut for
+  `/features/compare`: source now measures 439 lines versus 445 at
+  `7c62d9110f`, with the visible reduction concentrated in table cells, the
+  quick-read list, and section intro copy. Cut the quick-read third bullet,
+  tightened decision-table cells across all five rows while preserving the R&D
+  and role signals in rows 1-2, and shortened both section intros. Preserved
+  all five rows, both table columns, visually hidden caption, scope headers,
+  `data-label` mobile labels, responsive table CSS, both hero CTAs, support
+  deep-link context, route links, and trust-material conditional routing.
+  Updated the feature smoke test and `/features/compare` browser-QA canary for
+  the shorter hero/quick-read copy. Validation passed: focused
+  feature/browser-QA Jest 140/140, public/features Jest 196/196,
+  `pnpm -C src tsc`, `pnpm -C src lint:frontend`, `git diff --check`, and
+  `pnpm --dir src/packages/static build:dev && node
+  src/packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/compare --viewport desktop --viewport mobile` (42/42 assertions,
+  artifact `/tmp/cocalc-public-qa-GZWPHx`). Desktop and mobile screenshots
+  inspected clean. Known local static-build debug-log EACCES warning only.
+
 ### Codex - Density /features/jupyter-notebook item 40 (2026-06-23 02:50 PDT)
 
 - **START 2026-06-23 02:50 PDT:** Continuing the manual landing-page

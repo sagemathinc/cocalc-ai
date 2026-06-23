@@ -147,7 +147,7 @@ const ROUTE_RULES = {
     requireText: [
       "Compare CoCalc",
       "When is CoCalc the right fit?",
-      "When a whole project must stay together",
+      "When the project must stay together",
       "durable and reviewable",
       "Decision checklist",
       "Where to go next",
