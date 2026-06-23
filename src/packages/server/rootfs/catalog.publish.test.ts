@@ -106,10 +106,10 @@ describe("publishProjectRootfsCatalogEntry", () => {
       ([sql, params]) =>
         `${sql}`.includes("INSERT INTO rootfs_images") &&
         Array.isArray(params) &&
-        params.length === 27,
+        params.length === 28,
     );
     expect(insert).toBeDefined();
-    expect(insert?.[1]?.[22]).toBe("published-rootfs");
+    expect(insert?.[1]?.[23]).toBe("published-rootfs");
     expect(result.slug).toBe("published-rootfs");
   });
 });
@@ -144,10 +144,10 @@ describe("saveRootfsImage", () => {
       ([sql, params]) =>
         `${sql}`.includes("INSERT INTO rootfs_images") &&
         Array.isArray(params) &&
-        params.length === 27,
+        params.length === 28,
     );
     expect(insert).toBeDefined();
-    expect(insert?.[1]?.[22]).toBe("saved-rootfs");
+    expect(insert?.[1]?.[23]).toBe("saved-rootfs");
     expect(result.slug).toBe("saved-rootfs");
   });
 });
