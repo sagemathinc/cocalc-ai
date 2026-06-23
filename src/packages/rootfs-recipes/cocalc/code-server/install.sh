@@ -6,6 +6,14 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 prefix="${PREFIX:-/opt/code-server}"
 version="${VERSION:-latest}"
 extensions="${EXTENSIONS:-}"
@@ -17,6 +25,10 @@ owner_gid="${OWNER_GID:-2001}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+$SUDO apt-get update
+run_noninteractive apt-get install -y --no-install-recommends \
+  ca-certificates curl tar
+
 curl -fsSL https://code-server.dev/install.sh -o "$tmp/install-code-server.sh"
 
 args=(--method=standalone --prefix="$prefix")
@@ -24,7 +36,11 @@ if [ "$version" != "latest" ] && [ -n "$version" ]; then
   args+=(--version="$version")
 fi
 
-$SUDO sh "$tmp/install-code-server.sh" "${args[@]}"
+if [ -n "$SUDO" ]; then
+  $SUDO env -u VERSION sh "$tmp/install-code-server.sh" "${args[@]}"
+else
+  env -u VERSION sh "$tmp/install-code-server.sh" "${args[@]}"
+fi
 
 $SUDO ln -sf "$prefix/bin/code-server" /usr/local/bin/code-server
 $SUDO mkdir -p "$extensions_dir" "$user_data_dir"
@@ -43,5 +59,6 @@ $SUDO chown -R "$owner_uid:$owner_gid" "$prefix"
 $SUDO chown -R "$owner_uid:$owner_gid" "$extensions_dir" "$user_data_dir"
 $SUDO chmod -R u+rwX,go+rX "$prefix"
 $SUDO chmod -R u+rwX,go+rX "$extensions_dir" "$user_data_dir"
+$SUDO rm -rf /var/lib/apt/lists/*
 
 code-server --version
