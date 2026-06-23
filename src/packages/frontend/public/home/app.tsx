@@ -515,7 +515,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Shared projects for Research, Technical Teams, and Teaching
+            One shared project for the whole job.
           </Title>
           <Paragraph
             style={{
@@ -569,7 +569,7 @@ function AudienceRoutesSection() {
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
         eyebrow="Who it helps"
-        title="Built for research, courses, and platform teams."
+        title="Built for research, teaching, and technical teams."
         body="Start with the path that matches how your group works."
       />
       <div

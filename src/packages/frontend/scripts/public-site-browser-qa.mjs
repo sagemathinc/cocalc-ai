@@ -94,7 +94,7 @@ const ROUTE_RULES = {
   "/": {
     requireText: [
       "AI-NATIVE TECHNICAL WORKSPACE",
-      "Shared projects for Research, Technical Teams, and Teaching",
+      "One shared project for the whole job.",
       "Choose the operating model that fits your team.",
     ],
     requireLinks: [

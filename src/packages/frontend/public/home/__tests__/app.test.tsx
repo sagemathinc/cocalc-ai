@@ -102,12 +102,12 @@ describe("PublicHomeApp", () => {
     const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
     expect(heroHeadings).toHaveLength(1);
     expect(heroHeadings[0]).toHaveTextContent(
-      "Shared projects for Research, Technical Teams, and Teaching",
+      "One shared project for the whole job.",
     );
     expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
     expect(
       within(hero).queryByText(
-        "Shared projects for research, teaching, and technical teams",
+        "Shared projects for Research, Technical Teams, and Teaching",
       ),
     ).toBeNull();
     // Select the hero lead by structure (the element after the H1) instead of
