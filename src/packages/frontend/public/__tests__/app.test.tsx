@@ -952,6 +952,29 @@ describe("PublicApp", () => {
         /William is both the CEO and a lead software developer across the front and back end of CoCalc/i,
       ),
     ).not.toBeNull();
+    expect(
+      screen
+        .getAllByText("University of Washington", { selector: "div" })
+        .some((element) => element.textContent?.includes("2010-2019")),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByText("University of Washington", { selector: "div" })
+        .some((element) => element.textContent?.includes("2006-2010")),
+    ).toBe(true);
+    expect(screen.getByText("Tenured Professor of Mathematics")).not.toBeNull();
+    expect(
+      screen.getAllByText("Tenured Associate Professor of Mathematics"),
+    ).toHaveLength(2);
+    expect(
+      screen.getByText("University of California San Diego", {
+        selector: "div",
+      }).textContent,
+    ).toContain("2005-2006");
+    expect(
+      screen.getByText("Benjamin Peirce Assistant Professor of Mathematics"),
+    ).not.toBeNull();
+    expect(screen.queryByText("2006-2019")).toBeNull();
     expect(screen.queryByText(/at the helm/i)).toBeNull();
     expect(screen.getByText("Previous Experience")).not.toBeNull();
     expect(screen.queryByText("Back to team")).toBeNull();
@@ -962,6 +985,27 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByRole("link", { name: "GitHub" })).not.toBeNull();
     expect(screen.getByText("Personal website")).not.toBeNull();
+  });
+
+  it("renders Harald's consolidated Vienna degree", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={aboutRoute({
+          teamSlug: "harald-schilly",
+          view: "about-team-member",
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Harald Schilly, CTO" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Master's (Mag. rer. nat.) in Mathematics"),
+    ).not.toBeNull();
+    expect(screen.queryByText("M.S. Mathematics")).toBeNull();
+    expect(screen.queryByText("Mag. rer. nat. Mathematics")).toBeNull();
   });
 
   it("renders the built-in privacy policy page", async () => {

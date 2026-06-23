@@ -46,6 +46,41 @@ Known risks:
 
 ---
 
+### Codex - round-2 bio facts item 27 (2026-06-23 00:31 PDT)
+
+- **START 2026-06-23 00:28 PDT:** Continuing the scheduled landing-page
+  improvement loop on Round-2 item 27 Bio Facts in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Current
+  head is `539751a4b2`, matching `origin/blaec-synthesis-2026-06-18`; only the
+  known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  present. Claimed files/routes: `about/team-data.ts`, public about tests,
+  about/team browser-QA routes, this ledger, and shared coordination logs if
+  the slice completes. Scope: correct William Stein employment dates and
+  Harvard assistant-professor title/date from source-backed facts; consolidate
+  Harald Schilly's Vienna degree to one entry. Source check: William's CV at
+  `wstein.org/cv/cv.pdf` lists UW Professor 2010-2019, UW Associate Professor
+  2006-2010, UCSD Associate Professor 2005-2006, and Harvard Benjamin Peirce
+  Assistant Professor 2001-2005, so this slice follows the CV where the queued
+  UCSD 2006-2010 note conflicts. Guardrails: no home edits, no pricing
+  money/compliance changes, no type/palette 2e, no pitch docs, no raw-audit
+  foraging, no LaTeX/dedicated-compute draft.
+- **END 2026-06-23 00:33 PDT:** Corrected William's experience list to the
+  CV-backed UW Professor 2010-2019, UW Associate Professor 2006-2010, UCSD
+  Associate Professor 2005-2006, and Harvard Benjamin Peirce Assistant
+  Professor 2001-2005 entries; consolidated Harald's Vienna degree into one
+  Master's (Mag. rer. nat.) entry for 1999-2008; added public app canaries for
+  both profiles. Validation: `pnpm --dir src/packages/frontend exec jest
+  public/__tests__/app.test.tsx --runInBand --silent`; `pnpm -C src tsc`;
+  `pnpm -C src lint:frontend`; `git diff --check`; `pnpm --dir
+  src/packages/static build:dev` (known debug-log EACCES warning only);
+  `node src/packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /about --route /about/team/william-stein --route /about/team/harald-schilly
+  --viewport desktop --viewport mobile` (66/66 assertions, screenshots in
+  `/tmp/cocalc-public-qa-BnvkKm` inspected).
+
+---
+
 ### Codex - round-2 home H1 item 26 (2026-06-23 00:25 PDT)
 
 - **START 2026-06-23 00:25 PDT:** Continuing the scheduled landing-page

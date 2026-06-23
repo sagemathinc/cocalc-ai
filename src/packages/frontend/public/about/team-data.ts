@@ -61,12 +61,17 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       {
         institution: "University of Washington",
         position: "Tenured Professor of Mathematics",
-        timeframe: "2006-2019",
+        timeframe: "2010-2019",
+      },
+      {
+        institution: "University of Washington",
+        position: "Tenured Associate Professor of Mathematics",
+        timeframe: "2006-2010",
       },
       {
         institution: "University of California San Diego",
         position: "Tenured Associate Professor of Mathematics",
-        timeframe: "2006-2019",
+        timeframe: "2005-2006",
       },
       {
         institution: "SageMath Open-Source Software",
@@ -75,8 +80,8 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       },
       {
         institution: "Harvard University",
-        position: "Assistant Professor of Mathematics",
-        timeframe: "2000-2005",
+        position: "Benjamin Peirce Assistant Professor of Mathematics",
+        timeframe: "2001-2005",
       },
       {
         institution: "University of California Berkeley",
@@ -207,12 +212,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       },
       {
         institution: "University of Vienna",
-        position: "Mag. rer. nat. Mathematics",
-        timeframe: "1999-2012",
-      },
-      {
-        institution: "University of Vienna",
-        position: "M.S. Mathematics",
+        position: "Master's (Mag. rer. nat.) in Mathematics",
         timeframe: "1999-2008",
       },
     ],
