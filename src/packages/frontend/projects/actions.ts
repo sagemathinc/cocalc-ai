@@ -1258,11 +1258,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const row = resp?.query?.account_project_index?.[0] as
         | ProjectIndexBootstrapRow
         | undefined;
-      if (row?.project_id !== project_id || row.is_hidden === true) {
+      if (row?.project_id !== project_id) {
         return;
       }
 
       let project_map = store.get("project_map") ?? Map<string, any>();
+      if (row.is_hidden === true && !project_map.has(project_id)) {
+        return;
+      }
       project_map = this.mergeProjectedProjectIndexRow({
         project_map,
         row,

@@ -1504,6 +1504,9 @@ describe("project collaborators local bay access", () => {
   it("binds accepted course email invites to the student project course field", async () => {
     const inviteId = "77777777-7777-4777-8777-777777777777";
     const token = "course-invite-token";
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => {
+      throw new Error("verify");
+    });
     queryMock = jest.fn(async (sql: string) => {
       if (
         sql.includes("UPDATE project_collab_invites") &&
@@ -1607,6 +1610,7 @@ describe("project collaborators local bay access", () => {
       expect.stringContaining("jsonb_set"),
       [PROJECT_ID, ACCOUNT_ID],
     );
+    expect(assertAccountTrustedForProductAccessMock).not.toHaveBeenCalled();
   });
 
   it("rejects email invite acceptance when the sender is no longer a project collaborator", async () => {

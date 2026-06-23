@@ -11,8 +11,7 @@ import { IS_IOS, IS_IPAD } from "@cocalc/frontend/feature";
 import { set } from "@cocalc/util/misc";
 import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
-import { PDFEmbed } from "../latex-editor/pdf-embed";
-import { PDFJS } from "../latex-editor/pdfjs";
+import { StandalonePDFEmbed, StandalonePDFJS } from "./viewer";
 
 const pdfjsCommands = set([
   "reload",
@@ -31,7 +30,7 @@ const pdfjs_canvas: EditorDescription = {
   short: "PDF.js",
   name: "PDF Viewer",
   icon: "file-pdf",
-  component: PDFJS,
+  component: StandalonePDFJS,
   commands: pdfjsCommands,
   buttons: set([
     "reload",
@@ -51,7 +50,7 @@ const pdf_embed: EditorDescription = {
   name: "PDF Viewer - Native",
   icon: "file-pdf",
   commands: set(["reload", "print", "download"]),
-  component: PDFEmbed,
+  component: StandalonePDFEmbed,
 } as const;
 
 export const EDITOR_SPEC = {

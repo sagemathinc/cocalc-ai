@@ -330,14 +330,10 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
-      trusted_product_access_checked: true,
     });
     expect(
       assertClusterAccountTrustedForProductAccessMock,
-    ).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      action: "accept collaboration invites",
-    });
+    ).not.toHaveBeenCalled();
     expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
       invite_id: "77777777-7777-4777-8777-777777777777",
       token_hash: expect.any(String),
@@ -384,7 +380,6 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
-      trusted_product_access_checked: false,
     });
     expect(
       assertClusterAccountTrustedForProductAccessMock,
@@ -455,7 +450,7 @@ describe("remote project detail reads", () => {
     expect(result.project_id).toBe(PROJECT_ID);
   });
 
-  it("checks account trust before routing email invite accept responses", async () => {
+  it("routes email invite accept responses without requiring product-access trust", async () => {
     const { respondEmailProjectInvite } = await import("./projects");
     await respondEmailProjectInvite({
       account_id: ACCOUNT_ID,
@@ -465,17 +460,13 @@ describe("remote project detail reads", () => {
 
     expect(
       assertClusterAccountTrustedForProductAccessMock,
-    ).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      action: "accept collaboration invites",
-    });
+    ).not.toHaveBeenCalled();
     expect(respondEmailMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       action: "accept",
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
-      trusted_product_access_checked: true,
     });
   });
 

@@ -1717,6 +1717,7 @@ test("rootfs recipe run creates project, executes modules, and publishes", async
 
 test("rootfs recipe run --here executes locally and writes config metadata", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-here-"));
+  const homeDir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-recipe-home-"));
   const recipePath = join(dir, "recipe.json");
   const oldProjectId = process.env.COCALC_PROJECT_ID;
   const oldHome = process.env.HOME;
@@ -1742,7 +1743,7 @@ test("rootfs recipe run --here executes locally and writes config metadata", asy
       }),
     );
     process.env.COCALC_PROJECT_ID = "here-project";
-    process.env.HOME = dir;
+    process.env.HOME = homeDir;
     process.chdir(dir);
 
     const harness = rootfsDeps({
@@ -1793,6 +1794,7 @@ test("rootfs recipe run --here executes locally and writes config metadata", asy
       process.env.HOME = oldHome;
     }
     rmSync(dir, { force: true, recursive: true });
+    rmSync(homeDir, { force: true, recursive: true });
   }
 });
 

@@ -54,7 +54,6 @@ export default function SignUpFormBase({
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [displayName, setDisplayName] = useState<string>("");
-  const [acceptedTerms, setAcceptedTerms] = useState<boolean>(false);
   const [marketingConsent, setMarketingConsent] = useState<boolean>(false);
   const [signingUp, setSigningUp] = useState<boolean>(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
@@ -73,6 +72,8 @@ export default function SignUpFormBase({
   });
   const emailDomainPolicyViolation =
     isValidEmailAddress(email) && !emailAllowedByDomainPolicy;
+  const passwordTooShort =
+    password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
 
   const bootstrap = useMemo(() => getQueryParam("bootstrap") === "1", []);
 
@@ -133,12 +134,8 @@ export default function SignUpFormBase({
     if (requiresToken && !registrationToken.trim()) {
       return false;
     }
-    if (!acceptedTerms) {
-      return false;
-    }
     return !signingUp;
   }, [
-    acceptedTerms,
     email,
     emailAllowedByDomainPolicy,
     password,
@@ -160,7 +157,7 @@ export default function SignUpFormBase({
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
-          terms: acceptedTerms,
+          terms: true,
           marketing_consent: marketingConsent,
           email,
           password,
@@ -247,42 +244,6 @@ export default function SignUpFormBase({
           />
         </div>
       )}
-      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-        <Checkbox
-          checked={acceptedTerms}
-          style={{ cursor: "pointer" }}
-          onChange={(e) => setAcceptedTerms(e.target.checked)}
-        >
-          I accept the{" "}
-          <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
-            Terms of Service
-          </a>{" "}
-          and{" "}
-          <a href={PolicyPrivacyPageUrl} target="_blank" rel="noreferrer">
-            Privacy Policy
-          </a>
-          .
-        </Checkbox>
-        {issues.terms && (
-          <div
-            style={{
-              color: COLORS.ANTD_RED_WARN,
-              fontSize: "13px",
-              lineHeight: "18px",
-            }}
-          >
-            {issues.terms}
-          </div>
-        )}
-        <Checkbox
-          checked={marketingConsent}
-          style={{ cursor: "pointer" }}
-          onChange={(e) => setMarketingConsent(e.target.checked)}
-        >
-          Send me occasional platform tips, onboarding help, and product
-          updates. You can change this later in Account Preferences.
-        </Checkbox>
-      </Space>
       <div>
         <div>Email address</div>
         <Input
@@ -318,6 +279,18 @@ export default function SignUpFormBase({
           onChange={(e) => setPassword(e.target.value)}
           onPressEnter={signUp}
         />
+        {passwordTooShort ? (
+          <div
+            style={{
+              color: COLORS.FG_RED,
+              fontSize: "13px",
+              lineHeight: "18px",
+              marginTop: "6px",
+            }}
+          >
+            Password must be at least {MIN_PASSWORD_LENGTH} characters.
+          </div>
+        ) : null}
       </div>
       <div>
         <div>Name</div>
@@ -330,6 +303,44 @@ export default function SignUpFormBase({
           onPressEnter={signUp}
         />
       </div>
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <div
+          style={{
+            color: COLORS.GRAY_M,
+            fontSize: "13px",
+            lineHeight: "18px",
+          }}
+        >
+          By creating an account, you agree to CoCalc&apos;s{" "}
+          <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
+            Terms of Service
+          </a>{" "}
+          and acknowledge the{" "}
+          <a href={PolicyPrivacyPageUrl} target="_blank" rel="noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </div>
+        {issues.terms && (
+          <div
+            style={{
+              color: COLORS.ANTD_RED_WARN,
+              fontSize: "13px",
+              lineHeight: "18px",
+            }}
+          >
+            {issues.terms}
+          </div>
+        )}
+        <Checkbox
+          checked={marketingConsent}
+          style={{ cursor: "pointer" }}
+          onChange={(e) => setMarketingConsent(e.target.checked)}
+        >
+          Send me occasional platform tips, onboarding help, and product
+          updates. You can change this later in Account Preferences.
+        </Checkbox>
+      </Space>
       <Button
         type="primary"
         size="large"
@@ -340,7 +351,7 @@ export default function SignUpFormBase({
           signUp();
         }}
       >
-        {signingUp ? "Creating account..." : "Create account"}
+        {signingUp ? "Creating account..." : "Agree and create account"}
       </Button>
       <div style={{ textAlign: "center" }}>
         Already have an account?{" "}

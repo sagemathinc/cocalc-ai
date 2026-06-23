@@ -177,6 +177,7 @@ export const ProjectsPage: React.FC = () => {
     includeBlocks: false,
   });
   const emailVerificationRequired = useEmailVerificationRequired();
+  const createProjectDisabled = emailVerificationRequired;
 
   const selected_hashtags: Map<string, ImmutableSet<string>> = useTypedRedux(
     "projects",
@@ -443,6 +444,7 @@ export const ProjectsPage: React.FC = () => {
   }, [bookmarkedProjects.length]);
 
   function handleCreateProject() {
+    if (createProjectDisabled) return;
     setCreatePanelOpen(true);
   }
 
@@ -475,7 +477,7 @@ export const ProjectsPage: React.FC = () => {
           minHeight: 0,
         }}
       >
-        {!emailVerificationRequired && (
+        {!createProjectDisabled && (
           <NewProjectCreator
             default_value={search}
             open={createPanelOpen}
@@ -487,21 +489,24 @@ export const ProjectsPage: React.FC = () => {
             background: "white",
             padding: mobileProjectsList ? "8px 8px 0 8px" : "16px 0 0 15px",
             minHeight: 0,
-            overflow: "auto",
+            overflow: mobileProjectsList ? "auto" : "hidden",
             zIndex: 1,
           }}
         >
           <div
             ref={containerRef}
             className={"smc-vfill"}
-            style={{ overflowY: "auto" }}
+            style={{ overflowY: mobileProjectsList ? "auto" : "hidden" }}
           >
-            {emailVerificationRequired ? (
-              <VerifyEmailRequiredPanel
-                title="Verify your email to use projects"
-                description="Please verify your email address before creating, opening, or running projects."
-              />
-            ) : (
+            <>
+              {emailVerificationRequired ? (
+                <VerifyEmailRequiredPanel
+                  title="Verify your email to create projects"
+                  description="You can accept project invites and open projects you already have access to. Please verify your email address before creating new projects or starting project runtimes."
+                  compact
+                  style={{ marginBottom: 12 }}
+                />
+              ) : null}
               <Row>
                 <Col sm={24} md={24} lg={contentCol}>
                   <Space
@@ -538,6 +543,12 @@ export const ProjectsPage: React.FC = () => {
                       <Button
                         ref={createNewRef}
                         type="primary"
+                        disabled={createProjectDisabled}
+                        title={
+                          createProjectDisabled
+                            ? "Verify your email address before creating projects."
+                            : undefined
+                        }
                         onClick={handleCreateProject}
                         icon={<Icon name="plus-circle" />}
                       >
@@ -665,11 +676,11 @@ export const ProjectsPage: React.FC = () => {
                   </Space>
                 </Col>
               </Row>
-            )}
+            </>
           </div>
         </Layout.Content>
       </Layout>
-      {!emailVerificationRequired && <ProjectDrawer />}
+      <ProjectDrawer />
     </div>
   );
 };

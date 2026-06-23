@@ -250,31 +250,80 @@ export default function RootFilesystemImage({
     siteDefaultRootfsGpu,
   ]);
 
+  const currentProjectRootfsState = useMemo(
+    () => projectRootfsStates.find((state) => state.state_role === "current"),
+    [projectRootfsStates],
+  );
+  const previousProjectRootfsState = useMemo(
+    () => projectRootfsStates.find((state) => state.state_role === "previous"),
+    [projectRootfsStates],
+  );
+  const pinnedCatalogImageIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            imageId,
+            rootfsDraftId,
+            currentProjectRootfsState?.image_id,
+            previousProjectRootfsState?.image_id,
+          ]
+            .map((id) => `${id ?? ""}`.trim())
+            .filter(Boolean),
+        ),
+      ),
+    [
+      currentProjectRootfsState?.image_id,
+      imageId,
+      previousProjectRootfsState?.image_id,
+      rootfsDraftId,
+    ],
+  );
   const {
-    images: rootfsImages,
+    images: catalogRootfsImages,
+    loading: catalogRootfsLoading,
+    error: catalogRootfsError,
+  } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)], {
+    limit: 200,
+    imageIds: pinnedCatalogImageIds,
+  });
+  const {
+    images: pickerCatalogRootfsImages,
     loading: rootfsLoading,
     error: rootfsError,
   } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)], {
     query: rootfsSearch,
     limit: 200,
+    imageIds: pinnedCatalogImageIds,
   });
+  const catalogSelectableRootfsImages = useMemo(
+    () =>
+      canUseCustomRootfs
+        ? catalogRootfsImages
+        : catalogRootfsImages.filter((entry) => rootfsEntryIsManaged(entry)),
+    [canUseCustomRootfs, catalogRootfsImages],
+  );
   const selectableRootfsImages = useMemo(
     () =>
       canUseCustomRootfs
-        ? rootfsImages
-        : rootfsImages.filter((entry) => rootfsEntryIsManaged(entry)),
-    [canUseCustomRootfs, rootfsImages],
+        ? pickerCatalogRootfsImages
+        : pickerCatalogRootfsImages.filter((entry) =>
+            rootfsEntryIsManaged(entry),
+          ),
+    [canUseCustomRootfs, pickerCatalogRootfsImages],
   );
 
   const selectedRootfsEntry = useMemo(() => {
     const selectedId = imageId.trim();
     if (selectedId) {
-      return selectableRootfsImages.find((entry) => entry.id === selectedId);
+      return catalogSelectableRootfsImages.find(
+        (entry) => entry.id === selectedId,
+      );
     }
     const image = value.trim();
     if (!image) return undefined;
-    return selectableRootfsImages.find((entry) => entry.image === image);
-  }, [imageId, selectableRootfsImages, value]);
+    return catalogSelectableRootfsImages.find((entry) => entry.image === image);
+  }, [catalogSelectableRootfsImages, imageId, value]);
 
   const draftRootfsEntry = useMemo(() => {
     const selectedId = rootfsDraftId.trim();
@@ -286,14 +335,6 @@ export default function RootFilesystemImage({
     return selectableRootfsImages.find((entry) => entry.image === image);
   }, [rootfsDraft, rootfsDraftId, selectableRootfsImages]);
 
-  const currentProjectRootfsState = useMemo(
-    () => projectRootfsStates.find((state) => state.state_role === "current"),
-    [projectRootfsStates],
-  );
-  const previousProjectRootfsState = useMemo(
-    () => projectRootfsStates.find((state) => state.state_role === "previous"),
-    [projectRootfsStates],
-  );
   const initialRootfs = useMemo(() => {
     const image = `${currentProjectRootfsState?.image ?? ""}`.trim();
     if (!image) {
@@ -309,27 +350,27 @@ export default function RootFilesystemImage({
   const currentProjectRootfsEntry = useMemo(() => {
     if (!currentProjectRootfsState) return undefined;
     if (currentProjectRootfsState.image_id) {
-      const byId = selectableRootfsImages.find(
+      const byId = catalogSelectableRootfsImages.find(
         (entry) => entry.id === currentProjectRootfsState.image_id,
       );
       if (byId) return byId;
     }
-    return selectableRootfsImages.find(
+    return catalogSelectableRootfsImages.find(
       (entry) => entry.image === currentProjectRootfsState.image,
     );
-  }, [currentProjectRootfsState, selectableRootfsImages]);
+  }, [catalogSelectableRootfsImages, currentProjectRootfsState]);
   const previousProjectRootfsEntry = useMemo(() => {
     if (!previousProjectRootfsState) return undefined;
     if (previousProjectRootfsState.image_id) {
-      const byId = selectableRootfsImages.find(
+      const byId = catalogSelectableRootfsImages.find(
         (entry) => entry.id === previousProjectRootfsState.image_id,
       );
       if (byId) return byId;
     }
-    return selectableRootfsImages.find(
+    return catalogSelectableRootfsImages.find(
       (entry) => entry.image === previousProjectRootfsState.image,
     );
-  }, [previousProjectRootfsState, selectableRootfsImages]);
+  }, [catalogSelectableRootfsImages, previousProjectRootfsState]);
   const currentDisplayEntry = useMemo(() => {
     const liveImage = value.trim();
     const liveImageId = imageId.trim();
@@ -382,7 +423,7 @@ export default function RootFilesystemImage({
   );
   const relatedVersionEntries = useMemo(() => {
     if (!currentDisplayEntry?.family) return [];
-    return selectableRootfsImages
+    return catalogSelectableRootfsImages
       .filter(
         (entry) =>
           entry.id !== currentDisplayEntry.id &&
@@ -393,7 +434,7 @@ export default function RootFilesystemImage({
             entry.channel === currentDisplayEntry.channel),
       )
       .sort((a, b) => compareRootfsVersionEntries(a, b));
-  }, [currentDisplayEntry, selectableRootfsImages]);
+  }, [catalogSelectableRootfsImages, currentDisplayEntry]);
   const suggestedUpgradeEntry = useMemo(() => {
     return latestRootfsUpgradeEntry({
       current: currentDisplayEntry,
@@ -452,50 +493,54 @@ export default function RootFilesystemImage({
       Array.from(
         new Set(
           [
-            ...rootfsImages.flatMap((entry) => entry.tags ?? []),
+            ...catalogRootfsImages.flatMap((entry) => entry.tags ?? []),
             ...Object.values(ROOTFS_PROJECT_PRESET_TAGS).flat(),
           ].filter(Boolean),
         ),
       )
         .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
         .map((tag) => ({ label: tag, value: tag })),
-    [rootfsImages],
+    [catalogRootfsImages],
   );
   const publishFamilyOptions = useMemo(
     () =>
       Array.from(
         new Set(
-          rootfsImages.map((entry) => entry.family?.trim()).filter(Boolean),
+          catalogRootfsImages
+            .map((entry) => entry.family?.trim())
+            .filter(Boolean),
         ),
       )
         .sort((a, b) =>
           `${a}`.localeCompare(`${b}`, undefined, { sensitivity: "base" }),
         )
         .map((family) => ({ label: family, value: family })),
-    [rootfsImages],
+    [catalogRootfsImages],
   );
   const publishChannelOptions = useMemo(
     () =>
       Array.from(
         new Set(
-          rootfsImages.map((entry) => entry.channel?.trim()).filter(Boolean),
+          catalogRootfsImages
+            .map((entry) => entry.channel?.trim())
+            .filter(Boolean),
         ),
       )
         .sort((a, b) =>
           `${a}`.localeCompare(`${b}`, undefined, { sensitivity: "base" }),
         )
         .map((channel) => ({ label: channel, value: channel })),
-    [rootfsImages],
+    [catalogRootfsImages],
   );
   const publishSupersedesOptions = useMemo(
     () =>
-      rootfsImages
+      catalogRootfsImages
         .filter((entry) => entry.id !== publishSourceEntry?.id)
         .map((entry) => ({
           value: entry.id,
           label: `${entry.label || entry.image}${entry.version ? ` (${entry.version})` : ""}`,
         })),
-    [publishSourceEntry?.id, rootfsImages],
+    [publishSourceEntry?.id, catalogRootfsImages],
   );
   const publishContentInput = useMemo(
     () => rootfsContentDraftToInput(publishContentDraft),
@@ -576,8 +621,8 @@ export default function RootFilesystemImage({
     const current = getImage(rootfs, effectiveDefaultRootfs);
     const currentId = rootfs?.image_id?.trim() ?? "";
     const currentEntry =
-      selectableRootfsImages.find((entry) => entry.id === currentId) ??
-      selectableRootfsImages.find((entry) => entry.image === current);
+      catalogSelectableRootfsImages.find((entry) => entry.id === currentId) ??
+      catalogSelectableRootfsImages.find((entry) => entry.image === current);
     setRootfsDraft(currentEntry?.image ?? current);
     setRootfsDraftId(currentEntry?.id ?? "");
     setRootfsMode(currentEntry || !canUseCustomRootfs ? "catalog" : "custom");
@@ -1149,21 +1194,25 @@ export default function RootFilesystemImage({
   }
 
   const activeImage = value || effectiveDefaultRootfs;
-  const isCustomRootfs = !rootfsLoading && !activeDisplayEntry;
+  const isCustomRootfs = !catalogRootfsLoading && !activeDisplayEntry;
   const activeLabel = activeDisplayEntry
     ? displayRootfsLabel(activeDisplayEntry, activeImage)
-    : rootfsLoading
+    : catalogRootfsLoading
       ? "Loading image metadata..."
       : canUseCustomRootfs
         ? "Custom OCI image"
         : "Legacy/custom OCI image";
   const activeDescription =
-    activeDisplayEntry?.description?.trim() ||
-    (isCustomRootfs
-      ? canUseCustomRootfs
-        ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
-        : "This project uses a legacy or custom OCI image. Choose a managed catalog image; only admins can set arbitrary OCI image strings."
-      : "Loading managed catalog metadata for this project's image.");
+    activeDisplayEntry != null
+      ? activeDisplayEntry.description?.trim() ||
+        "This image does not have a catalog description."
+      : isCustomRootfs
+        ? canUseCustomRootfs
+          ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
+          : "This project uses a legacy or custom OCI image. Choose a managed catalog image; only admins can set arbitrary OCI image strings."
+        : catalogRootfsError
+          ? `Catalog metadata could not be loaded: ${catalogRootfsError}`
+          : "Loading image metadata...";
   const projectIsRunning = project.getIn(["state", "state"]) == "running";
 
   return (
@@ -1187,7 +1236,11 @@ export default function RootFilesystemImage({
             style={{
               ...rootfsHeroCardStyle(activeDisplayEntry),
               maxWidth: isModal || isPage ? undefined : 760,
-              padding: isPage ? 24 : undefined,
+              padding: isPage
+                ? 24
+                : isFlyout
+                  ? "10px 10px 5px 10px"
+                  : undefined,
             }}
           >
             <div

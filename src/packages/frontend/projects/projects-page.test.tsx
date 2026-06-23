@@ -228,20 +228,24 @@ beforeEach(() => {
   });
 });
 
-test("projects page is replaced by email verification when required", () => {
+test("projects page allows existing project access when email verification is required", () => {
   mockEmailVerificationRequired = true;
+  mockVisibleProjects.push("invited-project");
 
   render(<ProjectsPage />);
 
-  expect(screen.getByText("Verify your email to use projects")).toBeTruthy();
+  expect(screen.getByText("Verify your email to create projects")).toBeTruthy();
   expect(
     screen.getByText(
-      "Please verify your email address before creating, opening, or running projects.",
+      "You can accept project invites and open projects you already have access to. Please verify your email address before creating new projects or starting project runtimes.",
     ),
   ).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /create/i })).toBeNull();
-  expect(screen.queryByTestId("projects-table")).toBeNull();
-  expect(screen.queryByTestId("project-drawer")).toBeNull();
+  expect(screen.getByRole("button", { name: /create/i })).toBeDisabled();
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["invited-project"]),
+  );
+  expect(screen.getByTestId("project-drawer")).toBeTruthy();
 });
 
 test("project creation modal does not auto-open for an empty project list", () => {

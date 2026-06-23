@@ -98,7 +98,7 @@ export default function AddStudents({ name, students, close }: Props) {
           showIcon
           style={{ marginTop: "12px" }}
           message="Adding students..."
-          description="CoCalc is creating student projects and invite links."
+          description="CoCalc is preparing private student projects and invite links. Students get access only after they accept."
         />
       );
     }
@@ -147,9 +147,9 @@ export default function AddStudents({ name, students, close }: Props) {
             <Icon name="users" /> Add Students to Your Course
           </Title>
           <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
-            Paste student email addresses or a roster. CoCalc will create
-            student projects and secure invite links; students choose their own
-            CoCalc account when accepting.
+            Paste student email addresses or a roster. CoCalc will prepare
+            private projects and secure invite links; students choose their own
+            CoCalc account and get access when they accept.
           </Paragraph>
         </div>
         <Form onFinish={addStudents}>
@@ -199,8 +199,9 @@ export default function AddStudents({ name, students, close }: Props) {
                   </div>
                   <Space direction="vertical" size={10}>
                     <StepTag n={1} text="Paste roster emails" />
-                    <StepTag n={2} text="Create student projects" />
-                    <StepTag n={3} text="Send or copy invite links" />
+                    <StepTag n={2} text="Prepare private projects" />
+                    <StepTag n={3} text="Create invite links" />
+                    <StepTag n={4} text="Students accept to get access" />
                   </Space>
                 </Space>
               </div>
@@ -209,8 +210,8 @@ export default function AddStudents({ name, students, close }: Props) {
                   type="success"
                   showIcon
                   style={{ height: "100%" }}
-                  message="Students accept explicitly"
-                  description="Opening the link shows an accept/decline page. It does not automatically add them."
+                  message="Access starts after acceptance"
+                  description="Opening the link shows an accept/decline page. The private project and invite link are prepared now, but students are not added until they accept."
                 />
               </div>
             </Flex>

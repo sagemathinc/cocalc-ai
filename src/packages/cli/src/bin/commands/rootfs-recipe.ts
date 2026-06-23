@@ -1329,7 +1329,7 @@ async function execLocalRecipeCommand({
     `${name}: started local subprocess (timeout ${commandTimeout}s)`,
   );
   return await new Promise<RootfsRecipeStepResult>((resolve, reject) => {
-    const child = spawn("bash", ["-lc", script], {
+    const child = spawn("bash", ["-c", script], {
       cwd: process.cwd(),
       env: {
         ...process.env,

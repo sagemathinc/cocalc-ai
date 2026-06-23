@@ -67,6 +67,8 @@ import type {
   ProjectAccessRequestSource,
   ProjectAccessRequestStatus,
   ProjectBackupSchedule,
+  CourseStudentInviteAccountRepairInput,
+  CourseStudentInviteAccountRepairRow,
   ProjectCollabInviteAction,
   ProjectCollabInviteDirection,
   ProjectCollabInviteRow,
@@ -1754,6 +1756,12 @@ export interface ProjectCollabInviteListRequest {
   projectWide?: boolean;
 }
 
+export interface ProjectAcceptedCourseStudentInviteAccountRepairRequest {
+  account_id: string;
+  course_project_id: string;
+  students: CourseStudentInviteAccountRepairInput[];
+}
+
 export interface ProjectRemoveCollaboratorRequest {
   account_id: string;
   opts: {
@@ -2056,6 +2064,7 @@ export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
   | "list"
+  | "repair-accepted-course-student-invite-accounts"
   | "access-landing-info"
   | "request-access"
   | "list-access-requests"
@@ -3232,6 +3241,9 @@ export interface InterBayProjectCollabInviteApi {
   list: (
     opts: ProjectCollabInviteListRequest,
   ) => Promise<ProjectCollabInviteWire[]>;
+  repairAcceptedCourseStudentInviteAccounts: (
+    opts: ProjectAcceptedCourseStudentInviteAccountRepairRequest,
+  ) => Promise<CourseStudentInviteAccountRepairRow[]>;
   getProjectAccessLandingInfo: (
     opts: ProjectAccessLandingInfoRequest,
   ) => Promise<ProjectAccessLandingInfo>;
@@ -7370,6 +7382,18 @@ export function createInterBayProjectCollabInviteClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectCollabInviteSubject({ dest_bay, method: "list" }),
   });
+  const repairAcceptedCourseStudentInviteAccountsClient = createServiceClient<
+    Pick<
+      InterBayProjectCollabInviteApi,
+      "repairAcceptedCourseStudentInviteAccounts"
+    >
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "repair-accepted-course-student-invite-accounts",
+    }),
+  });
   const accessLandingInfoClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "getProjectAccessLandingInfo">
   >({
@@ -7494,6 +7518,10 @@ export function createInterBayProjectCollabInviteClient({
     upsertInbox: async (opts) => await upsertInboxClient.upsertInbox(opts),
     deleteInbox: async (opts) => await deleteInboxClient.deleteInbox(opts),
     list: async (opts) => await listClient.list(opts),
+    repairAcceptedCourseStudentInviteAccounts: async (opts) =>
+      await repairAcceptedCourseStudentInviteAccountsClient.repairAcceptedCourseStudentInviteAccounts(
+        opts,
+      ),
     removeCollaborator: async (opts) =>
       await removeCollaboratorClient.removeCollaborator(opts),
     setProjectUserRole: async (opts) =>
@@ -7684,6 +7712,23 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         list: async (opts) => await impl.list(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayProjectCollabInviteApi,
+        "repairAcceptedCourseStudentInviteAccounts"
+      >
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "repair-accepted-course-student-invite-accounts",
+      }),
+      impl: {
+        repairAcceptedCourseStudentInviteAccounts: async (opts) =>
+          await impl.repairAcceptedCourseStudentInviteAccounts(opts),
       },
     }),
     createServiceHandler<
