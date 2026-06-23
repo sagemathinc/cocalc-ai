@@ -254,55 +254,6 @@ function WorkflowDiagram() {
   );
 }
 
-function CourseBoundaryPanel() {
-  const rows = [
-    [
-      "Keep in your LMS",
-      "Rosters, calendars, announcements, and institution-wide communication.",
-      PUBLIC_COLORS.mutedText,
-    ],
-    [
-      "Use CoCalc for technical coursework",
-      "Student projects, notebook and file assignments, grading, help, shared environments, and recovery.",
-      COURSE_ACCENT,
-    ],
-    [
-      "Use a notebook hub when",
-      "A shared kernel service for mostly independent notebooks is enough.",
-      PUBLIC_COLORS.brand,
-    ],
-  ];
-  return (
-    <div
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PUBLIC_RADIUS.panel,
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        {rows.map(([label, description, accent]) => (
-          <div
-            key={label}
-            style={{
-              borderLeft: `3px solid ${accent}`,
-              paddingLeft: 14,
-            }}
-          >
-            <Text strong style={{ display: "block" }}>
-              {label}
-            </Text>
-            <Text style={{ color: PUBLIC_COLORS.mutedText, display: "block" }}>
-              {description}
-            </Text>
-          </div>
-        ))}
-      </Flex>
-    </div>
-  );
-}
-
 export default function TeachingFeaturePage({
   isAuthenticated,
 }: {
@@ -339,15 +290,10 @@ export default function TeachingFeaturePage({
                 Teach where students compute, write, and collaborate
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Students run real assignments in a shared computing environment
-                that instructors can see into, give feedback on, and recover
-                with TimeTravel, while notebooks, code, and data stay in the
-                same project.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                It works beside your existing LMS, so course coordination stays
-                where it already lives while the technical work moves into
-                student projects.
+                Students run assignments in shared projects that instructors can
+                inspect, grade, and recover with TimeTravel, while notebooks,
+                code, data, and existing LMS coordination stay in their right
+                places.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -362,26 +308,6 @@ export default function TeachingFeaturePage({
           </Col>
           <Col xs={24} lg={13}>
             <CourseDashboardMock />
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Keep administration in the LMS. Run coursework in CoCalc.
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                The boundary should be obvious to instructors, students, and
-                academic IT: the LMS coordinates the course, while CoCalc hosts
-                the technical assignments and student working state.
-              </Paragraph>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
-            <CourseBoundaryPanel />
           </Col>
         </Row>
       </PublicSection>
@@ -438,7 +364,7 @@ export default function TeachingFeaturePage({
         >
           <BulletList
             items={[
-              "Bring assignments here when they depend on notebooks, code, data, LaTeX, or terminal work.",
+              "Bring assignments that depend on notebooks, code, data, LaTeX, or terminals.",
               "Keep the LMS responsible for rosters, calendars, announcements, and course-wide communication.",
               "Keep feedback, grading, TimeTravel history, and help close to each student project.",
               "Compare operating models when deployment, procurement, or licensing questions shape the course.",

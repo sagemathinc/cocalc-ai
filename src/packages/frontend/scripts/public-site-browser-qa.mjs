@@ -399,13 +399,14 @@ const ROUTE_RULES = {
   },
   "/features/teaching": {
     requireText: [
-      "Keep administration in the LMS. Run coursework in CoCalc.",
+      "Teach where students compute, write, and collaborate",
       "Run the assignment loop in student projects",
       "When technical coursework belongs in CoCalc",
       "Related",
       "Start a course in CoCalc",
     ],
     forbidText: [
+      "Keep administration in the LMS. Run coursework in CoCalc.",
       "Ready to plan a course?",
       "Feature operating model next steps",
       "Use hosted CoCalc.ai",

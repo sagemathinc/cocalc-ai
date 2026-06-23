@@ -46,6 +46,46 @@ Known risks:
 
 ---
 
+### Codex - Density /features/teaching item 42 (2026-06-23 03:09 PDT)
+
+- **START 2026-06-23 03:09 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 42 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `b65d9889f2`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/teaching-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/teaching` browser QA, this
+  ledger, and shared queue/turn logs if the slice lands. Route frame: visitor
+  asks whether CoCalc belongs beside an LMS for real technical coursework;
+  promise is assignments in student projects with visible help, grading,
+  history, and shared environments. Must delete the standalone
+  LMS-vs-CoCalc/`CourseBoundaryPanel` section, collapse hero support copy to
+  one paragraph, trim final-band bullet 1, and preserve Section 3 in full:
+  assignment loop title/body, `BulletList`, `WorkflowDiagram`,
+  `CourseDashboardMock`, `nbgrader queue ready`, final-band wedge, a11y, guide
+  links, and authenticated/unauthenticated CTAs.
+- **END 2026-06-23 03:13 PDT:** Landed the density cut for
+  `/features/teaching`: source now measures 377 lines versus 451 at
+  `b65d9889f2`. Removed the standalone LMS/CoCalc boundary section and
+  `CourseBoundaryPanel`, collapsed hero support copy to one paragraph that
+  keeps LMS context, and trimmed final-band bullet 1. Preserved the assignment
+  loop section in full, including title/body, `BulletList`, `WorkflowDiagram`,
+  `CourseDashboardMock`, `nbgrader queue ready`, final-band wedge, guide links,
+  authenticated/unauthenticated CTAs, and the light final panel. Updated the
+  feature smoke test and `/features/teaching` browser-QA canaries to forbid the
+  deleted boundary heading and require retained hero/assignment-loop copy.
+  Validation passed: focused feature/browser-QA Jest 140/140, public/features
+  Jest 196/196, `pnpm -C src tsc`, `pnpm -C src lint:frontend`, `git diff
+  --check`, and `pnpm --dir src/packages/static build:dev && node
+  src/packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/teaching --viewport desktop --viewport mobile` (58/58 assertions,
+  artifact `/tmp/cocalc-public-qa-aRgMnA`). Desktop and mobile screenshots
+  inspected clean. Known local static-build debug-log EACCES warning only.
+
 ### Codex - Density /features/compare item 41 (2026-06-23 02:59 PDT)
 
 - **START 2026-06-23 02:59 PDT:** Continuing the manual landing-page

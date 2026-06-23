@@ -892,6 +892,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Teach where students compute, write, and collaborate"),
     ).not.toBeNull();
+    expect(
+      screen.queryByText(
+        "Keep administration in the LMS. Run coursework in CoCalc.",
+      ),
+    ).toBeNull();
     // "Technical course workspace" is the section anchor reused below to scope
     // the doc/route links; it doubles as a presence check.
     expect(screen.getByText("Technical course workspace")).not.toBeNull();
