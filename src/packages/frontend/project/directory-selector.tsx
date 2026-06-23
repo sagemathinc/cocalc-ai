@@ -237,6 +237,9 @@ export default function DirectorySelector({
         setRootPath(homePath);
         setExpandedPaths(new Set([homePath]));
         setSelectedPaths(new Set());
+        if (!multi) {
+          onSelect?.(allowAbsolutePaths ? homePath : "");
+        }
       },
     },
     {
@@ -246,6 +249,9 @@ export default function DirectorySelector({
         setRootPath("/");
         setExpandedPaths(new Set(["/"]));
         setSelectedPaths(new Set());
+        if (!multi) {
+          onSelect?.(allowAbsolutePaths ? "/" : "");
+        }
       },
     },
     {
@@ -255,6 +261,9 @@ export default function DirectorySelector({
         setRootPath("/tmp");
         setExpandedPaths(new Set(["/tmp"]));
         setSelectedPaths(new Set());
+        if (!multi) {
+          onSelect?.(allowAbsolutePaths ? "/tmp" : "");
+        }
       },
     },
     ...(sharedScratchPath
@@ -266,6 +275,9 @@ export default function DirectorySelector({
               setRootPath(sharedScratchPath);
               setExpandedPaths(new Set([sharedScratchPath]));
               setSelectedPaths(new Set());
+              if (!multi) {
+                onSelect?.(allowAbsolutePaths ? sharedScratchPath : "");
+              }
             },
           },
         ]
