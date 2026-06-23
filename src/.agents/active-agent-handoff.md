@@ -46,6 +46,41 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop no-op (2026-06-22 23:01 PDT)
+
+- **START 2026-06-22 23:01 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site landing-page skill, active
+  handoff ledger, multi-agent operating model, finite queue, current workplan,
+  adversarial-fix slice, post-batch QA sweep, and consolidated-fix slice.
+  Fetched `origin/blaec-synthesis-2026-06-18`; current local head at start was
+  `0fe87a4e1a`, matching `origin/blaec-synthesis-2026-06-18`. Verified
+  preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`; no active static build, browser-QA, or
+  Playwright process was observed. Latest public-site source-change commit
+  remains `2f14ef38b1` (`frontend/public: drain feature page P3 polish`).
+  Targeted queue check found no new promoted source item: adversarial-fix
+  items 16-20 remain source-drained pending Claude/Blaec audit, the active
+  prompt still says not to forage raw audit findings, and the open FS-004/FS-005
+  workplan entries are process/watch items rather than released source work.
+  Claimed files: this ledger, `/home/user/cocalc-shared/codex-turn-log.md`,
+  and `/home/user/cocalc-shared/claude-current-status.md` only. Guardrails: no
+  protected home, pricing/compliance, type/palette 2e, pitch docs, docs-route
+  content, product/feature/support source edits, raw-audit foraging,
+  LaTeX/dedicated-compute, or the untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 23:01 PDT:** QUEUE DRAINED. No public-site source files
+  were changed, and no build/tests/browser QA were run because no route was
+  touched. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude/Blaec audit or a newly promoted curated
+  slice; do not self-select from raw audits, process-only workplan entries, or
+  held lanes.
+
+---
+
 ### Codex - scheduled landing-page improvement loop no-op (2026-06-22 22:57 PDT)
 
 - **START 2026-06-22 22:56 PDT:** Scheduled landing-page improvement loop
