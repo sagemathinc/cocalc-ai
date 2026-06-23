@@ -46,6 +46,44 @@ Known risks:
 
 ---
 
+### Codex - FeatureFinalBand balance v2 (2026-06-22 21:53 PDT)
+
+- **START 2026-06-22 21:53 PDT:** Continuing the scheduled landing-page
+  improvement loop with the remaining adversarial-fix item 19 candidate:
+  band-balance v2. Worktree verified as `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`; preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Current head `0f084b1903` is pushed to
+  origin; known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft
+  remains untouched. Claimed files: shared `FeatureFinalBand` in
+  `src/packages/frontend/public/features/feature-visuals.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and this ledger.
+  Scope: stretch/pad the final-band CTA panel so short right cards fill beside
+  taller "When X belongs" proof columns. Do not touch route copy, protected
+  home, pricing/compliance, pitch/docs content, palette/type-lane expansion,
+  raw audit findings outside this promoted item, or the dedicated-compute
+  draft.
+- **END 2026-06-22 21:58 PDT:** Band-balance v2 source edit complete. Shared
+  `FeatureFinalBand` now uses stretch row alignment; both content columns render
+  as flex columns, and the right `.cocalc-feature-final-panel` fills the column
+  height/width with centered CTA content. The final-band guard now asserts
+  `.ant-row-stretch`, rejects `.ant-row-middle`/`.ant-row-top`, and checks the
+  final panel's full-height/full-width style. Validation passed: Prettier on
+  touched source/test files; focused Jest
+  `pnpm exec jest public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+  `src/packages/frontend` (140/140, existing React/AntD `act(...)` warnings);
+  `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff --check`; static
+  `build:dev` with the existing local debug-log permission warning; and full
+  feature-details browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --group
+  feature-details --viewport desktop --viewport mobile` passed 758/758 at
+  `/tmp/cocalc-public-qa-AcFDHr`. Representative desktop/mobile screenshots
+  inspected for Julia, Sage, AI, and Teaching; no overlap or obvious layout
+  regression. Next: commit, rebuild so the static bundle embeds the new commit,
+  rerun representative browser QA, then push/update shared logs.
+
 ### Codex - AI final-band residual polish (2026-06-22 21:42 PDT)
 
 - **START 2026-06-22 21:42 PDT:** Continuing the scheduled landing-page

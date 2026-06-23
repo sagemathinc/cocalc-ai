@@ -264,16 +264,16 @@ export function FeatureFinalBand({
         padding: 24,
       }}
     >
-      <Row gutter={[24, 24]} align="middle">
-        <Col xs={24} lg={15}>
-          <Flex vertical gap={14}>
+      <Row gutter={[24, 24]} align="stretch">
+        <Col xs={24} lg={15} style={{ display: "flex" }}>
+          <Flex vertical gap={14} style={{ width: "100%" }}>
             <Title level={3} style={{ margin: 0 }}>
               {title}
             </Title>
             {children}
           </Flex>
         </Col>
-        <Col xs={24} lg={9}>
+        <Col xs={24} lg={9} style={{ display: "flex" }}>
           <div
             className="cocalc-feature-final-panel"
             style={{
@@ -281,11 +281,13 @@ export function FeatureFinalBand({
               border: `1px solid ${PUBLIC_COLORS.border}`,
               borderRadius: PUBLIC_RADIUS.panel,
               color: PUBLIC_COLORS.heading,
+              display: "flex",
               height: "100%",
               padding: 22,
+              width: "100%",
             }}
           >
-            <Flex vertical gap={14}>
+            <Flex vertical gap={14} justify="center" style={{ width: "100%" }}>
               <Title
                 level={3}
                 style={{ color: PUBLIC_COLORS.heading, margin: 0 }}

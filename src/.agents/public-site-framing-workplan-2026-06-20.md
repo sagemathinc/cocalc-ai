@@ -784,11 +784,47 @@ Current disposition:
   `git diff --check`; static `build:dev`; and browser QA for `/features/ai`
   desktop+mobile 48/48 with screenshots in `/tmp/cocalc-public-qa-JiEgn4`.
 
+### FS-024 - Stretch final-band CTA panels to fill the row
+
+Status: `done`
+
+Evidence:
+
+- The adversarial-fix slice item 11 says the prior `align="middle"` fix centered
+  short final-band CTA cards but still left dead space in the "When X belongs"
+  bands.
+- `FeatureFinalBand` owns that repeated pattern across the feature-detail route
+  family, so the fix belongs in the shared component instead of page-by-page
+  padding.
+
+Decision:
+
+- Redesign only the shared final-band row mechanics: stretch the two main
+  columns and make the right CTA panel fill its column while centering the
+  action content.
+
+Current disposition:
+
+- `FeatureFinalBand` now uses AntD stretch row alignment instead of middle
+  alignment.
+- The left and right columns render as flex columns; the right final-panel
+  fills width/height and centers its CTA content inside the full-height card.
+- The final-band guard now covers every `FINAL_BAND_FEATURE_PAGES` route and
+  asserts the stretch row plus full-height/full-width final-panel styling.
+- Validation passed: focused feature/browser-QA-script Jest 140/140 with
+  existing React/AntD `act(...)` warnings; `pnpm -C src tsc`; frontend lint;
+  `git diff --check`; static `build:dev`; and full feature-details browser QA
+  desktop+mobile 758/758 with screenshots in `/tmp/cocalc-public-qa-AcFDHr`.
+  Representative screenshots for Julia, Sage, AI, and Teaching inspected clean.
+
 ## Next Recommended Burn-Down Order
 
-1. Continue adversarial-fix item 19 from the shared live queue: band-balance v2
-   if still promoted.
-2. Then proceed to adversarial-fix item 20 polish if item 19 is fully drained.
+1. Proceed to adversarial-fix item 20 polish if Claude agrees item 19 is fully
+   drained.
+2. Item 20 P3 polish candidates: julia delete hero 3rd paragraph; octave
+   IconBadges + heading-override + accent + role=img; more-languages
+   nested-shadow + headline + taxonomy; CLI triad/"documented"/jargon; copy
+   nits (whiteboard meta-tail, slides duplicated bullet).
 3. Keep FS-004 and FS-005 as process/backlog items, not autonomous Codex queue
    items, until Blaec or Claude promotes one into a curated slice.
 4. Keep FS-002, FS-003, and FS-006 as watch rules unless user feedback reopens

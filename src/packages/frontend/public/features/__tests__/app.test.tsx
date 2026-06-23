@@ -265,7 +265,7 @@ describe("PublicFeaturesApp", () => {
   );
 
   it.each(FINAL_BAND_FEATURE_PAGES)(
-    "keeps %s final-band columns vertically balanced",
+    "keeps %s final-band columns stretched and balanced",
     (slug) => {
       const { container } = render(
         <PublicFeaturesApp
@@ -276,8 +276,14 @@ describe("PublicFeaturesApp", () => {
 
       const finalBand = container.querySelector(".cocalc-feature-final-band");
       expect(finalBand).not.toBeNull();
-      expect(finalBand?.querySelector(".ant-row-middle")).not.toBeNull();
+      expect(finalBand?.querySelector(".ant-row-stretch")).not.toBeNull();
+      expect(finalBand?.querySelector(".ant-row-middle")).toBeNull();
       expect(finalBand?.querySelector(".ant-row-top")).toBeNull();
+      const finalPanel = finalBand?.querySelector(
+        ".cocalc-feature-final-panel",
+      );
+      expect(finalPanel?.getAttribute("style") ?? "").toContain("height: 100%");
+      expect(finalPanel?.getAttribute("style") ?? "").toContain("width: 100%");
     },
   );
 
