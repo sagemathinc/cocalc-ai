@@ -46,6 +46,26 @@ Known risks:
 
 ---
 
+### Codex - round-4 home H1 item 34 (2026-06-23 01:51 PDT)
+
+- **START 2026-06-23 01:51 PDT:** Manual landing-page improvement loop on
+  live queue item 34 in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Current head is `ef4245e346`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner verified: hub pid `27431` cwd is
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `home/app.tsx`, `home/__tests__/app.test.tsx`,
+  `home/__tests__/visual-quality.test.tsx`,
+  `__tests__/protected-overrides.ts`,
+  `scripts/public-site-browser-qa.mjs`, `/` browser QA, this ledger, and
+  shared queue/turn logs if the slice lands. Scope: exactly the
+  Blaec-directed home H1 replacement, with the subhead and "Built for..."
+  section unchanged. Guardrails: no other home edits, no pricing
+  money/compliance, no type/palette edits, no pitch docs, no raw-audit
+  foraging, no dedicated-compute draft.
+
 ### Codex - round-2 durability restraint item 28 (2026-06-23 00:43 PDT)
 
 - **START 2026-06-23 00:43 PDT:** Continuing the scheduled landing-page
@@ -67,13 +87,13 @@ Known risks:
   the code, math, and explanations together."; updated the feature route
   marker tests and added an absence canary for the removed tail. Validation:
   `pnpm --dir src/packages/frontend exec jest
-  public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+public/features/__tests__/app.test.tsx
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
   (140/140); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
-  --check`; `pnpm --dir src/packages/static build:dev` (known debug-log EACCES
+--check`; `pnpm --dir src/packages/static build:dev` (known debug-log EACCES
   warning only); `node
-  src/packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/whiteboard --viewport desktop --viewport mobile` (42/42,
+src/packages/frontend/scripts/public-site-browser-qa.mjs --route
+/features/whiteboard --viewport desktop --viewport mobile` (42/42,
   screenshots in `/tmp/cocalc-public-qa-S7Sh9l` inspected).
 
 ---
@@ -90,12 +110,12 @@ Known risks:
   through his work without re-listing the same triplet; added a public app
   canary for the preserved line and removed repeated plural triplets.
   Validation: `pnpm --dir src/packages/frontend exec jest
-  public/__tests__/app.test.tsx --runInBand --silent` (41/41); `pnpm -C src
-  tsc`; `pnpm -C src lint:frontend`; `git diff --check`; `pnpm --dir
-  src/packages/static build:dev` (known debug-log EACCES warning only); `node
-  src/packages/frontend/scripts/public-site-browser-qa.mjs --route /about
-  --route /about/team/blaec-bejarano --route /about/team/william-stein --route
-  /about/team/harald-schilly --viewport desktop --viewport mobile` (88/88,
+public/__tests__/app.test.tsx --runInBand --silent` (41/41); `pnpm -C src
+tsc`; `pnpm -C src lint:frontend`; `git diff --check`; `pnpm --dir
+src/packages/static build:dev` (known debug-log EACCES warning only); `node
+src/packages/frontend/scripts/public-site-browser-qa.mjs --route /about
+--route /about/team/blaec-bejarano --route /about/team/william-stein --route
+/about/team/harald-schilly --viewport desktop --viewport mobile` (88/88,
   screenshots in `/tmp/cocalc-public-qa-Y8oUvo` inspected). Guardrails held:
   no home, pricing money/compliance, type/palette 2e, pitch docs, raw-audit
   foraging, or dedicated-compute draft edits.
@@ -127,12 +147,12 @@ Known risks:
   Professor 2001-2005 entries; consolidated Harald's Vienna degree into one
   Master's (Mag. rer. nat.) entry for 1999-2008; added public app canaries for
   both profiles. Validation: `pnpm --dir src/packages/frontend exec jest
-  public/__tests__/app.test.tsx --runInBand --silent`; `pnpm -C src tsc`;
+public/__tests__/app.test.tsx --runInBand --silent`; `pnpm -C src tsc`;
   `pnpm -C src lint:frontend`; `git diff --check`; `pnpm --dir
-  src/packages/static build:dev` (known debug-log EACCES warning only);
+src/packages/static build:dev` (known debug-log EACCES warning only);
   `node src/packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /about --route /about/team/william-stein --route /about/team/harald-schilly
-  --viewport desktop --viewport mobile` (66/66 assertions, screenshots in
+/about --route /about/team/william-stein --route /about/team/harald-schilly
+--viewport desktop --viewport mobile` (66/66 assertions, screenshots in
   `/tmp/cocalc-public-qa-BnvkKm` inspected).
 
 ---
@@ -159,7 +179,7 @@ Known risks:
   text. Validation passed: home-focused Jest
   `public/home/__tests__/app.test.tsx public/home/__tests__/visual-quality.test.tsx public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
   (12/12); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
-  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+--check`; `pnpm --dir src/packages/static build:dev` with the existing local
   debug-log permission warning; and `/` browser QA desktop+mobile passed 34/34
   at `/tmp/cocalc-public-qa-lBYAll`. Screenshots inspected clean. Next:
   commit, rebuild post-commit so the static bundle embeds the new revision,
@@ -199,7 +219,7 @@ Known risks:
   canary updated. Validation passed: focused Jest
   `public/__tests__/app.test.tsx public/features/__tests__/app.test.tsx public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
   (179/179); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
-  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+--check`; `pnpm --dir src/packages/static build:dev` with the existing local
   debug-log permission warning; and browser QA for `/guides`, `/about`,
   `/about/team/william-stein`, `/about/team/harald-schilly`, `/news`,
   `/policies`, `/pricing`, and `/features/automations` desktop+mobile passed
@@ -237,7 +257,7 @@ Known risks:
   Validation passed: focused Jest
   `public/__tests__/app.test.tsx public/__tests__/public-site-browser-qa-script.test.ts public/support/__tests__/new-view.test.tsx public/features/__tests__/app.test.tsx --runInBand --silent`
   (186/186); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
-  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+--check`; `pnpm --dir src/packages/static build:dev` with the existing local
   debug-log permission warning; and browser QA for `/guides`, `/about`,
   `/about/team/blaec-bejarano`, `/features/automations`, and `/support/new`
   desktop+mobile passed 174/174 at `/tmp/cocalc-public-qa-vI94YF`.
@@ -275,7 +295,7 @@ Known risks:
   palette values. Validation passed: focused Jest
   `public/__tests__/app.test.tsx public/support/tickets-view.test.tsx public/support/__tests__/new-view.test.tsx public/features/__tests__/app.test.tsx --runInBand --silent`
   (184/184); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
-  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+--check`; `pnpm --dir src/packages/static build:dev` with the existing local
   debug-log permission warning; and browser QA for `/guides`, `/about`,
   `/about/team/william-stein`, `/support/new`, `/support/tickets`, and
   `/features/cli` desktop+mobile passed 232/232 at
@@ -313,7 +333,7 @@ Known risks:
   passed: focused Jest
   `public/__tests__/app.test.tsx public/support/__tests__/new-view.test.tsx public/features/__tests__/app.test.tsx --runInBand --silent`
   (181/181); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
-  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+--check`; `pnpm --dir src/packages/static build:dev` with the existing local
   debug-log permission warning; and browser QA for `/news`,
   `/about/team/william-stein`, `/policies/privacy`, `/policies/trust`,
   `/pricing`, `/support/new`, `/features/ai`, `/features/automations`,
@@ -357,11 +377,11 @@ Known risks:
   queries the form controls by label across every support-request body variant.
   Validation passed: Prettier on touched source/test files; focused support
   Jest `public/support/__tests__/app.test.tsx
-  public/support/__tests__/new-view.test.tsx
-  public/support/tickets-view.test.tsx --runInBand` (17/17, existing
+public/support/__tests__/new-view.test.tsx
+public/support/tickets-view.test.tsx --runInBand` (17/17, existing
   React/AntD `act(...)` warnings); `pnpm -C src tsc`; `pnpm -C src
-  lint:frontend`; `git diff --check`; `pnpm --dir src/packages/static
-  build:dev` with the existing local debug-log permission warning; and
+lint:frontend`; `git diff --check`; `pnpm --dir src/packages/static
+build:dev` with the existing local debug-log permission warning; and
   `/support/new` browser QA desktop+mobile 30/30 at
   `/tmp/cocalc-public-qa-SRNMV1`. Screenshots inspected clean. Preview shows
   the email fallback in this local environment; the Zendesk form path is
@@ -711,7 +731,7 @@ Known risks:
   trimmed. Updated focused feature/browser-QA canaries and the workplan entry.
   Validation passed: Prettier on touched files; focused Jest
   `pnpm exec jest public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
   `src/packages/frontend` (140/140, existing React/AntD `act(...)` warnings);
   `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff --check`; static
   `build:dev` with the existing local debug-log permission warning; and browser
@@ -725,7 +745,7 @@ Known risks:
   `2f14ef38b1` (`frontend/public: drain feature page P3 polish`) created.
   Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
   `COCALC_GIT_REVISION =
-  2f14ef38b1ca8034c8ec27ab53b107da9e3d3a30`. Post-commit browser QA for
+2f14ef38b1ca8034c8ec27ab53b107da9e3d3a30`. Post-commit browser QA for
   `/features/julia`, `/features/octave`, `/features/more-languages`,
   `/features/cli`, `/features/whiteboard`, and `/features/slides`
   desktop+mobile passed 278/278 at `/tmp/cocalc-public-qa-r0qqd3`. Next: push
