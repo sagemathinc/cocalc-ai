@@ -618,6 +618,7 @@ export interface AccountProjectListWindowRow {
   title: string;
   description: string;
   theme: Record<string, any> | null;
+  labels: Record<string, string>;
   host_id: string | null;
   rootfs_image_id: string | null;
   owning_bay_id: string;
@@ -738,6 +739,8 @@ export interface ProjectRootfsBuildPublishRecordResponse {
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
+export type ProjectLabels = Record<string, string>;
+export type ProjectLabelPatch = Record<string, string | null | undefined>;
 
 export const projects = {
   createProject: authFirstRequireAccount,
@@ -781,6 +784,8 @@ export const projects = {
   getProjectRootfs: authFirstRequireAccount,
   getProjectRootfsPublishConfig: authFirstRequireAccount,
   setProjectRootfsPublishConfig: authFirstRequireAccount,
+  getProjectLabels: authFirstRequireAccount,
+  setProjectLabels: authFirstRequireAccount,
   startProjectRootfsBuild: authFirstRequireAccount,
   getProjectRootfsBuildStatus: authFirstRequireAccount,
   getProjectRootfsBuildLog: authFirstRequireAccount,
@@ -1010,6 +1015,17 @@ export interface Projects {
     project_id: string;
     config: ProjectRootfsPublishConfig | null;
   }) => Promise<void>;
+
+  getProjectLabels: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectLabels>;
+
+  setProjectLabels: (opts: {
+    account_id?: string;
+    project_id: string;
+    labels: ProjectLabelPatch;
+  }) => Promise<ProjectLabels>;
 
   startProjectRootfsBuild: (
     opts: ProjectRootfsBuildStartRequest,

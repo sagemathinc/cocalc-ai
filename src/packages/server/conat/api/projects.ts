@@ -153,6 +153,8 @@ import type {
   ProjectRootfsBuildStatusRequest,
   ProjectRootfsBuildStatusResponse,
   ProjectRootfsPublishConfig,
+  ProjectLabelPatch,
+  ProjectLabels,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   CourseStudentInviteAccountRepairInput,
@@ -187,6 +189,10 @@ import {
   deleteProjectSshKeyInDb,
   upsertProjectSshKeyInDb,
 } from "@cocalc/server/projects/project-ssh-keys";
+import {
+  getProjectLabels as getProjectLabelsInDb,
+  setProjectLabels as setProjectLabelsInDb,
+} from "@cocalc/server/projects/labels";
 import {
   getAssignedProjectHostInfo,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
@@ -1122,6 +1128,35 @@ export async function setProjectRootfsPublishConfig({
   await publishProjectDetailInvalidationBestEffort({
     project_id,
     fields: ["rootfs_publish_config"],
+  });
+}
+
+export async function getProjectLabels({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectLabels> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  return await getProjectLabelsInDb({ project_id });
+}
+
+export async function setProjectLabels({
+  account_id,
+  project_id,
+  labels,
+}: {
+  account_id?: string;
+  project_id: string;
+  labels: ProjectLabelPatch;
+}): Promise<ProjectLabels> {
+  const actor = requireAccountId(account_id);
+  await assertCollab({ account_id: actor, project_id });
+  return await setProjectLabelsInDb({
+    account_id: actor,
+    project_id,
+    labels,
   });
 }
 

@@ -28,6 +28,7 @@ export interface AccountProjectIndexProjectListRow {
   title: string;
   description: string;
   theme: Record<string, any> | null;
+  labels: Record<string, string>;
   host_id: string | null;
   rootfs_image_id: string | null;
   owning_bay_id: string;
@@ -159,7 +160,7 @@ export async function listProjectedProjectsForAccount(opts: {
       const pattern = `%${word.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
       i += 1;
       where.push(
-        `(account_project_index.title ILIKE $${i} ESCAPE '\\' OR account_project_index.description ILIKE $${i} ESCAPE '\\' OR account_project_index.rootfs_image_id ILIKE $${i} ESCAPE '\\' OR account_project_index.state_summary->>'state' ILIKE $${i} ESCAPE '\\' OR rootfs_images.label ILIKE $${i} ESCAPE '\\' OR rootfs_images.version ILIKE $${i} ESCAPE '\\' OR rootfs_images.family ILIKE $${i} ESCAPE '\\')`,
+        `(account_project_index.title ILIKE $${i} ESCAPE '\\' OR account_project_index.description ILIKE $${i} ESCAPE '\\' OR account_project_index.labels::TEXT ILIKE $${i} ESCAPE '\\' OR account_project_index.rootfs_image_id ILIKE $${i} ESCAPE '\\' OR account_project_index.state_summary->>'state' ILIKE $${i} ESCAPE '\\' OR rootfs_images.label ILIKE $${i} ESCAPE '\\' OR rootfs_images.version ILIKE $${i} ESCAPE '\\' OR rootfs_images.family ILIKE $${i} ESCAPE '\\')`,
       );
       params.push(pattern);
     }
@@ -174,6 +175,7 @@ export async function listProjectedProjectsForAccount(opts: {
        COALESCE(account_project_index.title, '') AS title,
        COALESCE(account_project_index.description, '') AS description,
        account_project_index.theme,
+       COALESCE(account_project_index.labels, '{}'::JSONB) AS labels,
        account_project_index.host_id,
        account_project_index.rootfs_image_id,
        COALESCE(NULLIF(BTRIM(account_project_index.owning_bay_id), ''), 'bay-0') AS owning_bay_id,
@@ -335,6 +337,7 @@ export async function rebuildAccountProjectIndex(opts: {
           title,
           description,
           theme,
+          labels,
           users_summary,
           state_summary,
           last_edited,
@@ -355,6 +358,11 @@ export async function rebuildAccountProjectIndex(opts: {
           COALESCE(title, '') AS title,
           COALESCE(description, '') AS description,
           COALESCE(theme, '{}'::JSONB) AS theme,
+          COALESCE((
+            SELECT jsonb_object_agg(project_labels.key, project_labels.value ORDER BY project_labels.key)
+            FROM project_labels
+            WHERE project_labels.project_id = projects.project_id
+          ), '{}'::JSONB) AS labels,
           COALESCE(users, '{}'::JSONB) AS users_summary,
           COALESCE(state, '{}'::JSONB) AS state_summary,
           last_edited,

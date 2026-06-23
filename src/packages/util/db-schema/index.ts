@@ -72,6 +72,7 @@ import "./project-backup-repos";
 import "./project-backup-indexes";
 import "./project-collab-invites";
 import "./project-events-outbox";
+import "./project-labels";
 import "./project-host-route-invalidations";
 import "./project-rootfs-states";
 import "./project-rootfs-builds";

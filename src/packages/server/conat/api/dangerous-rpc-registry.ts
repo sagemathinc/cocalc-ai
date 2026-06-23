@@ -548,6 +548,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "collaborator-authorized RootFS publish metadata defaults for the project",
   },
+  "projects.setProjectLabels": {
+    decision: "fresh-auth-not-required",
+    reason: "collaborator-authorized project metadata labels",
+  },
   "projects.recordProjectRootfsBuildPublish": {
     decision: "fresh-auth-not-required",
     reason:

@@ -427,6 +427,34 @@ async function startRootfsBuilderProject({
   return { project_id, created_project: true };
 }
 
+async function labelRootfsBuilderProject({
+  ctx,
+  project_id,
+  plan,
+  created_project,
+  build_id,
+}: {
+  ctx: any;
+  project_id: string;
+  plan: RootfsRecipeBuildPlan;
+  created_project: boolean;
+  build_id?: string;
+}): Promise<void> {
+  const labels: Record<string, string> = {
+    "cocalc.com/project-kind": "rootfs-build",
+    "cocalc.com/rootfs-recipe": plan.recipe,
+    "cocalc.com/rootfs-recipe-path": plan.recipe_path,
+    "cocalc.com/autocreated": created_project ? "true" : "false",
+  };
+  if (build_id) {
+    labels["cocalc.com/rootfs-build-id"] = build_id;
+  }
+  await ctx.hub.projects.setProjectLabels({
+    project_id,
+    labels,
+  });
+}
+
 async function waitForProjectStart({
   ctx,
   deps,
@@ -1883,6 +1911,12 @@ export function registerRootfsCommand(
             options: opts,
             plan,
           });
+          await labelRootfsBuilderProject({
+            ctx,
+            project_id: project.project_id,
+            plan,
+            created_project: project.created_project,
+          });
           const publishConfig = projectRootfsPublishConfigEnvelope(plan);
           await ctx.hub.projects.setProjectRootfsPublishConfig({
             project_id: project.project_id,
@@ -1898,6 +1932,13 @@ export function registerRootfsCommand(
             recipe_ref: plan.recipe,
             resolved_recipe_json: plan.resolved_recipe,
             metadata_json: plan.config,
+          });
+          await labelRootfsBuilderProject({
+            ctx,
+            project_id: project.project_id,
+            plan,
+            created_project: project.created_project,
+            build_id: build.build_id,
           });
           emitRootfsBuildProgress(ctx, `started build ${build.build_id}`);
           if (opts.configOut) {

@@ -5,6 +5,101 @@ import { Command } from "commander";
 
 import { registerProjectBasicCommands } from "./basic";
 
+test("project label commands call project label APIs", async () => {
+  const calls: any[] = [];
+  const outputs: any[] = [];
+  const deps = {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          projects: {
+            getProjectLabels: async (opts: any) => {
+              calls.push(["get", opts]);
+              return { "cocalc.com/project-kind": "rootfs-build" };
+            },
+            setProjectLabels: async (opts: any) => {
+              calls.push(["set", opts]);
+              return opts.labels;
+            },
+          },
+        },
+      };
+      outputs.push(await fn(ctx));
+    },
+    resolveProjectFromArgOrContext: async (_ctx, project) => ({
+      project_id: project ?? "project-id",
+      title: "Project",
+    }),
+  };
+
+  const program = new Command();
+  program.name("cocalc");
+  const project = program.command("project");
+  registerProjectBasicCommands(project, deps as any);
+
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "project",
+    "label",
+    "set",
+    "--project",
+    "project-id",
+    "foo=bar",
+    "empty=",
+  ]);
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "project",
+    "label",
+    "list",
+    "--project",
+    "project-id",
+  ]);
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "project",
+    "label",
+    "unset",
+    "--project",
+    "project-id",
+    "foo",
+  ]);
+
+  assert.deepEqual(calls, [
+    [
+      "set",
+      {
+        project_id: "project-id",
+        labels: {
+          foo: "bar",
+          empty: "",
+        },
+      },
+    ],
+    ["get", { project_id: "project-id" }],
+    [
+      "set",
+      {
+        project_id: "project-id",
+        labels: {
+          foo: null,
+        },
+      },
+    ],
+  ]);
+  assert.deepEqual(outputs, [
+    { project_id: "project-id", labels: { foo: "bar", empty: "" } },
+    {
+      project_id: "project-id",
+      labels: { "cocalc.com/project-kind": "rootfs-build" },
+    },
+    { project_id: "project-id", labels: { foo: null } },
+  ]);
+});
+
 test("project exec honors the subcommand timeout even when the root CLI also uses --timeout", async () => {
   let captured:
     | {

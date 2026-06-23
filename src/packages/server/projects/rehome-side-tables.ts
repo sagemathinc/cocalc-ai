@@ -135,6 +135,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Project event outbox rows are delivery workflow state; copying them risks duplicate or stale projection updates.",
   },
+  project_labels: {
+    table: "project_labels",
+    status: "not-portable",
+    reason:
+      "Project labels are project-owned metadata and need explicit copy/reconcile semantics before project rehome can preserve them.",
+  },
   account_project_index: {
     table: "account_project_index",
     status: "projection",
