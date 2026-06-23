@@ -13,16 +13,14 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  LinkButton,
-} from "./page-components";
-import { ContextList, IconBadge } from "./feature-visuals";
+import { BulletList, featureAppPath as appPath } from "./page-components";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
+import { FEATURE_ACCENTS } from "./feature-accents";
 
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
+const AI_ACCENT = FEATURE_ACCENTS.ai;
 const AI_PAGE_CSS = `
 .feature-ai-thread-panel {
   background: ${PUBLIC_COLORS.surfaceMuted};
@@ -48,39 +46,26 @@ const AI_PAGE_CSS = `
   height: 100%;
   padding: 22px;
 }
-
-.feature-ai-path-panel {
-  background: ${PUBLIC_COLORS.surfaceMuted};
-  border: 1px solid ${PUBLIC_COLORS.border};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
-  box-shadow: ${PUBLIC_ELEVATION.panelStrong};
-  height: 100%;
-  padding: 26px;
-}
 `;
 
 function ThreadMock() {
   const messages = [
     {
-      accent: "#2f6fda",
       body: "The test failure is in the notebook export. Please inspect the repo, patch the conversion step, and run the focused test.",
       icon: "user",
       label: "human",
     },
     {
-      accent: "#7c3aed",
       body: "I found the outdated path handling, updated the file, and I am running the package test now.",
       icon: "robot",
       label: "codex",
     },
     {
-      accent: "#278c83",
       body: "The same thread keeps the patch, test output, screenshots, and review notes together.",
       icon: "history",
       label: "durable thread",
     },
   ] satisfies {
-    accent: string;
     body: string;
     icon: IconName;
     label: string;
@@ -94,7 +79,7 @@ function ThreadMock() {
       <Flex vertical gap={16}>
         <Flex align="center" justify="space-between" wrap gap={10}>
           <Flex align="center" gap={10}>
-            <IconBadge accent="#7c3aed" icon="robot" />
+            <IconBadge accent={AI_ACCENT} icon="robot" />
             <div>
               <Text strong>Agent thread</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
@@ -108,7 +93,7 @@ function ThreadMock() {
           {messages.map((message) => (
             <div className="feature-ai-thread-message" key={message.label}>
               <Flex align="start" gap={12}>
-                <IconBadge accent={message.accent} icon={message.icon} />
+                <IconBadge accent={AI_ACCENT} icon={message.icon} />
                 <div>
                   <Text strong style={{ color: PUBLIC_COLORS.heading }}>
                     {message.label}
@@ -136,42 +121,7 @@ function ProjectContextPanel() {
 
   return (
     <div className="feature-ai-context-panel">
-      <ContextList
-        accent={PUBLIC_COLORS.brand}
-        items={items}
-        title="Project context"
-      />
-    </div>
-  );
-}
-
-function PathChoicePanel({
-  primaryHref,
-  primaryLabel,
-}: {
-  primaryHref: string;
-  primaryLabel: string;
-}) {
-  return (
-    <div className="cocalc-feature-final-panel feature-ai-path-panel">
-      <Flex vertical gap={16} justify="center" style={{ height: "100%" }}>
-        <Title level={3} style={{ margin: 0 }}>
-          Start with the path that fits
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Open a project for Codex work, compare deployment choices, or continue
-          with terminal-based agent workflows.
-        </Paragraph>
-        <Flex wrap gap={10}>
-          <Button type="primary" href={primaryHref}>
-            {primaryLabel}
-          </Button>
-          <Button href={appPath("products")}>Compare operating models</Button>
-        </Flex>
-        <LinkButton href={appPath("features/terminal")}>
-          Terminal workflows
-        </LinkButton>
-      </Flex>
+      <ContextList accent={AI_ACCENT} items={items} title="Project context" />
     </div>
   );
 }
@@ -179,35 +129,30 @@ function PathChoicePanel({
 function WorkflowStrip() {
   const steps = [
     {
-      accent: "#278c83",
       body: "Start a chat thread as a human-only conversation or invite Codex into the thread.",
       icon: "comments",
       label: "1",
       title: "Choose the thread",
     },
     {
-      accent: "#2f6fda",
       body: "Paste images, code blocks, quotes, files, and exact instructions into the rich editor.",
       icon: "markdown",
       label: "2",
       title: "Give useful context",
     },
     {
-      accent: "#f59e0b",
       body: "Let Codex inspect project files, work with terminals, and use CoCalc-aware tools.",
       icon: "robot",
       label: "3",
       title: "Run the turn",
     },
     {
-      accent: "#7c3aed",
       body: "Review the patch, test output, and discussion in the same durable project history.",
       icon: "history",
       label: "4",
       title: "Keep the trail",
     },
   ] satisfies {
-    accent: string;
     body: string;
     icon: IconName;
     label: string;
@@ -244,7 +189,7 @@ function WorkflowStrip() {
                   <Flex vertical gap={12}>
                     <Flex align="center" justify="space-between">
                       <IconBadge
-                        accent={step.accent}
+                        accent={AI_ACCENT}
                         icon={step.icon}
                         size="md"
                       />
@@ -258,7 +203,7 @@ function WorkflowStrip() {
                         {step.label}
                       </Text>
                     </Flex>
-                    <Title level={3} style={{ margin: 0 }}>
+                    <Title level={4} style={{ margin: 0 }}>
                       {step.title}
                     </Title>
                     <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>
@@ -354,40 +299,34 @@ export default function AIFeaturePage({
         </PublicSection>
 
         <PublicSection>
-          <div
-            style={{
-              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
-              paddingTop: 24,
+          <FeatureFinalBand
+            action={{
+              body: "Open a project and keep the agent thread, files, checks, and review trail with the work it touched.",
+              href: primaryHref,
+              label: primaryLabel,
+              title: "Start in a project",
             }}
+            relatedLinks={[
+              {
+                href: appPath("features/terminal"),
+                label: "Terminal workflows",
+              },
+              {
+                href: appPath("products"),
+                label: "Compare operating models",
+              },
+            ]}
+            title="When AI work belongs in CoCalc"
           >
-            <Row gutter={[24, 24]} align="stretch">
-              <Col xs={24} lg={15}>
-                <Flex vertical gap={12}>
-                  <Title level={3} style={{ margin: 0 }}>
-                    Choose the AI path that fits.
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>
-                    Start with Codex when the agent should work beside the
-                    project record. Use terminal workflows when the task depends
-                    on another command-line agent or shell process.
-                  </Paragraph>
-                  <BulletList
-                    items={[
-                      "Use Codex chat when review should stay near files, notebooks, terminal output, and discussion.",
-                      "Use terminal workflows when the task depends on a command-line tool or shell process.",
-                      "Ask CoCalc when AI workflows are tied to courses, teams, deployment, or policy requirements.",
-                    ]}
-                  />
-                </Flex>
-              </Col>
-              <Col xs={24} lg={9}>
-                <PathChoicePanel
-                  primaryHref={primaryHref}
-                  primaryLabel={primaryLabel}
-                />
-              </Col>
-            </Row>
-          </div>
+            <BulletList
+              items={[
+                "Codex should inspect files, notebooks, terminals, images, and discussion in one place.",
+                "A collaborator needs the patch, checks, screenshots, and rationale close enough to review.",
+                "A shell-based agent or command-line workflow should leave output in the same project record.",
+                "People need to continue the work later and decide what to keep.",
+              ]}
+            />
+          </FeatureFinalBand>
         </PublicSection>
       </Flex>
     </>

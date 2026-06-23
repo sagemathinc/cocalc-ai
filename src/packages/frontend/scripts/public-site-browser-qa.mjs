@@ -301,9 +301,10 @@ const ROUTE_RULES = {
     requireLinks: [{ hrefIncludes: "/features/ai" }],
   },
   "/features/ai": {
-    requireText: ["Agent thread", "Choose the AI path that fits"],
+    requireText: ["Agent thread", "When AI work belongs in CoCalc"],
     forbidText: [
       "Codex thread",
+      "Choose the AI path that fits",
       "Ready to use Codex in CoCalc?",
       "Built-in provider support",
       "Other agents can still run in terminals.",

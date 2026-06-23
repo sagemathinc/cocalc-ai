@@ -46,6 +46,49 @@ Known risks:
 
 ---
 
+### Codex - AI final-band residual polish (2026-06-22 21:42 PDT)
+
+- **START 2026-06-22 21:42 PDT:** Continuing the scheduled landing-page
+  improvement loop with adversarial-fix item 19's accepted AI residual:
+  reframe the `/features/ai` closing section around project continuity, move it
+  onto shared `FeatureFinalBand`, and collapse the local AI icon hues onto an
+  existing `FEATURE_ACCENTS.ai` entry. Worktree verified as
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`; preview
+  hub pid `27431` is rooted at `/home/user/cocalc-ai-synthesis/src`. Current
+  head `0b00b9ce68`; known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft
+  remains untouched. Claimed route/files: `/features/ai`,
+  `src/packages/frontend/public/features/ai-page.tsx`,
+  `src/packages/frontend/public/features/feature-accents.ts`,
+  `src/packages/frontend/public/features/app.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and this ledger.
+  Scope: AI closing-band structure/copy, existing-token accent cleanup, and
+  focused guards. Do not touch protected home, pricing/compliance, pitch/docs
+  content, raw audit findings outside this promoted item, palette/type-lane
+  expansion, or the dedicated-compute draft.
+- **END 2026-06-22 21:47 PDT:** AI residual sub-slice complete. `/features/ai`
+  now uses shared `FeatureFinalBand` for its close, with the sibling-consistent
+  heading "When AI work belongs in CoCalc"; the old "Choose the AI path that
+  fits" tool-menu close is guarded against returning. Registered
+  `FEATURE_ACCENTS.ai`, routed the feature catalog and AI page through it, and
+  removed the four route-local AI icon hues from the page source/allowlist.
+  Workflow card titles are now level-4 headings under the workflow panel, with
+  the audited-page heading guard narrowed to that explicit AI exception.
+  Validation passed: Prettier on touched source/test files; focused Jest
+  `pnpm exec jest public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+  `src/packages/frontend` (140/140, existing React/AntD `act(...)` warnings);
+  `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff --check`; static
+  `build:dev` with the existing local debug-log permission warning; and browser
+  QA `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/ai --viewport desktop --viewport mobile` passed 48/48 at
+  `/tmp/cocalc-public-qa-JiEgn4`. Desktop/mobile screenshots inspected; no
+  overlap or obvious layout regression. Next: commit, rebuild so the static
+  bundle embeds the new commit, rerun AI browser QA, then push/update handoff
+  logs.
+
 ### Codex - teaching final-band polish (2026-06-22 21:22 PDT)
 
 - **START 2026-06-22 21:22 PDT:** Continuing the scheduled landing-page

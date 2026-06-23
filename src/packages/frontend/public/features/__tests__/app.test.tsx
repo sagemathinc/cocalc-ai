@@ -68,6 +68,7 @@ const INTERNAL_CONTEXT_LEAKAGE = combineLeak(
 );
 
 const SHARED_PRIMITIVE_FEATURE_PAGES = [
+  "ai",
   "automations",
   "julia",
   "jupyter-notebook",
@@ -82,6 +83,7 @@ const SHARED_PRIMITIVE_FEATURE_PAGES = [
 ] as const;
 
 const FINAL_BAND_FEATURE_PAGES = [
+  "ai",
   "automations",
   "julia",
   "jupyter-notebook",
@@ -99,7 +101,6 @@ const FINAL_BAND_FEATURE_PAGES = [
 ] as const;
 
 const CUSTOM_FEATURE_PAGES_WITHOUT_SHARED_PRIMITIVES = new Set([
-  "ai-page.tsx",
   "api-page.tsx",
   "cli-page.tsx",
   "compare-page.tsx",
@@ -110,7 +111,6 @@ const SHARED_CARD_PRIMITIVE =
 
 const INLINE_STYLE_LIMIT = 15;
 const LEGACY_INLINE_STYLE_BUDGETS: Record<string, number> = {
-  "ai-page.tsx": 21,
   "cli-page.tsx": 23,
   "python-page.tsx": 20,
   "sage-page.tsx": 21,
@@ -124,15 +124,6 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
   string,
   readonly string[]
 > = {
-  "ai-page.tsx": [
-    "#278c83",
-    "#2f6fda",
-    "#7c3aed",
-    "#f59e0b",
-    "#f7f4ff",
-    "#fff8e8",
-    "#ffffff",
-  ],
   "cli-page.tsx": [
     "#101820",
     "#cbd5e1",
@@ -680,8 +671,11 @@ describe("PublicFeaturesApp", () => {
         }),
       ]),
     );
-    // Closing section identity without pinning the exact headline wording.
-    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
+    expect(screen.getByText("When AI work belongs in CoCalc")).not.toBeNull();
+    expect(screen.queryByText(/Choose the .*path that fits/i)).toBeNull();
+    expect(
+      container.querySelector(".cocalc-feature-final-band"),
+    ).not.toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
@@ -1430,6 +1424,7 @@ describe("PublicFeaturesApp", () => {
   );
 
   it.each([
+    "ai",
     "jupyter-notebook",
     "automations",
     "terminal",
@@ -1462,6 +1457,7 @@ describe("PublicFeaturesApp", () => {
   });
 
   it.each([
+    { slug: "ai", title: "When AI work belongs in CoCalc" },
     { slug: "julia", title: "When Julia belongs in CoCalc" },
     { slug: "octave", title: "When Octave belongs in CoCalc" },
     {
@@ -1573,7 +1569,19 @@ describe("PublicFeaturesApp", () => {
         .map((heading) => heading.textContent?.replace(/\s+/g, " ").trim())
         .filter((heading): heading is string => !!heading);
       expect(new Set(headings).size).toBe(headings.length);
-      expect(container.querySelectorAll("main h4")).toHaveLength(0);
+      const h4s = Array.from(container.querySelectorAll("main h4")).map(
+        (heading) => heading.textContent?.replace(/\s+/g, " ").trim(),
+      );
+      if (slug === "ai") {
+        expect(h4s).toEqual([
+          "Choose the thread",
+          "Give useful context",
+          "Run the turn",
+          "Keep the trail",
+        ]);
+      } else {
+        expect(h4s).toHaveLength(0);
+      }
 
       // Design guardrail: primary-CTA emphasis stays sane — the main action may
       // repeat hero+close, but flag 3+ repeats or multiple repeated primaries.

@@ -143,7 +143,7 @@ const FEATURE_GROUPS = [
 ] as const;
 
 const FEATURE_META = {
-  ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot" },
+  ai: { accent: FEATURE_ACCENTS.ai, icon: "robot" },
   api: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "api" },
   automations: { accent: FEATURE_ACCENTS.automations, icon: "sync" },
   cli: { accent: COLORS.GRAY_D, icon: "terminal" },

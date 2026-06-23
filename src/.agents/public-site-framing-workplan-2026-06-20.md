@@ -727,11 +727,67 @@ Current disposition:
   `/features/teaching` desktop+mobile 56/56 with screenshots in
   `/tmp/cocalc-public-qa-lrBwx6`.
 
+### FS-023 - Move the AI close onto the shared final band
+
+Status: `done`
+
+Evidence:
+
+- Claude's audit of the first AI polish accepted the lighter hero/context
+  treatment but kept item 7's residual open: the closing heading still read
+  like a tool-selection menu, AI carried four local accent hues, and the page
+  had not joined the shared `FeatureFinalBand` guardrails.
+- The adversarial-fix slice says the AI page should keep AI as a proof surface
+  inside durable project work, not make AI-native/tool choice the public lead.
+
+Current route frame for `/features/ai`:
+
+```md
+Route: /features/ai
+Visitor: technical user, collaborator, or reviewer deciding whether agent work
+can stay with the surrounding project context.
+Visitor question: can Codex work happen beside the files, notebooks,
+terminals, images, discussion, checks, and review trail it needs?
+One-sentence promise: CoCalc keeps Codex threads and shell-agent workflows with
+the shared project record people review and continue.
+Proof mechanism: agent-thread mock, workflow trail cards, shared project
+context list, review/history explanation, terminal workflow route, and
+operating-model comparison.
+Primary next step: Codex guide first; create account / open projects as the
+conversion action.
+Secondary next step: terminal workflows and operating-model comparison.
+What this must not claim: no AI IDE/category-collapse lead, no autonomous
+finish-line claim, no broad agent-platform compatibility, no benchmark,
+pricing, compliance, managed-hosting, or vertical-specific proof.
+Evidence consulted: adversarial-fix item 7, Claude residual note in shared
+status, frozen Brief, framing system/register, current `/features/ai` source,
+and browser-QA canaries.
+Decision: redesign the closing section onto `FeatureFinalBand`, reframe it as
+project continuity, and collapse local AI hues onto an existing feature accent.
+```
+
+Current disposition:
+
+- `/features/ai` now uses shared `FeatureFinalBand` for the closing section and
+  joins the shared final-band/shared-primitive guardrails.
+- The close is reframed from "Choose the AI path that fits" to "When AI work
+  belongs in CoCalc," with bullets about project context, review, shell-agent
+  output, and people deciding what to keep.
+- `FEATURE_ACCENTS.ai` centralizes the existing AI accent for the feature index,
+  hero thread mock, workflow cards, and project-context list; the four local AI
+  hue literals were removed from page source and the raw-hex allowlist.
+- Workflow card titles are level-4 headings under the workflow panel, with a
+  focused test exception that keeps other audited feature pages free of `h4`
+  drift.
+- Validation passed: focused feature/browser-QA-script Jest 140/140 with
+  existing React/AntD `act(...)` warnings; `pnpm -C src tsc`; frontend lint;
+  `git diff --check`; static `build:dev`; and browser QA for `/features/ai`
+  desktop+mobile 48/48 with screenshots in `/tmp/cocalc-public-qa-JiEgn4`.
+
 ## Next Recommended Burn-Down Order
 
-1. Continue adversarial-fix item 19 from the shared live queue: Teaching
-   `FeatureFinalBand`/CTA/accent cleanup, band-balance v2, or Claude's accepted
-   AI residual.
+1. Continue adversarial-fix item 19 from the shared live queue: band-balance v2
+   if still promoted.
 2. Then proceed to adversarial-fix item 20 polish if item 19 is fully drained.
 3. Keep FS-004 and FS-005 as process/backlog items, not autonomous Codex queue
    items, until Blaec or Claude promotes one into a curated slice.
