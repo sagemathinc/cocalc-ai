@@ -109,87 +109,7 @@ function PythonProjectMock() {
   );
 }
 
-function WorkflowNode({
-  accent,
-  body,
-  icon,
-  label,
-  title,
-}: {
-  accent: string;
-  body: string;
-  icon: IconName;
-  label: string;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: PUBLIC_ELEVATION.code,
-        height: "100%",
-        padding: 18,
-      }}
-    >
-      <Flex vertical gap={12}>
-        <Flex align="center" justify="space-between" gap={12}>
-          <IconBadge accent={accent} icon={icon} />
-          <Text
-            strong
-            style={{
-              color: PUBLIC_COLORS.heading,
-              fontSize: PUBLIC_TYPE.caption,
-            }}
-          >
-            {label}
-          </Text>
-        </Flex>
-        <div>
-          <Title level={3} style={{ margin: "0 0 6px" }}>
-            {title}
-          </Title>
-          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-            {body}
-          </Paragraph>
-        </div>
-      </Flex>
-    </div>
-  );
-}
-
 function PythonWorkflowMap() {
-  const top = [
-    {
-      accent: "#2f6fda",
-      body: "Explore data, plots, widgets, and rough ideas in the live notebook.",
-      icon: "jupyter",
-      label: "analysis.ipynb",
-      title: "Notebook",
-    },
-    {
-      accent: "#278c83",
-      body: "Move stable code into modules, scripts, tests, and reusable functions.",
-      icon: "python",
-      label: "model.py",
-      title: "Script",
-    },
-    {
-      accent: "#ad6800",
-      body: "Use generated figures, tables, and checked results in writing.",
-      icon: "tex",
-      label: "paper.tex",
-      title: "Paper",
-    },
-  ] satisfies {
-    accent: string;
-    body: string;
-    icon: IconName;
-    label: string;
-    title: string;
-  }[];
-
   return (
     <PublicSection>
       <Flex vertical gap={22}>
@@ -226,31 +146,6 @@ function PythonWorkflowMap() {
             />
           </Col>
         </Row>
-
-        <div
-          style={{
-            background:
-              "linear-gradient(145deg, #ffffff 0%, #f5fbff 58%, #fff8e8 100%)",
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PUBLIC_RADIUS.panel,
-            boxShadow: PUBLIC_ELEVATION.panel,
-            padding: 22,
-          }}
-        >
-          <Flex vertical gap={16}>
-            <Row gutter={[14, 14]} align="stretch">
-              {top.map((node) => (
-                <Col key={node.title} xs={24} lg={8}>
-                  <Flex align="center" gap={12} style={{ height: "100%" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <WorkflowNode {...node} />
-                    </div>
-                  </Flex>
-                </Col>
-              ))}
-            </Row>
-          </Flex>
-        </div>
       </Flex>
     </PublicSection>
   );

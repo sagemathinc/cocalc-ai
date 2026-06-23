@@ -1090,6 +1090,21 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Project context")).not.toBeNull();
     expect(
+      screen.queryByText(
+        "Explore data, plots, widgets, and rough ideas in the live notebook.",
+      ),
+    ).toBeNull();
+    expect(
+      screen.queryByText(
+        "Move stable code into modules, scripts, tests, and reusable functions.",
+      ),
+    ).toBeNull();
+    expect(
+      screen.queryByText(
+        "Use generated figures, tables, and checked results in writing.",
+      ),
+    ).toBeNull();
+    expect(
       screen.queryByText("$ uv venv && uv pip install numpy matplotlib"),
     ).toBeNull();
     expect(screen.queryByText("Codex sees the surrounding work")).toBeNull();

@@ -462,7 +462,12 @@ const ROUTE_RULES = {
       "Start using Python",
       "The same project stays exploratory",
     ],
-    forbidText: ["Ask about Python workflows"],
+    forbidText: [
+      "Ask about Python workflows",
+      "Explore data, plots, widgets, and rough ideas in the live notebook.",
+      "Move stable code into modules, scripts, tests, and reusable functions.",
+      "Use generated figures, tables, and checked results in writing.",
+    ],
     requireSelectors: [".cocalc-feature-final-panel"],
     styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },

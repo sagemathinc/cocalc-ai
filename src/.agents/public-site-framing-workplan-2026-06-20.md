@@ -616,12 +616,62 @@ Current disposition:
 - Browser QA for `/features/linux` desktop+mobile passed 46/46 with updated
   screenshots in `/tmp/cocalc-public-qa-uVd7ir`.
 
+### FS-021 - Remove the redundant Python workflow card row
+
+Status: `done`
+
+Evidence:
+
+- The adversarial-fix slice item 19 calls out `PythonWorkflowMap` as repeating
+  the notebook-to-script-to-paper idea a third time and carrying an extra
+  gradient/nested-card panel.
+- Current `/features/python` already has a hero project mock, a shared
+  `ContextList`, use-case cards, and a final band that preserve the Python
+  proof without the repeated card row.
+
+Current route frame for `/features/python`:
+
+```md
+Route: /features/python
+Visitor: technical user, researcher, instructor, or team reviewer deciding
+whether Python analysis can stay continuous from exploration to write-up.
+Visitor question: can notebooks, scripts, package setup, generated figures, and
+review context stay together in one project?
+One-sentence promise: CoCalc keeps Python notebooks, scripts, terminals,
+packages, collaborators, and write-ups in one shared project.
+Proof mechanism: hero project mock, shared context list, use-case cards,
+package-heavy workflow proof, and final-band continuity bullets.
+Primary next step: create account / open projects.
+Secondary next step: Python workflow guide plus Linux, terminal, and operating
+model routes.
+What this must not claim: no benchmark, setup-time, restore-time, managed
+compute, pricing, compliance, security, or broad agent-platform claim.
+Evidence consulted: adversarial-fix item 19, frozen Brief, framing system,
+current `/features/python` source, and browser-QA canaries.
+Decision: omit the repeated local workflow-card panel; keep the explanatory
+text and shared `ContextList` so the page proves continuity without restating
+the same diagram.
+```
+
+Current disposition:
+
+- Removed the local `WorkflowNode` card row and its route-owned gradient panel
+  from `/features/python`.
+- Preserved the hero project mock, workflow explanatory text, shared
+  `ContextList`, use-case cards, final band, CTA labels, and destinations.
+- Added focused Jest and browser-QA guards against the removed panel copy
+  returning.
+- Focused feature Jest passed 134/134; `pnpm -C src tsc`, frontend lint,
+  `git diff --check`, and static `build:dev` passed.
+- Browser QA for `/features/python` desktop+mobile passed 44/44 with
+  screenshots in `/tmp/cocalc-public-qa-osUiUD`.
+
 ## Next Recommended Burn-Down Order
 
-1. The released Codex queue is drained. Feature-page consistency items 9-12 and
-   design-polish items 13-15 are complete.
-2. Wait for Claude audit plus the fresh vision-critique pass before taking
-   another public-site source slice.
+1. Continue adversarial-fix item 19 from the shared live queue: Teaching
+   `FeatureFinalBand`/CTA/accent cleanup, band-balance v2, or Claude's accepted
+   AI residual.
+2. Then proceed to adversarial-fix item 20 polish if item 19 is fully drained.
 3. Keep FS-004 and FS-005 as process/backlog items, not autonomous Codex queue
    items, until Blaec or Claude promotes one into a curated slice.
 4. Keep FS-002, FS-003, and FS-006 as watch rules unless user feedback reopens

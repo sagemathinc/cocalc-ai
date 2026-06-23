@@ -46,6 +46,40 @@ Known risks:
 
 ---
 
+### Codex - Python workflow-panel P2 redundancy polish (2026-06-22 20:52 PDT)
+
+- **START 2026-06-22 20:52 PDT:** Continuing the scheduled landing-page
+  improvement loop with adversarial-fix queue item 19, next bounded P2 design
+  sub-slice: `/features/python` redundant `WorkflowNode` panel removal.
+  Current branch head `892530f408` is synced with origin except for the known
+  untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
+  draft, which remains untouched. Preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed route/files:
+  `/features/python`,
+  `src/packages/frontend/public/features/python-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, this ledger, and
+  shared coordination logs if the slice completes. Scope: remove the repeated
+  notebook-to-script-to-paper workflow card row while preserving the text,
+  shared `ContextList`, Python proof, final band, and CTA destinations. Do not
+  touch protected home, pricing/compliance, type/palette, pitch/docs content,
+  raw audit findings, or the dedicated-compute draft.
+- **END 2026-06-22 20:55 PDT:** Python redundancy sub-slice complete. Removed
+  the local `WorkflowNode`/three-card workflow panel and its extra gradient
+  shell, leaving the section text plus the shared `ContextList` as the single
+  workflow proof. Added Jest and browser-QA guards so the removed panel copy
+  does not return. Validation: Prettier on touched files, `pnpm -C src tsc`,
+  focused Jest `pnpm exec jest public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
+  existing React/AntD `act(...)` warnings), `pnpm -C src lint:frontend`,
+  `git diff --check`, `pnpm --dir src/packages/static build:dev`, and browser
+  QA `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/python --viewport desktop --viewport mobile` (44/44) passed.
+  Desktop/mobile screenshots inspected at `/tmp/cocalc-public-qa-osUiUD`; no
+  overlap or obvious visual regression. Next: commit, rebuild so the static
+  bundle embeds the new commit, rerun Python browser QA, then push.
+
 ### Codex - Sage hero P2 redundancy polish (2026-06-22 20:46 PDT)
 
 - **START 2026-06-22 20:46 PDT:** Continuing the scheduled landing-page
