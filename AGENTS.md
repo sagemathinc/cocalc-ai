@@ -20,6 +20,7 @@ state belong.
 
 > **READ FIRST every session — live coordination (multiple agents share this repo):**
 > Shared coordination docs: read `cocalc-shared/INDEX.md` first.
+>
 > 1. **`src/.agents/active-agent-handoff.md`** — the live "who is doing what right
 >    now" ledger: claimed files, current branch, preview owner, open risks. Updated
 >    at the START and END of every agent turn; update your block before editing. From
@@ -155,7 +156,8 @@ EOF
 
 Any agent (Codex, Claude, Gemini) touching the public site — landing, feature, product, pricing, guides pages, public copy, CTAs — inherits ONE operating system. Start here; do not improvise a workflow.
 
-- **`docs/website-operating-system.md`** — the contract: the frozen Brief, evidence-gated rounds, **solo by default** (multi-agent only for judge / pitch-challenge / a finite queue), and a per-turn rebuild + screenshot human gate. Read it first.
+- Autonomous queue loop (the LIVE workflow): the live work queue is `cocalc-shared/codex-queue.md` — read it each turn; it is your only work source. Contract: `cocalc-shared/codex-plan.md` (the loop + the validation gate + the protected-surface gate), which supersedes `codex-kickoff-prompt.md` and `codex-landing-page-guardrails.md`. `cocalc-shared/INDEX.md` routes the rest. The per-turn solo round described below applies only to non-queue exploratory work.
+- **`docs/website-operating-system.md`** — the contract: the frozen Brief, evidence-gated rounds, **solo by default** (multi-agent only for judge / pitch-challenge / a finite queue) (being reconciled to the autonomous-queue model — see `codex-plan.md`; queue item 30), and a per-turn rebuild + screenshot human gate. Read it first.
 - Run work through the commands in `src/.claude/commands/`: `/site-round <route>` (the default solo round), `/site-audit`, `/site-verify`, `/site-judge`, `/pitch-challenge`. Codex/Gemini: these are plain prompts — read the matching `*.md`.
 - The edit standard for a single round: `.agents/skills/public-site-landing-page/SKILL.md`.
 - Durable docs (an index — do NOT inline): north-star Brief `docs/landing-page-brief.md` · finite queue `docs/landing-page-issues-and-plans.md` · copy craft `docs/landing-page-copy-playbook.md` · decisions log `docs/landing-page-decisions.md` (append ONE line per durable decision; mechanical detail goes in the commit, not here).
