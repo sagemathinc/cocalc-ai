@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Map as ImmutableMap, Set as ImmutableSet } from "immutable";
 import { IntlProvider } from "react-intl";
 
-import { ActionBox } from "./action-box";
+import { ActionBox, crossProjectSingleItemDestPath } from "./action-box";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store: any, key: string) => {
@@ -156,5 +156,43 @@ describe("ActionBox delete modal", () => {
         deleteFromSnapshots: true,
       }),
     );
+  });
+});
+
+describe("crossProjectSingleItemDestPath", () => {
+  it("copies a single source file into the selected home directory", () => {
+    expect(
+      crossProjectSingleItemDestPath({
+        paths: ["/home/user/scratch/test.ipynb"],
+        destinationDirectory: "/home/user",
+      }),
+    ).toBe("/home/user/test.ipynb");
+  });
+
+  it("copies a single source file into a selected relative directory", () => {
+    expect(
+      crossProjectSingleItemDestPath({
+        paths: ["scratch/test.ipynb"],
+        destinationDirectory: "k2",
+      }),
+    ).toBe("k2/test.ipynb");
+  });
+
+  it("uses the basename when the destination is the project home shortcut", () => {
+    expect(
+      crossProjectSingleItemDestPath({
+        paths: ["scratch/test.ipynb"],
+        destinationDirectory: "",
+      }),
+    ).toBe("test.ipynb");
+  });
+
+  it("leaves multi-source destinations as directories for backend expansion", () => {
+    expect(
+      crossProjectSingleItemDestPath({
+        paths: ["a.txt", "b.txt"],
+        destinationDirectory: "target",
+      }),
+    ).toBe("target");
   });
 });

@@ -59,6 +59,30 @@ export const PRE_STYLE = {
 
 const MAX_RENDERED_SELECTED_FILES = 500;
 
+export function crossProjectSingleItemDestPath({
+  paths,
+  destinationDirectory,
+}: {
+  paths: string[];
+  destinationDirectory: string;
+}): string {
+  if (paths.length !== 1) {
+    return destinationDirectory;
+  }
+  const sourceName = misc.path_split(paths[0].replace(/\/+$/, "")).tail;
+  if (!sourceName) {
+    return destinationDirectory;
+  }
+  const directory = destinationDirectory.replace(/\/+$/, "");
+  if (!directory) {
+    return sourceName;
+  }
+  if (directory === "/") {
+    return `/${sourceName}`;
+  }
+  return `${directory}/${sourceName}`;
+}
+
 type FileAction = undefined | keyof typeof file_actions;
 
 interface Props {
@@ -549,7 +573,10 @@ export function ActionBox({
         src: { project_id, path: paths },
         dest: {
           project_id: destination_project_id,
-          path: destination_directory,
+          path: crossProjectSingleItemDestPath({
+            paths,
+            destinationDirectory: destination_directory,
+          }),
         },
         options: { force: overwrite, recursive: true },
       });
