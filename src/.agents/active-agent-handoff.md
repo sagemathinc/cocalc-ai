@@ -46,6 +46,39 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop no-op (2026-06-22 22:31 PDT)
+
+- **START 2026-06-22 22:31 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site landing-page skill, multi-agent
+  operating model, framing/design docs, finite issue tracker, active workplan,
+  and this handoff ledger. Verified preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/browser-QA
+  process was observed. Current local head at start was `afa1d1cf73`, one
+  coordination commit ahead of `origin/blaec-synthesis-2026-06-18`; latest
+  public-site source-change commit remains `2f14ef38b1`
+  (`frontend/public: drain feature page P3 polish`). Targeted queue check
+  found no new released source item: Claude's current status and Codex turn log
+  still say adversarial-fix items 16-20 are source-drained pending
+  Claude/Blaec audit, the current prompt says not to forage raw audit findings,
+  and LaTeX/dedicated-compute remain held. Claimed files: this ledger,
+  `/home/user/cocalc-shared/codex-turn-log.md`, and
+  `/home/user/cocalc-shared/claude-current-status.md` only. Guardrails: no
+  protected home, pricing/compliance, type/palette 2e, pitch docs, docs-route
+  content, product/feature/support source edits, raw-audit foraging,
+  LaTeX/dedicated-compute, or the untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 22:31 PDT:** QUEUE DRAINED. No public-site source files
+  were changed, and no build/browser QA was run because no route was touched.
+  The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude/Blaec audit or a newly promoted curated
+  slice; do not self-select from raw audits or held lanes.
+
+---
+
 ### Codex - scheduled landing-page improvement loop no-op (2026-06-22 22:27 PDT)
 
 - **START 2026-06-22 22:27 PDT:** Scheduled landing-page improvement loop
