@@ -321,9 +321,26 @@ package_manager_processes() {
   done
 }
 
+package_manager_pids() {
+  package_manager_processes | cut -d/ -f1
+}
+
+describe_package_manager_processes() {
+  local pids="$1"
+  local csv
+  csv="$(printf '%s\n' "$pids" | tr ' ' ',' | sed 's/,,*/,/g; s/^,//; s/,$//')"
+  if [ -z "$csv" ]; then
+    return
+  fi
+  echo "Blocking package-manager process details:"
+  ps -ww -o pid=,ppid=,etimes=,stat=,comm=,args= -p "$csv" 2>/dev/null \
+    | sed 's/^/  /' || true
+}
+
 wait_for_package_manager() {
   local deadline
   local blockers
+  local pids
   deadline=$(( $(date +%s) + PACKAGE_MANAGER_WAIT_SECONDS ))
   while true; do
     blockers="$(package_manager_processes | xargs echo)"
@@ -335,6 +352,8 @@ wait_for_package_manager() {
       return 1
     fi
     echo "Waiting for existing package-manager process(es) to finish before running this rootfs build: $blockers"
+    pids="$(package_manager_pids | xargs echo)"
+    describe_package_manager_processes "$pids"
     append_event "waiting_for_package_manager" "running"
     sleep 5
   done

@@ -192,6 +192,8 @@ describe("rootfs build runner", () => {
     expect(runner).toContain(
       "Waiting for existing package-manager process(es) to finish before running this rootfs build",
     );
+    expect(runner).toContain("Blocking package-manager process details:");
+    expect(runner).toContain("ps -ww -o pid=,ppid=,etimes=,stat=,comm=,args=");
     expect(runner).toContain('/bin/bash "$SCRIPT" >> "$LOG" 2>&1');
     await expect(
       fs.readFile(path.join(buildDir, "resolved-recipe.json"), "utf8"),
