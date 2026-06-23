@@ -7,6 +7,11 @@ import { Button, Modal, Progress, Space, Tag, Typography } from "antd";
 import type { ReactElement } from "react";
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  getWarningMembershipDetails,
+  shouldPollUsageWarnings,
+  warningPollInterval,
+} from "@cocalc/frontend/account/membership-usage-cache";
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import {
   React,
@@ -21,7 +26,6 @@ import {
   ManagedEgressRecentEventsButton,
   formatManagedEgressCategory,
 } from "@cocalc/frontend/purchases/managed-egress-recent-events";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -212,13 +216,11 @@ export const ManagedEgressWarning: React.FC<{
     }
     let mounted = true;
     const load = async () => {
+      if (!shouldPollUsageWarnings()) return;
       try {
-        const next =
-          await webapp_client.conat_client.hub.purchases.getMembershipDetails(
-            {},
-          );
+        const next = await getWarningMembershipDetails();
         if (mounted) {
-          setDetails((next as MembershipDetails) ?? null);
+          setDetails(next ?? null);
         }
       } catch {
         if (mounted) {
@@ -229,7 +231,7 @@ export const ManagedEgressWarning: React.FC<{
     void load();
     const interval = setInterval(
       () => void load(),
-      MANAGED_EGRESS_WARNING_POLL_MS,
+      warningPollInterval(MANAGED_EGRESS_WARNING_POLL_MS),
     );
     const refresh = () => void load();
     window.addEventListener("cocalc:membership-changed", refresh);

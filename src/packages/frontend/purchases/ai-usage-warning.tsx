@@ -6,6 +6,11 @@
 import { Button, Modal, Progress, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  getWarningAIUsage,
+  shouldPollUsageWarnings,
+  warningPollInterval,
+} from "@cocalc/frontend/account/membership-usage-cache";
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import {
   React,
@@ -16,7 +21,6 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { PageStyle } from "@cocalc/frontend/app/top-nav-consts";
 import { TOP_BAR_ELEMENT_CLASS } from "@cocalc/frontend/app/top-nav-consts";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { AIUsageStatus as AIUsageStatusResponse } from "@cocalc/conat/hub/api/purchases";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -134,12 +138,11 @@ export const AIUsageWarning: React.FC<{
     }
     let mounted = true;
     const load = async () => {
+      if (!shouldPollUsageWarnings()) return;
       try {
-        const next = await webapp_client.conat_client.hub.purchases.getAIUsage(
-          {},
-        );
+        const next = await getWarningAIUsage();
         if (mounted) {
-          setStatus((next as AIUsageStatusResponse) ?? null);
+          setStatus(next ?? null);
         }
       } catch {
         if (mounted) {
@@ -148,7 +151,10 @@ export const AIUsageWarning: React.FC<{
       }
     };
     void load();
-    const interval = setInterval(() => void load(), AI_USAGE_WARNING_POLL_MS);
+    const interval = setInterval(
+      () => void load(),
+      warningPollInterval(AI_USAGE_WARNING_POLL_MS),
+    );
     const refresh = () => void load();
     window.addEventListener("cocalc:membership-changed", refresh);
     return () => {

@@ -6,6 +6,11 @@
 import { Button, Modal, Progress, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  getWarningAccountUsageOverview,
+  shouldPollUsageWarnings,
+  warningPollInterval,
+} from "@cocalc/frontend/account/membership-usage-cache";
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import {
   ACCOUNT_USAGE_OVERVIEW_REFRESHED_EVENT,
@@ -17,7 +22,6 @@ import type { PageStyle } from "@cocalc/frontend/app/top-nav-consts";
 import { TOP_BAR_ELEMENT_CLASS } from "@cocalc/frontend/app/top-nav-consts";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   AccountUsageMeter,
   AccountUsageOverview,
@@ -170,11 +174,11 @@ export const AccountCpuWarning: React.FC<{
     }
     let mounted = true;
     const load = async () => {
+      if (!shouldPollUsageWarnings()) return;
       try {
-        const next =
-          await webapp_client.conat_client.hub.purchases.getAccountUsageOverview();
+        const next = await getWarningAccountUsageOverview();
         if (mounted) {
-          setOverview((next as AccountUsageOverview) ?? null);
+          setOverview(next ?? null);
         }
       } catch {
         if (mounted) {
@@ -185,7 +189,7 @@ export const AccountCpuWarning: React.FC<{
     void load();
     const interval = setInterval(
       () => void load(),
-      ACCOUNT_CPU_WARNING_POLL_MS,
+      warningPollInterval(ACCOUNT_CPU_WARNING_POLL_MS),
     );
     const refresh = () => void load();
     const updateFromFreshOverview = (event: Event) => {

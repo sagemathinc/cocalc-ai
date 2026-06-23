@@ -30,7 +30,7 @@ export type ServiceAdmissionLimitOverrides = Partial<
 const DEFINITIONS: Record<ServiceAdmissionLimitKey, LimitDefinition> = {
   hub_conat_api_max_active: {
     env: "COCALC_HUB_CONAT_API_MAX_ACTIVE",
-    fallback: 200,
+    fallback: 1000,
   },
   conat_service_max_parallel_active: {
     env: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",

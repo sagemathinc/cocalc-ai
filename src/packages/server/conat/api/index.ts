@@ -63,6 +63,7 @@ import {
   syncAccountSecurityStateOnce,
   startAccountSecurityStateSyncLoop,
 } from "@cocalc/server/accounts/security-state";
+import { getHubApiAdmissionDecision } from "./admission";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -147,26 +148,32 @@ async function handleMessage({ mesg }) {
     "hub_conat_api_max_active",
   );
   const limitName = serviceAdmissionLimitEnvName("hub_conat_api_max_active");
-  if (activeApiRequests >= maxActiveApiRequests) {
+  const admission = getHubApiAdmissionDecision({
+    active: activeApiRequests,
+    maximum: maxActiveApiRequests,
+    key: request?.name,
+  });
+  if (!admission.allowed) {
     void recordServiceAdmissionDenialLocal({
       surface: "hub-conat-api",
-      source: "hub-api",
+      source: admission.source,
       limit: limitName,
       current: activeApiRequests,
-      maximum: maxActiveApiRequests,
-      reason: "hub api server is busy",
+      maximum: admission.maximum,
+      reason: admission.reason,
       subject: mesg.subject,
       key: request?.name,
     });
     logger.warn("rejecting hub.api request; active request cap reached", {
       active: activeApiRequests,
-      max: maxActiveApiRequests,
+      max: admission.maximum,
       name: request?.name,
+      source: admission.source,
     });
     mesg.respond(null, {
       noThrow: true,
       headers: {
-        error: "hub api server is busy",
+        error: admission.reason ?? "hub api server is busy",
         error_attrs: { code: 503 },
       },
     });
@@ -174,7 +181,7 @@ async function handleMessage({ mesg }) {
   }
   recordServiceAdmissionNearLimit({
     surface: "hub-conat-api",
-    source: "hub-api",
+    source: admission.source,
     limit: limitName,
     current: activeApiRequests + 1,
     maximum: maxActiveApiRequests,

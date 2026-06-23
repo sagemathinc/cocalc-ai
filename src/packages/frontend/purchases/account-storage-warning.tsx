@@ -8,6 +8,11 @@ import { useEffect, useMemo, useState } from "react";
 
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import {
+  getWarningMembershipDetails,
+  shouldPollUsageWarnings,
+  warningPollInterval,
+} from "@cocalc/frontend/account/membership-usage-cache";
+import {
   getMembershipDetailsRefreshedEventDetail,
   MEMBERSHIP_DETAILS_REFRESHED_EVENT,
 } from "@cocalc/frontend/account/membership-usage-events";
@@ -20,7 +25,6 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { PageStyle } from "@cocalc/frontend/app/top-nav-consts";
 import { TOP_BAR_ELEMENT_CLASS } from "@cocalc/frontend/app/top-nav-consts";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -192,13 +196,11 @@ export const AccountStorageWarning: React.FC<{
     }
     let mounted = true;
     const load = async () => {
+      if (!shouldPollUsageWarnings()) return;
       try {
-        const next =
-          await webapp_client.conat_client.hub.purchases.getMembershipDetails({
-            refresh_usage_status: true,
-          });
+        const next = await getWarningMembershipDetails();
         if (mounted) {
-          setDetails((next as MembershipDetails) ?? null);
+          setDetails(next ?? null);
         }
       } catch {
         if (mounted) {
@@ -209,7 +211,7 @@ export const AccountStorageWarning: React.FC<{
     void load();
     const interval = setInterval(
       () => void load(),
-      ACCOUNT_STORAGE_WARNING_POLL_MS,
+      warningPollInterval(ACCOUNT_STORAGE_WARNING_POLL_MS),
     );
     const refresh = () => void load();
     const updateFromFreshDetails = (event: Event) => {
