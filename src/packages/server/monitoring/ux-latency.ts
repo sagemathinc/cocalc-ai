@@ -298,12 +298,15 @@ export async function getUxLatencySummary({
     ),
     getPool().query(
       `
-      SELECT received_at, event_type, metric, segment, duration_ms, project_id,
-             host_id, path_ext, editor, details
-        FROM ${TABLE}
-       WHERE received_at >= $1
-       ORDER BY duration_ms DESC, received_at DESC
-       LIMIT 25
+      SELECT e.received_at, e.started_at, e.event_type, e.metric, e.segment,
+             e.duration_ms, e.account_id, e.project_id, p.title AS project_title,
+             e.host_id, e.bay_id, e.client_event_id, e.path_ext, e.editor,
+             e.details
+        FROM ${TABLE} e
+        LEFT JOIN projects p ON p.project_id = e.project_id
+       WHERE e.received_at >= $1
+       ORDER BY e.duration_ms DESC, e.received_at DESC
+       LIMIT 100
       `,
       [since],
     ),
@@ -317,12 +320,20 @@ export async function getUxLatencySummary({
     recent_slow_events: recentRows.rows.map(
       (row): UxLatencyRecentEvent => ({
         received_at: row.received_at?.toISOString?.() ?? `${row.received_at}`,
+        started_at:
+          row.started_at == null
+            ? undefined
+            : (row.started_at?.toISOString?.() ?? `${row.started_at}`),
         event_type: row.event_type,
         metric: row.metric,
         segment: row.segment ?? undefined,
         duration_ms: Number(row.duration_ms) || 0,
+        account_id: row.account_id ?? undefined,
         project_id: row.project_id ?? undefined,
+        project_title: row.project_title ?? undefined,
         host_id: row.host_id ?? undefined,
+        bay_id: row.bay_id ?? undefined,
+        client_event_id: row.client_event_id ?? undefined,
         path_ext: row.path_ext ?? undefined,
         editor: row.editor ?? undefined,
         details: row.details ?? {},
@@ -389,6 +400,90 @@ function latencyBody(
     .join("\n");
 }
 
+function compactText(value: unknown, max = 96): string | undefined {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return undefined;
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
+function eventDetailString(
+  details: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  return compactText(details?.[key]);
+}
+
+function formatAlertSample(event: UxLatencyRecentEvent): string {
+  const host =
+    compactText(event.host_id) ?? eventDetailString(event.details, "host_id");
+  const opId = eventDetailString(event.details, "op_id");
+  const observed = eventDetailString(event.details, "observed_state");
+  const initial = eventDetailString(event.details, "initial_state");
+  const fields = [
+    `duration=${formatMs(event.duration_ms)}`,
+    `received=${event.received_at}`,
+    event.segment ? `segment=${event.segment}` : undefined,
+    event.account_id ? `account=${event.account_id}` : undefined,
+    event.project_id ? `project=${event.project_id}` : undefined,
+    event.project_title
+      ? `title=${compactText(event.project_title)}`
+      : undefined,
+    host ? `host=${host}` : undefined,
+    opId ? `op=${opId}` : undefined,
+    initial || observed
+      ? `state=${initial ?? "?"}->${observed ?? "?"}`
+      : undefined,
+  ];
+  return `- ${fields.filter(Boolean).join(" ")}`;
+}
+
+function recentSamplesBody({
+  summary,
+  metric,
+  segment,
+  limit = 8,
+}: {
+  summary: UxLatencySummary;
+  metric: string;
+  segment?: string;
+  limit?: number;
+}): string {
+  const events = summary.recent_slow_events
+    .filter((event) => {
+      if (event.metric !== metric) return false;
+      if (segment != null && event.segment !== segment) return false;
+      return true;
+    })
+    .slice(0, limit);
+  if (events.length === 0) {
+    return "\n\nRecent samples: none retained in the slow-event sample window.";
+  }
+  return `\n\nRecent samples:\n${events.map(formatAlertSample).join("\n")}`;
+}
+
+function actionableLatencyBody({
+  summary,
+  row,
+  expectation,
+  thresholdMs,
+  slowSamples,
+}: {
+  summary: UxLatencySummary;
+  row: UxLatencyMetricSummary;
+  expectation: string;
+  thresholdMs: number;
+  slowSamples?: number;
+}): string {
+  return (
+    latencyBody(row, expectation, thresholdMs, slowSamples) +
+    recentSamplesBody({
+      summary,
+      metric: row.metric,
+      segment: row.segment,
+    })
+  );
+}
+
 function recentSlowSampleCount({
   summary,
   row,
@@ -447,12 +542,14 @@ function alertCandidates(
   if (warmStartAlert.alert && warmStart) {
     alerts.push({
       subject: "warm project starts are slow",
-      body: latencyBody(
-        warmStart,
-        "Warm provisioned project starts violated the configured P95 SLA.",
-        sla.project_start_warm_p95_ms,
-        warmStartAlert.slowSamples,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: warmStart,
+        expectation:
+          "Warm provisioned project starts violated the configured P95 SLA.",
+        thresholdMs: sla.project_start_warm_p95_ms,
+        slowSamples: warmStartAlert.slowSamples,
+      }),
     });
   }
 
@@ -466,12 +563,14 @@ function alertCandidates(
   if (allStartsAlert.alert && allStarts) {
     alerts.push({
       subject: "project starts are slow",
-      body: latencyBody(
-        allStarts,
-        "Overall project start latency violated the configured P95 SLA. Restore/dearchive paths may be expected outliers; check segment rows before treating this as a warm-start regression.",
-        sla.project_start_overall_p95_ms,
-        allStartsAlert.slowSamples,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: allStarts,
+        expectation:
+          "Overall project start latency violated the configured P95 SLA. Restore/dearchive paths may be expected outliers; check segment rows before treating this as a warm-start regression.",
+        thresholdMs: sla.project_start_overall_p95_ms,
+        slowSamples: allStartsAlert.slowSamples,
+      }),
     });
   }
 
@@ -482,11 +581,13 @@ function alertCandidates(
   if (stuckStarts && stuckStarts.count >= EXPLICIT_FAILURE_ALERT_MIN_SAMPLES) {
     alerts.push({
       subject: "project start appears stuck",
-      body: latencyBody(
-        stuckStarts,
-        "At least one browser-observed project start was still not running after the user-visible stuck threshold.",
-        sla.project_start_overall_p95_ms,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: stuckStarts,
+        expectation:
+          "At least one browser-observed project start was still not running after the user-visible stuck threshold.",
+        thresholdMs: sla.project_start_overall_p95_ms,
+      }),
     });
   }
 
@@ -500,11 +601,13 @@ function alertCandidates(
   ) {
     alerts.push({
       subject: "project starts timed out",
-      body: latencyBody(
-        startTimeouts,
-        "At least one project start did not reach browser-observed running state within the monitoring deadline.",
-        sla.project_start_overall_p95_ms,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: startTimeouts,
+        expectation:
+          "At least one project start did not reach browser-observed running state within the monitoring deadline.",
+        thresholdMs: sla.project_start_overall_p95_ms,
+      }),
     });
   }
 
@@ -518,12 +621,14 @@ function alertCandidates(
   if (visibleAlert.alert && visible) {
     alerts.push({
       subject: "file open visible latency is high",
-      body: latencyBody(
-        visible,
-        "File-open visible latency violated the configured P95 SLA.",
-        sla.file_open_visible_p95_ms,
-        visibleAlert.slowSamples,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: visible,
+        expectation:
+          "File-open visible latency violated the configured P95 SLA.",
+        thresholdMs: sla.file_open_visible_p95_ms,
+        slowSamples: visibleAlert.slowSamples,
+      }),
     });
   }
 
@@ -537,12 +642,14 @@ function alertCandidates(
   if (syncReadyAlert.alert && syncReady) {
     alerts.push({
       subject: "file open sync-ready latency is high",
-      body: latencyBody(
-        syncReady,
-        "File-open sync-ready latency violated the configured P95 SLA.",
-        sla.file_open_sync_ready_p95_ms,
-        syncReadyAlert.slowSamples,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: syncReady,
+        expectation:
+          "File-open sync-ready latency violated the configured P95 SLA.",
+        thresholdMs: sla.file_open_sync_ready_p95_ms,
+        slowSamples: syncReadyAlert.slowSamples,
+      }),
     });
   }
 
@@ -555,12 +662,13 @@ function alertCandidates(
   if (terminalReadyAlert.alert && terminalReady) {
     alerts.push({
       subject: "terminal ready latency is high",
-      body: latencyBody(
-        terminalReady,
-        "Terminal readiness violated the configured P95 SLA.",
-        sla.project_terminal_ready_p95_ms,
-        terminalReadyAlert.slowSamples,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: terminalReady,
+        expectation: "Terminal readiness violated the configured P95 SLA.",
+        thresholdMs: sla.project_terminal_ready_p95_ms,
+        slowSamples: terminalReadyAlert.slowSamples,
+      }),
     });
   }
 
@@ -573,12 +681,13 @@ function alertCandidates(
   if (jupyterReadyAlert.alert && jupyterReady) {
     alerts.push({
       subject: "Jupyter ready latency is high",
-      body: latencyBody(
-        jupyterReady,
-        "Jupyter readiness violated the configured P95 SLA.",
-        sla.project_jupyter_ready_p95_ms,
-        jupyterReadyAlert.slowSamples,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: jupyterReady,
+        expectation: "Jupyter readiness violated the configured P95 SLA.",
+        thresholdMs: sla.project_jupyter_ready_p95_ms,
+        slowSamples: jupyterReadyAlert.slowSamples,
+      }),
     });
   }
 
@@ -591,12 +700,13 @@ function alertCandidates(
   if (execReadyAlert.alert && execReady) {
     alerts.push({
       subject: "project exec ready latency is high",
-      body: latencyBody(
-        execReady,
-        "Project exec readiness violated the configured P95 SLA.",
-        sla.project_exec_ready_p95_ms,
-        execReadyAlert.slowSamples,
-      ),
+      body: actionableLatencyBody({
+        summary,
+        row: execReady,
+        expectation: "Project exec readiness violated the configured P95 SLA.",
+        thresholdMs: sla.project_exec_ready_p95_ms,
+        slowSamples: execReadyAlert.slowSamples,
+      }),
     });
   }
 

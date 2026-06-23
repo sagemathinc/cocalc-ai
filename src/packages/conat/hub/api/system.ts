@@ -259,12 +259,17 @@ export interface UxLatencyMetricSummary {
 
 export interface UxLatencyRecentEvent {
   received_at: string;
+  started_at?: string;
   event_type: string;
   metric: string;
   segment?: string;
   duration_ms: number;
+  account_id?: string;
   project_id?: string;
+  project_title?: string;
   host_id?: string;
+  bay_id?: string;
+  client_event_id?: string;
   path_ext?: string;
   editor?: string;
   details?: Record<string, unknown>;
