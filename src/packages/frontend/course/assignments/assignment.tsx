@@ -26,6 +26,7 @@ import {
   MarkdownInput,
   Tip,
 } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { course, labels } from "@cocalc/frontend/i18n";
 import { capitalize, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -524,7 +525,35 @@ export function Assignment({
     set_selected_update_open(true);
   }
 
+  function open_assignment_update_docs(): void {
+    openProjectDocs({
+      projectId: project_id,
+      slug: "teaching/create-assignment",
+    });
+  }
+
   function render_assignment_button(status) {
+    if (status.assignment > 0) {
+      return [
+        <Button
+          key="selected-update"
+          type="primary"
+          size={size}
+          onClick={show_selected_update}
+          disabled={copy_confirm}
+        >
+          <Icon name="files" /> Send Selected Files...
+        </Button>,
+        <Progress
+          key="progress"
+          done={status.assignment}
+          not_done={status.not_assignment}
+          step="assigned"
+          skipped={assignment.get("skip_assignment")}
+        />,
+      ];
+    }
+
     const last_assignment = assignment.get("last_assignment");
     // Primary if it hasn't been assigned before or if it hasn't started assigning.
     let type;
@@ -572,17 +601,6 @@ export function Assignment({
           <Icon name="share-square" /> {label}...
         </Tip>
       </Button>,
-      status.assignment > 0 ? (
-        <Button
-          key="selected-update"
-          size={size}
-          onClick={show_selected_update}
-          disabled={copy_confirm}
-          style={{ marginLeft: "6px" }}
-        >
-          <Icon name="files" /> Send Selected Files...
-        </Button>
-      ) : undefined,
       <Progress
         key="progress"
         done={status.assignment}
@@ -811,16 +829,19 @@ export function Assignment({
       case "assignment":
         return (
           <span>
-            This will recopy all of the files to them. CAUTION: if you update a
-            file that a student has also worked on, their work will get
-            overwritten. They can use TimeTravel to get it back.
-            <a
-              target="_blank"
-              href="https://github.com/sagemathinc/cocalc/wiki/CourseCopy"
+            This sends the entire assignment again. If a selected destination
+            file already exists, student work can be replaced. Prefer{" "}
+            <b>Send Selected Files</b> for ordinary fixes, and use overwrite
+            only when that is intentional. TimeTravel can recover previous file
+            versions.{" "}
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={open_assignment_update_docs}
             >
-              (more details)
-            </a>
-            .
+              More about updating assignments
+            </Button>
           </span>
         );
       case "collect":

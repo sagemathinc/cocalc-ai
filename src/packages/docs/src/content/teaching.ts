@@ -23,6 +23,26 @@ their projects, and instructors collect the results.
 For notebooks, use nbgrader when you need automated grading cells and structured
 feedback.
 
+## Update an assignment after students have started
+
+After an assignment has been sent once, use **Send Selected Files** for ordinary
+fixes. Select the files or folders that changed, then send only those paths to
+student projects.
+
+By default, selected-file updates target only students who already received the
+assignment. Check the option to include students who have not received it yet.
+
+Existing student files are skipped by default and count as successful. This is
+the safest way to add a new file or folder without touching student work.
+
+Use overwrite only when you intentionally want to replace existing student
+files. Students and instructors can usually recover earlier versions with
+TimeTravel, but avoiding accidental overwrite is better.
+
+Selecting all files in **Send Selected Files** is the safe replacement for
+"assign again". It makes the target paths explicit and keeps overwrite as a
+separate choice.
+
 ## What makes this different from an LMS
 
 Canvas and Moodle organize course communication, calendars, and grades. CoCalc

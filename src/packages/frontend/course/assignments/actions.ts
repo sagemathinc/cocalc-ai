@@ -1363,11 +1363,13 @@ ${details}
   send_selected_assignment_paths_to_students = async ({
     assignment_id,
     relative_paths,
+    student_ids,
     include_not_assigned = false,
     overwrite = false,
   }: {
     assignment_id: string;
     relative_paths: string[];
+    student_ids?: string[];
     include_not_assigned?: boolean;
     overwrite?: boolean;
   }): Promise<void> => {
@@ -1417,8 +1419,13 @@ ${details}
       const patchDests: CourseAssignmentPatchDestination[] = [];
       const courseCopyDests: CourseCopyDestination[] = [];
       let errors = "";
-      for (const student_id of store.get_student_ids({ deleted: false })) {
-        if (!include_not_assigned) {
+      const explicitStudentIds = student_ids?.length
+        ? Array.from(new Set(student_ids))
+        : undefined;
+      const targetStudentIds =
+        explicitStudentIds ?? store.get_student_ids({ deleted: false });
+      for (const student_id of targetStudentIds) {
+        if (!explicitStudentIds && !include_not_assigned) {
           const alreadyCopied = !!store.last_copied(
             "assignment",
             assignment_id,
@@ -1437,7 +1444,10 @@ ${details}
           continue;
         }
         let student_project_id: string | undefined = student.get("project_id");
-        if (student_project_id == null && include_not_assigned) {
+        if (
+          student_project_id == null &&
+          (include_not_assigned || explicitStudentIds)
+        ) {
           const student_name = store.get_student_name(student_id);
           this.course_actions.set_activity({
             id: activity_id,

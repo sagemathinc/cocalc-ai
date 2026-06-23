@@ -99,13 +99,17 @@ export function SendSelectedAssignmentFilesModal({
   actions,
   project_id,
   status,
+  studentIds,
+  targetLabel,
 }: {
   open: boolean;
   onClose: () => void;
   assignment: AssignmentRecord;
   actions: CourseActions;
   project_id: string;
-  status: AssignmentStatus;
+  status?: AssignmentStatus;
+  studentIds?: string[];
+  targetLabel?: string;
 }) {
   const [paths, setPaths] = useState<SelectableAssignmentPath[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -120,10 +124,13 @@ export function SendSelectedAssignmentFilesModal({
   const sourceRoot = sourceRootPath(assignment);
   const targetRoot = assignment.get("target_path");
   const assignment_id = assignment.get("assignment_id");
+  const explicitTargetCount = studentIds?.length;
   const compactSelection = compactSelectedPaths(Array.from(selected));
-  const targetCount = includeNotAssigned
-    ? status.assignment + status.not_assignment
-    : status.assignment;
+  const targetCount =
+    explicitTargetCount ??
+    (includeNotAssigned
+      ? (status?.assignment ?? 0) + (status?.not_assignment ?? 0)
+      : (status?.assignment ?? 0));
   const canSend =
     compactSelection.length > 0 &&
     targetCount > 0 &&
@@ -173,6 +180,7 @@ export function SendSelectedAssignmentFilesModal({
       await actions.assignments.send_selected_assignment_paths_to_students({
         assignment_id,
         relative_paths: compactSelection,
+        student_ids: studentIds,
         include_not_assigned: includeNotAssigned,
         overwrite,
       });
@@ -204,7 +212,7 @@ export function SendSelectedAssignmentFilesModal({
         }
         description={`Source: ${sourceRoot || "/"} -> student destination: ${
           targetRoot || "/"
-        }`}
+        }${targetLabel ? ` (${targetLabel})` : ""}`}
       />
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Input.Search
@@ -256,13 +264,15 @@ export function SendSelectedAssignmentFilesModal({
           )}
         </div>
         <Space direction="vertical">
-          <Checkbox
-            checked={includeNotAssigned}
-            onChange={(e) => setIncludeNotAssigned(e.target.checked)}
-          >
-            Also send to students who have not previously received this
-            assignment
-          </Checkbox>
+          {explicitTargetCount == null ? (
+            <Checkbox
+              checked={includeNotAssigned}
+              onChange={(e) => setIncludeNotAssigned(e.target.checked)}
+            >
+              Also send to students who have not previously received this
+              assignment
+            </Checkbox>
+          ) : undefined}
           <Checkbox
             checked={overwrite}
             onChange={(e) => {
