@@ -165,14 +165,7 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#ffffff",
   ],
   "slides-page.tsx": ["#d46b08"],
-  "terminal-page.tsx": [
-    "#096dd9",
-    "#278c83",
-    "#ad6800",
-    "#f4f9ff",
-    "#fff8e8",
-    "#ffffff",
-  ],
+  "terminal-page.tsx": ["#096dd9", "#f4f9ff", "#fff8e8", "#ffffff"],
   "whiteboard-page.tsx": ["#2f6fda", "#389e0d", "#ad6800", "#d4380d"],
 };
 
@@ -997,6 +990,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getAllByText("Each terminal opens in its own folder.").length,
     ).toBeGreaterThan(0);
+    expect(screen.getByText(/Preserved scrollback/i)).not.toBeNull();
+    expect(screen.getByText(/TimeTravel on generated files/i)).not.toBeNull();
+    expect(screen.queryByText("One session stays visible")).toBeNull();
+    expect(screen.queryByText("Output remains reviewable")).toBeNull();
+    expect(screen.queryByText("Split the shell around the work")).toBeNull();
     // Closing section identity without pinning the headline.
     expect(
       screen.getByText("Where the terminal earns its place"),

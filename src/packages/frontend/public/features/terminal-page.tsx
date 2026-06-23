@@ -96,10 +96,6 @@ export default function TerminalFeaturePage({
                 A real Linux shell that survives disconnects and shares one live
                 stream.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Open the <code>.term</code> file and the same shell context
-                comes back.
-              </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
                   {primaryCtaLabel}
@@ -125,37 +121,6 @@ export default function TerminalFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
-        <Col xs={24} md={8}>
-          <StoryCard icon="file" title="Each terminal opens in its own folder.">
-            Open <code>research/runs/run.term</code> and the shell starts in{" "}
-            <code>research/runs/</code>. Open the <code>.term</code> file and
-            the same shell context comes back with the files it reads or writes.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <StoryCard
-            accent="#278c83"
-            icon="users"
-            title="One session stays visible"
-          >
-            Collaborators can reconnect to the same terminal stream instead of
-            chasing screenshots, pasted logs, or a private shell on one person's
-            laptop.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <StoryCard
-            accent="#ad6800"
-            icon="history"
-            title="Output remains reviewable"
-          >
-            Split panes, preserved scrollback, and TimeTravel on generated files
-            keep command output close enough to inspect during the next handoff.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
@@ -167,78 +132,36 @@ export default function TerminalFeaturePage({
                 <Title level={3} style={{ margin: 0 }}>
                   Put the shell beside the work it changes
                 </Title>
+                <StoryCard
+                  icon="file"
+                  title="Each terminal opens in its own folder."
+                >
+                  Open <code>research/runs/run.term</code> and the shell starts
+                  in <code>research/runs/</code>. Open the <code>.term</code>{" "}
+                  file and the same shell context comes back with the files it
+                  reads or writes.
+                </StoryCard>
                 <Paragraph style={{ margin: 0 }}>
                   A terminal is useful in CoCalc because it is not separate from
                   the project. The shell sits near notebooks, source files,
                   logs, generated outputs, notes, and chat, so a teammate can
                   review what happened before continuing.
                 </Paragraph>
+                <Paragraph style={{ margin: 0 }}>
+                  CoCalc terminals are durable like tmux and collaborative like
+                  the rest of the workspace. Preserved scrollback, split panes,
+                  and TimeTravel on generated files keep command output close
+                  enough to inspect during the next handoff.
+                </Paragraph>
                 <BulletList
                   items={[
                     "Run scripts beside the files they read or create.",
-                    "Keep logs, generated outputs, and notes in the same project.",
+                    "Use split panes for logs, a REPL, a server process, and a build command.",
                     "Let Codex inspect terminal context instead of guessing from a final error.",
                   ]}
                 />
               </Flex>
-              <Flex vertical gap={12}>
-                <Title level={3} style={{ margin: 0 }}>
-                  Collaborate in one terminal stream
-                </Title>
-                <Paragraph style={{ margin: 0 }}>
-                  CoCalc terminals are durable like tmux and collaborative like
-                  the rest of the workspace. Close the browser, reopen the
-                  project, and the session can still be there.
-                </Paragraph>
-                <Paragraph style={{ margin: 0 }}>
-                  Shared terminals include output pause, shared sizing, side
-                  chat, and controls for inactive viewers when another browser
-                  is holding the session too small.
-                </Paragraph>
-              </Flex>
             </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Split the shell around the work
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Keep logs, a server process, a REPL, and a build command visible
-                in one frame. Split horizontally or vertically, drag panes into
-                place, and keep a terminal beside the editor that needs it.
-              </Paragraph>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
-            <ContextList
-              accent="#096dd9"
-              items={[
-                {
-                  icon: "file-code",
-                  label: "Edit a script and run it in the adjacent terminal",
-                },
-                {
-                  icon: "terminal",
-                  label: "Tail logs while testing a notebook or local web app",
-                },
-                {
-                  icon: "layout",
-                  label: (
-                    <>
-                      Use <code>open</code> to pop files into the browser
-                      workspace
-                    </>
-                  ),
-                },
-              ]}
-              title="Pane workflow"
-            />
           </Col>
         </Row>
       </PublicSection>

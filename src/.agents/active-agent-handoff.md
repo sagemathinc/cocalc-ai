@@ -46,6 +46,48 @@ Known risks:
 
 ---
 
+### Codex - Density /features/terminal item 39 (2026-06-23 02:44 PDT)
+
+- **START 2026-06-23 02:44 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 39 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `c288b108d6`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/terminal-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/terminal` browser QA, this
+  ledger, and shared queue/turn logs if the slice lands. Route frame: visitor
+  is a technical user or reviewer asking whether shell work can stay attached
+  to the project instead of disappearing into a private terminal; promise is a
+  real Linux terminal that opens where the work lives and remains shareable and
+  reviewable; proof mechanism is the kept `TerminalEvidencePanel`, `.term`
+  folder anchor, and merged durability/collaboration bullets; primary next
+  step is start/open a project; secondary next steps are the terminal guide,
+  Linux, Jupyter, software-install, and products links. Must not claim
+  benchmark/restore timing, broad agent-platform support, or managed compute.
+  Decision: collapse the hero, keep StoryCard 1, cut StoryCards 2-3, merge the
+  evidence sub-blocks, and preserve TimeTravel/scrollback in the merged band.
+- **END 2026-06-23 02:49 PDT:** Item 39 source edit complete. Reduced
+  `/features/terminal` from 284 to 207 source lines and collapsed the route to
+  three bands: hero, one proof section, and final band. Removed the hero's
+  second `.term` paragraph, cut the duplicate "One session stays visible" and
+  "Output remains reviewable" StoryCards, merged the collaboration/durability
+  evidence into the main proof band, and cut the standalone split-pane section.
+  Preserved the H1 canary, the "Each terminal opens in its own folder." `.term`
+  anchor, `TerminalEvidencePanel` role/aria proof, split-pane bullet,
+  TimeTravel/scrollback sentence, and final-band heading/links. Validation
+  passed: focused feature/browser-QA Jest
+  `public/features/__tests__/app.test.tsx public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+  (140/140); public/features Jest `public/__tests__ public/features/__tests__
+  --runInBand --silent` (196/196); `git diff --check`; `pnpm -C src tsc`;
+  `pnpm -C src lint:frontend`; `pnpm --dir src/packages/static build:dev`
+  (known debug-log EACCES warning only); `/features/terminal` browser QA
+  desktop+mobile (58/58) with screenshots in
+  `/tmp/cocalc-public-qa-i6Mc4X` inspected.
+
 ### Codex - Density /features/linux item 38 (2026-06-23 02:32 PDT)
 
 - **START 2026-06-23 02:32 PDT:** Continuing the manual landing-page
