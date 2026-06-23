@@ -49,6 +49,20 @@ interface SupportFileRef {
 const { Paragraph, Text, Title } = Typography;
 
 const MIN_BODY_LENGTH = 16;
+const SUPPORT_FIELD_IDS = {
+  email: "support-email",
+  subject: "support-subject",
+  typeLabel: "support-type-label",
+  problemAction: "support-problem-action",
+  problemResult: "support-problem-result",
+  problemExpectation: "support-problem-expectation",
+  questionDetails: "support-question-details",
+  purchaseDetails: "support-purchase-details",
+  taskSoftware: "support-task-software",
+  taskUse: "support-task-use",
+  taskTest: "support-task-test",
+  chatDetails: "support-chat-details",
+} as const;
 const RecentFiles = lazy(() => import("./recent-files"));
 type ClientApi = typeof import("@cocalc/frontend/client/api").default;
 
@@ -91,6 +105,7 @@ function useInitialQueryState(): QueryState {
 function Status({ done }: { done: boolean }) {
   return (
     <span
+      aria-hidden="true"
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -114,14 +129,36 @@ function Status({ done }: { done: boolean }) {
 function SectionLabel({
   children,
   done,
+  htmlFor,
+  id,
 }: {
   children: ReactNode;
   done: boolean;
+  htmlFor?: string;
+  id?: string;
 }) {
-  return (
-    <div style={{ fontSize: PUBLIC_TYPE.body, fontWeight: PUBLIC_WEIGHT.bold }}>
+  const style = {
+    fontSize: PUBLIC_TYPE.body,
+    fontWeight: PUBLIC_WEIGHT.bold,
+  };
+  const content = (
+    <>
       <Status done={done} />
       {children}
+    </>
+  );
+
+  if (htmlFor) {
+    return (
+      <label htmlFor={htmlFor} id={id} style={style}>
+        {content}
+      </label>
+    );
+  }
+
+  return (
+    <div id={id} style={style}>
+      {content}
     </div>
   );
 }
@@ -158,9 +195,12 @@ function ProblemFields({
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <div>
-        <Text strong>What did you do exactly?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.problemAction}>
+          <Text strong>What did you do exactly?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.problemAction}
           rows={3}
           placeholder="Describe exactly what you did before the problem happened."
           style={{ marginTop: 8 }}
@@ -168,9 +208,12 @@ function ProblemFields({
         />
       </div>
       <div>
-        <Text strong>What happened?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.problemResult}>
+          <Text strong>What happened?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.problemResult}
           rows={3}
           placeholder="Tell us what happened."
           style={{ marginTop: 8 }}
@@ -178,9 +221,12 @@ function ProblemFields({
         />
       </div>
       <div>
-        <Text strong>How did this differ from what you expected?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.problemExpectation}>
+          <Text strong>How did this differ from what you expected?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.problemExpectation}
           rows={3}
           placeholder="Explain what you expected instead."
           style={{ marginTop: 8 }}
@@ -202,7 +248,9 @@ function QuestionFields({
 }) {
   return (
     <Input.TextArea
+      aria-label="Question details"
       disabled={disabled}
+      id={SUPPORT_FIELD_IDS.questionDetails}
       rows={8}
       defaultValue={defaultValue}
       placeholder="Ask your question here."
@@ -250,7 +298,9 @@ function PurchaseFields({
         />
       ) : null}
       <Input.TextArea
+        aria-label="Pricing or purchasing details"
         disabled={disabled}
+        id={SUPPORT_FIELD_IDS.purchaseDetails}
         rows={8}
         defaultValue={defaultValue}
         placeholder="Tell us which CoCalc path you are considering, who it is for, who will operate it, and any purchasing or deployment constraints."
@@ -300,9 +350,12 @@ function TaskFields({
         }
       />
       <div>
-        <Text strong>What software do you need?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.taskSoftware}>
+          <Text strong>What software do you need?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.taskSoftware}
           rows={4}
           placeholder="Name the software, package, library, or stack you need."
           style={{ marginTop: 8 }}
@@ -310,9 +363,12 @@ function TaskFields({
         />
       </div>
       <div>
-        <Text strong>How do you plan to use this software?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.taskUse}>
+          <Text strong>How do you plan to use this software?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.taskUse}
           rows={3}
           placeholder="Explain the workload, project, class, or timeline."
           style={{ marginTop: 8 }}
@@ -320,11 +376,14 @@ function TaskFields({
         />
       </div>
       <div>
-        <Text strong>
-          How can we test that the software is properly installed?
-        </Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.taskTest}>
+          <Text strong>
+            How can we test that the software is properly installed?
+          </Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.taskTest}
           rows={3}
           placeholder="Include the commands, notebook imports, or checks that should work."
           style={{ marginTop: 8 }}
@@ -444,7 +503,9 @@ function renderBodyFields(params: {
       }
       description={
         <Input.TextArea
+          aria-label="Video chat request details"
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.chatDetails}
           rows={6}
           defaultValue={body}
           placeholder="Describe what you want to discuss, your goals, and any scheduling constraints."
@@ -716,11 +777,16 @@ export default function SupportNew({
       <PublicSection>
         <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <div>
-            <SectionLabel done={isValidEmailAddress(email)}>
+            <SectionLabel
+              done={isValidEmailAddress(email)}
+              htmlFor={SUPPORT_FIELD_IDS.email}
+            >
               Your email address
             </SectionLabel>
             <Input
+              aria-label="Your email address"
               disabled={formLocked}
+              id={SUPPORT_FIELD_IDS.email}
               placeholder="Email address..."
               style={{ marginTop: 10, maxWidth: 520 }}
               type="email"
@@ -730,11 +796,16 @@ export default function SupportNew({
           </div>
 
           <div>
-            <SectionLabel done={subject.trim().length > 0}>
+            <SectionLabel
+              done={subject.trim().length > 0}
+              htmlFor={SUPPORT_FIELD_IDS.subject}
+            >
               Subject
             </SectionLabel>
             <Input
+              aria-label="Subject"
               disabled={formLocked}
+              id={SUPPORT_FIELD_IDS.subject}
               placeholder="Summarize what this is about..."
               style={{ marginTop: 10 }}
               value={subject}
@@ -743,12 +814,17 @@ export default function SupportNew({
           </div>
 
           <div>
-            <SectionLabel done={body.trim().length >= MIN_BODY_LENGTH}>
+            <SectionLabel
+              done={body.trim().length >= MIN_BODY_LENGTH}
+              id={SUPPORT_FIELD_IDS.typeLabel}
+            >
               Support request type
             </SectionLabel>
             <Radio.Group
+              aria-labelledby={SUPPORT_FIELD_IDS.typeLabel}
               disabled={formLocked}
               name="support-type"
+              role="radiogroup"
               style={{ display: "block", marginTop: 10 }}
               value={type}
               onChange={(e) => {

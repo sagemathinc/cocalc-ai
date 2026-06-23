@@ -46,6 +46,52 @@ Known risks:
 
 ---
 
+### Codex - round-2 support form a11y (2026-06-22 23:11 PDT)
+
+- **START 2026-06-22 23:11 PDT:** Scheduled landing-page improvement loop
+  resumed in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX/status/log,
+  public-site guardrails, synthesis AGENTS, website operating system, frozen
+  Brief, public-site landing-page skill, active handoff ledger, multi-agent
+  operating model, finite queue, and the newly promoted
+  `round2-adversarial-sweep-fix-slice-2026-06-22.md`. Fetched
+  `origin/blaec-synthesis-2026-06-18`; local head at start was `77b58d5d26`,
+  matching origin, with only the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Verified preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/browser-QA/
+  Playwright process was observed. Top queued item is Round-2 item 21:
+  `/support` form controls need programmatic labels. Claimed files/routes:
+  `/support/new`,
+  `src/packages/frontend/public/support/new-view.tsx`,
+  `src/packages/frontend/public/support/__tests__/new-view.test.tsx`, this
+  ledger, `/home/user/cocalc-shared/codex-turn-log.md`, and
+  `/home/user/cocalc-shared/claude-current-status.md`. Guardrails: do not touch
+  protected home, pricing/compliance, type/palette 2e, pitch docs, raw audits,
+  LaTeX/dedicated-compute, or the untracked dedicated-compute draft.
+- **END 2026-06-22 23:16 PDT:** Round-2 item 21 source edit complete. The
+  Zendesk-backed `/support/new` form now gives the email and subject inputs
+  programmatic names, labels the support-type radio group, labels each
+  problem/task textarea with visible `label`/`htmlFor`, gives the single
+  question/purchase/chat detail textareas explicit `aria-label`s, and hides the
+  decorative completion glyph from accessible names. Regression coverage now
+  queries the form controls by label across every support-request body variant.
+  Validation passed: Prettier on touched source/test files; focused support
+  Jest `public/support/__tests__/app.test.tsx
+  public/support/__tests__/new-view.test.tsx
+  public/support/tickets-view.test.tsx --runInBand` (17/17, existing
+  React/AntD `act(...)` warnings); `pnpm -C src tsc`; `pnpm -C src
+  lint:frontend`; `git diff --check`; `pnpm --dir src/packages/static
+  build:dev` with the existing local debug-log permission warning; and
+  `/support/new` browser QA desktop+mobile 30/30 at
+  `/tmp/cocalc-public-qa-SRNMV1`. Screenshots inspected clean. Preview shows
+  the email fallback in this local environment; the Zendesk form path is
+  covered by jsdom tests. Next: commit, rebuild post-commit so the static
+  bundle embeds the new revision, rerun `/support/new` browser QA, then update
+  the shared logs.
+
+---
+
 ### Codex - scheduled landing-page improvement loop no-op (2026-06-22 23:06 PDT)
 
 - **START 2026-06-22 23:06 PDT:** Scheduled landing-page improvement loop

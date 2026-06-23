@@ -61,6 +61,63 @@ describe("SupportNew", () => {
     expect(screen.getByText("Relevant files")).not.toBeNull();
     expect(await screen.findByText("Recent files picker")).not.toBeNull();
     expect(screen.getByText("Enter a valid email address")).not.toBeNull();
+    expect(screen.getByLabelText("Your email address")).not.toBeNull();
+    expect(screen.getByLabelText("Subject")).not.toBeNull();
+    expect(
+      screen.getByRole("radiogroup", { name: "Support request type" }),
+    ).not.toBeNull();
+    expect(screen.getByLabelText("What did you do exactly?")).not.toBeNull();
+    expect(screen.getByLabelText("What happened?")).not.toBeNull();
+    expect(
+      screen.getByLabelText("How did this differ from what you expected?"),
+    ).not.toBeNull();
+  });
+
+  it("gives every support-request body variant a programmatic label", () => {
+    render(
+      <SupportNew
+        config={{ site_name: "Launchpad", zendesk: true }}
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("radio", {
+        name: /I have a question about billing, functionality/i,
+      }),
+    );
+    expect(screen.getByLabelText("Question details")).not.toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("radio", {
+        name: /I need help installing or configuring software/i,
+      }),
+    );
+    expect(screen.getByLabelText("What software do you need?")).not.toBeNull();
+    expect(
+      screen.getByLabelText("How do you plan to use this software?"),
+    ).not.toBeNull();
+    expect(
+      screen.getByLabelText(
+        "How can we test that the software is properly installed?",
+      ),
+    ).not.toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("radio", {
+        name: /I have a question about pricing or purchasing/i,
+      }),
+    );
+    expect(
+      screen.getByLabelText("Pricing or purchasing details"),
+    ).not.toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("radio", {
+        name: /I would like to schedule a video chat/i,
+      }),
+    );
+    expect(screen.getByLabelText("Video chat request details")).not.toBeNull();
   });
 
   it("keeps trust context on the email-only contact fallback", () => {
