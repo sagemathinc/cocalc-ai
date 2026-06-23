@@ -46,6 +46,40 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 17:21 PDT)
+
+- **START 2026-06-22 17:21 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site skill, multi-agent operating
+  model, current workplan, landing-page issues tracker, and this ledger.
+  Dry-run fetch showed no update to `origin/blaec-synthesis-2026-06-18`;
+  local HEAD matched origin at `728e4e1059`. Files newer than the prior 17:16
+  gate in `/home/user/cocalc-shared` were only coordination/status files, not a
+  fresh Claude audit, fresh vision critique, or promoted source queue item. The
+  released Codex source queue remains drained: feature-page consistency items
+  9-12 and design-polish items 13-15 are complete, FS-004/FS-005 remain
+  process/backlog items rather than autonomous queue items, and the
+  post-batch QA sweep's low findings have not been promoted into the active
+  Codex queue. Preview ownership drift is still present: the visible hub
+  process pid `238` is rooted at `/home/user/cocalc-ai/src`, not
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files: this ledger and shared
+  coordination status/logs only. Guardrails: no protected home,
+  pricing/compliance, type/palette work, pitch/docs content, route source
+  edits, raw-audit foraging, preview rebuild/restart, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 17:21 PDT:** QUEUE DRAINED / PREVIEW OWNER DRIFT STILL
+  PRESENT. No public-site route source was changed and no build/browser QA was
+  run because no rendered route was touched and the preview is not currently
+  rooted in the synthesis worktree. The latest public-site source-change
+  commit remains Blaec's `ef3bed61d2`; this turn records only the queue gate
+  and preview-owner risk in coordination artifacts. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude audit / fresh vision critique or another
+  curated, non-gated queue item; before source/preview work, restore/verify
+  `blaec.cocalc.ai` ownership from `/home/user/cocalc-ai-synthesis/src`.
+
 ### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 17:16 PDT)
 
 - **START 2026-06-22 17:16 PDT:** Scheduled landing-page improvement loop
