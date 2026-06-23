@@ -120,13 +120,8 @@ export async function waitForCompletion({
   onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
   onSummary?: (summary: LroSummary) => void;
 }): Promise<LroSummary> {
-  const stream = await get({
-    op_id,
-    stream_name,
-    scope_type,
-    scope_id,
-    client: requireExplicitConatClient(client),
-  });
+  const resolvedClient = requireExplicitConatClient(client);
+  let stream: DStream<LroEvent> | undefined;
   let lastIndex = 0;
   let done = false;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -168,12 +163,16 @@ export async function waitForCompletion({
     };
 
     const handleChange = () => {
-      if (done) return;
+      if (done || !stream) return;
       let events: LroEvent[];
       try {
         events = stream.getAll();
       } catch (err) {
-        fail(err as Error);
+        if (getSummary == null) {
+          fail(err as Error);
+        } else {
+          void pollSummary();
+        }
         return;
       }
       if (events.length < lastIndex) {
@@ -194,7 +193,11 @@ export async function waitForCompletion({
     };
 
     const handleClosed = () => {
-      fail(new Error("lro stream closed before completion"));
+      if (getSummary == null) {
+        fail(new Error("lro stream closed before completion"));
+      } else {
+        void pollSummary();
+      }
     };
 
     const cleanup = () => {
@@ -204,9 +207,11 @@ export async function waitForCompletion({
       if (pollId) {
         clearInterval(pollId);
       }
-      stream.removeListener("change", handleChange);
-      stream.removeListener("closed", handleClosed);
-      stream.close();
+      if (stream) {
+        stream.removeListener("change", handleChange);
+        stream.removeListener("closed", handleClosed);
+        stream.close();
+      }
     };
 
     const pollSummary = async () => {
@@ -224,9 +229,33 @@ export async function waitForCompletion({
       }
     };
 
-    stream.on("change", handleChange);
-    stream.on("closed", handleClosed);
-    handleChange();
+    const openStream = async () => {
+      try {
+        const opened = await get({
+          op_id,
+          stream_name,
+          scope_type,
+          scope_id,
+          client: resolvedClient,
+        });
+        if (done) {
+          opened.close();
+          return;
+        }
+        stream = opened;
+        stream.on("change", handleChange);
+        stream.on("closed", handleClosed);
+        handleChange();
+      } catch (err) {
+        if (getSummary == null) {
+          fail(err as Error);
+        } else {
+          void pollSummary();
+        }
+      }
+    };
+
+    void openStream();
     void pollSummary();
     if (getSummary != null) {
       pollId = setInterval(pollSummary, Math.max(250, poll_ms));
