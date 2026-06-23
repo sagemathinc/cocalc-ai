@@ -6,6 +6,8 @@
 import type { ConatClient } from "@cocalc/frontend/conat/client";
 import type {
   AddCollaborator,
+  CourseStudentInviteAccountRepairInput,
+  CourseStudentInviteAccountRepairRow,
   ProjectAccessLandingInfo,
   ProjectAccessRequestAction,
   ProjectAccessRequestBlockRow,
@@ -130,6 +132,15 @@ export class ProjectCollaborators {
     projectWide?: boolean;
   }): Promise<ProjectCollabInviteRow[]> {
     return await this.conat.hub.projects.listCollabInvites(opts);
+  }
+
+  public async repair_accepted_course_student_invite_accounts(opts: {
+    course_project_id: string;
+    students: CourseStudentInviteAccountRepairInput[];
+  }): Promise<CourseStudentInviteAccountRepairRow[]> {
+    return await this.conat.hub.projects.repairAcceptedCourseStudentInviteAccounts(
+      opts,
+    );
   }
 
   public async respond_invite(opts: {

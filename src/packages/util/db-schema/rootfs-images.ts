@@ -75,6 +75,11 @@ Table({
       type: "string",
       desc: "Longer description shown to users.",
     },
+    default_jupyter_kernel: {
+      type: "string",
+      pg_type: "VARCHAR(160)",
+      desc: "Optional Jupyter kernel name to use when creating a generic notebook in projects using this image.",
+    },
     visibility: {
       type: "string",
       pg_type: "VARCHAR(32)",

@@ -76,6 +76,7 @@ type RootfsImageRow = {
   channel: string | null;
   supersedes_image_id: string | null;
   description: string | null;
+  default_jupyter_kernel: string | null;
   visibility: RootfsImageVisibility | null;
   official: boolean | null;
   prepull: boolean | null;
@@ -430,6 +431,7 @@ function rowToEntry({
       channel: row.channel ?? undefined,
       supersedes_image_id: row.supersedes_image_id ?? undefined,
       description: row.description ?? undefined,
+      default_jupyter_kernel: row.default_jupyter_kernel ?? undefined,
       digest: row.digest ?? undefined,
       arch: row.arch ? [row.arch as any] : undefined,
       gpu: row.gpu ?? undefined,
@@ -490,6 +492,7 @@ function rowToAdminEntry({
         channel: row.channel ?? undefined,
         supersedes_image_id: row.supersedes_image_id ?? undefined,
         description: row.description ?? undefined,
+        default_jupyter_kernel: row.default_jupyter_kernel ?? undefined,
         digest: row.digest ?? undefined,
         arch: row.arch ? [row.arch as any] : undefined,
         gpu: row.gpu ?? undefined,
@@ -812,6 +815,7 @@ async function queryRootfsCatalogRows(
       r.channel,
       r.supersedes_image_id,
       r.description,
+      r.default_jupyter_kernel,
       r.visibility,
       r.official,
       r.prepull,
@@ -917,8 +921,8 @@ async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
   const slug = validateRootfsSlug(entry.slug);
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
-      VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, NULL, $18, $19, $20, $21::JSONB, $22::JSONB, $23::JSONB, COALESCE($24::TIMESTAMP, NOW()), NOW())
+      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, default_jupyter_kernel, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
+      VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $14, $15, $16, $17::TEXT[], $18, NULL, $19, $20, $21, $22::JSONB, $23::JSONB, $24::JSONB, COALESCE($25::TIMESTAMP, NOW()), NOW())
       ON CONFLICT (image_id) DO UPDATE SET
         release_id=EXCLUDED.release_id,
         runtime_image=EXCLUDED.runtime_image,
@@ -928,6 +932,7 @@ async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
         channel=EXCLUDED.channel,
         supersedes_image_id=EXCLUDED.supersedes_image_id,
         description=EXCLUDED.description,
+        default_jupyter_kernel=EXCLUDED.default_jupyter_kernel,
         visibility=EXCLUDED.visibility,
         official=EXCLUDED.official,
         prepull=EXCLUDED.prepull,
@@ -954,6 +959,7 @@ async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
       trimString(entry.channel) ?? null,
       trimString(entry.supersedes_image_id) ?? null,
       trimString(entry.description) ?? null,
+      trimString(entry.default_jupyter_kernel) ?? null,
       entry.visibility ?? "public",
       entry.official === true,
       entry.prepull === true,
@@ -1366,6 +1372,8 @@ async function upsertRootfsRow({
   const version = trimString(body.version) ?? null;
   const channel = trimString(body.channel) ?? null;
   const supersedes_image_id = trimString(body.supersedes_image_id) ?? null;
+  const default_jupyter_kernel =
+    trimString(body.default_jupyter_kernel) ?? null;
   const tags = normalizeTags(body.tags);
   const description = trimString(body.description) ?? null;
   const theme = normalizeTheme(body.theme);
@@ -1431,16 +1439,16 @@ async function upsertRootfsRow({
 
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
+      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, default_jupyter_kernel, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
      VALUES
-      ($1, $2, $3::UUID, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-       CASE WHEN $14 THEN NOW() ELSE NULL END,
-       CASE WHEN $14 THEN $3::UUID ELSE NULL END,
-       $15,
-       CASE WHEN $15 THEN $16 ELSE NULL END,
+      ($1, $2, $3::UUID, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
        CASE WHEN $15 THEN NOW() ELSE NULL END,
        CASE WHEN $15 THEN $3::UUID ELSE NULL END,
-       false, NULL, NULL, NULL, $17, $18, $19, $20::TEXT[], $21, $22, false, NULL, $23, $24::JSONB, $25::JSONB, $26::JSONB, NOW(), NOW())
+       $16,
+       CASE WHEN $16 THEN $17 ELSE NULL END,
+       CASE WHEN $16 THEN NOW() ELSE NULL END,
+       CASE WHEN $16 THEN $3::UUID ELSE NULL END,
+       false, NULL, NULL, NULL, $18, $19, $20, $21::TEXT[], $22, $23, false, NULL, $24, $25::JSONB, $26::JSONB, $27::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
       owner_id = EXCLUDED.owner_id,
@@ -1451,6 +1459,7 @@ async function upsertRootfsRow({
       channel = COALESCE(EXCLUDED.channel, rootfs_images.channel),
       supersedes_image_id = COALESCE(EXCLUDED.supersedes_image_id, rootfs_images.supersedes_image_id),
       description = EXCLUDED.description,
+      default_jupyter_kernel = EXCLUDED.default_jupyter_kernel,
       visibility = EXCLUDED.visibility,
       official = EXCLUDED.official,
       prepull = EXCLUDED.prepull,
@@ -1484,8 +1493,8 @@ async function upsertRootfsRow({
       content_key = COALESCE(EXCLUDED.content_key, rootfs_images.content_key),
       slug = COALESCE(EXCLUDED.slug, rootfs_images.slug),
       theme = EXCLUDED.theme,
-      content = CASE WHEN $27 THEN EXCLUDED.content ELSE rootfs_images.content END,
-      content_warnings = CASE WHEN $27 THEN EXCLUDED.content_warnings ELSE rootfs_images.content_warnings END,
+      content = CASE WHEN $28 THEN EXCLUDED.content ELSE rootfs_images.content END,
+      content_warnings = CASE WHEN $28 THEN EXCLUDED.content_warnings ELSE rootfs_images.content_warnings END,
       updated = NOW()`,
     [
       image_id,
@@ -1498,6 +1507,7 @@ async function upsertRootfsRow({
       channel,
       supersedes_image_id,
       description,
+      default_jupyter_kernel,
       visibility,
       official,
       prepull,
@@ -1643,6 +1653,7 @@ export async function saveRootfsImage({
       version: body.version,
       channel: body.channel,
       supersedes_image_id: body.supersedes_image_id,
+      default_jupyter_kernel: body.default_jupyter_kernel,
       description: description ?? undefined,
       visibility,
       official,
@@ -1713,6 +1724,7 @@ export async function publishProjectRootfsCatalogEntry({
       channel: body.channel,
       supersedes_image_id: body.supersedes_image_id,
       description: body.description,
+      default_jupyter_kernel: body.default_jupyter_kernel,
       visibility: body.visibility,
       arch: artifact.arch,
       tags,
@@ -1747,6 +1759,7 @@ export async function publishProjectRootfsCatalogEntry({
       channel: body.channel,
       supersedes_image_id: body.supersedes_image_id,
       description: body.description,
+      default_jupyter_kernel: body.default_jupyter_kernel,
       digest: artifact.digest,
       arch: artifact.arch,
       visibility,

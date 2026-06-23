@@ -24,6 +24,8 @@ import {
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import type {
   AddCollaborator,
+  CourseStudentInviteAccountRepairInput,
+  CourseStudentInviteAccountRepairRow,
   MyCollaboratorRow,
   ProjectAccessLandingInfo,
   ProjectAccessRequestAction,
@@ -351,6 +353,13 @@ async function ensureProjectCollabInviteEmailTokenSchemaUncached(): Promise<void
     `CREATE INDEX IF NOT EXISTS project_collab_invites_email_expire_idx
        ON project_collab_invites (status, created)
        WHERE invite_source IN ('email', 'course_email')`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS project_collab_invites_course_student_accepted_idx
+       ON project_collab_invites (project_id, status, scope)
+       WHERE accepted_account_id IS NOT NULL
+         AND scope = 'course_student'
+         AND invite_source IN ('email', 'course_email')`,
   );
 }
 
@@ -1461,6 +1470,84 @@ export async function listCollabInvites({
       .slice(0, maxRows),
     includeEmail,
   );
+}
+
+export async function repairAcceptedCourseStudentInviteAccountsLocal({
+  account_id,
+  course_project_id,
+  students,
+  trustedCourseAccess = false,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  students: CourseStudentInviteAccountRepairInput[];
+  trustedCourseAccess?: boolean;
+}): Promise<CourseStudentInviteAccountRepairRow[]> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(course_project_id, "course_project_id");
+  if (!trustedCourseAccess) {
+    await assertLocalProjectCollaborator({
+      account_id,
+      project_id: course_project_id,
+    });
+  }
+  if (!Array.isArray(students)) {
+    throw new Error("students must be an array");
+  }
+  if (students.length === 0) {
+    return [];
+  }
+  if (students.length > 5000) {
+    throw new Error("at most 5000 students can be repaired at once");
+  }
+
+  const byStudentId = new Map<string, string>();
+  for (const student of students) {
+    ensureUuid(student.student_id, "student_id");
+    ensureUuid(student.student_project_id, "student_project_id");
+    byStudentId.set(student.student_id, student.student_project_id);
+  }
+  if (byStudentId.size === 0) {
+    return [];
+  }
+
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const studentIds = [...byStudentId.keys()];
+  const studentProjectIds = studentIds.map((student_id) => {
+    const student_project_id = byStudentId.get(student_id);
+    if (student_project_id == null) {
+      throw new Error("student_project_id missing");
+    }
+    return student_project_id;
+  });
+  const pool = getPool();
+  const { rows } = await pool.query<CourseStudentInviteAccountRepairRow>(
+    `WITH input AS (
+       SELECT *
+       FROM UNNEST($1::uuid[], $2::uuid[]) AS t(student_id, student_project_id)
+     )
+     SELECT DISTINCT ON (input.student_id)
+       input.student_id::text AS student_id,
+       input.student_project_id::text AS student_project_id,
+       i.accepted_account_id::text AS accepted_account_id,
+       i.invite_id::text AS invite_id
+     FROM input
+     JOIN project_collab_invites i
+       ON i.project_id = input.student_project_id
+     WHERE i.status = 'accepted'
+       AND i.scope = 'course_student'
+       AND i.invite_source IN ('email', 'course_email')
+       AND i.accepted_account_id IS NOT NULL
+       AND (
+         i.context ->> 'student_id' = input.student_id::text
+         OR i.context ->> 'student_project_id' = input.student_project_id::text
+       )
+     ORDER BY input.student_id, i.responded DESC NULLS LAST, i.updated DESC`,
+    [studentIds, studentProjectIds],
+  );
+  return rows;
 }
 
 async function getCanonicalCollabInvite(

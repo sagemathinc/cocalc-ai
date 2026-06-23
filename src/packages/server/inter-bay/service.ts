@@ -364,6 +364,7 @@ import {
   previewEmailProjectInvite,
   redeemEmailProjectInvite,
   removeCollaborator,
+  repairAcceptedCourseStudentInviteAccountsLocal,
   requestProjectAccess,
   respondCollabInviteCanonical,
   respondEmailProjectInvite,
@@ -1653,6 +1654,11 @@ async function startProjectCollabInviteService(): Promise<void> {
       (await listCollabInvites(opts)).map((invite) =>
         collabInviteToWire(invite),
       ),
+    repairAcceptedCourseStudentInviteAccounts: async (opts) =>
+      await repairAcceptedCourseStudentInviteAccountsLocal({
+        ...opts,
+        trustedCourseAccess: true,
+      }),
     getProjectAccessLandingInfo: async (opts) =>
       await getProjectAccessLandingInfo(opts),
     requestProjectAccess: async (opts) => await requestProjectAccess(opts),
