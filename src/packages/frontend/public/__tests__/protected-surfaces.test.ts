@@ -1,8 +1,12 @@
 import { execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { readFileSync } from "fs";
 
 import {
+  PROTECTED_SURFACE_BASELINES,
   PROTECTED_SURFACE_OVERRIDES,
   type ProtectedSurface,
+  type ProtectedSurfaceBaseline,
   type ProtectedSurfaceOverride,
 } from "./protected-overrides";
 
@@ -61,14 +65,40 @@ function overrideForSurface(
   );
 }
 
+function baselineForFile(
+  surface: ProtectedSurface,
+  file: string,
+): ProtectedSurfaceBaseline | undefined {
+  return PROTECTED_SURFACE_BASELINES.find(
+    (baseline) => baseline.surface === surface && baseline.path === file,
+  );
+}
+
+function fileSha256(file: string): string | undefined {
+  try {
+    return createHash("sha256").update(readFileSync(file)).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
+function fileMatchesBaseline(surface: ProtectedSurface, file: string): boolean {
+  const baseline = baselineForFile(surface, file);
+  return !!baseline && fileSha256(file) === baseline.sha256;
+}
+
 function protectedSurfaceOffenders(files: string[]): string[] {
   return files.flatMap((file) => {
     const surface = protectedSurfaceForFile(file);
-    if (!surface || overrideForSurface(surface)) {
+    if (
+      !surface ||
+      overrideForSurface(surface) ||
+      fileMatchesBaseline(surface, file)
+    ) {
       return [];
     }
     return [
-      `${file} (${surface}) needs a committed override in public/__tests__/protected-overrides.ts`,
+      `${file} (${surface}) needs a committed override or matching baseline in public/__tests__/protected-overrides.ts`,
     ];
   });
 }
@@ -97,6 +127,16 @@ describe("public protected-surface gate", () => {
       if (override.surface === "theme.ts") {
         expect(override.reason).toContain("alias-only, no new hue");
       }
+    }
+    expect(overrideForSurface("theme.ts")).toBeUndefined();
+    for (const baseline of PROTECTED_SURFACE_BASELINES) {
+      expect(PROTECTED_SURFACES.map(({ surface }) => surface)).toContain(
+        baseline.surface,
+      );
+      expect(baseline.path.trim()).not.toBe("");
+      expect(baseline.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(baseline.reason.trim()).not.toBe("");
+      expect(baseline.approvedBy.trim()).not.toBe("");
     }
   });
 

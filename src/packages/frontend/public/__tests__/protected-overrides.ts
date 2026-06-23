@@ -6,6 +6,14 @@ export interface ProtectedSurfaceOverride {
   readonly approvedBy: string;
 }
 
+export interface ProtectedSurfaceBaseline {
+  readonly surface: ProtectedSurface;
+  readonly path: string;
+  readonly sha256: string;
+  readonly reason: string;
+  readonly approvedBy: string;
+}
+
 export const PROTECTED_SURFACE_OVERRIDES: readonly ProtectedSurfaceOverride[] =
   [
     {
@@ -14,9 +22,17 @@ export const PROTECTED_SURFACE_OVERRIDES: readonly ProtectedSurfaceOverride[] =
         "Blaec-directed round-4 home H1 override; queue item 34, 2026-06-23",
       approvedBy: "Blaec",
     },
+  ];
+
+export const PROTECTED_SURFACE_BASELINES: readonly ProtectedSurfaceBaseline[] =
+  [
     {
       surface: "theme.ts",
-      reason: "alias-only, no new hue; Blaec-accepted, 3561f1405c pattern",
+      path: "public/theme.ts",
+      sha256:
+        "aabfd226fcb1643f826d05da6662cd7d65dc9626d0d4c2aacd16f9eddd517e6c",
+      reason:
+        "current committed theme aliases accepted; future edits need a fresh override",
       approvedBy: "Blaec",
     },
   ];

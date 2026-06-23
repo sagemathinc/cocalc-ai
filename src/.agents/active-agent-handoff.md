@@ -46,6 +46,26 @@ Known risks:
 
 ---
 
+### Codex - re-freeze theme.ts item 36 (2026-06-23 02:03 PDT)
+
+- **START 2026-06-23 02:03 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 36 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `cd98babeb8`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pid `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `public/__tests__/protected-overrides.ts`,
+  `public/__tests__/protected-surfaces.test.ts`, protected-surface Jest, this
+  ledger, and shared queue/turn logs if the slice lands. Scope: remove the
+  standing `theme.ts` override, pin the current committed `theme.ts` hash so
+  branch-diff CI accepts already-landed aliases, and keep future `theme.ts`
+  edits gated. Guardrails: no source route edits, no home edits, no pricing
+  money/compliance, no theme content edits, no pitch docs, no raw-audit
+  foraging, no dedicated-compute draft.
+
 ### Codex - round-4 features index H1 item 35 (2026-06-23 01:57 PDT)
 
 - **START 2026-06-23 01:57 PDT:** Continuing the manual landing-page
