@@ -46,6 +46,35 @@ Known risks:
 
 ---
 
+### Codex - restore public-site preview ownership (2026-06-22 17:40 PDT)
+
+- **START 2026-06-22 17:40 PDT:** User asked to make sure the right branch is
+  served in the preview. Verified drift: running hub pid `238` is rooted at
+  `/home/user/cocalc-ai/src`, while the public-site synthesis branch is
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18` at
+  `a5fa00af2a`. Synthesis daemon config is present and points
+  `HUB_CMD` at `DATA_BASE=/home/user/cocalc-ai/src/data/app
+  ./packages/hub/bin/start.sh postgres`, so starting it from synthesis should
+  reuse the existing preview database while serving synthesis source. Claimed
+  preview ownership for this turn; no public-route source edits planned. Do
+  not touch protected home, pricing/compliance, type/palette, pitch/docs
+  content, raw audit findings, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 17:41 PDT:** PREVIEW OWNERSHIP RESTORED. Stopped the
+  platform-rooted daemon from `/home/user/cocalc-ai/src` (`hub daemon stopped`;
+  its cloudflared helper stopped with it), then started the synthesis daemon
+  from `/home/user/cocalc-ai-synthesis/src` (`hub daemon started`, pid `27431`).
+  Verified `readlink /proc/27431/cwd` =
+  `/home/user/cocalc-ai-synthesis/src`, branch =
+  `blaec-synthesis-2026-06-18`, commit = `a5fa00af2a`, and
+  `pnpm -s dev:hub:status` reports running from the synthesis `.local`
+  daemon state while reusing the existing postgres data dir under
+  `/home/user/cocalc-ai/src/data/app`. External preview
+  `https://blaec.cocalc.ai/` returns HTTP 200. Browser QA against `/` and
+  `/features/terminal` on desktop+mobile passed 82/82 assertions with
+  artifacts in `/tmp/cocalc-public-qa-l0L0oZ`. No public route source changed;
+  the known untracked `dedicated-compute-page.tsx` draft remains untouched.
+
 ### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 17:37 PDT)
 
 - **START 2026-06-22 17:37 PDT:** Scheduled landing-page improvement loop
