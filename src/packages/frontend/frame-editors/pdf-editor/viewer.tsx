@@ -30,7 +30,9 @@ function StandalonePDFViewerFrame({
       }}
     >
       <Path project_id={project_id} path={path} />
-      <div style={{ flex: "1 1 auto", minHeight: 0 }}>{children}</div>
+      <div className="smc-vfill" style={{ flex: "1 1 auto", minHeight: 0 }}>
+        {children}
+      </div>
     </div>
   );
 }
