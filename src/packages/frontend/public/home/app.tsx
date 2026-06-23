@@ -515,7 +515,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Shared projects for research, teaching, and technical teams
+            Shared projects for Research, Technical Teams, and Teaching
           </Title>
           <Paragraph
             style={{

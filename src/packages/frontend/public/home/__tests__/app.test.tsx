@@ -101,7 +101,15 @@ describe("PublicHomeApp", () => {
     });
     const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
     expect(heroHeadings).toHaveLength(1);
+    expect(heroHeadings[0]).toHaveTextContent(
+      "Shared projects for Research, Technical Teams, and Teaching",
+    );
     expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
+    expect(
+      within(hero).queryByText(
+        "Shared projects for research, teaching, and technical teams",
+      ),
+    ).toBeNull();
     // Select the hero lead by structure (the element after the H1) instead of
     // pinning the sentence; assert it stays short and carries the key ideas.
     const heroLead = hero.querySelector(".cocalc-public-home-hero-title + *");

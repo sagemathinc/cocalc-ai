@@ -46,6 +46,36 @@ Known risks:
 
 ---
 
+### Codex - round-2 home H1 item 26 (2026-06-23 00:25 PDT)
+
+- **START 2026-06-23 00:25 PDT:** Continuing the scheduled landing-page
+  improvement loop on Round-2 item 26, the Blaec-directed HOME H1 change, in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Current
+  head is `0455cc66a7`, matching `origin/blaec-synthesis-2026-06-18`; only the
+  known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  present. Claimed files/routes: `home/app.tsx`, home tests, the `/` browser-QA
+  canary, this ledger, and shared coordination logs if the slice completes.
+  Scope is exactly the explicit Blaec H1 replacement: "Shared projects for
+  Research, Technical Teams, and Teaching"; keep the subhead unchanged.
+  Guardrails: no other home edits, no home heritage line, no pricing
+  money/compliance changes, no type/palette 2e, no pitch docs, no raw-audit
+  foraging, no LaTeX/dedicated-compute draft.
+- **END 2026-06-23 00:27 PDT:** Round-2 item 26 source edit complete. Home H1
+  now exactly reads "Shared projects for Research, Technical Teams, and
+  Teaching"; the subhead is unchanged. Added a home test canary for the exact
+  new H1 and absence of the old H1, and updated the `/` browser-QA required
+  text. Validation passed: home-focused Jest
+  `public/home/__tests__/app.test.tsx public/home/__tests__/visual-quality.test.tsx public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+  (12/12); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
+  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+  debug-log permission warning; and `/` browser QA desktop+mobile passed 34/34
+  at `/tmp/cocalc-public-qa-lBYAll`. Screenshots inspected clean. Next:
+  commit, rebuild post-commit so the static bundle embeds the new revision,
+  rerun home browser QA, push, then update shared logs/status.
+
+---
+
 ### Codex - round-2 copy batch D (2026-06-23 00:21 PDT)
 
 - **START 2026-06-23 00:05 PDT:** Continuing the scheduled landing-page
