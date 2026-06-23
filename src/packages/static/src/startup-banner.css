@@ -98,11 +98,14 @@
 }
 
 .cocalc-startup-progress-bar {
-  animation: cocalc-progress-sweep 1.35s linear infinite;
+  animation: cocalc-progress-sweep 1.8s linear infinite;
   background: linear-gradient(90deg, #4474c0 0%, #58a49c 50%, #4474c0 100%);
   border-radius: inherit;
   height: 100%;
-  width: 44%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  width: 100%;
+  will-change: transform;
 }
 
 .cocalc-startup-status {
@@ -161,10 +164,10 @@
 
 @keyframes cocalc-progress-sweep {
   0% {
-    transform: translateX(-120%);
+    transform: scaleX(0);
   }
   100% {
-    transform: translateX(260%);
+    transform: scaleX(1);
   }
 }
 
