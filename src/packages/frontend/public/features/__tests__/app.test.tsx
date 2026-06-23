@@ -418,7 +418,7 @@ describe("PublicFeaturesApp", () => {
     },
     {
       marker:
-        "Whiteboards and slides that keep the code, math, and explanations together — in one durable, reviewable project.",
+        "Whiteboards and slides that keep the code, math, and explanations together.",
       slug: "whiteboard",
     },
     {
@@ -1156,9 +1156,12 @@ describe("PublicFeaturesApp", () => {
     // Hero marker = page identity anchor.
     expect(
       screen.getByText(
-        "Whiteboards and slides that keep the code, math, and explanations together — in one durable, reviewable project.",
+        "Whiteboards and slides that keep the code, math, and explanations together.",
       ),
     ).not.toBeNull();
+    expect(
+      screen.queryByText(/in one durable, reviewable project/i),
+    ).toBeNull();
     // Route-specific section keyword (whiteboard runs Jupyter cells).
     expect(
       screen.getByText("Put Jupyter cells in a directed graph."),

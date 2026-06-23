@@ -206,7 +206,7 @@ export default function WhiteboardFeaturePage({
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
                 Whiteboards and slides that keep the code, math, and
-                explanations together — in one durable, reviewable project.
+                explanations together.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Work through the problem together, then replay every change with

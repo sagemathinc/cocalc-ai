@@ -46,6 +46,38 @@ Known risks:
 
 ---
 
+### Codex - round-2 durability restraint item 28 (2026-06-23 00:43 PDT)
+
+- **START 2026-06-23 00:43 PDT:** Continuing the scheduled landing-page
+  improvement loop on Round-2 item 28 Durability restraint in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Current
+  head is `8ab7bff53a`, matching `origin/blaec-synthesis-2026-06-18`; only the
+  known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  present. Claimed files/routes: `features/whiteboard-page.tsx`,
+  `features/__tests__/app.test.tsx`, `/features/whiteboard` browser QA, this
+  ledger, and shared coordination logs if the slice completes. Scope: trim the
+  whiteboard hero's bolted-on "durable, reviewable project" tail and update the
+  exact route canaries; sibling scan found no same-tail subheads outside the
+  explicit whiteboard target. Guardrails: no home, pricing money/compliance,
+  type/palette 2e, pitch docs, raw-audit foraging, or dedicated-compute draft.
+- **END 2026-06-23 00:45 PDT:** Trimmed the whiteboard hero from
+  "Whiteboards and slides that keep the code, math, and explanations together
+  — in one durable, reviewable project." to "Whiteboards and slides that keep
+  the code, math, and explanations together."; updated the feature route
+  marker tests and added an absence canary for the removed tail. Validation:
+  `pnpm --dir src/packages/frontend exec jest
+  public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+  (140/140); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
+  --check`; `pnpm --dir src/packages/static build:dev` (known debug-log EACCES
+  warning only); `node
+  src/packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/whiteboard --viewport desktop --viewport mobile` (42/42,
+  screenshots in `/tmp/cocalc-public-qa-S7Sh9l` inspected).
+
+---
+
 ### Codex - round-2 bio facts item 27 follow-up (2026-06-23 00:38 PDT)
 
 - **START/END 2026-06-23 00:38 PDT:** After pushing the source-backed
