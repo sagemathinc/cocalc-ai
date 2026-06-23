@@ -569,6 +569,53 @@ Current disposition:
 - Next validation step from the slice spec: Claude audit and a fresh
   vision-critique pass to confirm the route scores moved up.
 
+### FS-020 - Add breathing room to the Linux middle sections
+
+Status: `done`
+
+Evidence:
+
+- User screenshot/comment on 2026-06-22 flagged the online Linux environment
+  page middle section as visually tight: adjacent text sections need more
+  breathing room.
+- Browser QA screenshot of `/features/linux` confirmed that the install/verify
+  section, "Work at the right software layer," and "Build course and team
+  environments once" read as one compressed run of text on desktop and mobile.
+
+Current route frame for `/features/linux`:
+
+```md
+Route: /features/linux
+Visitor: technical user, instructor, team lead, or reviewer who needs a
+project Linux environment that can be installed, checked, and reused.
+Visitor question: can I administer a real Linux environment without separating
+setup, verification, and handoff from the project?
+One-sentence promise: CoCalc keeps Ubuntu packages, services, setup notes,
+snapshots, and reusable environment choices close to the project work.
+Proof mechanism: sudo/apt install example, Linux evidence panel, layer-specific
+package guidance, reusable environment checklist, snapshots, and related
+terminal/Jupyter/software-install routes.
+Primary next step: create account / open projects.
+Secondary next step: software install guide, terminal details, Jupyter, and
+environment image guide.
+What this must not claim: no benchmark, setup-time, restore-time, managed
+compute, pricing, compliance, security, or broad agent-platform claim.
+Evidence consulted: user screenshot feedback, frozen Brief, framing system,
+current `/features/linux` source, and browser-QA screenshots.
+Decision: keep the existing proof and copy; redesign only the middle-section
+vertical rhythm so consecutive text blocks have clearer separation.
+```
+
+Current disposition:
+
+- Added a route-local middle-section spacer to the three proof sections between
+  the opening cards and the final band.
+- Preserved all Linux proof, copy, CTAs, and final-band structure.
+- Focused feature Jest passed 129/129; frontend lint passed; static
+  `build:dev` passed.
+- Browser QA for `/features/linux` desktop+mobile passed 46/46 with updated
+  screenshots in `/tmp/cocalc-public-qa-uVd7ir`.
+
 ## Next Recommended Burn-Down Order
 
 1. The released Codex queue is drained. Feature-page consistency items 9-12 and

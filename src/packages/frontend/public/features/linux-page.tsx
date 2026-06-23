@@ -29,6 +29,7 @@ import {
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
+const MIDDLE_SECTION_SPACER_STYLE = { marginTop: 12 } as const;
 
 function LinuxEvidencePanel() {
   return (
@@ -155,69 +156,73 @@ export default function LinuxFeaturePage({
         </Col>
       </Row>
 
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <LinuxEvidencePanel />
-          </Col>
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Install, verify, and document what changed
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                The useful workflow is not "make the error disappear." It is
-                diagnose, install only what is needed, verify directly, and
-                leave a short note or setup script that the next collaborator
-                can understand.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                A shell-capable agent like Codex can help read the exact error,
-                suggest the right layer, and propose a command or verification
-                check. You decide what runs, and the work stays in the project
-                where your team can see, adjust, and document it.
-              </Paragraph>
-              <BulletList
-                items={[
-                  <>
-                    Use <code>sudo apt-get update</code> and{" "}
-                    <code>sudo apt-get install</code> for system packages.
-                  </>,
-                  "Install language packages where the notebook or script actually runs.",
-                  "Take a snapshot before risky system-level changes.",
-                ]}
-              />
-            </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
+      <div style={MIDDLE_SECTION_SPACER_STYLE}>
+        <PublicSection>
+          <Row gutter={[24, 24]} align="middle">
+            <Col xs={24} lg={12}>
+              <LinuxEvidencePanel />
+            </Col>
+            <Col xs={24} lg={12}>
+              <Flex vertical gap={12}>
+                <Title level={3} style={{ margin: 0 }}>
+                  Install, verify, and document what changed
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  The useful workflow is not "make the error disappear." It is
+                  diagnose, install only what is needed, verify directly, and
+                  leave a short note or setup script that the next collaborator
+                  can understand.
+                </Paragraph>
+                <Paragraph style={{ margin: 0 }}>
+                  A shell-capable agent like Codex can help read the exact
+                  error, suggest the right layer, and propose a command or
+                  verification check. You decide what runs, and the work stays
+                  in the project where your team can see, adjust, and document
+                  it.
+                </Paragraph>
+                <BulletList
+                  items={[
+                    <>
+                      Use <code>sudo apt-get update</code> and{" "}
+                      <code>sudo apt-get install</code> for system packages.
+                    </>,
+                    "Install language packages where the notebook or script actually runs.",
+                    "Take a snapshot before risky system-level changes.",
+                  ]}
+                />
+              </Flex>
+            </Col>
+          </Row>
+        </PublicSection>
+      </div>
 
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Work at the right software layer
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Not every dependency belongs in the same place. Keep Ubuntu
-                packages, language packages, scripts, and verification commands
-                visible in the project so collaborators know which layer fixed
-                the problem.
-              </Paragraph>
-              <BulletList
-                items={[
-                  "Use apt when a notebook needs an operating-system library or command-line tool.",
-                  "Use pip, conda, R, Julia, Octave, npm, pnpm, TeX, or language-specific package managers where the code runs.",
-                  "Keep logs and setup scripts beside the files they support.",
-                ]}
-              />
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
-            <CodeBlock
-              ariaLabel="Linux package installation and verification commands"
-              code={`sudo apt-get update
+      <div style={MIDDLE_SECTION_SPACER_STYLE}>
+        <PublicSection>
+          <Row gutter={[24, 24]} align="middle">
+            <Col xs={24} lg={12}>
+              <Flex vertical gap={12}>
+                <Title level={3} style={{ margin: 0 }}>
+                  Work at the right software layer
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  Not every dependency belongs in the same place. Keep Ubuntu
+                  packages, language packages, scripts, and verification
+                  commands visible in the project so collaborators know which
+                  layer fixed the problem.
+                </Paragraph>
+                <BulletList
+                  items={[
+                    "Use apt when a notebook needs an operating-system library or command-line tool.",
+                    "Use pip, conda, R, Julia, Octave, npm, pnpm, TeX, or language-specific package managers where the code runs.",
+                    "Keep logs and setup scripts beside the files they support.",
+                  ]}
+                />
+              </Flex>
+            </Col>
+            <Col xs={24} lg={12}>
+              <CodeBlock
+                ariaLabel="Linux package installation and verification commands"
+                code={`sudo apt-get update
 sudo apt-get install -y graphviz
 dot -V
 
@@ -226,48 +231,51 @@ python - <<'PY'
 import graphviz, networkx
 print("ready")
 PY`}
-            />
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[24, 24]} align="top">
-          <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Build course and team environments once
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Reusable environment images let a team lead, lab admin, or
-                instructor turn a configured Linux environment into a base for
-                many projects. Install the right packages, include data or
-                tools, and publish upgraded versions instead of repeating setup
-                by hand.
-              </Paragraph>
-              <BulletList
-                items={[
-                  "Give every student the same packages and data from the start.",
-                  "Use a known-good template across a research group.",
-                  "Publish upgraded images instead of repeating manual setup.",
-                ]}
               />
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <ContextList
-              accent="#278c83"
-              items={[
-                { icon: "copy", label: "Start projects from a template" },
-                { icon: "database", label: "Include data and tools" },
-                { icon: "upload", label: "Publish upgraded versions" },
-                { icon: "file", label: "Keep setup notes nearby" },
-              ]}
-              title="Reusable environments"
-            />
-          </Col>
-        </Row>
-      </PublicSection>
+            </Col>
+          </Row>
+        </PublicSection>
+      </div>
+
+      <div style={MIDDLE_SECTION_SPACER_STYLE}>
+        <PublicSection>
+          <Row gutter={[24, 24]} align="top">
+            <Col xs={24} lg={13}>
+              <Flex vertical gap={12}>
+                <Title level={3} style={{ margin: 0 }}>
+                  Build course and team environments once
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  Reusable environment images let a team lead, lab admin, or
+                  instructor turn a configured Linux environment into a base for
+                  many projects. Install the right packages, include data or
+                  tools, and publish upgraded versions instead of repeating
+                  setup by hand.
+                </Paragraph>
+                <BulletList
+                  items={[
+                    "Give every student the same packages and data from the start.",
+                    "Use a known-good template across a research group.",
+                    "Publish upgraded images instead of repeating manual setup.",
+                  ]}
+                />
+              </Flex>
+            </Col>
+            <Col xs={24} lg={11}>
+              <ContextList
+                accent="#278c83"
+                items={[
+                  { icon: "copy", label: "Start projects from a template" },
+                  { icon: "database", label: "Include data and tools" },
+                  { icon: "upload", label: "Publish upgraded versions" },
+                  { icon: "file", label: "Keep setup notes nearby" },
+                ]}
+                title="Reusable environments"
+              />
+            </Col>
+          </Row>
+        </PublicSection>
+      </div>
 
       <PublicSection>
         <FeatureFinalBand

@@ -46,6 +46,34 @@ Known risks:
 
 ---
 
+### Codex - Linux page middle-section breathing room (2026-06-22 17:49 PDT)
+
+- **START 2026-06-22 17:49 PDT:** User flagged the online Linux environment
+  page (`/features/linux`) middle section as too tight: adjacent text sections
+  need more breathing room. Verified current worktree
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`, with
+  preview hub pid `27431` rooted at `/home/user/cocalc-ai-synthesis/src`.
+  Claimed files/routes: `/features/linux`,
+  `src/packages/frontend/public/features/linux-page.tsx`, focused tests if
+  needed, this ledger, and the public-site framing workplan route frame. Do not
+  touch protected home, pricing/compliance, type/palette gates, pitch/docs
+  content, raw audit findings, or the untracked
+  `dedicated-compute-page.tsx` draft. Plan: inspect render/screenshots, make a
+  narrow layout-spacing fix using existing tokens/patterns, rebuild preview,
+  run browser QA for `/features/linux`, commit, and push.
+- **END 2026-06-22 17:56 PDT:** Linux middle-section breathing room fixed.
+  Added a route-local `MIDDLE_SECTION_SPACER_STYLE` and applied it to the
+  three middle proof sections between the opening card row and the final band.
+  Preserved Linux copy, proof, CTA destinations, final band, protected home,
+  pricing/compliance, type/palette gates, pitch/docs content, raw audit
+  findings, and the untracked `dedicated-compute-page.tsx` draft. Validation:
+  focused feature Jest passed 129/129 (with existing Ant Design React
+  `act(...)` console warnings), `pnpm -C src lint:frontend` passed,
+  `pnpm --dir src/packages/static build:dev` passed, and browser QA for
+  `/features/linux` desktop+mobile passed 46/46 with screenshots in
+  `/tmp/cocalc-public-qa-uVd7ir`. Preview remains served by hub pid `27431`
+  rooted at `/home/user/cocalc-ai-synthesis/src`.
+
 ### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 17:46 PDT)
 
 - **START 2026-06-22 17:46 PDT:** Scheduled landing-page improvement loop
