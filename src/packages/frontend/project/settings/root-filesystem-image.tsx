@@ -202,6 +202,7 @@ export default function RootFilesystemImage({
     version: "",
     channel: "",
     supersedes_image_id: "",
+    default_jupyter_kernel: "",
     theme: themeDraftFromTheme(null),
     visibility: "private",
     tags: "",
@@ -615,6 +616,7 @@ export default function RootFilesystemImage({
       family: currentEntry?.family ?? "",
       version: currentEntry?.version ?? "",
       channel: currentEntry?.channel ?? "",
+      default_jupyter_kernel: currentEntry?.default_jupyter_kernel ?? "",
       supersedes_image_id:
         defaultMode === "manage"
           ? (currentEntry?.supersedes_image_id ?? "")
@@ -755,6 +757,8 @@ export default function RootFilesystemImage({
               channel: publishDraft.channel.trim() || undefined,
               supersedes_image_id:
                 publishDraft.supersedes_image_id.trim() || undefined,
+              default_jupyter_kernel:
+                publishDraft.default_jupyter_kernel.trim() || undefined,
               description: publishDraft.description,
               visibility: publishDraft.visibility,
               tags,
@@ -780,6 +784,8 @@ export default function RootFilesystemImage({
               channel: publishDraft.channel.trim() || undefined,
               supersedes_image_id:
                 publishDraft.supersedes_image_id.trim() || undefined,
+              default_jupyter_kernel:
+                publishDraft.default_jupyter_kernel.trim() || undefined,
               description: publishDraft.description,
               visibility: publishDraft.visibility,
               tags,
@@ -846,6 +852,8 @@ export default function RootFilesystemImage({
             channel: publishDraft.channel.trim() || undefined,
             supersedes_image_id:
               publishDraft.supersedes_image_id.trim() || undefined,
+            default_jupyter_kernel:
+              publishDraft.default_jupyter_kernel.trim() || undefined,
             description: publishDraft.description,
             visibility: publishDraft.visibility,
             tags,
@@ -949,6 +957,9 @@ export default function RootFilesystemImage({
         channel: candidate.metadata?.channel ?? cur.channel,
         supersedes_image_id:
           candidate.metadata?.supersedes_image_id ?? cur.supersedes_image_id,
+        default_jupyter_kernel:
+          candidate.metadata?.default_jupyter_kernel ??
+          cur.default_jupyter_kernel,
         visibility: candidate.metadata?.visibility ?? cur.visibility,
         tags: candidate.metadata?.tags
           ? normalizeRootfsTags(candidate.metadata.tags).join(", ")
@@ -2625,6 +2636,16 @@ export default function RootFilesystemImage({
                               }
                               placeholder="Optional image this replaces for upgrade guidance"
                             />
+                            <Input
+                              value={publishDraft.default_jupyter_kernel}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  default_jupyter_kernel: e.target.value,
+                                }))
+                              }
+                              placeholder="Default notebook kernel, e.g. sagemath"
+                            />
                           </Space>
                           <Paragraph
                             type="secondary"
@@ -3162,6 +3183,7 @@ function rootfsConfigMetadataFromPublishDraft(
     version: draft.version.trim() || undefined,
     channel: draft.channel.trim() || undefined,
     supersedes_image_id: draft.supersedes_image_id.trim() || undefined,
+    default_jupyter_kernel: draft.default_jupyter_kernel.trim() || undefined,
     visibility: draft.visibility,
     tags: parseRootfsTagString(draft.tags),
   };

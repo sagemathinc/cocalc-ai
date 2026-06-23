@@ -45,6 +45,10 @@ import {
   open_file,
 } from "@cocalc/frontend/project/open-file";
 import { OpenFiles } from "@cocalc/frontend/project/open-files";
+import {
+  loadRootfsImages,
+  managedRootfsCatalogUrl,
+} from "@cocalc/frontend/rootfs/manifest";
 import { FixedTab } from "@cocalc/frontend/project/page/file-tab";
 import {
   FlyoutActiveMode,
@@ -3074,13 +3078,36 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       ensureContainingDirectoryExists: (path) =>
         this.ensureContainingDirectoryExists(path),
       log: (event) => this.log(event),
-      getPreferredKernel: () =>
-        redux
-          .getStore("account")
-          ?.getIn(["editor_settings", "jupyter", "kernel"]),
+      getPreferredKernel: () => this.getPreferredJupyterKernel(),
       addCreatedTag: (tag) => redux.getActions("account")?.addTag(tag),
       openFile: (opts) => this.open_file(opts),
     });
+  };
+
+  private getPreferredJupyterKernel = async (): Promise<
+    string | null | undefined
+  > => {
+    const accountKernel = redux
+      .getStore("account")
+      ?.getIn(["editor_settings", "jupyter", "kernel"]);
+    if (typeof accountKernel === "string" && accountKernel.trim()) {
+      return accountKernel.trim();
+    }
+    const rootfsImageId =
+      `${this.get_store()?.get("rootfs_image_id") ?? ""}`.trim();
+    if (!rootfsImageId) {
+      return undefined;
+    }
+    try {
+      const images = await loadRootfsImages([managedRootfsCatalogUrl()], "", {
+        imageIds: [rootfsImageId],
+      });
+      return images
+        .find((entry) => entry.id.toLowerCase() === rootfsImageId.toLowerCase())
+        ?.default_jupyter_kernel?.trim();
+    } catch {
+      return undefined;
+    }
   };
 
   private new_file_from_web = async (

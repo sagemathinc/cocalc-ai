@@ -242,9 +242,11 @@ describe("parseRootfsConfigExport", () => {
       metadata: {
         label: "Minimal Jupyter",
         slug: "Minimal-Jupyter",
+        default_jupyter_kernel: " sagemath ",
       },
     });
 
     expect(result.metadata?.slug).toBe("minimal-jupyter");
+    expect(result.metadata?.default_jupyter_kernel).toBe("sagemath");
   });
 });

@@ -106,7 +106,11 @@ export async function createFile({
   newFileFromWeb: (url: string, currentPath: string) => void | Promise<void>;
   ensureContainingDirectoryExists: (path: string) => Promise<void>;
   log: LogProjectEvent;
-  getPreferredKernel: () => string | null | undefined;
+  getPreferredKernel: () =>
+    | string
+    | null
+    | undefined
+    | Promise<string | null | undefined>;
   addCreatedTag: (tag: string) => void;
   openFile: (opts: {
     path: string;
@@ -162,7 +166,7 @@ export async function createFile({
     ext === "ipynb"
       ? await (
           await import("@cocalc/frontend/jupyter/new-notebook")
-        ).createInitialIpynbContent(projectId, getPreferredKernel())
+        ).createInitialIpynbContent(projectId, await getPreferredKernel())
       : getFileTemplate(ext);
   await ensureContainingDirectoryExists(path);
   try {

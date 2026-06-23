@@ -127,6 +127,7 @@ export type RootfsConfigExportMetadata = {
   version?: string;
   channel?: string;
   supersedes_image_id?: string;
+  default_jupyter_kernel?: string;
   visibility?: RootfsImageVisibility;
   tags?: string[];
 };
@@ -217,6 +218,7 @@ export type RootfsImageEntry = {
   channel?: string;
   supersedes_image_id?: string;
   description?: string;
+  default_jupyter_kernel?: string;
   digest?: string;
   arch?: RootfsImageArch | RootfsImageArch[];
   gpu?: boolean;
@@ -327,6 +329,7 @@ export type RootfsCatalogSaveBody = {
   channel?: string;
   supersedes_image_id?: string;
   description?: string;
+  default_jupyter_kernel?: string;
   visibility?: RootfsImageVisibility;
   arch?: RootfsImageArch | RootfsImageArch[];
   gpu?: boolean;
@@ -353,6 +356,7 @@ export type PublishProjectRootfsBody = {
   channel?: string;
   supersedes_image_id?: string;
   description?: string;
+  default_jupyter_kernel?: string;
   visibility?: RootfsImageVisibility;
   tags?: string[];
   theme?: RootfsImageTheme;
@@ -858,6 +862,7 @@ function parseRootfsConfigExportMetadata(
     version: trimString(input.version, 160),
     channel: trimString(input.channel, 80),
     supersedes_image_id: trimString(input.supersedes_image_id, 160),
+    default_jupyter_kernel: trimString(input.default_jupyter_kernel, 160),
     visibility: isRootfsImageVisibility(visibility) ? visibility : undefined,
     tags: Array.isArray(input.tags)
       ? normalizeRootfsTagArray(input.tags)
@@ -1067,6 +1072,7 @@ export function normalizeRootfsEntry(
     label: entry.label.trim(),
     image: entry.image.trim(),
     description: entry.description?.trim(),
+    default_jupyter_kernel: entry.default_jupyter_kernel?.trim(),
     tags,
     arch: normalizeArch(entry.arch),
     priority: entry.priority ?? 0,

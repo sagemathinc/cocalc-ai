@@ -804,6 +804,7 @@ function rootfsCatalogConfigPayload(
     imageVersion?: string;
     channel?: string;
     supersedesImageId?: string;
+    defaultJupyterKernel?: string;
     description?: string;
     visibility?: string;
     tags?: string;
@@ -824,7 +825,7 @@ function rootfsCatalogConfigPayload(
     config?.content != null
       ? { content: config.content, content_warnings: [] }
       : {};
-  return {
+  const payload = {
     label,
     slug: opts.slug ?? config?.metadata?.slug,
     family: opts.family ?? config?.metadata?.family,
@@ -845,6 +846,12 @@ function rootfsCatalogConfigPayload(
     size_gb: parseOptionalNumber(opts.sizeGb, "--size-gb"),
     ...content,
   };
+  const default_jupyter_kernel =
+    opts.defaultJupyterKernel ?? config?.metadata?.default_jupyter_kernel;
+  if (default_jupyter_kernel != null) {
+    return { ...payload, default_jupyter_kernel };
+  }
+  return payload;
 }
 
 function normalizeSection(value?: string): RootfsImageSection | undefined {
@@ -873,6 +880,7 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     version: entry.version ?? null,
     channel: entry.channel ?? null,
     supersedes_image_id: entry.supersedes_image_id ?? null,
+    default_jupyter_kernel: entry.default_jupyter_kernel ?? null,
     section: entry.section ?? null,
     visibility: entry.visibility ?? null,
     official: !!entry.official,
@@ -995,6 +1003,11 @@ function formatRootfsEntriesHuman(
       if (entry.supersedes_image_id) {
         lines.push(`   supersedes: ${entry.supersedes_image_id}`);
       }
+      if (entry.default_jupyter_kernel) {
+        lines.push(
+          `   default_jupyter_kernel: ${entry.default_jupyter_kernel}`,
+        );
+      }
       if (entry.size_gb != null) {
         lines.push(`   size_gb: ${entry.size_gb}`);
       }
@@ -1051,6 +1064,11 @@ function formatRootfsAdminEntriesHuman(
       }
       if (entry.supersedes_image_id) {
         lines.push(`   supersedes: ${entry.supersedes_image_id}`);
+      }
+      if (entry.default_jupyter_kernel) {
+        lines.push(
+          `   default_jupyter_kernel: ${entry.default_jupyter_kernel}`,
+        );
       }
       if (entry.blocked_at || entry.blocked_by) {
         lines.push(
@@ -2511,6 +2529,10 @@ export function registerRootfsCommand(
       "--supersedes-image-id <id>",
       "optional catalog image id superseded by this entry",
     )
+    .option(
+      "--default-jupyter-kernel <name>",
+      "default kernelspec name for new generic notebooks in projects using this image",
+    )
     .option("--description <text>", "catalog description")
     .option("--visibility <visibility>", "private, collaborators, or public")
     .option("--tags <csv>", "comma-separated tags")
@@ -2537,6 +2559,7 @@ export function registerRootfsCommand(
           imageVersion?: string;
           channel?: string;
           supersedesImageId?: string;
+          defaultJupyterKernel?: string;
           description?: string;
           visibility?: string;
           tags?: string;
@@ -2585,6 +2608,10 @@ export function registerRootfsCommand(
       "--supersedes-image-id <id>",
       "optional catalog image id superseded by this entry",
     )
+    .option(
+      "--default-jupyter-kernel <name>",
+      "default kernelspec name for new generic notebooks in projects using this image",
+    )
     .option("--description <text>", "catalog description")
     .option("--visibility <visibility>", "private, collaborators, or public")
     .option("--tags <csv>", "comma-separated tags")
@@ -2609,6 +2636,7 @@ export function registerRootfsCommand(
           imageVersion?: string;
           channel?: string;
           supersedesImageId?: string;
+          defaultJupyterKernel?: string;
           description?: string;
           visibility?: string;
           tags?: string;
