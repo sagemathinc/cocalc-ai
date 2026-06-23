@@ -1,17 +1,6 @@
 .cocalc-startup-shell {
   align-items: center;
-  background:
-    radial-gradient(
-      circle at 35% 28%,
-      rgba(68, 116, 192, 0.18),
-      transparent 34%
-    ),
-    radial-gradient(
-      circle at 70% 75%,
-      rgba(88, 164, 156, 0.16),
-      transparent 30%
-    ),
-    linear-gradient(135deg, #f7fbff 0%, #eef5fb 48%, #f9faf6 100%);
+  background: #f6f7f9;
   display: flex;
   height: 100vh;
   justify-content: center;
@@ -26,34 +15,16 @@
 .cocalc-startup-card {
   align-items: center;
   animation: cocalc-card-enter 420ms ease-out both;
-  background: rgba(255, 255, 255, 0.76);
-  border: 1px solid rgba(68, 116, 192, 0.16);
-  border-radius: 28px;
-  box-shadow:
-    0 24px 70px rgba(35, 65, 110, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  background: #fff;
+  border: 1px solid #d9e2ec;
+  border-radius: 22px;
+  box-shadow: 0 14px 38px rgba(31, 49, 72, 0.1);
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  min-width: min(360px, 84vw);
-  padding: 34px 38px 30px;
+  gap: 18px;
+  min-width: min(330px, 84vw);
+  padding: 30px 34px 28px;
   position: relative;
-}
-
-.cocalc-startup-card::before {
-  animation: cocalc-card-sheen 3.6s ease-in-out infinite;
-  background: linear-gradient(
-    115deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.56) 42%,
-    transparent 58%
-  );
-  border-radius: inherit;
-  content: "";
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-  transform: translateX(-42%);
 }
 
 .cocalc-startup-brand {
@@ -67,11 +38,14 @@
 
 .cocalc-startup-mark {
   align-items: center;
+  background: #4474c0;
+  border-radius: 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
   display: flex;
-  height: 118px;
+  height: 104px;
   justify-content: center;
   position: relative;
-  width: 118px;
+  width: 104px;
 }
 
 .cocalc-startup-halo,
@@ -81,27 +55,19 @@
 }
 
 .cocalc-startup-halo {
-  animation: cocalc-halo-breathe 2.4s ease-in-out infinite;
-  background: radial-gradient(
-    circle,
-    rgba(68, 116, 192, 0.18) 0%,
-    rgba(68, 116, 192, 0.1) 38%,
-    transparent 70%
-  );
-  inset: -16px;
+  animation: cocalc-halo-breathe 2.8s ease-in-out infinite;
+  border: 1px solid rgba(68, 116, 192, 0.2);
+  inset: -7px;
 }
 
 .cocalc-startup-orbit {
-  animation: cocalc-orbit-glow 2.1s ease-in-out infinite;
-  border: 1px solid rgba(68, 116, 192, 0.24);
-  box-shadow: 0 0 28px rgba(68, 116, 192, 0.16);
-  inset: 4px;
+  display: none;
 }
 
 .cocalc-startup-logo {
-  height: 88px;
+  height: 74px;
   position: relative;
-  width: 88px;
+  width: 74px;
   z-index: 1;
 }
 
@@ -113,30 +79,34 @@
 }
 
 .cocalc-startup-wordmark {
-  height: 44px;
-  max-width: 210px;
+  background: #4474c0;
+  border-radius: 8px;
+  box-sizing: content-box;
+  height: 24px;
+  max-width: 160px;
+  padding: 8px 12px;
 }
 
 .cocalc-startup-progress {
-  background: rgba(68, 116, 192, 0.1);
+  background: #e7edf6;
   border-radius: 999px;
-  height: 4px;
+  height: 5px;
   overflow: hidden;
   position: relative;
-  width: min(240px, 64vw);
+  width: min(230px, 64vw);
   z-index: 1;
 }
 
 .cocalc-startup-progress-bar {
-  animation: cocalc-progress-sweep 1.6s ease-in-out infinite;
-  background: linear-gradient(90deg, #4474c0, #58a49c, #4474c0);
+  animation: cocalc-progress-sweep 1.35s linear infinite;
+  background: linear-gradient(90deg, #4474c0 0%, #58a49c 50%, #4474c0 100%);
   border-radius: inherit;
   height: 100%;
-  width: 46%;
+  width: 44%;
 }
 
 .cocalc-startup-status {
-  color: #4f647c;
+  color: #334155;
   font:
     500 14px/1.4 system-ui,
     -apple-system,
@@ -177,51 +147,24 @@
   }
 }
 
-@keyframes cocalc-card-sheen {
-  0%,
-  42% {
-    opacity: 0;
-    transform: translateX(-42%);
-  }
-  58% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(42%);
-  }
-}
-
 @keyframes cocalc-halo-breathe {
   0%,
   100% {
-    opacity: 0.68;
-    transform: scale(0.94);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
-}
-
-@keyframes cocalc-orbit-glow {
-  0%,
-  100% {
-    opacity: 0.58;
+    opacity: 0.45;
     transform: scale(0.98);
   }
   50% {
-    opacity: 1;
-    transform: scale(1.03);
+    opacity: 0.85;
+    transform: scale(1.04);
   }
 }
 
 @keyframes cocalc-progress-sweep {
   0% {
-    transform: translateX(-110%);
+    transform: translateX(-120%);
   }
   100% {
-    transform: translateX(230%);
+    transform: translateX(260%);
   }
 }
 
@@ -245,9 +188,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cocalc-startup-card,
-  .cocalc-startup-card::before,
   .cocalc-startup-halo,
-  .cocalc-startup-orbit,
   .cocalc-startup-progress-bar,
   .cocalc-startup-status span {
     animation: none;
