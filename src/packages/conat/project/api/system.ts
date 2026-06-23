@@ -3,7 +3,10 @@ import type {
   ExecuteCodeRequest,
 } from "@cocalc/util/types/execute-code";
 import type { DirectoryListingEntry } from "@cocalc/util/types";
-import type { HostRootfsBuildLogResponse } from "@cocalc/conat/project-host/api";
+import type {
+  HostRootfsBuildLogResponse,
+  HostRootfsBuildStatusResponse,
+} from "@cocalc/conat/project-host/api";
 import type {
   Configuration,
   ConfigurationAspect,
@@ -21,6 +24,7 @@ export const system = {
   writeTextFileToProject: true,
   readTextFileFromProject: true,
   readRootfsBuildLog: true,
+  listRootfsBuilds: true,
 
   configuration: true,
 
@@ -60,6 +64,9 @@ export interface System {
     byte_offset?: number;
     max_bytes?: number;
   }) => Promise<HostRootfsBuildLogResponse>;
+  listRootfsBuilds: (opts?: {
+    limit?: number;
+  }) => Promise<HostRootfsBuildStatusResponse[]>;
 
   configuration: (
     aspect: ConfigurationAspect,

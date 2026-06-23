@@ -63,6 +63,7 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
               found: true,
               path: ".cocalc/rootfs-builds/build-1/build.log",
             }),
+            listRootfsBuilds: async () => [],
           },
         },
       })),
@@ -1173,6 +1174,22 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
         project: { project_id: "builder-project" },
         api: {
           system: {
+            listRootfsBuilds: async (opts: any) => {
+              calls.push(["direct-list", opts]);
+              return [
+                {
+                  build_id: "build-1",
+                  project_id: "builder-project",
+                  status: "succeeded",
+                  recipe_ref: "cocalc/demo",
+                  created_at: "2026-06-22T00:00:00.000Z",
+                  paths: {
+                    log: ".cocalc/rootfs-builds/build-1/build.log",
+                    script: ".cocalc/rootfs-builds/build-1/run.sh",
+                  },
+                },
+              ];
+            },
             readRootfsBuildLog: async (opts: any) => {
               calls.push(["direct-log", opts]);
               return {
@@ -1252,6 +1269,19 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
     "node",
     "test",
     "rootfs",
+    "build-list",
+    "--project",
+    "Builder",
+    "--limit",
+    "7",
+  ]);
+  assert.match(harness.captured, /build-1  succeeded/);
+  assert.match(harness.captured, /recipe=cocalc\/demo/);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
     "build-cancel",
     "build-1",
     "--project",
@@ -1272,6 +1302,9 @@ test("rootfs build status logs and cancel use project build APIs", async () => {
         max_bytes: undefined,
       },
     ],
+    ["resolve", "Builder"],
+    ["project-api", "builder-project"],
+    ["direct-list", { limit: 7 }],
     ["resolve", "Builder"],
     ["cancel", { project_id: "builder-project", build_id: "build-1" }],
   ]);

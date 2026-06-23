@@ -457,6 +457,28 @@ function formatRootfsBuildStatusHuman(status: any): string {
   return lines.join("\n");
 }
 
+function formatRootfsBuildListHuman({
+  project_id,
+  builds,
+}: {
+  project_id: string;
+  builds: any[];
+}): string {
+  const lines = [`project_id: ${project_id}`, `builds: ${builds.length}`];
+  for (const build of builds) {
+    const parts = [
+      build.build_id,
+      build.status,
+      build.recipe_ref ? `recipe=${build.recipe_ref}` : undefined,
+      build.created_at ? `created=${build.created_at}` : undefined,
+      build.finished_at ? `finished=${build.finished_at}` : undefined,
+      build.paths?.log ? `log=${build.paths.log}` : undefined,
+    ].filter(Boolean);
+    lines.push(parts.join("  "));
+  }
+  return lines.join("\n");
+}
+
 function requireProjectOption(project?: string): string {
   const trimmed = `${project ?? ""}`.trim();
   if (!trimmed) {
@@ -1506,6 +1528,36 @@ export function registerRootfsCommand(
             return formatRootfsBuildStatusHuman(finalStatus);
           }
           return "";
+        });
+      },
+    );
+
+  rootfs
+    .command("build-list")
+    .description("list durable RootFS builds recorded in a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--limit <n>", "max rows", "50")
+    .action(
+      async (opts: { project?: string; limit?: string }, command: Command) => {
+        await withContext(command, "rootfs build-list", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const builds = await api.system.listRootfsBuilds({
+            limit: parseLimit(opts.limit, 50),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return { project_id: project.project_id, builds };
+          }
+          return formatRootfsBuildListHuman({
+            project_id: project.project_id,
+            builds,
+          });
         });
       },
     );

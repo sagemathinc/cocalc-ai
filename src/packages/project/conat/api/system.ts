@@ -44,13 +44,18 @@ export { get_configuration as configuration };
 
 import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
 import { constants as fsConstants } from "node:fs";
-import { access, open, readFile, stat, writeFile } from "fs/promises";
+import { access, open, readFile, readdir, stat, writeFile } from "fs/promises";
 import { join } from "node:path";
-import type { HostRootfsBuildLogResponse } from "@cocalc/conat/project-host/api";
+import type {
+  HostRootfsBuildLogResponse,
+  HostRootfsBuildStatusResponse,
+} from "@cocalc/conat/project-host/api";
 
 const ROOTFS_BUILD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 const ROOTFS_BUILD_MAX_LOG_LINES = 10_000;
 const ROOTFS_BUILD_MAX_LOG_BYTES = 1024 * 1024;
+const ROOTFS_BUILD_MAX_LIST_LIMIT = 1000;
+const ROOTFS_BUILD_DIR = join(".cocalc", "rootfs-builds");
 
 export async function writeTextFileToProject({
   path,
@@ -86,7 +91,7 @@ export async function readRootfsBuildLog({
     throw new Error("invalid build_id");
   }
   const project_id = `${process.env.COCALC_PROJECT_ID ?? ""}`;
-  const relativePath = join(".cocalc", "rootfs-builds", build_id, "build.log");
+  const relativePath = join(ROOTFS_BUILD_DIR, build_id, "build.log");
   const path = join(process.env.HOME || "/home/user", relativePath);
   const limit = Math.max(
     1,
@@ -176,6 +181,57 @@ export async function readRootfsBuildLog({
     found: true,
     path: relativePath,
   };
+}
+
+export async function listRootfsBuilds({
+  limit,
+}: {
+  limit?: number;
+} = {}): Promise<HostRootfsBuildStatusResponse[]> {
+  const root = join(process.env.HOME || "/home/user", ROOTFS_BUILD_DIR);
+  const max = Math.max(
+    1,
+    Math.min(
+      ROOTFS_BUILD_MAX_LIST_LIMIT,
+      Math.floor(Number(limit) || ROOTFS_BUILD_MAX_LIST_LIMIT),
+    ),
+  );
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  }
+  const statuses: HostRootfsBuildStatusResponse[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !ROOTFS_BUILD_ID_RE.test(entry.name)) {
+      continue;
+    }
+    try {
+      const text = await readFile(
+        join(root, entry.name, "status.json"),
+        "utf8",
+      );
+      const status = JSON.parse(text) as HostRootfsBuildStatusResponse;
+      if (status?.build_id === entry.name) {
+        statuses.push(status);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw err;
+      }
+    }
+  }
+  return statuses
+    .sort((a, b) =>
+      `${b.created_at ?? b.started_at ?? ""}`.localeCompare(
+        `${a.created_at ?? a.started_at ?? ""}`,
+      ),
+    )
+    .slice(0, max);
 }
 
 export async function signal({
