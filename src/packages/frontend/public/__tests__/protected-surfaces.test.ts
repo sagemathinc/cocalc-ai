@@ -26,8 +26,12 @@ const PROTECTED_SURFACES: readonly {
 ];
 
 function gitLines(args: string[]): string[] {
-  const output = execFileSync("git", args, { encoding: "utf8" }).trim();
+  const output = gitOutput(args);
   return output ? output.split("\n").filter(Boolean) : [];
+}
+
+function gitOutput(args: string[]): string {
+  return execFileSync("git", args, { encoding: "utf8" }).trim();
 }
 
 function normalizePublicPath(file: string): string {
@@ -38,19 +42,36 @@ function uniqueSorted(files: string[]): string[] {
   return Array.from(new Set(files.map(normalizePublicPath))).sort();
 }
 
-function changedPublicFiles(): string[] {
-  const baseRef = process.env.PROTECTED_BASE_REF?.trim();
-  if (baseRef) {
-    return uniqueSorted(
-      gitLines(["diff", "--name-only", `${baseRef}..HEAD`, "--", "public"]),
+function requireGitCommit(ref: string): string {
+  try {
+    return gitOutput(["rev-parse", "--verify", `${ref}^{commit}`]);
+  } catch {
+    throw new Error(
+      `Protected surface gate could not resolve git ref "${ref}". Set PROTECTED_BASE_REF to a valid commit-ish or run with at least one parent commit.`,
     );
   }
+}
 
-  return uniqueSorted([
-    ...gitLines(["diff", "--name-only", "--", "public"]),
-    ...gitLines(["diff", "--name-only", "--cached", "--", "public"]),
-    ...gitLines(["ls-files", "--others", "--exclude-standard", "--", "public"]),
-  ]);
+function protectedDiffBase(): string {
+  const baseRef = process.env.PROTECTED_BASE_REF?.trim();
+  if (!baseRef) {
+    return requireGitCommit("HEAD~1");
+  }
+
+  try {
+    return gitOutput(["merge-base", baseRef, "HEAD"]);
+  } catch {
+    throw new Error(
+      `Protected surface gate could not resolve a merge-base for PROTECTED_BASE_REF="${baseRef}" and HEAD.`,
+    );
+  }
+}
+
+function changedPublicFiles(): string[] {
+  const base = protectedDiffBase();
+  return uniqueSorted(
+    gitLines(["diff", "--name-only", `${base}..HEAD`, "--", "public"]),
+  );
 }
 
 function protectedSurfaceForFile(file: string): ProtectedSurface | undefined {
@@ -59,22 +80,22 @@ function protectedSurfaceForFile(file: string): ProtectedSurface | undefined {
 
 function overrideForSurface(
   surface: ProtectedSurface,
+  overrides: readonly ProtectedSurfaceOverride[] = PROTECTED_SURFACE_OVERRIDES,
 ): ProtectedSurfaceOverride | undefined {
-  return PROTECTED_SURFACE_OVERRIDES.find(
-    (override) => override.surface === surface,
-  );
+  return overrides.find((override) => override.surface === surface);
 }
 
 function baselineForFile(
   surface: ProtectedSurface,
   file: string,
+  baselines: readonly ProtectedSurfaceBaseline[] = PROTECTED_SURFACE_BASELINES,
 ): ProtectedSurfaceBaseline | undefined {
-  return PROTECTED_SURFACE_BASELINES.find(
+  return baselines.find(
     (baseline) => baseline.surface === surface && baseline.path === file,
   );
 }
 
-function fileSha256(file: string): string | undefined {
+function readFileSha256(file: string): string | undefined {
   try {
     return createHash("sha256").update(readFileSync(file)).digest("hex");
   } catch {
@@ -82,23 +103,62 @@ function fileSha256(file: string): string | undefined {
   }
 }
 
-function fileMatchesBaseline(surface: ProtectedSurface, file: string): boolean {
-  const baseline = baselineForFile(surface, file);
+interface ProtectedGateOptions {
+  readonly baselines?: readonly ProtectedSurfaceBaseline[];
+  readonly fileSha256?: (file: string) => string | undefined;
+  readonly overrides?: readonly ProtectedSurfaceOverride[];
+}
+
+function fileMatchesBaselineWithOptions(
+  surface: ProtectedSurface,
+  file: string,
+  options: ProtectedGateOptions = {},
+): boolean {
+  const baseline = baselineForFile(
+    surface,
+    file,
+    options.baselines ?? PROTECTED_SURFACE_BASELINES,
+  );
+  const fileSha256 = options.fileSha256 ?? readFileSha256;
   return !!baseline && fileSha256(file) === baseline.sha256;
 }
 
-function protectedSurfaceOffenders(files: string[]): string[] {
+function protectedSurfaceOffenders(
+  files: string[],
+  options: ProtectedGateOptions = {},
+): string[] {
+  const overrides = options.overrides ?? PROTECTED_SURFACE_OVERRIDES;
   return files.flatMap((file) => {
     const surface = protectedSurfaceForFile(file);
     if (
       !surface ||
-      overrideForSurface(surface) ||
-      fileMatchesBaseline(surface, file)
+      overrideForSurface(surface, overrides) ||
+      fileMatchesBaselineWithOptions(surface, file, options)
     ) {
       return [];
     }
     return [
       `${file} (${surface}) needs a committed override or matching baseline in public/__tests__/protected-overrides.ts`,
+    ];
+  });
+}
+
+function protectedBaselineDriftOffenders(
+  options: ProtectedGateOptions = {},
+): string[] {
+  const baselines = options.baselines ?? PROTECTED_SURFACE_BASELINES;
+  const fileSha256 = options.fileSha256 ?? readFileSha256;
+  const overrides = options.overrides ?? PROTECTED_SURFACE_OVERRIDES;
+
+  return baselines.flatMap((baseline) => {
+    if (
+      fileSha256(baseline.path) === baseline.sha256 ||
+      overrideForSurface(baseline.surface, overrides)
+    ) {
+      return [];
+    }
+    return [
+      `${baseline.path} (${baseline.surface}) differs from its protected baseline; restore the accepted file or add a committed override in public/__tests__/protected-overrides.ts`,
     ];
   });
 }
@@ -129,6 +189,7 @@ describe("public protected-surface gate", () => {
       }
     }
     expect(overrideForSurface("theme.ts")).toBeUndefined();
+    expect(overrideForSurface("home/")).toBeUndefined();
     for (const baseline of PROTECTED_SURFACE_BASELINES) {
       expect(PROTECTED_SURFACES.map(({ surface }) => surface)).toContain(
         baseline.surface,
@@ -137,10 +198,67 @@ describe("public protected-surface gate", () => {
       expect(baseline.sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(baseline.reason.trim()).not.toBe("");
       expect(baseline.approvedBy.trim()).not.toBe("");
+      if (baseline.surface === "home/") {
+        expect(baseline.path).toMatch(/^public\/home\//);
+      }
     }
   });
 
+  it("resolves a committed diff base for the protected scan", () => {
+    expect(protectedDiffBase()).toMatch(/^[a-f0-9]{40}$/);
+  });
+
+  it("blocks home baseline drift, but allows an explicit override fixture", () => {
+    const homeAppPath = "public/home/app.tsx";
+    const driftSha256 = "0".repeat(64);
+    const hashFixture = (file: string): string | undefined => {
+      if (file === homeAppPath) {
+        return driftSha256;
+      }
+      return baselineForFile("home/", file)?.sha256 ?? readFileSha256(file);
+    };
+    const overrideFixture: readonly ProtectedSurfaceOverride[] = [
+      {
+        surface: "home/",
+        reason: "test fixture for a Blaec-approved home override",
+        approvedBy: "Blaec",
+      },
+    ];
+
+    expect(
+      protectedSurfaceOffenders([homeAppPath], {
+        fileSha256: hashFixture,
+        overrides: [],
+      }),
+    ).toEqual([
+      `${homeAppPath} (home/) needs a committed override or matching baseline in public/__tests__/protected-overrides.ts`,
+    ]);
+    expect(
+      protectedBaselineDriftOffenders({
+        fileSha256: hashFixture,
+        overrides: [],
+      }),
+    ).toEqual([
+      `${homeAppPath} (home/) differs from its protected baseline; restore the accepted file or add a committed override in public/__tests__/protected-overrides.ts`,
+    ]);
+    expect(
+      protectedSurfaceOffenders([homeAppPath], {
+        fileSha256: hashFixture,
+        overrides: overrideFixture,
+      }),
+    ).toEqual([]);
+    expect(
+      protectedBaselineDriftOffenders({
+        fileSha256: hashFixture,
+        overrides: overrideFixture,
+      }),
+    ).toEqual([]);
+  });
+
   it("blocks changed protected public files without an override", () => {
-    expect(protectedSurfaceOffenders(changedPublicFiles())).toEqual([]);
+    expect([
+      ...protectedSurfaceOffenders(changedPublicFiles()),
+      ...protectedBaselineDriftOffenders(),
+    ]).toEqual([]);
   });
 });

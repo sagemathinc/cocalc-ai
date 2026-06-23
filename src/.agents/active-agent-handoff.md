@@ -46,6 +46,39 @@ Known risks:
 
 ---
 
+### Codex - Gate hardening home protected surface item 46 (2026-06-23 03:25 PDT)
+
+- **START 2026-06-23 03:25 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 46 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `3fa2a369cb`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `public/__tests__/protected-surfaces.test.ts`,
+  `public/__tests__/protected-overrides.ts`, this ledger, and shared queue/turn
+  logs if the slice lands. Task frame: fix the protected-surface gate so it
+  scans a committed diff range by default instead of an empty post-commit
+  worktree, hard-fails unresolved diff bases, adds home path/hash baselines, and
+  proves red on a home drift plus green with an explicit override fixture.
+  Guardrails: do not edit protected home content itself; do not broaden the
+  protected-surface scope beyond item 46.
+- **END 2026-06-23 03:29 PDT:** Landed the item 46 gate hardening. The
+  protected-surface gate now resolves a committed diff base by default
+  (`HEAD~1`) or a `PROTECTED_BASE_REF` merge-base, hard-fails unresolved bases,
+  and scans `base..HEAD` instead of the post-commit worktree. Replaced the
+  broad home override with four `home/` path/hash baselines for the accepted
+  committed home files, added baseline-drift offenders so a protected committed
+  change fails even if the changed-set misses it, and added red/green fixture
+  tests for home drift without/with an explicit override. No protected home
+  source was edited. Validation passed: focused protected Jest 5/5,
+  public/features Jest 197/197, `pnpm -C src tsc`, `pnpm -C src
+  lint:frontend`, `git diff --check`, and `pnpm --dir src/packages/static
+  build:dev` (known local static-build debug-log EACCES warning only). No
+  route UI changed, so no route-specific browser QA was run.
+
 ### Codex - Density /features/ai item 43 (2026-06-23 03:16 PDT)
 
 - **START 2026-06-23 03:16 PDT:** Continuing the manual landing-page
