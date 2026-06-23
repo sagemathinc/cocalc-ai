@@ -1,0 +1,164 @@
+version: 1
+name: cocalc-legacy
+
+builder:
+  run_quota:
+    disk_quota: 140000
+
+steps:
+  - uses: cocalc/apt
+    with:
+      upgrade: true
+      no_recommends: false
+      packages:
+        - bash
+        - build-essential
+        - ca-certificates
+        - curl
+        - git
+        - gfortran
+        - less
+        - libatomic1
+        - libgomp1
+        - make
+        - openssh-client
+        - openssh-sftp-server
+        - pandoc
+        - pkg-config
+        - procps
+        - python3
+        - python3-dev
+        - python3-pip
+        - python3-venv
+        - rsync
+        - sudo
+        - texlive-full
+        - tmux
+        - vim
+        - wget
+        - zstd
+
+  - name: Configure OpenSSH SFTP server compatibility path
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      $SUDO mkdir -p /usr/libexec
+      $SUDO ln -sf /usr/lib/openssh/sftp-server /usr/libexec/sftp-server
+
+  - uses: cocalc/jupyter-python
+    with:
+      prefix: /opt/cocalc-jupyter
+      install_bash_kernel: true
+      packages:
+        - ipykernel
+        - ipywidgets
+        - jupyterlab
+        - matplotlib
+        - notebook
+        - numpy
+        - pandas
+        - scipy
+        - scikit-learn
+        - sympy
+        - statsmodels
+        - seaborn
+        - plotly
+        - requests
+        - beautifulsoup4
+        - uv
+        - jupyter-console
+
+  - uses: cocalc/sagemath
+    with:
+      method: source
+      version: "10.9"
+      prefix: /usr/local/sage
+      jobs: auto
+    timeout: 28800
+
+  - uses: cocalc/julia
+    with:
+      version: "1.12.6"
+      install_prefix: /opt/julia
+    timeout: 1200
+
+  - uses: cocalc/r
+    timeout: 2400
+
+  - uses: cocalc/rstudio
+    timeout: 2400
+
+  - uses: cocalc/code-server
+    with:
+      prefix: /opt/code-server
+      version: latest
+      extensions:
+        - ms-python.python
+        - julialang.language-julia
+    timeout: 1200
+
+verify:
+  - command -v bash
+  - command -v code-server
+  - command -v jupyter-lab
+  - command -v latexmk
+  - command -v pdflatex
+  - command -v python3
+  - command -v R
+  - command -v rserver
+  - command -v sage
+  - command -v julia
+  - command -v uv
+  - test -e /usr/libexec/sftp-server
+  - pip --version
+  - pip install --dry-run packaging
+  - python3 -c 'import ipykernel, jupyterlab, matplotlib, numpy, pandas, scipy, sklearn, sympy'
+  - sage --version
+  - sage -c 'from sage.all import ZZ; assert ZZ(2) + ZZ(2) == 4'
+  - julia --version
+  - Rscript --vanilla -e 'stopifnot(requireNamespace("IRkernel", quietly=TRUE))'
+  - jupyter kernelspec list | grep -q python3
+  - jupyter kernelspec list | grep -qi sagemath
+  - jupyter kernelspec list | grep -qi julia
+  - jupyter kernelspec list | grep -qi ir
+
+publish:
+  label: CoCalc Legacy Compatibility
+  slug: cocalc-legacy
+  description: CoCalc.com-style compatibility image for migrated projects, with comprehensive LaTeX, SageMath 10.9, Julia, R, Python scientific packages, JupyterLab, RStudio Server, VS Code/code-server, shell tools, and SFTP support.
+  family: cocalc-legacy
+  version: "2026.06"
+  channel: stable
+  default_jupyter_kernel: sagemath
+  visibility: collaborators
+  theme:
+    icon: graduation-cap
+    color: "#ffffff"
+    accent_color: "#2563eb"
+  content:
+    version: 1
+    title: CoCalc Legacy Compatibility
+    subtitle: Broad cocalc.com-style software stack for migrated projects.
+    highlights:
+      - SageMath 10.9
+      - JupyterLab
+      - Full LaTeX
+      - Julia
+      - R and RStudio
+      - VS Code
+      - User pip installs
+  tags:
+    - cocalc
+    - migration
+    - sagemath
+    - latex
+    - python
+    - jupyter
+    - julia
+    - r
+    - rstudio
+    - code-server

@@ -55,6 +55,7 @@ import "./membership-grants";
 import "./membership-claim-identities";
 import "./membership-side-effects-outbox";
 import "./membership-tiers";
+import "./legacy-migration";
 import "./messages";
 import "./news";
 import "./notification-events-outbox";

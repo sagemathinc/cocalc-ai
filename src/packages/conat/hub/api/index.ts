@@ -16,6 +16,7 @@ import { type AgentApi, agent } from "./agent";
 import { type Notifications, notifications } from "./notifications";
 import { type AdminData, adminData } from "./admin-data-explorer";
 import { type AiSessionsApi, aiSessions } from "./ai-sessions";
+import { type LegacyMigration, legacyMigration } from "./legacy-migration";
 
 export interface HubApi {
   system: System;
@@ -34,6 +35,7 @@ export interface HubApi {
   notifications: Notifications;
   adminData: AdminData;
   aiSessions: AiSessionsApi;
+  legacyMigration: LegacyMigration;
 }
 
 const HubApiStructure = {
@@ -53,6 +55,7 @@ const HubApiStructure = {
   notifications,
   adminData,
   aiSessions,
+  legacyMigration,
 } as const;
 
 export function transformArgs({
