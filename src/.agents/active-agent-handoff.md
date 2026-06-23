@@ -46,6 +46,35 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 17:46 PDT)
+
+- **START 2026-06-22 17:46 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site skill, multi-agent operating
+  model, landing-page issues tracker, and this ledger. `git ls-remote` showed
+  `origin/blaec-synthesis-2026-06-18` still at local HEAD `9a1ef7df22`.
+  Files newer than the 17:41 preview-restore status in
+  `/home/user/cocalc-shared` are only coordination/status files, not a fresh
+  Claude audit, fresh vision critique, or promoted source queue item. Preview
+  ownership is correctly restored: hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src` and `pnpm -s dev:hub:status` reports the
+  synthesis daemon on port `9100`. Claimed files: this ledger and shared
+  coordination status/logs only. Guardrails: no protected home,
+  pricing/compliance, type/palette work, pitch/docs content, route source
+  edits, raw-audit foraging, preview rebuild/restart, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 17:46 PDT:** QUEUE DRAINED / PREVIEW OWNER VERIFIED. No
+  public-site route source was changed and no build/browser QA was run because
+  no rendered route was touched. The latest public-site source-change commit
+  remains Blaec's `ef3bed61d2`; this turn records only the queue gate and
+  preview-owner verification in coordination artifacts. The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude audit / fresh vision critique or another
+  curated, non-gated queue item; continue to verify hub cwd before future
+  source/preview work.
+
 ### Codex - restore public-site preview ownership (2026-06-22 17:40 PDT)
 
 - **START 2026-06-22 17:40 PDT:** User asked to make sure the right branch is
