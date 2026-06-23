@@ -434,6 +434,7 @@ const ROUTE_RULES = {
   "/features/terminal": {
     requireText: [
       "A Linux terminal that lives in your project.",
+      "A real Linux shell that reconnects with project files, outputs, and history.",
       "Where the terminal earns its place",
       "Ready to use terminals in CoCalc?",
       "Open the .term file and the same shell context comes back",
@@ -448,6 +449,10 @@ const ROUTE_RULES = {
       "One session stays visible",
       "Output remains reviewable",
       "Split the shell around the work",
+      "shares one live stream",
+      "Split panes for logs and REPLs",
+      "server process, and a build command",
+      "project secrets, snapshots, backups",
       "visible to the agents and people",
       "humans and agents a stable target",
     ],

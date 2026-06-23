@@ -93,8 +93,8 @@ export default function TerminalFeaturePage({
                 A Linux terminal that lives in your project.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                A real Linux shell that survives disconnects and shares one live
-                stream.
+                A real Linux shell that reconnects with project files, outputs,
+                and history.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -110,9 +110,9 @@ export default function TerminalFeaturePage({
             <ContextList
               accent="#096dd9"
               items={[
-                { icon: "file", label: ".term files sit beside the work" },
+                { icon: "file", label: ".term files reopen in their folder" },
                 { icon: "users", label: "One live stream for collaborators" },
-                { icon: "layout", label: "Split panes for logs and REPLs" },
+                { icon: "layout", label: "Sessions survive disconnects" },
                 { icon: "robot", label: "Codex can inspect project context" },
               ]}
               title="Project context"
@@ -149,14 +149,14 @@ export default function TerminalFeaturePage({
                 </Paragraph>
                 <Paragraph style={{ margin: 0 }}>
                   CoCalc terminals are durable like tmux and collaborative like
-                  the rest of the workspace. Preserved scrollback, split panes,
-                  and TimeTravel on generated files keep command output close
-                  enough to inspect during the next handoff.
+                  the rest of the workspace. Preserved scrollback and TimeTravel
+                  on generated files keep command output close enough to inspect
+                  during the next handoff.
                 </Paragraph>
                 <BulletList
                   items={[
-                    "Run scripts beside the files they read or create.",
-                    "Use split panes for logs, a REPL, a server process, and a build command.",
+                    "Run scripts against the files they read or create.",
+                    "Use split panes for logs and a REPL.",
                     "Let Codex inspect terminal context instead of guessing from a final error.",
                   ]}
                 />
@@ -171,8 +171,8 @@ export default function TerminalFeaturePage({
           action={{
             body: (
               <>
-                Open a project, create a <code>.term</code> file, and put the
-                shell next to the document or notebook it supports.
+                Open a project, create a <code>.term</code> file, and start the
+                shell in the folder for the document or notebook.
               </>
             ),
             href: primaryCtaHref,
@@ -195,7 +195,7 @@ export default function TerminalFeaturePage({
         >
           <BulletList
             items={[
-              "Use a real shell beside notebooks, LaTeX, files, Git, chat, project secrets, snapshots, backups, and app servers.",
+              "Use a real shell with notebooks, source files, Git, and generated output.",
               "Reach heavier compute from the same project when exploration, post-processing, and review need to stay together.",
               "Best fit when shell commands should remain visible to collaborators instead of disappearing into a private local terminal.",
             ]}

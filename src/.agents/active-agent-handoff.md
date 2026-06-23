@@ -46,6 +46,40 @@ Known risks:
 
 ---
 
+### Codex - Restraint/dedup /features/terminal item 51 (2026-06-23 07:01 PDT)
+
+- **START 2026-06-23 07:01 PDT:** Continuing the scheduled landing-page
+  improvement loop on live queue item 51 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `6439b20261`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known lane-gated untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431`, both rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/terminal-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/terminal` browser QA, this
+  ledger, and the shared turn log if the slice lands. Route frame: visitor asks
+  whether a Linux shell can stay close to project files and review context
+  without repeating the same split-pane/live-stream/beside-the-work pitch in
+  every band. Change budget: dedup "split panes", "one live stream", and the
+  "beside the work" enumeration; trim the final-band kitchen-sink bullet to
+  three or four concrete neighbors. Excluded: Blaec-gated collaborative-terminal
+  detail restoration.
+- **END 2026-06-23 07:08 PDT:** Landed the item 51 terminal restraint pass.
+  Replaced the hero lead so the live-stream point appears only in the context
+  list, changed the context list's split-pane slot to disconnect recovery,
+  kept one split-pane bullet, kept one "beside the work" carrier in the proof
+  section heading, and trimmed the final-band kitchen-sink bullet to notebooks,
+  source files, Git, and generated output. Added Jest/browser-QA canaries
+  against the removed duplicate phrases. No protected home/theme, pricing,
+  policy, compliance copy, or Blaec-gated collaborative-terminal restoration was
+  touched. Validation passed: terminal-focused Jest 7/7, `pnpm -C src
+  lint:frontend`, `git diff --check`, `pnpm -C src/packages/static build:dev`
+  (known local debug-log EACCES warning only), and `/features/terminal` browser
+  QA desktop+mobile 68/68 at `/tmp/cocalc-public-qa-qgDLZj`; screenshots
+  inspected clean.
+
 ### Codex - Scheduled loop awaiting item 50 audit (2026-06-23 06:21 PDT)
 
 - **START 2026-06-23 06:21 PDT:** Ran the scheduled landing-page

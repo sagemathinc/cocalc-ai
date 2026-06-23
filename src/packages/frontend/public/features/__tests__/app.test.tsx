@@ -999,6 +999,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("A Linux terminal that lives in your project."),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "A real Linux shell that reconnects with project files, outputs, and history.",
+      ),
+    ).not.toBeNull();
     // Section marker: the .term-file folder anchor remains explicit.
     expect(
       screen.getAllByText("Each terminal opens in its own folder.").length,
@@ -1008,6 +1013,13 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("One session stays visible")).toBeNull();
     expect(screen.queryByText("Output remains reviewable")).toBeNull();
     expect(screen.queryByText("Split the shell around the work")).toBeNull();
+    expect(screen.queryByText(/shares one live stream/i)).toBeNull();
+    expect(
+      screen.queryByText(/server process, and a build command/i),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/project secrets, snapshots, backups/i),
+    ).toBeNull();
     // Closing section identity without pinning the headline.
     expect(
       screen.getByText("Where the terminal earns its place"),
