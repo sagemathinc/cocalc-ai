@@ -9,6 +9,12 @@ import {
   ensureDirectoryExists,
 } from "./file-creation";
 
+jest.mock("@cocalc/frontend/jupyter/new-notebook", () => ({
+  createInitialIpynbContent: jest.fn(async (_projectId, kernel) =>
+    JSON.stringify({ kernel }),
+  ),
+}));
+
 describe("project redux file creation", () => {
   it("constructs absolute paths and appends missing extensions", () => {
     expect(
@@ -91,6 +97,34 @@ describe("project redux file creation", () => {
       explicit: true,
       foreground: true,
     });
+  });
+
+  it("awaits the preferred kernel when creating notebooks", async () => {
+    const writeFile = jest.fn().mockResolvedValue(undefined);
+    const preferredKernel = jest.fn(async () => "sagemath");
+
+    await createFile({
+      name: "demo",
+      ext: "ipynb",
+      currentPath: "/home/user",
+      projectId: "project-id",
+      fs: () => ({ writeFile }) as any,
+      toAbsoluteCurrentPath: (path) => path,
+      setFileCreationError: jest.fn(),
+      createFolder: jest.fn(),
+      newFileFromWeb: jest.fn(),
+      ensureContainingDirectoryExists: jest.fn(),
+      log: jest.fn(),
+      getPreferredKernel: preferredKernel,
+      addCreatedTag: jest.fn(),
+      openFile: jest.fn(),
+    });
+
+    expect(preferredKernel).toHaveBeenCalled();
+    expect(writeFile).toHaveBeenCalledWith(
+      "/home/user/demo.ipynb",
+      JSON.stringify({ kernel: "sagemath" }),
+    );
   });
 
   it("does not mkdir when the directory is already present in cache", async () => {

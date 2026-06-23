@@ -32,6 +32,7 @@ publish:
   family: sagemath
   version: "10.9"
   channel: stable
+  default_jupyter_kernel: sagemath
   visibility: public
   tags:
     - sagemath

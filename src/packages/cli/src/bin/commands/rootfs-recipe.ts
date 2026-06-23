@@ -57,6 +57,7 @@ type RootfsRecipePublish = {
   family?: string;
   version?: string;
   channel?: string;
+  default_jupyter_kernel?: string;
   visibility?: string;
   tags?: string[];
   theme?: JsonObject;
@@ -1686,6 +1687,7 @@ function emptyRecipeConfig(recipe: RootfsRecipe): RootfsConfigExport {
       version: publish.version,
       channel: publish.channel,
       visibility: publish.visibility as any,
+      default_jupyter_kernel: publish.default_jupyter_kernel,
       tags: publish.tags,
     },
     theme: publish.theme as any,
@@ -1765,7 +1767,7 @@ function recipeConfigToCatalogPayload(config: RootfsConfigExport) {
   if (!label) {
     throw new Error("recipe publish metadata must include a label");
   }
-  return {
+  const payload = {
     label,
     slug: config.metadata?.slug,
     description: config.metadata?.description,
@@ -1778,4 +1780,11 @@ function recipeConfigToCatalogPayload(config: RootfsConfigExport) {
     content: config.content,
     content_warnings: [],
   };
+  if (config.metadata?.default_jupyter_kernel != null) {
+    return {
+      ...payload,
+      default_jupyter_kernel: config.metadata.default_jupyter_kernel,
+    };
+  }
+  return payload;
 }

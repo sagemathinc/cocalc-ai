@@ -30,6 +30,7 @@
   "contributes": {
     "metadata": {
       "family": "sagemath",
+      "default_jupyter_kernel": "sagemath",
       "tags": ["sagemath", "math", "jupyter"]
     },
     "theme": {

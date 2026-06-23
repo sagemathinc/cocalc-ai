@@ -22,6 +22,7 @@ export type PublishDraft = {
   version: string;
   channel: string;
   supersedes_image_id: string;
+  default_jupyter_kernel: string;
   theme: ThemeEditorDraft;
   visibility: RootfsImageVisibility;
   tags: string;
@@ -95,6 +96,11 @@ export function buildRootfsPublishAssistCommand(opts: {
     "--supersedes-image-id",
     publishDraft.supersedes_image_id,
   );
+  pushCliOption(
+    parts,
+    "--default-jupyter-kernel",
+    publishDraft.default_jupyter_kernel,
+  );
   if (publishDraft.visibility) {
     pushCliOption(parts, "--visibility", publishDraft.visibility);
   }
@@ -162,6 +168,7 @@ export function buildRootfsPublishAgentPrompt(opts: {
     `- version: ${publishDraft.version || "(none)"}`,
     `- channel: ${publishDraft.channel || "(none)"}`,
     `- supersedes_image_id: ${publishDraft.supersedes_image_id || "(none)"}`,
+    `- default_jupyter_kernel: ${publishDraft.default_jupyter_kernel || "(none)"}`,
     `- visibility: ${publishDraft.visibility}`,
     `- tags: ${publishDraft.tags || "(none)"}`,
     `- theme: ${rootfsThemeFromPublishDraft(publishDraft) ? "customized" : "default"}`,
