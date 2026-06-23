@@ -9,23 +9,17 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
-  PUBLIC_ELEVATION,
   PUBLIC_COLORS,
+  PUBLIC_ELEVATION,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import {
-  BulletList,
   CodeBlock,
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
-import {
-  ContextList,
-  FeatureFinalBand,
-  IconBadge,
-  StoryCard,
-} from "./feature-visuals";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -49,6 +43,12 @@ const LEAD_STYLE: CSSProperties = {
 };
 const MUTED_TEXT_STYLE: CSSProperties = { color: PUBLIC_COLORS.mutedText };
 const NO_MARGIN_STYLE: CSSProperties = { margin: 0 };
+const FIT_PANEL_STYLE: CSSProperties = {
+  background: PUBLIC_COLORS.surfaceMuted,
+  border: `1px solid ${PUBLIC_COLORS.border}`,
+  borderRadius: PUBLIC_RADIUS.panel,
+  padding: 18,
+};
 
 const FIT_DECISION_ROWS = [
   ["Hosted paper collaboration", "Dedicated LaTeX editor"],
@@ -216,19 +216,12 @@ export default function LatexEditorFeaturePage({
                 Coauthors edit in real time, with builds and full history in one
                 project.
               </Paragraph>
-              <Paragraph style={NO_MARGIN_STYLE}>
-                The evidence behind every claim stays with the paper,
-                reproducible later.
-              </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
                   {primaryCtaLabel}
                 </Button>
                 <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
                   Read the LaTeX guide
-                </LinkButton>
-                <LinkButton href={`${GUIDE_BASE}/paper-polishing/`}>
-                  Paper polishing workflow
                 </LinkButton>
               </Flex>
             </Flex>
@@ -248,146 +241,57 @@ export default function LatexEditorFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row className="cocalc-latex-story-row" gutter={[16, 16]}>
-        <Col xs={24} md={8}>
-          <StoryCard icon="users" title="Edit with coauthors live">
-            Write in the same project with visible cursors, discussion, source
-            files, figures, bibliography, and build output close enough to
-            review.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <StoryCard
-            accent="#ad6800"
-            icon="file-pdf"
-            title="Build the PDF beside evidence"
-          >
-            Keep generated tables, figures, notebooks, scripts, and terminal
-            output next to the source that cites them.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <StoryCard
-            accent="#7c3aed"
-            icon="history"
-            title="Review draft history"
-          >
-            TimeTravel keeps edits reviewable, so a collaborator can inspect
-            what changed before continuing the paper.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <LatexEvidencePanel />
-          </Col>
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={NO_MARGIN_STYLE}>
-                Keep the working tree together
-              </Title>
-              <Paragraph style={NO_MARGIN_STYLE}>
-                A mathematical or scientific paper usually has more structure
-                than the final PDF shows: <code>.tex</code> files, bibliography
-                entries, figures, scripts, notebooks, generated tables, and
-                discussions.
-              </Paragraph>
-              <Paragraph style={NO_MARGIN_STYLE}>
-                CoCalc makes that working tree collaborative. Coauthors can
-                edit, discuss, and review those assets without splitting the
-                paper workflow across separate tools.
-              </Paragraph>
-              <ContextList
-                accent="#ad6800"
-                items={[
-                  {
-                    icon: "file",
-                    label: "source, bibliography, figures, and build logs",
-                  },
-                  {
-                    icon: "jupyter",
-                    label: "notebooks, scripts, terminals, and package state",
-                  },
-                  {
-                    icon: "comment",
-                    label: "review notes, chat, and collaborator context",
-                  },
-                ]}
-                title="What stays with the paper"
-              />
-            </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={NO_MARGIN_STYLE}>
-                Use computation as part of the writing process
-              </Title>
-              <Paragraph style={NO_MARGIN_STYLE}>
-                CoCalc is a strong fit when figures or tables come from code.
-                Regenerate evidence in a notebook, script, or SageTeX step,
-                rebuild the PDF, and check the result while the draft is still
-                open.
-              </Paragraph>
-              <Button href={appPath("features/ai")} style={FIT_BUTTON_STYLE}>
-                AI assistance
-              </Button>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
-            <div className="cocalc-latex-computation-list">
-              <ContextList
-                accent="#278c83"
-                items={[
-                  {
-                    icon: "refresh",
-                    label: "Regenerate a table, figure, or result",
-                  },
-                  {
-                    icon: "file-pdf",
-                    label: "Rebuild the PDF beside its evidence",
-                  },
-                  {
-                    icon: "users",
-                    label: "Review the claim, source, and computation together",
-                  },
-                ]}
-                title="A practical writing loop"
-              />
-            </div>
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={NO_MARGIN_STYLE}>
-                Choose the writing environment around the real task
-              </Title>
-              <Paragraph style={NO_MARGIN_STYLE}>
-                Dedicated hosted LaTeX editors are a natural choice when the
-                main task is collaborative paper editing. Local TeX editors are
-                excellent when keyboard-driven local craft is the priority.
-              </Paragraph>
-              <Paragraph style={NO_MARGIN_STYLE}>
-                CoCalc is useful when the paper depends on computation, project
-                files, command-line tools, collaborators, history, and agent
-                help.
-              </Paragraph>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
-            <LatexFitTable />
-          </Col>
-        </Row>
+        <Flex vertical gap={22}>
+          <Row gutter={[24, 24]} align="middle">
+            <Col xs={24} lg={12}>
+              <LatexEvidencePanel />
+            </Col>
+            <Col xs={24} lg={12}>
+              <Flex vertical gap={12}>
+                <Title level={3} style={NO_MARGIN_STYLE}>
+                  Keep the working tree together
+                </Title>
+                <Paragraph style={NO_MARGIN_STYLE}>
+                  A mathematical or scientific paper usually has more structure
+                  than the final PDF shows: <code>.tex</code> files,
+                  bibliography entries, figures, scripts, notebooks, generated
+                  tables, build logs, and discussions. CoCalc makes that working
+                  tree collaborative, so coauthors can edit, discuss, review,
+                  and regenerate figures or tables with notebooks, scripts, or
+                  SageTeX while the draft is still open.
+                </Paragraph>
+                <Button href={appPath("features/ai")} style={FIT_BUTTON_STYLE}>
+                  AI assistance
+                </Button>
+              </Flex>
+            </Col>
+          </Row>
+          <div className="cocalc-latex-fit-panel" style={FIT_PANEL_STYLE}>
+            <Row gutter={[18, 18]} align="middle">
+              <Col xs={24} lg={11}>
+                <Flex vertical gap={10}>
+                  <Text strong>
+                    Choose the writing environment around the task
+                  </Text>
+                  <Paragraph style={NO_MARGIN_STYLE}>
+                    Dedicated hosted LaTeX editors fit collaborative paper
+                    editing; local TeX editors fit keyboard-driven local craft.
+                    CoCalc fits when the paper also depends on computation,
+                    project files, command-line tools, collaborators, history,
+                    or agent help.
+                  </Paragraph>
+                  <LinkButton href={appPath("products")}>
+                    Compare operating models
+                  </LinkButton>
+                </Flex>
+              </Col>
+              <Col xs={24} lg={13}>
+                <LatexFitTable />
+              </Col>
+            </Row>
+          </div>
+        </Flex>
       </PublicSection>
 
       <PublicSection>
@@ -416,13 +320,11 @@ export default function LatexEditorFeaturePage({
           ]}
           title="Where LaTeX belongs in the project"
         >
-          <BulletList
-            items={[
-              "This workflow fits papers that depend on code, generated figures, notebooks, terminals, and review history.",
-              "Use SageTeX when computation belongs directly in the LaTeX build.",
-              "Keep coauthors, source, PDF output, project files, and TimeTravel in one workspace.",
-            ]}
-          />
+          <Paragraph style={NO_MARGIN_STYLE}>
+            Use this workflow when the paper depends on code, generated figures,
+            SageTeX, notebooks, terminals, coauthors, and review history in the
+            same workspace.
+          </Paragraph>
         </FeatureFinalBand>
       </PublicSection>
     </Flex>

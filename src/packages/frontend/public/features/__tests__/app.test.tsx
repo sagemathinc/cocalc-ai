@@ -135,14 +135,7 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#fff8e8",
     "#ffffff",
   ],
-  "latex-editor-page.tsx": [
-    "#278c83",
-    "#7c3aed",
-    "#ad6800",
-    "#f4f9ff",
-    "#fff8e8",
-    "#ffffff",
-  ],
+  "latex-editor-page.tsx": ["#ad6800", "#f4f9ff", "#fff8e8", "#ffffff"],
   "linux-page.tsx": [
     "#096dd9",
     "#278c83",
@@ -853,6 +846,8 @@ describe("PublicFeaturesApp", () => {
     expect(
       container.querySelector(".cocalc-feature-context-list"),
     ).not.toBeNull();
+    expect(container.querySelector(".cocalc-latex-story-row")).toBeNull();
+    expect(container.querySelector(".cocalc-latex-fit-panel")).not.toBeNull();
     expect(
       container.querySelector(".cocalc-feature-final-band"),
     ).not.toBeNull();
@@ -861,8 +856,8 @@ describe("PublicFeaturesApp", () => {
         name: /CoCalc LaTeX project with source, PDF preview, and build log/i,
       }),
     ).not.toBeNull();
-    // Route-specific body keyword (LaTeX writing loop) instead of pinned prose.
-    expect(screen.getByText(/writing loop/i)).not.toBeNull();
+    // Route-specific body keyword (SageTeX computation) instead of pinned prose.
+    expect(screen.getAllByText(/SageTeX/i).length).toBeGreaterThan(0);
     // Mock-UI label ban: the agent panel reads "AI review thread", not "Codex".
     expect(screen.queryByText("Codex review thread")).toBeNull();
     // Decorative PDF mock text should not pollute the document heading outline.

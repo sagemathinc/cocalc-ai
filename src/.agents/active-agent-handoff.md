@@ -46,6 +46,47 @@ Known risks:
 
 ---
 
+### Codex - Density /features/latex item 37 (2026-06-23 02:22 PDT)
+
+- **START 2026-06-23 02:22 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 37 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `bd1876d1ff`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/latex-editor-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/latex-editor` browser QA,
+  this ledger, and shared queue/turn logs if the slice lands. Route frame:
+  visitor is a technical author/coauthor asking whether LaTeX work can stay
+  beside code, figures, review, and history; promise is one project for the
+  paper and its evidence; proof mechanism is the `LatexEvidencePanel`,
+  SageTeX/computation sentence, and Paper context list; primary next step is
+  start/open a project; secondary next steps are LaTeX guide, paper-polishing
+  guide, Jupyter/terminal/product links; must not claim benchmark,
+  competitor superiority, managed migration, compliance, or a generic
+  dedicated-editor replacement. Decision: subtract redundant story/list
+  sections, merge computation into the working-tree proof, preserve the fit
+  positioning and table a11y inline.
+- **END 2026-06-23 02:31 PDT:** Item 37 source edit complete. Reduced the
+  `/features/latex-editor` page from 430 to 332 source lines and removed the
+  redundant three-card story row, the "What stays with the paper" context
+  list, the separate computation section, the separate fit-table section, and
+  the final bullet list. Kept the hero Paper context list, the
+  `LatexEvidencePanel` role/aria proof, the SageTeX/computation sentence, the
+  dedicated/local/CoCalc fit positioning, the fit table caption/scope
+  accessibility, and the related links. Validation passed: focused
+  feature/browser-QA Jest
+  `public/features/__tests__/app.test.tsx public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+  (140/140); public/features Jest `public/__tests__ public/features/__tests__
+  --runInBand --silent` (196/196); `git diff --check`; `pnpm -C src tsc`;
+  `pnpm -C src lint:frontend`; `pnpm --dir src/packages/static build:dev`
+  (known debug-log EACCES warning only); `/features/latex-editor` browser QA
+  desktop+mobile (56/56) with screenshots in
+  `/tmp/cocalc-public-qa-jCqd0J` inspected.
+
 ### Codex - HOME H1 micro-correction item 45 (2026-06-23 02:16 PDT)
 
 - **START 2026-06-23 02:16 PDT:** Manual landing-page improvement loop on

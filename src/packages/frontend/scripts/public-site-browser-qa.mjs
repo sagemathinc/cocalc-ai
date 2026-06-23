@@ -481,18 +481,22 @@ const ROUTE_RULES = {
   "/features/latex-editor": {
     requireText: [
       "Keep the working tree together",
-      "What stays with the paper",
-      "Use computation as part of the writing process",
-      "A practical writing loop",
+      "Paper context",
+      "SageTeX and computed figures",
+      "Choose the writing environment around the task",
+      "Dedicated LaTeX editor",
       "Coauthors edit in real time",
     ],
     requireSelectors: [
       ".cocalc-feature-context-list",
       ".cocalc-feature-final-band",
       ".cocalc-feature-final-panel",
-      ".cocalc-latex-computation-list",
+      ".cocalc-latex-fit-panel",
     ],
     forbidText: [
+      "What stays with the paper",
+      "Use computation as part of the writing process",
+      "A practical writing loop",
       "PDF build",
       "Ask about LaTeX workflows",
       "project that also contains terminals",
