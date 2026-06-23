@@ -93,6 +93,7 @@ const FINAL_BAND_FEATURE_PAGES = [
   "r-statistical-software",
   "sage",
   "slides",
+  "teaching",
   "terminal",
   "whiteboard",
 ] as const;
@@ -102,7 +103,6 @@ const CUSTOM_FEATURE_PAGES_WITHOUT_SHARED_PRIMITIVES = new Set([
   "api-page.tsx",
   "cli-page.tsx",
   "compare-page.tsx",
-  "teaching-page.tsx",
 ]);
 
 const SHARED_CARD_PRIMITIVE =
@@ -916,19 +916,19 @@ describe("PublicFeaturesApp", () => {
         .querySelector(".cocalc-teaching-assignment-panel")
         ?.getAttribute("style") ?? "",
     ).not.toMatch(DARK_FEATURE_CARD_STYLE);
-    // Closing section identity without pinning the headline.
-    expect(screen.getByText(/Choose the .*path that fits/i)).not.toBeNull();
-    // Planning-guides panel + teaching's own unauth CTA identity.
-    expect(screen.getByText("Useful planning guides")).not.toBeNull();
-    expect(screen.getByText("Use hosted CoCalc.ai")).not.toBeNull();
+    // Shared closing band + teaching's own unauth final CTA identity.
+    expect(
+      container.querySelector(".cocalc-feature-final-band"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("When technical coursework belongs in CoCalc"),
+    ).not.toBeNull();
+    expect(screen.getByText("Related")).not.toBeNull();
+    expect(screen.getByText("Start a course in CoCalc")).not.toBeNull();
+    expect(screen.queryByText("Use hosted CoCalc.ai")).toBeNull();
+    expect(screen.queryByText("Start on CoCalc.ai")).toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
     // Documentation deep links (route canaries), scoped via the section anchor.
-    expect(
-      screen.getByRole("link", { name: "Environment guide" }),
-    ).toHaveAttribute(
-      "href",
-      "https://sagemathinc.github.io/cocalc-guides/rootfs-management/",
-    );
     expect(
       within(screen.getByText("Technical course workspace").closest("section")!)
         .getAllByRole("link", { name: /teaching guide/i })
@@ -939,6 +939,12 @@ describe("PublicFeaturesApp", () => {
         .getByRole("link", { name: "Compare operating models" })
         .getAttribute("href"),
     ).toBe("/products");
+    expect(
+      screen.getByRole("link", { name: "Environment guide" }),
+    ).toHaveAttribute(
+      "href",
+      "https://sagemathinc.github.io/cocalc-guides/rootfs-management/",
+    );
     // Internal-language leakage: shared floor + teaching-surface-unique bans.
     expect(container.textContent ?? "").not.toMatch(
       combineLeak(
@@ -975,6 +981,7 @@ describe("PublicFeaturesApp", () => {
       expect(link.getAttribute("href")).toBe("/projects");
     }
     expect(screen.queryByText("Use hosted CoCalc.ai")).toBeNull();
+    expect(screen.queryByText("Start a course in CoCalc")).toBeNull();
   });
 
   it("renders the richer terminal feature page", () => {
@@ -1485,6 +1492,10 @@ describe("PublicFeaturesApp", () => {
       slug: "sage",
       title: "When SageMath belongs in CoCalc.",
     },
+    {
+      slug: "teaching",
+      title: "When technical coursework belongs in CoCalc",
+    },
   ] as const)("uses the balanced final band on $slug", ({ slug, title }) => {
     const { container } = render(
       <PublicFeaturesApp
@@ -1499,8 +1510,8 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText(title)).not.toBeNull();
     expect(screen.getByText("Related")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Compare operating models" }),
-    ).not.toBeNull();
+      screen.getAllByRole("link", { name: "Compare operating models" }).length,
+    ).toBeGreaterThan(0);
   });
 
   it.each(auditedFeaturePages)(

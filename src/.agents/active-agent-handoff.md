@@ -46,6 +46,49 @@ Known risks:
 
 ---
 
+### Codex - teaching final-band polish (2026-06-22 21:22 PDT)
+
+- **START 2026-06-22 21:22 PDT:** Continuing the scheduled landing-page
+  improvement loop with promoted adversarial-fix queue item 10: migrate
+  `/features/teaching` from its route-owned final plan to the shared
+  `FeatureFinalBand`, standardize unauth/auth CTA labels, and register the
+  teaching accent instead of local `COLORS.RUN`/AI-dot usage. Worktree verified
+  as `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`; preview
+  hub pid `27431` is rooted at `/home/user/cocalc-ai-synthesis/src`. Current
+  head `75d4437879`; known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft
+  remains untouched. Claimed route/files: `/features/teaching`,
+  `src/packages/frontend/public/features/teaching-page.tsx`,
+  `src/packages/frontend/public/features/app.tsx`,
+  `src/packages/frontend/public/features/feature-accents.ts`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, and this ledger.
+  Scope: closing-section design consistency and accent cleanup only. Do not
+  touch protected home, pricing/compliance, pitch/docs content, raw audit
+  findings outside this promoted item, or the dedicated-compute draft.
+- **END 2026-06-22 21:31 PDT:** Teaching final-band slice complete. Replaced
+  the route-owned `.cocalc-teaching-final-plan` closing section with shared
+  `FeatureFinalBand`, standardized unauth labels to `Create account` in the
+  hero and `Start a course in CoCalc` in the final action, preserved
+  authenticated `Open projects`, moved the teaching accent into
+  `FEATURE_ACCENTS`, and removed the unrelated AI-colored student status dot.
+  Updated Jest/browser-QA guards so teaching is now in the audited final-band
+  set and the old final-plan/CTA wording does not return. Validation passed:
+  Prettier on touched files; `pnpm -C src tsc`; focused Jest
+  `pnpm exec jest public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+  `src/packages/frontend` (136/136, existing React/AntD `act(...)` warnings);
+  `pnpm -C src lint:frontend`; `git diff --check`; `pnpm --dir
+  src/packages/static build:dev` with the existing local debug-log permission
+  warning; and browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/teaching --viewport desktop --viewport mobile` passed 56/56 at
+  `/tmp/cocalc-public-qa-lrBwx6`. Desktop/mobile screenshots inspected; no
+  overlap or obvious visual regression. Next: commit, rebuild so the static
+  bundle embeds the new commit, rerun teaching browser QA, then push/update
+  handoff logs.
+
 ### Codex - Python workflow-panel P2 redundancy polish (2026-06-22 20:52 PDT)
 
 - **START 2026-06-22 20:52 PDT:** Continuing the scheduled landing-page

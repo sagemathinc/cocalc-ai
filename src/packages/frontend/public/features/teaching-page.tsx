@@ -13,18 +13,18 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
+import { FEATURE_ACCENTS } from "./feature-accents";
 import {
   BulletList,
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
-import { IconBadge } from "./feature-visuals";
+import { FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
-const COURSE_ACCENT = COLORS.RUN;
+const COURSE_ACCENT = FEATURE_ACCENTS.teaching;
 
 function CourseDashboardMock() {
   const students = [
@@ -33,7 +33,7 @@ function CourseDashboardMock() {
     ["Priya", "active", COURSE_ACCENT],
     ["Jordan", "needs help", PUBLIC_COLORS.warning],
     ["Liam", "offline", PUBLIC_COLORS.mutedText],
-    ["Diego", "collected", COLORS.AI_ASSISTANT_FONT],
+    ["Diego", "collected", PUBLIC_COLORS.info],
   ];
   return (
     <div
@@ -312,12 +312,10 @@ export default function TeachingFeaturePage({
   const primaryCtaHref = isAuthenticated
     ? appPath("projects")
     : appPath("auth/sign-up");
-  const primaryCtaLabel = isAuthenticated
-    ? "Open projects"
-    : "Start on CoCalc.ai";
+  const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
-    : "Use hosted CoCalc.ai";
+    : "Start a course in CoCalc";
 
   return (
     <Flex vertical gap={18}>
@@ -416,58 +414,38 @@ export default function TeachingFeaturePage({
         </Row>
       </PublicSection>
 
-      <div style={{ marginBottom: 44 }}>
-        <PublicSection>
-          <Row
-            className="cocalc-teaching-final-plan"
-            gutter={[28, 24]}
-            align="top"
-          >
-            <Col xs={24} lg={13}>
-              <Title level={3} style={{ margin: 0 }}>
-                Choose the teaching path that fits
-              </Title>
-              <Paragraph style={{ margin: "8px 0 0" }}>
-                Start hosted for a course on CoCalc.ai. Use the guides when
-                planning assignments or shared course software. Compare
-                operating models or talk to CoCalc when procurement, licensing,
-                or deployment questions matter.
-              </Paragraph>
-              <Flex wrap gap={12}>
-                <Button type="primary" href={primaryCtaHref}>
-                  {finalCtaLabel}
-                </Button>
-                <Button href={appPath("products")}>
-                  Compare operating models
-                </Button>
-              </Flex>
-            </Col>
-            <Col xs={24} lg={11}>
-              <Flex
-                vertical
-                gap={10}
-                style={{
-                  borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
-                  paddingLeft: 18,
-                }}
-              >
-                <Text strong>Useful planning guides</Text>
-                <Flex wrap gap={12}>
-                  <LinkButton href={`${GUIDE_BASE}/teaching/`}>
-                    Teaching guide
-                  </LinkButton>
-                  <Button href={`${GUIDE_BASE}/rootfs-management/`}>
-                    Environment guide
-                  </Button>
-                  <Button href={appPath("features/jupyter-notebook")}>
-                    Jupyter notebooks
-                  </Button>
-                </Flex>
-              </Flex>
-            </Col>
-          </Row>
-        </PublicSection>
-      </div>
+      <PublicSection>
+        <FeatureFinalBand
+          action={{
+            body: "Create an account, start the technical coursework in projects, and use the guides when planning assignments or shared environments.",
+            href: primaryCtaHref,
+            label: finalCtaLabel,
+            title: "Start with course projects",
+          }}
+          relatedLinks={[
+            { href: `${GUIDE_BASE}/teaching/`, label: "Teaching guide" },
+            {
+              href: `${GUIDE_BASE}/rootfs-management/`,
+              label: "Environment guide",
+            },
+            {
+              href: appPath("features/jupyter-notebook"),
+              label: "Jupyter notebooks",
+            },
+            { href: appPath("products"), label: "Compare operating models" },
+          ]}
+          title="When technical coursework belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "Bring assignments here when they depend on notebooks, code, data, LaTeX, or terminal work.",
+              "Keep the LMS responsible for rosters, calendars, announcements, and course-wide communication.",
+              "Keep feedback, grading, TimeTravel history, and help close to each student project.",
+              "Compare operating models when deployment, procurement, or licensing questions shape the course.",
+            ]}
+          />
+        </FeatureFinalBand>
+      </PublicSection>
     </Flex>
   );
 }

@@ -168,7 +168,7 @@ const FEATURE_META = {
   },
   sage: { accent: COLORS.RUN, icon: "sagemath" },
   slides: { accent: COLORS.BG_WARNING, icon: "slides" },
-  teaching: { accent: COLORS.RUN, icon: "graduation-cap" },
+  teaching: { accent: FEATURE_ACCENTS.teaching, icon: "graduation-cap" },
   terminal: {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     icon: "terminal",

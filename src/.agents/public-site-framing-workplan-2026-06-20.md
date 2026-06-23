@@ -666,6 +666,67 @@ Current disposition:
 - Browser QA for `/features/python` desktop+mobile passed 44/44 with
   screenshots in `/tmp/cocalc-public-qa-osUiUD`.
 
+### FS-022 - Move Teaching onto the shared final band
+
+Status: `done`
+
+Evidence:
+
+- The adversarial-fix slice item 10 identifies `/features/teaching` as the
+  lone hand-rolled closing holdout after the feature-detail pages converged on
+  `FeatureFinalBand`.
+- Current source uses a route-owned `.cocalc-teaching-final-plan`,
+  non-standard unauth final CTA copy, and a local `COLORS.RUN` accent plus an
+  unrelated AI-colored status dot.
+- Teaching should stay a visible secondary workflow destination, not a
+  top-level product path or LMS replacement.
+
+Current route frame for `/features/teaching`:
+
+```md
+Route: /features/teaching
+Visitor: instructor, course staff member, or program owner evaluating where
+technical coursework should run.
+Visitor question: can CoCalc handle the computational assignment loop while the
+LMS keeps course administration?
+One-sentence promise: CoCalc keeps student technical work, feedback, grading,
+history, and recovery in course projects without replacing the LMS.
+Proof mechanism: course dashboard mock, LMS/CoCalc boundary panel, assignment
+workflow diagram, nbgrader/help/history language, teaching guides, and
+operating-model comparison.
+Primary next step: create account / open projects.
+Secondary next step: teaching guide, environment guide, Jupyter route, and
+operating-model comparison.
+What this must not claim: no LMS replacement, institutional procurement proof,
+setup timing, managed operations, compliance, metrics, or teaching as a
+top-level product path.
+Evidence consulted: adversarial-fix item 10, frozen Brief, decisions log,
+framing system/register, current `/features/teaching` source, and browser-QA
+canaries.
+Decision: redesign only the closing section onto `FeatureFinalBand` and
+standardize the route accent/CTA labels; keep the course boundary and
+assignment-loop proof.
+```
+
+Current disposition:
+
+- `/features/teaching` now uses the shared `FeatureFinalBand` for its closing
+  section, with the default `Related` link row and balanced final-panel
+  treatment.
+- Unauthenticated teaching CTAs now match sibling conventions: hero
+  `Create account`, final `Start a course in CoCalc`; authenticated users still
+  see `Open projects`.
+- Teaching accent usage now comes from `FEATURE_ACCENTS.teaching`, including
+  the feature catalog card, and the unrelated AI-colored student status dot was
+  replaced with the public info color.
+- Added route tests and browser-QA guards for the shared final band, new CTA
+  labels, old CTA bans, and light final-panel styling.
+- Validation passed: `pnpm -C src tsc`; focused feature/browser-QA-script Jest
+  136/136 with existing React/AntD `act(...)` warnings; `pnpm -C src
+  lint:frontend`; `git diff --check`; static `build:dev`; and browser QA for
+  `/features/teaching` desktop+mobile 56/56 with screenshots in
+  `/tmp/cocalc-public-qa-lrBwx6`.
+
 ## Next Recommended Burn-Down Order
 
 1. Continue adversarial-fix item 19 from the shared live queue: Teaching

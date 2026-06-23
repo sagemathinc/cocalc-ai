@@ -399,16 +399,20 @@ const ROUTE_RULES = {
     requireText: [
       "Keep administration in the LMS. Run coursework in CoCalc.",
       "Run the assignment loop in student projects",
-      "Choose the teaching path that fits",
-      "Useful planning guides",
+      "When technical coursework belongs in CoCalc",
+      "Related",
+      "Start a course in CoCalc",
     ],
     forbidText: [
       "Ready to plan a course?",
       "Feature operating model next steps",
+      "Use hosted CoCalc.ai",
+      "Start on CoCalc.ai",
     ],
     requireSelectors: [
       ".cocalc-teaching-assignment-panel",
-      ".cocalc-teaching-final-plan",
+      ".cocalc-feature-final-band",
+      ".cocalc-feature-final-panel",
     ],
     styleChecks: [
       {
@@ -416,6 +420,7 @@ const ROUTE_RULES = {
         property: "backgroundColor",
         not: DARK_CARD_BACKGROUND_COLORS,
       },
+      LIGHT_FEATURE_FINAL_PANEL_CHECK,
     ],
     requireLinks: [
       { text: "Compare operating models", hrefIncludes: "/products" },
