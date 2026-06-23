@@ -452,9 +452,16 @@ const ROUTE_RULES = {
       "Choose the Linux path that fits",
       "Ready to use Linux in CoCalc?",
       "Install software, run services, and keep the environment reproducible with the project",
-      "You decide what runs",
+      "you decide what runs",
+      "graphviz version reported",
+      "Reusable environments",
     ],
-    forbidText: ["Ask about Linux environments", "and running the command"],
+    forbidText: [
+      "Ask about Linux environments",
+      "and running the command",
+      "Administer Ubuntu packages",
+      "Run services beside the work",
+    ],
     requireSelectors: [
       ".cocalc-feature-context-list",
       ".cocalc-feature-final-band",

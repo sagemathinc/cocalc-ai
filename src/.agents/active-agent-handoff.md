@@ -46,6 +46,48 @@ Known risks:
 
 ---
 
+### Codex - Density /features/linux item 38 (2026-06-23 02:32 PDT)
+
+- **START 2026-06-23 02:32 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 38 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `fc2a701365`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/linux-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/linux` browser QA, this
+  ledger, and shared queue/turn logs if the slice lands. Route frame: visitor
+  is a technical teammate, instructor, or lab lead asking whether CoCalc gives
+  a real project Linux environment they can administer and document; promise
+  is install at the right layer, verify, and leave the setup with the project;
+  proof mechanism is the kept package-install `CodeBlock` plus project Linux
+  context and reusable-environment links; primary next step is start/open a
+  project; secondary next steps are terminal, Jupyter, software-install, image,
+  and products links. Must not claim benchmark/setup timing, managed compute,
+  compliance, or internal root-filesystem architecture. Decision: cut the
+  duplicate story row and LinuxEvidencePanel, merge install/layer proof, keep
+  `graphviz version reported` in the CodeBlock canary.
+- **END 2026-06-23 02:43 PDT:** Item 38 source edit complete. Reduced
+  `/features/linux` from 317 to 165 source lines and collapsed the page to
+  three bands: hero, one install/layer proof section, and the final band.
+  Removed the story row, `LinuxEvidencePanel`, `TerminalMock`, duplicate
+  install/layer section, standalone reusable-environments section, and the
+  extra hero Terminal details button. Preserved the project Linux context list,
+  the Layer `CodeBlock` as the single tool proof, the `graphviz version
+  reported` canary inside that proof, the wedge sentence "you decide what
+  runs...", reusable-environment context in the final band, and all related
+  links. Validation passed: focused feature/browser-QA Jest
+  `public/features/__tests__/app.test.tsx public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`
+  (140/140); public/features Jest `public/__tests__ public/features/__tests__
+  --runInBand --silent` (196/196); `git diff --check`; `pnpm -C src tsc`;
+  `pnpm -C src lint:frontend`; `pnpm --dir src/packages/static build:dev`
+  (known debug-log EACCES warning only); `/features/linux` browser QA
+  desktop+mobile (54/54) with screenshots in
+  `/tmp/cocalc-public-qa-7A9aqG` inspected.
+
 ### Codex - Density /features/latex item 37 (2026-06-23 02:22 PDT)
 
 - **START 2026-06-23 02:22 PDT:** Continuing the manual landing-page
