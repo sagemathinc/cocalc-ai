@@ -622,14 +622,15 @@ The first production-worthy version should satisfy:
 ## Open Questions
 
 - Should `rootfs recipe run` without `--here` become an alias for
-  `rootfs build`, or remain a lower-level command?
+  `rootfs build`, or remain a lower-level command? (ANS: stay lower level)
 - How much build history should remain in the control-plane database versus
-  only in project files?
-- What is the default builder project retention policy?
-- Should official recipe builds always use dedicated high-performance hosts?
-- Should build projects have a special project type or tag?
-- Should snapshots be on by default for all non-new builder projects?
+  only in project files? (ANS: not too much, because we don't want to waste space/overload the database.)
+- What is the default builder project retention policy?  (ANS: not sure -- you mean until the project is deleted or ?)
+- Should official recipe builds always use dedicated high-performance hosts?  (ANS: no; this is a great use for spare capacity.)
+- Should build projects have a special project type or tag?  (ANS: definitely yes.  We don't have any notion of that yet, but already I really wish they were not shown in my normal listing. The only similar thing we have right now is "hidden" projects that are used mainly for courses. We need a general notion of project tags though, and hidden would then just be a special case. That shouldn't be part of this proposal -- it's out of scope.)
+- Should snapshots be on by default for all non-new builder projects? (ANS: probably not; snapshots will be useful for some purposes - e.g., debugging - but often they won't be at all.)
 - How should `last_changed`/filesystem generation metadata feed build exposure
-  and backup decisions without polluting user-facing `last_edited`?
+  and backup decisions without polluting user-facing `last_edited`?   (ANS: not sure; somewhat orthogonal to this particular project.)
 - How do we make browser-started builds use the same recipe resolver as CLI
-  without duplicating code?
+  without duplicating code? (ANS: is browser started using "--here"?  maybe refactor the code into src/packages/util and include it in both the cli and project-host?)
+
