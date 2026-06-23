@@ -49,7 +49,8 @@ function OctaveProjectMock() {
             <div>
               <Text strong>Octave project</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                notebooks, .m files, plots, terminal runs, and teaching context
+                notebooks, .m files, plots, terminal runs, and TimeTravel
+                history
               </div>
             </div>
           </Flex>

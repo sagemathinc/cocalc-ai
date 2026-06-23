@@ -46,6 +46,40 @@ Known risks:
 
 ---
 
+### Codex - language education-secondary cleanup (2026-06-22 20:24 PDT)
+
+- **START 2026-06-22 20:24 PDT:** Continuing the scheduled landing-page
+  improvement loop with promoted adversarial-fix queue item 18 from
+  `/home/user/cocalc-shared/feature-page-adversarial-fix-slice-2026-06-22.md`.
+  Source commit `8cba363dcb` (Sage P0 cleanup) has been pushed, and
+  post-commit Sage browser QA passed 40/40 at `/tmp/cocalc-public-qa-U6XWcf`.
+  Worktree verified as `/home/user/cocalc-ai-synthesis/src` on
+  `blaec-synthesis-2026-06-18`; preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed routes/files:
+  `/features/octave`, `/features/julia`, `/features/r-statistical-software`,
+  their three feature page files, focused tests/QA canaries if needed, and
+  this ledger. Scope: keep education secondary by dropping the Octave hero
+  teaching-context stamp, leading Julia's closing bullet with collaborators
+  before students, and replacing R's teaching context-list slot with
+  history/TimeTravel. Do not touch protected home, pricing/compliance,
+  type/palette, pitch/docs content, raw audit findings beyond the promoted
+  item, or the untracked `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 20:27 PDT:** Item 18 implemented as scoped. Octave's hero
+  mock now says the project keeps TimeTravel history instead of "teaching
+  context"; Julia's final-band bullet now leads with collaborators before
+  students; R's context list now uses TimeTravel history instead of a teaching
+  slot. Added browser-QA guards for the new language and old-phrase bans.
+  Validation passed: `pnpm -C src tsc`; focused feature/browser-QA-script Jest
+  134/134 with existing Ant Design React `act(...)` warnings; `pnpm -C src
+  lint:frontend`; `pnpm --dir src/packages/static build:dev`; and browser QA
+  for `/features/octave`, `/features/julia`, and
+  `/features/r-statistical-software` desktop+mobile 126/126 with screenshots
+  in `/tmp/cocalc-public-qa-g0bUjW`. Screenshots inspected clean. Protected
+  home, pricing/compliance, type/palette, pitch/docs content, unpromoted raw
+  audit findings, and the known untracked `dedicated-compute-page.tsx` draft
+  were left untouched. Next curated queue item is adversarial-fix item 19:
+  P2 design fixes, starting with AI polish.
+
 ### Codex - Sage P0 factual + education-weight cleanup (2026-06-22 20:17 PDT)
 
 - **START 2026-06-22 20:17 PDT:** Continuing the scheduled landing-page

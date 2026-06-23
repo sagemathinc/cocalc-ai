@@ -199,7 +199,7 @@ export default function JuliaFeaturePage({
           <BulletList
             items={[
               "Use Jupyter, Pluto, source files, and terminal workflows together.",
-              "Share a Julia environment with students or collaborators.",
+              "Share a Julia environment with collaborators or students.",
               "Keep Julia work near data, reports, Python, R, and Linux tools.",
               "Best fit when collaboration and project context matter as much as the language.",
             ]}

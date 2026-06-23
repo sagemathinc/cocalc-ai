@@ -115,8 +115,8 @@ function RProjectFitBand() {
                 label: "Publish with LaTeX, Rmd, Qmd, or Knitr",
               },
               {
-                icon: "graduation-cap",
-                label: "Teach in shared project environments",
+                icon: "history",
+                label: "Review TimeTravel history with the report",
               },
               {
                 icon: "jupyter",

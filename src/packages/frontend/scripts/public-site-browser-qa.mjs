@@ -507,7 +507,9 @@ const ROUTE_RULES = {
       "Project context",
       "Start using R",
       "Fit statistical models and share analyses others can re-run later",
+      "Review TimeTravel history with the report",
     ],
+    forbidText: ["Teach in shared project environments"],
     requireSelectors: [
       ".cocalc-feature-context-list",
       ".cocalc-feature-final-panel",
@@ -520,7 +522,9 @@ const ROUTE_RULES = {
       "Project context",
       "Start using Julia",
       "Review results together while the whole modeling project stays reproducible",
+      "Share a Julia environment with collaborators or students.",
     ],
+    forbidText: ["Share a Julia environment with students or collaborators."],
     requireSelectors: [
       ".cocalc-feature-context-list",
       ".cocalc-feature-final-panel",
@@ -533,7 +537,9 @@ const ROUTE_RULES = {
       "Project context",
       "Start in a project",
       "The numerical work lives in one durable project",
+      "TimeTravel history",
     ],
+    forbidText: ["teaching context"],
     requireSelectors: [
       ".cocalc-feature-context-list",
       ".cocalc-feature-final-panel",
