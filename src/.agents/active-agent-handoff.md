@@ -95,6 +95,15 @@ Known risks:
   Desktop/mobile screenshots for all six routes were inspected; no overlap or
   obvious layout regression. Next: commit, rebuild so the static bundle embeds
   the new commit, rerun focused browser QA, then push/update shared logs.
+- **POST-COMMIT 2026-06-22 22:16 PDT:** Source/workplan commit
+  `2f14ef38b1` (`frontend/public: drain feature page P3 polish`) created.
+  Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
+  `COCALC_GIT_REVISION =
+  2f14ef38b1ca8034c8ec27ab53b107da9e3d3a30`. Post-commit browser QA for
+  `/features/julia`, `/features/octave`, `/features/more-languages`,
+  `/features/cli`, `/features/whiteboard`, and `/features/slides`
+  desktop+mobile passed 278/278 at `/tmp/cocalc-public-qa-r0qqd3`. Next: push
+  branch and update shared status logs.
 
 ### Codex - FeatureFinalBand balance v2 (2026-06-22 21:53 PDT)
 
