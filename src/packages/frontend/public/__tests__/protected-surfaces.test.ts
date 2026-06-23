@@ -10,6 +10,11 @@ import {
   type ProtectedSurfaceOverride,
 } from "./protected-overrides";
 
+const FRONTEND_GIT_PREFIX = "src/packages/frontend/";
+const PROTECTED_OVERRIDES_PATH = "public/__tests__/protected-overrides.ts";
+const PROTECTED_SURFACES_TEST_PATH =
+  "public/__tests__/protected-surfaces.test.ts";
+
 const PROTECTED_SURFACES: readonly {
   surface: ProtectedSurface;
   matches: (file: string) => boolean;
@@ -22,6 +27,12 @@ const PROTECTED_SURFACES: readonly {
   {
     surface: "theme.ts",
     matches: (file) => file === "public/theme.ts",
+  },
+  {
+    surface: "protected-gate",
+    matches: (file) =>
+      file === PROTECTED_OVERRIDES_PATH ||
+      file === PROTECTED_SURFACES_TEST_PATH,
   },
 ];
 
@@ -67,6 +78,18 @@ function protectedDiffBase(): string {
   }
 }
 
+function publicPathToGitPath(file: string): string {
+  return `${FRONTEND_GIT_PREFIX}${file}`;
+}
+
+function gitFileAt(ref: string, file: string): string | undefined {
+  try {
+    return gitOutput(["show", `${ref}:${publicPathToGitPath(file)}`]);
+  } catch {
+    return undefined;
+  }
+}
+
 function changedPublicFiles(): string[] {
   const base = protectedDiffBase();
   return uniqueSorted(
@@ -95,9 +118,25 @@ function baselineForFile(
   );
 }
 
+function canonicalizeProtectedOverridesSource(source: string): string {
+  return source.replace(
+    /(path:\s*"public\/__tests__\/protected-overrides\.ts",\s*sha256:\s*)"[a-f0-9]{64}"/s,
+    `$1"${"0".repeat(64)}"`,
+  );
+}
+
+function canonicalizeProtectedFile(file: string, source: string): string {
+  if (file === PROTECTED_OVERRIDES_PATH) {
+    return canonicalizeProtectedOverridesSource(source);
+  }
+  return source;
+}
+
 function readFileSha256(file: string): string | undefined {
   try {
-    return createHash("sha256").update(readFileSync(file)).digest("hex");
+    return createHash("sha256")
+      .update(canonicalizeProtectedFile(file, readFileSync(file, "utf8")))
+      .digest("hex");
   } catch {
     return undefined;
   }
@@ -163,6 +202,48 @@ function protectedBaselineDriftOffenders(
   });
 }
 
+function overrideBlock(source: string): string {
+  const start = source.indexOf("PROTECTED_SURFACE_OVERRIDES");
+  const end = source.indexOf("export const PROTECTED_SURFACE_BASELINES", start);
+  if (start === -1 || end === -1) {
+    return "";
+  }
+  return source.slice(start, end);
+}
+
+function overrideEntryCount(source: string): number {
+  return overrideBlock(source).match(/\bsurface:\s*"/g)?.length ?? 0;
+}
+
+function protectedOverrideIntroduced(
+  base: string = protectedDiffBase(),
+): boolean {
+  const before = gitFileAt(base, PROTECTED_OVERRIDES_PATH) ?? "";
+  const after = readFileSync(PROTECTED_OVERRIDES_PATH, "utf8");
+  return overrideEntryCount(after) > overrideEntryCount(before);
+}
+
+function protectedOverrideCoCommitOffenders(
+  files: string[],
+  overrideIntroduced: boolean = protectedOverrideIntroduced(),
+): string[] {
+  if (!overrideIntroduced || !files.includes(PROTECTED_OVERRIDES_PATH)) {
+    return [];
+  }
+
+  const protectedFiles = files.filter(
+    (file) =>
+      file !== PROTECTED_OVERRIDES_PATH && protectedSurfaceForFile(file),
+  );
+  if (protectedFiles.length === 0) {
+    return [];
+  }
+
+  return [
+    `Protected override additions cannot land with protected-source changes in the same commit: ${protectedFiles.join(", ")}`,
+  ];
+}
+
 describe("public protected-surface gate", () => {
   it("hard-gates only home and theme at the file-path level", () => {
     expect(protectedSurfaceForFile("public/home/app.tsx")).toBe("home/");
@@ -170,6 +251,12 @@ describe("public protected-surface gate", () => {
       "home/",
     );
     expect(protectedSurfaceForFile("public/theme.ts")).toBe("theme.ts");
+    expect(protectedSurfaceForFile(PROTECTED_OVERRIDES_PATH)).toBe(
+      "protected-gate",
+    );
+    expect(protectedSurfaceForFile(PROTECTED_SURFACES_TEST_PATH)).toBe(
+      "protected-gate",
+    );
 
     expect(protectedSurfaceForFile("public/pricing/app.tsx")).toBeUndefined();
     expect(
@@ -201,11 +288,29 @@ describe("public protected-surface gate", () => {
       if (baseline.surface === "home/") {
         expect(baseline.path).toMatch(/^public\/home\//);
       }
+      if (baseline.surface === "protected-gate") {
+        expect([
+          PROTECTED_OVERRIDES_PATH,
+          PROTECTED_SURFACES_TEST_PATH,
+        ]).toContain(baseline.path);
+      }
     }
   });
 
   it("resolves a committed diff base for the protected scan", () => {
     expect(protectedDiffBase()).toMatch(/^[a-f0-9]{40}$/);
+  });
+
+  it("canonicalizes the protected override manifest self-hash", () => {
+    const source = readFileSync(PROTECTED_OVERRIDES_PATH, "utf8");
+    const changedSelfHash = source.replace(
+      /(path:\s*"public\/__tests__\/protected-overrides\.ts",\s*sha256:\s*)"[a-f0-9]{64}"/s,
+      `$1"${"f".repeat(64)}"`,
+    );
+
+    expect(canonicalizeProtectedOverridesSource(changedSelfHash)).toBe(
+      canonicalizeProtectedOverridesSource(source),
+    );
   });
 
   it("blocks home baseline drift, but allows an explicit override fixture", () => {
@@ -255,10 +360,32 @@ describe("public protected-surface gate", () => {
     ).toEqual([]);
   });
 
+  it("blocks override additions that land with protected-source changes", () => {
+    expect(
+      protectedOverrideCoCommitOffenders(
+        [PROTECTED_OVERRIDES_PATH, "public/home/app.tsx"],
+        true,
+      ),
+    ).toEqual([
+      "Protected override additions cannot land with protected-source changes in the same commit: public/home/app.tsx",
+    ]);
+    expect(
+      protectedOverrideCoCommitOffenders([PROTECTED_OVERRIDES_PATH], true),
+    ).toEqual([]);
+    expect(
+      protectedOverrideCoCommitOffenders(
+        [PROTECTED_OVERRIDES_PATH, "public/home/app.tsx"],
+        false,
+      ),
+    ).toEqual([]);
+  });
+
   it("blocks changed protected public files without an override", () => {
+    const files = changedPublicFiles();
     expect([
-      ...protectedSurfaceOffenders(changedPublicFiles()),
+      ...protectedSurfaceOffenders(files),
       ...protectedBaselineDriftOffenders(),
+      ...protectedOverrideCoCommitOffenders(files),
     ]).toEqual([]);
   });
 });

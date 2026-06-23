@@ -46,6 +46,40 @@ Known risks:
 
 ---
 
+### Codex - Protected gate self-bypass hardening item 47 (2026-06-23 03:33 PDT)
+
+- **START 2026-06-23 03:33 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 47 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `cde0931205`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `public/__tests__/protected-surfaces.test.ts`,
+  `public/__tests__/protected-overrides.ts`, this ledger, and shared queue/turn
+  logs if the slice lands. Task frame: make the gate non-self-bypassable by
+  protecting the gate files themselves and rejecting a protected override
+  addition when it lands with protected-source changes in the same commit.
+  Implementation note: because `protected-overrides.ts` stores its own
+  baselines, use canonical hashing that normalizes that file's own baseline hash
+  before calculating drift. Guardrails: do not edit protected home/theme content
+  or compliance copy; keep the scope to gate files and fixtures.
+- **END 2026-06-23 03:38 PDT:** Landed the item 47 self-bypass hardening.
+  Added the `protected-gate` protected surface for
+  `public/__tests__/protected-overrides.ts` and
+  `public/__tests__/protected-surfaces.test.ts`, with baselines for both files.
+  Added canonical hashing for `protected-overrides.ts` so its own stored
+  baseline hash is normalized before drift checks. Added detection for protected
+  override additions and a red fixture proving an override addition cannot land
+  with a protected-source change in the same commit. Preserved the item 46
+  committed-range and home-baseline behavior. Validation passed: focused
+  protected Jest 7/7, public/features Jest 199/199, `pnpm -C src tsc`,
+  `pnpm -C src lint:frontend`, `git diff --check`, and `pnpm --dir
+  src/packages/static build:dev` (known local static-build debug-log EACCES
+  warning only). No route UI changed, so no route-specific browser QA was run.
+
 ### Codex - Gate hardening home protected surface item 46 (2026-06-23 03:25 PDT)
 
 - **START 2026-06-23 03:25 PDT:** Continuing the manual landing-page

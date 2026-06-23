@@ -1,4 +1,4 @@
-export type ProtectedSurface = "home/" | "theme.ts";
+export type ProtectedSurface = "home/" | "protected-gate" | "theme.ts";
 
 export interface ProtectedSurfaceOverride {
   readonly surface: ProtectedSurface;
@@ -62,6 +62,24 @@ export const PROTECTED_SURFACE_BASELINES: readonly ProtectedSurfaceBaseline[] =
         "aabfd226fcb1643f826d05da6662cd7d65dc9626d0d4c2aacd16f9eddd517e6c",
       reason:
         "current committed theme aliases accepted; future edits need a fresh override",
+      approvedBy: "Blaec",
+    },
+    {
+      surface: "protected-gate",
+      path: "public/__tests__/protected-overrides.ts",
+      sha256:
+        "75c31cdca0d6959da94cc4009a50e7187c7a31d9c5ee069ac1af559c2c17860b",
+      reason:
+        "current committed protected-surface override manifest accepted; future edits need a fresh override",
+      approvedBy: "Blaec",
+    },
+    {
+      surface: "protected-gate",
+      path: "public/__tests__/protected-surfaces.test.ts",
+      sha256:
+        "908ffe27d0bfaf91813763cfa8851f52146a11912dbf89a9e706f9a35a179e19",
+      reason:
+        "current committed protected-surface gate test accepted; future edits need a fresh override",
       approvedBy: "Blaec",
     },
   ];
