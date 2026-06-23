@@ -81,6 +81,7 @@ describe("SupportNew", () => {
       />,
     );
 
+    expect(screen.queryByText(/billing, functionality, teaching/i)).toBeNull();
     fireEvent.click(
       screen.getByRole("radio", {
         name: /I have a question about billing, functionality/i,

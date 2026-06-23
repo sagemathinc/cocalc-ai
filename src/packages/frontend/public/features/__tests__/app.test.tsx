@@ -1760,6 +1760,12 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     expect(
+      screen.getByText(
+        "A team workspace needs the same preparation every time.",
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText(/class or lab setup/i)).toBeNull();
+    expect(
       screen.queryByRole("link", { name: "API documentation" }),
     ).toBeNull();
     expect(

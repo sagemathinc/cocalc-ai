@@ -411,6 +411,10 @@ describe("PublicApp", () => {
     expect(screen.getByText("From notebook to paper")).not.toBeNull();
     expect(screen.getByText("Installing software")).not.toBeNull();
     expect(screen.getByText("Reviewing agent commits")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Operating paths" }),
+    ).not.toBeNull();
+    expect(screen.queryByText("Operating paths and teaching")).toBeNull();
     expect(screen.getByText("Teaching with CoCalc")).not.toBeNull();
     expect(screen.getByText("Self-hosting CoCalc")).not.toBeNull();
     expect(screen.getByText("How CoCalc works")).not.toBeNull();

@@ -170,12 +170,6 @@ const GUIDE_GROUPS = [
   {
     guides: [
       {
-        body: "Use live student projects, assignments, grading workflows, TimeTravel, and shared environments.",
-        href: guidePath("teaching"),
-        icon: "graduation-cap",
-        title: "Teaching with CoCalc",
-      },
-      {
         body: "Install a self-contained one-user CoCalc for a laptop, workstation, or SSH machine.",
         href: guidePath("cocalc-plus"),
         icon: "laptop",
@@ -199,10 +193,16 @@ const GUIDE_GROUPS = [
         icon: "sitemap",
         title: "How CoCalc works",
       },
+      {
+        body: "Use live student projects, assignments, grading workflows, TimeTravel, and shared environments.",
+        href: guidePath("teaching"),
+        icon: "graduation-cap",
+        title: "Teaching with CoCalc",
+      },
     ],
     intro:
-      "Guides for self-hosting, local evaluation, durable collaborative projects, architecture, and teaching.",
-    title: "Operating paths and teaching",
+      "Guides for self-hosting, local evaluation, durable collaborative projects, and architecture.",
+    title: "Operating paths",
   },
 ] satisfies {
   guides: GuideCardSpec[];

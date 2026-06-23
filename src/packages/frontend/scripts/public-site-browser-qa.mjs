@@ -604,7 +604,7 @@ const ROUTE_RULES = {
   "/guides": {
     requireText: [
       "Hands-on walkthroughs of each workflow, end to end in one durable project",
-      "Operating paths and teaching",
+      "Operating paths",
       "Find the guide by task",
       "Codex agent chat",
       "Jupyter notebooks",

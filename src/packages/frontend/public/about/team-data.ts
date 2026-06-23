@@ -124,7 +124,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     imageSrc: "/public/about/blaec-bejarano.png",
     imageAlt: "A portrait of Blaec Bejarano.",
     bioTopText: [
-      "For partnerships, integrations, or questions about how CoCalc fits a research, engineering, or teaching organization, Blaec is the person to talk to.",
+      "For partnerships, integrations, or questions about how CoCalc fits a research lab, technical team, or academic institution, Blaec is the person to talk to.",
       "He pairs a background in applied mathematics — numerical modeling of geophysical phenomena — with the work of bringing CoCalc to research labs, technical teams, and academic institutions.",
       "He stays close to the applied-mathematics and open-source communities, including the Society for Industrial and Applied Mathematics, and represents CoCalc at conferences throughout the year.",
     ],
@@ -142,7 +142,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     ],
     background: [
       "Blaec earned his M.S. in Mathematics from Oregon State University in 2021, applying numerical analysis and partial differential equations to model physical phenomena, after teaching there as a graduate assistant and instructor of record.",
-      "As Chief Sales Officer at SageMath, Inc., he leads sales, partnerships, and go-to-market — translating CoCalc's capabilities for research, engineering, and teaching organizations, and demonstrating new features through live demos at conferences such as the International Congress on Industrial and Applied Mathematics (ICIAM) and the International Conference on Machine Learning (ICML).",
+      "As Chief Sales Officer at SageMath, Inc., he leads sales, partnerships, and go-to-market — translating CoCalc's capabilities for research labs, engineering groups, and academic institutions, and demonstrating new features through live demos at conferences such as the International Congress on Industrial and Applied Mathematics (ICIAM) and the International Conference on Machine Learning (ICML).",
       "He represents CoCalc across industry and open-source communities — including NumFOCUS, the National Small Business Association Leadership Technology Council, and the Seattle Chamber of Commerce — and leads partnership work that brings tools from proprietary ecosystems such as MATLAB toward open alternatives.",
       "Outside work, Blaec is a mountaineer who climbs the Cascade volcanoes of the Pacific Northwest and a musician who writes songs at home alongside his cat, Fushigi.",
     ],

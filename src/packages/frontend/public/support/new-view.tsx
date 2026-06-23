@@ -843,8 +843,8 @@ export default function SupportNew({
                   Something is not working the way I think it should.
                 </Radio>
                 <Radio value="question">
-                  I have a question about billing, functionality, teaching, or
-                  how something works.
+                  I have a question about billing, functionality, configuration,
+                  or how something works.
                 </Radio>
                 <Radio value="task">
                   I need help installing or configuring software.

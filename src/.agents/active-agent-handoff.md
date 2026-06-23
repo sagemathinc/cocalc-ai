@@ -46,6 +46,44 @@ Known risks:
 
 ---
 
+### Codex - round-2 education-secondary batch C (2026-06-22 23:53 PDT)
+
+- **START 2026-06-22 23:53 PDT:** Continuing the scheduled landing-page
+  improvement loop on Round-2 item 24 Batch C framing/education-secondary in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Current
+  head is `45229dbe76`, matching `origin/blaec-synthesis-2026-06-18`; only the
+  known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  present. Claimed files/routes: promoted framing copy in `guides/app.tsx`,
+  `about/team-data.ts`, `features/automations-page.tsx`,
+  `support/new-view.tsx`, focused public/support/feature canaries as needed,
+  this ledger, and shared coordination logs if the slice completes. Scope:
+  de-elevate education in the named guide group heading/intro, about-bio
+  audience triplet, automations closing bullet, and support request-type
+  examples. Guardrails: no home edits, no pricing money/compliance copy, no
+  type/palette 2e, no pitch docs, no raw-audit foraging outside this batch, no
+  LaTeX/dedicated-compute draft.
+- **END 2026-06-23 00:01 PDT:** Round-2 item 24 Batch C source edit complete.
+  De-elevated the promoted education-forward copy: guides group is now
+  "Operating paths" with teaching retained as a lower item in the group; Blaec
+  bio triplets now lead with research/technical language and place academic
+  institutions last; automations closing proof uses a team-workspace example
+  instead of class/lab; support request-type examples say configuration instead
+  of teaching. Added canaries for the old guide heading, support topic, and
+  automations bullet, and updated the `/guides` browser-QA required text.
+  Validation passed: focused Jest
+  `public/__tests__/app.test.tsx public/__tests__/public-site-browser-qa-script.test.ts public/support/__tests__/new-view.test.tsx public/features/__tests__/app.test.tsx --runInBand --silent`
+  (186/186); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
+  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+  debug-log permission warning; and browser QA for `/guides`, `/about`,
+  `/about/team/blaec-bejarano`, `/features/automations`, and `/support/new`
+  desktop+mobile passed 174/174 at `/tmp/cocalc-public-qa-vI94YF`.
+  Screenshots inspected clean. Next: commit, rebuild post-commit so the static
+  bundle embeds the new revision, rerun browser QA, push, then update shared
+  logs/status.
+
+---
+
 ### Codex - round-2 token adherence batch B (2026-06-22 23:39 PDT)
 
 - **START 2026-06-22 23:39 PDT:** Continuing the scheduled landing-page

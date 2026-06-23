@@ -197,7 +197,7 @@ export default function AutomationsFeaturePage({
           <BulletList
             items={[
               "A notebook or report needs to be rebuilt on a schedule.",
-              "A class or lab setup needs the same preparation every time.",
+              "A team workspace needs the same preparation every time.",
               "A scheduled analysis or model run should write its results back into a shared project the team reviews.",
               "A script should run with the same files, software, and history collaborators already use.",
             ]}
