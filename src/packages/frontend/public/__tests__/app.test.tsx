@@ -987,6 +987,50 @@ describe("PublicApp", () => {
     expect(screen.getByText("Personal website")).not.toBeNull();
   });
 
+  it("renders Blaec's profile without repeating the audience triplet", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={aboutRoute({
+          teamSlug: "blaec-bejarano",
+          view: "about-team-member",
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Blaec Bejarano, CSO" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "For partnerships, integrations, or questions about how CoCalc fits a research lab, technical team, or academic institution, Blaec is the person to talk to.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/numerical modeling of geophysical phenomena/i),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /International Congress on Industrial and Applied Mathematics \(ICIAM\)/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /International Conference on Machine Learning \(ICML\)/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByText(
+        /research labs, technical teams, and academic institutions/i,
+      ),
+    ).toBeNull();
+    expect(
+      screen.queryByText(
+        /research labs, engineering groups, and academic institutions/i,
+      ),
+    ).toBeNull();
+  });
+
   it("renders Harald's consolidated Vienna degree", async () => {
     await renderPublicApp(
       <PublicApp

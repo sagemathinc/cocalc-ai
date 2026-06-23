@@ -46,6 +46,30 @@ Known risks:
 
 ---
 
+### Codex - round-2 bio facts item 27 follow-up (2026-06-23 00:38 PDT)
+
+- **START/END 2026-06-23 00:38 PDT:** After pushing the source-backed
+  William/Harald bio-facts commit `20f28461b0`, re-read the live
+  `cocalc-shared/codex-queue.md` and found item 27 also included the
+  Blaec-Bejarano audience-triplet trim. Completed that remaining subpart in
+  `about/team-data.ts`: preserved the approved "research lab, technical team,
+  or academic institution" contact line; reworked the applied-math/geophysical
+  background line and the ICIAM/ICML demos line so they carry the audience point
+  through his work without re-listing the same triplet; added a public app
+  canary for the preserved line and removed repeated plural triplets.
+  Validation: `pnpm --dir src/packages/frontend exec jest
+  public/__tests__/app.test.tsx --runInBand --silent` (41/41); `pnpm -C src
+  tsc`; `pnpm -C src lint:frontend`; `git diff --check`; `pnpm --dir
+  src/packages/static build:dev` (known debug-log EACCES warning only); `node
+  src/packages/frontend/scripts/public-site-browser-qa.mjs --route /about
+  --route /about/team/blaec-bejarano --route /about/team/william-stein --route
+  /about/team/harald-schilly --viewport desktop --viewport mobile` (88/88,
+  screenshots in `/tmp/cocalc-public-qa-Y8oUvo` inspected). Guardrails held:
+  no home, pricing money/compliance, type/palette 2e, pitch docs, raw-audit
+  foraging, or dedicated-compute draft edits.
+
+---
+
 ### Codex - round-2 bio facts item 27 (2026-06-23 00:31 PDT)
 
 - **START 2026-06-23 00:28 PDT:** Continuing the scheduled landing-page
