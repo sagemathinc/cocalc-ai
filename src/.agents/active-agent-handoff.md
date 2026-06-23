@@ -79,6 +79,16 @@ Known risks:
   Desktop/mobile screenshots inspected at `/tmp/cocalc-public-qa-osUiUD`; no
   overlap or obvious visual regression. Next: commit, rebuild so the static
   bundle embeds the new commit, rerun Python browser QA, then push.
+- **POST-COMMIT 2026-06-22 20:58 PDT:** Source/ledger commit
+  `1809d5ef78` (`frontend/public: remove redundant Python workflow panel`)
+  created. Post-commit `pnpm --dir src/packages/static build:dev` passed and
+  embedded `COCALC_GIT_REVISION =
+  1809d5ef78cf0870b1f14a7c9db912e8107523fc`. Post-commit browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/python --viewport desktop --viewport mobile` passed 44/44 at
+  `/tmp/cocalc-public-qa-RaJ2qz`. Desktop/mobile screenshots inspected; no
+  overlap or obvious layout regression. Next: push branch and update shared
+  status logs.
 
 ### Codex - Sage hero P2 redundancy polish (2026-06-22 20:46 PDT)
 
