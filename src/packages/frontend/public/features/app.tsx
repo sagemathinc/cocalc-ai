@@ -661,7 +661,8 @@ function FeaturesIndex() {
                 margin: 0,
               }}
             >
-              Keep the whole job in one durable project.
+              Work with your favorite tools, AI agents, and collaborators — all
+              together.
             </Title>
             <Paragraph
               style={{

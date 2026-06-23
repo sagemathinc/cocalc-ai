@@ -46,6 +46,26 @@ Known risks:
 
 ---
 
+### Codex - round-4 features index H1 item 35 (2026-06-23 01:57 PDT)
+
+- **START 2026-06-23 01:57 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 35 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `02f13ff2b5`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pid `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/app.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features` browser QA, this ledger,
+  and shared queue/turn logs if the slice lands. Scope: update the
+  `/features` index H1 to Blaec's round-4 wording and update route canaries;
+  leave the subhead unchanged because it supplies mechanism rather than
+  restating the H1. Guardrails: no home edits, no pricing money/compliance, no
+  type/palette edits, no pitch docs, no raw-audit foraging, no
+  dedicated-compute draft.
+
 ### Codex - round-4 home H1 item 34 (2026-06-23 01:51 PDT)
 
 - **START 2026-06-23 01:51 PDT:** Manual landing-page improvement loop on

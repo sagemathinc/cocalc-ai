@@ -15,7 +15,6 @@ import {
   getDirectCards,
   getHeadingTexts,
   getPrimaryCtas,
-  HERO_H1_MAX,
   installMatchMediaStub,
   INTERNAL_IMPLEMENTATION_TERMS,
   SECTION_H2_MAX,
@@ -66,6 +65,8 @@ const INTERNAL_CONTEXT_LEAKAGE = combineLeak(
   INTERNAL_IMPLEMENTATION_TERMS,
   "Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious Linux|strongest|workspace model|internal planning|\\bstale\\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool|Use CoCalc when|competitor comparison|proof packet|evidence register|pitch docs|AGENTS\\.md|CLAUDE\\.md|GEMINI\\.md|public-site cohesion audit|agent operating",
 );
+
+const FEATURE_INDEX_H1_MAX = 80;
 
 const SHARED_PRIMITIVE_FEATURE_PAGES = [
   "ai",
@@ -455,7 +456,7 @@ describe("PublicFeaturesApp", () => {
     expect(indexHero).not.toBeNull();
     const indexH1 = container.querySelectorAll("h1");
     expect(indexH1).toHaveLength(1);
-    expect(textLength(indexH1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
+    expect(textLength(indexH1[0])).toBeLessThanOrEqual(FEATURE_INDEX_H1_MAX);
     expect(
       screen.getAllByRole("link", { name: /Courses and labs/i }),
     ).toHaveLength(1);
@@ -504,8 +505,13 @@ describe("PublicFeaturesApp", () => {
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText("Keep the whole job in one durable project."),
+      screen.getByText(
+        "Work with your favorite tools, AI agents, and collaborators — all together.",
+      ),
     ).not.toBeNull();
+    expect(
+      screen.queryByText("Keep the whole job in one durable project."),
+    ).toBeNull();
     expect(container.textContent ?? "").not.toMatch(/command-line surface/i);
     expect(
       screen
