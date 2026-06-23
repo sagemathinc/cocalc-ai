@@ -21,7 +21,9 @@ import {
   explainRootfsRecipe,
   listRootfsRecipes,
   renderRootfsRecipeDryRunScript,
+  resolveRootfsRecipeBuildPlan,
   runRootfsRecipe,
+  type RootfsRecipeBuildPlan,
   type RootfsRecipeRunResult,
   type RootfsRecipeRunOptions,
 } from "./rootfs-recipe";
@@ -217,7 +219,7 @@ function parseRootfsConfigFile(value?: string): RootfsConfigExport | undefined {
 }
 
 function projectRootfsPublishConfigEnvelope(
-  result: RootfsRecipeRunResult,
+  result: Pick<RootfsRecipeRunResult, "recipe" | "recipe_path" | "config">,
 ): ProjectRootfsPublishConfig {
   return {
     kind: "cocalc-project-rootfs-publish-config",
@@ -229,6 +231,392 @@ function projectRootfsPublishConfigEnvelope(
     },
     config: result.config,
   };
+}
+
+async function startRootfsBuilderProject({
+  ctx,
+  deps,
+  options,
+  plan,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  options: RootfsRecipeRunOptions;
+  plan: RootfsRecipeBuildPlan;
+}): Promise<{ project_id: string; created_project: boolean }> {
+  if (options.project) {
+    const project = await deps.resolveProjectFromArgOrContext(
+      ctx,
+      options.project,
+    );
+    await waitForProjectStart({ ctx, deps, project_id: project.project_id });
+    return { project_id: project.project_id, created_project: false };
+  }
+  const project_id = await ctx.hub.projects.createProject({
+    title: options.title ?? `RootFS build: ${plan.recipe}`,
+    rootfs_image: plan.base?.image,
+    rootfs_image_id: plan.base?.image_id,
+    run_quota: plan.builder?.run_quota,
+    start: false,
+  });
+  await waitForProjectStart({ ctx, deps, project_id });
+  return { project_id, created_project: true };
+}
+
+async function waitForProjectStart({
+  ctx,
+  deps,
+  project_id,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  project_id: string;
+}): Promise<void> {
+  const op = await ctx.hub.projects.start({ project_id, wait: false });
+  const waited = await deps.waitForLro(ctx, op.op_id, {
+    timeoutMs: ctx.timeoutMs,
+    pollMs: ctx.pollMs,
+  });
+  if (waited.timedOut) {
+    throw new Error(
+      `timeout waiting for rootfs build project start op ${op.op_id}; last_status=${waited.status}`,
+    );
+  }
+  if (waited.status !== "succeeded" && waited.status !== "done") {
+    throw new Error(
+      `rootfs build project start failed: status=${waited.status} error=${waited.error ?? "unknown"}`,
+    );
+  }
+}
+
+const ROOTFS_BUILD_TERMINAL_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "unknown",
+]);
+const ROOTFS_BUILD_FRESH_HEARTBEAT_MS = 120_000;
+
+function ageSeconds(iso?: string): number | undefined {
+  if (!iso) return undefined;
+  const time = Date.parse(iso);
+  if (!Number.isFinite(time)) return undefined;
+  return Math.max(0, Math.floor((Date.now() - time) / 1000));
+}
+
+function formatAge(iso?: string): string | undefined {
+  const age = ageSeconds(iso);
+  return age == null ? undefined : `${age}s ago`;
+}
+
+function heartbeatFresh(status: any): boolean | undefined {
+  if (!status?.heartbeat_at) return undefined;
+  const time = Date.parse(status.heartbeat_at);
+  if (!Number.isFinite(time)) return undefined;
+  return Date.now() - time <= ROOTFS_BUILD_FRESH_HEARTBEAT_MS;
+}
+
+async function followRootfsBuildLog({
+  ctx,
+  deps,
+  project_id,
+  build_id,
+  byte_offset = 0,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  project_id: string;
+  build_id: string;
+  byte_offset?: number;
+}) {
+  let byteOffset = byte_offset;
+  const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
+  while (true) {
+    const chunk = await readRootfsBuildLogDirect({
+      api,
+      ctx,
+      project_id,
+      build_id,
+      byte_offset: byteOffset,
+      max_bytes: 128 * 1024,
+    });
+    if (
+      chunk.text &&
+      !ctx.globals?.quiet &&
+      !ctx.globals?.json &&
+      ctx.globals?.output !== "json"
+    ) {
+      process.stderr.write(chunk.text);
+    }
+    byteOffset = chunk.next_byte_offset ?? byteOffset;
+    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    const status = current.status ?? "unknown";
+    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+      return current;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
+    );
+  }
+}
+
+async function readRootfsBuildLogDirect({
+  api,
+  ctx,
+  project_id,
+  build_id,
+  lines,
+  byte_offset,
+  max_bytes,
+}: {
+  api: any;
+  ctx: any;
+  project_id: string;
+  build_id: string;
+  lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
+}) {
+  try {
+    return await api.system.readRootfsBuildLog({
+      build_id,
+      lines,
+      byte_offset,
+      max_bytes,
+    });
+  } catch (err) {
+    if (!isMissingDirectRootfsBuildLogApi(err)) {
+      throw err;
+    }
+    return await ctx.hub.projects.getProjectRootfsBuildLog({
+      project_id,
+      build_id,
+      lines,
+      byte_offset,
+      max_bytes,
+    });
+  }
+}
+
+async function readRootfsBuildEventsDirect({
+  api,
+  build_id,
+  lines,
+  byte_offset,
+  max_bytes,
+}: {
+  api: any;
+  build_id: string;
+  lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
+}) {
+  return await api.system.readRootfsBuildEvents({
+    build_id,
+    lines,
+    byte_offset,
+    max_bytes,
+  });
+}
+
+function isMissingDirectRootfsBuildLogApi(err: unknown): boolean {
+  return /unknown function 'system\.readRootfsBuildLog'|readRootfsBuildLog is not a function/i.test(
+    `${err}`,
+  );
+}
+
+function parseNdjson(text: string): unknown[] {
+  const events: unknown[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed));
+    } catch (err) {
+      events.push({ parse_error: `${err}`, raw: line });
+    }
+  }
+  return events;
+}
+
+async function followRootfsBuildEvents({
+  ctx,
+  deps,
+  project_id,
+  build_id,
+  byte_offset = 0,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  project_id: string;
+  build_id: string;
+  byte_offset?: number;
+}) {
+  let byteOffset = byte_offset;
+  const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
+  while (true) {
+    const chunk = await readRootfsBuildEventsDirect({
+      api,
+      build_id,
+      byte_offset: byteOffset,
+      max_bytes: 64 * 1024,
+    });
+    if (
+      chunk.text &&
+      !ctx.globals?.quiet &&
+      !ctx.globals?.json &&
+      ctx.globals?.output !== "json"
+    ) {
+      process.stderr.write(chunk.text);
+      if (!chunk.text.endsWith("\n")) {
+        process.stderr.write("\n");
+      }
+    }
+    byteOffset = chunk.next_byte_offset ?? byteOffset;
+    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    const status = current.status ?? "unknown";
+    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+      return current;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
+    );
+  }
+}
+
+function formatRootfsBuildStartHuman(result: {
+  recipe: string;
+  recipe_path: string;
+  project_id: string;
+  created_project: boolean;
+  build: any;
+  saved_rootfs_publish_config: boolean;
+}): string {
+  const lines = [
+    `recipe: ${result.recipe}`,
+    `recipe_path: ${result.recipe_path}`,
+    `project_id: ${result.project_id}`,
+    `created_project: ${result.created_project}`,
+    `build_id: ${result.build.build_id}`,
+    `host_id: ${result.build.host_id}`,
+    `status: ${result.build.status}`,
+  ];
+  if (result.build.paths?.log) {
+    lines.push(`log_path: ${result.build.paths.log}`);
+  }
+  if (result.build.paths?.script) {
+    lines.push(`script_path: ${result.build.paths.script}`);
+  }
+  lines.push(
+    `saved_rootfs_publish_config: ${result.saved_rootfs_publish_config}`,
+    `next: cocalc rootfs publish --project=${result.project_id}`,
+  );
+  return lines.join("\n");
+}
+
+function formatRootfsBuildStatusHuman(status: any): string {
+  const lines = [
+    `build_id: ${status.build_id}`,
+    `project_id: ${status.project_id}`,
+    `host_id: ${status.host_id}`,
+    `status: ${status.status}`,
+  ];
+  if (status.recipe_ref) {
+    lines.push(`recipe: ${status.recipe_ref}`);
+  }
+  if (status.created_at) {
+    lines.push(`created_at: ${status.created_at}`);
+  }
+  if (status.started_at) {
+    lines.push(`started_at: ${status.started_at}`);
+  }
+  if (status.finished_at) {
+    lines.push(`finished_at: ${status.finished_at}`);
+  }
+  if (status.heartbeat_at) {
+    const heartbeatAge = formatAge(status.heartbeat_at);
+    const fresh = heartbeatFresh(status);
+    lines.push(
+      `heartbeat_at: ${status.heartbeat_at}${heartbeatAge ? ` (${heartbeatAge})` : ""}`,
+    );
+    if (fresh != null) {
+      lines.push(`heartbeat_fresh: ${fresh}`);
+    }
+  }
+  if (status.last_output_at) {
+    const outputAge = formatAge(status.last_output_at);
+    lines.push(
+      `last_output_at: ${status.last_output_at}${outputAge ? ` (${outputAge})` : ""}`,
+    );
+  }
+  if (status.pid != null) {
+    lines.push(`pid: ${status.pid}`);
+  }
+  if (status.exit_code != null) {
+    lines.push(`exit_code: ${status.exit_code}`);
+  }
+  if (status.signal) {
+    lines.push(`signal: ${status.signal}`);
+  }
+  if (status.error) {
+    lines.push(`error: ${status.error}`);
+  }
+  if (status.paths?.log) {
+    lines.push(`log_path: ${status.paths.log}`);
+  }
+  if (status.paths?.events) {
+    lines.push(`events_path: ${status.paths.events}`);
+  }
+  if (status.paths?.runner) {
+    lines.push(`runner_path: ${status.paths.runner}`);
+  }
+  if (status.paths?.script) {
+    lines.push(`script_path: ${status.paths.script}`);
+  }
+  return lines.join("\n");
+}
+
+function formatRootfsBuildListHuman({
+  project_id,
+  builds,
+}: {
+  project_id: string;
+  builds: any[];
+}): string {
+  const lines = [`project_id: ${project_id}`, `builds: ${builds.length}`];
+  for (const build of builds) {
+    const parts = [
+      build.build_id,
+      build.status,
+      build.recipe_ref ? `recipe=${build.recipe_ref}` : undefined,
+      build.pid != null ? `pid=${build.pid}` : undefined,
+      build.heartbeat_at
+        ? `heartbeat=${formatAge(build.heartbeat_at) ?? build.heartbeat_at}`
+        : undefined,
+      heartbeatFresh(build) != null
+        ? `fresh=${heartbeatFresh(build)}`
+        : undefined,
+      build.created_at ? `created=${build.created_at}` : undefined,
+      build.finished_at ? `finished=${build.finished_at}` : undefined,
+      build.paths?.log ? `log=${build.paths.log}` : undefined,
+    ].filter(Boolean);
+    lines.push(parts.join("  "));
+  }
+  return lines.join("\n");
+}
+
+function requireProjectOption(project?: string): string {
+  const trimmed = `${project ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error("--project is required");
+  }
+  return trimmed;
 }
 
 async function rootfsPublishConfigForProject({
@@ -1084,6 +1472,10 @@ export function registerRootfsCommand(
     .option("--browser-id <id>", "browser session id for fresh-auth checks")
     .option("--config-out <path>", "also write generated RootFS config JSON")
     .option(
+      "--detach",
+      "start the durable build and return without following logs",
+    )
+    .option(
       "--step-timeout <seconds>",
       "default timeout for each recipe step command",
       "900",
@@ -1095,43 +1487,362 @@ export function registerRootfsCommand(
         command: Command,
       ) => {
         await withContext(command, "rootfs build", async (ctx) => {
-          const result = await runRootfsRecipe({
+          const deps = {
+            withContext,
+            resolveProjectFromArgOrContext,
+            resolveProjectProjectApi,
+            waitForLro,
+            serializeLroSummary,
+          };
+          if (opts.here) {
+            const result = await runRootfsRecipe({
+              ctx,
+              deps,
+              options: {
+                ...opts,
+                publish: false,
+                wait: false,
+              },
+              recipePath,
+            });
+            const publishConfig = projectRootfsPublishConfigEnvelope(result);
+            await ctx.hub.projects.setProjectRootfsPublishConfig({
+              project_id: result.project_id,
+              config: publishConfig,
+            });
+            if (opts.configOut) {
+              writeFileSync(
+                opts.configOut,
+                `${JSON.stringify(result.config, null, 2)}\n`,
+              );
+            }
+            if (ctx.globals?.json || ctx.globals?.output === "json") {
+              return {
+                ...result,
+                saved_rootfs_publish_config: true,
+              };
+            }
+            return [
+              formatRootfsRecipeRunHuman(result),
+              "",
+              "saved_rootfs_publish_config: true",
+              `next: cocalc rootfs publish --project=${result.project_id}`,
+            ].join("\n");
+          }
+          const plan = resolveRootfsRecipeBuildPlan(recipePath, opts);
+          const project = await startRootfsBuilderProject({
+            ctx,
+            deps,
+            options: opts,
+            plan,
+          });
+          const publishConfig = projectRootfsPublishConfigEnvelope(plan);
+          await ctx.hub.projects.setProjectRootfsPublishConfig({
+            project_id: project.project_id,
+            config: publishConfig,
+          });
+          const build = await ctx.hub.projects.startProjectRootfsBuild({
+            project_id: project.project_id,
+            script: plan.script,
+            recipe_ref: plan.recipe,
+            resolved_recipe_json: plan.resolved_recipe,
+            metadata_json: plan.config,
+          });
+          if (opts.configOut) {
+            writeFileSync(
+              opts.configOut,
+              `${JSON.stringify(plan.config, null, 2)}\n`,
+            );
+          }
+          const finalBuild = opts.detach
+            ? build
+            : await followRootfsBuildLog({
+                ctx,
+                deps,
+                project_id: project.project_id,
+                build_id: build.build_id,
+              });
+          const result = {
+            recipe: plan.recipe,
+            recipe_path: plan.recipe_path,
+            project_id: project.project_id,
+            created_project: project.created_project,
+            build: finalBuild,
+            config: plan.config,
+            saved_rootfs_publish_config: true,
+          };
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return result;
+          }
+          return formatRootfsBuildStartHuman(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("build-status <build>")
+    .description("show durable RootFS build status for a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-status", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const status = await ctx.hub.projects.getProjectRootfsBuildStatus({
+            project_id: project.project_id,
+            build_id,
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return status;
+          }
+          return formatRootfsBuildStatusHuman(status);
+        });
+      },
+    );
+
+  rootfs
+    .command("build-logs <build>")
+    .description("show or follow durable RootFS build logs for a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--tail <lines>", "line count to show before following", "100")
+    .option("--follow", "continue following new log output")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string; tail?: string; follow?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-logs", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const log = await readRootfsBuildLogDirect({
+            api,
+            ctx,
+            project_id: project.project_id,
+            build_id,
+            lines: parseLimit(opts.tail, 100),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return log;
+          }
+          if (log.text && !ctx.globals?.quiet) {
+            process.stderr.write(log.text);
+            if (!log.text.endsWith("\n")) {
+              process.stderr.write("\n");
+            }
+          }
+          if (opts.follow) {
+            const finalStatus = await followRootfsBuildLog({
+              ctx,
+              deps: {
+                withContext,
+                resolveProjectFromArgOrContext,
+                resolveProjectProjectApi,
+                waitForLro,
+                serializeLroSummary,
+              },
+              project_id: project.project_id,
+              build_id,
+              byte_offset: log.next_byte_offset,
+            });
+            return formatRootfsBuildStatusHuman(finalStatus);
+          }
+          return "";
+        });
+      },
+    );
+
+  rootfs
+    .command("build-list")
+    .description("list durable RootFS builds recorded in a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--limit <n>", "max rows", "50")
+    .action(
+      async (opts: { project?: string; limit?: string }, command: Command) => {
+        await withContext(command, "rootfs build-list", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const builds = await api.system.listRootfsBuilds({
+            limit: parseLimit(opts.limit, 50),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return { project_id: project.project_id, builds };
+          }
+          return formatRootfsBuildListHuman({
+            project_id: project.project_id,
+            builds,
+          });
+        });
+      },
+    );
+
+  rootfs
+    .command("build-events <build>")
+    .description("show or follow durable RootFS build lifecycle events")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--tail <lines>", "line count to show before following", "100")
+    .option("--follow", "continue following new events")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string; tail?: string; follow?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-events", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const events = await readRootfsBuildEventsDirect({
+            api,
+            build_id,
+            lines: parseLimit(opts.tail, 100),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return {
+              ...events,
+              events: parseNdjson(events.text ?? ""),
+            };
+          }
+          if (events.text && !ctx.globals?.quiet) {
+            process.stderr.write(events.text);
+            if (!events.text.endsWith("\n")) {
+              process.stderr.write("\n");
+            }
+          }
+          if (opts.follow) {
+            const finalStatus = await followRootfsBuildEvents({
+              ctx,
+              deps: {
+                withContext,
+                resolveProjectFromArgOrContext,
+                resolveProjectProjectApi,
+                waitForLro,
+                serializeLroSummary,
+              },
+              project_id: project.project_id,
+              build_id,
+              byte_offset: events.next_byte_offset,
+            });
+            return formatRootfsBuildStatusHuman(finalStatus);
+          }
+          return "";
+        });
+      },
+    );
+
+  rootfs
+    .command("build-attach <build>")
+    .description("show status, tail logs, and follow a durable RootFS build")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--tail <lines>", "line count to show before following", "100")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string; tail?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-attach", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const status = await ctx.hub.projects.getProjectRootfsBuildStatus({
+            project_id: project.project_id,
+            build_id,
+          });
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            project.project_id,
+          );
+          const log = await readRootfsBuildLogDirect({
+            api,
+            ctx,
+            project_id: project.project_id,
+            build_id,
+            lines: parseLimit(opts.tail, 100),
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return { status, log };
+          }
+          if (!ctx.globals?.quiet) {
+            process.stderr.write(formatRootfsBuildStatusHuman(status));
+            process.stderr.write("\n\n");
+            if (log.text) {
+              process.stderr.write(log.text);
+              if (!log.text.endsWith("\n")) {
+                process.stderr.write("\n");
+              }
+            }
+          }
+          const finalStatus = await followRootfsBuildLog({
             ctx,
             deps: {
+              withContext,
               resolveProjectFromArgOrContext,
               resolveProjectProjectApi,
               waitForLro,
               serializeLroSummary,
             },
-            options: {
-              ...opts,
-              publish: false,
-              wait: false,
-            },
-            recipePath,
+            project_id: project.project_id,
+            build_id,
+            byte_offset: log.next_byte_offset,
           });
-          const publishConfig = projectRootfsPublishConfigEnvelope(result);
-          await ctx.hub.projects.setProjectRootfsPublishConfig({
-            project_id: result.project_id,
-            config: publishConfig,
+          return formatRootfsBuildStatusHuman(finalStatus);
+        });
+      },
+    );
+
+  rootfs
+    .command("build-cancel <build>")
+    .description("cancel a durable RootFS build for a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        build_id: string,
+        opts: { project?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-cancel", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            requireProjectOption(opts.project),
+          );
+          const result = await ctx.hub.projects.cancelProjectRootfsBuild({
+            project_id: project.project_id,
+            build_id,
           });
-          if (opts.configOut) {
-            writeFileSync(
-              opts.configOut,
-              `${JSON.stringify(result.config, null, 2)}\n`,
-            );
-          }
           if (ctx.globals?.json || ctx.globals?.output === "json") {
-            return {
-              ...result,
-              saved_rootfs_publish_config: true,
-            };
+            return result;
           }
           return [
-            formatRootfsRecipeRunHuman(result),
-            "",
-            "saved_rootfs_publish_config: true",
-            `next: cocalc rootfs publish --project=${result.project_id}`,
+            `build_id: ${result.build_id}`,
+            `project_id: ${result.project_id}`,
+            `status: ${result.status}`,
+            `signaled: ${result.signaled}`,
+            ...(result.message ? [`message: ${result.message}`] : []),
           ].join("\n");
         });
       },

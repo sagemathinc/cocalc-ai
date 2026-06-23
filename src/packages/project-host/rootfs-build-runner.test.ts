@@ -69,12 +69,24 @@ function mockSpawnedBuild({
     stdout: PassThrough;
     stderr: PassThrough;
     kill: jest.Mock;
+    unref: jest.Mock;
   };
   child.pid = 12345;
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   child.kill = jest.fn();
-  spawnMock.mockImplementation(() => {
+  child.unref = jest.fn();
+  spawnMock.mockImplementation((_cmd: string, args: string[]) => {
+    if (args.includes("rootfs-build-signal")) {
+      const signalChild = new EventEmitter() as EventEmitter & {
+        pid: number;
+        kill: jest.Mock;
+      };
+      signalChild.pid = 99999;
+      signalChild.kill = jest.fn();
+      process.nextTick(() => signalChild.emit("close", 0));
+      return signalChild;
+    }
     if (close) {
       process.nextTick(() => {
         if (stdout) child.stdout.write(stdout);
@@ -125,10 +137,7 @@ async function setupVolume() {
 describe("rootfs build runner", () => {
   it("runs a project-host owned build and persists artifacts", async () => {
     const volumePath = await setupVolume();
-    mockSpawnedBuild({
-      stdout: "hello from build\n",
-      stderr: "warning from build\n",
-    });
+    mockSpawnedBuild();
 
     const started = await startRootfsBuild({
       project_id: PROJECT_ID,
@@ -171,16 +180,15 @@ describe("rootfs build runner", () => {
     await expect(
       fs.readFile(path.join(buildDir, "run.sh"), "utf8"),
     ).resolves.toBe("echo hello\n");
+    const runner = await fs.readFile(path.join(buildDir, "runner.sh"), "utf8");
+    expect(runner).toContain('/bin/bash "$SCRIPT" >> "$LOG" 2>&1');
     await expect(
       fs.readFile(path.join(buildDir, "resolved-recipe.json"), "utf8"),
     ).resolves.toContain("cocalc/test");
-    const log = await waitFor(
-      () =>
-        getRootfsBuildLog({ project_id: PROJECT_ID, build_id: "test-build" }),
-      (value) =>
-        value.text.includes("hello from build") &&
-        value.text.includes("warning from build"),
-    );
+    const log = await getRootfsBuildLog({
+      project_id: PROJECT_ID,
+      build_id: "test-build",
+    });
     expect(log.found).toBe(true);
   });
 
@@ -194,7 +202,8 @@ describe("rootfs build runner", () => {
         build_id: "stale-build",
         project_id: PROJECT_ID,
         status: "running",
-        created_at: new Date().toISOString(),
+        created_at: "2026-01-01T00:00:00Z",
+        heartbeat_at: "2026-01-01T00:00:00Z",
         paths: paths.publicPaths,
       }),
       "utf8",
@@ -206,6 +215,63 @@ describe("rootfs build runner", () => {
     });
     expect(status.status).toBe("unknown");
     expect(status.error).toContain("not tracked");
+  });
+
+  it("trusts fresh wrapper heartbeat state after in-memory tracking is gone", async () => {
+    await setupVolume();
+    const paths = await __test__.buildPaths(PROJECT_ID, "fresh-build");
+    const now = new Date().toISOString();
+    await fs.mkdir(paths.hostDir, { recursive: true });
+    await fs.writeFile(
+      paths.hostStatus,
+      JSON.stringify({
+        build_id: "fresh-build",
+        project_id: PROJECT_ID,
+        status: "running",
+        created_at: now,
+        started_at: now,
+        heartbeat_at: now,
+        pid: 45678,
+        paths: paths.publicPaths,
+      }),
+      "utf8",
+    );
+
+    const status = await getRootfsBuildStatus({
+      project_id: PROJECT_ID,
+      build_id: "fresh-build",
+    });
+    expect(status).toMatchObject({
+      status: "running",
+      pid: 45678,
+    });
+  });
+
+  it("persists running process details before the build exits", async () => {
+    const volumePath = await setupVolume();
+    mockSpawnedBuild({ close: false });
+
+    const started = await startRootfsBuild({
+      project_id: PROJECT_ID,
+      build_id: "running-build",
+      script: "sleep 100",
+    });
+    expect(started.pid).toBe(12345);
+
+    const statusPath = path.join(
+      volumePath,
+      ".cocalc",
+      "rootfs-builds",
+      "running-build",
+      "status.json",
+    );
+    const status = JSON.parse(await fs.readFile(statusPath, "utf8"));
+    expect(status).toMatchObject({
+      build_id: "running-build",
+      project_id: PROJECT_ID,
+      status: "running",
+      pid: 12345,
+    });
   });
 
   it("reads build logs incrementally by byte offset", async () => {
@@ -277,5 +343,51 @@ describe("rootfs build runner", () => {
     } finally {
       killSpy.mockRestore();
     }
+  });
+
+  it("cancels a fresh wrapper-tracked build after in-memory tracking is gone", async () => {
+    await setupVolume();
+    const paths = await __test__.buildPaths(PROJECT_ID, "remote-cancel");
+    const now = new Date().toISOString();
+    await fs.mkdir(paths.hostDir, { recursive: true });
+    await fs.writeFile(paths.hostEvents, "", "utf8");
+    await fs.writeFile(
+      paths.hostStatus,
+      JSON.stringify({
+        build_id: "remote-cancel",
+        project_id: PROJECT_ID,
+        status: "running",
+        created_at: now,
+        started_at: now,
+        heartbeat_at: now,
+        pid: 45678,
+        paths: paths.publicPaths,
+      }),
+      "utf8",
+    );
+    spawnMock.mockImplementation((_cmd: string, args: string[]) => {
+      expect(args).toContain("rootfs-build-signal");
+      expect(args).toContain("45678");
+      const signalChild = new EventEmitter() as EventEmitter & {
+        pid: number;
+        kill: jest.Mock;
+      };
+      signalChild.pid = 99999;
+      signalChild.kill = jest.fn();
+      process.nextTick(() => signalChild.emit("close", 0));
+      return signalChild;
+    });
+
+    const canceled = await cancelRootfsBuild({
+      project_id: PROJECT_ID,
+      build_id: "remote-cancel",
+    });
+
+    expect(canceled).toMatchObject({
+      status: "canceling",
+      signaled: true,
+    });
+    const status = JSON.parse(await fs.readFile(paths.hostStatus, "utf8"));
+    expect(status.status).toBe("canceling");
   });
 });

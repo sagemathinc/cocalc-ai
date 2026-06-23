@@ -30,6 +30,12 @@ import type {
 } from "@cocalc/util/types/execute-code";
 import type { LroStatus } from "./lro";
 import type { ProjectSecretSshKeySetupResult } from "@cocalc/util/project-secrets";
+import type {
+  HostRootfsBuildCancelResponse,
+  HostRootfsBuildLogResponse,
+  HostRootfsBuildStartRequest,
+  HostRootfsBuildStatusResponse,
+} from "@cocalc/conat/project-host/api";
 
 export type ProjectCopyState =
   | "queued"
@@ -652,6 +658,33 @@ export interface ProjectRootfsPublishConfig {
   };
   config: RootfsConfigExport;
 }
+export type ProjectRootfsBuildStatusResponse = HostRootfsBuildStatusResponse & {
+  host_id: string;
+};
+export type ProjectRootfsBuildLogResponse = HostRootfsBuildLogResponse & {
+  host_id: string;
+};
+export type ProjectRootfsBuildCancelResponse = HostRootfsBuildCancelResponse & {
+  host_id: string;
+};
+export type ProjectRootfsBuildStartRequest = Omit<
+  HostRootfsBuildStartRequest,
+  "project_id"
+> & {
+  account_id?: string;
+  project_id: string;
+};
+export interface ProjectRootfsBuildStatusRequest {
+  account_id?: string;
+  project_id: string;
+  build_id: string;
+}
+export interface ProjectRootfsBuildLogRequest extends ProjectRootfsBuildStatusRequest {
+  lines?: number;
+  byte_offset?: number;
+  max_bytes?: number;
+}
+export type ProjectRootfsBuildCancelRequest = ProjectRootfsBuildStatusRequest;
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
@@ -697,6 +730,10 @@ export const projects = {
   getProjectRootfs: authFirstRequireAccount,
   getProjectRootfsPublishConfig: authFirstRequireAccount,
   setProjectRootfsPublishConfig: authFirstRequireAccount,
+  startProjectRootfsBuild: authFirstRequireAccount,
+  getProjectRootfsBuildStatus: authFirstRequireAccount,
+  getProjectRootfsBuildLog: authFirstRequireAccount,
+  cancelProjectRootfsBuild: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
   getProjectRuntimeSponsorStatus: authFirstRequireAccount,
   getAccountRuntimeSponsorStatus: authFirstRequireAccount,
@@ -920,6 +957,22 @@ export interface Projects {
     project_id: string;
     config: ProjectRootfsPublishConfig | null;
   }) => Promise<void>;
+
+  startProjectRootfsBuild: (
+    opts: ProjectRootfsBuildStartRequest,
+  ) => Promise<ProjectRootfsBuildStatusResponse>;
+
+  getProjectRootfsBuildStatus: (
+    opts: ProjectRootfsBuildStatusRequest,
+  ) => Promise<ProjectRootfsBuildStatusResponse>;
+
+  getProjectRootfsBuildLog: (
+    opts: ProjectRootfsBuildLogRequest,
+  ) => Promise<ProjectRootfsBuildLogResponse>;
+
+  cancelProjectRootfsBuild: (
+    opts: ProjectRootfsBuildCancelRequest,
+  ) => Promise<ProjectRootfsBuildCancelResponse>;
 
   getProjectCourseInfo: (opts: {
     account_id?: string;

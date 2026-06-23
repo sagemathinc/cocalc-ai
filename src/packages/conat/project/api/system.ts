@@ -4,6 +4,10 @@ import type {
 } from "@cocalc/util/types/execute-code";
 import type { DirectoryListingEntry } from "@cocalc/util/types";
 import type {
+  HostRootfsBuildLogResponse,
+  HostRootfsBuildStatusResponse,
+} from "@cocalc/conat/project-host/api";
+import type {
   Configuration,
   ConfigurationAspect,
 } from "@cocalc/comm/project-configuration";
@@ -19,6 +23,9 @@ export const system = {
   // these should be deprecated -- the new streaming writeFile and readFile in conat/files are  better.
   writeTextFileToProject: true,
   readTextFileFromProject: true,
+  readRootfsBuildLog: true,
+  readRootfsBuildEvents: true,
+  listRootfsBuilds: true,
 
   configuration: true,
 
@@ -52,6 +59,21 @@ export interface System {
     content: string;
   }) => Promise<void>;
   readTextFileFromProject: (opts: { path: string }) => Promise<string>;
+  readRootfsBuildLog: (opts: {
+    build_id: string;
+    lines?: number;
+    byte_offset?: number;
+    max_bytes?: number;
+  }) => Promise<HostRootfsBuildLogResponse>;
+  readRootfsBuildEvents: (opts: {
+    build_id: string;
+    lines?: number;
+    byte_offset?: number;
+    max_bytes?: number;
+  }) => Promise<HostRootfsBuildLogResponse>;
+  listRootfsBuilds: (opts?: {
+    limit?: number;
+  }) => Promise<HostRootfsBuildStatusResponse[]>;
 
   configuration: (
     aspect: ConfigurationAspect,
