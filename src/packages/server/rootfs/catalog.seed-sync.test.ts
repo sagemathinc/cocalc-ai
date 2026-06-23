@@ -88,7 +88,7 @@ describe("RootFS catalog seed sync", () => {
       })),
     };
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
-      if (sql.includes("COALESCE($24::TIMESTAMP")) {
+      if (sql.includes("COALESCE($25::TIMESTAMP")) {
         synced.push(params ?? []);
         return { rows: [] };
       }
@@ -102,20 +102,21 @@ describe("RootFS catalog seed sync", () => {
             release_id: row[1],
             runtime_image: row[2],
             label: row[3],
-            visibility: row[9],
-            official: row[10],
-            prepull: row[11],
-            arch: row[12],
-            gpu: row[13],
-            size_gb: row[14],
-            tags: row[15],
-            digest: row[16],
-            deprecated: row[17],
-            deprecated_reason: row[18],
-            slug: row[19],
-            theme: row[20] ? JSON.parse(row[20]) : null,
-            content: row[21] ? JSON.parse(row[21]) : null,
-            content_warnings: row[22] ? JSON.parse(row[22]) : null,
+            default_jupyter_kernel: row[9],
+            visibility: row[10],
+            official: row[11],
+            prepull: row[12],
+            arch: row[13],
+            gpu: row[14],
+            size_gb: row[15],
+            tags: row[16],
+            digest: row[17],
+            deprecated: row[18],
+            deprecated_reason: row[19],
+            slug: row[20],
+            theme: row[21] ? JSON.parse(row[21]) : null,
+            content: row[22] ? JSON.parse(row[22]) : null,
+            content_warnings: row[23] ? JSON.parse(row[23]) : null,
             owner_id: null,
             hidden: false,
             blocked: false,
@@ -142,7 +143,7 @@ describe("RootFS catalog seed sync", () => {
     expect(manifest.images[0]?.content?.title).toBe("Seed Content");
     expect(
       queryMock.mock.calls
-        .filter(([sql]) => `${sql}`.includes("COALESCE($24::TIMESTAMP"))
+        .filter(([sql]) => `${sql}`.includes("COALESCE($25::TIMESTAMP"))
         .map(([, params]) => params[0]),
     ).toEqual(["seed-official"]);
   });

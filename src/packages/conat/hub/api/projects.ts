@@ -670,12 +670,14 @@ export interface ProjectRootfsPublishConfig {
 }
 export type ProjectRootfsBuildStatusResponse = HostRootfsBuildStatusResponse & {
   host_id: string;
+  op_id?: string | null;
 };
 export type ProjectRootfsBuildLogResponse = HostRootfsBuildLogResponse & {
   host_id: string;
 };
 export type ProjectRootfsBuildCancelResponse = HostRootfsBuildCancelResponse & {
   host_id: string;
+  op_id?: string | null;
 };
 export type ProjectRootfsBuildStartRequest = Omit<
   HostRootfsBuildStartRequest,
@@ -695,6 +697,19 @@ export interface ProjectRootfsBuildLogRequest extends ProjectRootfsBuildStatusRe
   max_bytes?: number;
 }
 export type ProjectRootfsBuildCancelRequest = ProjectRootfsBuildStatusRequest;
+export type ProjectRootfsBuildRecord = Omit<
+  ProjectRootfsBuildStatusResponse,
+  "paths"
+> & {
+  paths?: HostRootfsBuildStatusResponse["paths"];
+  account_id?: string | null;
+  updated?: string;
+};
+export interface ProjectRootfsBuildListRequest {
+  account_id?: string;
+  project_id: string;
+  limit?: number;
+}
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
@@ -744,6 +759,7 @@ export const projects = {
   startProjectRootfsBuild: authFirstRequireAccount,
   getProjectRootfsBuildStatus: authFirstRequireAccount,
   getProjectRootfsBuildLog: authFirstRequireAccount,
+  listProjectRootfsBuilds: authFirstRequireAccount,
   cancelProjectRootfsBuild: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
   getProjectRuntimeSponsorStatus: authFirstRequireAccount,
@@ -980,6 +996,10 @@ export interface Projects {
   getProjectRootfsBuildLog: (
     opts: ProjectRootfsBuildLogRequest,
   ) => Promise<ProjectRootfsBuildLogResponse>;
+
+  listProjectRootfsBuilds: (
+    opts: ProjectRootfsBuildListRequest,
+  ) => Promise<ProjectRootfsBuildRecord[]>;
 
   cancelProjectRootfsBuild: (
     opts: ProjectRootfsBuildCancelRequest,
