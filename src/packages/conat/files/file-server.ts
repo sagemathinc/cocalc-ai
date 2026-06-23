@@ -80,6 +80,24 @@ export interface ProjectArchiveRestoreResult {
   duration_ms: number;
 }
 
+export interface ProjectArchiveEntry {
+  path: string;
+  size: number;
+  type: "file" | "directory" | "symlink" | "other";
+  mtime?: string;
+}
+
+export interface ProjectArchiveIndexResult {
+  cache_id: string;
+  bytes: number;
+  sha256: string;
+  file_count: number;
+  uncompressed_bytes: number;
+  entries: ProjectArchiveEntry[];
+  truncated: boolean;
+  duration_ms: number;
+}
+
 export interface FileTextPreview {
   content: string;
   truncated: boolean;
@@ -167,12 +185,21 @@ export interface Fileserver {
   // it into the project home. This keeps large legacy migrations off the hub.
   restoreProjectArchive: (opts: {
     project_id: string;
-    download: SignedProjectArchiveDownload;
+    download?: SignedProjectArchiveDownload;
+    cache_id?: string;
     include_paths?: string[];
     exclude_paths?: string[];
     max_uncompressed_bytes?: number;
     lro?: LroRef;
   }) => Promise<ProjectArchiveRestoreResult>;
+  // Download and index an archive once on the target project host. Later
+  // selected restores can reuse cache_id to avoid a second R2 download.
+  cacheProjectArchive: (opts: {
+    project_id: string;
+    download: SignedProjectArchiveDownload;
+    max_entries?: number;
+    lro?: LroRef;
+  }) => Promise<ProjectArchiveIndexResult>;
   // staged restore helpers (filesystem-specific implementation)
   beginRestoreStaging: (opts: {
     project_id: string;

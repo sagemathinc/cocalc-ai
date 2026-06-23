@@ -22,7 +22,10 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  LegacyMigrationArchiveEntry,
+  LegacyMigrationArchiveIndex,
   LegacyMigrationImportProjectResult,
+  LegacyMigrationProjectRestoreMode,
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -50,6 +53,11 @@ function restoreTag(project: LegacyMigrationProjectSummary) {
   if (status === "pending") return <Tag color="gold">file restore pending</Tag>;
   if (status === "failed") return <Tag color="red">file restore failed</Tag>;
   if (status === "restoring") return <Tag color="blue">restoring files</Tag>;
+  if (status === "selection-pending") {
+    return <Tag color="gold">waiting for file selection</Tag>;
+  }
+  if (status === "indexing") return <Tag color="blue">indexing archive</Tag>;
+  if (status === "indexed") return <Tag color="cyan">archive indexed</Tag>;
   return <Tag>{status}</Tag>;
 }
 
@@ -92,6 +100,164 @@ function resultSummary(results: LegacyMigrationImportProjectResult[]): string {
   ]
     .filter(Boolean)
     .join(", ");
+}
+
+function pathLines(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/\r?\n/g)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function archiveSummaryFromProject(
+  project: LegacyMigrationProjectSummary,
+): Partial<LegacyMigrationArchiveIndex> | undefined {
+  const index = project.restore_result?.archive_index;
+  return index && typeof index === "object"
+    ? (index as Partial<LegacyMigrationArchiveIndex>)
+    : undefined;
+}
+
+function SelectiveRestoreControls({
+  project,
+  reload,
+}: {
+  project: LegacyMigrationProjectSummary;
+  reload: () => Promise<void>;
+}) {
+  const [index, setIndex] = useState<LegacyMigrationArchiveIndex>();
+  const [includePaths, setIncludePaths] = useState("");
+  const [excludePaths, setExcludePaths] = useState("");
+  const [working, setWorking] = useState<"" | "index" | "restore">("");
+  const summary = index ?? archiveSummaryFromProject(project);
+  const include = pathLines(includePaths);
+  const exclude = pathLines(excludePaths);
+  const hasSelection = include.length > 0 || exclude.length > 0;
+  const canRestore =
+    !!summary?.cache_id &&
+    (project.restore_status === "indexed" ||
+      project.restore_status === "failed" ||
+      index != null);
+
+  async function indexArchive() {
+    setWorking("index");
+    try {
+      const response =
+        await webapp_client.conat_client.hub.legacyMigration.prepareArchiveSelection(
+          {
+            legacy_project_id: project.legacy_project_id,
+            max_entries: 5000,
+          },
+        );
+      setIndex(response.index);
+      void message.success("Archive indexed on the project host.");
+      await reload();
+    } catch (err) {
+      void message.error(`${err}`);
+    } finally {
+      setWorking("");
+    }
+  }
+
+  async function restoreSelected() {
+    if (!hasSelection) return;
+    setWorking("restore");
+    try {
+      await webapp_client.conat_client.hub.legacyMigration.restoreArchiveSelection(
+        {
+          legacy_project_id: project.legacy_project_id,
+          include_paths: include,
+          exclude_paths: exclude,
+        },
+      );
+      void message.success("Selected files restored.");
+      setIndex(undefined);
+      await reload();
+    } catch (err) {
+      void message.error(`${err}`);
+    } finally {
+      setWorking("");
+    }
+  }
+
+  return (
+    <Space direction="vertical" size={6} style={{ maxWidth: 520 }}>
+      <Button
+        disabled={project.restore_status === "indexing"}
+        loading={working === "index" || project.restore_status === "indexing"}
+        onClick={() => void indexArchive()}
+        size="small"
+      >
+        {summary?.cache_id ? "Refresh file list" : "Index archive"}
+      </Button>
+      {summary?.cache_id ? (
+        <Text type="secondary">
+          {summary.file_count ?? "Unknown"} entries,{" "}
+          {summary.uncompressed_bytes ?? "unknown"} bytes expanded
+          {summary.truncated ? " (list truncated)" : ""}
+        </Text>
+      ) : null}
+      {index?.entries?.length ? (
+        <Table<LegacyMigrationArchiveEntry>
+          columns={[
+            {
+              title: "Path",
+              dataIndex: "path",
+              key: "path",
+              ellipsis: true,
+            },
+            {
+              title: "Type",
+              dataIndex: "type",
+              key: "type",
+              width: 90,
+            },
+            {
+              title: "Bytes",
+              dataIndex: "size",
+              key: "size",
+              width: 100,
+            },
+          ]}
+          dataSource={index.entries}
+          pagination={{ pageSize: 8, size: "small" }}
+          rowKey="path"
+          size="small"
+        />
+      ) : null}
+      {canRestore ? (
+        <>
+          <Input.TextArea
+            autoSize={{ minRows: 2, maxRows: 5 }}
+            onChange={(event) => setIncludePaths(event.target.value)}
+            placeholder="Include paths, one per line. Example: src or assignments/week1"
+            value={includePaths}
+          />
+          <Input.TextArea
+            autoSize={{ minRows: 2, maxRows: 5 }}
+            onChange={(event) => setExcludePaths(event.target.value)}
+            placeholder="Exclude paths, one per line. Example: .conda or node_modules"
+            value={excludePaths}
+          />
+          <Button
+            disabled={!hasSelection}
+            loading={
+              working === "restore" || project.restore_status === "restoring"
+            }
+            onClick={() => void restoreSelected()}
+            size="small"
+            type="primary"
+          >
+            Restore selected files
+          </Button>
+        </>
+      ) : null}
+    </Space>
+  );
 }
 
 export const LEGACY_MIGRATION_SETTINGS_PAGE = {
@@ -157,7 +323,7 @@ export function LegacyMigrationPage() {
     void loadProjects();
   }, [account_id, includeHidden]);
 
-  async function importSelected() {
+  async function importSelected(mode: LegacyMigrationProjectRestoreMode) {
     if (selected.length === 0) return;
     setImporting(true);
     setLastResults([]);
@@ -165,6 +331,7 @@ export function LegacyMigrationPage() {
       const response =
         await webapp_client.conat_client.hub.legacyMigration.importProjects({
           legacy_project_ids: selected,
+          restore_mode: mode,
         });
       setLastResults(response.results);
       void message.info(
@@ -229,6 +396,15 @@ export function LegacyMigrationPage() {
           ) : null}
           {project.artifact_status && !project.restore_status ? (
             <Text type="secondary">{project.artifact_status}</Text>
+          ) : null}
+          {project.restore_mode === "select" &&
+          project.project_id &&
+          project.restore_status !== "restored" &&
+          project.restore_status !== "restoring" ? (
+            <SelectiveRestoreControls
+              project={project}
+              reload={() => loadProjects()}
+            />
           ) : null}
         </Space>
       ),
@@ -308,10 +484,17 @@ export function LegacyMigrationPage() {
                 <Button
                   disabled={selected.length === 0}
                   loading={importing}
-                  onClick={() => void importSelected()}
+                  onClick={() => void importSelected("full")}
                   type="primary"
                 >
                   Import selected
+                </Button>
+                <Button
+                  disabled={selected.length === 0}
+                  loading={importing}
+                  onClick={() => void importSelected("select")}
+                >
+                  Import selected for file selection
                 </Button>
               </Space>
               {lastResults.length > 0 ? (

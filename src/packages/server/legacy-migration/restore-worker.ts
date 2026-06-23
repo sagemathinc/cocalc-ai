@@ -51,6 +51,7 @@ async function ensureLegacyMigrationRestoreSchema(): Promise<void> {
     await getPool().query(`
       ALTER TABLE legacy_migration_project_imports
         ADD COLUMN IF NOT EXISTS restore_attempts INTEGER,
+        ADD COLUMN IF NOT EXISTS restore_mode VARCHAR(32),
         ADD COLUMN IF NOT EXISTS restore_worker_id VARCHAR(64),
         ADD COLUMN IF NOT EXISTS restore_claimed_until TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_started TIMESTAMP,
@@ -156,6 +157,7 @@ async function claimRestoreRows(limit: number): Promise<LegacyRestoreRow[]> {
           ON p.legacy_project_id=i.legacy_project_id
        WHERE i.project_id IS NOT NULL
          AND i.owner_account_id IS NOT NULL
+         AND COALESCE(i.restore_mode, 'full') = 'full'
          AND COALESCE(p.artifact_key, '') <> ''
          AND COALESCE(p.artifact_status, '') = 'available'
          AND (

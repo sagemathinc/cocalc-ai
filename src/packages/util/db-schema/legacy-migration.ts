@@ -299,6 +299,7 @@ Table({
           project_id: null,
           owner_account_id: null,
           status: null,
+          restore_mode: null,
           restore_status: null,
           restore_error: null,
           restore_attempts: null,
@@ -321,6 +322,7 @@ Table({
           project_id: null,
           owner_account_id: null,
           status: null,
+          restore_mode: null,
           restore_status: null,
           restore_error: null,
           restore_attempts: null,
@@ -356,10 +358,15 @@ Table({
       pg_type: "VARCHAR(32)",
       desc: "Metadata import status: creating, imported, or failed.",
     },
+    restore_mode: {
+      type: "string",
+      pg_type: "VARCHAR(32)",
+      desc: "Restore mode: full for automatic whole-archive restore, or select for host-cached selective restore.",
+    },
     restore_status: {
       type: "string",
       pg_type: "VARCHAR(32)",
-      desc: "File restore status from R2: pending, restoring, restored, skipped, or failed.",
+      desc: "File restore status from R2: pending, restoring, restored, skipped, selection-pending, indexing, indexed, or failed.",
     },
     restore_error: {
       type: "string",

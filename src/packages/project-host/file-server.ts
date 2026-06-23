@@ -29,6 +29,8 @@ import {
   type CopyOptions,
   type LroRef,
   type ManagedBackupEgressOverride,
+  type ProjectArchiveEntry,
+  type ProjectArchiveIndexResult,
   type ProjectArchiveRestoreResult,
   type RestoreMode,
   type RestoreStagingHandle,
@@ -3758,12 +3760,46 @@ function shouldRestoreArchivePath({
   exclude?: string[];
 }): boolean {
   const normalized = normalizeProjectArchiveMemberPath(archivePath);
-  if (!normalized) return true;
+  if (!normalized) return include == null && exclude == null;
   if (exclude?.some((root) => archivePathMatchesRoot(normalized, root))) {
     return false;
   }
   if (include == null) return true;
   return include.some((root) => archivePathMatchesRoot(normalized, root));
+}
+
+function projectArchiveCacheRoot(project_id: string): string {
+  return join(data, "cache", "legacy-project-archives", project_id);
+}
+
+function projectArchiveCacheId(download: SignedProjectArchiveDownload): string {
+  return createHash("sha256")
+    .update(`${download.bucket ?? ""}\0${download.key ?? ""}\0`)
+    .update(`${download.sha256 ?? ""}\0${download.bytes ?? ""}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function assertSafeArchiveCacheId(cache_id: string): void {
+  if (!/^[0-9a-f]{32,64}$/i.test(cache_id)) {
+    throw new Error("invalid project archive cache id");
+  }
+}
+
+function projectArchiveCachePaths({
+  project_id,
+  cache_id,
+}: {
+  project_id: string;
+  cache_id: string;
+}): { dir: string; archive: string; index: string } {
+  assertSafeArchiveCacheId(cache_id);
+  const dir = join(projectArchiveCacheRoot(project_id), cache_id);
+  return {
+    dir,
+    archive: join(dir, "project.tar.zst"),
+    index: join(dir, "index.json"),
+  };
 }
 
 function runProjectArchiveTarCommand({
@@ -3870,36 +3906,66 @@ function runProjectArchiveTarCommand({
   });
 }
 
-function parseTarVerboseLine(
-  line: string,
-): { path: string; size: number } | undefined {
+function parseTarVerboseLine(line: string):
+  | {
+      path: string;
+      size: number;
+      type: ProjectArchiveEntry["type"];
+      mtime?: string;
+    }
+  | undefined {
   const match = line.match(
-    /^\S+\s+\S+\s+(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?\s+(.+)$/,
+    /^(\S+)\s+\S+\s+(\d+)\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(?::\d{2})?)\s+(.+)$/,
   );
   if (!match) return;
-  const size = Number(match[1]);
+  const size = Number(match[2]);
   if (!Number.isFinite(size) || size < 0) return;
-  const name = match[2]
+  const mode = match[1];
+  const name = match[5]
     .replace(/\s+->\s+.*$/, "")
     .replace(/\s+link to\s+.*$/, "");
-  return { path: name, size };
+  const kind = mode[0];
+  const type =
+    kind === "d"
+      ? "directory"
+      : kind === "l"
+        ? "symlink"
+        : kind === "-"
+          ? "file"
+          : "other";
+  return { path: name, size, type, mtime: `${match[3]}T${match[4]}Z` };
 }
 
-async function validateProjectArchiveTar({
+async function scanProjectArchiveTar({
   archivePath,
   include,
   exclude,
   member_list_path,
+  collect_entries,
+  max_entries,
   max_uncompressed_bytes,
 }: {
   archivePath: string;
   include?: string[];
   exclude?: string[];
   member_list_path?: string;
+  collect_entries?: boolean;
+  max_entries?: number;
   max_uncompressed_bytes?: number;
-}): Promise<{ file_count: number; uncompressed_bytes: number }> {
+}): Promise<{
+  file_count: number;
+  uncompressed_bytes: number;
+  entries: ProjectArchiveEntry[];
+  truncated: boolean;
+}> {
   let file_count = 0;
   let uncompressed_bytes = 0;
+  const entries: ProjectArchiveEntry[] = [];
+  let truncated = false;
+  const entryLimit =
+    typeof max_entries === "number" && Number.isFinite(max_entries)
+      ? Math.max(0, Math.floor(max_entries))
+      : 0;
   const memberList =
     member_list_path != null ? createWriteStream(member_list_path) : undefined;
   const closeMemberList = async () => {
@@ -3938,6 +4004,21 @@ async function validateProjectArchiveTar({
         if (parsed.path.trim()) {
           file_count += 1;
           memberList?.write(`${parsed.path}\n`);
+          if (collect_entries) {
+            if (entryLimit === 0 || entries.length < entryLimit) {
+              const normalized = normalizeProjectArchiveMemberPath(parsed.path);
+              if (normalized) {
+                entries.push({
+                  path: normalized,
+                  size: parsed.size,
+                  type: parsed.type,
+                  mtime: parsed.mtime,
+                });
+              }
+            } else {
+              truncated = true;
+            }
+          }
         }
         uncompressed_bytes += parsed.size;
         if (
@@ -3953,7 +4034,7 @@ async function validateProjectArchiveTar({
   } finally {
     await closeMemberList();
   }
-  return { file_count, uncompressed_bytes };
+  return { file_count, uncompressed_bytes, entries, truncated };
 }
 
 async function extractProjectArchiveTar({
@@ -4039,15 +4120,99 @@ async function downloadSignedProjectArchive({
   return { bytes, sha256 };
 }
 
+async function readCachedProjectArchiveIndex({
+  indexPath,
+}: {
+  indexPath: string;
+}): Promise<ProjectArchiveIndexResult | undefined> {
+  if (!(await exists(indexPath))) return;
+  const raw = JSON.parse(await readFile(indexPath, "utf8"));
+  if (!raw || typeof raw !== "object" || !raw.cache_id) return;
+  return raw as ProjectArchiveIndexResult;
+}
+
+async function hashProjectArchiveFile(
+  archivePath: string,
+): Promise<{ bytes: number; sha256: string }> {
+  const archiveStat = await stat(archivePath);
+  const sha256 = await new Promise<string>((resolve, reject) => {
+    const hash = createHash("sha256");
+    createReadStream(archivePath)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("error", reject)
+      .on("end", () => resolve(hash.digest("hex")));
+  });
+  return { bytes: archiveStat.size, sha256 };
+}
+
+async function cacheProjectArchive({
+  project_id,
+  download,
+  max_entries,
+}: {
+  project_id: string;
+  download: SignedProjectArchiveDownload;
+  max_entries?: number;
+}): Promise<ProjectArchiveIndexResult> {
+  const started = Date.now();
+  await getOrEnsureVolume(project_id);
+  const cache_id = projectArchiveCacheId(download);
+  const paths = projectArchiveCachePaths({ project_id, cache_id });
+  await mkdir(paths.dir, { recursive: true });
+  const cached = await readCachedProjectArchiveIndex({
+    indexPath: paths.index,
+  });
+  const archiveExists = await exists(paths.archive);
+  if (cached != null && archiveExists) {
+    const requestedEntryLimit =
+      typeof max_entries === "number" && Number.isFinite(max_entries)
+        ? Math.max(0, Math.floor(max_entries))
+        : 0;
+    if (
+      !cached.truncated ||
+      requestedEntryLimit === 0 ||
+      requestedEntryLimit <= (cached.entries?.length ?? 0)
+    ) {
+      return cached;
+    }
+  }
+
+  const downloaded = archiveExists
+    ? await hashProjectArchiveFile(paths.archive)
+    : await downloadSignedProjectArchive({
+        download,
+        dest: paths.archive,
+      });
+  const { file_count, uncompressed_bytes, entries, truncated } =
+    await scanProjectArchiveTar({
+      archivePath: paths.archive,
+      collect_entries: true,
+      max_entries,
+    });
+  const result: ProjectArchiveIndexResult = {
+    cache_id,
+    ...downloaded,
+    file_count,
+    uncompressed_bytes,
+    entries,
+    truncated,
+    duration_ms: Date.now() - started,
+  };
+  await writeFile(paths.index, JSON.stringify(result), "utf8");
+  return result;
+}
+
 async function restoreProjectArchive({
   project_id,
   download,
+  cache_id,
   include_paths,
   exclude_paths,
   max_uncompressed_bytes,
 }: {
   project_id: string;
-  download: SignedProjectArchiveDownload;
+  download?: SignedProjectArchiveDownload;
+  cache_id?: string;
   include_paths?: string[];
   exclude_paths?: string[];
   max_uncompressed_bytes?: number;
@@ -4055,22 +4220,47 @@ async function restoreProjectArchive({
   const started = Date.now();
   await getOrEnsureVolume(project_id);
   const home = projectMountpoint(project_id);
-  const tmpRoot = archiveRestoreTmpRoot();
-  await mkdir(tmpRoot, { recursive: true });
-  const tmpDir = await mkdtemp(join(tmpRoot, `${project_id}-`));
-  const archivePath = join(tmpDir, "project.tar.zst");
+  let tmpDir: string | undefined;
+  let memberListTmpDir: string | undefined;
+  let archivePath: string;
+  if (cache_id) {
+    archivePath = projectArchiveCachePaths({ project_id, cache_id }).archive;
+    if (!(await exists(archivePath))) {
+      throw new Error("cached project archive is not available");
+    }
+  } else {
+    if (download == null) {
+      throw new Error("project archive restore requires download or cache_id");
+    }
+    const tmpRoot = archiveRestoreTmpRoot();
+    await mkdir(tmpRoot, { recursive: true });
+    tmpDir = await mkdtemp(join(tmpRoot, `${project_id}-`));
+    archivePath = join(tmpDir, "project.tar.zst");
+  }
   try {
-    const downloaded = await downloadSignedProjectArchive({
-      download,
-      dest: archivePath,
-    });
+    const downloaded =
+      download != null && !cache_id
+        ? await downloadSignedProjectArchive({
+            download,
+            dest: archivePath,
+          })
+        : await hashProjectArchiveFile(archivePath);
     const include = normalizeProjectArchivePathRoots(include_paths);
     const exclude = normalizeProjectArchivePathRoots(exclude_paths);
     const useSelection = include != null || exclude != null;
-    const member_list_path = useSelection
-      ? join(tmpDir, "selected-members.txt")
-      : undefined;
-    const { file_count, uncompressed_bytes } = await validateProjectArchiveTar({
+    let member_list_path: string | undefined;
+    if (useSelection) {
+      if (tmpDir == null) {
+        const tmpRoot = archiveRestoreTmpRoot();
+        await mkdir(tmpRoot, { recursive: true });
+        memberListTmpDir = await mkdtemp(join(tmpRoot, `${project_id}-list-`));
+      }
+      member_list_path = join(
+        tmpDir ?? memberListTmpDir!,
+        "selected-members.txt",
+      );
+    }
+    const { file_count, uncompressed_bytes } = await scanProjectArchiveTar({
       archivePath,
       include,
       exclude,
@@ -4094,13 +4284,26 @@ async function restoreProjectArchive({
       duration_ms: Date.now() - started,
     };
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch((err) => {
-      logger.warn("legacy project archive temp cleanup failed", {
-        project_id,
-        tmpDir,
-        err: `${err}`,
+    if (tmpDir) {
+      await rm(tmpDir, { recursive: true, force: true }).catch((err) => {
+        logger.warn("legacy project archive temp cleanup failed", {
+          project_id,
+          tmpDir,
+          err: `${err}`,
+        });
       });
-    });
+    }
+    if (memberListTmpDir) {
+      await rm(memberListTmpDir, { recursive: true, force: true }).catch(
+        (err) => {
+          logger.warn("legacy project archive member-list cleanup failed", {
+            project_id,
+            memberListTmpDir,
+            err: `${err}`,
+          });
+        },
+      );
+    }
   }
 }
 
@@ -4751,6 +4954,7 @@ export async function initFileServer({
     createBackup: reuseInFlight(createBackup),
     restoreBackup: reuseInFlight(restoreBackup),
     restoreProjectArchive: reuseInFlight(restoreProjectArchive),
+    cacheProjectArchive: reuseInFlight(cacheProjectArchive),
     beginRestoreStaging,
     ensureRestoreStaging,
     finalizeRestoreStaging,
