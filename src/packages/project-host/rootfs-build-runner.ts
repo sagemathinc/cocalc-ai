@@ -46,6 +46,7 @@ const MAX_LOG_LINES = 10_000;
 const MAX_LOG_BYTES = 1024 * 1024;
 const BUILD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 interface BuildPaths {
   hostDir: string;
@@ -64,6 +65,7 @@ interface RunningBuild {
   child: ChildProcessByStdio<null, Readable, Readable>;
   cancelRequested: boolean;
   finished: boolean;
+  heartbeat?: NodeJS.Timeout;
   paths: BuildPaths;
   status: HostRootfsBuildStatusResponse;
 }
@@ -76,6 +78,13 @@ function registryKey(project_id: string, build_id: string): string {
 
 function isoNow(): string {
   return new Date().toISOString();
+}
+
+function secondsSince(iso?: string): number | undefined {
+  if (!iso) return undefined;
+  const time = Date.parse(iso);
+  if (!Number.isFinite(time)) return undefined;
+  return Math.max(0, Math.floor((Date.now() - time) / 1000));
 }
 
 function generateBuildId(): string {
@@ -185,6 +194,32 @@ async function persistStatus(
   await writeJsonAtomic(paths.hostStatus, status);
 }
 
+function startHeartbeat(build: RunningBuild): void {
+  build.heartbeat = setInterval(() => {
+    if (build.finished) return;
+    void persistStatus(build.paths, build.status).catch((err) =>
+      logger.warn("failed to persist rootfs build heartbeat status", {
+        project_id: build.status.project_id,
+        build_id: build.status.build_id,
+        err,
+      }),
+    );
+    void appendEvent(build.paths, {
+      event: "heartbeat",
+      status: build.status.status,
+      elapsed_s: secondsSince(build.status.started_at),
+      last_output_s: secondsSince(build.status.last_output_at),
+    }).catch((err) =>
+      logger.warn("failed to append rootfs build heartbeat event", {
+        project_id: build.status.project_id,
+        build_id: build.status.build_id,
+        err,
+      }),
+    );
+  }, HEARTBEAT_INTERVAL_MS);
+  build.heartbeat.unref();
+}
+
 function podmanExecArgs(
   project_id: string,
   opts: { cwd?: string; env?: Record<string, string> },
@@ -240,6 +275,10 @@ async function markFinished(
 ): Promise<void> {
   if (build.finished) return;
   build.finished = true;
+  if (build.heartbeat) {
+    clearInterval(build.heartbeat);
+    build.heartbeat = undefined;
+  }
   build.status.status = status;
   build.status.finished_at = isoNow();
   build.status.exit_code = opts.exit_code ?? null;
@@ -309,6 +348,10 @@ export async function startRootfsBuild(
     stdio: ["ignore", "pipe", "pipe"],
   });
   status.pid = child.pid;
+  const startResponse: HostRootfsBuildStatusResponse = {
+    ...status,
+    paths: { ...status.paths },
+  };
   const build: RunningBuild = {
     child,
     cancelRequested: false,
@@ -349,7 +392,10 @@ export async function startRootfsBuild(
     );
   });
 
-  return status;
+  await persistStatus(paths, status);
+  startHeartbeat(build);
+
+  return startResponse;
 }
 
 export async function getRootfsBuildStatus({
@@ -546,6 +592,9 @@ export async function cancelRootfsBuild({
 
 export const __test__ = {
   reset() {
+    for (const build of running.values()) {
+      if (build.heartbeat) clearInterval(build.heartbeat);
+    }
     running.clear();
   },
   buildPaths,

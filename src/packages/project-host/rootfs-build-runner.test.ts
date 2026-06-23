@@ -208,6 +208,33 @@ describe("rootfs build runner", () => {
     expect(status.error).toContain("not tracked");
   });
 
+  it("persists running process details before the build exits", async () => {
+    const volumePath = await setupVolume();
+    mockSpawnedBuild({ close: false });
+
+    const started = await startRootfsBuild({
+      project_id: PROJECT_ID,
+      build_id: "running-build",
+      script: "sleep 100",
+    });
+    expect(started.pid).toBe(12345);
+
+    const statusPath = path.join(
+      volumePath,
+      ".cocalc",
+      "rootfs-builds",
+      "running-build",
+      "status.json",
+    );
+    const status = JSON.parse(await fs.readFile(statusPath, "utf8"));
+    expect(status).toMatchObject({
+      build_id: "running-build",
+      project_id: PROJECT_ID,
+      status: "running",
+      pid: 12345,
+    });
+  });
+
   it("reads build logs incrementally by byte offset", async () => {
     const volumePath = await setupVolume();
     const paths = await __test__.buildPaths(PROJECT_ID, "paged-log");
