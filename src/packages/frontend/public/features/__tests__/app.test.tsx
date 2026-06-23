@@ -69,7 +69,6 @@ const INTERNAL_CONTEXT_LEAKAGE = combineLeak(
 const FEATURE_INDEX_H1_MAX = 80;
 
 const SHARED_PRIMITIVE_FEATURE_PAGES = [
-  "ai",
   "automations",
   "julia",
   "jupyter-notebook",
@@ -619,7 +618,7 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
     // Body keeps a route-specific keyword rather than pinning the sentence.
     expect(
-      screen.getByText(/edit Markdown notes or documentation/i),
+      screen.getByText(/edit Markdown or code, debug notebooks/i),
     ).not.toBeNull();
     expect(
       screen.getByRole("img", {
@@ -627,7 +626,7 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     // Mock-UI labels (not headings): the agent panel says "Agent thread" /
-    // "Durable agent thread", never the prior "Codex"/"chat history" labels.
+    // "durable thread", never the prior "Codex"/"chat history" labels.
     expect(screen.getByText("Agent thread")).not.toBeNull();
     expect(screen.queryByText("Codex thread")).toBeNull();
     expect(
@@ -635,7 +634,7 @@ describe("PublicFeaturesApp", () => {
         .querySelector(".cocalc-ai-workflow-panel")
         ?.getAttribute("style") ?? "",
     ).not.toContain(PUBLIC_DARK.terminalSurface);
-    expect(screen.getByText("Durable agent thread")).not.toBeNull();
+    expect(screen.getByText("durable thread")).not.toBeNull();
     expect(screen.queryByText("Durable chat history")).toBeNull();
     const codexGuide = screen.getByRole("link", {
       name: "Read the Codex guide",
@@ -665,6 +664,10 @@ describe("PublicFeaturesApp", () => {
     expect(
       container.querySelector(".cocalc-feature-final-band"),
     ).not.toBeNull();
+    expect(
+      screen.queryByText("Review agent work with the people who own it."),
+    ).toBeNull();
+    expect(container.querySelector(".feature-ai-context-panel")).toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
@@ -687,6 +690,11 @@ describe("PublicFeaturesApp", () => {
         .getByRole("link", { name: "Compare operating models" })
         .getAttribute("href"),
     ).toBe("/products");
+    expect(
+      screen
+        .getByRole("link", { name: "Jupyter notebooks" })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
     // next-steps/Decide/Next-Previous absence is centrally backstopped by the
     // auditedFeaturePages structural test below for all 14 feature slugs.
     expect(

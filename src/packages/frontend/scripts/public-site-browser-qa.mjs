@@ -309,6 +309,7 @@ const ROUTE_RULES = {
       "Built-in provider support",
       "Other agents can still run in terminals.",
       "Ask about AI workflows",
+      "Review agent work with the people who own it.",
     ],
     requireSelectors: [".cocalc-ai-workflow-panel"],
     styleChecks: [
@@ -321,6 +322,7 @@ const ROUTE_RULES = {
     requireLinks: [
       { text: "Read the Codex guide", hrefIncludes: "/codex-agent-chat/" },
       { text: "Terminal workflows", hrefIncludes: "/features/terminal" },
+      { text: "Jupyter notebooks", hrefIncludes: "/features/jupyter-notebook" },
     ],
   },
   "/features/cli": {

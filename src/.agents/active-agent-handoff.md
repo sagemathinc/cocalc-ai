@@ -46,6 +46,47 @@ Known risks:
 
 ---
 
+### Codex - Density /features/ai item 43 (2026-06-23 03:16 PDT)
+
+- **START 2026-06-23 03:16 PDT:** Continuing the manual landing-page
+  improvement loop on live queue item 43 in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`.
+  Current head is `33400023a3`, matching
+  `origin/blaec-synthesis-2026-06-18`; the only pre-existing worktree dirt is
+  the known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+  Preview owner remains hub pids `27390` and `27431` rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files/routes:
+  `features/ai-page.tsx`, `features/__tests__/app.test.tsx`,
+  `scripts/public-site-browser-qa.mjs`, `/features/ai` browser QA, this
+  ledger, and shared queue/turn logs if the slice lands. Route frame: visitor
+  asks whether Codex can work inside real project context instead of a detached
+  chat; promise is agent work tied to files, notebooks, terminals, tests,
+  collaborators, and review history. Must collapse the hero second paragraph,
+  merge the "Review agent work" section into the final band, cut
+  `ProjectContextPanel`, move notebook-review detail to a
+  `/features/jupyter-notebook` related link, and preserve `ThreadMock`, the
+  four-step `WorkflowStrip`, the wedge stated once, both CTAs, a11y, terminal
+  and products links, and a clear "Codex edits Markdown/code/notebooks"
+  capability mention.
+- **END 2026-06-23 03:21 PDT:** Landed the density cut for `/features/ai`:
+  source now measures 282 lines versus 335 at `33400023a3`. Collapsed hero
+  support copy to one paragraph with Codex file/Markdown/code/notebook/check
+  capability intact; removed `ProjectContextPanel` and the standalone "Review
+  agent work" section; folded review rationale into the final band; added the
+  `/features/jupyter-notebook` related link for notebook-review depth; and
+  preserved `ThreadMock`, the four-step `WorkflowStrip`, final-band wedge,
+  Codex guide CTA, project CTA, terminal/products links, and a11y. Updated the
+  feature smoke test and `/features/ai` browser-QA canaries for the shorter
+  copy, removed context panel, and new Jupyter link. Validation passed: focused
+  feature/browser-QA Jest 139/139, public/features Jest 195/195,
+  `pnpm -C src tsc`, `pnpm -C src lint:frontend`, `git diff --check`, and
+  `pnpm --dir src/packages/static build:dev && node
+  src/packages/frontend/scripts/public-site-browser-qa.mjs --route
+  /features/ai --viewport desktop --viewport mobile` (52/52 assertions,
+  artifact `/tmp/cocalc-public-qa-cNjY0o`). Desktop and mobile screenshots
+  inspected clean. Known local static-build debug-log EACCES warning only.
+
 ### Codex - Density /features/teaching item 42 (2026-06-23 03:09 PDT)
 
 - **START 2026-06-23 03:09 PDT:** Continuing the manual landing-page
