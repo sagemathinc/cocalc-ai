@@ -20,7 +20,11 @@ import {
   PublicHero,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_ELEVATION } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_ELEVATION,
+  PUBLIC_RADIUS,
+} from "@cocalc/frontend/public/theme";
 import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
@@ -249,7 +253,7 @@ function GuideDirectory() {
         style={{
           background: PUBLIC_COLORS.surface,
           border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: 8,
+          borderRadius: PUBLIC_RADIUS.panel,
           padding: 24,
         }}
       >

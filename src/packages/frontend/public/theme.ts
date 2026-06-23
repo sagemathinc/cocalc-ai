@@ -33,6 +33,8 @@ export const PUBLIC_COLORS = {
   pageBackground: COLORS.GRAY_LLL,
   paperBackground: COLORS.GRAY_LLL,
   success: COLORS.RUN,
+  successBorder: COLORS.BS_GREEN,
+  successTint: COLORS.BS_GREEN_LL,
   surface: COLORS.TOP_BAR.ACTIVE,
   surfaceMuted: COLORS.BLUE_LLLL,
   text: COLORS.GRAY_D,

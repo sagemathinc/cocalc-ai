@@ -113,8 +113,12 @@ function Status({ done }: { done: boolean }) {
         width: 18,
         height: 18,
         borderRadius: "50%",
-        background: done ? "#f6ffed" : "#fff7e6",
-        border: `1px solid ${done ? "#b7eb8f" : "#ffd591"}`,
+        background: done
+          ? PUBLIC_COLORS.successTint
+          : PUBLIC_COLORS.warningTint,
+        border: `1px solid ${
+          done ? PUBLIC_COLORS.successBorder : PUBLIC_COLORS.warningBorder
+        }`,
         color: done ? PUBLIC_COLORS.success : PUBLIC_COLORS.warning,
         fontSize: 12,
         fontWeight: PUBLIC_WEIGHT.bold,

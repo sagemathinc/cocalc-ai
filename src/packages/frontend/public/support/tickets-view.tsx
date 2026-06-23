@@ -10,8 +10,11 @@ import { Button } from "antd";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_WEIGHT,
+} from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import MarkdownIt from "markdown-it";
 
@@ -39,20 +42,20 @@ const STACK_STYLE: CSSProperties = {
 } as const;
 
 const ALERT_BASE_STYLE: CSSProperties = {
-  borderRadius: "8px",
+  borderRadius: PUBLIC_RADIUS.panel,
   padding: "10px 12px",
   fontSize: "14px",
 } as const;
 
 const LINK_STYLE: CSSProperties = {
-  color: COLORS.BLUE_D,
+  color: PUBLIC_COLORS.link,
   cursor: "pointer",
 } as const;
 
 const TICKET_BODY_STYLE: CSSProperties = {
   whiteSpace: "normal",
-  background: COLORS.GRAY_LLL,
-  borderRadius: "8px",
+  background: PUBLIC_COLORS.paperBackground,
+  borderRadius: PUBLIC_RADIUS.panel,
   padding: "12px",
   lineHeight: 1.65,
   overflow: "auto",
@@ -60,7 +63,7 @@ const TICKET_BODY_STYLE: CSSProperties = {
 } as const;
 
 const TICKET_SUBJECT_HEADING_STYLE: CSSProperties = {
-  fontWeight: 700,
+  fontWeight: PUBLIC_WEIGHT.bold,
   fontSize: "18px",
   lineHeight: 1.3,
   margin: 0,
@@ -116,8 +119,8 @@ function StatusPill({ status }: { status?: string }) {
   const tone =
     status === "solved"
       ? {
-          background: COLORS.GRAY_LLL,
-          border: COLORS.GRAY_L,
+          background: PUBLIC_COLORS.paperBackground,
+          border: PUBLIC_COLORS.border,
         }
       : status === "pending"
         ? {
@@ -133,12 +136,12 @@ function StatusPill({ status }: { status?: string }) {
       style={{
         alignItems: "center",
         display: "inline-flex",
-        borderRadius: "999px",
+        borderRadius: PUBLIC_RADIUS.pill,
         background: tone.background,
         border: `1px solid ${tone.border}`,
         color: PUBLIC_COLORS.heading,
         fontSize: "12px",
-        fontWeight: 700,
+        fontWeight: PUBLIC_WEIGHT.bold,
         minHeight: 24,
         padding: "4px 8px",
       }}
@@ -154,7 +157,7 @@ function TypePill({ type }: { type?: TicketType }) {
       style={{
         alignItems: "center",
         display: "inline-flex",
-        borderRadius: "999px",
+        borderRadius: PUBLIC_RADIUS.pill,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         color: PUBLIC_COLORS.text,
         fontSize: "12px",

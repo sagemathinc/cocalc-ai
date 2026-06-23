@@ -124,14 +124,7 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
   string,
   readonly string[]
 > = {
-  "cli-page.tsx": [
-    "#101820",
-    "#cbd5e1",
-    "#f4f9ff",
-    "#fde68a",
-    "#fff8e8",
-    "#ffffff",
-  ],
+  "cli-page.tsx": ["#f4f9ff", "#fff8e8", "#ffffff"],
   "julia-page.tsx": ["#f4fff8", "#f7f4ff", "#ffffff"],
   "jupyter-notebook-page.tsx": [
     "#389e0d",

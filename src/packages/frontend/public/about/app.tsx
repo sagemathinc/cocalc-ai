@@ -9,7 +9,12 @@ import { Flex, Tag, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { NewsItem } from "@cocalc/util/types/news";
 
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "../theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+  PUBLIC_WEIGHT,
+} from "../theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   EmptySection,
@@ -92,7 +97,7 @@ function AboutTeamPage() {
                 alt={member.imageAlt}
                 src={member.imageSrc}
                 style={{
-                  borderRadius: 14,
+                  borderRadius: PUBLIC_RADIUS.media,
                   objectFit: "cover",
                   width: "100%",
                 }}
@@ -110,7 +115,7 @@ function ExperienceList({ member }: { member: TeamMemberProfile }) {
     <div style={{ display: "grid", gap: 12 }}>
       {member.experience.map((item) => (
         <div key={`${item.position}-${item.institution}-${item.timeframe}`}>
-          <div style={{ fontWeight: 700 }}>
+          <div style={{ fontWeight: PUBLIC_WEIGHT.bold }}>
             {item.institution}
             <span style={MUTED_STYLE}> · {item.timeframe}</span>
           </div>
@@ -200,7 +205,7 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
             src={member.imageSrc}
             style={{
               alignSelf: "start",
-              borderRadius: 16,
+              borderRadius: PUBLIC_RADIUS.media,
               maxWidth: 320,
               objectFit: "cover",
               width: "100%",
@@ -275,7 +280,7 @@ function EventList({ items }: { items: NewsItem[] }) {
             style={{
               ...MUTED_STYLE,
               fontSize: PUBLIC_TYPE.caption,
-              fontWeight: 700,
+              fontWeight: PUBLIC_WEIGHT.bold,
             }}
           >
             {formatNewsDate(item.date)}

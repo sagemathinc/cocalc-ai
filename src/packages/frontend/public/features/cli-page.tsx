@@ -15,6 +15,7 @@ import {
   PUBLIC_DARK,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
+  PUBLIC_WEIGHT,
 } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -85,7 +86,7 @@ function CliHeroWorkflow() {
           aria-label="CoCalc CLI project workflow example"
           role="img"
           style={{
-            background: "#101820",
+            background: PUBLIC_DARK.terminalSurface,
             border: `1px solid ${PUBLIC_COLORS.border}`,
             borderRadius: PUBLIC_RADIUS.panel,
             boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
@@ -103,7 +104,7 @@ function CliHeroWorkflow() {
             style={{
               background: "rgba(255, 255, 255, 0.06)",
               borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-              color: "#cbd5e1",
+              color: PUBLIC_DARK.mockTextDim,
               padding: "10px 14px",
             }}
           >
@@ -120,7 +121,7 @@ function CliHeroWorkflow() {
                   style={{
                     color:
                       line.kind === "command"
-                        ? "#fde68a"
+                        ? PUBLIC_DARK.dotAmber
                         : PUBLIC_DARK.mockText,
                     whiteSpace: "pre-wrap",
                     wordBreak: "break-word",
@@ -189,7 +190,7 @@ function CliFitSection() {
                   style={{
                     color: CLI_ACCENT,
                     fontSize: 12,
-                    fontWeight: 700,
+                    fontWeight: PUBLIC_WEIGHT.bold,
                     letterSpacing: 0,
                     textTransform: "uppercase",
                   }}

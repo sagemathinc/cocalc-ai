@@ -46,6 +46,44 @@ Known risks:
 
 ---
 
+### Codex - round-2 token adherence batch B (2026-06-22 23:39 PDT)
+
+- **START 2026-06-22 23:39 PDT:** Continuing the scheduled landing-page
+  improvement loop on Round-2 item 23 Batch B token adherence in
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Current
+  head is `02c3dbda1f`, matching `origin/blaec-synthesis-2026-06-18`; only the
+  known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  present. Claimed files/routes: promoted token substitutions in
+  `guides/app.tsx`, `about/app.tsx`, `support/new-view.tsx`,
+  `support/tickets-view.tsx`, `features/cli-page.tsx`, public theme/test files
+  as needed, this ledger, and shared coordination logs if the slice completes.
+  Scope: hardcoded radius to `PUBLIC_RADIUS`, promoted hardcoded support/CLI
+  colors to existing public/util tokens, and promoted `fontWeight: 700` to
+  `PUBLIC_WEIGHT.bold`. Guardrails: no home edits, no pricing money/compliance
+  copy, no type/palette 2e beyond aliases backed by existing colors, no pitch
+  docs, no raw-audit foraging outside this batch, no LaTeX/dedicated-compute
+  draft.
+- **END 2026-06-22 23:46 PDT:** Round-2 item 23 Batch B source edit complete.
+  Promoted radius strays in guides/about now use `PUBLIC_RADIUS`; about/support
+  font-weight strays now use `PUBLIC_WEIGHT.bold`; support status glyphs and
+  ticket pills use public color/radius/weight tokens; CLI dark mock surface,
+  header text, command text, and step label weight use existing `PUBLIC_DARK`
+  and `PUBLIC_WEIGHT` tokens; CLI raw-hex guard allowlist was tightened. Added
+  public success tint/border aliases backed by existing util colors, with no new
+  palette values. Validation passed: focused Jest
+  `public/__tests__/app.test.tsx public/support/tickets-view.test.tsx public/support/__tests__/new-view.test.tsx public/features/__tests__/app.test.tsx --runInBand --silent`
+  (184/184); `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff
+  --check`; `pnpm --dir src/packages/static build:dev` with the existing local
+  debug-log permission warning; and browser QA for `/guides`, `/about`,
+  `/about/team/william-stein`, `/support/new`, `/support/tickets`, and
+  `/features/cli` desktop+mobile passed 232/232 at
+  `/tmp/cocalc-public-qa-pbV7Lh`. Screenshots inspected clean. Next: commit,
+  rebuild post-commit so the static bundle embeds the new revision, rerun
+  browser QA, push, then update shared logs/status.
+
+---
+
 ### Codex - round-2 systemic a11y batch A (2026-06-22 23:18 PDT)
 
 - **START 2026-06-22 23:18 PDT:** Continuing the scheduled landing-page
