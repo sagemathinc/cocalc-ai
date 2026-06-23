@@ -1884,11 +1884,8 @@ export function registerRootfsCommand(
             resolveProjectFromArgOrContext,
             project: opts.project,
           });
-          const { api } = await resolveProjectProjectApi(
-            ctx,
-            project.project_id,
-          );
-          const builds = await api.system.listRootfsBuilds({
+          const builds = await ctx.hub.projects.listProjectRootfsBuilds({
+            project_id: project.project_id,
             limit: parseLimit(opts.limit, 50),
           });
           if (ctx.globals?.json || ctx.globals?.output === "json") {

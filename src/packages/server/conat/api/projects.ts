@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
 import execProject from "@cocalc/server/projects/exec";
@@ -144,6 +145,8 @@ import type {
   ProjectRootfsBuildCancelResponse,
   ProjectRootfsBuildLogRequest,
   ProjectRootfsBuildLogResponse,
+  ProjectRootfsBuildListRequest,
+  ProjectRootfsBuildRecord,
   ProjectRootfsBuildStartRequest,
   ProjectRootfsBuildStatusRequest,
   ProjectRootfsBuildStatusResponse,
@@ -194,6 +197,14 @@ import {
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import {
+  createProjectRootfsBuildLro,
+  getProjectRootfsBuildRecord,
+  listProjectRootfsBuildRecords,
+  markProjectRootfsBuildFailed,
+  syncProjectRootfsBuildLro,
+  upsertProjectRootfsBuildStatus,
+} from "@cocalc/server/rootfs/build-index";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 import {
@@ -1129,6 +1140,15 @@ async function getProjectRootfsBuildClient({
   return { host_id, client };
 }
 
+function generateProjectRootfsBuildId(): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(".", "")
+    .replace("Z", "");
+  return `rb-${timestamp}-${randomUUID().slice(0, 8)}`;
+}
+
 export async function startProjectRootfsBuild({
   account_id,
   project_id,
@@ -1139,11 +1159,69 @@ export async function startProjectRootfsBuild({
     project_id,
     timeout: 30_000,
   });
-  const status = await client.startRootfsBuild({
-    ...start,
+  const build_id = start.build_id ?? generateProjectRootfsBuildId();
+  const op = await createProjectRootfsBuildLro({
+    account_id,
     project_id,
+    host_id,
+    build_id,
+    recipe_ref: start.recipe_ref,
   });
-  return { ...status, host_id };
+  try {
+    const status = await client.startRootfsBuild({
+      ...start,
+      build_id,
+      project_id,
+    });
+    const record = await upsertProjectRootfsBuildStatus({
+      account_id,
+      host_id,
+      op_id: op.op_id,
+      status,
+    });
+    await syncProjectRootfsBuildLro({
+      op_id: record.op_id,
+      status,
+    });
+    return { ...status, host_id, op_id: record.op_id };
+  } catch (err) {
+    const failed = await markProjectRootfsBuildFailed({
+      account_id,
+      project_id,
+      host_id,
+      build_id,
+      op_id: op.op_id,
+      recipe_ref: start.recipe_ref,
+      error: err,
+    });
+    await syncProjectRootfsBuildLro({
+      op_id: failed.op_id,
+      status: {
+        build_id,
+        project_id,
+        status: "failed",
+        recipe_ref: start.recipe_ref,
+        created_at: failed.created_at,
+        finished_at: failed.finished_at,
+        error: `${err}`,
+        paths: failed.paths ?? {
+          dir: "",
+          script: "",
+          log: "",
+          status: "",
+          events: "",
+        },
+      },
+    }).catch((syncErr) => {
+      log.warn("failed to sync rootfs build LRO after start failure", {
+        project_id,
+        build_id,
+        op_id: op.op_id,
+        err: syncErr,
+      });
+    });
+    throw err;
+  }
 }
 
 export async function getProjectRootfsBuildStatus({
@@ -1160,7 +1238,21 @@ export async function getProjectRootfsBuildStatus({
     project_id,
     build_id,
   });
-  return { ...status, host_id };
+  const existing = await getProjectRootfsBuildRecord({
+    project_id,
+    build_id,
+  });
+  const record = await upsertProjectRootfsBuildStatus({
+    account_id: existing?.account_id ?? account_id,
+    host_id,
+    op_id: existing?.op_id,
+    status,
+  });
+  await syncProjectRootfsBuildLro({
+    op_id: record.op_id,
+    status,
+  });
+  return { ...status, host_id, op_id: record.op_id };
 }
 
 export async function getProjectRootfsBuildLog({
@@ -1186,6 +1278,15 @@ export async function getProjectRootfsBuildLog({
   return { ...log, host_id };
 }
 
+export async function listProjectRootfsBuilds({
+  account_id,
+  project_id,
+  limit,
+}: ProjectRootfsBuildListRequest): Promise<ProjectRootfsBuildRecord[]> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  return await listProjectRootfsBuildRecords({ project_id, limit });
+}
+
 export async function cancelProjectRootfsBuild({
   account_id,
   project_id,
@@ -1200,7 +1301,37 @@ export async function cancelProjectRootfsBuild({
     project_id,
     build_id,
   });
-  return { ...cancel, host_id };
+  let op_id = (
+    await getProjectRootfsBuildRecord({
+      project_id,
+      build_id,
+    })
+  )?.op_id;
+  try {
+    const status = await client.getRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    const record = await upsertProjectRootfsBuildStatus({
+      account_id,
+      host_id,
+      op_id,
+      status,
+    });
+    op_id = record.op_id;
+    await syncProjectRootfsBuildLro({
+      op_id,
+      status,
+    });
+  } catch (err) {
+    log.warn("failed to refresh rootfs build status after cancel", {
+      project_id,
+      build_id,
+      host_id,
+      err,
+    });
+  }
+  return { ...cancel, host_id, op_id };
 }
 
 export async function setProjectEnv({
