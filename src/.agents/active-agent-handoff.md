@@ -46,6 +46,34 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop queue gate (2026-06-22 18:06 PDT)
+
+- **START 2026-06-22 18:06 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, public-site skill, multi-agent operating
+  model, landing-page issues tracker, the current feature-page consistency and
+  design-polish slice docs, and this ledger. Verified local HEAD and
+  `origin/blaec-synthesis-2026-06-18` both at `137cc011b4`; only newer shared
+  files since the 18:03 render prep are the existing coordination status/logs,
+  not a fresh Claude audit, fresh vision critique, or promoted source queue
+  item. Preview ownership remains correct: hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`. Claimed files: this ledger and shared
+  coordination status/logs only. Guardrails: no protected home,
+  pricing/compliance, type/palette work, pitch/docs content, route source
+  edits, raw-audit foraging, preview rebuild/restart, or the untracked
+  `dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 18:06 PDT:** QUEUE DRAINED / PREVIEW OWNER VERIFIED. No
+  public-site route source was changed and no build/browser QA was run because
+  no rendered route was touched. The current branch HEAD remains `137cc011b4`
+  and the latest public-site source-change commit remains `22a6c015f1`. The
+  known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude's fresh vision design critique against
+  `/tmp/cocalc-public-qa-CJKOCP` or another curated queue item before any
+  further Codex route edits.
+
 ### Codex - regenerate feature-page vision-critique renders (2026-06-22 18:03 PDT)
 
 - **START 2026-06-22 18:02 PDT:** User relayed Claude's request to verify
