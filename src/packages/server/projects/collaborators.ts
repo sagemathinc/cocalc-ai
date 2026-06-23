@@ -3345,7 +3345,6 @@ export async function redeemEmailProjectInvite({
   invite_id,
   token,
   project_id,
-  trustedProductAccessChecked,
 }: {
   account_id?: string;
   invite_id: string;
@@ -3357,12 +3356,6 @@ export async function redeemEmailProjectInvite({
     throw new Error("user must be signed in");
   }
   ensureUuid(invite_id, "invite_id");
-  if (!trustedProductAccessChecked) {
-    await assertAccountTrustedForProductAccess(
-      account_id,
-      "accept collaboration invites",
-    );
-  }
   const pool = getPool();
   const invite = await getPendingEmailCollabInviteForToken({
     invite_id,
