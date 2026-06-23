@@ -343,6 +343,30 @@ function policyUrls(publicConfig?: PublicConfig) {
   };
 }
 
+function PolicyActionNotice({
+  action,
+  privacyUrl,
+  termsUrl,
+}: {
+  action: string;
+  privacyUrl: string;
+  termsUrl: string;
+}) {
+  return (
+    <div style={TERMS_NOTICE_STYLE}>
+      By {action}, you agree to CoCalc&apos;s{" "}
+      <a href={termsUrl} target="_blank" rel="noreferrer">
+        Terms of Service
+      </a>{" "}
+      and acknowledge the{" "}
+      <a href={privacyUrl} target="_blank" rel="noreferrer">
+        Privacy Policy
+      </a>
+      .
+    </div>
+  );
+}
+
 export function defaultAuthRedirectPath(): string {
   return appUrl("projects");
 }
@@ -472,7 +496,6 @@ export function PublicSignInForm({
   const [factorMethod, setFactorMethod] = useState<SecondFactorMethod>("totp");
   const [factorCode, setFactorCode] = useState("");
   const [mfaOrigin, setMfaOrigin] = useState<string | undefined>();
-  const [acceptedSsoTerms, setAcceptedSsoTerms] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [checkingSignInMethod, setCheckingSignInMethod] = useState(false);
   const [signInMethod, setSignInMethod] = useState<SignInMethod>();
@@ -489,7 +512,6 @@ export function PublicSignInForm({
     !challengeId && signInMethod?.sso_required
       ? signInMethod.sso_strategy
       : undefined;
-  const acceptedRequiredSsoTerms = !policiesVisible || acceptedSsoTerms;
 
   useEffect(() => {
     setChallengeId(initialChallengeId ?? "");
@@ -683,50 +705,27 @@ export function PublicSignInForm({
                 Continue with {ssoStrategy.display} instead of using a password.
               </div>
               {policiesVisible ? (
-                <label style={{ ...CHECKBOX_ROW_STYLE, marginBottom: "12px" }}>
-                  <input
-                    checked={acceptedSsoTerms}
-                    type="checkbox"
-                    onChange={(e) =>
-                      setAcceptedSsoTerms(e.currentTarget.checked)
-                    }
+                <div style={{ marginBottom: "12px" }}>
+                  <PolicyActionNotice
+                    action={`continuing with ${ssoStrategy.display}`}
+                    privacyUrl={privacyUrl}
+                    termsUrl={termsUrl}
                   />
-                  <span>
-                    I accept the{" "}
-                    <a href={termsUrl} target="_blank" rel="noreferrer">
-                      Terms of Service
-                    </a>{" "}
-                    and{" "}
-                    <a href={privacyUrl} target="_blank" rel="noreferrer">
-                      Privacy Policy
-                    </a>
-                    .
-                  </span>
-                </label>
+                </div>
               ) : null}
               <a
-                href={ssoLoginHref(
-                  ssoStrategy.name,
-                  acceptedRequiredSsoTerms
-                    ? {
-                        target: resolveAuthRedirectPath(redirectToPath),
-                        terms: policiesVisible ? acceptedSsoTerms : true,
-                      }
-                    : undefined,
-                )}
+                href={ssoLoginHref(ssoStrategy.name, {
+                  target: resolveAuthRedirectPath(redirectToPath),
+                  terms: policiesVisible ? true : undefined,
+                })}
                 style={{
                   ...BUTTON_STYLE,
-                  opacity: acceptedRequiredSsoTerms ? 1 : 0.65,
                   display: "block",
                   textAlign: "center",
                   textDecoration: "none",
                 }}
-                aria-disabled={!acceptedRequiredSsoTerms}
+                aria-disabled="false"
                 onClick={(event) => {
-                  if (!acceptedRequiredSsoTerms) {
-                    event.preventDefault();
-                    return;
-                  }
                   if (
                     cookieBannerEnabled &&
                     !cookieConsentReady &&
@@ -736,7 +735,8 @@ export function PublicSignInForm({
                   }
                 }}
               >
-                Continue with {ssoStrategy.display}
+                {policiesVisible ? "Agree and continue" : "Continue"} with{" "}
+                {ssoStrategy.display}
               </a>
             </Alert>
           )}
@@ -943,7 +943,6 @@ export function PublicSignUpForm({
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [signingUp, setSigningUp] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
@@ -1029,19 +1028,14 @@ export function PublicSignUpForm({
     if (requiresToken && !registrationToken.trim()) {
       return false;
     }
-    if (policiesVisible && !acceptedTerms) {
-      return false;
-    }
     return cookieConsentReady && !signingUp;
   }, [
-    acceptedTerms,
     confirmPassword,
     cookieConsentReady,
     displayName,
     email,
     emailAllowedByDomainPolicy,
     password,
-    policiesVisible,
     registrationToken,
     requiresToken,
     signingUp,
@@ -1065,7 +1059,7 @@ export function PublicSignUpForm({
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
-          terms: policiesVisible ? acceptedTerms : true,
+          terms: true,
           marketing_consent: marketingConsent,
           email,
           password,
@@ -1113,7 +1107,6 @@ export function PublicSignUpForm({
     googleStrategy != null &&
     (requiresToken === false ||
       (requiresToken === true && !!registrationToken.trim())) &&
-    (!policiesVisible || acceptedTerms) &&
     cookieConsentReady;
 
   return (
@@ -1153,54 +1146,39 @@ export function PublicSignUpForm({
           />
         </div>
       )}
-      {policiesVisible ? (
-        <>
-          <label style={CHECKBOX_ROW_STYLE}>
-            <input
-              checked={acceptedTerms}
-              type="checkbox"
-              onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
-            />
-            <span>
-              I accept the{" "}
-              <a href={termsUrl} target="_blank" rel="noreferrer">
-                Terms of Service
-              </a>{" "}
-              and{" "}
-              <a href={privacyUrl} target="_blank" rel="noreferrer">
-                Privacy Policy
-              </a>
-              .
-            </span>
-          </label>
-          {issues.terms && <div style={TERMS_NOTICE_STYLE}>{issues.terms}</div>}
-        </>
-      ) : null}
-      <label style={CHECKBOX_ROW_STYLE}>
-        <input
-          checked={marketingConsent}
-          type="checkbox"
-          onChange={(e) => setMarketingConsent(e.currentTarget.checked)}
-        />
-        <span>
-          Send me occasional platform tips, onboarding help, and product
-          updates. You can change this later in Account Preferences.
-        </span>
-      </label>
       {googleStrategy != null ? (
         <>
+          {policiesVisible ? (
+            <PolicyActionNotice
+              action={`continuing with ${googleStrategy.display}`}
+              privacyUrl={privacyUrl}
+              termsUrl={termsUrl}
+            />
+          ) : null}
+          <label style={CHECKBOX_ROW_STYLE}>
+            <input
+              checked={marketingConsent}
+              type="checkbox"
+              onChange={(e) => setMarketingConsent(e.currentTarget.checked)}
+            />
+            <span>
+              Send me occasional platform tips, onboarding help, and product
+              updates. You can change this later in Account Preferences.
+            </span>
+          </label>
           <SsoButton
             disabled={!canGoogleSignUp}
             cookieBannerEnabled={cookieBannerEnabled}
             cookieConsentReady={cookieConsentReady}
             href={ssoLoginHref("google", {
               target: resolveAuthRedirectPath(redirectToPath),
-              terms: policiesVisible ? acceptedTerms : true,
+              terms: policiesVisible ? true : undefined,
               marketing_consent: marketingConsent,
               registration_token: registrationToken.trim(),
             })}
           >
-            Sign up with {googleStrategy.display}
+            {policiesVisible ? "Agree and sign up" : "Sign up"} with{" "}
+            {googleStrategy.display}
           </SsoButton>
           <AuthDivider>or create an account with email</AuthDivider>
         </>
@@ -1274,12 +1252,37 @@ export function PublicSignUpForm({
           onPressEnter={signUp}
         />
       </div>
+      {policiesVisible ? (
+        <>
+          <PolicyActionNotice
+            action="creating an account"
+            privacyUrl={privacyUrl}
+            termsUrl={termsUrl}
+          />
+          {issues.terms && <div style={TERMS_NOTICE_STYLE}>{issues.terms}</div>}
+        </>
+      ) : null}
+      {googleStrategy == null ? (
+        <label style={CHECKBOX_ROW_STYLE}>
+          <input
+            checked={marketingConsent}
+            type="checkbox"
+            onChange={(e) => setMarketingConsent(e.currentTarget.checked)}
+          />
+          <span>
+            Send me occasional platform tips, onboarding help, and product
+            updates. You can change this later in Account Preferences.
+          </span>
+        </label>
+      ) : null}
       <ActionButton disabled={!canSubmit} onClick={signUp}>
         {signingUp
           ? "Creating account..."
           : !cookieConsentReady
             ? "Acknowledge cookie banner to continue"
-            : "Create account"}
+            : policiesVisible
+              ? "Agree and create account"
+              : "Create account"}
       </ActionButton>
       <div style={{ textAlign: "center" }}>
         Already have an account?{" "}

@@ -45,18 +45,16 @@ beforeEach(() => {
 });
 
 describe("SignUpFormBase", () => {
-  it("requires explicit Terms of Service and Privacy Policy acceptance", () => {
+  it("shows Terms of Service and Privacy Policy notice near account creation", () => {
     render(
       <SignUpFormBase initialRequiresToken={false} onNavigate={jest.fn()} />,
     );
 
     expect(
-      (
-        screen.getByRole("checkbox", {
-          name: /I accept the Terms of Service and Privacy Policy/,
-        }) as HTMLInputElement
-      ).checked,
-    ).toBe(false);
+      screen.queryByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    ).toBeNull();
     expect(
       screen
         .getByRole("link", { name: "Terms of Service" })
@@ -67,11 +65,9 @@ describe("SignUpFormBase", () => {
     ).toBe("/policies/privacy");
     expect(
       screen
-        .getByRole("checkbox", {
-          name: /I accept the Terms of Service and Privacy Policy/,
-        })
+        .getByText(/By creating an account, you agree/)
         .compareDocumentPosition(
-          screen.getByPlaceholderText("you@example.com"),
+          screen.getByRole("button", { name: "Agree and create account" }),
         ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
@@ -102,11 +98,8 @@ describe("SignUpFormBase", () => {
       target: { value: "New User" },
     });
     fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /I accept the Terms of Service and Privacy Policy/,
-      }),
+      screen.getByRole("button", { name: "Agree and create account" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
       await screen.findByText(
@@ -135,15 +128,12 @@ describe("SignUpFormBase", () => {
     });
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: /I accept the Terms of Service and Privacy Policy/,
-      }),
-    );
-    fireEvent.click(
-      screen.getByRole("checkbox", {
         name: /Send me occasional platform tips/,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Agree and create account" }),
+    );
 
     expect(mockedPostAuthApi).toHaveBeenCalledWith(
       expect.objectContaining({

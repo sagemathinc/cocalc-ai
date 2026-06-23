@@ -352,7 +352,7 @@ describe("PublicAuthApp", () => {
     ).not.toBeDisabled();
   });
 
-  it("requires explicit Terms of Service and Privacy Policy acceptance on sign-up", async () => {
+  it("shows Terms of Service and Privacy Policy notice on sign-up", async () => {
     mockedApi.mockResolvedValueOnce(false);
 
     render(
@@ -372,15 +372,16 @@ describe("PublicAuthApp", () => {
       screen.getByRole("link", { name: "Privacy Policy" }),
     ).toHaveAttribute("href", "https://example.com/terms");
     expect(
-      (
-        screen.getByRole("checkbox", {
-          name: /I accept the Terms of Service and Privacy Policy/,
-        }) as HTMLInputElement
-      ).checked,
-    ).toBe(false);
+      screen.queryByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    ).toBeNull();
+    expect(
+      screen.getByText(/By creating an account, you agree/),
+    ).not.toBeNull();
   });
 
-  it("shows policy acceptance before Google sign-up", async () => {
+  it("shows policy notice before Google sign-up without disabling SSO", async () => {
     mockedApi.mockResolvedValueOnce(false);
 
     render(
@@ -393,17 +394,15 @@ describe("PublicAuthApp", () => {
       />,
     );
 
-    const termsCheckbox = await screen.findByRole("checkbox", {
-      name: /I accept the Terms of Service and Privacy Policy/,
-    });
+    const notice = await screen.findByText(/By continuing with Google/);
     const googleLink = screen.getByRole("link", {
-      name: "Sign up with Google",
+      name: "Agree and sign up with Google",
     });
     expect(
-      termsCheckbox.compareDocumentPosition(googleLink) &
+      notice.compareDocumentPosition(googleLink) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(googleLink).toHaveAttribute("aria-disabled", "true");
+    expect(googleLink).toHaveAttribute("aria-disabled", "false");
   });
 
   it("does not require Terms of Service acceptance when policies are not configured", async () => {
@@ -589,19 +588,21 @@ describe("PublicAuthApp", () => {
     expect(
       await screen.findByText("This email domain uses single sign-on."),
     ).not.toBeNull();
+    expect(screen.getByText(/By continuing with Cornell SSO/)).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Continue with Cornell SSO" }),
-    ).toHaveProperty("href", "http://localhost/auth/cornell");
+      screen.queryByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    ).toBeNull();
     expect(
-      (
-        screen.getByRole("checkbox", {
-          name: /I accept the Terms of Service and Privacy Policy/,
-        }) as HTMLInputElement
-      ).checked,
-    ).toBe(false);
+      screen.getByRole("link", { name: "Agree and continue with Cornell SSO" }),
+    ).toHaveProperty("href", expect.stringContaining("/auth/cornell"));
     expect(
-      screen.getByRole("link", { name: "Continue with Cornell SSO" }),
-    ).toHaveAttribute("aria-disabled", "true");
+      screen.getByRole("link", { name: "Agree and continue with Cornell SSO" }),
+    ).toHaveProperty("href", expect.stringContaining("terms=1"));
+    expect(
+      screen.getByRole("link", { name: "Agree and continue with Cornell SSO" }),
+    ).toHaveAttribute("aria-disabled", "false");
     expect(screen.getByRole("button", { name: "Sign In" })).toHaveProperty(
       "disabled",
       true,
