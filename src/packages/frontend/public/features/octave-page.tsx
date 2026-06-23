@@ -5,6 +5,7 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
+import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   PUBLIC_ELEVATION,
@@ -13,26 +14,22 @@ import {
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
+import { FEATURE_ACCENTS } from "./feature-accents";
 import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
-const OCTAVE_SECTION_TITLE_STYLE = {
-  fontSize: PUBLIC_TYPE.subhead,
-  lineHeight: 1.25,
-  margin: 0,
-} as const;
-
 function OctaveProjectMock() {
   const projectItems = [
-    ["solver.m", "source file"],
-    ["analysis.ipynb", "interactive notebook"],
-    ["terminal run", "plots and output"],
-  ] as const;
+    ["file-code", "solver.m", "source file"],
+    ["jupyter", "analysis.ipynb", "interactive notebook"],
+    ["terminal", "terminal run", "plots and output"],
+  ] satisfies [IconName, string, string][];
 
   return (
     <div
       aria-label="Illustration of Octave scripts, notebooks, and terminal workflows in CoCalc"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #fff7f1 52%, #f4f9ff 100%)",
@@ -45,7 +42,7 @@ function OctaveProjectMock() {
       <Flex vertical gap={16}>
         <Flex align="center" justify="space-between" wrap gap={10}>
           <Flex align="center" gap={10}>
-            <IconBadge accent="#d4380d" icon="octave" />
+            <IconBadge accent={FEATURE_ACCENTS.octave} icon="octave" />
             <div>
               <Text strong>Octave project</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
@@ -57,7 +54,7 @@ function OctaveProjectMock() {
         </Flex>
 
         <Flex wrap gap={10}>
-          {projectItems.map(([title, body]) => (
+          {projectItems.map(([icon, title, body]) => (
             <div
               key={title}
               style={{
@@ -68,8 +65,17 @@ function OctaveProjectMock() {
                 padding: "10px 12px",
               }}
             >
-              <Text strong>{title}</Text>
-              <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
+              <Flex align="center" gap={10}>
+                <IconBadge
+                  accent={FEATURE_ACCENTS.octave}
+                  icon={icon}
+                  size="sm"
+                />
+                <div>
+                  <Text strong>{title}</Text>
+                  <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
+                </div>
+              </Flex>
             </div>
           ))}
         </Flex>
@@ -84,7 +90,7 @@ function OctaveFlow() {
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
-            <Title level={3} style={OCTAVE_SECTION_TITLE_STYLE}>
+            <Title level={3} style={{ margin: 0 }}>
               Run reproducible Octave work without local setup drift.
             </Title>
             <Paragraph style={{ margin: 0 }}>
@@ -96,7 +102,7 @@ function OctaveFlow() {
         </Col>
         <Col xs={24} lg={12}>
           <ContextList
-            accent="#d4380d"
+            accent={FEATURE_ACCENTS.octave}
             items={[
               {
                 icon: "users",

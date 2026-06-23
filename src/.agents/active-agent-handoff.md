@@ -46,6 +46,56 @@ Known risks:
 
 ---
 
+### Codex - P3 feature-page polish batch (2026-06-22 22:06 PDT)
+
+- **START 2026-06-22 22:06 PDT:** Continuing the scheduled landing-page
+  improvement loop with adversarial-fix item 20 P3 polish. Worktree verified as
+  `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`; preview
+  hub pid `27431` is rooted at `/home/user/cocalc-ai-synthesis/src`. Current
+  head `e8cac84914`; known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft
+  remains untouched. Claimed routes/files: `/features/julia`,
+  `/features/octave`, `/features/more-languages`, `/features/cli`,
+  `/features/whiteboard`, `/features/slides`,
+  `src/packages/frontend/public/features/julia-page.tsx`,
+  `src/packages/frontend/public/features/octave-page.tsx`,
+  `src/packages/frontend/public/features/more-languages-page.tsx`,
+  `src/packages/frontend/public/features/cli-page.tsx`,
+  `src/packages/frontend/public/features/whiteboard-page.tsx`,
+  `src/packages/frontend/public/features/slides-page.tsx`,
+  `src/packages/frontend/public/features/feature-accents.ts`,
+  focused feature/browser-QA guards if needed,
+  `src/.agents/public-site-framing-workplan-2026-06-20.md`, this ledger, and
+  shared coordination logs if the slice completes. Scope: item 20 only —
+  delete Julia hero's extra paragraph, align Octave hero cards/accent/a11y,
+  simplify More Languages hero/taxonomy visual, tighten CLI repetition and
+  jargon, and remove the whiteboard/slides copy nits. Do not touch protected
+  home, pricing/compliance, pitch/docs content, type/palette 2e, raw audit
+  findings outside this promoted item, LaTeX/dedicated-compute, or the
+  dedicated-compute draft.
+- **END 2026-06-22 22:13 PDT:** Item 20 P3 source edit complete. Julia hero
+  now uses title + one lead paragraph; Octave hero cards use `IconBadge`, the
+  page uses `FEATURE_ACCENTS.octave`, the hero mock has `role="img"`, and the
+  route-owned heading-size override is gone per the newer P3 spec; More
+  Languages now leads with "Run more languages in one shared project," drops
+  the inner-card nested shadow, and avoids repeating the language taxonomy;
+  CLI copy reduces the inspect/run/return repetition, uses "documented
+  command" once on the detail page, and replaces "Run bounded actions" with
+  "Run notebook and browser checks"; Whiteboard and Slides copy nits were
+  trimmed. Updated focused feature/browser-QA canaries and the workplan entry.
+  Validation passed: Prettier on touched files; focused Jest
+  `pnpm exec jest public/features/__tests__/app.test.tsx
+  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+  `src/packages/frontend` (140/140, existing React/AntD `act(...)` warnings);
+  `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff --check`; static
+  `build:dev` with the existing local debug-log permission warning; and browser
+  QA for `/features/julia`, `/features/octave`, `/features/more-languages`,
+  `/features/cli`, `/features/whiteboard`, and `/features/slides`
+  desktop+mobile passed 278/278 at `/tmp/cocalc-public-qa-ykW3rg`.
+  Desktop/mobile screenshots for all six routes were inspected; no overlap or
+  obvious layout regression. Next: commit, rebuild so the static bundle embeds
+  the new commit, rerun focused browser QA, then push/update shared logs.
+
 ### Codex - FeatureFinalBand balance v2 (2026-06-22 21:53 PDT)
 
 - **START 2026-06-22 21:53 PDT:** Continuing the scheduled landing-page
@@ -72,13 +122,13 @@ Known risks:
   final panel's full-height/full-width style. Validation passed: Prettier on
   touched source/test files; focused Jest
   `pnpm exec jest public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
   `src/packages/frontend` (140/140, existing React/AntD `act(...)` warnings);
   `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff --check`; static
   `build:dev` with the existing local debug-log permission warning; and full
   feature-details browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --group
-  feature-details --viewport desktop --viewport mobile` passed 758/758 at
+feature-details --viewport desktop --viewport mobile` passed 758/758 at
   `/tmp/cocalc-public-qa-AcFDHr`. Representative desktop/mobile screenshots
   inspected for Julia, Sage, AI, and Teaching; no overlap or obvious layout
   regression. Next: commit, rebuild so the static bundle embeds the new commit,
@@ -87,10 +137,10 @@ Known risks:
   `cf70336534` (`frontend/public: stretch feature final CTA panels`) created.
   Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
   `COCALC_GIT_REVISION =
-  cf70336534a0f1c78fc3c89bec60724ffce915ca`. Post-commit full feature-details
+cf70336534a0f1c78fc3c89bec60724ffce915ca`. Post-commit full feature-details
   browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --group
-  feature-details --viewport desktop --viewport mobile` passed 758/758 at
+feature-details --viewport desktop --viewport mobile` passed 758/758 at
   `/tmp/cocalc-public-qa-XmIXK2`. Representative desktop/mobile screenshots
   inspected for Julia, Sage, AI, and Teaching; no overlap or obvious layout
   regression. Next: push branch and update shared status logs.
@@ -127,12 +177,12 @@ Known risks:
   the audited-page heading guard narrowed to that explicit AI exception.
   Validation passed: Prettier on touched source/test files; focused Jest
   `pnpm exec jest public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
   `src/packages/frontend` (140/140, existing React/AntD `act(...)` warnings);
   `pnpm -C src tsc`; `pnpm -C src lint:frontend`; `git diff --check`; static
   `build:dev` with the existing local debug-log permission warning; and browser
   QA `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/ai --viewport desktop --viewport mobile` passed 48/48 at
+/features/ai --viewport desktop --viewport mobile` passed 48/48 at
   `/tmp/cocalc-public-qa-JiEgn4`. Desktop/mobile screenshots inspected; no
   overlap or obvious layout regression. Next: commit, rebuild so the static
   bundle embeds the new commit, rerun AI browser QA, then push/update handoff
@@ -141,9 +191,9 @@ Known risks:
   `94f47b7599` (`frontend/public: move AI close to final band`) created.
   Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
   `COCALC_GIT_REVISION =
-  94f47b7599fe9d7b11ebefad38a7639a23e17109`. Post-commit browser QA
+94f47b7599fe9d7b11ebefad38a7639a23e17109`. Post-commit browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/ai --viewport desktop --viewport mobile` passed 48/48 at
+/features/ai --viewport desktop --viewport mobile` passed 48/48 at
   `/tmp/cocalc-public-qa-Bvhtf1`. Desktop/mobile screenshots inspected; no
   overlap or obvious layout regression. Next: push branch and update shared
   status logs.
@@ -179,13 +229,13 @@ Known risks:
   set and the old final-plan/CTA wording does not return. Validation passed:
   Prettier on touched files; `pnpm -C src tsc`; focused Jest
   `pnpm exec jest public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand` from
   `src/packages/frontend` (136/136, existing React/AntD `act(...)` warnings);
   `pnpm -C src lint:frontend`; `git diff --check`; `pnpm --dir
-  src/packages/static build:dev` with the existing local debug-log permission
+src/packages/static build:dev` with the existing local debug-log permission
   warning; and browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/teaching --viewport desktop --viewport mobile` passed 56/56 at
+/features/teaching --viewport desktop --viewport mobile` passed 56/56 at
   `/tmp/cocalc-public-qa-lrBwx6`. Desktop/mobile screenshots inspected; no
   overlap or obvious visual regression. Next: commit, rebuild so the static
   bundle embeds the new commit, rerun teaching browser QA, then push/update
@@ -194,9 +244,9 @@ Known risks:
   `a34ea86b8d` (`frontend/public: move teaching close to final band`) created.
   Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
   `COCALC_GIT_REVISION =
-  a34ea86b8dd88f909d81d6df34f738290539f9b4`. Post-commit browser QA
+a34ea86b8dd88f909d81d6df34f738290539f9b4`. Post-commit browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/teaching --viewport desktop --viewport mobile` passed 56/56 at
+/features/teaching --viewport desktop --viewport mobile` passed 56/56 at
   `/tmp/cocalc-public-qa-6BkXPW`. Desktop/mobile screenshots inspected; no
   overlap or obvious layout regression. Next: push branch and update shared
   status logs.
@@ -226,11 +276,11 @@ Known risks:
   workflow proof. Added Jest and browser-QA guards so the removed panel copy
   does not return. Validation: Prettier on touched files, `pnpm -C src tsc`,
   focused Jest `pnpm exec jest public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
   existing React/AntD `act(...)` warnings), `pnpm -C src lint:frontend`,
   `git diff --check`, `pnpm --dir src/packages/static build:dev`, and browser
   QA `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/python --viewport desktop --viewport mobile` (44/44) passed.
+/features/python --viewport desktop --viewport mobile` (44/44) passed.
   Desktop/mobile screenshots inspected at `/tmp/cocalc-public-qa-osUiUD`; no
   overlap or obvious visual regression. Next: commit, rebuild so the static
   bundle embeds the new commit, rerun Python browser QA, then push.
@@ -238,9 +288,9 @@ Known risks:
   `1809d5ef78` (`frontend/public: remove redundant Python workflow panel`)
   created. Post-commit `pnpm --dir src/packages/static build:dev` passed and
   embedded `COCALC_GIT_REVISION =
-  1809d5ef78cf0870b1f14a7c9db912e8107523fc`. Post-commit browser QA
+1809d5ef78cf0870b1f14a7c9db912e8107523fc`. Post-commit browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/python --viewport desktop --viewport mobile` passed 44/44 at
+/features/python --viewport desktop --viewport mobile` passed 44/44 at
   `/tmp/cocalc-public-qa-RaJ2qz`. Desktop/mobile screenshots inspected; no
   overlap or obvious layout regression. Next: push branch and update shared
   status logs.
@@ -266,11 +316,11 @@ Known risks:
   visual. Added canaries so `sage: factor` / `sage: plot` prompt text does not
   return. Validation: Prettier on touched files, `pnpm -C src tsc`, focused Jest
   `pnpm exec jest public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
   existing React/AntD `act(...)` warnings), `pnpm -C src lint:frontend`,
   `git diff --check`, `pnpm --dir src/packages/static build:dev`, and browser
   QA `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/sage --viewport desktop --viewport mobile` (44/44) passed.
+/features/sage --viewport desktop --viewport mobile` (44/44) passed.
   Desktop/mobile screenshots inspected at `/tmp/cocalc-public-qa-mFXigR`; no
   overlap or obvious visual regression. Next: commit, rebuild so the static
   bundle embeds the Sage commit, rerun Sage browser QA, then push.
@@ -278,9 +328,9 @@ Known risks:
   `4457a9dfcb` (`frontend/public: remove redundant Sage hero terminal`)
   created. Post-commit `pnpm --dir src/packages/static build:dev` passed and
   embedded `COCALC_GIT_REVISION =
-  4457a9dfcb153658de45c7b6332dfa568fc51ee2`. Post-commit browser QA
+4457a9dfcb153658de45c7b6332dfa568fc51ee2`. Post-commit browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/sage --viewport desktop --viewport mobile` passed 44/44 at
+/features/sage --viewport desktop --viewport mobile` passed 44/44 at
   `/tmp/cocalc-public-qa-f7V3Fh`. Next: push branch and update shared status
   logs.
 
@@ -311,14 +361,14 @@ Known risks:
   first CTA order. Guardrail fixes kept the route at its inline-style budget
   and avoided leaking `cocalc-ai-*` selectors into rendered style text.
   Validation: `pnpm -C src prettier --write
-  packages/frontend/public/features/ai-page.tsx` (unchanged after final pass),
+packages/frontend/public/features/ai-page.tsx` (unchanged after final pass),
   `pnpm -C src tsc`, focused Jest
   `pnpm exec jest public/features/__tests__/app.test.tsx
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand` (134/134,
   existing React/AntD `act(...)` warnings), `pnpm -C src lint:frontend`,
   `pnpm --dir src/packages/static build:dev`, and browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/ai --viewport desktop --viewport mobile` (46/46) passed. Screenshot
+/features/ai --viewport desktop --viewport mobile` (46/46) passed. Screenshot
   artifact inspected at `/tmp/cocalc-public-qa-Mn0ri5`. Next: commit, rebuild so
   the static bundle embeds the new commit, rerun AI browser QA, then push.
 - **POST-COMMIT 2026-06-22 20:41 PDT:** Source/ledger commit
@@ -327,7 +377,7 @@ Known risks:
   `COCALC_GIT_REVISION = f12451b753961ecec14df99e00641bb034ce47ef`.
   Post-commit browser QA
   `node packages/frontend/scripts/public-site-browser-qa.mjs --route
-  /features/ai --viewport desktop --viewport mobile` passed 46/46 at
+/features/ai --viewport desktop --viewport mobile` passed 46/46 at
   `/tmp/cocalc-public-qa-iMKcfO`. Desktop/mobile screenshots inspected; no
   overlap or obvious layout regression. Next: push branch and update shared
   status logs.
@@ -357,7 +407,7 @@ Known risks:
   slot. Added browser-QA guards for the new language and old-phrase bans.
   Validation passed: `pnpm -C src tsc`; focused feature/browser-QA-script Jest
   134/134 with existing Ant Design React `act(...)` warnings; `pnpm -C src
-  lint:frontend`; `pnpm --dir src/packages/static build:dev`; and browser QA
+lint:frontend`; `pnpm --dir src/packages/static build:dev`; and browser QA
   for `/features/octave`, `/features/julia`, and
   `/features/r-statistical-software` desktop+mobile 126/126 with screenshots
   in `/tmp/cocalc-public-qa-g0bUjW`. Screenshots inspected clean. Protected
@@ -390,7 +440,7 @@ Known risks:
   "open-source Python library" wording is now test- and browser-QA-forbidden.
   Validation passed: `pnpm -C src tsc`; focused feature/browser-QA-script Jest
   134/134 with existing Ant Design React `act(...)` warnings; `pnpm -C src
-  lint:frontend`; `pnpm --dir src/packages/static build:dev`; and browser QA
+lint:frontend`; `pnpm --dir src/packages/static build:dev`; and browser QA
   for `/features/sage` desktop+mobile 40/40 with screenshots in
   `/tmp/cocalc-public-qa-bR36pd`. Screenshots inspected clean. Protected home,
   pricing/compliance, type/palette, pitch/docs content, unpromoted raw audit
@@ -470,7 +520,7 @@ Known risks:
   the post-polish vision critique. Verified preview hub pid `27431` is already
   rooted at `/home/user/cocalc-ai-synthesis/src`; no restart or rebuild needed.
   Current source HEAD is `22a6c015f1` (`frontend/public: give Linux page middle
-  sections room`). Claimed files: this ledger and shared coordination
+sections room`). Claimed files: this ledger and shared coordination
   status/logs only. Routes/render targets: `/features/julia`,
   `/features/octave`, `/features/r-statistical-software`, `/features/sage`,
   `/features/more-languages`, `/features/python`, `/features/terminal`,
@@ -556,7 +606,7 @@ Known risks:
   `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18` at
   `a5fa00af2a`. Synthesis daemon config is present and points
   `HUB_CMD` at `DATA_BASE=/home/user/cocalc-ai/src/data/app
-  ./packages/hub/bin/start.sh postgres`, so starting it from synthesis should
+./packages/hub/bin/start.sh postgres`, so starting it from synthesis should
   reuse the existing preview database while serving synthesis source. Claimed
   preview ownership for this turn; no public-route source edits planned. Do
   not touch protected home, pricing/compliance, type/palette, pitch/docs
@@ -1221,7 +1271,7 @@ Known risks:
   tokens, and its raw-hex allowlist entry was removed because no raw route
   colors remain. Validation passed: Prettier on touched files; focused
   feature/browser-QA harness Jest 134/134; `git diff --check`; `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
+lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
   `1cb96b354d` with only the existing local debug-log permission warning;
   browser QA desktop+mobile for `/features/sage` and `/features/automations`
   passed 78/78 at `/tmp/cocalc-public-qa-DvWPrx`. Screenshot inspection:
@@ -1252,7 +1302,7 @@ Known risks:
   allowlist entry was removed because no raw color literals remain. Validation
   passed: Prettier on touched files; focused feature/browser-QA harness Jest
   134/134; `git diff --check`; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev` from git revision `6527bc867a` with only the
+src/packages/static build:dev` from git revision `6527bc867a` with only the
   existing local debug-log permission warning; browser QA desktop+mobile for
   `/features/more-languages` passed 36/36 at
   `/tmp/cocalc-public-qa-VAoPQ0`. Screenshot inspection: stack cards are
@@ -1281,7 +1331,7 @@ Known risks:
   copy or proof. Added an Octave-specific canary for that hierarchy. Validation
   passed: Prettier on touched files; focused feature/browser-QA harness Jest
   134/134; `git diff --check`; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev` from git revision `7283d4fa67` with only the
+src/packages/static build:dev` from git revision `7283d4fa67` with only the
   existing local debug-log permission warning; browser QA desktop+mobile for
   `/features/octave` passed 38/38 at `/tmp/cocalc-public-qa-DXTbx2`.
   Screenshot inspection: hero headline now reads stronger than the first proof
@@ -1344,7 +1394,7 @@ Known risks:
   mocks. The slides raw-hex allowlist is tightened to the remaining route
   accent only. Validation passed: Prettier on touched files; focused
   feature/browser-QA harness Jest 133/133; `git diff --check`; `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
+lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
   `cee71ca3a7` with only the existing local debug-log permission warning;
   browser QA desktop+mobile for `/features/slides` passed 34/34 at
   `/tmp/cocalc-public-qa-RpX724`. Screenshot inspection: hero mock and deck
@@ -1380,7 +1430,7 @@ Known risks:
   template: one R project card plus a `Project context` checklist, so no R
   source edit was needed. Validation passed: Prettier on touched files;
   focused feature/browser-QA harness Jest 133/133; `git diff --check`; `pnpm
-  -C src lint:frontend`; `pnpm -C src/packages/static build:dev` from git
+-C src lint:frontend`; `pnpm -C src/packages/static build:dev` from git
   revision `6431a4eab6` with only the existing local debug-log permission
   warning; browser QA desktop+mobile for `/features/python` and
   `/features/r-statistical-software` passed 76/76 at
@@ -1412,7 +1462,7 @@ Known risks:
   `FeatureFinalBand`, asserting the final-band row stays middle-aligned and not
   top-aligned. Validation passed: Prettier on touched files; focused
   feature/browser-QA harness Jest 132/132; `git diff --check`; `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
+lint:frontend`; `pnpm -C src/packages/static build:dev` from git revision
   `b11e25473f` with only the existing local debug-log permission warning;
   browser QA desktop+mobile for `/features/julia`,
   `/features/r-statistical-software`, `/features/whiteboard`, and
@@ -1447,7 +1497,7 @@ Known risks:
   literals are banned. The one existing compare-table `font-size: 16px` literal
   was tokenized through `PUBLIC_TYPE.body`. Validation passed: Prettier on
   touched files; focused feature/browser-QA harness Jest 119/119; `git diff
-  --check`; `pnpm -C src lint:frontend`. No static rebuild/browser screenshot
+--check`; `pnpm -C src lint:frontend`. No static rebuild/browser screenshot
   was run because the only runtime source change preserves the same computed
   compare-page font size through an existing token. The known untracked
   `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
@@ -1552,7 +1602,7 @@ Known risks:
   and the "You decide what runs" boundary. Validation passed: Prettier on
   touched source/test/QA files; `git diff --check`; focused feature/browser-QA
   harness Jest 105/105; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev` before commit and again after commit from git
+src/packages/static build:dev` before commit and again after commit from git
   revision `d8df1f24c7` with the existing local debug-log permission warning
   only; browser QA for `/features/linux` desktop+mobile 46/46, final
   screenshots/results at `/tmp/cocalc-public-qa-glNoNR`. Screenshot inspection:
@@ -1646,7 +1696,7 @@ Known risks:
   cards, copy, CTAs, and layout unchanged. Validation passed: Prettier on
   `terminal-page.tsx`; `git diff --check`; focused feature Jest 100/100;
   browser-QA harness Jest 5/5; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev` with the existing local debug-log permission
+src/packages/static build:dev` with the existing local debug-log permission
   warning only; browser QA for `/features/terminal` desktop+mobile 48/48,
   screenshots/results at `/tmp/cocalc-public-qa-N0kiTO`. Screenshot inspection:
   desktop and mobile now show a clearer pause between the hero/context block and
@@ -1675,7 +1725,7 @@ Known risks:
   touched. The latest public-site source-change commit remains `0126856906`
   (`frontend/public: calm terminal feature page layout`), with the latest
   coordination commit before this run `c1b706cab8` (`agents: log held
-  landing-page scheduled run`). The known untracked
+landing-page scheduled run`). The known untracked
   `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
   still untouched. Waiting for Claude's terminal audit, a curated fix slice
   from the post-batch QA sweep, or for Blaec/Claude to release another bounded
@@ -1703,7 +1753,7 @@ Known risks:
   touched. The latest public-site source-change commit remains `0126856906`
   (`frontend/public: calm terminal feature page layout`), with the latest
   coordination commit before this run `feff000d92` (`agents: log drained
-  landing-page scheduled run`). The known untracked
+landing-page scheduled run`). The known untracked
   `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
   still untouched. Waiting for Claude's terminal audit, a curated fix slice
   from the post-batch QA sweep, or for Blaec/Claude to release another bounded
@@ -1736,7 +1786,7 @@ Known risks:
   The latest public-site source-change commit remains `0126856906`
   (`frontend/public: calm terminal feature page layout`), with the latest
   handoff commit `d2ad8d4154` (`agents: log terminal visual correction
-  handoff`) already matching origin before this ledger update. The known
+handoff`) already matching origin before this ledger update. The known
   untracked `src/packages/frontend/public/features/dedicated-compute-page.tsx`
   draft is still untouched. Waiting for Claude's terminal visual/source audit,
   a curated fix slice from the post-batch QA sweep, or Blaec/Claude to release
@@ -1789,7 +1839,7 @@ Known risks:
   package-level focused Jest passed 100/100 for
   `public/features/__tests__/app.test.tsx` (with existing React/antd jsdom
   act/getComputedStyle warnings); browser-QA harness Jest passed 5/5; `pnpm -C
-  src lint:frontend` passed; `pnpm -C src/packages/static build:dev` passed
+src lint:frontend` passed; `pnpm -C src/packages/static build:dev` passed
   before commit and again after source commit from git revision `0126856906`
   with the existing local debug-log permission warning only; final browser QA
   for `/features/terminal` desktop+mobile passed 48/48 with screenshots/results
@@ -2663,9 +2713,9 @@ Plus/Star/Launchpad`).
   (`cocalc browser files` and `cocalc project jupyter exec`), deleted the unsafe PNG asset, and
   added Jest/browser-QA guards that require the safe workflow while forbidding the leaked internal
   terms. Validation: `pnpm prettier:write -- packages/frontend/public/features/cli-page.tsx
-  packages/frontend/public/features/__tests__/app.test.tsx packages/frontend/scripts/public-site-browser-qa.mjs`;
+packages/frontend/public/features/__tests__/app.test.tsx packages/frontend/scripts/public-site-browser-qa.mjs`;
   `pnpm jest public/features/__tests__/app.test.tsx --runInBand`; `pnpm jest
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand`; `pnpm lint:frontend`;
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand`; `pnpm lint:frontend`;
   `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA for `/features/cli` and
   `/features` on desktop/mobile passed with 102 assertions and 0 failures, artifacts in
   `/tmp/cocalc-public-qa-DDGlvr`. Pre-existing untracked dedicated-compute draft untouched. No PR.
@@ -2684,9 +2734,9 @@ Plus/Star/Launchpad`).
   surface / run and report" copy with workspace-first review language, reduced the middle section
   to three compact proof cards, and bounded the agent-compatibility language to scripts and
   shell-capable agents per Claude's review. Validation: `pnpm prettier:write -- packages/frontend/public/features/cli-page.tsx
-  packages/frontend/public/features/__tests__/app.test.tsx packages/frontend/scripts/public-site-browser-qa.mjs`;
+packages/frontend/public/features/__tests__/app.test.tsx packages/frontend/scripts/public-site-browser-qa.mjs`;
   `pnpm jest public/features/__tests__/app.test.tsx --runInBand`; `pnpm jest
-  public/__tests__/public-site-browser-qa-script.test.ts --runInBand`; `pnpm lint:frontend`;
+public/__tests__/public-site-browser-qa-script.test.ts --runInBand`; `pnpm lint:frontend`;
   `git diff --check`; `pnpm -C src/packages/static build:dev`; browser QA for `/features/cli` and
   `/features` on desktop/mobile passed with 114 assertions and 0 failures, artifacts in
   `/tmp/cocalc-public-qa-RDVlKQ`. Desktop and mobile screenshots inspected. Dedicated-compute draft
@@ -2760,10 +2810,10 @@ Plus/Star/Launchpad`).
   background `5.86:1`, CLI step/accent text on white `9.89:1`, CLI step/accent text on light panel
   `9.07:1`, terminal output/command/chrome text on terminal background `14.67:1` / `14.37:1` /
   `12.05:1`. Validation: `pnpm --dir packages/frontend exec jest
-  public/features/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend exec
-  jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`;
+public/features/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend exec
+jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`;
   `pnpm lint:frontend`; `git diff --check`; `pnpm prettier:check --
-  ../docs/landing-page-framing-system.md ../docs/landing-page-framing-research-register.md`;
+../docs/landing-page-framing-system.md ../docs/landing-page-framing-research-register.md`;
   `pnpm -C src/packages/static build:dev`; browser QA for `/features`, `/features/cli`,
   `/features/api`, `/features/automations`, and `/features/terminal` on desktop/mobile passed with
   202 assertions and 0 failures, artifacts in `/tmp/cocalc-public-qa-lAP9x1`; post-commit preview
@@ -2793,8 +2843,8 @@ Plus/Star/Launchpad`).
   `Title level={4}` / `level={4}` in `src/packages/frontend/public/features`, and no direct
   `style={{ paddingInline: 0 }}` link buttons without the target-size floor. Validation:
   `pnpm prettier:write` on touched feature files; `pnpm --dir packages/frontend exec jest
-  public/features/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend exec
-  jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`;
+public/features/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend exec
+jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand --silent`;
   `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`; broad browser
   QA for 18 feature routes on desktop/mobile passed with 668 assertions and 0 failures, artifacts
   in `/tmp/cocalc-public-qa-zX4jcd`. Desktop/mobile screenshots for `/features`,
@@ -2824,10 +2874,10 @@ Plus/Star/Launchpad`).
   `12.43:1`, about social icons `13.92:1`. `axe-core` is not installed in this workspace, so the
   accessibility verification used source-level contrast checks, semantic Jest assertions, and
   browser QA. Validation: `pnpm prettier:write` on touched files; `pnpm --dir packages/frontend
-  exec jest public/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend
-  exec jest public/support/tickets-view.test.tsx --runInBand --silent`; `pnpm --dir
-  packages/frontend exec jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand
-  --silent`; `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`;
+exec jest public/__tests__/app.test.tsx --runInBand --silent`; `pnpm --dir packages/frontend
+exec jest public/support/tickets-view.test.tsx --runInBand --silent`; `pnpm --dir
+packages/frontend exec jest public/__tests__/public-site-browser-qa-script.test.ts --runInBand
+--silent`; `pnpm lint:frontend`; `git diff --check`; `pnpm -C src/packages/static build:dev`;
   browser QA for `/products`, all product detail routes, `/about/team/william-stein`, `/support`,
   and `/support/tickets` on desktop/mobile passed with 262 assertions and 0 failures, artifacts
   in `/tmp/cocalc-public-qa-wTlPpR`. Dedicated-compute draft remains untouched and untracked. No
@@ -2877,7 +2927,7 @@ Plus/Star/Launchpad`).
   (`/tmp/cocalc-public-qa-hdy3nv`); focused feature Jest passed 90 tests; public browser-QA script
   Jest passed 5 tests; exact-dark-hex grep returned no tracked feature offenders;
   `git diff --check` passed; `pnpm lint:frontend` passed from `src`; `pnpm -C src/packages/static
-  build:dev` passed including `tsc --build`; post-change rendered QA passed the same routes/viewports
+build:dev` passed including `tsc --build`; post-change rendered QA passed the same routes/viewports
   with 336 assertions / 0 failures (`/tmp/cocalc-public-qa-nkH0wr`); all 16 before/after screenshot
   PNGs were byte-identical by `cmp`. No public copy or product claims changed. No PR.
 - **START 2026-06-20 21:11 PDT:** Starting Slice 2c only: `PUBLIC_ELEVATION` consumption for
@@ -2951,7 +3001,7 @@ Plus/Star/Launchpad`).
   passed 38/38 after updating a stale Slice 3 product-overview assertion; public browser-QA script
   Jest passed 5/5; `git diff --check` clean; scoped grep found no old public `project host` labels
   in the touched pages/tests/QA script; `pnpm lint:frontend` clean; `pnpm -C src/packages/static
-  build:dev` passed; live browser QA on `/pricing`, `/guides`, and `/products` passed 132
+build:dev` passed; live browser QA on `/pricing`, `/guides`, and `/products` passed 132
   assertions across desktop/mobile. No protected home, pricing dollars, compliance/policy, docs
   route, pitch-doc, or dedicated-compute draft edits. No PR.
 - **START 2026-06-21 15:02 PDT:** Slice 4b implementation, using Blaec's technical-audience
@@ -2972,7 +3022,7 @@ Plus/Star/Launchpad`).
   heroes so the first viewport still names the tools technical users care about (`Julia`, `Pluto`,
   `Jupyter`, `GNU Octave`, notebooks, scripts, `.m` files, terminals, and shared project files) while
   adding the project/reproducibility outcome. Replaced terminal implementation jargon (`one PTY
-  stream`, `terminal backpressure`) with user-facing session/output wording grounded in the terminal
+stream`, `terminal backpressure`) with user-facing session/output wording grounded in the terminal
   flow-control implementation. Updated the Star hero to state the one-Ubuntu-VM setup path and
   installer responsibilities without hiding the technical install card. Source grounding checked
   against the feature catalog, project Julia/Pluto support, Star self-hosting docs, and terminal
@@ -3040,7 +3090,7 @@ Plus/Star/Launchpad`).
   notebooks, and shared numerical work." Updated only the matching feature-page Jest markers.
   Supporting copy and visuals still carry reproducibility, TimeTravel, real-time collaboration,
   `.m` files, notebooks, terminals, plots, and shared project context. Validation: `git diff
-  --check` clean; `public/features/__tests__/app.test.tsx` 91/91 passed; `pnpm lint:frontend`
+--check` clean; `public/features/__tests__/app.test.tsx` 91/91 passed; `pnpm lint:frontend`
   clean from `src`; `pnpm -C src/packages/static build:dev` passed; live browser QA for
   `/features/julia` and `/features/octave` desktop/mobile passed 72/72 assertions; screenshots
   reviewed from `/tmp/cocalc-public-qa-mUespd`. No protected home, pitch-doc, docs route/content,
@@ -3057,8 +3107,8 @@ Plus/Star/Launchpad`).
   and removed the now-unused Julia support-link fixture. Added an explicit Jest canary that the
   Julia page does not render that support link. Validation: `git diff --check`,
   `pnpm lint:frontend`, `pnpm --dir src/packages/frontend exec jest
-  public/features/__tests__/app.test.tsx --runInBand --silent` (90/90), `pnpm -C
-  src/packages/static build:dev`, and browser QA for `/features/julia` desktop/mobile (36/36).
+public/features/__tests__/app.test.tsx --runInBand --silent` (90/90), `pnpm -C
+src/packages/static build:dev`, and browser QA for `/features/julia` desktop/mobile (36/36).
   Screenshots reviewed from `/tmp/cocalc-public-qa-MAi0Rc`; no PR.
 - **START 2026-06-21:** Applying Claude's language-page micro-polish after Blaec shared the
   audit: tighten Julia/Octave H2 grammar while keeping the concrete tool names visible, and add the
@@ -3070,17 +3120,17 @@ Plus/Star/Launchpad`).
   home, pitch docs, docs route/content, pricing/compliance, type/palette visual work, and the
   untracked dedicated-compute draft. No PR.
 - **END 2026-06-21:** Tightened the Julia and Octave H2s to `Use Julia in Pluto,
-  Jupyter, and shared modeling projects.` and `Run GNU Octave with notebooks, .m files, and shared
-  numerical work.` Kept concrete tool proof visible, added `reproducible` to the Octave project
+Jupyter, and shared modeling projects.` and `Run GNU Octave with notebooks, .m files, and shared
+numerical work.` Kept concrete tool proof visible, added `reproducible` to the Octave project
   support paragraph, and updated route canaries. Validation: `git diff --check`,
   `pnpm --dir src/packages/frontend exec jest public/features/__tests__/app.test.tsx --runInBand
-  --silent` (90/90), `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static build:dev`,
+--silent` (90/90), `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static build:dev`,
   and browser QA for `/features/julia` + `/features/octave` desktop/mobile (72/72). Screenshots
   reviewed from `/tmp/cocalc-public-qa-NG326m`; no PR.
 - **START 2026-06-21:** Implementing Slice 4c from the logged proposal: add the
   multi-artifact/unoccupied-bundle line on `/features`, update `/features/compare` hero/quick-read
   copy, and convert compare decision rows into a labeled `Choose CoCalc when` / `Choose a lighter
-  tool when` table if the existing source supports it. Claimed files:
+tool when` table if the existing source supports it. Claimed files:
   `src/packages/frontend/public/features/app.tsx`,
   `src/packages/frontend/public/features/compare-page.tsx`,
   `src/packages/frontend/public/features/__tests__/app.test.tsx`, this ledger, and
@@ -3090,9 +3140,9 @@ Plus/Star/Launchpad`).
 - **END 2026-06-21:** Slice 4c landed in source: `/features` now names the multi-artifact project
   bundle in the index lead; `/features/compare` now contrasts CoCalc with lighter tools in the hero
   and quick-read; the decision checklist is a semantic table with `Decision question`, `Choose
-  CoCalc when`, and `Choose a lighter tool when` columns that stacks into labeled rows on mobile.
+CoCalc when`, and `Choose a lighter tool when` columns that stacks into labeled rows on mobile.
   Validation: `git diff --check`, `pnpm --dir src/packages/frontend exec jest
-  public/features/__tests__/app.test.tsx --runInBand --silent` (90/90), `pnpm lint:frontend` from
+public/features/__tests__/app.test.tsx --runInBand --silent` (90/90), `pnpm lint:frontend` from
   `src`, `pnpm -C src/packages/static build:dev`, and browser QA for `/features` +
   `/features/compare` desktop/mobile (88/88). Screenshots reviewed from
   `/tmp/cocalc-public-qa-cXFSHV`; no PR.
@@ -3145,7 +3195,7 @@ Plus/Star/Launchpad`).
   `Terminal workflows`, `Jupyter notebooks`, and `Compare operating models` into the full-width
   `Related` row. Concrete automation proof remained unchanged. Validation: `git diff --check`,
   focused feature Jest 95/95, `pnpm lint:frontend` from `src`, `pnpm -C src/packages/static
-  build:dev`, and browser QA for Automations/Julia/Octave/More Languages desktop+mobile 116/116.
+build:dev`, and browser QA for Automations/Julia/Octave/More Languages desktop+mobile 116/116.
   Screenshots reviewed from `/tmp/cocalc-public-qa-WVAkyF`; no PR.
 - **START 2026-06-21:** Following Blaec's approval of the logged Codex prompt at
   `/home/user/cocalc-shared/codex-turn-log.md:4076`. Scope: one-line Octave micro-copy only,
@@ -3304,7 +3354,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   contextual support CTAs intentionally remain. Updated feature tests and
   browser-QA forbidText guards. Validation passed: `git diff --check`; focused
   feature Jest 96/96; browser-QA harness Jest 5/5; `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
   `/features/ai`, `/features/latex-editor`, `/features/python`,
   `/features/linux`, `/features/terminal`, `/features/jupyter-notebook`
   desktop+mobile 228/228. Screenshots inspected. Ready to commit/push/rebuild
@@ -3320,7 +3370,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   proceed to Wave-3 final-section assessment/rollout for R, Slides, and Sage.
   Current group: Commit 1 = features-index + languages + tools +
   other-features, plus Octave primary CTA label `Get using Octave` → `Start
-  using Octave`. Guardrails: preserve concrete proof, use audience-led broad
+using Octave`. Guardrails: preserve concrete proof, use audience-led broad
   language, no vertical-specific language, avoid protected home/pitch/docs
   routes/pricing/compliance/type-palette and the dedicated-compute draft. Known
   unrelated untracked file remains
@@ -3334,7 +3384,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   instruction. Updated feature Jest canaries and browser-QA rendered-text
   guards. Validation passed: `git diff --check`; focused feature Jest 96/96;
   browser-QA harness Jest 5/5; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/features`,
+src/packages/static build:dev`; browser QA on `/features`,
   `/features/automations`, `/features/jupyter-notebook`, `/features/terminal`,
   `/features/linux`, `/features/python`, `/features/latex-editor`,
   `/features/sage`, `/features/r-statistical-software`, `/features/julia`,
@@ -3361,7 +3411,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   canary. No protected home, pitch docs, docs content/routes, pricing/compliance,
   type/palette work, or dedicated-compute draft touched. Validation passed:
   `git diff --check`; focused layout + browser-QA harness Jest 18/18; `pnpm -C
-  src lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+src lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
   `/products`, `/features`, `/docs`, and `/support` desktop+mobile passed
   174/174. Screenshots inspected from `/tmp/cocalc-public-qa-TxCGI4`; footer
   wraps cleanly on desktop and mobile. Ready for commit/push/rebuild.
@@ -3373,7 +3423,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   protected home, pitch docs, docs content/routes, pricing/compliance,
   type/palette, Sage, Slides, or dedicated-compute draft touched. Validation
   passed: `git diff --check`; focused feature Jest 97/97; `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
   `/features/r-statistical-software` desktop+mobile passed 38/38. Screenshots
   inspected from `/tmp/cocalc-public-qa-q0ji36`; mobile order is fit proof,
   primary CTA, then Related.
@@ -3385,7 +3435,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   docs content/routes, pricing/compliance, type/palette, Sage, or
   dedicated-compute draft touched. Validation passed: `git diff --check`;
   focused feature Jest 98/98; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/features/slides`
+src/packages/static build:dev`; browser QA on `/features/slides`
   desktop+mobile passed 34/34. Screenshots inspected from
   `/tmp/cocalc-public-qa-hqubF5`; mobile order is fit proof, primary CTA, then
   Related.
@@ -3397,7 +3447,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   pitch docs, docs content/routes, pricing/compliance, type/palette, or
   dedicated-compute draft touched. Validation passed: `git diff --check`;
   focused feature Jest 99/99; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/features/sage` desktop+mobile
+src/packages/static build:dev`; browser QA on `/features/sage` desktop+mobile
   passed 38/38. Screenshots inspected from `/tmp/cocalc-public-qa-gv6LKO`;
   mobile order is fit proof, primary CTA, then Related.
 
@@ -3419,7 +3469,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   fallback label. Updated `tickets-view.test.tsx` to assert the ticket subject
   by heading role and level. Validation passed: `git diff --check`; focused
   support + QA harness Jest 13/13; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/support` and `/support/tickets`
+src/packages/static build:dev`; browser QA on `/support` and `/support/tickets`
   desktop+mobile passed 58/58. Screenshots inspected from
   `/tmp/cocalc-public-qa-3oy0dt`.
 
@@ -3430,7 +3480,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
 - **START 2026-06-22:** Continuing the post-framing queue in
   `/home/user/cocalc-ai-synthesis` on `blaec-synthesis-2026-06-18`. Scope is
   slice 2 only: make the AI feature hero docs-first by promoting `Read the Codex
-  guide` and demoting the account/projects CTA in that hero, and route the
+guide` and demoting the account/projects CTA in that hero, and route the
   Automations hero `CoCalc CLI` button to the sibling `/features/cli` page.
   Claimed files: `features/ai-page.tsx`, `features/automations-page.tsx`,
   `features/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`, and
@@ -3445,7 +3495,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   because this proof-surface page intentionally has docs-primary hero plus final
   conversion. Validation passed: `git diff --check`; focused feature + QA
   harness Jest 104/104; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/features/ai` and
+src/packages/static build:dev`; browser QA on `/features/ai` and
   `/features/automations` desktop+mobile passed 86/86. Screenshots inspected
   from `/tmp/cocalc-public-qa-vRXSoX`.
 
@@ -3469,7 +3519,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   require `You decide what runs` and forbid the old `and running the command`
   phrase. Validation passed: `git diff --check`; focused feature + QA harness
   Jest 104/104; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/features/linux` desktop+mobile
+src/packages/static build:dev`; browser QA on `/features/linux` desktop+mobile
   passed 42/42. Screenshots inspected from `/tmp/cocalc-public-qa-ptFW0V`.
 
 ---
@@ -3481,7 +3531,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   the final-CTA wording consistency slice for Terminal, Linux, Jupyter, and
   LaTeX. Source inspection showed Terminal/Linux/LaTeX already have
   feature-specific unauthenticated final labels and authenticated `Open
-  projects`; Jupyter still reuses `Create account` in the final section. Claimed
+projects`; Jupyter still reuses `Create account` in the final section. Claimed
   files: `features/jupyter-notebook-page.tsx`,
   `features/__tests__/app.test.tsx`, `scripts/public-site-browser-qa.mjs`, and
   this ledger. Guardrails: preserve technical proof, layout, and authenticated
@@ -3494,7 +3544,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   behavior as `Open projects`. Updated feature and browser-QA canaries for the
   new Jupyter label. Validation passed: `git diff --check`; focused feature +
   QA harness Jest 104/104; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/features/terminal`,
+src/packages/static build:dev`; browser QA on `/features/terminal`,
   `/features/linux`, `/features/jupyter-notebook`, and `/features/latex-editor`
   desktop+mobile passed 162/162. Screenshots inspected from
   `/tmp/cocalc-public-qa-Gd3jP7`.
@@ -3521,7 +3571,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   `SlideDeckMock` import. Updated feature and browser-QA canaries, including a
   guard that the slide mock label/text does not return on Whiteboard. Validation
   passed: `git diff --check`; focused feature + QA harness Jest 104/104; `pnpm
-  -C src lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+-C src lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
   `/features/whiteboard` and `/features/slides` desktop+mobile passed 76/76.
   Screenshots inspected from `/tmp/cocalc-public-qa-W3o2qG`.
 
@@ -3549,8 +3599,8 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   Rocket deployment-claim wording was intentionally left untouched for the
   separate claim-safety slice. Updated public app tests and browser-QA guards so
   the old comparison labels cannot return. Validation passed: `git diff
-  --check`; focused public app + browser-QA harness Jest 43/43; `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+--check`; focused public app + browser-QA harness Jest 43/43; `pnpm -C src
+lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
   `/products`, `/products/cocalc-plus`, `/products/cocalc-star`,
   `/products/cocalc-launchpad`, and `/products/cocalc-rocket` desktop+mobile
   passed 200/200. Screenshots inspected from `/tmp/cocalc-public-qa-Wmvuxx`.
@@ -3601,7 +3651,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   rules to forbid the old `Full guide library` / `Reference docs` labels.
   Validation passed: `git diff --check`; focused public app + browser-QA
   harness Jest 43/43; `pnpm -C src lint:frontend`; `pnpm -C
-  src/packages/static build:dev`; browser QA on `/guides` desktop+mobile passed
+src/packages/static build:dev`; browser QA on `/guides` desktop+mobile passed
   60/60. Screenshots inspected from `/tmp/cocalc-public-qa-13mPlu`.
 
 ---
@@ -3626,7 +3676,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   expectation; `rg` confirms the old phrase is gone from public source and
   browser-QA rules. Validation passed: `git diff --check`; focused home +
   public app Jest 40/40 (with existing React/AntD act warnings); `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on the
+lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on the
   conversion spine desktop+mobile passed 264/264, and direct common-component
   routes `/guides`, `/about`, `/news`, `/policies`, `/support/community`
   desktop+mobile passed 148/148. Screenshots inspected from
@@ -3659,7 +3709,7 @@ verify its spacing in the logged-in explorer view, NOT on the public landing pag
   wording. Added browser-QA forbidden-text canaries for the removed phrases.
   Validation passed: `git diff --check`; focused feature Jest 99/99 (with
   existing React/AntD jsdom warnings); browser-QA script Jest 5/5; `pnpm -C src
-  lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
+lint:frontend`; `pnpm -C src/packages/static build:dev`; browser QA on
   `/features/terminal`, `/features/latex-editor`, and
   `/features/jupyter-notebook` desktop+mobile passed 130/130. Mobile
   screenshots inspected from `/tmp/cocalc-public-qa-z8ynBQ`.

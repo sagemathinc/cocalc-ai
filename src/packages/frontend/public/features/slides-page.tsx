@@ -220,7 +220,6 @@ export default function SlidesFeaturePage({
           <BulletList
             items={[
               "Present technical walkthroughs from the same editable canvas where the material was built.",
-              "Keep slides close to notebooks, files, data, and terminal work.",
               "Use math, diagrams, markdown, and code in technical talks.",
               "Collaborate on the deck and keep TimeTravel history around it.",
             ]}

@@ -77,7 +77,7 @@ function CliHeroWorkflow() {
           <div>
             <Text strong>CoCalc CLI</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              documented commands for project workflows
+              project commands for notebook and browser checks
             </div>
           </div>
         </Flex>
@@ -145,12 +145,12 @@ function CliFitSection() {
       title: "Read project context",
     },
     {
-      body: "Execute notebook or browser checks through documented commands instead of UI scripting.",
+      body: "Execute notebook or browser checks through the CLI instead of UI scripting.",
       step: "Step 2",
-      title: "Run bounded actions",
+      title: "Run notebook and browser checks",
     },
     {
-      body: "Leave run IDs, files, and generated outputs in the project where collaborators can inspect them.",
+      body: "Leave run IDs, files, and generated outputs where collaborators can inspect them.",
       step: "Step 3",
       title: "Return reviewable output",
     },
@@ -165,8 +165,9 @@ function CliFitSection() {
           </Title>
           <Paragraph style={{ margin: 0 }}>
             When a script or shell-capable agent needs project context, the CLI
-            gives it a documented command path. Results stay in CoCalc alongside
-            the notebooks, files, and terminal evidence people need to review.
+            gives it one documented command path. Results stay in CoCalc
+            alongside the notebooks, files, and terminal evidence people need to
+            review.
           </Paragraph>
         </Flex>
         <Row className="cocalc-cli-workflow-flow" gutter={[16, 16]}>
@@ -275,15 +276,16 @@ export default function CliFeaturePage({}: {
                 Run project work from the command line.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Use the CoCalc CLI to inspect project context, run notebook
-                actions, and leave outputs in the same workspace for review.
+                Use the CoCalc CLI when scripts or shell-capable agents need
+                project-aware notebook, browser, and file checks.
               </Paragraph>
               <Flex vertical gap={8}>
                 <HeroPoint>
                   Call it from scripts or agents that can run shell commands.
                 </HeroPoint>
                 <HeroPoint>
-                  Inspect files, notebooks, open tabs, and project state.
+                  Work against a specific CoCalc project, not a detached local
+                  copy.
                 </HeroPoint>
                 <HeroPoint>
                   Leave outputs where collaborators can review them.
@@ -320,7 +322,7 @@ export default function CliFeaturePage({}: {
           </Flex>
           <Row gutter={[16, 16]}>
             <CliSurfaceChoice
-              body="For people, scripts, or shell-capable agents that need a documented command against a project."
+              body="For people, scripts, or shell-capable agents that need an explicit project command."
               href={CLI_DOCS_PATH}
               icon="terminal"
               label="CLI Docs"

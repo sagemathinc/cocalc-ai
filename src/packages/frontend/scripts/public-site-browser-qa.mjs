@@ -332,7 +332,7 @@ const ROUTE_RULES = {
       "$ cocalc project jupyter exec --path analysis.ipynb --stdin",
       "status: finished",
       "Keep automated work attached to the project.",
-      "Return reviewable output",
+      "Run notebook and browser checks",
       "Choose the right connection surface.",
     ],
     forbidText: [
@@ -343,6 +343,7 @@ const ROUTE_RULES = {
       "A practical bridge for external tools.",
       "typed surface",
       "run and report",
+      "Run bounded actions",
       "command-line surface",
       "Create account",
       "admin/operator",
@@ -559,9 +560,14 @@ const ROUTE_RULES = {
   },
   "/features/more-languages": {
     requireText: [
+      "Run more languages in one shared project.",
       "Use the language that fits the project.",
       "large Fortran, C, or Rust simulations",
       "Start in a project",
+    ],
+    forbidText: [
+      "Use many other languages from the same project.",
+      "Compiled, scripting, JVM, web, and data languages",
     ],
     requireSelectors: [
       ".cocalc-feature-final-band",

@@ -35,7 +35,6 @@ function LanguageStackCard({
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: PUBLIC_ELEVATION.compact,
         height: "100%",
         padding: 14,
       }}
@@ -53,10 +52,10 @@ function LanguageStackCard({
 
 function MoreLanguagesProjectMock() {
   const blocks = [
-    ["file-code", "Compiled code", "C, C++, Fortran, Rust, Go"],
-    ["terminal", "Scripting and shell", "Bash, Perl, Ruby, CLI tools"],
-    ["code", "JVM and web", "Java, JavaScript, TypeScript"],
-    ["database", "Data workflows", "SQL, data files, pipelines"],
+    ["file-code", "Source files", "C, C++, Fortran, Rust, Go"],
+    ["terminal", "Terminal tools", "Bash, Perl, Ruby, CLI tools"],
+    ["code", "Web stacks", "Java, JavaScript, TypeScript"],
+    ["database", "Data work", "SQL, data files, pipelines"],
   ] satisfies [IconName, string, string][];
 
   return (
@@ -103,10 +102,9 @@ function MoreLanguagesFit() {
               Use the language that fits the project.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              CoCalc projects are collaborative Linux workspaces, so compiled
-              languages, JVM and web stacks, shell scripts, SQL/data tools, and
-              command-line tools can live beside the notebooks and documents
-              that explain them.
+              CoCalc projects are collaborative Linux workspaces, so source
+              files, scripts, command-line tools, and data work can live beside
+              the notebooks and documents that explain them.
             </Paragraph>
           </Flex>
         </Col>
@@ -159,11 +157,11 @@ export default function MoreLanguagesFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Use many other languages from the same project.
+                Run more languages in one shared project.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Compiled, scripting, JVM, web, and data languages — all in one
-                shared project.
+                Use source files, scripts, terminals, notebooks, and data tools
+                without splitting the project apart.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Use a project when source files, command-line runs, generated
@@ -210,7 +208,7 @@ export default function MoreLanguagesFeaturePage({
         >
           <BulletList
             items={[
-              "A research or engineering project mixes notebooks with compiled code or shell tools.",
+              "A research or engineering project mixes notebooks with source code or shell tools.",
               "Teams running large Fortran, C, or Rust simulations keep the pre- and post-processing, visualization, and review together in one durable project.",
               "Generated output needs to stay near the source files and explanation.",
               "Collaborators need to inspect and rerun the same project workflow.",

@@ -156,10 +156,6 @@ export default function JuliaFeaturePage({
                 Review results together while the whole modeling project stays
                 reproducible in one place.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                A teammate can instantiate the same package environment and
-                continue the work — notebooks, source files, and history intact.
-              </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}

@@ -157,7 +157,7 @@ const ALLOWED_RAW_HEX_COLORS_BY_FEATURE_PAGE: Record<
     "#fff8e8",
     "#ffffff",
   ],
-  "octave-page.tsx": ["#d4380d", "#f4f9ff", "#fff7f1", "#ffffff"],
+  "octave-page.tsx": ["#f4f9ff", "#fff7f1", "#ffffff"],
   "python-page.tsx": [
     "#278c83",
     "#2f6fda",
@@ -443,7 +443,7 @@ describe("PublicFeaturesApp", () => {
       slug: "octave",
     },
     {
-      marker: "Use many other languages from the same project.",
+      marker: "Run more languages in one shared project.",
       slug: "more-languages",
     },
   ] as const;
@@ -1205,7 +1205,7 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "more-languages",
-      title: "Use many other languages from the same project.",
+      title: "Run more languages in one shared project.",
       section: "Use the language that fits the project.",
     },
     {
@@ -1250,8 +1250,8 @@ describe("PublicFeaturesApp", () => {
     },
   );
 
-  it("keeps the Octave hero visually dominant over its first proof section", () => {
-    render(
+  it("keeps the Octave hero mock accessible and icon-card based", () => {
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "octave", view: "detail" }}
@@ -1267,7 +1267,17 @@ describe("PublicFeaturesApp", () => {
 
     expect(heroTitle.tagName).toBe("H2");
     expect(proofTitle.tagName).toBe("H3");
-    expect(proofTitle).toHaveStyle(`font-size: ${PUBLIC_TYPE.subhead}px`);
+    expect(
+      screen.getByRole("img", {
+        name: "Illustration of Octave scripts, notebooks, and terminal workflows in CoCalc",
+      }),
+    ).not.toBeNull();
+    expect(
+      container
+        .querySelector(".cocalc-feature-context-list")
+        ?.textContent?.includes("Project context"),
+    ).toBe(true);
+    expect(screen.getAllByText("solver.m").length).toBeGreaterThan(0);
   });
 
   it.each(removedFinalSupportLinks)(
@@ -1538,11 +1548,13 @@ describe("PublicFeaturesApp", () => {
         ).toBeNull();
         expect(screen.queryByRole("link", { name: "CLI guide" })).toBeNull();
         expect(
-          screen.getByText("documented commands for project workflows"),
+          screen.getByText("project commands for notebook and browser checks"),
         ).not.toBeNull();
         expect(screen.getByText("reviewable notebook workflow")).not.toBeNull();
         expect(screen.getByText("Read project context")).not.toBeNull();
-        expect(screen.getByText("Run bounded actions")).not.toBeNull();
+        expect(
+          screen.getByText("Run notebook and browser checks"),
+        ).not.toBeNull();
         expect(screen.getByText("Return reviewable output")).not.toBeNull();
         expect(
           screen.getByRole("img", {

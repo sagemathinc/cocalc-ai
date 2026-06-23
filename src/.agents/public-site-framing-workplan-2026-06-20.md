@@ -425,7 +425,7 @@ Evidence:
   column combined a project card, dark terminal mock, and Codex context card.
 - R was listed in the same polish item, but current source/render already
   follows the target pattern: one R project card plus a nearby `Project
-  context` checklist.
+context` checklist.
 
 Current disposition:
 
@@ -723,7 +723,7 @@ Current disposition:
   labels, old CTA bans, and light final-panel styling.
 - Validation passed: `pnpm -C src tsc`; focused feature/browser-QA-script Jest
   136/136 with existing React/AntD `act(...)` warnings; `pnpm -C src
-  lint:frontend`; `git diff --check`; static `build:dev`; and browser QA for
+lint:frontend`; `git diff --check`; static `build:dev`; and browser QA for
   `/features/teaching` desktop+mobile 56/56 with screenshots in
   `/tmp/cocalc-public-qa-lrBwx6`.
 
@@ -817,15 +817,70 @@ Current disposition:
   desktop+mobile 758/758 with screenshots in `/tmp/cocalc-public-qa-AcFDHr`.
   Representative screenshots for Julia, Sage, AI, and Teaching inspected clean.
 
+### FS-025 - Drain adversarial-fix item 20 P3 feature polish
+
+Status: `done`
+
+Evidence:
+
+- The adversarial-fix item 20 queue named bounded residuals on Julia, Octave,
+  More Languages, CLI, Whiteboard, and Slides after the larger feature-page
+  consistency/design polish work.
+- These were polish removals or alignment fixes only: no route proof, CTA
+  destination, protected home/pricing/compliance/pitch content, or new palette
+  lane was needed.
+
+Current route frame:
+
+```md
+Routes: /features/julia, /features/octave, /features/more-languages,
+/features/cli, /features/whiteboard, /features/slides
+Visitor: technical user or reviewer scanning whether a feature workflow fits a
+shared project.
+Visitor question: can this workflow stay clear, reviewable, and connected to
+the project without repeated or route-owned visual clutter?
+One-sentence promise: the feature proof stays concrete while residual
+repetition and local one-offs are removed.
+Proof mechanism: existing hero mocks, ContextList/FeatureFinalBand sections,
+CLI command example, board/deck proof, and route-specific final bands.
+Primary next step: keep each route's existing primary CTA.
+Secondary next step: keep related feature/product links.
+What this must not claim: no new metrics, pricing, compliance, managed
+hosting, vertical-specific proof, or broad agent-platform promise.
+Evidence consulted: adversarial-fix item 20, frozen Brief, framing
+system/register, route source/tests, and browser-QA screenshots.
+Decision: omit repeated copy, align route-local visuals to existing shared
+patterns/tokens, and add only focused canaries where stale residuals could
+return.
+```
+
+Current disposition:
+
+- Julia hero now has the sibling pattern of title plus one lead paragraph.
+- Octave hero cards now use `IconBadge`, the page uses
+  `FEATURE_ACCENTS.octave` instead of a route-local raw accent, and the hero
+  illustration has `role="img"`; the route-owned heading-size override was
+  removed per the newer P3 spec.
+- More Languages now leads with "Run more languages in one shared project,"
+  removes the nested inner-card shadow, and avoids re-enumerating the
+  compiled/scripting/JVM taxonomy in the hero/proof text.
+- CLI copy no longer repeats the inspect/run/return triad as heavily, uses
+  "documented command" once on the page, and replaces "Run bounded actions"
+  with "Run notebook and browser checks."
+- Whiteboard and Slides copy nits were trimmed without changing their proof or
+  CTA destinations.
+- Validation passed: Prettier on touched files; focused feature/browser-QA
+  Jest 140/140 with existing React/AntD `act(...)` warnings; `pnpm -C src
+tsc`; frontend lint; `git diff --check`; static `build:dev`; and browser QA
+  for the six affected routes desktop+mobile 278/278 with screenshots in
+  `/tmp/cocalc-public-qa-ykW3rg`. Desktop/mobile screenshots were inspected for
+  all six changed routes; no overlap or obvious layout regression.
+
 ## Next Recommended Burn-Down Order
 
-1. Proceed to adversarial-fix item 20 polish if Claude agrees item 19 is fully
-   drained.
-2. Item 20 P3 polish candidates: julia delete hero 3rd paragraph; octave
-   IconBadges + heading-override + accent + role=img; more-languages
-   nested-shadow + headline + taxonomy; CLI triad/"documented"/jargon; copy
-   nits (whiteboard meta-tail, slides duplicated bullet).
-3. Keep FS-004 and FS-005 as process/backlog items, not autonomous Codex queue
+1. Item 20 P3 polish is drained in source; Claude should audit the commit and
+   rerun the fresh vision/adversarial check if desired.
+2. Keep FS-004 and FS-005 as process/backlog items, not autonomous Codex queue
    items, until Blaec or Claude promotes one into a curated slice.
-4. Keep FS-002, FS-003, and FS-006 as watch rules unless user feedback reopens
+3. Keep FS-002, FS-003, and FS-006 as watch rules unless user feedback reopens
    them.

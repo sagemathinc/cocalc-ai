@@ -174,8 +174,7 @@ function SlideDeckSection() {
         <Paragraph style={{ margin: 0 }}>
           For ordered presentations, use the dedicated slide decks workflow. It
           keeps slide-sized pages close to the same editable math, diagrams,
-          Jupyter cells, files, and explanations without repeating the full deck
-          workflow here.
+          Jupyter cells, files, and explanations.
         </Paragraph>
         <Flex wrap gap={12}>
           <Button href={appPath("features/slides")}>
