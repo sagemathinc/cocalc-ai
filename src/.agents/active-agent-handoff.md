@@ -83,6 +83,17 @@ Known risks:
   inspected for Julia, Sage, AI, and Teaching; no overlap or obvious layout
   regression. Next: commit, rebuild so the static bundle embeds the new commit,
   rerun representative browser QA, then push/update shared logs.
+- **POST-COMMIT 2026-06-22 22:00 PDT:** Source/workplan commit
+  `cf70336534` (`frontend/public: stretch feature final CTA panels`) created.
+  Post-commit `pnpm --dir src/packages/static build:dev` passed and embedded
+  `COCALC_GIT_REVISION =
+  cf70336534a0f1c78fc3c89bec60724ffce915ca`. Post-commit full feature-details
+  browser QA
+  `node packages/frontend/scripts/public-site-browser-qa.mjs --group
+  feature-details --viewport desktop --viewport mobile` passed 758/758 at
+  `/tmp/cocalc-public-qa-XmIXK2`. Representative desktop/mobile screenshots
+  inspected for Julia, Sage, AI, and Teaching; no overlap or obvious layout
+  regression. Next: push branch and update shared status logs.
 
 ### Codex - AI final-band residual polish (2026-06-22 21:42 PDT)
 
