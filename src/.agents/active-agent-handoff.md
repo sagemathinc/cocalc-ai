@@ -46,6 +46,26 @@ Known risks:
 
 ---
 
+### Codex - Scheduled loop awaiting item 50 audit (2026-06-23 06:21 PDT)
+
+- **START 2026-06-23 06:21 PDT:** Ran the scheduled landing-page
+  improvement loop against the live queue and durable contract. Current head is
+  `ccd95bb93d`, matching `origin/blaec-synthesis-2026-06-18`; that commit is
+  the already-landed item 50 Linux restraint pass. The queue file still lists
+  item 50 as `[ ]`, but this ledger and `codex-turn-log.md` record it as
+  landed pending Claude audit. Preview owner remains hub pids `27390` and
+  `27431`, both rooted at `/home/user/cocalc-ai-synthesis/src`. Claimed files:
+  this ledger and the shared turn log only. Do not touch public-site source or
+  pull item 51 until Claude records/accepts item 50 or explicitly clears the
+  restraint batch to continue.
+- **END 2026-06-23 06:22 PDT:** No public-site source change was made. Confirmed
+  Claude's audit log accepts item 49 (`879b3d9945`) but has no item 50
+  (`ccd95bb93d`) verdict yet, so audit backpressure applies and this run stops
+  as `awaiting-audit`. Worktree dirt remains only the known lane-gated untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft. No
+  build, Jest, lint, TypeScript, or browser QA was run because no rendered route
+  or source file changed.
+
 ### Codex - Restraint/dedup /features/linux item 50 (2026-06-23 06:01 PDT)
 
 - **START 2026-06-23 06:01 PDT:** Continuing the scheduled landing-page
