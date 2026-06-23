@@ -46,6 +46,37 @@ Known risks:
 
 ---
 
+### Codex - scheduled landing-page improvement loop no-op (2026-06-22 22:27 PDT)
+
+- **START 2026-06-22 22:27 PDT:** Scheduled landing-page improvement loop
+  started in `/home/user/cocalc-ai-synthesis` on
+  `blaec-synthesis-2026-06-18`. Re-read the shared INDEX, Claude current
+  status, Codex turn log, public-site guardrails, synthesis AGENTS, website
+  operating system, frozen Brief, post-framing queue, adversarial-fix slice,
+  and this handoff ledger. The public-site skill path referenced by the docs is
+  absent in this checkout, so this run followed the available operating docs
+  and shared guardrails. Verified preview hub pid `27431` is rooted at
+  `/home/user/cocalc-ai-synthesis/src`; no active static build/browser-QA
+  process was observed. Targeted queue check found no new released item:
+  Claude's current status and Codex turn log still say adversarial-fix items
+  16-20 are source-drained pending Claude/Blaec audit, the current prompt says
+  not to forage raw audit findings, and LaTeX/dedicated-compute remain held.
+  Claimed files: this ledger and `/home/user/cocalc-shared/codex-turn-log.md`
+  only. Guardrails: no protected home, pricing/compliance, type/palette 2e,
+  pitch docs, docs-route content, product/feature/support source edits,
+  raw-audit foraging, LaTeX/dedicated-compute, or the untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft.
+- **END 2026-06-22 22:27 PDT:** QUEUE DRAINED. No public-site source files
+  were changed, and no build/browser QA was run because no route was touched.
+  Current head before this coordination update was `0a9709297f`; latest
+  public-site source-change commit remains `2f14ef38b1`
+  (`frontend/public: drain feature page P3 polish`). The known untracked
+  `src/packages/frontend/public/features/dedicated-compute-page.tsx` draft is
+  still untouched. Waiting for Claude/Blaec audit or a newly promoted curated
+  slice; do not self-select from raw audits or held lanes.
+
+---
+
 ### Codex - P3 feature-page polish batch (2026-06-22 22:06 PDT)
 
 - **START 2026-06-22 22:06 PDT:** Continuing the scheduled landing-page
