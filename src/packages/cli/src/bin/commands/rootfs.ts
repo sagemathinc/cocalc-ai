@@ -48,6 +48,24 @@ function parseLimit(value?: string, fallback = 100): number {
   return Math.max(1, Math.min(10_000, Number(value ?? fallback) || fallback));
 }
 
+function shouldEmitHumanProgress(globals: any): boolean {
+  return !globals?.quiet && !globals?.json && globals?.output !== "json";
+}
+
+function emitRootfsBuildProgress(ctx: any, message: string): void {
+  if (!shouldEmitHumanProgress(ctx?.globals)) return;
+  console.error(`[rootfs build] ${message}`);
+}
+
+function emitRootfsBuildProgressForCommand(
+  command: Command,
+  message: string,
+): void {
+  const globals = command.optsWithGlobals?.() ?? {};
+  if (!shouldEmitHumanProgress(globals)) return;
+  console.error(`[rootfs build] ${message}`);
+}
+
 type LastRootfsBuild = {
   version: 1;
   api?: string;
@@ -383,13 +401,19 @@ async function startRootfsBuilderProject({
   plan: RootfsRecipeBuildPlan;
 }): Promise<{ project_id: string; created_project: boolean }> {
   if (options.project) {
+    emitRootfsBuildProgress(ctx, `using existing project ${options.project}`);
     const project = await deps.resolveProjectFromArgOrContext(
       ctx,
       options.project,
     );
+    emitRootfsBuildProgress(ctx, `starting project ${project.project_id}`);
     await waitForProjectStart({ ctx, deps, project_id: project.project_id });
     return { project_id: project.project_id, created_project: false };
   }
+  emitRootfsBuildProgress(
+    ctx,
+    `creating builder project for recipe ${plan.recipe}`,
+  );
   const project_id = await ctx.hub.projects.createProject({
     title: options.title ?? `RootFS build: ${plan.recipe}`,
     rootfs_image: plan.base?.image,
@@ -397,6 +421,8 @@ async function startRootfsBuilderProject({
     run_quota: plan.builder?.run_quota,
     start: false,
   });
+  emitRootfsBuildProgress(ctx, `created builder project ${project_id}`);
+  emitRootfsBuildProgress(ctx, `starting project ${project_id}`);
   await waitForProjectStart({ ctx, deps, project_id });
   return { project_id, created_project: true };
 }
@@ -1618,6 +1644,10 @@ export function registerRootfsCommand(
         opts: RootfsRecipeRunOptions,
         command: Command,
       ) => {
+        emitRootfsBuildProgressForCommand(
+          command,
+          `preparing recipe ${recipePath}`,
+        );
         await withContext(command, "rootfs build", async (ctx) => {
           const deps = {
             withContext,
@@ -1627,6 +1657,10 @@ export function registerRootfsCommand(
             serializeLroSummary,
           };
           if (opts.here) {
+            emitRootfsBuildProgress(
+              ctx,
+              "running recipe in the current project",
+            );
             const result = await runRootfsRecipe({
               ctx,
               deps,
@@ -1661,7 +1695,12 @@ export function registerRootfsCommand(
               `next: cocalc rootfs publish --project=${result.project_id}`,
             ].join("\n");
           }
+          emitRootfsBuildProgress(ctx, `resolving recipe ${recipePath}`);
           const plan = resolveRootfsRecipeBuildPlan(recipePath, opts);
+          emitRootfsBuildProgress(
+            ctx,
+            `resolved recipe ${plan.recipe} from ${plan.recipe_path}`,
+          );
           const project = await startRootfsBuilderProject({
             ctx,
             deps,
@@ -1673,6 +1712,10 @@ export function registerRootfsCommand(
             project_id: project.project_id,
             config: publishConfig,
           });
+          emitRootfsBuildProgress(
+            ctx,
+            `starting durable build in project ${project.project_id}`,
+          );
           const build = await ctx.hub.projects.startProjectRootfsBuild({
             project_id: project.project_id,
             script: plan.script,
@@ -1680,11 +1723,15 @@ export function registerRootfsCommand(
             resolved_recipe_json: plan.resolved_recipe,
             metadata_json: plan.config,
           });
+          emitRootfsBuildProgress(ctx, `started build ${build.build_id}`);
           if (opts.configOut) {
             writeFileSync(
               opts.configOut,
               `${JSON.stringify(plan.config, null, 2)}\n`,
             );
+          }
+          if (!opts.detach) {
+            emitRootfsBuildProgress(ctx, `following build ${build.build_id}`);
           }
           const finalBuild = opts.detach
             ? build

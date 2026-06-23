@@ -189,6 +189,9 @@ describe("rootfs build runner", () => {
     const runner = await fs.readFile(path.join(buildDir, "runner.sh"), "utf8");
     expect(runner).toContain("wait_for_package_manager");
     expect(runner).toContain("waiting_for_package_manager");
+    expect(runner).toContain(
+      "Waiting for existing package-manager process(es) to finish before running this rootfs build",
+    );
     expect(runner).toContain('/bin/bash "$SCRIPT" >> "$LOG" 2>&1');
     await expect(
       fs.readFile(path.join(buildDir, "resolved-recipe.json"), "utf8"),

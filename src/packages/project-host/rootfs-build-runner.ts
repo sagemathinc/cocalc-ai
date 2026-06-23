@@ -306,11 +306,16 @@ append_event() {
 
 package_manager_processes() {
   local comm
+  local name
+  local pid
   for comm in /proc/[0-9]*/comm; do
     [ -r "$comm" ] || continue
-    case "$(cat "$comm" 2>/dev/null || true)" in
+    name="$(cat "$comm" 2>/dev/null || true)"
+    case "$name" in
       apt|apt-get|dpkg|unattended-upgr)
-        echo "\${comm#/proc/}" | cut -d/ -f1
+        pid="\${comm#/proc/}"
+        pid="\${pid%%/*}"
+        echo "$pid/$name"
         ;;
     esac
   done
@@ -318,18 +323,18 @@ package_manager_processes() {
 
 wait_for_package_manager() {
   local deadline
-  local pids
+  local blockers
   deadline=$(( $(date +%s) + PACKAGE_MANAGER_WAIT_SECONDS ))
   while true; do
-    pids="$(package_manager_processes | xargs echo)"
-    if [ -z "$pids" ]; then
+    blockers="$(package_manager_processes | xargs echo)"
+    if [ -z "$blockers" ]; then
       return 0
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "Timed out waiting for package manager processes to finish: $pids" >&2
+      echo "Timed out waiting for existing package-manager process(es) to finish before running this rootfs build: $blockers" >&2
       return 1
     fi
-    echo "Waiting for package manager processes to finish: $pids"
+    echo "Waiting for existing package-manager process(es) to finish before running this rootfs build: $blockers"
     append_event "waiting_for_package_manager" "running"
     sleep 5
   done
