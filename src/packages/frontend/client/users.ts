@@ -11,7 +11,16 @@ import type { WebappClient } from "./client";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 import { MAX_GET_NAMES_ACCOUNT_IDS } from "@cocalc/util/security-limits";
 
-const nameCache = new TTL({ ttl: 60 * 1000 });
+type AccountName = {
+  display_name: string;
+  first_name: string;
+  last_name: string;
+  profile?: { color?: string; image?: string };
+};
+
+const nameCache = new TTL<string, AccountName | undefined>({
+  ttl: 60 * 1000,
+});
 
 export class UsersClient {
   private client: WebappClient;
@@ -139,15 +148,14 @@ export class UsersClient {
     });
   };
 
-  // Gets username with given account_id.   We use caching and aggregate to
+  // Gets the canonical account name with given account_id. We use caching and aggregate to
   // makes it so this never calls to the backend more than once at a time
   // (per minute) for a given account_id.
   get_username = reuseInFlight(
-    async (
-      account_id: string,
-    ): Promise<{ first_name: string; last_name: string }> => {
+    async (account_id: string): Promise<AccountName> => {
       if (isChatBot(account_id)) {
-        return { first_name: chatBotName(account_id), last_name: "" };
+        const display_name = chatBotName(account_id);
+        return { display_name, first_name: display_name, last_name: "" };
       }
       const v = await this.getNames([account_id]);
       const u = v[account_id];
@@ -158,18 +166,10 @@ export class UsersClient {
     },
   );
 
-  // get map from account_id to first_name, last_name (or undefined if no account); cached
+  // get map from account_id to canonical name fields (or undefined if no account); cached
   // for about a minute client side.
   getNames = reuseInFlight(async (account_ids: string[]) => {
-    const x: {
-      [account_id: string]:
-        | {
-            first_name: string;
-            last_name: string;
-            profile?: { color?: string; image?: string };
-          }
-        | undefined;
-    } = {};
+    const x: { [account_id: string]: AccountName | undefined } = {};
     const v: string[] = [];
     for (const account_id of account_ids) {
       if (nameCache.has(account_id)) {
