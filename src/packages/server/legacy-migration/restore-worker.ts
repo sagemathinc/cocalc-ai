@@ -15,6 +15,7 @@ import {
 import { getAccountStorageRemainingBytes } from "@cocalc/server/membership/project-limits";
 import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
 
+import { isLegacyMigrationEnabled } from "./enabled";
 import { legacyProjectArchiveUncompressedBytes } from "./index";
 
 const logger = getLogger("server:legacy-migration:restore-worker");
@@ -362,6 +363,7 @@ export async function triggerLegacyMigrationProjectRestoreWorker({
 }: {
   maxParallel?: number;
 } = {}): Promise<void> {
+  if (!(await isLegacyMigrationEnabled())) return;
   if (inFlight >= maxParallel) return;
   let rows: LegacyRestoreRow[] = [];
   try {

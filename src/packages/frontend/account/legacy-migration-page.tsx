@@ -281,6 +281,10 @@ export const LEGACY_MIGRATION_SETTINGS_PAGE = {
 
 export function LegacyMigrationPage() {
   const account_id = useTypedRedux("account", "account_id");
+  const legacyMigrationEnabled = !!useTypedRedux(
+    "customize",
+    "legacy_migration_enabled",
+  );
   const [state, setState] = useState<LegacyMigrationState>({
     error: "",
     legacyAccountIds: [],
@@ -296,7 +300,7 @@ export function LegacyMigrationPage() {
   >([]);
 
   async function loadProjects(nextQuery = query) {
-    if (!account_id) return;
+    if (!account_id || !legacyMigrationEnabled) return;
     setState((prev) => ({ ...prev, error: "", loading: true }));
     try {
       const response =
@@ -320,8 +324,10 @@ export function LegacyMigrationPage() {
   }
 
   useEffect(() => {
-    void loadProjects();
-  }, [account_id, includeHidden]);
+    if (legacyMigrationEnabled) {
+      void loadProjects();
+    }
+  }, [account_id, includeHidden, legacyMigrationEnabled]);
 
   async function importSelected(mode: LegacyMigrationProjectRestoreMode) {
     if (selected.length === 0) return;
@@ -410,6 +416,17 @@ export function LegacyMigrationPage() {
       ),
     },
   ];
+
+  if (!legacyMigrationEnabled) {
+    return (
+      <Alert
+        showIcon
+        type="info"
+        message="Legacy cocalc.com migration is not enabled on this site."
+        description="An administrator must enable legacy migration in site settings before this page can import archived cocalc.com projects."
+      />
+    );
+  }
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>

@@ -39,6 +39,8 @@ import type {
   LegacyMigrationRestoreArchiveSelectionResponse,
 } from "@cocalc/conat/hub/api/legacy-migration";
 
+import { assertLegacyMigrationEnabled } from "./enabled";
+
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 const DEFAULT_LEGACY_PROJECTS_BUCKET = "cocalc-projects";
@@ -337,6 +339,7 @@ export async function listProjects({
   limit,
   query,
 }: LegacyMigrationListProjectsOptions): Promise<LegacyMigrationListProjectsResponse> {
+  await assertLegacyMigrationEnabled();
   if (!account_id) {
     throw Error("account_id is required");
   }
@@ -663,6 +666,7 @@ export async function importProjects({
   rootfs_image,
   rootfs_image_id,
 }: LegacyMigrationImportProjectsOptions): Promise<LegacyMigrationImportProjectsResponse> {
+  await assertLegacyMigrationEnabled();
   if (!account_id) {
     throw Error("account_id is required");
   }
@@ -915,6 +919,7 @@ export async function prepareArchiveSelection({
   legacy_project_id,
   max_entries,
 }: LegacyMigrationPrepareArchiveSelectionOptions): Promise<LegacyMigrationPrepareArchiveSelectionResponse> {
+  await assertLegacyMigrationEnabled();
   if (!account_id) {
     throw Error("account_id is required");
   }
@@ -968,6 +973,7 @@ export async function restoreArchiveSelection({
   include_paths,
   exclude_paths,
 }: LegacyMigrationRestoreArchiveSelectionOptions): Promise<LegacyMigrationRestoreArchiveSelectionResponse> {
+  await assertLegacyMigrationEnabled();
   if (!account_id) {
     throw Error("account_id is required");
   }

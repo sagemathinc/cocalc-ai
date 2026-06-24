@@ -80,7 +80,6 @@ export const authFirstRequireProjectOrHost = async ({
     args[0] = {} as any;
   }
   if (host_id) {
-    delete args[0].project_id;
     args[0].host_id = host_id;
     return args;
   }

@@ -291,6 +291,356 @@ Audit requirements:
 - Log claim method.
 - Log verified-email grandfathering.
 
+### Secure Legacy Auth Claim Server
+
+The current cocalc.com application should not be kept alive merely to validate
+old passwords. It is too large, too old, and too operationally risky. Replace it
+with a tiny shutdown-oriented credential verification service whose only job is
+to let a user prove control of a legacy cocalc.com account and receive a
+short-lived claim token for cocalc.ai.
+
+This service is not a reduced CoCalc deployment. It is a temporary
+credential-verification appliance.
+
+Purpose:
+
+- Verify cocalc.com email/password credentials for legacy accounts.
+- Mint short-lived signed migration claims for cocalc.ai.
+- Explain the shutdown and point users to cocalc.ai.
+- Record minimal audit and rate-limit state.
+- Support users who can still log into cocalc.com but no longer control their
+  old email inbox.
+
+Non-goals:
+
+- No project access.
+- No project listing.
+- No file restore.
+- No purchases.
+- No subscriptions.
+- No admin dashboard.
+- No SSO.
+- No password reset.
+- No account mutation.
+- No general cocalc.com API compatibility.
+
+#### Data Export
+
+Export a separate legacy-auth dataset from old PostgreSQL. This dataset must not
+be part of the normal migration metadata dump.
+
+Fields:
+
+- `legacy_account_id`
+- normalized primary email address
+- legacy password verifier/hash fields
+- password algorithm/version metadata required to verify the hash
+- account deleted/disabled flags
+- email verified status
+- `last_active`
+- optional small display metadata for the confirmation page, such as first and
+  last name
+
+Do not export:
+
+- project metadata
+- purchases
+- cards or Stripe data
+- sessions
+- OAuth/SSO tokens
+- API keys
+- user settings
+- arbitrary account maps
+
+The output file should be treated as highly sensitive.
+
+Handling rules:
+
+- Create the export on the old DB node or a locked-down admin machine.
+- Encrypt the export immediately for the legacy-auth server.
+- Copy it only once to the target VM or import bucket.
+- Delete the plaintext export immediately after import.
+- Do not store the plaintext export in R2, git, shared project files, or normal
+  migration staging.
+- Document the final deletion/destruction step.
+
+#### Storage Model
+
+Use SQLite on the legacy-auth VM unless testing proves it is too slow. The
+dataset is a few million rows and the lookup path is indexed by normalized
+email, which SQLite can handle for this narrow use.
+
+Suggested tables:
+
+```sql
+CREATE TABLE legacy_accounts (
+  legacy_account_id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  email_verified INTEGER NOT NULL,
+  password_algorithm TEXT NOT NULL,
+  password_hash BLOB NOT NULL,
+  password_metadata TEXT,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  deleted INTEGER NOT NULL DEFAULT 0,
+  last_active TEXT,
+  display_name TEXT
+);
+
+CREATE INDEX legacy_accounts_email_idx ON legacy_accounts(email);
+
+CREATE TABLE claim_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  legacy_account_id TEXT,
+  email TEXT,
+  success INTEGER NOT NULL,
+  reason TEXT,
+  ip_hash TEXT,
+  user_agent_hash TEXT,
+  jti TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE rate_limits (
+  key TEXT PRIMARY KEY,
+  window_start TEXT NOT NULL,
+  failures INTEGER NOT NULL,
+  blocked_until TEXT
+);
+```
+
+If the legacy password data must be encrypted per row, store the verifier blob
+encrypted and decrypt only during password verification. The decrypt key must
+come from Secret Manager or an environment file outside the SQLite database.
+
+#### Runtime and Implementation
+
+Use a small TypeScript/Node service with no runtime package dependencies if
+practical.
+
+Recommended Node APIs:
+
+- `node:http` for the server.
+- `node:sqlite` for the local database.
+- `node:crypto` for HMAC/JWT-style signing, password hash helpers, constant-time
+  comparisons, and IP/user-agent hashing.
+- `node:fs` for reading mounted secrets.
+- `node:timers` for cleanup and rate-limit maintenance.
+
+Build/deploy shape:
+
+- Compile TypeScript to one small `dist/` directory.
+- Run with Node 26.
+- No Next.js.
+- No Express.
+- No webpack.
+- No database network connection.
+- No access to cocalc.ai production databases.
+
+Endpoints:
+
+- `GET /` renders the shutdown explanation and migration form.
+- `GET /claim` renders the email/password form.
+- `POST /claim` verifies credentials and redirects to cocalc.ai with a signed
+  claim token.
+- `GET /healthz` returns a simple health response with no sensitive details.
+- `GET /robots.txt` disallows crawling.
+
+No endpoint should ever return a password hash, account dump, stack trace, or
+raw database error.
+
+#### Claim Token
+
+The old service signs a short-lived token that cocalc.ai can verify.
+
+Token fields:
+
+- `iss`: `cocalc.com-legacy-auth`
+- `aud`: `cocalc.ai.legacy-migration-claim`
+- `legacy_account_id`
+- normalized legacy email
+- `email_verified`
+- `iat`
+- `exp`, with a short TTL such as 10 minutes
+- `jti`, a random nonce
+
+Recommended signing:
+
+- Use Ed25519 if using Node standard library keypair support cleanly.
+- HMAC-SHA256 is acceptable if the shared secret is stored only in Secret
+  Manager on both sides and rotated after the migration window.
+- The token should be URL-safe and compact enough to redirect as a query
+  parameter.
+
+Redeem flow:
+
+- User submits legacy email/password on cocalc.com.
+- The legacy-auth service validates the password and disabled/deleted flags.
+- The service records a successful audit event.
+- The service redirects to
+  `https://cocalc.ai/migrate/legacy/claim?token=<token>`.
+- cocalc.ai verifies signature, audience, expiration, and replay.
+- cocalc.ai links the legacy account to the signed-in cocalc.ai account or asks
+  the user to sign in first.
+- cocalc.ai records `jti` consumption so a token cannot be reused.
+
+The token proves the user recently authenticated to the legacy account. It does
+not grant arbitrary access by itself; cocalc.ai still owns account linking and
+project import authorization.
+
+#### Password Verification
+
+Implement only the exact legacy email/password algorithms required by the old
+database. Do not implement SSO, OAuth, or old session validation.
+
+Rules:
+
+- Normalize the submitted email the same way old cocalc.com did for account
+  login.
+- If multiple legacy accounts share an email, handle explicitly and safely:
+  either reject with support-required or require disambiguation after password
+  verification.
+- Use constant-time comparisons for verifier checks.
+- Never log submitted passwords.
+- Never log password hashes or verifier metadata.
+- Return the same generic error for unknown email and bad password.
+- Rate-limit before expensive password verification when possible.
+
+#### Rate Limiting and Abuse Control
+
+This service protects a high-value credential corpus, so brute-force resistance
+is mandatory.
+
+Controls:
+
+- Per-IP failure limit.
+- Per-email failure limit.
+- Per-IP plus per-email combined limit.
+- Global concurrent request cap.
+- Exponential backoff or temporary blocks after repeated failures.
+- Minimum response jitter for failed logins.
+- Cloudflare WAF/rate limits in front of the service.
+- Audit events for all success and repeated failure cases.
+
+Suggested initial limits:
+
+- 5 failed attempts per email per hour.
+- 20 failed attempts per IP per hour.
+- 100 total login attempts per minute globally.
+- 15-minute block after limit exceeded.
+
+Tune these with real support feedback. The target is migration, not high-volume
+normal login.
+
+#### Deployment
+
+Run the service in a separate, minimal environment.
+
+Preferred deployment:
+
+- A small VM in a separate GCP project, or at least with a separate service
+  account and firewall policy.
+- No public external IP if Cloudflare Tunnel is reliable.
+- Cloudflare Tunnel exposes only `https://cocalc.com` or a narrow migration
+  hostname.
+- Systemd runs the Node process as an unprivileged user.
+- SQLite database is readable only by that user.
+- Secrets are loaded from Secret Manager or a root-readable environment file and
+  passed to the process with tight permissions.
+
+System hardening:
+
+- Read-only application directory.
+- Writable directory only for SQLite/audit/rate-limit state.
+- `NoNewPrivileges=true`.
+- `PrivateTmp=true`.
+- `ProtectSystem=strict` if compatible.
+- `ProtectHome=true` if compatible.
+- `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`.
+- `SystemCallFilter` if it does not break Node/SQLite.
+- Automatic restart with conservative limits.
+- Log rotation.
+
+Network policy:
+
+- No inbound ports except the Cloudflare tunnel or localhost tunnel endpoint.
+- No outbound access except what is required for Cloudflare Tunnel and optional
+  health/metrics shipping.
+- No access to cocalc.ai internal databases.
+- No access to old cocalc.com Kubernetes.
+
+#### Monitoring and Operations
+
+Minimum operational signals:
+
+- Process health.
+- Request count.
+- Successful claim count.
+- Failed login count.
+- Rate-limit block count.
+- Token redirect count.
+- cocalc.ai token redemption success/failure count, measured on cocalc.ai.
+
+Alert on:
+
+- Service down.
+- Spike in failed logins.
+- Spike in per-IP blocks.
+- Token verification failures on cocalc.ai.
+- SQLite open/write errors.
+- Disk nearly full.
+
+Runbook:
+
+- How to deploy new binary.
+- How to rotate signing key.
+- How to disable all claims quickly.
+- How to block an abusive IP range at Cloudflare.
+- How to export audit logs for support/security review.
+- How to destroy the service at end of migration window.
+
+#### Deletion Deadline
+
+This service should have a deletion deadline from day one.
+
+Recommended policy:
+
+- Publicly state that legacy password-based claims are temporary.
+- Disable password-based claims on or before 2027-01-01.
+- Delete the SQLite database and encrypted import files after the support window.
+- Destroy the VM/disk/secrets after final audit retention review.
+- Keep only aggregate, non-sensitive migration statistics and necessary support
+  audit records.
+
+#### Implementation Checklist
+
+Phase 1:
+
+- Identify exact legacy password hash fields and algorithm.
+- Add a separate old DB export for legacy-auth fields only.
+- Write importer from encrypted export to SQLite.
+- Implement minimal TypeScript server with `node:http`, `node:sqlite`, and
+  `node:crypto`.
+- Implement email/password verification.
+- Implement signed claim token minting.
+- Implement generic failure messages and rate limits.
+
+Phase 2:
+
+- Add cocalc.ai claim redemption endpoint.
+- Add replay protection for `jti`.
+- Link legacy account to signed-in cocalc.ai account.
+- Expose migrated projects through existing legacy migration UI after linking.
+- Add audit events on both sides.
+
+Phase 3:
+
+- Deploy behind Cloudflare Tunnel.
+- Load a small test subset.
+- Run security review.
+- Load full legacy-auth dataset.
+- Switch cocalc.com DNS/tunnel to the migration service when ready.
+- Shut down the old cocalc.com application surface.
+
 ## Project Migration UX
 
 Project import should happen inside cocalc.ai.
@@ -655,6 +1005,10 @@ Deliverables:
 
 - Legacy account mapping table.
 - Legacy login proof flow.
+- Secure legacy-auth claim server replacing the old cocalc.com app.
+- Separate sensitive legacy-auth export and SQLite import.
+- Signed short-lived claim tokens from cocalc.com to cocalc.ai.
+- cocalc.ai legacy claim redemption endpoint with replay protection.
 - Verified email grandfathering.
 - Support path for all other cases.
 
@@ -818,6 +1172,9 @@ Deliverables:
 - Does CUP need the signed claim flow before UCLA, or can it follow after the
   course launch?
 - Which focused images are launch blockers for UCLA?
+- What exact legacy password hash algorithms and fields must the secure
+  legacy-auth claim server support?
+- What is the public deletion date for password-based legacy claims?
 
 ## Recommended Decisions
 
@@ -832,6 +1189,10 @@ Deliverables:
 - Do not build a giant compatibility image.
 - Treat site-license claim tokens as the CUP replacement and a reusable
   product primitive.
+- Replace current cocalc.com with a tiny legacy-auth claim server, not a
+  reduced old CoCalc deployment.
+- Keep password verifier data out of the normal migration dump and main
+  cocalc.ai database.
 
 ## Bottom Line
 
@@ -850,4 +1211,3 @@ spending the launch window rebuilding legacy licensing complexity.
 The third most important simplification is CUP. Signed site-license claim tokens
 and rootfs landing pages solve CUP's current flow using general cocalc.ai
 primitives instead of preserving a dangerous anonymous secret-URL system.
-

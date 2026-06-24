@@ -14,7 +14,11 @@ import { canonicalizeSshRemoteAddr } from "./ssh-remote-addr";
 import { SSHPIPER_PLUGIN_PROTO } from "./sshpiper-plugin-proto";
 
 const logger = getLogger("project-proxy:ssh:plugin");
-const CALLBACKS = ["NextAuthMethods", "PublicKeyAuth"] as const;
+const CALLBACKS = [
+  "NextAuthMethods",
+  "PublicKeyAuth",
+  "UpstreamAuthFailure",
+] as const;
 const SSH_AUTH_METHOD_PUBLICKEY = "PUBLICKEY" as const;
 const PROTO_PATH = join(tmpdir(), "cocalc-sshpiper-plugin.proto");
 
@@ -27,6 +31,7 @@ export interface ManagedSshSessionIdentity {
   remote_addr: string;
   project_id: string;
   account_id?: string;
+  authorized?: true;
 }
 
 export interface AuthorizedSshPublicKeyResult {
@@ -115,8 +120,12 @@ export class ManagedSshPluginState {
 
   async nextAuthMethods(
     meta: any,
-  ): Promise<readonly [typeof SSH_AUTH_METHOD_PUBLICKEY]> {
+  ): Promise<readonly (typeof SSH_AUTH_METHOD_PUBLICKEY)[]> {
     const normalized = this.normalizeMeta(meta);
+    const existing = this.getSession(normalized.from_addr);
+    if (existing?.authorized) {
+      return [];
+    }
     if (normalized.user_name) {
       await this.noteProjectTarget(normalized);
     }
@@ -141,6 +150,7 @@ export class ManagedSshPluginState {
       remote_addr,
       project_id: target.project_id,
       ...(current?.account_id ? { account_id: current.account_id } : {}),
+      ...(current?.authorized ? { authorized: true as const } : {}),
     };
     this.sessions.set(remote_addr, next);
     return next;
@@ -166,6 +176,7 @@ export class ManagedSshPluginState {
       remote_addr: placeholder.remote_addr,
       project_id: authorized.project_id,
       ...(authorized.account_id ? { account_id: authorized.account_id } : {}),
+      authorized: true,
     });
     return authorized;
   }
@@ -225,8 +236,9 @@ export async function startManagedSshPluginServer(
       });
       callback(null, {
         upstream: {
+          host: "127.0.0.1",
+          port: authorized.port,
           userName: authorized.ssh_user,
-          ignoreHostKey: true,
           uri: `tcp://127.0.0.1:${authorized.port}`,
           privateKey: {
             privateKey: Buffer.from(opts.proxy_private_key, "utf8"),
@@ -258,7 +270,13 @@ export async function startManagedSshPluginServer(
         ),
       );
     },
-    UpstreamAuthFailureNotice: unary<any, any>((_call, callback) => {
+    UpstreamAuthFailureNotice: unary<any, any>((call, callback) => {
+      logger.warn("sshpiper upstream auth failed", {
+        meta: call.request?.meta,
+        method: call.request?.method,
+        error: call.request?.error,
+        allowed_methods: call.request?.allowedMethods,
+      });
       callback(null, {});
     }),
     Banner: unary<any, any>((_call, callback) => {

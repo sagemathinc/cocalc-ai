@@ -52,7 +52,31 @@ describe("managed ssh plugin state", () => {
       remote_addr: "203.0.113.10:54321",
       project_id,
       account_id: "22222222-2222-4222-8222-222222222222",
+      authorized: true,
     });
+  });
+
+  it("reports no remaining auth methods after public key authorization", async () => {
+    const authorizePublicKey = jest.fn().mockResolvedValue({
+      project_id,
+      ssh_user: "root",
+      port: 2224,
+    });
+    const state = new ManagedSshPluginState({
+      proxy_private_key: "PRIVATE KEY",
+      authorizePublicKey,
+    });
+    const meta = {
+      fromAddr: "203.0.113.12:54323",
+      userName: `project-${project_id}`,
+    };
+
+    await expect(state.nextAuthMethods(meta)).resolves.toEqual(["PUBLICKEY"]);
+    await state.authorizePublicKey({
+      meta,
+      public_key: Buffer.from("abcd"),
+    });
+    await expect(state.nextAuthMethods(meta)).resolves.toEqual([]);
   });
 
   it("allows initial next-auth negotiation before sshpiperd knows the username", async () => {
