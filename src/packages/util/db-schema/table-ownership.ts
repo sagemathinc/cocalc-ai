@@ -412,6 +412,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(["legacy_migration_raw_records"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "legacy migration dump importer",
+    migrate_to_schema: false,
+    notes:
+      "Temporary raw cocalc.com migration dump rows keyed by source and legacy id. This is diagnostic/import staging data for the global legacy migration dataset and should be deleted with the migration subsystem.",
+  }),
+
   ...adHocEntries(["account_impersonation_grant_directory"], {
     ownership: "projection",
     authority: "mixed",
