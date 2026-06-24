@@ -95,7 +95,7 @@ describe("accounts.cluster-directory", () => {
     });
   });
 
-  it("prefers directory home bay over stale local account rows", async () => {
+  it("prefers local profile fields and directory home bay when merging account rows", async () => {
     const { getClusterAccountByIdDirect } = await import("./cluster-directory");
     const account = await getClusterAccountByIdDirect(
       "11111111-1111-4111-8111-111111111111",
@@ -104,7 +104,8 @@ describe("accounts.cluster-directory", () => {
     expect(account).toMatchObject({
       account_id: "11111111-1111-4111-8111-111111111111",
       email_address: "qa@example.com",
-      last_name: "Directory",
+      display_name: "QA Local",
+      last_name: "Local",
       home_bay_id: "bay-2",
     });
   });
@@ -151,9 +152,9 @@ describe("accounts.cluster-directory", () => {
       [
         "11111111-1111-4111-8111-111111111111",
         "new@example.com",
-        "QA Directory",
-        "QA",
-        "Directory",
+        "QA Local",
+        null,
+        null,
         "bay-2",
       ],
     );

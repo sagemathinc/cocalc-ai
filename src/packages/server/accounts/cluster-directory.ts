@@ -545,7 +545,12 @@ function mergeEntries(
     }
     merged.set(entry.account_id, {
       ...entry,
+      display_name: current.display_name ?? entry.display_name,
+      first_name: current.first_name ?? entry.first_name,
+      last_name: current.last_name ?? entry.last_name,
       email_address: current.email_address ?? entry.email_address,
+      email_address_verified:
+        current.email_address_verified ?? entry.email_address_verified,
       is_admin: current.is_admin ?? entry.is_admin,
       // The directory is the cluster routing source of truth. A stale local
       // account row on the seed must not win after an attached-bay rehome.
