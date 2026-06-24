@@ -57,7 +57,9 @@ import { getUser } from "@cocalc/server/purchases/statements/email-statement";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
 const RECENT_PAYMENT_INTENT_SEARCH_LIMIT = 100;
-const RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES = 10;
+const RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES = 1;
+const RECENT_PAYMENT_INTENT_SEARCH_TRUNCATED_ALERT_MS = 1000 * 60 * 60;
+let lastRecentPaymentIntentSearchTruncatedAlert = 0;
 
 function stripeCustomerId(customer): string | undefined {
   if (typeof customer === "string") {
@@ -521,7 +523,7 @@ export function isReadyToProcess(paymentIntent) {
   );
 }
 
-async function belongsToCurrentStripeSite({
+export async function belongsToCurrentStripeSite({
   paymentIntent,
   site,
 }: {
@@ -1277,15 +1279,39 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
       ? (paymentIntents.next_page ?? undefined)
       : undefined;
   } while (page && pageCount < RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES);
+  const hasMore =
+    page != null && pageCount >= RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES;
+  if (hasMore) {
+    await alertRecentPaymentIntentSearchTruncated({ considered, pageCount });
+  }
   logger.debug("processAllRecentPaymentIntents: finished", {
     considered,
     processed: purchase_ids.size,
     skippedForeign,
     pageCount,
-    hasMore:
-      page != null && pageCount >= RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES,
+    hasMore,
   });
   return purchase_ids.size;
+}
+
+async function alertRecentPaymentIntentSearchTruncated({
+  considered,
+  pageCount,
+}: {
+  considered: number;
+  pageCount: number;
+}) {
+  if (
+    Date.now() - lastRecentPaymentIntentSearchTruncatedAlert <
+    RECENT_PAYMENT_INTENT_SEARCH_TRUNCATED_ALERT_MS
+  ) {
+    return;
+  }
+  lastRecentPaymentIntentSearchTruncatedAlert = Date.now();
+  await adminAlert({
+    subject: "Stripe missed-payment repair backlog exceeds one page",
+    body: `The missed-payment repair sweep considered ${considered} succeeded unprocessed Stripe payment intents across ${pageCount} page(s), but Stripe reported more results. This is no longer routine maintenance; investigate the Stripe payment-intent backlog or run explicit payment-intent repair for known impacted payments.`,
+  });
 }
 
 export async function maintainPaymentIntents() {
