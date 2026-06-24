@@ -41,18 +41,27 @@ interface CellTypeInfo {
 const PY_TEST = `
 # [Modify the tests below for your own problem]
 # Check that squares returns the correct output for several inputs:
-from nose.tools import assert_equal
-assert_equal(squares(1), [1])
-assert_equal(squares(2), [1, 4])
+assert squares(1) == [1]
+assert squares(2) == [1, 4]
 
 # Check that squares raises an error for invalid input:
-from nose.tools import assert_raises
-assert_raises(ValueError, squares, 0)
-assert_raises(ValueError, squares, -1)
+try:
+    squares(0)
+except ValueError:
+    pass
+else:
+    raise AssertionError("squares(0) should raise ValueError")
+
+try:
+    squares(-1)
+except ValueError:
+    pass
+else:
+    raise AssertionError("squares(-1) should raise ValueError")
 
 ### BEGIN HIDDEN TESTS
 # students will NOT see these extra tests
-assert_equal(squares(10), [1, 4, 9, 16, 25, 36, 49, 64, 81, 100])
+assert squares(10) == [1, 4, 9, 16, 25, 36, 49, 64, 81, 100]
 ### END HIDDEN TESTS
 `;
 

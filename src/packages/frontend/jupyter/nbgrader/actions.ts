@@ -200,15 +200,9 @@ export class NBGraderActions {
       actions = this.redux.getEditorActions(project_id, filename);
     }
     await actions.jupyter_actions.wait_until_ready();
-    actions.jupyter_actions.syncdb.from_str(
-      this.jupyter_actions.syncdb.to_str(),
+    await actions.jupyter_actions.setToIpynb(
+      await this.jupyter_actions.toIpynb(),
     );
-    // Important: we also have to fire a changes event with all
-    // records, since otherwise the Jupyter store doesn't get
-    // updated since we're using from_str.
-    // The complicated map/filter thing below is just to grab
-    // only the {type:?,id:?} parts of all the records.
-    actions.jupyter_actions.syncdb.emit("change", "all");
 
     // Apply all the transformations.
     await actions.jupyter_actions.nbgrader_actions.apply_assign_transformations(
