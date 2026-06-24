@@ -57,6 +57,20 @@ const PROJECT_LOG_RUNTIME_STATES = new Set([
   "restarting",
 ]);
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function cloudflaredProxyCommand({
+  cloudflared,
+  hostname,
+}: {
+  cloudflared: string;
+  hostname: string;
+}): string {
+  return `${shellQuote(cloudflared)} access ssh --hostname ${shellQuote(hostname)}`;
+}
+
 export function getMovePlacementFallbackTimeoutMs(
   summary: Pick<LroStatus, "status" | "timedOut">,
   timeoutMs: number,
@@ -228,7 +242,7 @@ export function registerProjectOpsCommands(
     runSshCheck,
     isLikelySshAuthFailure,
     runSsh,
-    resolveCloudflaredBinary,
+    ensureCloudflaredBinary,
     normalizeProjectSshHostAlias,
     normalizeProjectSshConfigPath,
     projectSshConfigBlockMarkers,
@@ -332,11 +346,11 @@ export function registerProjectOpsCommands(
                 "project ssh route is missing cloudflare hostname",
               );
             }
-            const cloudflared = opts.check
-              ? resolveCloudflaredBinary()
-              : `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
-                "cloudflared";
-            const proxyCommand = `${cloudflared} access ssh --hostname ${cloudflareHostname}`;
+            const cloudflared = await ensureCloudflaredBinary();
+            const proxyCommand = cloudflaredProxyCommand({
+              cloudflared,
+              hostname: cloudflareHostname,
+            });
             baseArgs.push("-o", `ProxyCommand=${proxyCommand}`);
             baseArgs.push(`${route.ssh_username}@${cloudflareHostname}`);
             sshServer = `${cloudflareHostname}:443`;
@@ -474,7 +488,10 @@ export function registerProjectOpsCommands(
             const cloudflared =
               `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
               "cloudflared";
-            const proxyCommand = `${cloudflared} access ssh --hostname ${cloudflareHostname}`;
+            const proxyCommand = cloudflaredProxyCommand({
+              cloudflared,
+              hostname: cloudflareHostname,
+            });
             baseArgs.push("-o", `ProxyCommand=${proxyCommand}`);
             baseArgs.push(`${route.ssh_username}@${cloudflareHostname}`);
             sshServer = `${cloudflareHostname}:443`;
@@ -570,12 +587,15 @@ export function registerProjectOpsCommands(
             `  HostName ${hostName}`,
             `  User ${route.ssh_username}`,
           ];
+          let cloudflared: string | null = null;
           if (route.transport !== "direct") {
-            const cloudflared =
-              `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
-              "cloudflared";
+            const cloudflaredPath = await ensureCloudflaredBinary();
+            cloudflared = cloudflaredPath;
             lines.push(
-              `  ProxyCommand ${cloudflared} access ssh --hostname %h`,
+              `  ProxyCommand ${cloudflaredProxyCommand({
+                cloudflared: cloudflaredPath,
+                hostname: "%h",
+              })}`,
             );
           } else if (route.ssh_port != null) {
             lines.push(`  Port ${route.ssh_port}`);
@@ -612,6 +632,7 @@ export function registerProjectOpsCommands(
               route.transport !== "direct"
                 ? `${hostName}:443`
                 : route.ssh_server,
+            cloudflared_path: cloudflared,
             key_created: keyInfo?.created ?? false,
             key_path: keyInfo?.private_key_path ?? null,
             key_installed: keyInstall

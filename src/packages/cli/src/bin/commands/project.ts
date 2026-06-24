@@ -42,6 +42,7 @@ export type ProjectCommandDeps = {
   runSsh: any;
   runLocalCommand: any;
   resolveCloudflaredBinary: any;
+  ensureCloudflaredBinary: any;
   normalizeProjectSshHostAlias: any;
   normalizeProjectSshConfigPath: any;
   projectSshConfigBlockMarkers: any;
