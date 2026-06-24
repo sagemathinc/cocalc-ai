@@ -120,6 +120,7 @@ function SageWorkspaceMock() {
   return (
     <div
       aria-label="Illustration of SageMath connected to notebooks, LaTeX, terminals, and research workflows"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f3fbf3 52%, #fff8e8 100%)",
