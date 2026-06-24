@@ -62,8 +62,21 @@ export default async function stripeWebhookHandler(
     return;
   }
 
+  const eventLogContext = {
+    event_id: event?.id,
+    event_type: event?.type,
+    stripe_object_id: stripeId(event?.data?.object),
+  };
+  logger.info("Stripe webhook event verified", eventLogContext);
+
   try {
     const result = await processStripeWebhookEvent(event);
+    logger.info("Stripe webhook event handled", {
+      ...eventLogContext,
+      action: result.action,
+      processed: result.processed,
+      result_type: result.type,
+    });
     res.status(200).json({ ok: true, ...result });
   } catch (err) {
     logger.warn("Stripe webhook processing failed", {
@@ -143,13 +156,39 @@ async function processStripeWebhookPaymentIntent({
   const latest = await stripe.paymentIntents.retrieve(id);
   const site = await currentStripeSite();
   if (!(await belongsToCurrentStripeSite({ paymentIntent: latest, site }))) {
+    logger.info("Stripe webhook payment intent skipped", {
+      event_type: eventType,
+      payment_intent_id: id,
+      action: "foreign-site",
+      status: latest?.status,
+      account_id: latest?.metadata?.account_id,
+      cocalc_site: latest?.metadata?.cocalc_site,
+    });
     return { processed: false, type: eventType, action: "foreign-site" };
   }
   if (!isReadyToProcess(latest)) {
+    logger.info("Stripe webhook payment intent skipped", {
+      event_type: eventType,
+      payment_intent_id: id,
+      action: "not-ready",
+      status: latest?.status,
+      account_id: latest?.metadata?.account_id,
+      processed: latest?.metadata?.processed,
+      purpose: latest?.metadata?.purpose,
+    });
     return { processed: false, type: eventType, action: "not-ready" };
   }
   try {
     const purchase_id = await processPaymentIntent(latest);
+    logger.info("Stripe webhook payment intent processed", {
+      event_type: eventType,
+      payment_intent_id: id,
+      purchase_id,
+      processed: purchase_id != null,
+      status: latest?.status,
+      account_id: latest?.metadata?.account_id,
+      purpose: latest?.metadata?.purpose,
+    });
     return {
       processed: purchase_id != null,
       type: eventType,
@@ -194,6 +233,12 @@ async function processStripeWebhookPaidInvoice({
       } as any)
     : invoice;
   if (!(await metadataBelongsToCurrentSite(invoiceMetadata(latest)))) {
+    logger.info("Stripe webhook invoice skipped", {
+      event_type: eventType,
+      invoice_id: invoice?.id,
+      action: "foreign-site",
+      metadata: invoiceMetadata(latest),
+    });
     return { processed: false, type: eventType, action: "foreign-site" };
   }
 
@@ -206,6 +251,13 @@ async function processStripeWebhookPaidInvoice({
   }
 
   const processed = await createCreditFromPaidStripeInvoice(latest);
+  logger.info("Stripe webhook invoice processed", {
+    event_type: eventType,
+    invoice_id: latest?.id,
+    processed,
+    action: "invoice-credit",
+    metadata: invoiceMetadata(latest),
+  });
   return { processed, type: eventType, action: "invoice-credit" };
 }
 
@@ -218,16 +270,35 @@ async function processStripeWebhookSubscription({
 }) {
   const metadata = subscription?.metadata ?? {};
   if (!(await metadataBelongsToCurrentSite(metadata))) {
+    logger.info("Stripe webhook subscription skipped", {
+      event_type: eventType,
+      subscription_id: subscription?.id,
+      action: "foreign-site",
+      metadata,
+    });
     return { processed: false, type: eventType, action: "foreign-site" };
   }
   const account_id = `${metadata.account_id ?? ""}`.trim();
   if (!account_id || metadata.service !== "credit") {
+    logger.info("Stripe webhook subscription skipped", {
+      event_type: eventType,
+      subscription_id: subscription?.id,
+      action: "not-usage-credit",
+      metadata,
+    });
     return { processed: false, type: eventType, action: "not-usage-credit" };
   }
   const active = ["active", "trialing"].includes(`${subscription.status}`);
   await setUsageSubscription({
     account_id,
     subscription_id: active ? subscription.id : "",
+  });
+  logger.info("Stripe webhook subscription processed", {
+    event_type: eventType,
+    subscription_id: subscription?.id,
+    status: subscription?.status,
+    account_id,
+    action: active ? "set-usage-subscription" : "clear-usage-subscription",
   });
   return {
     processed: true,
