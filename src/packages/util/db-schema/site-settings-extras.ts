@@ -266,7 +266,6 @@ export type SiteSettingsExtrasKeys =
   | "stripe_heading"
   | "stripe_publishable_key"
   | "stripe_secret_key"
-  | "stripe_webhook_secret"
   | "r2_heading"
   | "r2_account_id"
   | "r2_api_token"
@@ -928,15 +927,6 @@ export const EXTRAS: SettingsExtras = {
   stripe_secret_key: {
     name: "Stripe Secret",
     desc: "Stripe calls this key 'secret'",
-    default: "",
-    password: true,
-    tags: ["Stripe"],
-    group: "Payments & Billing",
-    subgroup: "Stripe",
-  },
-  stripe_webhook_secret: {
-    name: "Stripe Webhook Secret",
-    desc: "The stripe webhook secret, which is used to verify the signature for stripe webhooks events, and should look like 'whsec_fibl8xlfp...'.  For this to work, you must enable stripe webhooks at https://dashboard.stripe.com/webhooks with a URL like `https://my-cocalc-server/webhooks/stripe`.   The actual webhook events we use are: invoice.paid, payment_intent.succeeded, customer.subscription.created; you can enable all webhooks and things still work, but it is less efficient.  See https://github.com/sagemathinc/cocalc/blob/master/src/packages/hub/servers/app/webhooks/stripe.ts",
     default: "",
     password: true,
     tags: ["Stripe"],

@@ -23,7 +23,6 @@ Relevant settings:
 
 - `stripe_publishable_key`
 - `stripe_secret_key`
-- `stripe_webhook_secret`
 - legacy `commercial`
 
 Existing useful helper:
@@ -304,4 +303,3 @@ This should be presented as a simplification:
    or under Membership/Credit to avoid implying card billing?  (ANS: I don't know; it's easy to move later so just select one.  Billing is probably fine for now.)
 3. Should `commercial` survive temporarily as `commercial_analytics_enabled`, or
    should analytics be controlled only by Google Analytics being configured?  (ANS: remove commercial entirely.)
-
