@@ -540,11 +540,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "collaborator-authorized snapshot/rootfs restore; recoverable project state mutation with same impact class as normal project file writes",
   },
-  "projects.repairAcceptedCourseStudentInviteAccounts": {
-    decision: "fresh-auth-not-required",
-    reason:
-      "collaborator-authorized course invite/account repair for existing accepted students",
-  },
   "projects.setProjectEnv": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
