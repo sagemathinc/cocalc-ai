@@ -5,7 +5,7 @@
 
 const mockGetConn = jest.fn();
 const mockGetPool = jest.fn();
-const mockSetStripeCustomerId = jest.fn();
+const mockGetTransactionClient = jest.fn();
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -15,14 +15,11 @@ jest.mock("@cocalc/server/stripe/connection", () => ({
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: (...args: any[]) => mockGetPool(...args),
-}));
-
-jest.mock("@cocalc/database/postgres/stripe", () => ({
-  setStripeCustomerId: (...args: any[]) => mockSetStripeCustomerId(...args),
+  getTransactionClient: (...args: any[]) => mockGetTransactionClient(...args),
 }));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
-  getServerSettings: jest.fn(async () => ({})),
+  getServerSettings: jest.fn(async () => ({ dns: "cocalc.ai" })),
 }));
 
 jest.mock("@cocalc/server/accounts/is-valid-account", () => ({
@@ -37,8 +34,13 @@ jest.mock("@cocalc/server/messages/send", () => ({
 import { getStripeCustomerId } from "./util";
 
 describe("getStripeCustomerId", () => {
+  const client = {
+    query: jest.fn(),
+    release: jest.fn(),
+  };
   const pool = {
     query: jest.fn(),
+    connect: jest.fn(),
   };
   const stripe = {
     customers: {
@@ -50,9 +52,26 @@ describe("getStripeCustomerId", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetPool.mockReturnValue(pool);
+    mockGetTransactionClient.mockResolvedValue(client);
     mockGetConn.mockResolvedValue(stripe);
     pool.query.mockResolvedValue({ rows: [{}] });
-    mockSetStripeCustomerId.mockResolvedValue(undefined);
+    pool.connect.mockResolvedValue(client);
+    client.query.mockImplementation(async (query: string) => {
+      if (query.startsWith("SELECT email_address")) {
+        return {
+          rows: [
+            {
+              email_address: "account-1@example.com",
+              display_name: "Ada Byron Lovelace",
+              first_name: "Ada",
+              last_name: "Lovelace",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    client.release.mockResolvedValue(undefined);
     stripe.customers.create.mockResolvedValue({ id: "cus_created" });
     stripe.customers.search.mockResolvedValue({
       data: [{ id: "cus_existing", deleted: false }],
@@ -68,10 +87,40 @@ describe("getStripeCustomerId", () => {
       query: "metadata['account_id']:'account-1'",
       limit: 1,
     });
-    expect(mockSetStripeCustomerId).toHaveBeenCalledWith(
-      "account-1",
-      "cus_existing",
+    expect(client.query).toHaveBeenCalledWith(
+      "UPDATE accounts SET stripe_customer_id=$2::TEXT WHERE account_id=$1",
+      ["account-1", "cus_existing"],
     );
     expect(stripe.customers.create).not.toHaveBeenCalled();
+  });
+
+  it("uses a row lock and Stripe idempotency key when creating a customer", async () => {
+    stripe.customers.search.mockResolvedValue({ data: [] });
+
+    await expect(
+      getStripeCustomerId({ account_id: "account-1", create: true }),
+    ).resolves.toBe("cus_created");
+
+    expect(client.query).toHaveBeenCalledWith(
+      "SELECT email_address, display_name, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
+      ["account-1"],
+    );
+    expect(stripe.customers.create).toHaveBeenCalledWith(
+      {
+        description: "Ada Byron Lovelace",
+        name: "Ada Byron Lovelace",
+        email: "account-1@example.com",
+        metadata: {
+          account_id: "account-1",
+          cocalc_site: "cocalc.ai",
+        },
+      },
+      {
+        idempotencyKey: "cocalc-stripe-customer:account-1",
+      },
+    );
+    expect(mockGetTransactionClient).toHaveBeenCalledWith();
+    expect(client.query).toHaveBeenCalledWith("COMMIT");
+    expect(client.release).toHaveBeenCalled();
   });
 });

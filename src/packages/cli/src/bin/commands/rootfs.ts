@@ -1,11 +1,13 @@
 import {
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
 import type { ProjectRootfsPublishConfig } from "@cocalc/conat/hub/api/projects";
@@ -35,6 +37,14 @@ import {
   type RootfsRecipeRunResult,
   type RootfsRecipeRunOptions,
 } from "./rootfs-recipe";
+import {
+  binderProjectLabels,
+  binderRecipeName,
+  generateBinderRootfsRecipe,
+  normalizeBinderSpec,
+  type BinderSpec,
+  type BinderRootfsRecipeOptions,
+} from "./rootfs-binder";
 
 export type RootfsCommandDeps = {
   withContext: any;
@@ -433,18 +443,21 @@ async function labelRootfsBuilderProject({
   plan,
   created_project,
   build_id,
+  extraLabels,
 }: {
   ctx: any;
   project_id: string;
   plan: RootfsRecipeBuildPlan;
   created_project: boolean;
   build_id?: string;
+  extraLabels?: Record<string, string>;
 }): Promise<void> {
   const labels: Record<string, string> = {
     "cocalc.com/project-kind": "rootfs-build",
     "cocalc.com/rootfs-recipe": plan.recipe,
     "cocalc.com/rootfs-recipe-path": plan.recipe_path,
     "cocalc.com/autocreated": created_project ? "true" : "false",
+    ...(extraLabels ?? {}),
   };
   if (build_id) {
     labels["cocalc.com/rootfs-build-id"] = build_id;
@@ -803,6 +816,200 @@ function formatRootfsBuildStartHuman(result: {
     `next: cocalc rootfs build-publish ${result.build.build_id} --project=${result.project_id}`,
   );
   return lines.join("\n");
+}
+
+type RootfsBuildCommandOptions = RootfsRecipeRunOptions & {
+  publishWait?: boolean;
+};
+
+async function runRootfsBuildCommand({
+  ctx,
+  deps,
+  recipePath,
+  opts,
+  extraProjectLabels,
+}: {
+  ctx: any;
+  deps: RootfsCommandDeps;
+  recipePath: string;
+  opts: RootfsBuildCommandOptions;
+  extraProjectLabels?: Record<string, string>;
+}) {
+  if (opts.here) {
+    emitRootfsBuildProgress(ctx, "running recipe in the current project");
+    const result = await runRootfsRecipe({
+      ctx,
+      deps,
+      options: {
+        ...opts,
+        publish: false,
+        wait: false,
+      },
+      recipePath,
+    });
+    const publishConfig = projectRootfsPublishConfigEnvelope(result);
+    await ctx.hub.projects.setProjectRootfsPublishConfig({
+      project_id: result.project_id,
+      config: publishConfig,
+    });
+    if (extraProjectLabels && Object.keys(extraProjectLabels).length > 0) {
+      await ctx.hub.projects.setProjectLabels({
+        project_id: result.project_id,
+        labels: extraProjectLabels,
+      });
+    }
+    if (opts.configOut) {
+      writeFileSync(
+        opts.configOut,
+        `${JSON.stringify(result.config, null, 2)}\n`,
+      );
+    }
+    if (ctx.globals?.json || ctx.globals?.output === "json") {
+      return {
+        ...result,
+        saved_rootfs_publish_config: true,
+      };
+    }
+    return [
+      formatRootfsRecipeRunHuman(result),
+      "",
+      "saved_rootfs_publish_config: true",
+      `next: cocalc rootfs publish --project=${result.project_id}`,
+    ].join("\n");
+  }
+  emitRootfsBuildProgress(ctx, `resolving recipe ${recipePath}`);
+  const plan = resolveRootfsRecipeBuildPlan(recipePath, opts);
+  emitRootfsBuildProgress(
+    ctx,
+    `resolved recipe ${plan.recipe} from ${plan.recipe_path}`,
+  );
+  const project = await startRootfsBuilderProject({
+    ctx,
+    deps,
+    options: opts,
+    plan,
+  });
+  await labelRootfsBuilderProject({
+    ctx,
+    project_id: project.project_id,
+    plan,
+    created_project: project.created_project,
+    extraLabels: extraProjectLabels,
+  });
+  const publishConfig = projectRootfsPublishConfigEnvelope(plan);
+  await ctx.hub.projects.setProjectRootfsPublishConfig({
+    project_id: project.project_id,
+    config: publishConfig,
+  });
+  emitRootfsBuildProgress(
+    ctx,
+    `starting durable build in project ${project.project_id}`,
+  );
+  const build = await ctx.hub.projects.startProjectRootfsBuild({
+    project_id: project.project_id,
+    script: plan.script,
+    recipe_ref: plan.recipe,
+    resolved_recipe_json: plan.resolved_recipe,
+    metadata_json: plan.config,
+  });
+  await labelRootfsBuilderProject({
+    ctx,
+    project_id: project.project_id,
+    plan,
+    created_project: project.created_project,
+    build_id: build.build_id,
+    extraLabels: extraProjectLabels,
+  });
+  emitRootfsBuildProgress(ctx, `started build ${build.build_id}`);
+  if (opts.configOut) {
+    writeFileSync(opts.configOut, `${JSON.stringify(plan.config, null, 2)}\n`);
+  }
+  if (!opts.detach) {
+    emitRootfsBuildProgress(ctx, `following build ${build.build_id}`);
+  }
+  const finalBuild = opts.detach
+    ? build
+    : await followRootfsBuildLog({
+        ctx,
+        deps,
+        project_id: project.project_id,
+        build_id: build.build_id,
+      });
+  const publish = opts.publish
+    ? await publishRootfsBuild({
+        ctx,
+        project_id: project.project_id,
+        build_id: finalBuild.build_id,
+        opts,
+        wait: opts.publishWait,
+        waitForLroFn: deps.waitForLro,
+      })
+    : undefined;
+  writeLastRootfsBuild({
+    ctx,
+    project_id: project.project_id,
+    build: finalBuild,
+    recipe: plan.recipe,
+  });
+  const result = {
+    recipe: plan.recipe,
+    recipe_path: plan.recipe_path,
+    project_id: project.project_id,
+    created_project: project.created_project,
+    build: finalBuild,
+    config: plan.config,
+    saved_rootfs_publish_config: true,
+    publish,
+  };
+  if (ctx.globals?.json || ctx.globals?.output === "json") {
+    return result;
+  }
+  return formatRootfsBuildStartHuman(result);
+}
+
+type BinderRecipeCommandOptions = BinderRootfsRecipeOptions & {
+  dryRun?: boolean;
+  output?: string;
+  stepTimeout?: string;
+};
+
+type BinderBuildCommandOptions = RootfsBuildCommandOptions &
+  BinderRootfsRecipeOptions & {
+    recipeOut?: string;
+  };
+
+function binderRecipeJson(spec: BinderSpec, opts: BinderRootfsRecipeOptions) {
+  return `${JSON.stringify(generateBinderRootfsRecipe(spec, opts), null, 2)}\n`;
+}
+
+function writeBinderRecipeFile({
+  opts,
+  spec,
+}: {
+  opts: BinderRootfsRecipeOptions & { recipeOut?: string; output?: string };
+  spec: BinderSpec;
+}): { path: string; cleanup?: () => void } {
+  const explicit = opts.recipeOut ?? opts.output;
+  if (explicit) {
+    writeFileSync(explicit, binderRecipeJson(spec, opts));
+    return { path: explicit };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-binder-rootfs-"));
+  const path = join(dir, `${binderRecipeName(spec)}.json`);
+  writeFileSync(path, binderRecipeJson(spec, opts));
+  return {
+    path,
+    cleanup: () => rmSync(dir, { force: true, recursive: true }),
+  };
+}
+
+function parseBinderSpecArgs(
+  provider: string,
+  owner: string,
+  repo: string,
+  ref: string,
+): BinderSpec {
+  return normalizeBinderSpec(provider, owner, repo, ref);
 }
 
 function formatRootfsBuildStatusHuman(status: any): string {
@@ -1765,6 +1972,71 @@ export function registerRootfsCommand(
     );
 
   recipe
+    .command("from-binder <provider> <owner> <repo> <ref>")
+    .description(
+      "generate a RootFS recipe from Binder-compatible repository files; currently supports GitHub via provider 'gh'",
+    )
+    .option("--base-image <image>", "optional base RootFS image for the build")
+    .option("--output <path>", "write the generated recipe JSON to a file")
+    .option(
+      "--dry-run",
+      "print the expanded runnable RootFS build script for the generated recipe",
+    )
+    .option(
+      "--step-timeout <seconds>",
+      "default timeout for each generated recipe step command",
+      "900",
+    )
+    .action(
+      (
+        provider: string,
+        owner: string,
+        repo: string,
+        ref: string,
+        opts: BinderRecipeCommandOptions,
+        command: Command,
+      ) => {
+        const globals = command.optsWithGlobals?.() ?? {};
+        const spec = parseBinderSpecArgs(provider, owner, repo, ref);
+        const recipe = generateBinderRootfsRecipe(spec, opts);
+        if (opts.output) {
+          writeFileSync(opts.output, `${JSON.stringify(recipe, null, 2)}\n`);
+        }
+        if (opts.dryRun) {
+          const temp = writeBinderRecipeFile({ opts, spec });
+          try {
+            const script = renderRootfsRecipeDryRunScript(temp.path, opts);
+            if (globals.json || globals.output === "json") {
+              emitSuccess({ globals }, "rootfs recipe from-binder", {
+                spec,
+                recipe_path: opts.output,
+                script,
+              });
+            } else if (!globals.quiet) {
+              console.log(script);
+            }
+          } finally {
+            temp.cleanup?.();
+          }
+          return;
+        }
+        if (globals.json || globals.output === "json") {
+          emitSuccess({ globals }, "rootfs recipe from-binder", {
+            spec,
+            recipe_path: opts.output,
+            recipe,
+          });
+        } else if (!globals.quiet) {
+          if (opts.output) {
+            console.log(`recipe_path: ${opts.output}`);
+          } else {
+            console.log(JSON.stringify(recipe, null, 2));
+          }
+        }
+      },
+    );
+
+  recipe
     .command("run <recipe>")
     .description(
       "run a RootFS recipe file, bundled example, or module in a clean builder project or existing project",
@@ -1941,135 +2213,94 @@ export function registerRootfsCommand(
             waitForLro,
             serializeLroSummary,
           };
-          if (opts.here) {
-            emitRootfsBuildProgress(
-              ctx,
-              "running recipe in the current project",
-            );
-            const result = await runRootfsRecipe({
-              ctx,
-              deps,
-              options: {
-                ...opts,
-                publish: false,
-                wait: false,
-              },
-              recipePath,
-            });
-            const publishConfig = projectRootfsPublishConfigEnvelope(result);
-            await ctx.hub.projects.setProjectRootfsPublishConfig({
-              project_id: result.project_id,
-              config: publishConfig,
-            });
-            if (opts.configOut) {
-              writeFileSync(
-                opts.configOut,
-                `${JSON.stringify(result.config, null, 2)}\n`,
-              );
-            }
-            if (ctx.globals?.json || ctx.globals?.output === "json") {
-              return {
-                ...result,
-                saved_rootfs_publish_config: true,
-              };
-            }
-            return [
-              formatRootfsRecipeRunHuman(result),
-              "",
-              "saved_rootfs_publish_config: true",
-              `next: cocalc rootfs publish --project=${result.project_id}`,
-            ].join("\n");
-          }
-          emitRootfsBuildProgress(ctx, `resolving recipe ${recipePath}`);
-          const plan = resolveRootfsRecipeBuildPlan(recipePath, opts);
-          emitRootfsBuildProgress(
-            ctx,
-            `resolved recipe ${plan.recipe} from ${plan.recipe_path}`,
-          );
-          const project = await startRootfsBuilderProject({
+          return await runRootfsBuildCommand({
             ctx,
             deps,
-            options: opts,
-            plan,
+            recipePath,
+            opts,
           });
-          await labelRootfsBuilderProject({
-            ctx,
-            project_id: project.project_id,
-            plan,
-            created_project: project.created_project,
-          });
-          const publishConfig = projectRootfsPublishConfigEnvelope(plan);
-          await ctx.hub.projects.setProjectRootfsPublishConfig({
-            project_id: project.project_id,
-            config: publishConfig,
-          });
-          emitRootfsBuildProgress(
-            ctx,
-            `starting durable build in project ${project.project_id}`,
-          );
-          const build = await ctx.hub.projects.startProjectRootfsBuild({
-            project_id: project.project_id,
-            script: plan.script,
-            recipe_ref: plan.recipe,
-            resolved_recipe_json: plan.resolved_recipe,
-            metadata_json: plan.config,
-          });
-          await labelRootfsBuilderProject({
-            ctx,
-            project_id: project.project_id,
-            plan,
-            created_project: project.created_project,
-            build_id: build.build_id,
-          });
-          emitRootfsBuildProgress(ctx, `started build ${build.build_id}`);
-          if (opts.configOut) {
-            writeFileSync(
-              opts.configOut,
-              `${JSON.stringify(plan.config, null, 2)}\n`,
-            );
-          }
-          if (!opts.detach) {
-            emitRootfsBuildProgress(ctx, `following build ${build.build_id}`);
-          }
-          const finalBuild = opts.detach
-            ? build
-            : await followRootfsBuildLog({
-                ctx,
-                deps,
-                project_id: project.project_id,
-                build_id: build.build_id,
-              });
-          const publish = (opts as any).publish
-            ? await publishRootfsBuild({
-                ctx,
-                project_id: project.project_id,
-                build_id: finalBuild.build_id,
-                opts: opts as any,
-                wait: (opts as any).publishWait,
-                waitForLroFn: waitForLro,
-              })
-            : undefined;
-          writeLastRootfsBuild({
-            ctx,
-            project_id: project.project_id,
-            build: finalBuild,
-            recipe: plan.recipe,
-          });
-          const result = {
-            recipe: plan.recipe,
-            recipe_path: plan.recipe_path,
-            project_id: project.project_id,
-            created_project: project.created_project,
-            build: finalBuild,
-            config: plan.config,
-            saved_rootfs_publish_config: true,
-            publish,
-          };
-          if (ctx.globals?.json || ctx.globals?.output === "json") {
-            return result;
-          }
-          return formatRootfsBuildStartHuman(result);
         });
+      },
+    );
+
+  rootfs
+    .command("build-binder <provider> <owner> <repo> <ref>")
+    .description(
+      "generate a Binder-compatible RootFS recipe and build it with the durable RootFS builder",
+    )
+    .option("-w, --project <project>", "existing project id or name to use")
+    .option(
+      "--here",
+      "build in the current CoCalc project using local subprocesses; requires COCALC_PROJECT_ID",
+    )
+    .option(
+      "--title <title>",
+      "title for a new builder project; defaults to the generated Binder recipe name",
+    )
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
+    .option("--config-out <path>", "also write generated RootFS config JSON")
+    .option("--recipe-out <path>", "also write generated Binder recipe JSON")
+    .option(
+      "--detach",
+      "start the durable build and return without following logs",
+    )
+    .option("--publish", "publish the project RootFS after the build succeeds")
+    .option("--publish-wait", "wait for publish completion after build")
+    .option(
+      "--switch-project",
+      "switch the builder project to the published image when publish succeeds",
+    )
+    .option("--base-image <image>", "optional base RootFS image for the build")
+    .option(
+      "--step-timeout <seconds>",
+      "default timeout for each recipe step command",
+      "900",
+    )
+    .action(
+      async (
+        provider: string,
+        owner: string,
+        repo: string,
+        ref: string,
+        opts: BinderBuildCommandOptions,
+        command: Command,
+      ) => {
+        const spec = parseBinderSpecArgs(provider, owner, repo, ref);
+        emitRootfsBuildProgressForCommand(
+          command,
+          `preparing Binder recipe ${spec.provider}/${spec.owner}/${spec.repo}/${spec.ref}`,
+        );
+        if (opts.publish && opts.detach) {
+          throw new Error(
+            "rootfs build-binder --publish is not supported with --detach",
+          );
+        }
+        if (opts.publish && opts.here) {
+          throw new Error(
+            "rootfs build-binder --publish is not supported with --here; run rootfs publish after the local build",
+          );
+        }
+        const temp = writeBinderRecipeFile({ opts, spec });
+        try {
+          await withContext(command, "rootfs build-binder", async (ctx) => {
+            const deps = {
+              withContext,
+              resolveProjectFromArgOrContext,
+              resolveProjectProjectApi,
+              waitForLro,
+              serializeLroSummary,
+            };
+            return await runRootfsBuildCommand({
+              ctx,
+              deps,
+              recipePath: temp.path,
+              opts,
+              extraProjectLabels: binderProjectLabels(spec),
+            });
+          });
+        } finally {
+          temp.cleanup?.();
+        }
       },
     );
 

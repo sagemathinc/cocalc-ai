@@ -52,7 +52,7 @@ import getPool from "@cocalc/database/pool";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
-import { getStripeCustomerId } from "./stripe/util";
+import { currentStripeSite, getStripeCustomerId } from "./stripe/util";
 import {
   getCurrentSession,
   setStripeCheckoutSession,
@@ -102,6 +102,7 @@ export async function createStripeUsageBasedSubscription(
   const customer = await getStripeCustomerId({ account_id, create: true });
   log({ customer });
   const price_id = await getPriceId();
+  const cocalc_site = await currentStripeSite();
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     success_url,
@@ -115,7 +116,9 @@ export async function createStripeUsageBasedSubscription(
     customer,
     customer_email:
       customer == null ? await getEmailAddress(account_id) : undefined,
-    subscription_data: { metadata: { account_id, service: "credit" } },
+    subscription_data: {
+      metadata: { account_id, service: "credit", cocalc_site },
+    },
     tax_id_collection: { enabled: true },
     automatic_tax: {
       enabled: true,
@@ -391,7 +394,11 @@ async function collectPaymentUsingCreditCard({
     currency: "usd",
     confirm: true,
     description: "Credit CoCalc Account",
-    metadata: { account_id, service: "credit" },
+    metadata: {
+      account_id,
+      service: "credit",
+      cocalc_site: await currentStripeSite(),
+    },
     payment_method: card.id,
   });
   if (intent.status == "succeeded") {

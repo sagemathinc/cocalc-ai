@@ -15,14 +15,16 @@ Use case:
 
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
-import stripeName from "@cocalc/util/stripe/name";
-import { setStripeCustomerId } from "@cocalc/database/postgres/stripe";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import createCredit from "./create-credit";
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { moneyToCurrency, stripeToMoney, toDecimal } from "@cocalc/util/money";
 import { decimalToStripe } from "@cocalc/util/stripe/calc";
+import {
+  currentStripeSite,
+  getStripeCustomerId as getStripeCustomerIdFromUtil,
+} from "./stripe/util";
 
 const logger = getLogger("purchases:create-invoice");
 
@@ -67,7 +69,11 @@ export default async function createInvoice({
     auto_advance: true,
     collection_method: "send_invoice",
     days_until_due: 21,
-    metadata: { account_id, service: "credit" },
+    metadata: {
+      account_id,
+      service: "credit",
+      cocalc_site: await currentStripeSite(),
+    },
     automatic_tax: { enabled: true },
   });
   await stripe.invoiceItems.create({
@@ -89,56 +95,7 @@ export async function getStripeCustomerId({
   account_id: string;
   create: boolean;
 }): Promise<string | null> {
-  const db = getPool();
-  const { rows } = await db.query(
-    "SELECT stripe_customer_id FROM accounts WHERE account_id=$1",
-    [account_id],
-  );
-  const stripe_customer_id = rows[0]?.stripe_customer_id;
-  if (stripe_customer_id) {
-    logger.debug(
-      "getStripeCustomerId",
-      "customer already exists",
-      stripe_customer_id,
-    );
-    return stripe_customer_id;
-  }
-  if (create) {
-    return await createStripeCustomer(account_id);
-  } else {
-    return null;
-  }
-}
-
-async function createStripeCustomer(account_id: string): Promise<string> {
-  logger.debug("createStripeCustomer", account_id);
-  const db = getPool();
-  const { rows } = await db.query(
-    "SELECT email_address, display_name, first_name, last_name FROM accounts WHERE account_id=$1",
-    [account_id],
-  );
-  if (rows.length == 0) {
-    throw Error(`no account ${account_id}`);
-  }
-  const email = rows[0].email_address;
-  const description = stripeName(rows[0]);
-  const stripe = await getConn();
-  const { id } = await stripe.customers.create({
-    description,
-    name: description,
-    email,
-    metadata: {
-      account_id,
-    },
-  });
-  logger.debug("createStripeCustomer", "created ", {
-    id,
-    description,
-    email,
-    account_id,
-  });
-  await setStripeCustomerId(account_id, id);
-  return id;
+  return (await getStripeCustomerIdFromUtil({ account_id, create })) ?? null;
 }
 
 /*

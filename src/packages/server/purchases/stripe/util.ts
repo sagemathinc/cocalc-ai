@@ -5,9 +5,11 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import getConn from "@cocalc/server/stripe/connection";
-import getPool from "@cocalc/database/pool";
+import getPool, {
+  getTransactionClient,
+  type PoolClient,
+} from "@cocalc/database/pool";
 import stripeName from "@cocalc/util/stripe/name";
-import { setStripeCustomerId } from "@cocalc/database/postgres/stripe";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
@@ -19,34 +21,57 @@ const MINIMUM_STRIPE_TRANSACTION = 0.5; // Stripe requires transactions to be at
 
 const logger = getLogger("purchases:stripe:util");
 
-async function createStripeCustomer(account_id: string): Promise<string> {
-  logger.debug("createStripeCustomer", account_id);
-  const db = getPool();
-  const { rows } = await db.query(
-    "SELECT email_address, display_name, first_name, last_name FROM accounts WHERE account_id=$1",
-    [account_id],
+async function setStripeCustomerId({
+  account_id,
+  id,
+  client,
+}: {
+  account_id: string;
+  id: string;
+  client: PoolClient;
+}): Promise<void> {
+  await client.query(
+    "UPDATE accounts SET stripe_customer_id=$2::TEXT WHERE account_id=$1",
+    [account_id, id],
   );
-  if (rows.length == 0) {
-    throw Error(`no account ${account_id}`);
-  }
-  const email = rows[0].email_address;
-  const description = stripeName(rows[0]);
+}
+
+async function createStripeCustomer({
+  account_id,
+  email,
+  display_name,
+  first_name,
+  last_name,
+}: {
+  account_id: string;
+  email?: string | null;
+  display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+}): Promise<string> {
+  logger.debug("createStripeCustomer", account_id);
+  const description = stripeName({ display_name, first_name, last_name });
   const stripe = await getConn();
-  const { id } = await stripe.customers.create({
-    description,
-    name: description,
-    email,
-    metadata: {
-      account_id,
+  const { id } = await stripe.customers.create(
+    {
+      description,
+      name: description,
+      email: email ?? undefined,
+      metadata: {
+        account_id,
+        cocalc_site: await currentStripeSite(),
+      },
     },
-  });
+    {
+      idempotencyKey: `cocalc-stripe-customer:${account_id}`,
+    },
+  );
   logger.debug("createStripeCustomer", "created ", {
     id,
     description,
     email,
     account_id,
   });
-  await setStripeCustomerId(account_id, id);
   return id;
 }
 
@@ -56,6 +81,7 @@ function stripeSearchString(value: string): string {
 
 async function findStripeCustomerIdByAccountMetadata(
   account_id: string,
+  client: PoolClient,
 ): Promise<string | undefined> {
   const stripe = await getConn();
   try {
@@ -73,7 +99,7 @@ async function findStripeCustomerIdByAccountMetadata(
       "recovered customer from Stripe metadata",
       { account_id, id },
     );
-    await setStripeCustomerId(account_id, id);
+    await setStripeCustomerId({ account_id, id, client });
     return id;
   } catch (err) {
     logger.warn("unable to search Stripe customers by account metadata", {
@@ -91,7 +117,7 @@ export async function getStripeCustomerId({
   account_id: string;
   create: boolean;
 }): Promise<string | undefined> {
-  const db = getPool("long");
+  const db = getPool();
   const { rows } = await db.query(
     "SELECT stripe_customer_id FROM accounts WHERE account_id=$1",
     [account_id],
@@ -105,15 +131,52 @@ export async function getStripeCustomerId({
     );
     return stripe_customer_id;
   }
-  const recovered_customer_id =
-    await findStripeCustomerIdByAccountMetadata(account_id);
-  if (recovered_customer_id) {
-    return recovered_customer_id;
-  }
-  if (create) {
-    return await createStripeCustomer(account_id);
-  } else {
-    return undefined;
+
+  const client = await getTransactionClient();
+  try {
+    const { rows } = await client.query(
+      "SELECT email_address, display_name, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
+      [account_id],
+    );
+    if (rows.length == 0) {
+      if (create) {
+        throw Error(`no account ${account_id}`);
+      }
+      await client.query("COMMIT");
+      return undefined;
+    }
+    const row = rows[0];
+    if (row.stripe_customer_id) {
+      await client.query("COMMIT");
+      return row.stripe_customer_id;
+    }
+    const recovered_customer_id = await findStripeCustomerIdByAccountMetadata(
+      account_id,
+      client,
+    );
+    if (recovered_customer_id) {
+      await client.query("COMMIT");
+      return recovered_customer_id;
+    }
+    if (!create) {
+      await client.query("COMMIT");
+      return undefined;
+    }
+    const id = await createStripeCustomer({
+      account_id,
+      email: row.email_address,
+      display_name: row.display_name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+    });
+    await setStripeCustomerId({ account_id, id, client });
+    await client.query("COMMIT");
+    return id;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -181,17 +244,25 @@ export async function defaultReturnUrl() {
   return return_url;
 }
 
+export async function currentStripeSite(): Promise<string> {
+  const { dns } = await getServerSettings();
+  return `${dns ?? ""}`.trim();
+}
+
 export function assertValidUserMetadata(metadata) {
   if (
     metadata?.purpose != null ||
     metadata?.account_id != null ||
+    metadata?.cocalc_site != null ||
+    metadata?.checkout_key != null ||
     metadata?.confirm != null ||
+    metadata?.lineItems != null ||
     metadata?.processed != null ||
     metadata?.recorded != null ||
     metadata?.total_excluding_tax_usd != null
   ) {
     throw Error(
-      "metadata must not include 'purpose', 'account_id', 'confirm', 'total_excluding_tax_usd', 'recorded', or 'processed' as a key",
+      "metadata must not include 'purpose', 'account_id', 'cocalc_site', 'checkout_key', 'confirm', 'lineItems', 'total_excluding_tax_usd', 'recorded', or 'processed' as a key",
     );
   }
 }

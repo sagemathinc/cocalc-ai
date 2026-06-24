@@ -59,6 +59,9 @@ jest.mock("antd", () => {
     Card: Box,
     Divider: () => <hr />,
     Modal: Box,
+    Progress: ({ percent }: { percent?: number }) => (
+      <div>progress {percent}</div>
+    ),
     Space: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     Spin: () => <div>loading</div>,
     Table: ({ columns, dataSource }: any) => (

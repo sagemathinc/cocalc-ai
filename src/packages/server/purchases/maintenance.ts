@@ -12,6 +12,9 @@ const logger = getLogger("purchases:maintenance");
 
 // By default wait this long after running maintenance task.
 const DEFAULT_DELAY_MS = 1000 * 60 * 5;
+const INITIAL_DELAY_MS = 1000 * 10;
+
+let started = false;
 
 interface MaintenanceDescription {
   // The async function to run
@@ -74,7 +77,11 @@ function getEnabledMaintenanceFunctions(
   return FUNCTIONS.filter(({ desc }) => enabledDescriptions.has(desc));
 }
 
-export default async function init() {
+export default function startPurchasesMaintenanceLoop() {
+  if (started) {
+    return;
+  }
+  started = true;
   let running: boolean = false;
   async function f() {
     if (running) {
@@ -94,9 +101,15 @@ export default async function init() {
     }
   }
   // Do a first round in a couple of seconds:
-  setTimeout(f, 10000);
+  const initial = setTimeout(f, INITIAL_DELAY_MS);
+  initial.unref?.();
   // And every few minutes afterwards.
-  setInterval(f, DEFAULT_DELAY_MS);
+  const interval = setInterval(f, DEFAULT_DELAY_MS);
+  interval.unref?.();
+  logger.info("purchase maintenance loop started", {
+    interval_ms: DEFAULT_DELAY_MS,
+    initial_delay_ms: INITIAL_DELAY_MS,
+  });
 }
 
 async function doMaintenance(functions: MaintenanceDescription[] = FUNCTIONS) {
