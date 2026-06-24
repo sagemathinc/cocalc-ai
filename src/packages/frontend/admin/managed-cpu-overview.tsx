@@ -47,6 +47,7 @@ import {
 } from "@cocalc/frontend/purchases/managed-egress-history";
 import { ManagedEgressRecentEventsButton } from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -82,11 +83,11 @@ function formatCpuSeconds(seconds: number): string {
 function getAccountLabel(account: {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
 }): string {
-  const fullName =
-    `${account.first_name ?? ""} ${account.last_name ?? ""}`.trim();
+  const fullName = displayNameFromAccount(account);
   if (fullName && account.email_address) {
     return `${fullName} (${account.email_address})`;
   }
@@ -106,6 +107,7 @@ function getProjectLabel(project: {
 function formatAccountSummary(account: {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
 }): string {
@@ -115,6 +117,7 @@ function formatAccountSummary(account: {
 function formatProjectSummary(project: {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   project_id?: string | null;

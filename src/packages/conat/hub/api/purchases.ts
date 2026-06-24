@@ -739,6 +739,7 @@ export interface ManagedEgressProjectSummary {
 export interface ManagedEgressAccountSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   bytes: number;
@@ -748,6 +749,7 @@ export interface ManagedEgressAccountSummary {
 export interface ManagedEgressAdminProjectSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   project_id: string | null;
@@ -841,6 +843,7 @@ export interface ManagedCpuEventSummary {
 export interface ManagedCpuAccountSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   cpu_seconds: number;
@@ -850,6 +853,7 @@ export interface ManagedCpuAccountSummary {
 export interface ManagedCpuAdminProjectSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   project_id: string | null;

@@ -356,6 +356,7 @@ export async function getManagedEgressAdminOverview(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       bytes: string | number;
@@ -364,6 +365,7 @@ export async function getManagedEgressAdminOverview(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           COALESCE(SUM(events.bytes), 0) AS bytes
@@ -373,6 +375,7 @@ export async function getManagedEgressAdminOverview(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name
         ORDER BY bytes DESC, events.account_id ASC
@@ -383,6 +386,7 @@ export async function getManagedEgressAdminOverview(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       project_id: string | null;
@@ -393,6 +397,7 @@ export async function getManagedEgressAdminOverview(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           events.project_id,
@@ -405,6 +410,7 @@ export async function getManagedEgressAdminOverview(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           events.project_id,
@@ -446,6 +452,7 @@ export async function getManagedEgressAdminOverview(opts: {
     accountRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       bytes: Math.max(0, Number(row.bytes) || 0),
@@ -455,6 +462,7 @@ export async function getManagedEgressAdminOverview(opts: {
     projectRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       project_id: row.project_id ?? null,
@@ -541,6 +549,7 @@ export async function getManagedEgressAdminHistory(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       bytes: string | number;
@@ -549,6 +558,7 @@ export async function getManagedEgressAdminHistory(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           COALESCE(SUM(events.bytes), 0) AS bytes
@@ -558,6 +568,7 @@ export async function getManagedEgressAdminHistory(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name
         ORDER BY bytes DESC, events.account_id ASC
@@ -568,6 +579,7 @@ export async function getManagedEgressAdminHistory(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       project_id: string | null;
@@ -578,6 +590,7 @@ export async function getManagedEgressAdminHistory(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           events.project_id,
@@ -590,6 +603,7 @@ export async function getManagedEgressAdminHistory(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           events.project_id,
@@ -648,6 +662,7 @@ export async function getManagedEgressAdminHistory(opts: {
     accountRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       bytes: Math.max(0, Number(row.bytes) || 0),
@@ -657,6 +672,7 @@ export async function getManagedEgressAdminHistory(opts: {
     projectRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       project_id: row.project_id ?? null,

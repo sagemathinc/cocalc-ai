@@ -225,6 +225,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               bytes: "6000",
@@ -232,6 +233,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-2",
               email_address: "alan@example.com",
+              display_name: "Alan Turing",
               first_name: "Alan",
               last_name: "Turing",
               bytes: "2192",
@@ -248,6 +250,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               project_id: "project-1",
@@ -290,6 +293,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         bytes: 6000,
@@ -298,6 +302,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-2",
         email_address: "alan@example.com",
+        display_name: "Alan Turing",
         first_name: "Alan",
         last_name: "Turing",
         bytes: 2192,
@@ -308,6 +313,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         project_id: "project-1",
@@ -383,6 +389,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               bytes: "450",
@@ -399,6 +406,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               project_id: "project-1",
@@ -461,6 +469,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         bytes: 450,
@@ -471,6 +480,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         project_id: "project-1",

@@ -436,6 +436,7 @@ export async function getManagedCpuAdminOverview(
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       cpu_seconds: string | number;
@@ -444,6 +445,7 @@ export async function getManagedCpuAdminOverview(
           SELECT
             events.account_id,
             accounts.email_address,
+            accounts.display_name,
             accounts.first_name,
             accounts.last_name,
             COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
@@ -453,6 +455,7 @@ export async function getManagedCpuAdminOverview(
           GROUP BY
             events.account_id,
             accounts.email_address,
+            accounts.display_name,
             accounts.first_name,
             accounts.last_name
           ORDER BY cpu_seconds DESC, events.account_id ASC
@@ -463,6 +466,7 @@ export async function getManagedCpuAdminOverview(
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       project_id: string | null;
@@ -474,6 +478,7 @@ export async function getManagedCpuAdminOverview(
           SELECT
             events.account_id,
             accounts.email_address,
+            accounts.display_name,
             accounts.first_name,
             accounts.last_name,
             events.project_id,
@@ -487,6 +492,7 @@ export async function getManagedCpuAdminOverview(
           GROUP BY
             events.account_id,
             accounts.email_address,
+            accounts.display_name,
             accounts.first_name,
             accounts.last_name,
             events.project_id,
@@ -528,6 +534,7 @@ export async function getManagedCpuAdminOverview(
     (row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
@@ -538,6 +545,7 @@ export async function getManagedCpuAdminOverview(
     projectRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       project_id: row.project_id ?? null,
@@ -631,6 +639,7 @@ export async function getManagedCpuAdminHistory(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       cpu_seconds: string | number;
@@ -639,6 +648,7 @@ export async function getManagedCpuAdminHistory(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
@@ -648,6 +658,7 @@ export async function getManagedCpuAdminHistory(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name
         ORDER BY cpu_seconds DESC, events.account_id ASC
@@ -658,6 +669,7 @@ export async function getManagedCpuAdminHistory(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       project_id: string | null;
@@ -669,6 +681,7 @@ export async function getManagedCpuAdminHistory(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           events.project_id,
@@ -682,6 +695,7 @@ export async function getManagedCpuAdminHistory(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           events.project_id,
@@ -737,6 +751,7 @@ export async function getManagedCpuAdminHistory(opts: {
     (row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
@@ -746,6 +761,7 @@ export async function getManagedCpuAdminHistory(opts: {
     projectRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       project_id: row.project_id ?? null,

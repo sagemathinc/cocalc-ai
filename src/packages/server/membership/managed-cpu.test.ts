@@ -263,6 +263,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               cpu_seconds: "3000",
@@ -280,6 +281,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               project_id: "project-1",
@@ -321,6 +323,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         cpu_seconds: 3000,
@@ -331,6 +334,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         project_id: "project-1",
@@ -392,6 +396,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               cpu_seconds: "500",
@@ -409,6 +414,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               project_id: "project-1",
@@ -469,6 +475,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         cpu_seconds: 500,
@@ -479,6 +486,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         project_id: "project-1",
