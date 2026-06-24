@@ -7,6 +7,7 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { Flex, Segmented, Tag, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { capitalize } from "@cocalc/util/misc";
 import {
   CHANNELS_DESCRIPTIONS,
   PUBLIC_NEWS_CHANNELS,
@@ -18,9 +19,10 @@ import {
   appPath,
   EmptySection,
   fetchJson,
-  getSiteName,
+  getPublicMarketingSiteName,
   LinkButton,
   LoadingSection,
+  PublicNextStep,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
@@ -28,11 +30,37 @@ import { publicPath } from "../routes";
 import type { PublicNewsRoute } from "./routes";
 import { contentNewsPath, formatNewsDate, newsHistoryPath } from "./utils";
 import { PublicGrid, PublicSection } from "../layout/shell";
+import { PUBLIC_COLORS } from "../theme";
 
 const StaticMarkdown = lazy(
   () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
 );
 const { Paragraph, Text, Title } = Typography;
+
+const NEWS_EXCERPT_MAX_CHARS = 220;
+const NEWS_EXCERPT_STYLE = {
+  display: "-webkit-box",
+  margin: 0,
+  overflow: "hidden",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 4,
+} as const;
+
+const NEWS_PAGE_CSS = `
+  .cocalc-news-markdown a {
+    color: ${PUBLIC_COLORS.linkHover};
+  }
+
+  .cocalc-news-markdown a:hover {
+    color: ${PUBLIC_COLORS.brandActive};
+  }
+`;
+
+// CHANNELS_DESCRIPTIONS is shared with the in-app news admin; override the
+// less-clear public-facing wording here so the filter tooltips read naturally.
+const CHANNEL_TOOLTIPS: Partial<Record<Channel, string>> = {
+  about: "Company news and updates about CoCalc",
+};
 
 interface NewsDetailPayload {
   history?: boolean;
@@ -52,37 +80,57 @@ interface NewsDetailPayload {
 
 type PublicNewsDetailRoute = Exclude<PublicNewsRoute, { view: "news" }>;
 
-function NewsMarkdown({
-  preview,
-  value,
-}: {
-  preview?: boolean;
-  value: string;
-}) {
+function NewsMarkdown({ value }: { value: string }) {
   return (
-    <Suspense fallback={<div>Loading content…</div>}>
-      <StaticMarkdown
-        style={{
-          fontSize: preview ? "0.98rem" : undefined,
-          overflowX: "auto",
-        }}
-        value={value}
-      />
-    </Suspense>
+    <div className="cocalc-news-markdown">
+      <Suspense fallback={<div>Loading content…</div>}>
+        <StaticMarkdown
+          style={{
+            overflowX: "auto",
+          }}
+          value={value}
+        />
+      </Suspense>
+    </div>
   );
+}
+
+function truncateAtWord(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+
+  const candidate = value.slice(0, maxLength).trimEnd();
+  const wordBreak = candidate.lastIndexOf(" ");
+  const truncated =
+    wordBreak > Math.floor(maxLength * 0.6)
+      ? candidate.slice(0, wordBreak)
+      : candidate;
+  return `${truncated.trimEnd()}...`;
+}
+
+function newsExcerpt(markdown: string): string {
+  const text = markdown
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}[-*+]\s+/gm, "")
+    .replace(/[`*_~>#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return truncateAtWord(text, NEWS_EXCERPT_MAX_CHARS);
 }
 
 function NewsCard({ item }: { item: NewsItem }) {
   return (
     <PublicSection>
       <Flex gap={8} wrap>
-        <Tag color="blue">{item.channel}</Tag>
+        <Tag color="blue">{capitalize(item.channel)}</Tag>
         <Text type="secondary">{formatNewsDate(item.date)}</Text>
       </Flex>
-      <Title level={3} style={{ margin: 0 }}>
+      <Title level={2} style={{ margin: 0 }}>
         {item.title}
       </Title>
-      <NewsMarkdown preview value={item.text} />
+      <Paragraph style={NEWS_EXCERPT_STYLE}>{newsExcerpt(item.text)}</Paragraph>
       {item.tags?.length ? (
         <Flex gap={8} wrap>
           {item.tags.map((tag) => (
@@ -149,19 +197,22 @@ function NewsListPage({ isAdmin }: { isAdmin?: boolean }) {
         </PublicSection>
       ) : null}
       <Segmented
+        aria-label="Filter news by channel"
         block
         onChange={(value) => setChannel(value as Channel | "all")}
         options={[
           { label: "All", title: "All channels", value: "all" },
           ...PUBLIC_NEWS_CHANNELS.map((name) => ({
-            label: name,
-            title: CHANNELS_DESCRIPTIONS[name],
+            label: capitalize(name),
+            title: CHANNEL_TOOLTIPS[name] ?? CHANNELS_DESCRIPTIONS[name],
             value: name,
           })),
         ]}
         value={channel}
       />
-      {!loading && visible.length === 0 ? (
+      {loading ? (
+        <LoadingSection label="Loading news…" />
+      ) : visible.length === 0 ? (
         <EmptySection label="No news items match the selected filter." />
       ) : (
         <PublicGrid columns={3}>
@@ -228,7 +279,7 @@ function NewsDetailPage({ route }: { route: PublicNewsDetailRoute }) {
       ) : null}
       <PublicSection>
         <Flex gap={8} wrap>
-          <Tag color="blue">{news.channel}</Tag>
+          <Tag color="blue">{capitalize(news.channel)}</Tag>
           <Text type="secondary">{formatNewsDate(news.date)}</Text>
         </Flex>
         <Title level={2} style={{ margin: 0 }}>
@@ -282,7 +333,7 @@ export default function PublicNewsApp({
   config?: PublicConfig;
   initialRoute: PublicNewsRoute;
 }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const title = `${siteName} News`;
 
   useEffect(() => {
@@ -291,11 +342,18 @@ export default function PublicNewsApp({
 
   return (
     <PublicSectionShell active="news" config={config} title={title}>
+      <style>{NEWS_PAGE_CSS}</style>
       {initialRoute.view === "news-detail" ||
       initialRoute.view === "news-history" ? (
-        <NewsDetailPage route={initialRoute} />
+        <>
+          <NewsDetailPage route={initialRoute} />
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
+        </>
       ) : (
-        <NewsListPage isAdmin={!!config?.is_admin} />
+        <>
+          <NewsListPage isAdmin={!!config?.is_admin} />
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
+        </>
       )}
     </PublicSectionShell>
   );

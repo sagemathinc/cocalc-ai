@@ -4,22 +4,26 @@
  */
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
-import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_TYPE,
+  PUBLIC_WEIGHT,
+} from "@cocalc/frontend/public/theme";
+import { builtinPolicyPath, type PublicConfig } from "../common";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
-import RecentFiles from "./recent-files";
 
 type SupportView = "index" | "new" | "tickets";
 type TicketType = "problem" | "question" | "task" | "purchase" | "chat";
 
-interface SupportConfig {
+interface SupportConfig extends PublicConfig {
   help_email?: string;
   site_name?: string;
   support_video_call?: string;
@@ -45,6 +49,29 @@ interface SupportFileRef {
 const { Paragraph, Text, Title } = Typography;
 
 const MIN_BODY_LENGTH = 16;
+const SUPPORT_FIELD_IDS = {
+  email: "support-email",
+  subject: "support-subject",
+  typeLabel: "support-type-label",
+  problemAction: "support-problem-action",
+  problemResult: "support-problem-result",
+  problemExpectation: "support-problem-expectation",
+  questionDetails: "support-question-details",
+  purchaseDetails: "support-purchase-details",
+  taskSoftware: "support-task-software",
+  taskUse: "support-task-use",
+  taskTest: "support-task-test",
+  chatDetails: "support-chat-details",
+} as const;
+const RecentFiles = lazy(() => import("./recent-files"));
+type ClientApi = typeof import("@cocalc/frontend/client/api").default;
+
+async function clientApi(
+  ...args: Parameters<ClientApi>
+): Promise<Awaited<ReturnType<ClientApi>>> {
+  const { default: api } = await import("@cocalc/frontend/client/api");
+  return api(...args);
+}
 
 function stringToType(value?: string): TicketType {
   switch (value) {
@@ -78,6 +105,7 @@ function useInitialQueryState(): QueryState {
 function Status({ done }: { done: boolean }) {
   return (
     <span
+      aria-hidden="true"
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -85,11 +113,15 @@ function Status({ done }: { done: boolean }) {
         width: 18,
         height: 18,
         borderRadius: "50%",
-        background: done ? "#f6ffed" : "#fff7e6",
-        border: `1px solid ${done ? "#b7eb8f" : "#ffd591"}`,
-        color: done ? "#389e0d" : "#d46b08",
+        background: done
+          ? PUBLIC_COLORS.successTint
+          : PUBLIC_COLORS.warningTint,
+        border: `1px solid ${
+          done ? PUBLIC_COLORS.successBorder : PUBLIC_COLORS.warningBorder
+        }`,
+        color: done ? PUBLIC_COLORS.success : PUBLIC_COLORS.warning,
         fontSize: 12,
-        fontWeight: 700,
+        fontWeight: PUBLIC_WEIGHT.bold,
         marginRight: 8,
       }}
     >
@@ -101,14 +133,36 @@ function Status({ done }: { done: boolean }) {
 function SectionLabel({
   children,
   done,
+  htmlFor,
+  id,
 }: {
   children: ReactNode;
   done: boolean;
+  htmlFor?: string;
+  id?: string;
 }) {
-  return (
-    <div style={{ fontSize: 16, fontWeight: 700 }}>
+  const style = {
+    fontSize: PUBLIC_TYPE.body,
+    fontWeight: PUBLIC_WEIGHT.bold,
+  };
+  const content = (
+    <>
       <Status done={done} />
       {children}
+    </>
+  );
+
+  if (htmlFor) {
+    return (
+      <label htmlFor={htmlFor} id={id} style={style}>
+        {content}
+      </label>
+    );
+  }
+
+  return (
+    <div id={id} style={style}>
+      {content}
     </div>
   );
 }
@@ -145,9 +199,12 @@ function ProblemFields({
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <div>
-        <Text strong>What did you do exactly?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.problemAction}>
+          <Text strong>What did you do exactly?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.problemAction}
           rows={3}
           placeholder="Describe exactly what you did before the problem happened."
           style={{ marginTop: 8 }}
@@ -155,9 +212,12 @@ function ProblemFields({
         />
       </div>
       <div>
-        <Text strong>What happened?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.problemResult}>
+          <Text strong>What happened?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.problemResult}
           rows={3}
           placeholder="Tell us what happened."
           style={{ marginTop: 8 }}
@@ -165,9 +225,12 @@ function ProblemFields({
         />
       </div>
       <div>
-        <Text strong>How did this differ from what you expected?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.problemExpectation}>
+          <Text strong>How did this differ from what you expected?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.problemExpectation}
           rows={3}
           placeholder="Explain what you expected instead."
           style={{ marginTop: 8 }}
@@ -189,7 +252,9 @@ function QuestionFields({
 }) {
   return (
     <Input.TextArea
+      aria-label="Question details"
       disabled={disabled}
+      id={SUPPORT_FIELD_IDS.questionDetails}
       rows={8}
       defaultValue={defaultValue}
       placeholder="Ask your question here."
@@ -215,22 +280,34 @@ function PurchaseFields({
         <Alert
           showIcon
           type="info"
-          title="What information helps us respond quickly?"
+          title="Helpful context for pricing or purchasing"
           description={
             <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
-              <li>The rough number of users or projects.</li>
-              <li>The kind of workload you expect.</li>
-              <li>How long you expect to use the service.</li>
-              <li>Any academic, classroom, or organizational context.</li>
+              <li>
+                Which CoCalc path you are considering: hosted CoCalc.ai, Plus,
+                Star, Launchpad, Rocket, or site licensing, and who would
+                operate it.
+              </li>
+              <li>
+                Approximate users or projects, and whether this is for a course,
+                lab, team, department, or institution.
+              </li>
+              <li>Timeline, procurement requirements, or invoice needs.</li>
+              <li>
+                Any deployment, governance, privacy, security, data-location,
+                data-ownership, or support constraints.
+              </li>
             </ul>
           }
         />
       ) : null}
       <Input.TextArea
+        aria-label="Pricing or purchasing details"
         disabled={disabled}
+        id={SUPPORT_FIELD_IDS.purchaseDetails}
         rows={8}
         defaultValue={defaultValue}
-        placeholder="Describe what you want to purchase and any constraints we should know about."
+        placeholder="Tell us which CoCalc path you are considering, who it is for, who will operate it, and any purchasing or deployment constraints."
         onChange={(e) => onChange(e.target.value)}
       />
     </Space>
@@ -277,9 +354,12 @@ function TaskFields({
         }
       />
       <div>
-        <Text strong>What software do you need?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.taskSoftware}>
+          <Text strong>What software do you need?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.taskSoftware}
           rows={4}
           placeholder="Name the software, package, library, or stack you need."
           style={{ marginTop: 8 }}
@@ -287,9 +367,12 @@ function TaskFields({
         />
       </div>
       <div>
-        <Text strong>How do you plan to use this software?</Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.taskUse}>
+          <Text strong>How do you plan to use this software?</Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.taskUse}
           rows={3}
           placeholder="Explain the workload, project, class, or timeline."
           style={{ marginTop: 8 }}
@@ -297,11 +380,14 @@ function TaskFields({
         />
       </div>
       <div>
-        <Text strong>
-          How can we test that the software is properly installed?
-        </Text>
+        <label htmlFor={SUPPORT_FIELD_IDS.taskTest}>
+          <Text strong>
+            How can we test that the software is properly installed?
+          </Text>
+        </label>
         <Input.TextArea
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.taskTest}
           rows={3}
           placeholder="Include the commands, notebook imports, or checks that should work."
           style={{ marginTop: 8 }}
@@ -405,7 +491,15 @@ function renderBodyFields(params: {
       title={
         supportVideoCall ? (
           <>
-            You can also <a href={supportVideoCall}>book a video call</a>.
+            You can also{" "}
+            <a
+              href={supportVideoCall}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              book a video call
+            </a>
+            .
           </>
         ) : (
           "Video chat request"
@@ -413,7 +507,9 @@ function renderBodyFields(params: {
       }
       description={
         <Input.TextArea
+          aria-label="Video chat request details"
           disabled={disabled}
+          id={SUPPORT_FIELD_IDS.chatDetails}
           rows={6}
           defaultValue={body}
           placeholder="Describe what you want to discuss, your goals, and any scheduling constraints."
@@ -434,6 +530,7 @@ export default function SupportNew({
 }) {
   const initial = useInitialQueryState();
   const siteName = config.site_name ?? "CoCalc";
+  const helpEmail = config.help_email?.trim() || HELP_EMAIL;
   const [email, setEmail] = useState("");
   const [subject, setSubject] = useState(initial.subject);
   const [type, setType] = useState<TicketType>(initial.type);
@@ -444,6 +541,9 @@ export default function SupportNew({
   const [successUrl, setSuccessUrl] = useState("");
   const feedbackRef = useRef<HTMLDivElement | null>(null);
   const formLocked = !!successUrl;
+  const privacyHref = builtinPolicyPath(config, "privacy");
+  const supportTicketsHref = joinUrlPath(appBasePath, "support/tickets");
+  const trustHref = builtinPolicyPath(config, "trust");
 
   const hasRequired = !initial.required || !body.includes(initial.required);
   const canSubmit =
@@ -470,7 +570,7 @@ export default function SupportNew({
       if (initial.context) {
         info.context = initial.context;
       }
-      const result = await api("support/create-ticket", {
+      const result = await clientApi("support/create-ticket", {
         options: {
           email,
           subject,
@@ -508,12 +608,15 @@ export default function SupportNew({
 
   useEffect(() => {
     let canceled = false;
+    if (!config.zendesk) {
+      return;
+    }
     if (email.trim().length > 0) {
       return;
     }
     (async () => {
       try {
-        const result = await api("accounts/profile");
+        const result = await clientApi("accounts/profile");
         const nextEmail = result?.profile?.email_address;
         if (
           !canceled &&
@@ -529,15 +632,70 @@ export default function SupportNew({
     return () => {
       canceled = true;
     };
-  }, [email]);
+  }, [config.zendesk, email]);
 
   if (!config.zendesk) {
+    const mailtoParams = new URLSearchParams();
+    if (initial.subject.trim()) {
+      mailtoParams.set("subject", initial.subject);
+    }
+    if (initial.body.trim()) {
+      mailtoParams.set("body", initial.body);
+    }
+    const mailtoHref = `mailto:${helpEmail}${
+      mailtoParams.size > 0 ? `?${mailtoParams.toString()}` : ""
+    }`;
+
     return (
-      <Alert
-        showIcon
-        type="error"
-        title="Support ticket creation is not configured."
-      />
+      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
+        <PublicSection>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            {initial.title ? (
+              <Title level={2} style={{ margin: 0 }}>
+                {initial.title}
+              </Title>
+            ) : null}
+            <Paragraph style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}>
+              This site is not accepting support tickets directly here. Use the
+              support page or email CoCalc, and include the context below if it
+              applies to your request.
+            </Paragraph>
+            {initial.subject || initial.body ? (
+              <Alert
+                showIcon
+                type="info"
+                title={initial.subject || "Request context"}
+                description={
+                  initial.body ? (
+                    <Paragraph style={{ marginBottom: 0 }}>
+                      {initial.body}
+                    </Paragraph>
+                  ) : undefined
+                }
+              />
+            ) : null}
+            <Space wrap>
+              <Button type="primary" onClick={() => onNavigate("index")}>
+                Open support page
+              </Button>
+              <Button href={mailtoHref}>Email CoCalc</Button>
+            </Space>
+            {trustHref || privacyHref ? (
+              <Paragraph
+                style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}
+              >
+                For published security and privacy context, review{" "}
+                {trustHref ? <a href={trustHref}>trust materials</a> : null}
+                {trustHref && privacyHref ? " and " : null}
+                {privacyHref ? (
+                  <a href={privacyHref}>the privacy policy</a>
+                ) : null}
+                .
+              </Paragraph>
+            ) : null}
+          </Space>
+        </PublicSection>
+      </Space>
     );
   }
 
@@ -549,9 +707,10 @@ export default function SupportNew({
             <Title level={2} style={{ margin: 0 }}>
               {initial.title || "Create a New Support Ticket"}
             </Title>
-            <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+            <Paragraph style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}>
               Create a new support ticket below or{" "}
               <a
+                href={supportTicketsHref}
                 onClick={(e) => {
                   e.preventDefault();
                   onNavigate("tickets");
@@ -561,21 +720,32 @@ export default function SupportNew({
               </a>
               .
             </Paragraph>
-            {config.help_email ? (
-              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+            {helpEmail ? (
+              <Paragraph
+                style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}
+              >
                 You can also email us directly at{" "}
-                <a href={`mailto:${config.help_email}`}>{config.help_email}</a>.
+                <a href={`mailto:${helpEmail}`}>{helpEmail}</a>.
               </Paragraph>
             ) : null}
             {config.support_video_call ? (
-              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+              <Paragraph
+                style={{ fontSize: PUBLIC_TYPE.body, marginBottom: 0 }}
+              >
                 Alternatively, you can{" "}
-                <a href={config.support_video_call}>book a video call</a>.
+                <a
+                  href={config.support_video_call}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  book a video call
+                </a>
+                .
               </Paragraph>
             ) : null}
             <Alert
               showIcon
-              type="warning"
+              type="info"
               title="Helpful links"
               description={
                 <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
@@ -584,8 +754,22 @@ export default function SupportNew({
                       CoCalc documentation
                     </a>
                   </li>
+                  {trustHref ? (
+                    <li>
+                      <a href={trustHref}>Trust materials</a>
+                    </li>
+                  ) : null}
+                  {privacyHref ? (
+                    <li>
+                      <a href={privacyHref}>Privacy policy</a>
+                    </li>
+                  ) : null}
                   <li>
-                    <a href="https://github.com/sagemathinc/cocalc-ai/issues">
+                    <a
+                      href="https://github.com/sagemathinc/cocalc-ai/issues"
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
                       Bug reports
                     </a>
                   </li>
@@ -599,11 +783,16 @@ export default function SupportNew({
       <PublicSection>
         <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <div>
-            <SectionLabel done={isValidEmailAddress(email)}>
+            <SectionLabel
+              done={isValidEmailAddress(email)}
+              htmlFor={SUPPORT_FIELD_IDS.email}
+            >
               Your email address
             </SectionLabel>
             <Input
+              aria-label="Your email address"
               disabled={formLocked}
+              id={SUPPORT_FIELD_IDS.email}
               placeholder="Email address..."
               style={{ marginTop: 10, maxWidth: 520 }}
               type="email"
@@ -613,11 +802,16 @@ export default function SupportNew({
           </div>
 
           <div>
-            <SectionLabel done={subject.trim().length > 0}>
+            <SectionLabel
+              done={subject.trim().length > 0}
+              htmlFor={SUPPORT_FIELD_IDS.subject}
+            >
               Subject
             </SectionLabel>
             <Input
+              aria-label="Subject"
               disabled={formLocked}
+              id={SUPPORT_FIELD_IDS.subject}
               placeholder="Summarize what this is about..."
               style={{ marginTop: 10 }}
               value={subject}
@@ -626,12 +820,17 @@ export default function SupportNew({
           </div>
 
           <div>
-            <SectionLabel done={body.trim().length >= MIN_BODY_LENGTH}>
+            <SectionLabel
+              done={body.trim().length >= MIN_BODY_LENGTH}
+              id={SUPPORT_FIELD_IDS.typeLabel}
+            >
               Support request type
             </SectionLabel>
             <Radio.Group
+              aria-labelledby={SUPPORT_FIELD_IDS.typeLabel}
               disabled={formLocked}
               name="support-type"
+              role="radiogroup"
               style={{ display: "block", marginTop: 10 }}
               value={type}
               onChange={(e) => {
@@ -644,8 +843,8 @@ export default function SupportNew({
                   Something is not working the way I think it should.
                 </Radio>
                 <Radio value="question">
-                  I have a question about billing, functionality, teaching, or
-                  how something works.
+                  I have a question about billing, functionality, configuration,
+                  or how something works.
                 </Radio>
                 <Radio value="task">
                   I need help installing or configuring software.
@@ -670,14 +869,22 @@ export default function SupportNew({
               <Paragraph
                 style={{ color: COLORS.GRAY_D, margin: "10px 0 12px 0" }}
               >
-                Select any relevant projects and files below. This will make it
-                much easier for us to quickly understand your problem.
+                Select any relevant projects and files below. Attaching them
+                helps us understand and resolve your problem faster.
               </Paragraph>
-              <RecentFiles
-                disabled={formLocked}
-                interval="1 day"
-                onChange={setFiles}
-              />
+              <Suspense
+                fallback={
+                  <div style={{ padding: "8px 0" }}>
+                    Loading recent files...
+                  </div>
+                }
+              >
+                <RecentFiles
+                  disabled={formLocked}
+                  interval="1 day"
+                  onChange={setFiles}
+                />
+              </Suspense>
             </div>
           ) : null}
 
@@ -785,6 +992,7 @@ export default function SupportNew({
                     <div>
                       You can also{" "}
                       <a
+                        href={supportTicketsHref}
                         onClick={(e) => {
                           e.preventDefault();
                           onNavigate("tickets");

@@ -10,7 +10,11 @@ import { Button } from "antd";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { COLORS } from "@cocalc/util/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_WEIGHT,
+} from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import MarkdownIt from "markdown-it";
 
@@ -38,24 +42,31 @@ const STACK_STYLE: CSSProperties = {
 } as const;
 
 const ALERT_BASE_STYLE: CSSProperties = {
-  borderRadius: "8px",
+  borderRadius: PUBLIC_RADIUS.panel,
   padding: "10px 12px",
   fontSize: "14px",
 } as const;
 
 const LINK_STYLE: CSSProperties = {
-  color: COLORS.BLUE_D,
+  color: PUBLIC_COLORS.link,
   cursor: "pointer",
 } as const;
 
 const TICKET_BODY_STYLE: CSSProperties = {
   whiteSpace: "normal",
-  background: COLORS.GRAY_LLL,
-  borderRadius: "8px",
+  background: PUBLIC_COLORS.paperBackground,
+  borderRadius: PUBLIC_RADIUS.panel,
   padding: "12px",
   lineHeight: 1.65,
   overflow: "auto",
   maxHeight: "30vh",
+} as const;
+
+const TICKET_SUBJECT_HEADING_STYLE: CSSProperties = {
+  fontWeight: PUBLIC_WEIGHT.bold,
+  fontSize: "18px",
+  lineHeight: 1.3,
+  margin: 0,
 } as const;
 
 const ticketMarkdown = new MarkdownIt({
@@ -90,36 +101,48 @@ function Alert({
     kind === "error"
       ? {
           ...ALERT_BASE_STYLE,
-          background: "#fff2f0",
-          border: "1px solid #ffccc7",
-          color: "#a8071a",
+          background: PUBLIC_COLORS.errorTint,
+          border: `1px solid ${PUBLIC_COLORS.errorBorder}`,
+          color: PUBLIC_COLORS.error,
         }
       : {
           ...ALERT_BASE_STYLE,
-          background: "#e6f4ff",
-          border: "1px solid #91caff",
-          color: "#0958d9",
+          background: PUBLIC_COLORS.infoTint,
+          border: `1px solid ${PUBLIC_COLORS.infoBorder}`,
+          color: PUBLIC_COLORS.info,
         };
   return <div style={style}>{children}</div>;
 }
 
 function StatusPill({ status }: { status?: string }) {
   const label = `${status ?? "open"}`.toUpperCase();
-  const color =
+  const tone =
     status === "solved"
-      ? COLORS.GRAY_M
+      ? {
+          background: PUBLIC_COLORS.paperBackground,
+          border: PUBLIC_COLORS.border,
+        }
       : status === "pending"
-        ? "#f5ca00"
-        : COLORS.BLUE_D;
+        ? {
+            background: PUBLIC_COLORS.warningTint,
+            border: PUBLIC_COLORS.warningBorder,
+          }
+        : {
+            background: PUBLIC_COLORS.brandTint,
+            border: PUBLIC_COLORS.brandSubtle,
+          };
   return (
     <span
       style={{
-        display: "inline-block",
-        borderRadius: "999px",
-        background: color,
-        color: "white",
+        alignItems: "center",
+        display: "inline-flex",
+        borderRadius: PUBLIC_RADIUS.pill,
+        background: tone.background,
+        border: `1px solid ${tone.border}`,
+        color: PUBLIC_COLORS.heading,
         fontSize: "12px",
-        fontWeight: 700,
+        fontWeight: PUBLIC_WEIGHT.bold,
+        minHeight: 24,
         padding: "4px 8px",
       }}
     >
@@ -132,11 +155,13 @@ function TypePill({ type }: { type?: TicketType }) {
   return (
     <span
       style={{
-        display: "inline-block",
-        borderRadius: "999px",
-        border: `1px solid ${COLORS.GRAY_LL}`,
-        color: COLORS.GRAY_D,
+        alignItems: "center",
+        display: "inline-flex",
+        borderRadius: PUBLIC_RADIUS.pill,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        color: PUBLIC_COLORS.text,
         fontSize: "12px",
+        minHeight: 24,
         padding: "4px 8px",
         textTransform: "capitalize",
       }}
@@ -269,15 +294,15 @@ export default function SupportTickets({ config }: { config: SupportConfig }) {
               flexWrap: "wrap",
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: "18px" }}>
+            <h2 style={TICKET_SUBJECT_HEADING_STYLE}>
               {ticket.subject ?? `Ticket ${ticket.id ?? i + 1}`}
-            </div>
+            </h2>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <StatusPill status={ticket.status} />
               <TypePill type={ticket.type} />
             </div>
           </div>
-          <div style={{ color: COLORS.GRAY, fontSize: "14px" }}>
+          <div style={{ color: PUBLIC_COLORS.mutedText, fontSize: "14px" }}>
             Created {formatDate(ticket.created_at)}; updated{" "}
             {formatDate(ticket.updated_at)}
           </div>

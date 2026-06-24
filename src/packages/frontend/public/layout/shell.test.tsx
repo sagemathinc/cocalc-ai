@@ -68,6 +68,27 @@ describe("PublicPage", () => {
     );
 
     const footer = screen.getByRole("contentinfo");
+    expect(
+      within(footer).getByText(
+        /AI-native workspace for research, teaching, and technical teams/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      within(footer).queryByText(
+        /AI-native workspaces for research, technical teams, and teaching/i,
+      ),
+    ).toBeNull();
+    expect(
+      within(footer).queryByText(
+        /AI-native workspaces for research, teaching, and technical teams/i,
+      ),
+    ).toBeNull();
+    expect(
+      within(footer).queryByText(/industry R&D, research/i),
+    ).toBeNull();
+    expect(
+      within(footer).queryByText(/agent-assisted computational work/i),
+    ).toBeNull();
     expect(within(footer).getByText("Platform")).not.toBeNull();
     expect(within(footer).getByText("Resources")).not.toBeNull();
     expect(within(footer).getByText("Company")).not.toBeNull();

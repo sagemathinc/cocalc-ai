@@ -15,11 +15,12 @@ import {
 import { downloadStandaloneDocsHtml } from "@cocalc/frontend/docs/download-html";
 import {
   appPath,
-  getSiteName,
+  getPublicMarketingSiteName,
+  PublicNextStep,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
-import { PUBLIC_COLORS } from "../theme";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "../theme";
 import type { PublicDocsRoute } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
@@ -30,7 +31,7 @@ interface PublicDocsAppProps {
 }
 
 function DocsIndex({ config }: { config?: PublicConfig }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const [downloadHtmlBusy, setDownloadHtmlBusy] = useState(false);
 
   useEffect(() => {
@@ -47,19 +48,24 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
               style={{
                 color: PUBLIC_COLORS.brand,
                 textTransform: "uppercase",
+                fontSize: PUBLIC_TYPE.eyebrow,
+                letterSpacing: 0,
               }}
             >
-              CoCalc-ai documentation
+              {siteName} documentation
             </Text>
             <Title style={{ marginBottom: 12, marginTop: 10 }}>
               Current docs for this CoCalc instance.
             </Title>
             <Paragraph
-              style={{ fontSize: "1.125em", margin: 0, maxWidth: "72ch" }}
+              style={{
+                fontSize: PUBLIC_TYPE.lead,
+                margin: 0,
+                maxWidth: "72ch",
+              }}
             >
-              These docs are served by CoCalc-ai itself, so they can evolve with
-              the product, link to the current UI, and become source material
-              for agents answering questions inside your workspace.
+              Served by the workspace itself, evolving with the product and
+              matching your UI.
             </Paragraph>
           </div>
           <DocsIndexContent
@@ -79,6 +85,7 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
           {downloadHtmlBusy ? (
             <Text type="secondary">Preparing HTML download...</Text>
           ) : null}
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
         </Flex>
       </section>
     </PublicSectionShell>
@@ -86,7 +93,7 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
 }
 
 function DocsPrint({ config }: { config?: PublicConfig }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const [downloadHtmlBusy, setDownloadHtmlBusy] = useState(false);
 
   useEffect(() => {
@@ -122,7 +129,7 @@ function DocsDetail({
   config?: PublicConfig;
   entry: DocsEntry;
 }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
 
   useEffect(() => {
     document.title = `${entry.title} - Documentation - ${siteName}`;
@@ -138,7 +145,7 @@ function DocsDetail({
 }
 
 function DocsNotFound({ config }: { config?: PublicConfig }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
 
   useEffect(() => {
     document.title = `Documentation page not found - ${siteName}`;

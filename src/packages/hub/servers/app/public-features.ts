@@ -3,10 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { join } from "path";
-import type { Router } from "express";
+import type { Request, Response, Router } from "express";
 
 import basePath from "@cocalc/backend/base-path";
+import { sendPublicAppShell } from "./public-shell";
+
+function publicShellRedirectPath(target: string): string {
+  const base = basePath === "/" ? "" : basePath.replace(/\/+$/, "");
+  return `${base}/static/public.html?target=${encodeURIComponent(target)}`;
+}
+
+function redirectToPublicShell(req: Request, res: Response): void {
+  res.redirect(302, publicShellRedirectPath(req.originalUrl || req.url));
+}
 
 export default function initPublicFeatures(router: Router): void {
   const featurePaths = [
@@ -14,26 +23,17 @@ export default function initPublicFeatures(router: Router): void {
     "/features/",
     "/features/:slug",
     "/features/:slug/",
+    /^\/docs(?:\/.*)?$/,
+  ];
+  const rootfsPaths = [
     "/rootfs",
     "/rootfs/",
     "/rootfs/id/:imageId",
     "/rootfs/id/:imageId/",
     "/rootfs/:slug",
     "/rootfs/:slug/",
-    /^\/docs(?:\/.*)?$/,
   ];
 
-  router.get(featurePaths, (req, res) => {
-    const targetPath = join(basePath, req.path);
-    const url = new URL("http://host");
-    const search = req.url.includes("?")
-      ? req.url.slice(req.url.indexOf("?"))
-      : "";
-    if (search) {
-      url.searchParams.set("target", targetPath + search);
-    } else {
-      url.searchParams.set("target", targetPath);
-    }
-    res.redirect(join(basePath, "static/public.html") + url.search);
-  });
+  router.get(featurePaths, sendPublicAppShell);
+  router.get(rootfsPaths, redirectToPublicShell);
 }

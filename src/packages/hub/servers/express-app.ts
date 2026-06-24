@@ -27,6 +27,7 @@ import initPublicAuth from "./app/public-auth";
 import initPublicContent from "./app/public-content";
 import initPublicFeatures from "./app/public-features";
 import initPublicLang from "./app/public-lang";
+import { sendPublicAppShell } from "./app/public-shell";
 import initPublicSupport from "./app/public-support";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
@@ -36,6 +37,7 @@ import initRootfsManifest from "./app/rootfs-manifest";
 import { getDatabase } from "./database";
 import initHttpServer from "./http";
 import initRobots from "./robots";
+import initSitemap from "./sitemap";
 import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
@@ -211,6 +213,7 @@ export default async function init(opts: Options): Promise<{
   settings.table.on("change", applyTrustProxy);
 
   router.use("/robots.txt", initRobots());
+  router.use("/sitemap.xml", initSitemap());
 
   // setup the analytics.js endpoint (skip for launchpad/minimal modes)
   if (!isLaunchpadMode() && !process.env.COCALC_DISABLE_ANALYTICS) {
@@ -689,9 +692,7 @@ function initLanding(router: express.Router) {
           return;
         }
       }
-      const url = new URL("http://host");
-      url.searchParams.set("target", base === "" || base === "/" ? "/" : base);
-      res.redirect(join(base, "static/public.html") + url.search);
+      await sendPublicAppShell(req, res);
     })().catch((err) => {
       logger.warn("landing page failed", { err });
       res.status(500).send("Landing page error.");

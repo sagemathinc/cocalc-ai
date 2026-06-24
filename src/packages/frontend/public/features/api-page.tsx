@@ -7,15 +7,36 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
+import {
   BulletList,
+  CodeBlock,
   FeatureImage,
   featureAppPath as appPath,
-  LinkButton,
+  featureSupportPath,
 } from "./page-components";
 
 const { Paragraph, Title } = Typography;
 
-export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
+// A real, documented call (POST /api/v2/exec): basic auth with an API key as the
+// username, run a command in a project, get stdout/stderr/exit_code back.
+const EXEC_EXAMPLE = [
+  `curl -u "$COCALC_API_KEY:" \\`,
+  `  https://cocalc.ai/api/v2/exec \\`,
+  `  -d '{"project_id": "...", "command": "python3", "args": ["analysis.py"]}'`,
+].join("\n");
+
+export default function ApiFeaturePage({}: { helpEmail?: string }) {
+  const supportHref = featureSupportPath({
+    body: "I want to discuss automating CoCalc through the API. Helpful context: the research or engineering workflow you want to automate, provisioning or scheduling needs, expected volume, and where CoCalc runs.",
+    context: "api",
+    subject: "CoCalc API integration",
+    title: "Ask CoCalc about API integration",
+  });
+
   return (
     <Flex vertical gap={18}>
       <PublicSection>
@@ -23,26 +44,23 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={2} style={{ margin: 0 }}>
-                Automate and integrate CoCalc from your own systems
+                Drive your projects, notebooks, and terminals from your own code
               </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc exposes an HTTP API for automation, provisioning, and
-                integration workflows, so external systems do not have to drive
-                the web UI to manage projects or interact with platform
-                features.
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+                A documented HTTP API lets your scripts, pipelines, and
+                scheduled jobs create projects and run notebooks, terminals, and
+                computations directly.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                This is useful for hosted CoCalc, launchpad-style deployments,
-                and any environment where CoCalc needs to be part of a broader
-                technical stack.
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+                The work lands back in a persistent CoCalc project your team can
+                reopen, review, and continue — hosted on CoCalc.ai or in your
+                own deployment — instead of a one-off run that disappears.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("auth/sign-up")}>
-                  Create account
-                </Button>
-                <LinkButton href={appPath("docs")}>
+                <Button type="primary" href={appPath("docs/api/http-api")}>
                   API documentation
-                </LinkButton>
+                </Button>
+                <Button href={supportHref}>Ask about API integration</Button>
               </Flex>
             </Flex>
           </Col>
@@ -59,14 +77,14 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
         <Col xs={24} lg={12}>
           <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
-              Common use cases
+              What you can automate
             </Title>
             <BulletList
               items={[
-                "Provision and manage projects programmatically.",
-                "Integrate CoCalc into existing portals, admin tools, or learning platforms.",
-                "Automate workflows around users, support, or project lifecycle events.",
-                "Build external services that need a stable programmatic interface to CoCalc.",
+                "Create and configure project environments — for a study or a pipeline — reproducibly.",
+                "Run notebooks, terminals, and computations from a script, and read the results back.",
+                "Schedule recurring work — data pulls, model runs, report builds — that writes into the project.",
+                "Wire CoCalc into an existing pipeline: provision, run, and collect without driving the browser.",
               ]}
             />
           </PublicSection>
@@ -74,41 +92,57 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
         <Col xs={24} lg={12}>
           <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
-              Works with hosted and self-hosted deployments
+              Run code, get the output back
             </Title>
-            <Paragraph style={{ margin: 0 }}>
-              The same HTTP API is useful whether you use CoCalc as a hosted
-              service, a launchpad-style deployment, or one part of a larger
-              internal platform.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              It gives administrators and developers a stable way to automate
-              routine work without depending on browser automation or fragile UI
-              scripts.
+            <CodeBlock ariaLabel="Example API call" code={EXEC_EXAMPLE} />
+            <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+              Returns the stdout, stderr, and exit code — and the run stays in
+              the project. Calls use a scoped API key; the full reference is in
+              the API documentation.
             </Paragraph>
           </PublicSection>
         </Col>
       </Row>
 
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Programmatic control instead of UI automation
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          The point of the API is not only convenience. It is to provide a
-          stable route for integrations so deployments do not have to script the
-          browser to perform administrative or operational work.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          This is especially important for launchpad deployments and product
-          integrations where CoCalc is only one component in a larger system.
-        </Paragraph>
-        <Flex wrap gap={12}>
-          <Button href={appPath("support")}>Support</Button>
-          {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-          ) : null}
-        </Flex>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={13}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                A documented route, not fragile UI scripts
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                The API gives your automation a documented way to reach projects
+                and computations directly, instead of scripting the browser.
+                Reach for it when CoCalc is part of a research or engineering
+                pipeline that runs on its own.
+              </Paragraph>
+              <Flex wrap gap={12}>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
+              </Flex>
+            </Flex>
+          </Col>
+          <Col xs={24} lg={11}>
+            <div
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PUBLIC_RADIUS.panel,
+                padding: 24,
+              }}
+            >
+              <Title level={3} style={{ margin: "0 0 10px" }}>
+                Start automating
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Begin with the HTTP API docs. If your automation depends on
+                provisioning, scheduling, or where CoCalc runs, talk with us.
+              </Paragraph>
+            </div>
+          </Col>
+        </Row>
       </PublicSection>
     </Flex>
   );

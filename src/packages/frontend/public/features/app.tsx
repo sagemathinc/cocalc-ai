@@ -3,31 +3,49 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 
-import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import {
+  getPublicMarketingConfig,
+  type PublicConfig,
+} from "@cocalc/frontend/public/config";
 import {
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { SITE_NAME } from "@cocalc/util/theme";
+import {
+  alpha,
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
+import { COLORS } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
+import AutomationsFeaturePage from "./automations-page";
+import CliFeaturePage from "./cli-page";
+import { FEATURE_ACCENTS } from "./feature-accents";
 import {
   getFeatureIndexPages,
   getFeaturePage,
   type FeaturePage,
 } from "./catalog";
 import CompareFeaturePage from "./compare-page";
+import DedicatedComputeFeaturePage from "./dedicated-compute-page";
 import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
 import JuliaFeaturePage from "./julia-page";
 import LatexEditorFeaturePage from "./latex-editor-page";
 import LinuxFeaturePage from "./linux-page";
+import MoreLanguagesFeaturePage from "./more-languages-page";
 import OctaveFeaturePage from "./octave-page";
-import { FeatureImage, featureAppPath as appPath } from "./page-components";
+import {
+  FeatureImage,
+  featureAppPath as appPath,
+  LinkButton,
+} from "./page-components";
 import RStatisticalSoftwareFeaturePage from "./r-statistical-software-page";
 import type { PublicFeaturesRoute } from "./routes";
 import { featurePath } from "./routes";
@@ -40,12 +58,7 @@ import WhiteboardFeaturePage from "./whiteboard-page";
 
 const { Paragraph, Text, Title } = Typography;
 
-interface FeaturesConfig {
-  help_email?: string;
-  is_authenticated?: boolean;
-  logo_square?: string;
-  site_name?: string;
-}
+interface FeaturesConfig extends PublicConfig {}
 
 interface PublicFeaturesAppProps {
   config?: FeaturesConfig;
@@ -55,12 +68,16 @@ interface PublicFeaturesAppProps {
 const FEATURE_DETAIL_COMPONENTS = {
   ai: AIFeaturePage,
   api: ApiFeaturePage,
+  automations: AutomationsFeaturePage,
+  cli: CliFeaturePage,
   compare: CompareFeaturePage,
   "jupyter-notebook": JupyterNotebookFeaturePage,
   julia: JuliaFeaturePage,
   "latex-editor": LatexEditorFeaturePage,
   linux: LinuxFeaturePage,
+  "more-languages": MoreLanguagesFeaturePage,
   octave: OctaveFeaturePage,
+  "project-hosts": DedicatedComputeFeaturePage,
   python: PythonFeaturePage,
   "r-statistical-software": RStatisticalSoftwareFeaturePage,
   sage: SageFeaturePage,
@@ -83,192 +100,367 @@ const FEATURE_INDEX_PRIORITY = [
 
 const FEATURE_GROUPS = [
   {
-    accent: "#2f6fda",
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
     description:
-      "Notebooks, papers, whiteboards, slides, and technical writing in one collaborative project.",
-    icon: "jupyter",
-    slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
-    title: "Documents",
+      "Find shell, Linux, and dedicated hosted capacity for work that needs a real runtime.",
+    icon: "terminal",
+    slugs: ["terminal", "linux", "project-hosts"],
+    title: "Runtime",
+    variant: "cards",
   },
   {
-    accent: "#096dd9",
+    accent: COLORS.BLUE_D,
     description:
-      "A real Linux environment with terminals, language stacks, graphical apps, and installable software.",
-    icon: "terminal",
+      "Create notebooks, papers, boards, slide decks, and project notes.",
+    icon: "jupyter",
+    slugs: ["jupyter-notebook", "latex-editor", "whiteboard"],
+    title: "Documents",
+    variant: "cards",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    description:
+      "Use Codex inside CoCalc projects, automate recurring project work, or drive CoCalc from scripts and pipelines.",
+    icon: "robot",
+    slugs: ["ai", "automations", "cli"],
+    title: "AI workflows",
+    variant: "cards",
+  },
+  {
+    accent: COLORS.RUN,
+    description:
+      "Use the language your work needs for analysis, modeling, and reproducible research.",
+    icon: "python",
     slugs: [
-      "terminal",
-      "linux",
       "python",
       "r-statistical-software",
       "julia",
       "sage",
       "octave",
+      "more-languages",
     ],
-    title: "Compute",
-  },
-  {
-    accent: "#7c3aed",
-    description:
-      "Codex and AI assistance where files, notebooks, terminals, and chat already live.",
-    icon: "robot",
-    slugs: ["ai", "compare", "api"],
-    title: "AI and automation",
-  },
-  {
-    accent: "#389e0d",
-    description:
-      "Course workflows, grading, shared environments, and collaborative help for technical classes.",
-    icon: "graduation-cap",
-    slugs: ["teaching"],
-    title: "Teaching",
+    title: "Languages",
+    variant: "list",
   },
 ] as const;
 
 const FEATURE_META = {
-  ai: { accent: "#7c3aed", icon: "robot", label: "Agents" },
-  api: { accent: "#096dd9", icon: "api", label: "API" },
-  compare: { accent: "#2f6fda", icon: "swap", label: "Positioning" },
+  ai: { accent: FEATURE_ACCENTS.ai, icon: "robot" },
+  api: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "api" },
+  automations: { accent: FEATURE_ACCENTS.automations, icon: "sync" },
+  cli: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "terminal" },
+  compare: { accent: COLORS.BLUE_D, icon: "swap" },
   "jupyter-notebook": {
-    accent: "#2f6fda",
+    accent: COLORS.BLUE_D,
     icon: "jupyter",
-    label: "Notebook",
   },
-  julia: { accent: "#9558b2", icon: "julia", label: "Language" },
-  "latex-editor": { accent: "#ad6800", icon: "tex", label: "Writing" },
-  linux: { accent: "#096dd9", icon: "linux", label: "Environment" },
-  octave: { accent: "#d4380d", icon: "octave", label: "Language" },
-  python: { accent: "#2f6fda", icon: "python", label: "Language" },
-  "r-statistical-software": { accent: "#386cb0", icon: "r", label: "Stats" },
-  sage: { accent: "#389e0d", icon: "sagemath", label: "Math" },
-  slides: { accent: "#d46b08", icon: "slides", label: "Present" },
-  teaching: { accent: "#389e0d", icon: "graduation-cap", label: "Courses" },
-  terminal: { accent: "#096dd9", icon: "terminal", label: "Shell" },
-  whiteboard: { accent: "#d4380d", icon: "layout", label: "Canvas" },
-} satisfies Record<string, { accent: string; icon: IconName; label: string }>;
+  julia: { accent: FEATURE_ACCENTS.julia, icon: "julia" },
+  "latex-editor": { accent: COLORS.YELL_D, icon: "tex" },
+  linux: {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    icon: "linux",
+  },
+  "more-languages": { accent: COLORS.GRAY_D, icon: "code" },
+  octave: { accent: COLORS.FG_RED, icon: "octave" },
+  python: { accent: COLORS.BLUE_D, icon: "python" },
+  "project-hosts": { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "server" },
+  "r-statistical-software": {
+    accent: COLORS.BLUE_DD,
+    icon: "r",
+  },
+  sage: { accent: COLORS.RUN, icon: "sagemath" },
+  slides: { accent: COLORS.BG_WARNING, icon: "slides" },
+  teaching: { accent: FEATURE_ACCENTS.teaching, icon: "graduation-cap" },
+  terminal: {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    icon: "terminal",
+  },
+  whiteboard: { accent: COLORS.FG_RED, icon: "layout" },
+} satisfies Record<string, { accent: string; icon: IconName }>;
+
+// Index-specific cards for entries whose public tile should differ from the
+// detail-page metadata, plus intentional docs-only surfaces.
+const FEATURE_INDEX_CARD_OVERRIDES = {
+  cli: {
+    href: featurePath("cli"),
+    slug: "cli",
+    summary:
+      "Run commands against CoCalc projects so scripts and agents can inspect context, run notebook checks, and leave outputs for review.",
+    title: "CoCalc CLI",
+  },
+  "more-languages": {
+    href: featurePath("more-languages"),
+    slug: "more-languages",
+    summary:
+      "Use C, C++, Fortran, Rust, Go, Java, Bash, SQL, JavaScript, TypeScript, and many more.",
+    title: "More",
+  },
+} satisfies Record<
+  string,
+  { href: string; slug: string; summary: string; title: string }
+>;
+
+const FEATURE_PANEL_SHADOW = `0 14px 34px ${alpha(
+  PUBLIC_COLORS.heading,
+  0.07,
+)}`;
+
+const FEATURE_INDEX_CSS = `
+  .cocalc-feature-index-hero {
+    padding: 32px 0 12px;
+  }
+
+  .cocalc-feature-index-title {
+    font-size: 58px !important;
+    line-height: 1.02 !important;
+    max-width: 900px;
+    text-wrap: balance;
+  }
+
+  .cocalc-feature-link-card,
+  .cocalc-feature-list-link {
+    cursor: pointer;
+    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  }
+
+  .cocalc-feature-link-card:hover,
+  .cocalc-feature-list-link:hover {
+    border-color: ${PUBLIC_COLORS.linkHover} !important;
+    box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.1)} !important;
+    transform: translateY(-1px);
+  }
+
+  .cocalc-feature-link-card:focus-visible,
+  .cocalc-feature-list-link:focus-visible {
+    outline: 2px solid ${PUBLIC_COLORS.linkHover};
+    outline-offset: 3px;
+  }
+
+  .cocalc-feature-link-list {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+
+  .cocalc-feature-teaching-callout {
+    padding-bottom: 28px;
+  }
+
+  @media (max-width: 920px) {
+    .cocalc-feature-index-title {
+      font-size: 42px !important;
+      line-height: 1.08 !important;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .cocalc-feature-index-hero {
+      gap: 28px;
+      padding: 20px 0 4px;
+    }
+
+    .cocalc-feature-index-title {
+      font-size: 34px !important;
+    }
+
+    .cocalc-feature-link-card {
+      min-height: 0 !important;
+      padding: 14px !important;
+    }
+
+    .cocalc-feature-list-link {
+      min-height: 82px !important;
+      padding: 12px !important;
+    }
+
+    .cocalc-feature-link-list {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .cocalc-feature-teaching-callout {
+      padding-bottom: 20px;
+    }
+  }
+`;
 
 function featureMeta(slug: string) {
   return (
     FEATURE_META[slug as keyof typeof FEATURE_META] ?? {
       accent: PUBLIC_COLORS.brand,
       icon: "star",
-      label: "Feature",
     }
   );
 }
 
-function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
+function titleForRoute(route: PublicFeaturesRoute): string {
   if (route.view === "detail" && route.slug) {
-    return `${getFeaturePage(route.slug)?.title ?? "Features"} – ${siteName}`;
+    return `${getFeaturePage(route.slug)?.title ?? "Features"} – CoCalc`;
   }
-  return `${siteName} Features`;
+  return "CoCalc Features";
 }
 
-function FeatureLinkCard({ page }: { page: FeaturePage }) {
-  const meta = featureMeta(page.slug);
+function getOrderedFeatureIndexPages(): FeaturePage[] {
+  const priorities = new Map<string, number>(
+    FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
+  );
+  return getFeatureIndexPages()
+    .map((page, index) => ({ index, page }))
+    .sort((a, b) => {
+      const aPriority = priorities.get(a.page.slug);
+      const bPriority = priorities.get(b.page.slug);
+      if (aPriority != null || bPriority != null) {
+        return (aPriority ?? 100) - (bPriority ?? 100);
+      }
+      return a.index - b.index;
+    })
+    .map(({ page }) => page);
+}
+
+type FeatureIndexCard = {
+  href: string;
+  slug: string;
+  summary: string;
+  title: string;
+};
+
+function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
+  const meta = featureMeta(card.slug);
   return (
     <a
-      href={featurePath(page.slug)}
+      className="cocalc-feature-link-card"
+      href={card.href}
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
-        boxShadow: "0 14px 38px rgba(33, 49, 57, 0.07)",
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: FEATURE_PANEL_SHADOW,
         color: "inherit",
         display: "block",
         height: "100%",
-        minHeight: 188,
-        padding: 20,
+        minHeight: 168,
+        padding: 18,
         textDecoration: "none",
       }}
     >
       <Flex vertical gap={12}>
-        <Flex align="center" justify="space-between">
+        <Flex className="cocalc-feature-card-icon-row" align="center">
           <div
+            className={`cocalc-feature-card-icon cocalc-feature-card-icon-${card.slug}`}
             style={{
               alignItems: "center",
               background: `${meta.accent}14`,
               border: `1px solid ${meta.accent}33`,
-              borderRadius: 16,
+              borderRadius: PUBLIC_RADIUS.panel,
               color: meta.accent,
               display: "flex",
-              fontSize: 24,
-              height: 50,
+              fontSize: 22,
+              height: 44,
               justifyContent: "center",
-              width: 50,
+              width: 44,
             }}
           >
             <Icon name={meta.icon} />
           </div>
-          <Icon name="arrow-right" style={{ color: meta.accent }} />
         </Flex>
-        <Tag
-          style={{
-            alignSelf: "flex-start",
-            background: `${meta.accent}12`,
-            borderColor: `${meta.accent}2e`,
-            color: meta.accent,
-            marginInlineEnd: 0,
-          }}
-        >
-          {meta.label}
-        </Tag>
         <div>
-          <Title level={4} style={{ margin: "0 0 8px" }}>
-            {page.title}
+          <Title
+            className="cocalc-feature-link-card-title"
+            level={3}
+            style={{
+              fontSize: PUBLIC_TYPE.subhead,
+              lineHeight: 1.22,
+              margin: "0 0 8px",
+            }}
+          >
+            {card.title}
           </Title>
-          <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+          <Paragraph style={{ margin: 0 }}>{card.summary}</Paragraph>
         </div>
       </Flex>
     </a>
   );
 }
 
-function CapabilityCard({
-  body,
-  icon,
-  title,
-}: {
-  body: string;
-  icon: IconName;
-  title: string;
-}) {
+function FeatureListLink({ card }: { card: FeatureIndexCard }) {
+  const meta = featureMeta(card.slug);
   return (
-    <div
+    <a
+      className="cocalc-feature-list-link"
+      href={card.href}
       style={{
-        background: "#fff",
+        alignItems: "start",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 24,
-        boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
-        padding: 24,
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: FEATURE_PANEL_SHADOW,
+        color: "inherit",
+        display: "grid",
+        gap: 12,
+        gridTemplateColumns: "40px minmax(0, 1fr)",
+        minHeight: 96,
+        padding: 14,
+        textDecoration: "none",
       }}
     >
-      <Flex gap={14}>
-        <div
+      <span
+        className={`cocalc-feature-list-icon cocalc-feature-list-icon-${card.slug}`}
+        style={{
+          alignItems: "center",
+          alignSelf: "center",
+          background: `${meta.accent}14`,
+          border: `1px solid ${meta.accent}33`,
+          borderRadius: PUBLIC_RADIUS.panel,
+          color: meta.accent,
+          display: "flex",
+          fontSize: 19,
+          height: 40,
+          justifyContent: "center",
+          width: 40,
+        }}
+      >
+        <Icon name={meta.icon} />
+      </span>
+      <span>
+        <Title
+          level={3}
           style={{
-            alignItems: "center",
-            background: "#eef5ff",
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 16,
-            color: PUBLIC_COLORS.brand,
-            display: "flex",
-            flex: "0 0 auto",
-            fontSize: 24,
-            height: 52,
-            justifyContent: "center",
-            width: 52,
+            fontSize: PUBLIC_TYPE.body,
+            lineHeight: 1.3,
+            margin: "0 0 4px",
           }}
         >
-          <Icon name={icon} />
-        </div>
-        <div>
-          <Title level={3} style={{ margin: "0 0 8px" }}>
-            {title}
-          </Title>
-          <Paragraph style={{ margin: 0 }}>{body}</Paragraph>
-        </div>
-      </Flex>
-    </div>
+          {card.title}
+        </Title>
+        <Text
+          className="cocalc-feature-list-summary"
+          style={{ color: PUBLIC_COLORS.text }}
+        >
+          {card.summary}
+        </Text>
+      </span>
+    </a>
   );
+}
+
+function getFeatureIndexCard(
+  slug: string,
+  pages: FeaturePage[],
+): FeatureIndexCard | undefined {
+  const cardOverride =
+    FEATURE_INDEX_CARD_OVERRIDES[
+      slug as keyof typeof FEATURE_INDEX_CARD_OVERRIDES
+    ];
+  if (cardOverride != null) {
+    return cardOverride;
+  }
+  const page = pages.find((candidate) => candidate.slug === slug);
+  if (!page) return undefined;
+  return {
+    href: featurePath(page.slug),
+    slug: page.slug,
+    summary: page.summary,
+    title: page.title,
+  };
 }
 
 function FeatureGroupSection({
@@ -278,38 +470,43 @@ function FeatureGroupSection({
   group: (typeof FEATURE_GROUPS)[number];
   pages: FeaturePage[];
 }) {
-  const groupPages = group.slugs
-    .map((slug) => pages.find((page) => page.slug === slug))
-    .filter((page) => page != null);
-  if (!groupPages.length) return null;
+  const groupLinks =
+    "links" in group ? (group.links as { href: string; label: string }[]) : [];
+  const groupCards = group.slugs
+    .map((slug) => getFeatureIndexCard(slug, pages))
+    .filter((card) => card != null);
+  if (!groupCards.length) return null;
+  const useList = group.variant === "list";
 
   return (
     <section>
-      <Row gutter={[18, 18]}>
-        <Col lg={6} xs={24}>
+      <Row align="middle" className="cocalc-feature-group-row" gutter={[18, 18]}>
+        <Col
+          className="cocalc-feature-group-label-column"
+          lg={5}
+          style={{ alignItems: "center", display: "flex" }}
+          xs={24}
+        >
           <div
+            className="cocalc-feature-group-label"
             style={{
-              background:
-                "linear-gradient(145deg, #ffffff 0%, #f7fbff 58%, #fff8e8 100%)",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 28,
-              boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
-              padding: 24,
+              borderLeft: `3px solid ${group.accent}`,
+              padding: "4px 4px 4px 18px",
+              width: "100%",
             }}
           >
-            <Flex vertical gap={16}>
+            <Flex vertical gap={12}>
               <div
                 style={{
                   alignItems: "center",
-                  background: `${group.accent}14`,
-                  border: `1px solid ${group.accent}33`,
-                  borderRadius: 18,
+                  background: `${group.accent}10`,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   color: group.accent,
                   display: "flex",
-                  fontSize: 28,
-                  height: 58,
+                  fontSize: 22,
+                  height: 44,
                   justifyContent: "center",
-                  width: 58,
+                  width: 44,
                 }}
               >
                 <Icon name={group.icon} />
@@ -326,281 +523,338 @@ function FeatureGroupSection({
                 >
                   {group.description}
                 </Paragraph>
+                {groupLinks.length ? (
+                  <Flex vertical gap={6} style={{ marginTop: 10 }}>
+                    {groupLinks.map((link) => (
+                      <a
+                        href={link.href}
+                        key={link.href}
+                        style={{
+                          color: PUBLIC_COLORS.link,
+                          fontWeight: 600,
+                          textDecoration: "none",
+                        }}
+                      >
+                        {link.label}
+                      </a>
+                    ))}
+                  </Flex>
+                ) : null}
               </div>
-              <div
-                aria-hidden="true"
-                style={{
-                  background: `linear-gradient(180deg, ${group.accent}66 0%, ${group.accent}12 100%)`,
-                  borderRadius: 999,
-                  height: 90,
-                  width: 4,
-                }}
-              />
             </Flex>
           </div>
         </Col>
-        <Col lg={18} xs={24}>
-          <div
-            style={{
-              display: "grid",
-              gap: 16,
-              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-            }}
-          >
-            {groupPages.map((page) => (
-              <FeatureLinkCard key={page.slug} page={page} />
-            ))}
-          </div>
+        <Col lg={19} xs={24}>
+          {useList ? (
+            <div className="cocalc-feature-link-list">
+              {groupCards.map((card) => (
+                <FeatureListLink key={card.slug} card={card} />
+              ))}
+            </div>
+          ) : (
+            <div
+              className="cocalc-feature-card-grid"
+              style={{
+                display: "grid",
+                gap: 16,
+                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              }}
+            >
+              {groupCards.map((card) => (
+                <FeatureLinkCard key={card.slug} card={card} />
+              ))}
+            </div>
+          )}
         </Col>
       </Row>
     </section>
   );
 }
 
-function FeaturesIndex({ siteName }: { siteName: string }) {
-  const priorities = new Map<string, number>(
-    FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
+function TeachingWorkflowCallout() {
+  const meta = featureMeta("teaching");
+  return (
+    <section
+      aria-label="Teaching and course workflows"
+      className="cocalc-feature-teaching-callout"
+    >
+      <Row align="middle" gutter={[18, 18]}>
+        <Col className="cocalc-feature-teaching-label-column" lg={5} xs={24}>
+          <div
+            style={{
+              borderLeft: `3px solid ${meta.accent}`,
+              padding: "4px 4px 4px 18px",
+            }}
+          >
+            <Flex vertical gap={12}>
+              <div
+                style={{
+                  alignItems: "center",
+                  background: `${meta.accent}10`,
+                  borderRadius: PUBLIC_RADIUS.panel,
+                  color: meta.accent,
+                  display: "flex",
+                  fontSize: 22,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name={meta.icon} />
+              </div>
+              <div>
+                <Title level={2} style={{ margin: "0 0 8px" }}>
+                  Teaching
+                </Title>
+                <Paragraph
+                  style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}
+                >
+                  Run courses with shared projects for assignments, grading,
+                  live help, and reproducible technical work.
+                </Paragraph>
+              </div>
+            </Flex>
+          </div>
+        </Col>
+        <Col className="cocalc-feature-teaching-card-column" lg={19} xs={24}>
+          <a
+            className="cocalc-feature-link-card"
+            href={featurePath("teaching")}
+            style={{
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PUBLIC_RADIUS.panel,
+              boxShadow: FEATURE_PANEL_SHADOW,
+              color: "inherit",
+              display: "block",
+              padding: 18,
+              textDecoration: "none",
+            }}
+          >
+            <Flex align="start" gap={14}>
+              <span
+                style={{
+                  alignItems: "center",
+                  background: `${meta.accent}14`,
+                  border: `1px solid ${meta.accent}33`,
+                  borderRadius: PUBLIC_RADIUS.panel,
+                  color: meta.accent,
+                  display: "flex",
+                  flex: "0 0 auto",
+                  fontSize: 22,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name={meta.icon} />
+              </span>
+              <span>
+                <Title level={3} style={{ margin: "0 0 8px" }}>
+                  Technical courses and labs
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  Use CoCalc for assignments, shared environments, grading, and
+                  live help while students learn with the tools they will keep
+                  using.
+                </Paragraph>
+              </span>
+            </Flex>
+          </a>
+        </Col>
+      </Row>
+    </section>
   );
-  const pages = getFeatureIndexPages()
-    .map((page, index) => ({ index, page }))
-    .sort((a, b) => {
-      const aPriority = priorities.get(a.page.slug);
-      const bPriority = priorities.get(b.page.slug);
-      if (aPriority != null || bPriority != null) {
-        return (aPriority ?? 100) - (bPriority ?? 100);
-      }
-      return a.index - b.index;
-    })
-    .map(({ page }) => page);
+}
+
+function FeaturesIndex() {
+  const pages = getOrderedFeatureIndexPages();
   return (
     <>
-      <section>
-        <Row align="middle" gutter={[36, 36]}>
-          <Col lg={11} xs={24}>
-            <Flex vertical gap={20}>
-              <Tag color="blue" style={{ width: "fit-content" }}>
-                Feature map
-              </Tag>
-              <Title
-                level={1}
-                style={{
-                  fontSize: 64,
-                  letterSpacing: 0,
-                  lineHeight: 0.92,
-                  margin: 0,
-                }}
-              >
-                Everything starts in a project.
-              </Title>
-              <Paragraph
-                style={{
-                  color: PUBLIC_COLORS.mutedText,
-                  fontSize: 21,
-                  margin: 0,
-                }}
-              >
-                {siteName} features make the most sense when viewed together:
-                documents, compute, AI agents, teaching, and platform operations
-                all share the same files, collaborators, history, and project
-                environment.
-              </Paragraph>
-              <Flex wrap gap={12}>
-                <Button href={featurePath("jupyter-notebook")} type="primary">
-                  Jupyter
-                </Button>
-                <Button href={featurePath("ai")}>AI agents</Button>
-                <Button href={featurePath("terminal")}>Terminal</Button>
-              </Flex>
-            </Flex>
-          </Col>
-          <Col lg={13} xs={24}>
-            <FeatureImage
-              alt="CoCalc feature map with documents, compute, AI, teaching, and platform categories"
-              src="/public/landing/feature-map.jpg"
-            />
-          </Col>
-        </Row>
-      </section>
-
-      <section>
-        <Row gutter={[18, 18]}>
-          <Col lg={8} xs={24}>
-            <div
+      <style>{FEATURE_INDEX_CSS}</style>
+      <section
+        aria-label="CoCalc feature overview"
+        className="cocalc-feature-index-hero"
+      >
+        <Flex vertical gap={20}>
+          <Text
+            strong
+            style={{
+              color: PUBLIC_COLORS.heading,
+              fontSize: PUBLIC_TYPE.eyebrow,
+              letterSpacing: 0,
+              textTransform: "uppercase",
+            }}
+          >
+            CoCalc workflows
+          </Text>
+          <div>
+            <Title
+              className="cocalc-feature-index-title"
+              level={1}
               style={{
-                background:
-                  "linear-gradient(145deg, #f4f9ff 0%, #ffffff 58%, #fff8e8 100%)",
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 28,
-                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-                height: "100%",
-                padding: 26,
+                letterSpacing: 0,
+                margin: 0,
               }}
             >
-              <Flex vertical gap={18}>
-                <Flex align="center" gap={14}>
-                  <div
-                    style={{
-                      alignItems: "center",
-                      background: "#e9f2ff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 18,
-                      color: PUBLIC_COLORS.brand,
-                      display: "flex",
-                      fontSize: 28,
-                      height: 60,
-                      justifyContent: "center",
-                      width: 60,
-                    }}
-                  >
-                    <Icon name="project-outlined" />
-                  </div>
-                  <div>
-                    <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-                      One project
-                    </Text>
-                    <Title level={3} style={{ margin: "4px 0 0" }}>
-                      The shared unit of work.
-                    </Title>
-                  </div>
-                </Flex>
-                <Paragraph style={{ margin: 0 }}>
-                  Files, compute, documents, chat, agents, history, snapshots,
-                  backups, and collaborators stay together.
-                </Paragraph>
-                <Flex gap={8} wrap>
-                  {["Files", "Runtime", "History", "People", "Agents"].map(
-                    (label) => (
-                      <Tag
-                        key={label}
-                        color="blue"
-                        style={{ marginInlineEnd: 0 }}
-                      >
-                        {label}
-                      </Tag>
-                    ),
-                  )}
-                </Flex>
-              </Flex>
-            </div>
-          </Col>
-          <Col lg={8} xs={24}>
-            <CapabilityCard
-              body="CoCalc projects keep files, notebooks, terminals, chat, agents, snapshots, backups, and history together instead of splitting work across unrelated tools."
-              icon="history"
-              title="Durable collaborative projects"
-            />
-          </Col>
-          <Col lg={8} xs={24}>
-            <CapabilityCard
-              body="Codex can work in the same project context as humans: reading files, using terminals, interacting with notebooks, writing documents, and participating in durable chat threads."
-              icon="robot"
-              title="Agent-aware by design"
-            />
-          </Col>
-        </Row>
-      </section>
-
-      {FEATURE_GROUPS.map((group) => (
-        <FeatureGroupSection group={group} key={group.title} pages={pages} />
-      ))}
-
-      <section>
-        <Flex align="end" justify="space-between" wrap gap={14}>
-          <div>
-            <Title level={2} style={{ margin: 0 }}>
-              Full feature index
+              Collaborate using your favorite software and AI agents.
             </Title>
             <Paragraph
               style={{
                 color: PUBLIC_COLORS.mutedText,
-                margin: "8px 0 0",
-                maxWidth: "70ch",
+                fontSize: PUBLIC_TYPE.lead,
+                lineHeight: 1.5,
+                margin: "20px 0 0",
+                maxWidth: 600,
               }}
             >
-              Prefer the alphabetical view? Every feature page is still one
-              click away.
+              Keep your notebooks, code, and history all together in one
+              project.
             </Paragraph>
           </div>
         </Flex>
-        <div
-          style={{
-            display: "grid",
-            gap: 12,
-            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-            marginTop: 18,
-          }}
-        >
-          {pages.map((page) => {
-            const meta = featureMeta(page.slug);
-            return (
-              <a
-                href={featurePath(page.slug)}
-                key={page.slug}
-                style={{
-                  alignItems: "center",
-                  background: "#fff",
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
-                  color: "inherit",
-                  display: "flex",
-                  gap: 12,
-                  padding: "12px 14px",
-                  textDecoration: "none",
-                }}
-              >
-                <span
-                  style={{
-                    alignItems: "center",
-                    background: `${meta.accent}12`,
-                    borderRadius: 12,
-                    color: meta.accent,
-                    display: "flex",
-                    flex: "0 0 auto",
-                    height: 36,
-                    justifyContent: "center",
-                    width: 36,
-                  }}
-                >
-                  <Icon name={meta.icon} />
-                </span>
-                <Text strong>{page.title}</Text>
-              </a>
-            );
-          })}
-        </div>
       </section>
+
+      {FEATURE_GROUPS.map((group) => (
+        <Fragment key={group.title}>
+          <FeatureGroupSection group={group} pages={pages} />
+          {group.title === "Languages" ? <TeachingWorkflowCallout /> : null}
+        </Fragment>
+      ))}
     </>
   );
 }
 
-function FeatureDetail({
-  helpEmail,
-  isAuthenticated,
-  slug,
-}: {
-  helpEmail?: string;
-  isAuthenticated?: boolean;
-  slug: string;
-}) {
-  const page = getFeaturePage(slug);
-  if (!page) {
-    return (
-      <PublicSection>
-        <Empty description="Feature page not found" />
-        <div>
-          <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
-            Back to features
-          </Button>
-        </div>
-      </PublicSection>
-    );
+function FeatureDetailNavigation({ page }: { page: FeaturePage }) {
+  return (
+    <section
+      aria-label="Feature page navigation"
+      style={{
+        paddingBlock: 4,
+      }}
+    >
+      <Flex align="center" gap={8} wrap>
+        <Button
+          type="link"
+          href={featurePath()}
+          style={{ minHeight: 24, paddingInline: 0 }}
+        >
+          Features
+        </Button>
+        <Text type="secondary">/</Text>
+        <Text strong>{page.title}</Text>
+      </Flex>
+    </section>
+  );
+}
+
+function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
+  if (
+    [
+      "ai",
+      "automations",
+      "cli",
+      "compare",
+      "jupyter-notebook",
+      "api",
+      "julia",
+      "latex-editor",
+      "linux",
+      "more-languages",
+      "octave",
+      "project-hosts",
+      "python",
+      "r-statistical-software",
+      "sage",
+      "slides",
+      "teaching",
+      "terminal",
+      "whiteboard",
+    ].includes(currentSlug)
+  ) {
+    return null;
   }
 
+  return (
+    <PublicSection ariaLabel="Feature operating model next steps">
+      <div
+        className="cocalc-feature-product-paths"
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PUBLIC_RADIUS.panel,
+          padding: 24,
+        }}
+      >
+        <Row align="middle" gutter={[20, 20]}>
+          <Col xs={24} lg={14}>
+            <Flex vertical gap={8}>
+              <Title level={3} style={{ margin: 0 }}>
+                Decide how CoCalc should run
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Once the workflow fit is clear, compare hosted CoCalc.ai, local
+                CoCalc Plus, single-VM CoCalc Star, and customer-operated
+                Launchpad or Rocket deployments.
+              </Paragraph>
+            </Flex>
+          </Col>
+          <Col xs={24} lg={10}>
+            <Flex vertical gap={8} align="start">
+              <Flex gap={12} wrap>
+                <Button href={appPath("products")} type="primary">
+                  Compare operating models
+                </Button>
+                <Button href={appPath("pricing")}>Pricing and licensing</Button>
+              </Flex>
+              <Flex gap={16} wrap>
+                <LinkButton href={featurePath("compare")}>
+                  Compare CoCalc fit
+                </LinkButton>
+                <LinkButton href={featurePath()}>
+                  Browse feature workflows
+                </LinkButton>
+              </Flex>
+            </Flex>
+          </Col>
+        </Row>
+      </div>
+    </PublicSection>
+  );
+}
+
+function FeatureDetailContent({
+  config,
+  helpEmail,
+  isAuthenticated,
+  page,
+  slug,
+}: {
+  config?: FeaturesConfig;
+  helpEmail?: string;
+  isAuthenticated?: boolean;
+  page: FeaturePage;
+  slug: string;
+}) {
   const CustomPage =
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
+
   if (slug === "ai") {
     return (
       <AIFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
+    );
+  }
+  if (slug === "automations") {
+    return (
+      <AutomationsFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "cli") {
+    return (
+      <CliFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
     );
   }
   if (slug === "jupyter-notebook") {
@@ -638,6 +892,14 @@ function FeatureDetail({
   if (slug === "linux") {
     return (
       <LinuxFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "project-hosts") {
+    return (
+      <DedicatedComputeFeaturePage
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
       />
@@ -699,6 +961,17 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "more-languages") {
+    return (
+      <MoreLanguagesFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "compare") {
+    return <CompareFeaturePage config={config} helpEmail={helpEmail} />;
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
@@ -706,7 +979,11 @@ function FeatureDetail({
   return (
     <Flex vertical gap={18}>
       <div>
-        <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
+        <Button
+          type="link"
+          href={featurePath()}
+          style={{ minHeight: 24, paddingInline: 0 }}
+        >
           Back to features
         </Button>
       </div>
@@ -715,7 +992,7 @@ function FeatureDetail({
         <Title level={2} style={{ margin: 0 }}>
           {page.title}
         </Title>
-        <Paragraph style={{ fontSize: 18, margin: 0 }}>
+        <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
           {page.tagline}
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
@@ -724,7 +1001,7 @@ function FeatureDetail({
             <Button
               type="link"
               href={page.docsUrl}
-              style={{ paddingInline: 0 }}
+              style={{ minHeight: 24, paddingInline: 0 }}
             >
               Documentation
             </Button>
@@ -763,7 +1040,7 @@ function FeatureDetail({
                   key={link.href}
                   type="link"
                   href={link.href}
-                  style={{ paddingInline: 0 }}
+                  style={{ minHeight: 24, paddingInline: 0 }}
                 >
                   {link.label}
                 </Button>
@@ -776,12 +1053,56 @@ function FeatureDetail({
   );
 }
 
+function FeatureDetail({
+  config,
+  helpEmail,
+  isAuthenticated,
+  slug,
+}: {
+  config?: FeaturesConfig;
+  helpEmail?: string;
+  isAuthenticated?: boolean;
+  slug: string;
+}) {
+  const page = getFeaturePage(slug);
+  if (!page) {
+    return (
+      <PublicSection>
+        <Empty description="Feature page not found" />
+        <div>
+          <Button
+            type="link"
+            href={featurePath()}
+            style={{ minHeight: 24, paddingInline: 0 }}
+          >
+            Back to features
+          </Button>
+        </div>
+      </PublicSection>
+    );
+  }
+
+  return (
+    <>
+      <FeatureDetailNavigation page={page} />
+      <FeatureDetailContent
+        config={config}
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+        page={page}
+        slug={page.slug}
+      />
+      <FeatureProductPathLinks currentSlug={page.slug} />
+    </>
+  );
+}
+
 export default function PublicFeaturesApp({
   config,
   initialRoute,
 }: PublicFeaturesAppProps) {
-  const siteName = config?.site_name ?? SITE_NAME;
-  const title = titleForRoute(initialRoute, siteName);
+  const marketingConfig = getPublicMarketingConfig(config);
+  const title = titleForRoute(initialRoute);
 
   useEffect(() => {
     document.title = title;
@@ -794,7 +1115,8 @@ export default function PublicFeaturesApp({
   return (
     <PublicPage
       active="features"
-      config={config}
+      config={marketingConfig}
+      hideTitleVisually={initialRoute.view === "detail"}
       title={
         initialRoute.view === "index"
           ? undefined
@@ -803,12 +1125,13 @@ export default function PublicFeaturesApp({
     >
       {initialRoute.view === "detail" && initialRoute.slug ? (
         <FeatureDetail
+          config={marketingConfig}
           helpEmail={config?.help_email}
           isAuthenticated={!!config?.is_authenticated}
           slug={initialRoute.slug}
         />
       ) : (
-        <FeaturesIndex siteName={siteName} />
+        <FeaturesIndex />
       )}
     </PublicPage>
   );

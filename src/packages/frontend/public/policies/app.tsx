@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, type MouseEvent } from "react";
+import { useEffect, type MouseEvent, type ReactNode } from "react";
 
 import { Button, Flex, theme, Typography } from "antd";
 import {
@@ -11,15 +11,17 @@ import {
   getSiteName,
   MarkdownSection,
   type PublicConfig,
+  PublicNextStep,
   PublicSectionShell,
 } from "../common";
 import {
   arePublicPoliciesVisible,
   getExternalPoliciesUrl,
+  getPublicMarketingConfig,
   publicPoliciesUseBuiltin,
   publicPoliciesUseCustom,
 } from "@cocalc/frontend/public/config";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, PUBLIC_RADIUS } from "@cocalc/frontend/public/theme";
 import { publicPath } from "../routes";
 import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import {
@@ -28,6 +30,7 @@ import {
   getBuiltinPolicyNavItems,
 } from "./registry";
 import {
+  COCALC_TRUST_CENTER_URL,
   getPolicyNavLabel,
   PolicyDocument,
   preparePolicyContent,
@@ -38,6 +41,147 @@ import {
 import type { PublicPoliciesRoute } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
+
+interface PolicyEvaluationLink {
+  body: string;
+  href: string;
+  label: string;
+  title: string;
+}
+
+const POLICY_EVALUATION_LINKS: PolicyEvaluationLink[] = [
+  {
+    body: "Hosted, local, single-VM, and customer-operated paths.",
+    href: publicPath("products"),
+    label: "Compare operating models",
+    title: "Choose an operating model",
+  },
+  {
+    body: "Hosted memberships, site licensing, and buying routes.",
+    href: publicPath("pricing"),
+    label: "Review pricing",
+    title: "Plan pricing or licensing",
+  },
+  {
+    body: "Security, privacy, procurement, and deployment-context questions.",
+    href: publicPath(
+      `support/new?${new URLSearchParams({
+        body: "I am reviewing CoCalc policy, trust, privacy, or data-processing materials and want help understanding the right next step for my organization.",
+        context: "policy-evidence-review",
+        subject: "CoCalc policy and trust review",
+        title: "Ask CoCalc about policy and trust review",
+        type: "purchase",
+      }).toString()}`,
+    ),
+    label: "Ask about policy review",
+    title: "Ask about policy review",
+  },
+];
+
+function policySupportHref(policy: PublicPolicy): string {
+  return publicPath(
+    `support/new?${new URLSearchParams({
+      body: `I am reviewing ${policy.title} and want help understanding how it applies to my CoCalc evaluation.`,
+      context: `policy-${policy.slug}`,
+      subject: policy.title,
+      title: `Ask CoCalc about ${policy.title}`,
+      type: "purchase",
+    }).toString()}`,
+  );
+}
+
+function policyBuyerQuestion(policy: PublicPolicy): string {
+  switch (policy.slug) {
+    case "trust":
+      return "Where should a security or compliance review start?";
+    case "privacy":
+      return "How does SageMath, Inc. describe privacy practices for CoCalc?";
+    case "dpa":
+      return "What data-processing terms apply when SageMath, Inc. processes personal data on a user's behalf?";
+    case "terms":
+      return "What terms govern use of CoCalc and related services?";
+    case "ferpa":
+      return "How should an educational institution evaluate FERPA-related questions?";
+    case "accessibility":
+      return "What accessibility material is available for CoCalc evaluation?";
+    case "copyright":
+      return "How does CoCalc handle copyright and DMCA requests?";
+    default:
+      return "What policy question does this page answer?";
+  }
+}
+
+function policyBuyerSummary(policy: PublicPolicy): ReactNode {
+  switch (policy.slug) {
+    case "trust":
+      return (
+        <>
+          Review CoCalc&apos;s published SOC 2, GDPR, and Trust Center
+          references. Use the external Trust Center for the current trust status
+          during evaluation.
+        </>
+      );
+    case "privacy":
+      return (
+        <>
+          Review the privacy policy that explains SageMath, Inc.&apos;s
+          practices for collection, use, disclosure, revisions, and privacy
+          questions related to CoCalc services.
+        </>
+      );
+    case "dpa":
+      return (
+        <>
+          Review the data-processing addendum covering processing scope,
+          subprocessors, security-of-processing terms, data subject rights,
+          transfers, deletion or return, audit, and liability terms.
+        </>
+      );
+    default:
+      return policy.description;
+  }
+}
+
+function PolicyEvidenceSummary({ policy }: { policy: PublicPolicy }) {
+  const showTrustCenter = policy.slug === "trust" || policy.slug === "dpa";
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PUBLIC_RADIUS.panel,
+        marginBottom: 24,
+        padding: 16,
+      }}
+    >
+      <Flex vertical gap="small">
+        <Text strong>{policyBuyerQuestion(policy)}</Text>
+        <Paragraph style={{ margin: 0 }}>
+          {policyBuyerSummary(policy)}
+        </Paragraph>
+        <Flex gap={8} role="group" aria-label="Policy next steps" wrap>
+          {showTrustCenter ? (
+            <Button
+              href={COCALC_TRUST_CENTER_URL}
+              rel="noreferrer"
+              target="_blank"
+              type={policy.slug === "trust" ? "primary" : "default"}
+            >
+              Open Trust Center
+            </Button>
+          ) : null}
+          <Button href={publicPath("products")}>
+            Compare operating models
+          </Button>
+          <Button href={publicPath("pricing")}>Review pricing</Button>
+          <Button href={policySupportHref(policy)}>
+            Ask about this policy
+          </Button>
+        </Flex>
+      </Flex>
+    </div>
+  );
+}
 
 const POLICY_RAIL_CSS = `
   .cocalc-public-policy-rail-list {
@@ -87,7 +231,7 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
   if (!arePublicPoliciesVisible(config)) {
     return (
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Public policy pages are not configured
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -103,7 +247,7 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
 
   return (
     <PublicSection>
-      <Title level={3} style={{ margin: 0 }}>
+      <Title level={2} style={{ margin: 0 }}>
         Public policy information
       </Title>
       <Paragraph style={{ margin: 0 }}>
@@ -164,13 +308,38 @@ function PoliciesHome({ config }: { config: PublicConfig }) {
   }
 
   return (
-    <PublicGrid columns={3}>
-      {items.map((item) => (
-        <PublicCard href={item.href} key={item.href} title={item.title}>
-          <Paragraph style={{ margin: 0 }}>{item.description}</Paragraph>
-        </PublicCard>
-      ))}
-    </PublicGrid>
+    <Flex vertical gap="large">
+      <PublicSection
+        intro="Use these pages when you need the formal terms, privacy, data-processing, trust, accessibility, copyright, or education-policy materials behind a CoCalc evaluation."
+        title="Policy and trust resources"
+      >
+        <PublicGrid columns={3}>
+          {items.map((item) => (
+            <PublicCard href={item.href} key={item.href} title={item.title}>
+              <Paragraph style={{ margin: 0 }}>{item.description}</Paragraph>
+            </PublicCard>
+          ))}
+        </PublicGrid>
+      </PublicSection>
+
+      <PublicSection
+        intro="After reviewing the policy material, continue with the product, pricing, or support path that matches the decision you are making."
+        title="Continue the evaluation"
+      >
+        <PublicGrid columns={3}>
+          {POLICY_EVALUATION_LINKS.map((item) => (
+            <PublicCard href={item.href} key={item.href} title={item.title}>
+              <Flex vertical gap={8}>
+                <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+                <Text strong>{item.label}</Text>
+              </Flex>
+            </PublicCard>
+          ))}
+        </PublicGrid>
+      </PublicSection>
+
+      <PublicNextStep authenticated={!!config?.is_authenticated} />
+    </Flex>
   );
 }
 
@@ -247,6 +416,7 @@ function scrollToPolicySection(
     "",
     `${window.location.pathname}${window.location.search}#${id}`,
   );
+  element.focus({ preventScroll: true });
   element.scrollIntoView({ block: "start" });
 }
 
@@ -320,6 +490,7 @@ function BuiltinPolicyPageShell({
   return (
     <PublicSection>
       <PolicyDocument
+        beforeContent={<PolicyEvidenceSummary policy={policy} />}
         content={preparedPolicy.content}
         policy={policy}
         siteName={siteName}
@@ -335,13 +506,14 @@ export default function PublicPoliciesApp({
   config?: PublicConfig;
   initialRoute: PublicPoliciesRoute;
 }) {
-  const siteName = getSiteName(config);
+  const marketingConfig = getPublicMarketingConfig(config);
+  const siteName = getSiteName(marketingConfig);
   const title = titleForRoute(initialRoute, siteName);
   const builtinPolicy =
     initialRoute.view === "policies-detail" &&
-    arePublicPoliciesVisible(config) &&
-    !getExternalPoliciesUrl(config) &&
-    publicPoliciesUseBuiltin(config)
+    arePublicPoliciesVisible(marketingConfig) &&
+    !getExternalPoliciesUrl(marketingConfig) &&
+    publicPoliciesUseBuiltin(marketingConfig)
       ? getBuiltinPolicy(initialRoute.policySlug)
       : undefined;
   const preparedPolicy =
@@ -356,7 +528,7 @@ export default function PublicPoliciesApp({
   return (
     <PublicSectionShell
       active="policies"
-      config={config}
+      config={marketingConfig}
       sider={
         builtinPolicy != null && preparedPolicy != null ? (
           <PolicySideNav
@@ -372,20 +544,21 @@ export default function PublicPoliciesApp({
     >
       {initialRoute.view === "policies-imprint" ? (
         <PoliciesDetailPage
-          config={config}
-          markdown={config?.imprint}
+          config={marketingConfig}
+          markdown={marketingConfig?.imprint}
           title="Imprint"
         />
       ) : initialRoute.view === "policies-custom" ? (
         <PoliciesDetailPage
-          config={config}
-          markdown={config?.policies}
+          config={marketingConfig}
+          markdown={marketingConfig?.policies}
           title="Policies"
         />
       ) : initialRoute.view === "policies-detail" ? (
-        !arePublicPoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
-          <PolicyGateCard config={config} />
-        ) : !publicPoliciesUseBuiltin(config) ? (
+        !arePublicPoliciesVisible(marketingConfig) ||
+        getExternalPoliciesUrl(marketingConfig) ? (
+          <PolicyGateCard config={marketingConfig} />
+        ) : !publicPoliciesUseBuiltin(marketingConfig) ? (
           <EmptySection label="This policy page was not found." />
         ) : (
           <BuiltinPolicyPageShell
@@ -395,7 +568,7 @@ export default function PublicPoliciesApp({
           />
         )
       ) : (
-        <PoliciesHome config={config ?? {}} />
+        <PoliciesHome config={marketingConfig ?? {}} />
       )}
     </PublicSectionShell>
   );

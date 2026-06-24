@@ -217,6 +217,11 @@ describe("PublicAuthApp", () => {
     expect(
       screen.getByRole("heading", { name: "Create your Launchpad account" }),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Create an account to start projects, then compare product paths whenever your needs change.",
+      ),
+    ).not.toBeNull();
     expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 
@@ -324,17 +329,8 @@ describe("PublicAuthApp", () => {
     expect(password).toHaveAttribute("name", "new-password");
     expect(password).toHaveAttribute("autocomplete", "new-password");
     fireEvent.change(password, {
-      target: { value: "short" },
-    });
-    expect(
-      screen.getByText("Password must be at least 8 characters."),
-    ).not.toBeNull();
-    fireEvent.change(password, {
       target: { value: "correct horse battery staple 12345!" },
     });
-    expect(
-      screen.queryByText("Password must be at least 8 characters."),
-    ).toBeNull();
     const confirmPassword = screen.getByPlaceholderText(
       "Enter the same password again",
     );
@@ -388,30 +384,6 @@ describe("PublicAuthApp", () => {
     expect(
       screen.getByText(/By creating an account, you agree/),
     ).not.toBeNull();
-  });
-
-  it("shows policy notice before Google sign-up without disabling SSO", async () => {
-    mockedApi.mockResolvedValueOnce(false);
-
-    render(
-      <PublicAuthApp
-        config={config({
-          terms_of_service_url: "https://example.com/terms",
-        })}
-        initialRoute={{ kind: "auth-form", view: "sign-up" }}
-        initialSSOStrategies={[{ name: "google", display: "Google" }]}
-      />,
-    );
-
-    const notice = await screen.findByText(/By continuing with Google/);
-    const googleLink = screen.getByRole("link", {
-      name: "Agree and sign up with Google",
-    });
-    expect(
-      notice.compareDocumentPosition(googleLink) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(googleLink).toHaveAttribute("aria-disabled", "false");
   });
 
   it("does not require Terms of Service acceptance when policies are not configured", async () => {

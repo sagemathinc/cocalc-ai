@@ -8,15 +8,22 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import { Flex, Tag, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { NewsItem } from "@cocalc/util/types/news";
-import { COLORS } from "@cocalc/util/theme";
+
+import {
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+  PUBLIC_WEIGHT,
+} from "../theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   EmptySection,
   fetchJson,
-  getSiteName,
+  getPublicMarketingSiteName,
   LinkButton,
   LoadingSection,
   MUTED_STYLE,
+  PublicNextStep,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
@@ -81,7 +88,8 @@ function AboutTeamPage() {
                 alignItems: "start",
                 display: "grid",
                 gap: 24,
-                gridTemplateColumns: "minmax(180px, 240px) minmax(0, 1fr)",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
               }}
             >
               <Paragraph>{member.cardText}</Paragraph>
@@ -89,7 +97,7 @@ function AboutTeamPage() {
                 alt={member.imageAlt}
                 src={member.imageSrc}
                 style={{
-                  borderRadius: 14,
+                  borderRadius: PUBLIC_RADIUS.media,
                   objectFit: "cover",
                   width: "100%",
                 }}
@@ -107,7 +115,7 @@ function ExperienceList({ member }: { member: TeamMemberProfile }) {
     <div style={{ display: "grid", gap: 12 }}>
       {member.experience.map((item) => (
         <div key={`${item.position}-${item.institution}-${item.timeframe}`}>
-          <div style={{ fontWeight: 700 }}>
+          <div style={{ fontWeight: PUBLIC_WEIGHT.bold }}>
             {item.institution}
             <span style={MUTED_STYLE}> · {item.timeframe}</span>
           </div>
@@ -154,7 +162,16 @@ function TeamSocialLinks({ member }: { member: TeamMemberProfile }) {
             href={href}
             key={platform}
             rel="noreferrer noopener"
-            style={{ color: COLORS.GRAY_M, fontSize: 22, lineHeight: 1 }}
+            style={{
+              alignItems: "center",
+              color: PUBLIC_COLORS.heading,
+              display: "inline-flex",
+              fontSize: 22,
+              justifyContent: "center",
+              lineHeight: 1,
+              minHeight: 24,
+              minWidth: 24,
+            }}
             target="_blank"
           >
             <Icon name={platform} />
@@ -179,7 +196,8 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
           style={{
             display: "grid",
             gap: 24,
-            gridTemplateColumns: "minmax(220px, 320px) minmax(0, 1fr)",
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
           }}
         >
           <img
@@ -187,7 +205,8 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
             src={member.imageSrc}
             style={{
               alignSelf: "start",
-              borderRadius: 16,
+              borderRadius: PUBLIC_RADIUS.media,
+              maxWidth: 320,
               objectFit: "cover",
               width: "100%",
             }}
@@ -210,10 +229,15 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
             <Flex
               align="center"
               justify="space-between"
-              style={{ marginTop: "auto" }}
+              style={{ marginTop: "auto", minWidth: 0 }}
               wrap
             >
-              <a href={`mailto:${member.email}`}>{member.email}</a>
+              <a
+                href={`mailto:${member.email}`}
+                style={{ overflowWrap: "anywhere" }}
+              >
+                {member.email}
+              </a>
               <Flex align="center" gap={16} wrap>
                 {member.website ? (
                   <a href={member.website.href}>{member.website.label}</a>
@@ -225,7 +249,7 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
         </div>
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Background
         </Title>
         {member.background.map((paragraph) => (
@@ -235,7 +259,7 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
         ))}
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Previous Experience
         </Title>
         <ExperienceList member={member} />
@@ -252,7 +276,13 @@ function EventList({ items }: { items: NewsItem[] }) {
     <PublicGrid columns={2}>
       {items.map((item) => (
         <PublicSection key={`${item.id ?? item.title}-${item.date}`}>
-          <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
+          <div
+            style={{
+              ...MUTED_STYLE,
+              fontSize: PUBLIC_TYPE.caption,
+              fontWeight: PUBLIC_WEIGHT.bold,
+            }}
+          >
             {formatNewsDate(item.date)}
           </div>
           <Title level={3} style={{ margin: 0 }}>
@@ -304,11 +334,15 @@ function AboutEventsPage() {
   return (
     <div style={{ display: "grid", gap: "24px" }}>
       <div>
-        <h2 style={{ marginBottom: "10px" }}>Upcoming events</h2>
+        <Title level={2} style={{ marginBottom: 10 }}>
+          Upcoming events
+        </Title>
         <EventList items={payload.upcoming ?? []} />
       </div>
       <div>
-        <h2 style={{ marginBottom: "10px" }}>Past events</h2>
+        <Title level={2} style={{ marginBottom: 10 }}>
+          Past events
+        </Title>
         <EventList items={payload.past ?? []} />
       </div>
     </div>
@@ -322,7 +356,7 @@ export default function PublicAboutApp({
   config?: PublicConfig;
   initialRoute: PublicAboutRoute;
 }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const title = titleForRoute(initialRoute, siteName);
 
   useEffect(() => {
@@ -341,6 +375,7 @@ export default function PublicAboutApp({
         <>
           <AboutOverview />
           <AboutEventsPage />
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
         </>
       )}
     </PublicSectionShell>

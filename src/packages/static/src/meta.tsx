@@ -26,7 +26,7 @@ export default function Meta() {
           tag: "meta",
           attrs: {
             name: "viewport",
-            content: "width=device-width,initial-scale=1,user-scalable=no",
+            content: "width=device-width,initial-scale=1",
           },
         },
         { tag: "meta", attrs: { name: "google", content: "notranslate" } },

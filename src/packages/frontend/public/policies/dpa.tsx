@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { A, PolicySection, type PublicPolicy } from "./policy";
+import {
+  A,
+  COCALC_TRUST_CENTER_URL,
+  PolicySection,
+  type PublicPolicy,
+} from "./policy";
 
 export const dpaPolicy: PublicPolicy = {
   description:
@@ -55,7 +60,7 @@ export const dpaPolicy: PublicPolicy = {
             at the{" "}
             <b>
               SageMath, Inc. Trust Center (
-              <A href="https://trust.cocalc.ai/">https://trust.cocalc.ai/</A>)
+              <A href={COCALC_TRUST_CENTER_URL}>{COCALC_TRUST_CENTER_URL}</A>)
             </b>
             .
           </li>

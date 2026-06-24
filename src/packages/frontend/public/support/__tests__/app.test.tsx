@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import PublicSupportApp from "../app";
 import { getSupportViewFromPath } from "../routes";
@@ -19,7 +19,11 @@ describe("PublicSupportApp", () => {
   it("renders the support index with ticket actions when zendesk is enabled", () => {
     render(
       <PublicSupportApp
-        config={{ site_name: "Launchpad", zendesk: true }}
+        config={{
+          policy_pages: "sagemathinc",
+          site_name: "Launchpad",
+          zendesk: true,
+        }}
         initialRoute={{ view: "index" }}
       />,
     );
@@ -27,21 +31,102 @@ describe("PublicSupportApp", () => {
     expect(
       screen.getByRole("heading", { name: "Launchpad Support" }),
     ).not.toBeNull();
-    expect(screen.getByText("New support ticket")).not.toBeNull();
+    expect(screen.getByText("Choose an operating model")).not.toBeNull();
+    expect(screen.getByText("Pricing and licensing")).not.toBeNull();
+    expect(screen.getByText("Talk with Launchpad")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
+    expect(
+      screen.getByText(
+        /Reach us to choose how it runs, plan deployment, or resolve an account issue/,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/deployment boundaries, site licensing/),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Compare operating models" }),
+    ).toHaveAttribute("href", "/products");
+    expect(
+      screen.getByRole("link", { name: "Review pricing" }),
+    ).toHaveAttribute("href", "/pricing");
+    const trustResources = screen.getByRole("group", {
+      name: "Support trust materials",
+    });
+    expect(
+      within(trustResources).getByRole("link", {
+        name: "Review trust materials",
+      }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      within(trustResources).getByRole("link", {
+        name: "Review privacy policy",
+      }),
+    ).toHaveAttribute("href", "/policies/privacy");
+    expect(
+      screen.getByRole("button", { name: "Start support request" }),
+    ).not.toBeNull();
     expect(screen.queryByText("System status")).toBeNull();
+  });
+
+  it("uses CoCalc marketing branding for default Launchpad public support", () => {
+    render(
+      <PublicSupportApp
+        config={{
+          cocalc_product: "launchpad",
+          is_launchpad: true,
+          site_name: "CoCalc Launchpad",
+          zendesk: false,
+        }}
+        initialRoute={{ view: "index" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "CoCalc Support" }),
+    ).not.toBeNull();
+    expect(screen.queryByText("CoCalc Launchpad Support")).toBeNull();
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "CoCalc home",
+      }),
+    ).not.toBeNull();
   });
 
   it("does not advertise ticket actions when zendesk is disabled", () => {
     render(
       <PublicSupportApp
-        config={{ site_name: "Launchpad", zendesk: false }}
+        config={{ help_email: "", site_name: "Launchpad", zendesk: false }}
         initialRoute={{ view: "index" }}
       />,
     );
 
     expect(screen.queryByRole("button", { name: "New ticket" })).toBeNull();
     expect(screen.queryByRole("button", { name: "My tickets" })).toBeNull();
+    expect(screen.getByText("Talk with Launchpad")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Email Launchpad" }),
+    ).toHaveAttribute("href", "mailto:help@cocalc.com");
+  });
+
+  it("does not describe the direct contact fallback as ticket creation", async () => {
+    render(
+      <PublicSupportApp
+        config={{ site_name: "CoCalc", zendesk: false }}
+        initialRoute={{ view: "new" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Contact CoCalc Support" }),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Create a CoCalc Support Ticket" }),
+    ).toBeNull();
+    expect(
+      await screen.findByText(
+        "This site is not accepting support tickets directly here. Use the support page or email CoCalc, and include the context below if it applies to your request.",
+      ),
+    ).not.toBeNull();
   });
 
   it("renders the community view", async () => {

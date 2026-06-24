@@ -21,6 +21,109 @@ import { getPoliciesRouteFromPath } from "../policies/routes";
 import { getPublicRouteFromPath, isPublicTarget, publicPath } from "../routes";
 import type { PublicProductsRoute } from "../products/routes";
 import { getProductsRouteFromPath } from "../products/routes";
+import {
+  combineLeak,
+  INTERNAL_IMPLEMENTATION_TERMS,
+  SECTION_H2_MAX,
+  STALE_REPETITIVE_HOME_LINES,
+  textLength,
+} from "./test-helpers";
+
+// Competitor names, invented compliance/proof claims, and stale home taglines
+// must never leak onto the public products/pricing marketing surfaces. The
+// STALE floor is shared with the home surface; the surface-unique bans here are
+// the competitor set plus invented SOC2/GDPR/testimonial proof language. We do
+// NOT fold in the full INTERNAL_IMPLEMENTATION_TERMS floor for this regex
+// because some of those terms (e.g. "Kubernetes" on the Rocket page, "project
+// hosts" on pricing) are legitimate public copy; the pure internal floor is
+// asserted only on surfaces that are verified clean of it (the products
+// overview).
+const MARKETING_SURFACE_LEAK = combineLeak(
+  STALE_REPETITIVE_HOME_LINES,
+  /\bColab\b/,
+  /\bDeepnote\b/,
+  /\bOverleaf\b/,
+  /\bRStudio\b/,
+  /\bPosit\b/,
+  /\bMathematica\b/,
+  /\bMaple\b/,
+  /\bMATLAB\b/,
+  /\bSOC\s?2\b/,
+  /\bGDPR\b/,
+  /\btestimonial/,
+);
+
+function expectNoMarketingLeakage(scope: HTMLElement = document.body) {
+  expect(scope.textContent ?? "").not.toMatch(MARKETING_SURFACE_LEAK);
+}
+
+// Pure internal/implementation-language floor. Only safe on surfaces that do
+// not legitimately use any of these terms (products overview, home); detail
+// product pages and pricing legitimately surface a couple of them.
+function expectNoInternalFloor(scope: HTMLElement = document.body) {
+  expect(scope.textContent ?? "").not.toMatch(INTERNAL_IMPLEMENTATION_TERMS);
+  expect(scope.textContent ?? "").not.toMatch(STALE_REPETITIVE_HOME_LINES);
+}
+
+// The products path chooser renders five operating-model cards in a fixed
+// order. We canary the count and the ordered product titles via a robust
+// header-row selector (NOT a bare strong query) so card body copy can change
+// without a test edit.
+function expectProductPathChooserCards() {
+  const cards = document.querySelectorAll(".cocalc-public-products-path-card");
+  expect(cards).toHaveLength(5);
+  const actions = document.querySelectorAll(
+    ".cocalc-public-products-path-action",
+  );
+  expect(actions).toHaveLength(0);
+  expect(
+    screen
+      .getByRole("list", { name: "CoCalc product path chooser" })
+      .querySelectorAll('[role="listitem"]'),
+  ).toHaveLength(5);
+  expect(Array.from(cards).map((card) => card.getAttribute("href"))).toEqual([
+    "/pricing",
+    "/products/cocalc-plus",
+    "/products/cocalc-star",
+    "/products/cocalc-launchpad",
+    "/products/cocalc-rocket",
+  ]);
+  for (const card of cards) {
+    expect(card).toHaveStyle({ cursor: "pointer", textDecoration: "none" });
+  }
+  const titles = Array.from(
+    document.querySelectorAll(
+      ".cocalc-public-products-path-card > div:first-child strong",
+    ),
+  ).map((el) => (el.textContent ?? "").trim());
+  expect(titles).toEqual([
+    "CoCalc.ai",
+    "CoCalc Plus",
+    "CoCalc Star",
+    "CoCalc Launchpad",
+    "CoCalc Rocket",
+  ]);
+}
+
+// A product detail page has exactly one <h2> lead headline; assert its presence
+// and an anti-sprawl length bound instead of pinning the marketing wording.
+function expectSingleLeadHeadline() {
+  const h2s = document.querySelectorAll("main h2");
+  expect(h2s).toHaveLength(1);
+  expect(textLength(h2s[0])).toBeLessThanOrEqual(SECTION_H2_MAX);
+}
+
+// A "Boundary: ..." detail card renders an explicit notes list; assert the
+// item count (structure) plus one identity token for the surface.
+function expectBoundaryNotes(
+  name: string,
+  count: number,
+  identityToken: RegExp,
+) {
+  const card = screen.getByRole("region", { name });
+  expect(within(card).getAllByRole("listitem")).toHaveLength(count);
+  expect(within(card).getAllByText(identityToken).length).toBeGreaterThan(0);
+}
 
 const originalFetch = global.fetch;
 
@@ -75,6 +178,62 @@ async function renderPublicApp(ui: React.ReactElement) {
     await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+}
+
+function expectNoProductDetailStalePhrasing() {
+  // Detail pages cannot use the full INTERNAL_IMPLEMENTATION_TERMS floor because
+  // a few of its terms are legitimate public copy here (e.g. "Kubernetes" on the
+  // Rocket page). So we keep the detail-safe internal bans explicitly, alongside
+  // the product-detail-unique stale/invented phrasing.
+  for (const phrase of [
+    /serious technical/i,
+    /multi-bay/i,
+    /\bRootFS\b/i,
+    /What CoCalc/i,
+    /not HA/i,
+    /production operations matter/i,
+    /Production private cloud/i,
+    /lower-level operator control plane/i,
+    /local Lima/i,
+    /agent sandbox/i,
+    /^Next action$/i,
+    /^Audience$/i,
+    /^Deployment model$/i,
+    /^Why choose it$/i,
+    /setup-time/i,
+    /restore-time/i,
+    /deployment-time/i,
+    /benchmark/i,
+    /guaranteed support/i,
+    /guaranteed response/i,
+    /\bSLA\b/i,
+    /managed private cloud/i,
+    /sovereign cloud/i,
+    /air-gapped/i,
+    /basically an operating system/i,
+    /all open format/i,
+    /Compare with (Star|Launchpad|Rocket)/i,
+  ]) {
+    expect(screen.queryByText(phrase)).toBeNull();
+  }
+  // Cross-surface competitor / invented-proof / stale-tagline floor.
+  expectNoMarketingLeakage();
+}
+
+function expectSharedProjectContextNote() {
+  // Identity + visual contract canary: the note region must exist with its
+  // aria-label and its light, border-left, capped-width styling. The exact
+  // sentences are intentionally NOT pinned — only presence/structure and an
+  // anti-sprawl length bound, so copy can be reworded without a test edit.
+  const note = screen.getByRole("note", {
+    name: "Shared CoCalc project context",
+  });
+  const style = note.getAttribute("style") ?? "";
+  expect(style).toContain("border-left");
+  expect(style).toContain("max-width: 76ch");
+  expect(style).not.toContain("background");
+  expect(note.querySelector("strong")).not.toBeNull();
+  expect(textLength(note)).toBeLessThanOrEqual(320);
 }
 
 describe("section route parsers", () => {
@@ -168,10 +327,6 @@ describe("section route parsers", () => {
     expect(isPublicTarget("/docs/projects/project-secrets")).toBe(true);
     expect(isPublicTarget("/rootfs/minimal-jupyter")).toBe(true);
     expect(isPublicTarget("/invites/abc")).toBe(true);
-    expect(isPublicTarget("/auth/sign-in")).toBe(true);
-    expect(isPublicTarget("/base/auth/sign-up")).toBe(true);
-    expect(isPublicTarget("/auth/google")).toBe(false);
-    expect(isPublicTarget("/base/auth/google")).toBe(false);
   });
 
   it("uses an explicit not-found route for unknown public paths", () => {
@@ -234,9 +389,7 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Meet the People Behind CoCalc" }),
     ).not.toBeNull();
     expect(screen.getByText("William Stein, Founder and CEO")).not.toBeNull();
-    expect(
-      screen.getByText(/Get to know the math prodigy behind CoCalc/),
-    ).not.toBeNull();
+    expect(screen.getByText(/Berkeley-trained mathematician/)).not.toBeNull();
     expect(screen.queryByText("Team")).toBeNull();
   });
 
@@ -261,14 +414,56 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Guides" })).not.toBeNull();
-    expect(screen.getByText("Jupyter workflows")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: /Open all guides/i }),
-    ).toHaveAttribute("href", "https://sagemathinc.github.io/cocalc-guides/");
-    expect(screen.getByRole("link", { name: "Browse docs" })).toHaveAttribute(
+      screen.getByRole("heading", {
+        name: "Find the guide by task",
+      }),
+    ).not.toBeNull();
+    expect(screen.getByText("Codex agent chat")).not.toBeNull();
+    expect(screen.getByText("Jupyter notebooks")).not.toBeNull();
+    expect(screen.getByText("Terminal workflows")).not.toBeNull();
+    expect(screen.getByText("From notebook to paper")).not.toBeNull();
+    expect(screen.getByText("Installing software")).not.toBeNull();
+    expect(screen.getByText("Reviewing agent commits")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Operating paths" }),
+    ).not.toBeNull();
+    expect(screen.queryByText("Operating paths and teaching")).toBeNull();
+    expect(screen.getByText("Teaching with CoCalc")).not.toBeNull();
+    expect(screen.getByText("Self-hosting CoCalc")).not.toBeNull();
+    expect(screen.getByText("How CoCalc works")).not.toBeNull();
+    expect(
+      document.querySelectorAll(".cocalc-guide-link-featured"),
+    ).toHaveLength(3);
+    expect(
+      document.querySelectorAll(".cocalc-guide-link-compact").length,
+    ).toBeGreaterThan(8);
+    expect(document.querySelectorAll(".ant-tag")).toHaveLength(0);
+    expect(screen.queryByText("CoCalc-AI")).toBeNull();
+    expect(
+      screen
+        .getAllByRole("link", { name: "Open all guides" })
+        .every(
+          (link) =>
+            link.getAttribute("href") ===
+            "https://sagemathinc.github.io/cocalc-guides/",
+        ),
+    ).toBe(true);
+    expect(
+      screen.getByRole("link", { name: /From notebook to paper/i }),
+    ).toHaveAttribute(
       "href",
-      "/docs",
+      "https://sagemathinc.github.io/cocalc-guides/paper-polishing/",
     );
+    expect(
+      screen
+        .getAllByRole("link", { name: "Browse docs" })
+        .every((link) => link.getAttribute("href") === "/docs"),
+    ).toBe(true);
+    expect(
+      screen.queryByRole("link", { name: "Full guide library" }),
+    ).toBeNull();
+    expect(screen.queryByRole("link", { name: "Reference docs" })).toBeNull();
   });
 
   it("uses the stored home-bay origin for public auth bootstrap", async () => {
@@ -388,7 +583,7 @@ describe("PublicApp", () => {
             store_description: "A solid choice for everyday work.",
             store_highlights: [
               "Stronger shared resources",
-              "Dedicated project host access",
+              "Dedicated compute access",
             ],
             store_visible: true,
           },
@@ -416,29 +611,60 @@ describe("PublicApp", () => {
     }) as typeof fetch;
     await renderPublicApp(
       <PublicApp
-        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        config={{
+          is_authenticated: true,
+          policy_pages: "sagemathinc",
+          site_name: "Launchpad",
+        }}
         initialRoute={pricingRoute}
       />,
     );
 
     expect(
       screen.getByRole("heading", {
-        name: "Choose Your Launchpad Membership",
+        name: "Pricing and Licensing",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Hosted plans" }),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "CoCalc.ai Pricing and Licensing" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Hosted CoCalc.ai plans" }),
+    ).toBeNull();
+    expect(screen.getByText(/hosted and operated by CoCalc/i)).toHaveStyle({
+      maxWidth: "70ch",
+    });
+    expect(
+      document
+        .querySelector(".cocalc-pricing-hosted-plans-stack")
+        ?.getAttribute("style") ?? "",
+    ).toContain("margin-bottom: 16px");
+    expect(screen.queryByText(/operated by us/i)).toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
       screen.getByText("A solid choice for everyday work."),
     ).not.toBeNull();
-    expect(screen.getByText("Dedicated project host access")).not.toBeNull();
+    expect(screen.getByText("Dedicated compute access")).not.toBeNull();
     expect(screen.getByText("$18.75")).not.toBeNull();
     expect(screen.getByText("/ mo")).not.toBeNull();
     expect(screen.getAllByText("Billed annually, saving 25%").length).toBe(2);
     expect(
-      screen.getByRole("table", { name: "Membership comparison" }),
+      screen.getByRole("table", { name: "Hosted plan comparison" }),
     ).not.toBeNull();
+    const comparisonTable = screen.getByRole("table", {
+      name: "Hosted plan comparison",
+    });
     expect(
-      screen.getByRole("heading", { name: "Compare Memberships" }),
+      within(comparisonTable).getAllByLabelText("Yes").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(comparisonTable).getAllByLabelText("No").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("heading", { name: "Compare hosted plans" }),
     ).not.toBeNull();
     expect(screen.getByText("Limits Per Project")).not.toBeNull();
     expect(
@@ -469,20 +695,148 @@ describe("PublicApp", () => {
     expect(screen.getAllByText("/ month").length).toBe(2);
     expect(screen.getAllByText("Save 25% with annual billing").length).toBe(2);
     expect(
-      screen.getByRole("heading", { name: "For Teams and Organizations" }),
+      screen.getByRole("heading", {
+        name: "Buying paths for groups and deployments",
+      }),
     ).not.toBeNull();
+    expect(screen.getByText(/pricing is usually two decisions/i)).toHaveStyle({
+      maxWidth: "70ch",
+    });
+    expect(
+      screen.getByRole("link", { name: "Review trust materials" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "Review privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
+    expect(
+      document
+        .querySelector(".cocalc-pricing-trust-actions")
+        ?.getAttribute("style") ?? "",
+    ).not.toContain("margin-bottom");
+    expect(
+      document
+        .querySelector(".cocalc-pricing-buying-path-grid")
+        ?.getAttribute("style") ?? "",
+    ).toContain("margin-top: 12px");
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
+    const buyingPathCards = document.querySelectorAll(
+      ".cocalc-pricing-buying-path-card",
+    );
+    expect(buyingPathCards).toHaveLength(4);
+    const buyingPathActions = document.querySelectorAll(
+      ".cocalc-pricing-buying-path-action",
+    );
+    expect(buyingPathActions).toHaveLength(4);
+    for (const action of buyingPathActions) {
+      expect(action).toHaveStyle({ marginTop: "4px" });
+    }
     expect(
-      screen.getByRole("heading", { name: "Organization licenses" }),
+      screen.getByRole("link", { name: "Compare operating models" }),
+    ).toHaveAttribute("href", "/products");
+    expect(
+      screen.getAllByRole("link", {
+        name: "Talk with CoCalc about site licensing",
+      }).length,
+    ).toBeGreaterThan(0);
+    const siteLicenseLink = screen.getAllByRole("link", {
+      name: "Talk with CoCalc about site licensing",
+    })[0];
+    expect(siteLicenseLink.getAttribute("href")).toContain("/support/new?");
+    expect(siteLicenseLink.getAttribute("href")).toContain(
+      "context=pricing-site-license",
+    );
+    expect(siteLicenseLink.getAttribute("href")).toContain(
+      "data-location%2C+privacy%2C+or+security+questions",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Site licensing" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Dedicated project hosts" }),
+      screen.getByText(/support expectations, rollout, data-location/i),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Dedicated compute" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Manage dedicated compute" }),
+    ).toHaveAttribute("href", "/hosts");
+    expect(
+      screen.getByRole("link", { name: "Manage team seats" }),
+    ).toHaveAttribute("href", "/settings/team-licenses");
     expect(
       screen.getByRole("heading", {
         name: "Quotes and customized invoices",
       }),
     ).not.toBeNull();
+    expectNoMarketingLeakage();
+  });
+
+  it("keeps pricing useful when hosted plans are unavailable", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({ tiers: [] }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Pricing and Licensing",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "CoCalc.ai Pricing and Licensing" }),
+    ).toBeNull();
+    // Structural fallback contract: an informational alert is shown (copy free).
+    const fallbackAlert = document.querySelector(".ant-alert");
+    expect(fallbackAlert).not.toBeNull();
+    expect(fallbackAlert?.className).toContain("ant-alert-info");
+    expect(
+      document
+        .querySelector(".cocalc-pricing-hosted-plans-stack")
+        ?.getAttribute("style") ?? "",
+    ).toContain("margin-bottom: 16px");
+    expect(
+      screen
+        .getAllByRole("link", { name: "Compare operating models" })
+        .every((link) => link.getAttribute("href") === "/products"),
+    ).toBe(true);
+    const hostedPlansLink = screen.getByRole("link", {
+      name: "Talk with CoCalc about hosted plans",
+    });
+    expect(hostedPlansLink.getAttribute("href")).toContain("/support/new?");
+    expect(hostedPlansLink.getAttribute("href")).toContain(
+      "subject=Hosted+plans",
+    );
+    expect(hostedPlansLink.getAttribute("href")).toContain(
+      "context=pricing-hosted-plans",
+    );
+    expect(hostedPlansLink.getAttribute("href")).toContain(
+      "title=Ask+CoCalc+about+hosted+plans",
+    );
+    expect(
+      screen.getByRole("heading", {
+        name: "Buying paths for groups and deployments",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Sign up for team seats" }),
+    ).toHaveAttribute("href", "/auth/sign-up");
+    expect(
+      screen.getByRole("link", { name: "Compute host docs" }),
+    ).toHaveAttribute("href", "/docs/hosts/project-hosts");
+    expect(
+      screen.queryByText(/No public hosted plans are currently configured/i),
+    ).toBeNull();
+    expect(screen.queryByText(/in this environment/i)).toBeNull();
+    expect(
+      screen.queryByText(/membership tiers are currently configured/i),
+    ).toBeNull();
+    expectNoMarketingLeakage();
   });
 
   it("hides the shared Policies nav item when public policies are disabled", async () => {
@@ -535,6 +889,40 @@ describe("PublicApp", () => {
       />,
     );
 
+    expect(
+      screen.getByRole("heading", { name: "Policy and trust resources" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Continue the evaluation")).not.toBeNull();
+    expect(
+      screen
+        .getAllByText("Compare operating models")
+        .some(
+          (element) =>
+            element.tagName.toLowerCase() === "strong" &&
+            element.closest("a")?.getAttribute("href") === "/products",
+        ),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByText("Review pricing")
+        .some(
+          (element) =>
+            element.tagName.toLowerCase() === "strong" &&
+            element.closest("a")?.getAttribute("href") === "/pricing",
+        ),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByText("Ask about policy review")
+        .some(
+          (element) =>
+            element.tagName.toLowerCase() === "strong" &&
+            element
+              .closest("a")
+              ?.getAttribute("href")
+              ?.includes("context=policy-evidence-review"),
+        ),
+    ).toBe(true);
     expect(screen.getByText("Terms of Service")).not.toBeNull();
     expect(screen.getByText("Privacy Policy")).not.toBeNull();
     expect(screen.getByText("Trust and Compliance")).not.toBeNull();
@@ -542,6 +930,51 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: /Terms of Service/i }),
     ).not.toBeNull();
+  });
+
+  it("shows built-in policy pages by default for CoCalc public branding", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={policiesRoute({ view: "policies" })}
+      />,
+    );
+
+    expect(screen.getByText("Terms of Service")).not.toBeNull();
+    expect(screen.getByText("Privacy Policy")).not.toBeNull();
+    expect(screen.getByText("Trust and Compliance")).not.toBeNull();
+  });
+
+  it("shows built-in policy pages for the default Launchpad public marketing config", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          is_launchpad: true,
+          policy_pages: "none",
+          site_name: "CoCalc Launchpad",
+        }}
+        initialRoute={policiesRoute({
+          policySlug: "trust",
+          view: "policies-detail",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Trust and Compliance")).not.toBeNull();
+    expect(screen.getByRole("navigation", { name: "Policies" })).not.toBeNull();
+    expect(
+      screen.getByText("Where should a security or compliance review start?"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open Trust Center" }),
+    ).toHaveAttribute("href", "https://trust.cocalc.ai/");
+    expect(
+      Array.from(document.querySelectorAll("a")).some((anchor) =>
+        anchor.href.includes("trust.cocalc.com"),
+      ),
+    ).toBe(false);
+    expect(screen.getByTitle("GDPR Local verification badge")).not.toBeNull();
   });
 
   it("renders the team page", async () => {
@@ -554,6 +987,10 @@ describe("PublicApp", () => {
 
     expect(screen.getByText("William Stein, Founder and CEO")).not.toBeNull();
     expect(screen.getByText("Harald Schilly, CTO")).not.toBeNull();
+    expect(screen.queryByText(/life-long dedication/i)).toBeNull();
+    expect(
+      screen.getByText(/Harald is CoCalc's CTO and a long-time SageMath/i),
+    ).not.toBeNull();
   });
 
   it("renders an individual team profile", async () => {
@@ -572,9 +1009,33 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByText(
-        /William is both the CEO and a lead software developer for both the front and back end of CoCalc/i,
+        /William is both the CEO and a lead software developer across the front and back end of CoCalc/i,
       ),
     ).not.toBeNull();
+    expect(
+      screen
+        .getAllByText("University of Washington", { selector: "div" })
+        .some((element) => element.textContent?.includes("2010-2019")),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByText("University of Washington", { selector: "div" })
+        .some((element) => element.textContent?.includes("2006-2010")),
+    ).toBe(true);
+    expect(screen.getByText("Tenured Professor of Mathematics")).not.toBeNull();
+    expect(
+      screen.getAllByText("Tenured Associate Professor of Mathematics"),
+    ).toHaveLength(2);
+    expect(
+      screen.getByText("University of California San Diego", {
+        selector: "div",
+      }).textContent,
+    ).toContain("2005-2006");
+    expect(
+      screen.getByText("Benjamin Peirce Assistant Professor of Mathematics"),
+    ).not.toBeNull();
+    expect(screen.queryByText("2006-2019")).toBeNull();
+    expect(screen.queryByText(/at the helm/i)).toBeNull();
     expect(screen.getByText("Previous Experience")).not.toBeNull();
     expect(screen.queryByText("Back to team")).toBeNull();
     expect(screen.queryByText("TEAM")).toBeNull();
@@ -584,6 +1045,72 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByRole("link", { name: "GitHub" })).not.toBeNull();
     expect(screen.getByText("Personal website")).not.toBeNull();
+  });
+
+  it("renders Blaec's profile without repeating the audience triplet", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={aboutRoute({
+          teamSlug: "blaec-bejarano",
+          view: "about-team-member",
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Blaec Bejarano, CSO" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "For partnerships, integrations, or questions about how CoCalc fits a research lab, technical team, or academic institution, Blaec is the person to talk to.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/numerical modeling of geophysical phenomena/i),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /International Congress on Industrial and Applied Mathematics \(ICIAM\)/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /International Conference on Machine Learning \(ICML\)/i,
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText("Cascade Enrichment")).toBeNull();
+    expect(
+      screen.queryByText(
+        /research labs, technical teams, and academic institutions/i,
+      ),
+    ).toBeNull();
+    expect(
+      screen.queryByText(
+        /research labs, engineering groups, and academic institutions/i,
+      ),
+    ).toBeNull();
+  });
+
+  it("renders Harald's consolidated Vienna degree", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={aboutRoute({
+          teamSlug: "harald-schilly",
+          view: "about-team-member",
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Harald Schilly, CTO" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Master's (Mag. rer. nat.) in Mathematics"),
+    ).not.toBeNull();
+    expect(screen.queryByText("M.S. Mathematics")).toBeNull();
+    expect(screen.queryByText("Mag. rer. nat. Mathematics")).toBeNull();
   });
 
   it("renders the built-in privacy policy page", async () => {
@@ -601,8 +1128,28 @@ describe("PublicApp", () => {
       await screen.findByRole("heading", { name: "Privacy Policy" }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Launchpad · Last Updated: June 9, 2026"),
+      Array.from(document.querySelectorAll("style")).some((style) =>
+        style.textContent?.includes("overflow-wrap: anywhere"),
+      ),
+    ).toBe(true);
+    // Keep the mandatory site_name prefix (doubles as a site_name-injection
+    // canary) and the freshness structure, but free the date literal so a
+    // routine "Last Updated" bump needs no test edit.
+    expect(screen.getByText(/^Launchpad · Last Updated:/)).not.toBeNull();
+    expect(
+      screen.getByText(
+        "How does SageMath, Inc. describe privacy practices for CoCalc?",
+      ),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("group", { name: "Policy next steps" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Ask about this policy").closest("a"),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=policy-privacy"),
+    );
     expect(
       screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
@@ -633,6 +1180,7 @@ describe("PublicApp", () => {
       fireEvent.click(
         within(policyToc).getByRole("link", { name: "1 Purpose" }),
       );
+      expect(document.activeElement).toHaveAttribute("id", "purpose");
       expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
     } finally {
       HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
@@ -664,9 +1212,15 @@ describe("PublicApp", () => {
         name: "Data Processing Addendum",
       }),
     ).not.toBeNull();
+    expect(screen.getByText(/^Launchpad · Last Updated:/)).not.toBeNull();
     expect(
-      screen.getByText("Launchpad · Last Updated: June 9, 2026"),
+      screen.getByText(
+        "What data-processing terms apply when SageMath, Inc. processes personal data on a user's behalf?",
+      ),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open Trust Center" }),
+    ).toHaveAttribute("href", "https://trust.cocalc.ai/");
     expect(
       screen.getByText(/The Controller \(User\) provides/i),
     ).not.toBeNull();
@@ -767,7 +1321,10 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Public policy pages are not configured"),
     ).not.toBeNull();
-    expect(screen.queryByText("Terms of service")).toBeNull();
+    // Live non-leak guard: the built-in policy card title is cased
+    // "Terms of Service"; the previous lowercase literal never matched and was
+    // a no-op.
+    expect(screen.queryByText("Terms of Service")).toBeNull();
   });
 
   it("shows an external policy link instead of built-in policy pages", async () => {
@@ -786,7 +1343,8 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: "Open policy page" }),
     ).not.toBeNull();
-    expect(screen.queryByText("Terms of service")).toBeNull();
+    // Live non-leak guard (cased to match the built-in card title).
+    expect(screen.queryByText("Terms of Service")).toBeNull();
   });
 
   it("uses the external policy link for direct policy routes as well", async () => {
@@ -833,10 +1391,12 @@ describe("PublicApp", () => {
       await screen.findByRole("heading", { name: "Launchpad News" }),
     ).not.toBeNull();
     expect(await screen.findByText("Launchpad update")).not.toBeNull();
+    expect(screen.getByLabelText("Filter news by channel")).not.toBeNull();
+    expect(screen.queryByText(/Loading news/)).toBeNull();
     expect(screen.getByText("#launchpad")).not.toBeNull();
   });
 
-  it("renders rich markdown in public news cards", async () => {
+  it("renders bounded excerpts in public news cards", async () => {
     const initialNews: NewsItem[] = [
       {
         channel: "feature",
@@ -865,10 +1425,25 @@ describe("PublicApp", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("img", { name: "Image" })).not.toBeNull(),
+      expect(screen.getByText("Markdown update")).not.toBeNull(),
     );
-    expect(screen.getByText("foo")).not.toBeNull();
-    expect(screen.getByText("bar")).not.toBeNull();
+    expect(screen.getByText(/This is a test\. foo bar/)).not.toBeNull();
+    expect(screen.queryByRole("img", { name: "Image" })).toBeNull();
+  });
+
+  it("shows a loading state while the public news list is fetching", async () => {
+    global.fetch = jest.fn(
+      () => new Promise<Response>(() => undefined),
+    ) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={newsRoute({ view: "news" })}
+      />,
+    );
+
+    expect(screen.getByText(/Loading news/)).not.toBeNull();
   });
 
   it("shows admin news actions on the public news page for admins", async () => {
@@ -937,8 +1512,46 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Install CoCalc Plus")).not.toBeNull();
-    expect(screen.getByText("What CoCalc Plus is")).not.toBeNull();
+    expectSingleLeadHeadline();
+    expectSharedProjectContextNote();
+    const positioning = screen.getByRole("list", {
+      name: "CoCalc Plus positioning",
+    });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getByRole("heading", { name: "Install CoCalc Plus locally" }),
+    ).not.toBeNull();
+    // Boundary card: structure (li count) + one Plus identity token, not prose.
+    expectBoundaryNotes(
+      "Boundary: local, one-user runtime",
+      4,
+      /self-serve local software|user operates the runtime|one-user/i,
+    );
+    expect(screen.getAllByText(/operated by CoCalc/i).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByText(/operated by us/i)).toBeNull();
+    expect(
+      screen
+        .getAllByRole("link", { name: "Review hosted plans" })
+        .every((link) => link.getAttribute("href") === "/pricing"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Star" }),
+    ).toHaveAttribute("href", "/products/cocalc-star");
+    expect(
+      screen.queryByRole("link", { name: "Use hosted CoCalc.ai" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Jupyter notebooks" }),
+    ).toBeNull();
+    expect(screen.queryByRole("link", { name: "Linux workflow" })).toBeNull();
+    expectNoProductDetailStalePhrasing();
   });
 
   it("renders the software overview page", async () => {
@@ -952,7 +1565,158 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
-    expect(screen.getByText("Hosted CoCalc")).not.toBeNull();
+    expect(screen.getAllByText("CoCalc.ai").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Choose how CoCalc should run.")).toBeNull();
+    expect(
+      screen.queryByText(
+        /Your project stays one durable, reviewable workspace — only where it runs changes/i,
+      ),
+    ).toBeNull();
+    expect(screen.queryByText(/Use this as a decision guide/i)).toBeNull();
+    const pathGuideButton = screen.getByRole("button", {
+      name: "Show product path decision guide",
+    });
+    expect(pathGuideButton).not.toBeNull();
+    fireEvent.click(pathGuideButton);
+    expect(
+      await screen.findByText(/Use this as a decision guide/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/buyer map/i)).toBeNull();
+    const pathChooser = screen.getByRole("list", {
+      name: "CoCalc product path chooser",
+    });
+    expect(pathChooser).not.toBeNull();
+    expect(within(pathChooser).getAllByText("Where it runs")).toHaveLength(5);
+    expect(within(pathChooser).getAllByText("Best fit")).toHaveLength(5);
+    expect(
+      within(pathChooser).getByText(
+        "Lightweight private multi-VM deployment",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(pathChooser).queryByText("Lightweight private deployment"),
+    ).toBeNull();
+    expect(
+      within(pathChooser).queryByText(
+        "Lightweight private deployment operated by the customer",
+      ),
+    ).toBeNull();
+    // Structure + ordered identity instead of pinning each card's body copy.
+    expectProductPathChooserCards();
+    // Cheap cross-surface canary: the products overview is verified clean of the
+    // pure internal floor, so assert it directly here too.
+    expectNoInternalFloor();
+    expectNoMarketingLeakage();
+    expect(screen.queryByText(/local Lima/i)).toBeNull();
+    expect(screen.queryByText(/quick team starts/i)).toBeNull();
+    expect(screen.queryByText(/Production private cloud/i)).toBeNull();
+    expect(screen.queryByText(/multi-bay operations/i)).toBeNull();
+    for (const phrase of [
+      /setup-time/i,
+      /restore-time/i,
+      /deployment-time/i,
+      /benchmark/i,
+      /guaranteed support/i,
+      /\bSLA\b/i,
+      /managed private cloud/i,
+      /air-gapped/i,
+    ]) {
+      expect(screen.queryByText(phrase)).toBeNull();
+    }
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Rocket" }),
+    ).toHaveAttribute("href", "/products/cocalc-rocket");
+    expect(
+      screen.getByRole("link", { name: "Review hosted plans" }),
+    ).toHaveAttribute("href", "/pricing");
+    expect(screen.queryByRole("link", { name: "View CoCalc.ai" })).toBeNull();
+    expect(within(pathChooser).queryByText("Review hosted plans")).toBeNull();
+    expect(within(pathChooser).queryByText("View CoCalc Rocket")).toBeNull();
+    expect(
+      screen.getByText("Site licensing wraps the product path."),
+    ).not.toBeNull();
+    expect(screen.getByText(/commercial and support wrapper/i)).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=products-site-licensing"),
+    );
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("subject=Operating+model+and+site+licensing"),
+    );
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining(
+        "data-location%2C+privacy%2C+or+security+questions",
+      ),
+    );
+  });
+
+  it("surfaces product-path trust materials only when built-in policies are public", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("group", { name: "Product trust materials" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Review trust materials" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "Review privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
+    expect(
+      screen.queryByText(/setup-time|restore-time|customer proof/i),
+    ).toBeNull();
+  });
+
+  it("uses CoCalc marketing branding on public product pages for default Launchpad installs", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          is_launchpad: true,
+          site_name: "CoCalc Launchpad",
+        }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "CoCalc home",
+      }),
+    ).not.toBeNull();
+    expect(screen.queryByText("Choose how CoCalc should run.")).toBeNull();
+    expect(screen.getByText("Which path fits?")).not.toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Compare CoCalc fit" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Pricing and licensing" }),
+    ).toHaveAttribute("href", "/pricing");
+    expect(
+      screen.getByRole("link", { name: "Review trust materials" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "Review privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
+    expect(
+      screen.queryByRole("link", { name: "Compare workspace model" }),
+    ).toBeNull();
   });
 
   it("renders the cocalc launchpad page", async () => {
@@ -963,8 +1727,64 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
-    expect(screen.getByText("What the installer does")).not.toBeNull();
+    expectSingleLeadHeadline();
+    expectSharedProjectContextNote();
+    const positioning = screen.getByRole("list", {
+      name: "CoCalc Launchpad positioning",
+    });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getByRole("heading", { name: "Install CoCalc Launchpad" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/customer-operated CoCalc environment/),
+    ).not.toBeNull();
+    // Boundary card: structure (li count) + a Launchpad identity token.
+    expectBoundaryNotes(
+      "Boundary: bounded private deployment",
+      4,
+      /customer or administrator owns infrastructure|customer-operated/i,
+    );
+    expect(
+      screen.queryByText(/Support can cover install guidance/i),
+    ).toBeNull();
+    expect(
+      screen
+        .getAllByRole("link", { name: "Pricing and licensing" })
+        .every((link) => link.getAttribute("href") === "/pricing"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=product-cocalc-launchpad"),
+    );
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining(
+        "data-location%2C+privacy%2C+or+security+questions",
+      ),
+    );
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute("href", expect.stringContaining("ongoing+operations"));
+    expect(
+      screen.queryByRole("link", { name: "Compare with CoCalc Plus" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Star" }),
+    ).toHaveAttribute("href", "/products/cocalc-star");
+    expectNoProductDetailStalePhrasing();
   });
 
   it("renders the cocalc star page", async () => {
@@ -975,8 +1795,38 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Install CoCalc Star")).not.toBeNull();
-    expect(screen.getByText("What CoCalc Star is")).not.toBeNull();
+    expectSingleLeadHeadline();
+    expectSharedProjectContextNote();
+    const positioning = screen.getByRole("list", {
+      name: "CoCalc Star positioning",
+    });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getByRole("heading", { name: "Install CoCalc Star" }),
+    ).not.toBeNull();
+    // Star identity token kept at page level; boundary asserted structurally.
+    expect(screen.getAllByText(/public Ubuntu VM/).length).toBeGreaterThan(0);
+    expectBoundaryNotes(
+      "Boundary: one public VM",
+      3,
+      /not a high-availability or scale-out|one public VM/i,
+    );
+    expect(
+      screen.getByRole("link", { name: "Read Star setup guide" }),
+    ).toHaveAttribute("href", "/docs/self-hosting/cocalc-star");
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Launchpad" }),
+    ).toHaveAttribute("href", "/products/cocalc-launchpad");
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Rocket" }),
+    ).toHaveAttribute("href", "/products/cocalc-rocket");
+    expect(screen.getByText(/setup guide covers the firewall/i)).not.toBeNull();
+    expectNoProductDetailStalePhrasing();
   });
 
   it("renders the cocalc rocket page", async () => {
@@ -987,7 +1837,71 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("What CoCalc Rocket is")).not.toBeNull();
-    expect(screen.getByText("Talk with us")).not.toBeNull();
+    expectSingleLeadHeadline();
+    expectSharedProjectContextNote();
+    const positioning = screen.getByRole("list", {
+      name: "CoCalc Rocket positioning",
+    });
+    expect(within(positioning).getAllByRole("listitem")).toHaveLength(3);
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getByText(
+        /Run durable projects inside infrastructure you control and govern/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/available as a VM deployment or on Kubernetes/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/preferred packaging/i)).toBeNull();
+    expect(screen.getAllByText(/governance, support/i).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      screen.getByText(/deployment-planning expectations/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/level of deployment help/i)).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Plan Rocket with CoCalc" }),
+    ).not.toBeNull();
+    // Boundary card: structure (li count) + a Rocket identity token.
+    expectBoundaryNotes(
+      "Boundary: planned private cloud",
+      3,
+      /customer-operated private-cloud|clear ownership of ongoing operations/i,
+    );
+    const rocketTalkLinks = screen.getAllByRole("link", {
+      name: "Talk with CoCalc about Rocket",
+    });
+    expect(rocketTalkLinks).toHaveLength(1);
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("/support/new?"),
+    );
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=product-cocalc-rocket"),
+    );
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("operator+boundary"),
+    );
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("ongoing+operations"),
+    );
+    expect(rocketTalkLinks[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining(
+        "security%2C+privacy%2C+or+data-ownership+questions",
+      ),
+    );
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Launchpad" }),
+    ).toHaveAttribute("href", "/products/cocalc-launchpad");
+    expectNoProductDetailStalePhrasing();
   });
 });

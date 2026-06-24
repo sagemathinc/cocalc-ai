@@ -1,6 +1,12 @@
 import { Col, Row } from "antd";
 
-import { A, policyHref, PolicySection, type PublicPolicy } from "./policy";
+import {
+  A,
+  COCALC_TRUST_CENTER_URL,
+  policyHref,
+  PolicySection,
+  type PublicPolicy,
+} from "./policy";
 
 const SOC2LOGO = "/public/soc2-aicpa-logo.png";
 
@@ -33,7 +39,8 @@ const GDPR_BADGE_HTML = `
 `;
 
 export const trustPolicy: PublicPolicy = {
-  description: "Security, GDPR, SOC 2, and external trust resources.",
+  description:
+    "Published trust resources, including SOC 2, GDPR, and Trust Center references.",
   navLabel: "Trust",
   slug: "trust",
   title: "Trust and Compliance",
@@ -44,23 +51,22 @@ export const trustPolicy: PublicPolicy = {
         <Row align="top" gutter={["middle", "middle"]}>
           <Col sm={16} xs={24}>
             <p style={{ marginTop: 0 }}>
-              CoCalc by SageMath, Inc. is{" "}
+              CoCalc by SageMath, Inc. has completed a{" "}
               <strong>
                 <A href="https://www.vanta.com/collection/soc-2/what-is-soc-2">
-                  SOC 2 compliant
+                  SOC 2
                 </A>
-              </strong>
-              , meaning we meet rigorous standards for data security and
-              operational integrity. This compliance is verified through
-              independent audits, ensuring that we effectively protect customer
-              information across security, availability, processing integrity,
-              confidentiality, and privacy. Our commitment to these high
-              standards enhances trust and reliability for our users.
+              </strong>{" "}
+              examination — an independent, third-party attestation of the
+              controls we have in place for security and related Trust Services
+              Criteria. A SOC 2 report describes whether those controls were
+              suitably designed and operating over a defined audit period; the
+              specific criteria and period are described in the current report.
             </p>
             <p>
               <strong>
                 Please learn more about the current status in{" "}
-                <A href="https://trust.cocalc.ai/">
+                <A href={COCALC_TRUST_CENTER_URL}>
                   SageMath, Inc.'s Trust Center
                 </A>
                 .
@@ -72,7 +78,7 @@ export const trustPolicy: PublicPolicy = {
               <img
                 style={{ maxWidth: "100%", width: "150px" }}
                 src={policyHref(SOC2LOGO)}
-                alt={"SOC 2 Compliance Logo"}
+                alt={"AICPA SOC 2 logo"}
               />
             </div>
           </Col>
@@ -93,6 +99,7 @@ export const trustPolicy: PublicPolicy = {
               <iframe
                 srcDoc={GDPR_BADGE_HTML}
                 sandbox="allow-scripts"
+                title="GDPR Local verification badge"
                 style={{
                   border: "none",
                   height: "180px",

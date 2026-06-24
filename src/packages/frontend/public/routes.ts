@@ -158,3 +158,5 @@ export function publicPath(view: string): string {
   const base = appBasePath === "/" ? "" : appBasePath;
   return `${base}/${view}`;
 }
+
+export { PUBLIC_SITEMAP_PATHS } from "./sitemap-paths";

@@ -6,30 +6,32 @@
 import type { ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
-import { Button, Flex, Typography } from "antd";
+import { Button, Card, Flex, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  getPublicMarketingConfig,
+  getPublicMarketingSiteName,
+  type PublicConfig,
+} from "@cocalc/frontend/public/config";
+import { builtinPolicyPath } from "../common";
 import {
   PublicGrid,
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { navigatePublic } from "../navigation";
 import type { PublicSupportRoute, SupportView } from "./routes";
-import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
+import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
 
-const { Paragraph } = Typography;
+const { Paragraph, Text } = Typography;
 
 const CommunityView = lazy(() => import("./community-view"));
 const SupportNew = lazy(() => import("./new-view"));
 const SupportTickets = lazy(() => import("./tickets-view"));
 
-interface SupportConfig {
-  help_email?: string;
-  is_authenticated?: boolean;
-  logo_square?: string;
-  on_cocalc_com?: boolean;
-  site_name?: string;
+interface SupportConfig extends PublicConfig {
   support?: string;
   support_video_call?: string;
   zendesk?: boolean;
@@ -58,10 +60,16 @@ function supportPath(view: SupportView): string {
   }
 }
 
-function titleForView(view: SupportView, siteName: string): string {
+function titleForView(
+  view: SupportView,
+  siteName: string,
+  zendesk: boolean,
+): string {
   switch (view) {
     case "new":
-      return `Create a ${siteName} Support Ticket`;
+      return zendesk
+        ? `Create a ${siteName} Support Ticket`
+        : `Contact ${siteName} Support`;
     case "tickets":
       return `${siteName} Support Tickets`;
     case "community":
@@ -81,23 +89,33 @@ function SupportCard({
   title: string;
 }) {
   return (
-    <PublicSection>
-      <div style={{ fontWeight: 700, fontSize: "18px" }}>{title}</div>
-      <div style={{ color: COLORS.GRAY }}>{description}</div>
-      <div>{children}</div>
-    </PublicSection>
+    <Card
+      className="cocalc-public-card"
+      style={{ height: "100%" }}
+      title={title}
+      variant="outlined"
+    >
+      <Flex vertical gap="middle">
+        <Text style={{ color: PUBLIC_COLORS.mutedText }}>{description}</Text>
+        <div>{children}</div>
+      </Flex>
+    </Card>
   );
 }
 
 function SupportIndex({
   config,
   onNavigate,
+  siteName,
 }: {
   config: SupportConfig;
   onNavigate: (view: SupportView) => void;
+  siteName: string;
 }) {
-  const helpEmail = config.help_email ?? HELP_EMAIL;
+  const helpEmail = config.help_email?.trim() || HELP_EMAIL;
   const hasZendesk = !!config.zendesk;
+  const privacyHref = builtinPolicyPath(config, "privacy");
+  const trustHref = builtinPolicyPath(config, "trust");
 
   if (!config.on_cocalc_com && config.support) {
     return (
@@ -106,10 +124,10 @@ function SupportIndex({
           style={{
             borderRadius: 8,
             padding: "10px 12px",
-            fontSize: 14,
-            background: "#e6f4ff",
-            border: "1px solid #91caff",
-            color: "#0958d9",
+            fontSize: PUBLIC_TYPE.caption,
+            background: PUBLIC_COLORS.brandTint,
+            border: `1px solid ${PUBLIC_COLORS.brandSubtle}`,
+            color: PUBLIC_COLORS.brand,
           }}
         >
           {config.support}
@@ -127,18 +145,40 @@ function SupportIndex({
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <Paragraph style={{ fontSize: "16px", margin: 0 }}>
-        We provide direct support, documentation, and contact options. Use the
-        links below to open a ticket, review ticket status, or contact us.
+      <Paragraph style={{ fontSize: PUBLIC_TYPE.body, margin: 0 }}>
+        Reach us to choose how it runs, plan deployment, or resolve an account
+        issue.
       </Paragraph>
+      {trustHref || privacyHref ? (
+        <Flex aria-label="Support trust materials" gap={12} role="group" wrap>
+          {trustHref ? (
+            <Button href={trustHref}>Review trust materials</Button>
+          ) : null}
+          {privacyHref ? (
+            <Button href={privacyHref}>Review privacy policy</Button>
+          ) : null}
+        </Flex>
+      ) : null}
       <PublicGrid columns={3}>
+        <SupportCard
+          description="Compare hosted, local, single-VM, and private deployment options before opening a conversation."
+          title="Choose an operating model"
+        >
+          <Button href={appPath("/products")}>Compare operating models</Button>
+        </SupportCard>
+        <SupportCard
+          description="Review hosted plans, site licensing, and organizational buying routes before asking for a quote."
+          title="Pricing and licensing"
+        >
+          <Button href={appPath("/pricing")}>Review pricing</Button>
+        </SupportCard>
         {hasZendesk ? (
           <SupportCard
-            description="Create a new support ticket."
-            title="New support ticket"
+            description="Start here when you are ready to ask about pricing, deployment boundaries, site licensing, support expectations, or an existing account or project issue."
+            title={`Talk with ${siteName}`}
           >
             <Button type="primary" onClick={() => onNavigate("new")}>
-              Open ticket form
+              Start support request
             </Button>
           </SupportCard>
         ) : null}
@@ -152,15 +192,16 @@ function SupportIndex({
         ) : null}
         {config.support_video_call ? (
           <SupportCard
-            description="Book a video call with the CoCalc team."
+            description={`Book a video call with the ${siteName} team.`}
             title="Video chat"
           >
-            <a
+            <Button
               href={config.support_video_call}
-              style={{ color: COLORS.BLUE_D }}
+              rel="noopener noreferrer"
+              target="_blank"
             >
               Book a call
-            </a>
+            </Button>
           </SupportCard>
         ) : null}
         <SupportCard
@@ -175,17 +216,15 @@ function SupportIndex({
           description="Browse user and admin documentation."
           title="Documentation"
         >
-          <a href={appPath("/docs")} style={{ color: COLORS.BLUE_D }}>
-            Read the docs
-          </a>
+          <Button href={appPath("/docs")}>Browse docs</Button>
         </SupportCard>
         <SupportCard
           description="Reach the team directly by email."
-          title="Email"
+          title={hasZendesk ? "Email" : `Talk with ${siteName}`}
         >
-          <a href={`mailto:${helpEmail}`} style={{ color: COLORS.BLUE_D }}>
-            {helpEmail}
-          </a>
+          <Button href={`mailto:${helpEmail}`}>
+            {hasZendesk ? helpEmail : `Email ${siteName}`}
+          </Button>
         </SupportCard>
       </PublicGrid>
     </div>
@@ -197,9 +236,14 @@ export default function PublicSupportApp({
   initialRoute,
 }: PublicSupportAppProps) {
   const [view, setView] = useState(initialRoute.view);
+  const marketingConfig = getPublicMarketingConfig(config) as
+    | SupportConfig
+    | undefined;
+  const siteName = getPublicMarketingSiteName(config);
+  const hasZendesk = !!config.zendesk;
   const title = useMemo(
-    () => titleForView(view, config.site_name ?? SITE_NAME),
-    [config.site_name, view],
+    () => titleForView(view, siteName, hasZendesk),
+    [hasZendesk, siteName, view],
   );
 
   useEffect(() => {
@@ -216,7 +260,7 @@ export default function PublicSupportApp({
   }
 
   return (
-    <PublicPage active="support" config={config} title={title}>
+    <PublicPage active="support" config={marketingConfig} title={title}>
       {view !== "index" ? (
         <Flex wrap gap={8}>
           <Button onClick={() => navigate("index")}>Support</Button>
@@ -246,18 +290,25 @@ export default function PublicSupportApp({
       ) : null}
       <div style={{ marginTop: 24 }}>
         {view === "index" ? (
-          <SupportIndex config={config} onNavigate={navigate} />
+          <SupportIndex
+            config={marketingConfig ?? config}
+            onNavigate={navigate}
+            siteName={siteName}
+          />
         ) : null}
         {view === "new" ? (
           <Suspense
             fallback={<PublicSection>Loading support form…</PublicSection>}
           >
-            <SupportNew config={config} onNavigate={navigate} />
+            <SupportNew
+              config={marketingConfig ?? config}
+              onNavigate={navigate}
+            />
           </Suspense>
         ) : null}
         {view === "tickets" ? (
           <Suspense fallback={<PublicSection>Loading tickets…</PublicSection>}>
-            <SupportTickets config={config} />
+            <SupportTickets config={marketingConfig ?? config} />
           </Suspense>
         ) : null}
         {view === "community" ? (

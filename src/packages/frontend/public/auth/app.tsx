@@ -87,8 +87,6 @@ function subtitleForRoute(
   isAuthenticated?: boolean,
 ): string | undefined {
   switch (route.kind) {
-    case "auth-form":
-      return undefined;
     case "sso-detail":
     case "sso-index":
       return `Single sign-on for ${siteName}`;
@@ -100,6 +98,17 @@ function subtitleForRoute(
       return `Finish signing in to ${siteName}`;
     case "auth-password-reset-done":
       return siteName;
+    case "auth-form":
+      switch (route.view) {
+        case "sign-up":
+          return "Create an account to start projects, then compare product paths whenever your needs change.";
+        case "sign-in":
+          return "Sign in to open projects, manage your account, or continue from a product or support link.";
+        case "password-reset":
+          return `Reset your ${siteName} password.`;
+        default:
+          return siteName;
+      }
     case "project-invite":
       if (isAuthenticated) {
         return `Review this ${siteName} project invite before accepting it.`;
