@@ -9,9 +9,9 @@ import LRU from "lru-cache";
 import { chatBotName, isChatBot } from "@cocalc/frontend/account/chatbot";
 import { Store, redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { cmp } from "@cocalc/util/misc";
 import { actions } from "./actions";
+import { displayNameFromUserRecord } from "./display-name";
 import { UsersState } from "./types";
 
 export const DEFAULT_COLOR = "rgb(170,170,170)";
@@ -22,14 +22,6 @@ interface Profile {
 }
 // To avoid overfetching profiles we cache them for a few minutes:
 const profiles = new LRU({ ttl: 1000 * 120, max: 5000 });
-
-function userDisplayName(user?: any): string {
-  return displayNameFromAccount({
-    display_name: user?.get?.("display_name") ?? user?.display_name,
-    first_name: user?.get?.("first_name") ?? user?.first_name,
-    last_name: user?.get?.("last_name") ?? user?.last_name,
-  });
-}
 
 export function shouldHydrateUserIdentity(user?: any): boolean {
   if (user == null) {
@@ -57,7 +49,10 @@ export class UsersStore extends Store<UsersState> {
   }
 
   public get_sort_name(account_id: string): string {
-    return userDisplayName(this.getIn(["user_map", account_id])) || account_id;
+    return (
+      displayNameFromUserRecord(this.getIn(["user_map", account_id])) ||
+      account_id
+    );
   }
 
   /**
@@ -124,7 +119,7 @@ export class UsersStore extends Store<UsersState> {
       if (shouldHydrateUserIdentity(m)) {
         actions.fetch_non_collaborator(account_id);
       }
-      const name = userDisplayName(m);
+      const name = displayNameFromUserRecord(m);
       return name || undefined;
     } else {
       // look it up, which causes it to get saved in the store, which causes a new render later.

@@ -7,6 +7,7 @@ import { Well } from "@cocalc/frontend/antd-bootstrap";
 import { TimeAgo } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { sanitize_html_safe } from "@cocalc/frontend/misc";
+import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import {
   isLanguageModelService,
   service2model,
@@ -54,9 +55,11 @@ export function History({ history, user_map }: HistoryProps) {
       return null;
     }
     if (isValidUUID(author_id) && user_map.get(author_id) != null) {
-      const first_name = user_map.getIn([author_id, "first_name"]);
-      const last_name = user_map.getIn([author_id, "last_name"]);
-      return <>{trunc_middle(`${first_name} ${last_name}`, 20)}</>;
+      return (
+        <>
+          {trunc_middle(displayNameFromUserRecord(user_map.get(author_id)), 20)}
+        </>
+      );
     } else if (isLanguageModelService(author_id)) {
       return <AIModelName model={service2model(author_id)} size={14} />;
     } else {

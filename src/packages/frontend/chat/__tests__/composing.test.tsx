@@ -24,7 +24,7 @@ function makeUserMap(name: string) {
       "remote-account",
       {
         get: (key: string, fallback = "") =>
-          key === "first_name" ? name : fallback,
+          key === "display_name" ? name : fallback,
       },
     ],
   ]);

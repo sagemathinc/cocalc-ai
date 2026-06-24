@@ -25,6 +25,7 @@ import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { chatBotName, isChatBot } from "@cocalc/frontend/account/chatbot";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DivTempHeight } from "@cocalc/frontend/jupyter/div-temp-height";
+import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import { cmp } from "@cocalc/util/misc";
 import type { ChatActions } from "./actions";
 import { type AttachedSteerMessage } from "./agent-message-status";
@@ -788,7 +789,7 @@ export function getUserName(userMap, accountId: string): string {
   if (userMap == null) return "Unknown";
   const account = userMap.get(accountId);
   if (account == null) return "Unknown";
-  return account.get("first_name", "") + " " + account.get("last_name", "");
+  return displayNameFromUserRecord(account) || "Unknown";
 }
 
 export function MessageList({

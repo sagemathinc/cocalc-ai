@@ -62,4 +62,25 @@ describe("jupyter cursor profiles", () => {
       name: "Remote Friend",
     });
   });
+
+  it("prefers display_name over legacy name parts", async () => {
+    const { getProfile } = await import("../cursors");
+    const accountId = "33333333-3333-4333-8333-333333333333";
+
+    const userMap = immutable.fromJS({
+      [accountId]: {
+        display_name: "Unified Name",
+        first_name: "Legacy",
+        last_name: "Name",
+        profile: { color: "#abcdef" },
+      },
+    });
+
+    const profile = getProfile(accountId, userMap);
+
+    expect(profile).toEqual({
+      color: "#abcdef",
+      name: "Unified Name",
+    });
+  });
 });
