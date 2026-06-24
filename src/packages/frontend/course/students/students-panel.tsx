@@ -109,6 +109,7 @@ export function StudentsPanel({
       create_project?: number;
       account_id?: string;
       student_id: string;
+      display_name?: string;
       first_name?: string;
       last_name?: string;
       last_active?: number;
@@ -154,8 +155,9 @@ export function StudentsPanel({
     // turn map of students into a list
     // account_id     : "bed84c9e-98e0-494f-99a1-ad9203f752cb" # Student's CoCalc account ID
     // email_address  : "4@student.com"                        # Email the instructor signed the student up with.
-    // first_name     : "Rachel"                               # Student's first name they use for CoCalc
-    // last_name      : "Florence"                             # Student's last name they use for CoCalc
+    // display_name   : "Rachel Florence"                      # Student's name
+    // first_name     : "Rachel"                               # Derived from display_name for legacy columns
+    // last_name      : "Florence"                             # Derived from display_name for legacy columns
     // project_id     : "6bea25c7-da96-4e92-aa50-46ebee1994ca" # Student's project ID for this course
     // student_id     : "920bdad2-9c3a-40ab-b5c0-eb0b3979e212" # Student's id for this course
     // last_active    : 2357025
@@ -194,6 +196,7 @@ export function StudentsPanel({
         const students_filtered: any[] = [];
         for (const x of students_shown) {
           const target = [
+            x.display_name ?? "",
             x.first_name ?? "",
             x.last_name ?? "",
             x.email_address ?? "",
@@ -337,8 +340,7 @@ export function StudentsPanel({
     if (store == null) return null;
     const studentName: StudentNameDescription = {
       full: store.get_student_name(x.student_id),
-      first: x.first_name,
-      last: x.last_name,
+      display: x.display_name ?? "",
     };
     const student = get_student(student_id);
     if (student == null) {

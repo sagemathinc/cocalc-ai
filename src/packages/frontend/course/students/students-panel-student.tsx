@@ -52,8 +52,7 @@ import DeletedAccount from "./deleted-account";
 
 export interface StudentNameDescription {
   full: string;
-  first: string;
-  last: string;
+  display: string;
 }
 
 /*
@@ -145,11 +144,8 @@ export function Student({
   const size = useButtonSize();
 
   const [editing_student, set_editing_student] = useState<boolean>(false);
-  const [edited_first_name, set_edited_first_name] = useState<string>(
-    student_name.first || "",
-  );
-  const [edited_last_name, set_edited_last_name] = useState<string>(
-    student_name.last || "",
+  const [edited_display_name, set_edited_display_name] = useState<string>(
+    student_name.display || "",
   );
   const [edited_email_address, set_edited_email_address] = useState<string>(
     student.get("email_address") || "",
@@ -157,8 +153,7 @@ export function Student({
   const [more, set_more] = useState<boolean>(false);
   function reset_initial_state() {
     set_editing_student(false);
-    set_edited_first_name(student_name.first || "");
-    set_edited_last_name(student_name.last || "");
+    set_edited_display_name(student_name.display || "");
     set_edited_email_address(student.get("email_address") || "");
     set_more(false);
     setInviteDetailsOpen(false);
@@ -167,11 +162,8 @@ export function Student({
   }
 
   useEffect(() => {
-    set_edited_first_name(student_name.first);
-  }, [student_name.first]);
-  useEffect(() => {
-    set_edited_last_name(student_name.last);
-  }, [student_name.last]);
+    set_edited_display_name(student_name.display);
+  }, [student_name.display]);
   useEffect(() => {
     set_edited_email_address(student.get("email_address") ?? "");
   }, [student.get("email_address")]);
@@ -432,8 +424,7 @@ export function Student({
 
   function student_changed() {
     return (
-      student_name.first !== edited_first_name ||
-      student_name.last !== edited_last_name ||
+      student_name.display !== edited_display_name ||
       student.get("email_address") !== edited_email_address
     );
   }
@@ -490,8 +481,7 @@ export function Student({
 
   function save_student_changes() {
     actions.students.set_internal_student_info(student.get("student_id"), {
-      first_name: edited_first_name,
-      last_name: edited_last_name,
+      display_name: edited_display_name,
       email_address: edited_email_address,
     });
 
@@ -1330,28 +1320,16 @@ export function Student({
     return (
       <Card style={{ marginTop: "10px" }}>
         <Row>
-          <Col md={12} style={{ paddingRight: "15px" }}>
-            First Name
+          <Col md={24}>
+            Name
             <Input
               autoFocus
-              value={edited_first_name}
+              value={edited_display_name}
               onClick={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
               }}
-              onChange={(e) => set_edited_first_name(e.target.value)}
-              onKeyDown={on_key_down}
-            />
-          </Col>
-          <Col md={12}>
-            Last Name
-            <Input
-              value={edited_last_name}
-              onClick={(e) => {
-                e.stopPropagation();
-                e.preventDefault();
-              }}
-              onChange={(e) => set_edited_last_name((e.target as any).value)}
+              onChange={(e) => set_edited_display_name(e.target.value)}
               onKeyDown={on_key_down}
             />
           </Col>

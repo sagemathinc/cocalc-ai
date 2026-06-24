@@ -26,6 +26,10 @@ import {
   search_split,
   separate_file_extension,
 } from "@cocalc/util/misc";
+import {
+  displayNameFromAccount,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import { ProjectsStore } from "../projects/store";
 import { UserMap } from "../todo-types";
 import { StudentsMap } from "./store";
@@ -117,6 +121,7 @@ export function step_ready(step: AssignmentCopyStep, n) {
 // Takes a student immutable.Map with key 'student_id'
 // Returns a list of students `x` shaped like:
 // {
+//    display_name  : string
 //    first_name    : string
 //    last_name     : string
 //    last_active   : integer
@@ -133,11 +138,16 @@ export function parse_students(
   for (const x of v) {
     if (x.account_id != null) {
       const user = user_map.get(x.account_id);
-      if (x.first_name == null) {
-        x.first_name = user == null ? "" : user.get("first_name", "");
-      }
-      if (x.last_name == null) {
-        x.last_name = user == null ? "" : user.get("last_name", "");
+      if (x.display_name == null) {
+        x.display_name =
+          displayNameFromAccount(x) ||
+          (user == null
+            ? ""
+            : displayNameFromAccount({
+                display_name: user.get("display_name", ""),
+                first_name: user.get("first_name", ""),
+                last_name: user.get("last_name", ""),
+              }));
       }
       if (x.project_id != null) {
         const projects_store = redux.getStore("projects");
@@ -154,12 +164,12 @@ export function parse_students(
       x.hosting = description + state;
     }
 
-    if (x.first_name == null) {
-      x.first_name = "";
-    }
-    if (x.last_name == null) {
-      x.last_name = "";
-    }
+    x.display_name = displayNameFromAccount(x);
+    const { first_name, last_name } = legacyNamePartsFromDisplayName(
+      x.display_name,
+    );
+    x.first_name = first_name;
+    x.last_name = last_name;
     if (x.last_active == null) {
       x.last_active = 0;
     }

@@ -41,8 +41,7 @@ interface Props {
 
 interface ParsedStudent {
   email_address: string;
-  first_name?: string;
-  last_name?: string;
+  display_name?: string;
 }
 
 interface RosterParseResult {
@@ -321,22 +320,12 @@ function extractEmail(row: string): string | undefined {
   return is_valid_email_address(email) ? email : undefined;
 }
 
-function extractName(
-  row: string,
-  email: string,
-): { first_name?: string; last_name?: string } {
+function extractName(row: string, email: string): { display_name?: string } {
   const name = row
     .replace(email, "")
     .replace(/[<>"]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!name) return {};
-  const parts = name.split(" ");
-  if (parts.length === 1) {
-    return { first_name: parts[0] };
-  }
-  return {
-    first_name: parts.slice(0, -1).join(" "),
-    last_name: parts[parts.length - 1],
-  };
+  return { display_name: name };
 }

@@ -10,6 +10,10 @@ Actions specific to manipulating the students in a course
 import { delay, map } from "awaiting";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { callback2 } from "@cocalc/util/async-utils";
+import {
+  displayNameFromAccount,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import { defaults, required, uuid } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { CourseActions } from "../actions";
@@ -46,8 +50,7 @@ export class StudentsActions {
     students: {
       account_id?: string;
       email_address?: string;
-      first_name?: string;
-      last_name?: string;
+      display_name?: string;
     }[],
   ): Promise<void> {
     // students = array of objects that may have an account_id or email_address field set
@@ -263,6 +266,43 @@ export class StudentsActions {
     }
   };
 
+  private repairLegacyStudentDisplayNames = (): void => {
+    const store = this.get_store();
+    let changed = false;
+    store.get_students().map((student: StudentRecord) => {
+      const student_id = student.get("student_id");
+      if (!student_id) {
+        return;
+      }
+      const display_name = displayNameFromAccount({
+        display_name: student.get("display_name"),
+        first_name: student.get("first_name"),
+        last_name: student.get("last_name"),
+      });
+      const hasLegacyName =
+        student.get("first_name") != null || student.get("last_name") != null;
+      const needsDisplayName =
+        !!display_name && student.get("display_name") !== display_name;
+      if (!hasLegacyName && !needsDisplayName) {
+        return;
+      }
+      this.course_actions.set(
+        {
+          table: "students",
+          student_id,
+          display_name: display_name || undefined,
+          first_name: undefined,
+          last_name: undefined,
+        },
+        false,
+      );
+      changed = true;
+    });
+    if (changed) {
+      this.course_actions.syncdb.commit();
+    }
+  };
+
   // For every student with a known account_id, verify that their
   // account still exists, and if not, mark it as deleted.  This is rare, but happens
   // despite all attempts otherwise: https://github.com/sagemathinc/cocalc/issues/3243
@@ -304,6 +344,7 @@ export class StudentsActions {
       delete this.updateInterval;
       return;
     }
+    this.repairLegacyStudentDisplayNames();
     await this.repairAcceptedInviteAccounts();
     await this.lookupNonregisteredStudents();
     await this.updateDeletedAccounts();
@@ -327,20 +368,21 @@ export class StudentsActions {
 
   set_internal_student_info = async (
     student_id: string,
-    info: { first_name: string; last_name: string; email_address?: string },
+    info: { display_name: string; email_address?: string },
   ): Promise<void> => {
     const { student } = this.course_actions.resolve({ student_id });
     if (student == null) return;
 
     info = defaults(info, {
-      first_name: required,
-      last_name: required,
+      display_name: required,
       email_address: student.get("email_address"),
     });
+    const display_name = normalizeDisplayName(info.display_name);
 
     this.course_actions.set({
-      first_name: info.first_name,
-      last_name: info.last_name,
+      display_name: display_name || undefined,
+      first_name: undefined,
+      last_name: undefined,
       email_address: info.email_address,
       student_id,
       table: "students",
