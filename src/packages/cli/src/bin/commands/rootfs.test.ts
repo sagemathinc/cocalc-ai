@@ -1041,6 +1041,74 @@ test("rootfs recipe run --dry-run prints expanded runnable shell script", async 
   }
 });
 
+test("rootfs recipe from-binder generates a recipe and dry-run script", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-binder-recipe-"));
+  const recipePath = join(dir, "binder.json");
+  const oldWrite = process.stdout.write;
+  let stdout = "";
+  try {
+    process.stdout.write = ((chunk: any) => {
+      stdout += String(chunk);
+      return true;
+    }) as any;
+    const program = new Command();
+    registerRootfsCommand(program, rootfsDeps().deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "from-binder",
+      "gh",
+      "elegant-scipy",
+      "elegant-scipy",
+      "master",
+      "--output",
+      recipePath,
+    ]);
+
+    const recipe = JSON.parse(readFileSync(recipePath, "utf8"));
+    assert.equal(recipe.name, "binder-gh-elegant-scipy-elegant-scipy-master");
+    assert.equal(recipe.steps[0].uses, "cocalc/uv-python");
+    assert.match(
+      recipe.steps[1].run,
+      /BINDER_REPO_URL='https:\/\/github.com\/elegant-scipy\/elegant-scipy\.git'/,
+    );
+    assert.match(recipe.steps[1].run, /requirements\.txt/);
+    assert.match(recipe.steps[1].run, /postBuild/);
+    assert.equal(recipe.publish.family, "binder");
+    assert.equal(recipe.publish.content.actions[0].kind, "copy-to-home");
+    assert.match(stdout, /recipe_path:/);
+
+    stdout = "";
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "recipe",
+      "from-binder",
+      "gh",
+      "elegant-scipy",
+      "elegant-scipy",
+      "master",
+      "--dry-run",
+    ]);
+
+    assert.match(stdout, /^#!\/usr\/bin\/env bash/);
+    assert.match(stdout, /# Step 1: cocalc\/uv-python/);
+    assert.match(stdout, /Build Binder-compatible repository environment/);
+    assert.match(stdout, /git clone --depth 1 --branch "\$BINDER_REF"/);
+    assert.match(
+      stdout,
+      /python -m pip install --no-cache-dir -r "\$BINDER_CONFIG_DIR\/requirements\.txt"/,
+    );
+  } finally {
+    process.stdout.write = oldWrite;
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
 test("rootfs recipe explain parses bundled machine learning GPU recipes", async () => {
   for (const [recipe, module, slug] of [
     ["ml-pytorch-gpu.yaml", "cocalc/pytorch-gpu", "pytorch-gpu-ml"],
@@ -1224,6 +1292,128 @@ test("rootfs build runs recipe and saves publish config on the project", async (
     assert.match(
       harness.captured,
       /logs: cocalc rootfs build-logs build-1 --follow/,
+    );
+  } finally {
+    if (oldStateFile == null) {
+      delete process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
+    } else {
+      process.env.COCALC_ROOTFS_BUILD_STATE_FILE = oldStateFile;
+    }
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("rootfs build-binder generates a Binder recipe and starts a durable build", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-build-binder-"));
+  const stateFile = join(dir, "last-rootfs-build.json");
+  const recipeOut = join(dir, "generated-binder.json");
+  const oldStateFile = process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
+  let savedConfig: any;
+  let buildRequest: any;
+  const labelRequests: any[] = [];
+  try {
+    process.env.COCALC_ROOTFS_BUILD_STATE_FILE = stateFile;
+    const harness = rootfsDeps({
+      globals: { quiet: true },
+      projects: {
+        createProject: async (opts: any) => {
+          assert.equal(
+            opts.title,
+            "RootFS build: binder-gh-elegant-scipy-elegant-scipy-master",
+          );
+          return "binder-builder-project";
+        },
+        start: async () => ({ op_id: "start-op" }),
+        setProjectRootfsPublishConfig: async (opts: any) => {
+          savedConfig = opts;
+        },
+        setProjectLabels: async (opts: any) => {
+          labelRequests.push(opts);
+          return opts.labels;
+        },
+        startProjectRootfsBuild: async (opts: any) => {
+          buildRequest = opts;
+          return {
+            build_id: "binder-build-1",
+            project_id: opts.project_id,
+            host_id: "host-1",
+            status: "running",
+            created_at: "2026-06-24T00:00:00.000Z",
+            paths: {
+              dir: ".cocalc/rootfs-builds/binder-build-1",
+              script: ".cocalc/rootfs-builds/binder-build-1/run.sh",
+              log: ".cocalc/rootfs-builds/binder-build-1/build.log",
+              status: ".cocalc/rootfs-builds/binder-build-1/status.json",
+              events: ".cocalc/rootfs-builds/binder-build-1/events.ndjson",
+            },
+          };
+        },
+        getProjectRootfsBuildStatus: async (opts: any) => ({
+          build_id: opts.build_id,
+          project_id: opts.project_id,
+          host_id: "host-1",
+          status: "succeeded",
+          created_at: "2026-06-24T00:00:00.000Z",
+          paths: {
+            dir: ".cocalc/rootfs-builds/binder-build-1",
+            script: ".cocalc/rootfs-builds/binder-build-1/run.sh",
+            log: ".cocalc/rootfs-builds/binder-build-1/build.log",
+            status: ".cocalc/rootfs-builds/binder-build-1/status.json",
+            events: ".cocalc/rootfs-builds/binder-build-1/events.ndjson",
+          },
+        }),
+      },
+      waitForLro: async () => ({ status: "succeeded" }),
+    });
+    const program = new Command();
+    registerRootfsCommand(program, harness.deps as any);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "build-binder",
+      "gh",
+      "elegant-scipy",
+      "elegant-scipy",
+      "master",
+      "--recipe-out",
+      recipeOut,
+    ]);
+
+    const generatedRecipe = JSON.parse(readFileSync(recipeOut, "utf8"));
+    const lastBuild = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.equal(lastBuild.project_id, "binder-builder-project");
+    assert.equal(lastBuild.build_id, "binder-build-1");
+    assert.equal(
+      savedConfig.config.recipe.name,
+      "binder-gh-elegant-scipy-elegant-scipy-master",
+    );
+    assert.equal(generatedRecipe.publish.family, "binder");
+    assert.equal(buildRequest.project_id, "binder-builder-project");
+    assert.equal(
+      buildRequest.recipe_ref,
+      "binder-gh-elegant-scipy-elegant-scipy-master",
+    );
+    assert.match(
+      buildRequest.script,
+      /https:\/\/github.com\/elegant-scipy\/elegant-scipy\.git/,
+    );
+    assert.match(buildRequest.script, /requirements\.txt/);
+    assert.equal(labelRequests[0].labels["cocalc.com/rootfs-origin"], "binder");
+    assert.equal(labelRequests[0].labels["cocalc.com/binder-provider"], "gh");
+    assert.equal(
+      labelRequests[0].labels["cocalc.com/binder-owner"],
+      "elegant-scipy",
+    );
+    assert.equal(
+      labelRequests[0].labels["cocalc.com/binder-repo"],
+      "elegant-scipy",
+    );
+    assert.equal(labelRequests[0].labels["cocalc.com/binder-ref"], "master");
+    assert.equal(
+      labelRequests[1].labels["cocalc.com/rootfs-build-id"],
+      "binder-build-1",
     );
   } finally {
     if (oldStateFile == null) {
