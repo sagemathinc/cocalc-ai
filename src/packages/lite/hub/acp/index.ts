@@ -401,6 +401,10 @@ const ACP_WORKER_HEARTBEAT_MS = envNumber(
   "COCALC_ACP_WORKER_HEARTBEAT_MS",
   2_000,
 );
+const ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD = Math.max(
+  1,
+  envNumber("COCALC_ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD", 3),
+);
 const ACP_WORKER_DRAIN_QUIESCE_MS = envNumber(
   "COCALC_ACP_WORKER_DRAIN_QUIESCE_MS",
   30_000,
@@ -5035,6 +5039,35 @@ export function shouldStopDetachedWorkerForDrain({
   return now - exitRequestedAt >= quiesceMs;
 }
 
+export function isFatalAcpWorkerStorageError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.toUpperCase();
+  const errno = `${(err as any)?.errno ?? ""}`.toUpperCase();
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  if (
+    [
+      "ENOSPC",
+      "EIO",
+      "SQLITE_FULL",
+      "SQLITE_IOERR",
+      "SQLITE_CORRUPT",
+      "SQLITE_NOTADB",
+      "SQLITE_READONLY",
+    ].includes(code) ||
+    ["ENOSPC", "EIO"].includes(errno)
+  ) {
+    return true;
+  }
+  return [
+    "no space left on device",
+    "disk i/o error",
+    "input/output error",
+    "database or disk is full",
+    "database disk image is malformed",
+    "attempt to write a readonly database",
+    "readonly database",
+  ].some((needle) => message.includes(needle));
+}
+
 export async function recoverDetachedWorkerStartupState(
   client: ConatClient,
   opts: {
@@ -5168,6 +5201,27 @@ export async function runDetachedAcpQueueWorker(
   let workerControlService:
     | Awaited<ReturnType<typeof initAcpDaemonControlService>>
     | undefined;
+  let workerFatalError: unknown;
+  let workerHeartbeatFailureCount = 0;
+  const markWorkerFatalError = ({
+    err,
+    reason,
+  }: {
+    err: unknown;
+    reason: string;
+  }): void => {
+    if (workerFatalError != null) {
+      return;
+    }
+    workerStopReason ??= reason;
+    workerFatalError =
+      err instanceof Error ? err : new Error(`${err ?? "unknown error"}`);
+  };
+  const throwIfWorkerFatalError = (): void => {
+    if (workerFatalError != null) {
+      throw workerFatalError;
+    }
+  };
   const snapshotDetachedWorkerState = (): AcpDaemonStatus | null => {
     if (!workerContext || !currentDetachedWorkerContext) {
       return null;
@@ -5248,6 +5302,7 @@ export async function runDetachedAcpQueueWorker(
       workerStopReason ??=
         currentDetachedWorkerContext.stop_reason ?? "drained";
     }
+    workerHeartbeatFailureCount = 0;
     return { state: nextState, runningJobs, runningTurnLeases };
   };
   try {
@@ -5286,10 +5341,38 @@ export async function runDetachedAcpQueueWorker(
         try {
           syncDetachedWorkerState();
         } catch (err) {
+          workerHeartbeatFailureCount += 1;
+          const fatalStorageError = isFatalAcpWorkerStorageError(err);
           logger.warn("ACP worker heartbeat failed", {
             instance: ACP_INSTANCE_ID,
+            consecutive_failures: workerHeartbeatFailureCount,
+            failure_exit_threshold: ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD,
+            fatal_storage_error: fatalStorageError,
             err,
           });
+          if (
+            fatalStorageError ||
+            workerHeartbeatFailureCount >=
+              ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD
+          ) {
+            markWorkerFatalError({
+              err,
+              reason: fatalStorageError
+                ? "fatal_storage_error"
+                : "heartbeat_failed",
+            });
+            logger.warn(
+              "ACP worker heartbeat failure is fatal; exiting for supervisor restart",
+              {
+                instance: ACP_INSTANCE_ID,
+                pid: process.pid,
+                reason: workerStopReason,
+                consecutive_failures: workerHeartbeatFailureCount,
+                fatal_storage_error: fatalStorageError,
+                err,
+              },
+            );
+          }
         }
       }, ACP_WORKER_HEARTBEAT_MS);
       workerHeartbeatTimer.unref?.();
@@ -5303,6 +5386,7 @@ export async function runDetachedAcpQueueWorker(
     let idleSince = 0;
     let lastRecoveryAt = Date.now();
     while (true) {
+      throwIfWorkerFatalError();
       const workerStatus = syncDetachedWorkerState();
       if (!workerContext || workerStatus?.state === "active") {
         kickAllQueuedAcpJobs();
@@ -5341,6 +5425,7 @@ export async function runDetachedAcpQueueWorker(
       } else if (!idleSince) {
         idleSince = Date.now();
       }
+      throwIfWorkerFatalError();
       if (workerStopReason) {
         logger.warn("stopping ACP queue worker after drain", {
           instance: ACP_INSTANCE_ID,
@@ -5365,6 +5450,7 @@ export async function runDetachedAcpQueueWorker(
       }
       recordAcpWorkerHeartbeat({ pid: process.pid });
       await sleep(ACP_WORKER_POLL_MS);
+      throwIfWorkerFatalError();
     }
   } finally {
     clearAcpWorkerHeartbeat();
@@ -5373,10 +5459,19 @@ export async function runDetachedAcpQueueWorker(
     }
     workerControlService?.close();
     if (workerContext) {
-      stopAcpWorker({
-        worker_id: workerContext.worker_id,
-        reason: workerStopReason ?? "shutdown",
-      });
+      try {
+        stopAcpWorker({
+          worker_id: workerContext.worker_id,
+          reason: workerStopReason ?? "shutdown",
+        });
+      } catch (err) {
+        logger.warn("failed to mark ACP worker stopped during shutdown", {
+          instance: ACP_INSTANCE_ID,
+          worker_id: workerContext.worker_id,
+          reason: workerStopReason ?? "shutdown",
+          err,
+        });
+      }
       currentDetachedWorkerContext = null;
     }
   }
