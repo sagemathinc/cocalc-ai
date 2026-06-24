@@ -73,12 +73,34 @@ describe("evaluateDedicatedHostAdmission", () => {
     });
   });
 
-  it("requires a payment method for billable clouds", () => {
+  it("allows prepaid-funded dedicated host actions without a payment method", () => {
     expect(
       evaluateDedicatedHostAdmission({
         action: "resize",
         machine_cloud: "gcp",
         snapshot: snapshot({ has_payment_method: false }) as any,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      funding_lane: "prepaid",
+    });
+  });
+
+  it("requires a payment method for postpaid-funded dedicated host actions", () => {
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "resize",
+        machine_cloud: "gcp",
+        snapshot: snapshot({
+          funding_mode: "account-postpaid",
+          effective_limits: {
+            credit_spend_limit_5h_usd: 300,
+            credit_spend_limit_7d_usd: 1000,
+          },
+          balance: "0",
+          has_payment_method: false,
+          has_usage_subscription: true,
+        }) as any,
       }),
     ).toMatchObject({
       allowed: false,
