@@ -123,16 +123,17 @@ export class ProjectsStore extends Store<ProjectsState> {
     for (let user of users) {
       user.last_active = last_active.get(user.account_id, 0);
     }
-    // the code below sorts by last-active in reverse order, if defined; otherwise by last name (or as tie breaker)
-    const last_name = (account_id) =>
-      redux.getStore("users").get_last_name(account_id);
+    // Sort by last-active in reverse order when defined; use display name as
+    // the stable tie breaker.
+    const displayName = (account_id) =>
+      redux.getStore("users").get_sort_name(account_id);
 
     return users.sort((a, b) => {
       const c = cmp(b.last_active, a.last_active);
       if (c) {
         return c;
       } else {
-        return cmp(last_name(a.account_id), last_name(b.account_id));
+        return cmp(displayName(a.account_id), displayName(b.account_id));
       }
     });
   }

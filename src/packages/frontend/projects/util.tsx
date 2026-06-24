@@ -37,6 +37,7 @@ import {
   NAMED_SERVER_NAMES,
   NamedServerName,
 } from "@cocalc/util/types/servers";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { ProjectMap } from "./store";
 import { normalizeProjectStateForDisplay } from "./host-operational";
 
@@ -101,13 +102,14 @@ function get_search_info(
       if (account_id == webapp_client.account_id) return;
       const info = user_map.get(account_id);
       if (info != null) {
-        s += (
-          " " +
-          info.get("first_name") +
-          " " +
-          info.get("last_name") +
-          " "
-        ).toLowerCase();
+        const name = displayNameFromAccount({
+          display_name: info.get("display_name"),
+          first_name: info.get("first_name"),
+          last_name: info.get("last_name"),
+        });
+        if (name) {
+          s += ` ${name} `.toLowerCase();
+        }
       }
     });
   }

@@ -15,6 +15,7 @@ import { useMemo } from "react";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { DEFAULT_COLOR } from "../users/store";
 
 const AVATARS_CONTAINER_STYLE: CSS = {
@@ -67,11 +68,15 @@ export function CollaboratorsAvatars({
       const user = user_map.get(account_id);
       if (!user) return "Unknown";
 
-      const first_name = user.get("first_name") || "";
-      const last_name = user.get("last_name") || "";
-      const name = `${first_name} ${last_name}`.trim();
-
-      return name || user.get("email_address") || "Unknown";
+      return (
+        displayNameFromAccount({
+          display_name: user.get("display_name"),
+          first_name: user.get("first_name"),
+          last_name: user.get("last_name"),
+        }) ||
+        user.get("email_address") ||
+        "Unknown"
+      );
     });
   }, [collaboratorIds, user_map, maxAvatars, maxNamesTooltip]);
 
