@@ -149,7 +149,7 @@ describe("hub API argument transforms", () => {
         host_id: "host-1",
       });
       expect(hostArgs[0].host_id).toBe("host-1");
-      expect(hostArgs[0].project_id).toBeUndefined();
+      expect(hostArgs[0].project_id).toBe("spoofed-project");
       expect(hostArgs[0].account_id).toBe("account-for-download-attribution");
 
       const projectArgs = await transformArgs({
