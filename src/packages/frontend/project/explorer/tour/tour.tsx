@@ -2,7 +2,7 @@ import type { TourProps } from "antd";
 import { Checkbox, Tour } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph, Text } from "@cocalc/frontend/components";
-import { A } from "@cocalc/frontend/components/A";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { Icon } from "@cocalc/frontend/components/icon";
 import actionsImage from "./actions.png";
 
@@ -19,7 +19,10 @@ export default function ExplorerTour({
     {
       title: (
         <>
-          Tour of the File Explorer <A href="/docs/files/explorer">(docs)</A>
+          Tour of the File Explorer{" "}
+          <DocsLink projectId={project_id} slug="files/explorer">
+            (docs)
+          </DocsLink>
         </>
       ),
       description: (

@@ -34,6 +34,7 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
 import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
@@ -74,7 +75,6 @@ import {
 } from "@cocalc/frontend/rootfs/project-presets";
 import { queueRootfsChangeRestart } from "./rootfs-restart";
 import { themeDraftFromTheme } from "@cocalc/frontend/theme/types";
-import { docsPath } from "@cocalc/docs";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -2070,11 +2070,15 @@ export default function RootFilesystemImage({
                     {publishDraft.image}
                   </div>
                   <Button
-                    href={docsPath("projects/publish-rootfs")}
                     icon={<Icon name="external-link" />}
+                    onClick={() =>
+                      openProjectDocs({
+                        projectId: project_id,
+                        slug: "projects/publish-rootfs",
+                      })
+                    }
                     size="small"
                     style={{ marginTop: 10 }}
-                    target="_blank"
                   >
                     Image publishing docs
                   </Button>

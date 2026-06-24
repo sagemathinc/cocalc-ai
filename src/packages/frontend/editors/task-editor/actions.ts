@@ -9,6 +9,7 @@ Task Actions
 
 import { fromJS, Map } from "immutable";
 import type { TasksSession } from "@cocalc/app-tasks";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { throttle } from "lodash";
 import {
   close,
@@ -44,7 +45,7 @@ import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { createFrontendTasksSession } from "./tasks-session";
 
 const LAST_EDITED_THRESH_S = 30;
-const TASKS_HELP_URL = "/docs/projects/tasks";
+const TASKS_HELP_SLUG = "projects/tasks";
 
 export class TaskActions extends Actions<TaskState> {
   public syncdb: SyncDB;
@@ -476,7 +477,7 @@ export class TaskActions extends Actions<TaskState> {
   }
 
   public help(): void {
-    window.open(TASKS_HELP_URL, "_blank")?.focus();
+    openProjectDocs({ projectId: this.project_id, slug: TASKS_HELP_SLUG });
   }
 
   set_current_task = (task_id: string): void => {

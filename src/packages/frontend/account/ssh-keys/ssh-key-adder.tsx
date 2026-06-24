@@ -6,7 +6,8 @@
 import { Button, Input, Modal } from "antd";
 import { useState } from "react";
 import { useIntl } from "react-intl";
-import { A, Icon } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { labels } from "@cocalc/frontend/i18n";
 import { compute_fingerprint } from "./fingerprint";
 import ShowError from "@cocalc/frontend/components/error";
@@ -157,7 +158,14 @@ export default function SSHKeyAdder({
                 defaultMessage: "Add <A>SSH key</A>",
               },
               {
-                A: (c) => <A href="/app-docs/account/settings">{c}</A>,
+                A: (c) => (
+                  <DocsLink
+                    href="/app-docs/account/settings"
+                    slug="account/settings"
+                  >
+                    {c}
+                  </DocsLink>
+                ),
               },
             )}
           </>

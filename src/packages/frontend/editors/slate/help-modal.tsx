@@ -6,7 +6,8 @@
 import React from "react";
 import { Modal } from "antd";
 
-import { A, Paragraph, Text, Title } from "@cocalc/frontend/components";
+import { Paragraph, Text, Title } from "@cocalc/frontend/components";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { IS_MACOS } from "@cocalc/frontend/feature";
 
 interface Props {
@@ -104,7 +105,8 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
       </ul>
 
       <Paragraph>
-        Full docs: <A href="/docs/files/markdown">/docs/files/markdown</A>
+        Full docs:{" "}
+        <DocsLink slug="files/markdown">/docs/files/markdown</DocsLink>
       </Paragraph>
     </Modal>
   );

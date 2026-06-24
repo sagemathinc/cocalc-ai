@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useIntl } from "react-intl";
 
 import { redux, useRedux } from "@cocalc/frontend/app-framework";
-import { A } from "@cocalc/frontend/components/A";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -39,7 +39,7 @@ export default function ProjectsPageTour({
       title: (
         <>
           <Icon name="edit" /> The {projectsLabel} Page{" "}
-          <A href="/docs/projects/project-list">(docs)</A>
+          <DocsLink slug="projects/project-list">(docs)</DocsLink>
         </>
       ),
       cover: <img src={projectsImage} />,
