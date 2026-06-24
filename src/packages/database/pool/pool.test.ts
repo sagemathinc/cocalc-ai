@@ -24,8 +24,14 @@ const defer = <T>(): Deferred<T> => {
 type PgMock = typeof import("pg") & {
   __reset: () => void;
   __getPoolQueryMock: () => jest.Mock;
+  __getPoolConnectMock: () => jest.Mock;
   __getClientQueryMock: () => jest.Mock;
   __getClientInstances: () => Array<{ options: Record<string, unknown> }>;
+  __setPoolImpls: (impls: {
+    connect?: jest.Mock;
+    query?: jest.Mock;
+    end?: jest.Mock;
+  }) => void;
   __setClientImpls: (impls: {
     connect?: jest.Mock;
     query?: jest.Mock;
@@ -156,8 +162,22 @@ jest.mock("pg", () => {
       clientEndImpl = jest.fn().mockResolvedValue(undefined);
     },
     __getPoolQueryMock: () => poolQueryImpl,
+    __getPoolConnectMock: () => poolConnectImpl,
     __getClientQueryMock: () => clientQueryImpl,
     __getClientInstances: () => clientInstances,
+    __setPoolImpls: ({
+      connect,
+      query,
+      end,
+    }: {
+      connect?: jest.Mock;
+      query?: jest.Mock;
+      end?: jest.Mock;
+    }) => {
+      if (connect) poolConnectImpl = connect;
+      if (query) poolQueryImpl = query;
+      if (end) poolEndImpl = end;
+    },
     __setClientImpls: ({
       connect,
       query,
@@ -301,5 +321,25 @@ describe("pool getPool ensureExists", () => {
     expect(clientQuery).toHaveBeenCalledWith("SELECT pg_advisory_unlock($1)", [
       expect.any(Number),
     ]);
+  });
+});
+
+describe("getTransactionClient", () => {
+  it("ignores cache-time options because cached pools cannot provide transactional clients", async () => {
+    const { pgMock, poolModule } = await loadPool();
+    const transactionClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    const connect = jest.fn().mockResolvedValue(transactionClient);
+    pgMock.__setPoolImpls({ connect });
+
+    const client = await poolModule.getTransactionClient("long");
+
+    expect(client).toBe(transactionClient);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(transactionClient.query).toHaveBeenCalledWith("BEGIN");
+    client.release();
+    expect(transactionClient.release).toHaveBeenCalledTimes(1);
   });
 });

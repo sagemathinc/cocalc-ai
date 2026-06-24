@@ -57,6 +57,7 @@ async function createStripeCustomer({
       email: email ?? undefined,
       metadata: {
         account_id,
+        cocalc_site: await currentStripeSite(),
       },
     },
     {
@@ -114,7 +115,7 @@ export async function getStripeCustomerId({
   account_id: string;
   create: boolean;
 }): Promise<string | undefined> {
-  const db = getPool("long");
+  const db = getPool();
   const { rows } = await db.query(
     "SELECT stripe_customer_id FROM accounts WHERE account_id=$1",
     [account_id],
@@ -129,7 +130,7 @@ export async function getStripeCustomerId({
     return stripe_customer_id;
   }
 
-  const client = await getTransactionClient("long");
+  const client = await getTransactionClient();
   try {
     const { rows } = await client.query(
       "SELECT email_address, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
