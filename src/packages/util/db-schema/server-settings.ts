@@ -105,6 +105,7 @@ export interface Customize {
   imprint?: string;
   policies?: string;
   shareServer?: boolean;
+  legacy_migration_enabled?: boolean;
   landingPages?: boolean;
   dns?: string;
   siteURL?: string;

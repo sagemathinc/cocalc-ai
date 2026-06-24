@@ -10,6 +10,7 @@ import { getRegisteredSettingsPageDefinition } from "./settings-page-registry";
 const visibleContext: SettingsNavigationContext = {
   isAdmin: false,
   isLite: false,
+  legacyMigrationEnabled: true,
   stripeEnabled: true,
   zendesk: true,
 };
@@ -88,6 +89,33 @@ describe("settings-navigation", () => {
         (node) => node.type === "page" && node.page === "usage-limits",
       ),
     ).toBe(false);
+    expect(
+      liteNavigation.some(
+        (node) => node.type === "page" && node.page === "legacy-migration",
+      ),
+    ).toBe(false);
+  });
+
+  it("hides legacy migration unless explicitly enabled", () => {
+    const disabledNavigation = getVisibleSettingsNavigation({
+      ...visibleContext,
+      legacyMigrationEnabled: false,
+    });
+    expect(
+      disabledNavigation.some(
+        (node) => node.type === "page" && node.page === "legacy-migration",
+      ),
+    ).toBe(false);
+
+    const enabledNavigation = getVisibleSettingsNavigation({
+      ...visibleContext,
+      legacyMigrationEnabled: true,
+    });
+    expect(
+      enabledNavigation.some(
+        (node) => node.type === "page" && node.page === "legacy-migration",
+      ),
+    ).toBe(true);
   });
 
   it("derives overview sections from the visible navigation tree", () => {

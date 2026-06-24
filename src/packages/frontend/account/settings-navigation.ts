@@ -14,6 +14,7 @@ import type { SettingsPageIcon } from "./settings-page";
 export type SettingsNavigationContext = {
   isAdmin: boolean;
   isLite: boolean;
+  legacyMigrationEnabled: boolean;
   stripeEnabled: boolean;
   zendesk: boolean;
 };
@@ -22,6 +23,10 @@ export function useSettingsNavigationContext(): SettingsNavigationContext {
   return {
     isAdmin: !!useTypedRedux("account", "is_admin"),
     isLite: lite,
+    legacyMigrationEnabled: !!useTypedRedux(
+      "customize",
+      "legacy_migration_enabled",
+    ),
     stripeEnabled: !!useTypedRedux("customize", "stripe_enabled"),
     zendesk: !!useTypedRedux("customize", "zendesk"),
   };
@@ -70,7 +75,8 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
     type: "page",
     page: "legacy-migration",
     overview: "primary",
-    visible: ({ isLite }) => !isLite,
+    visible: ({ isLite, legacyMigrationEnabled }) =>
+      !isLite && legacyMigrationEnabled,
   },
   {
     type: "page",
