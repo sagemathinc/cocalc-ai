@@ -251,13 +251,15 @@ export function assertValidUserMetadata(metadata) {
     metadata?.purpose != null ||
     metadata?.account_id != null ||
     metadata?.cocalc_site != null ||
+    metadata?.checkout_key != null ||
     metadata?.confirm != null ||
+    metadata?.lineItems != null ||
     metadata?.processed != null ||
     metadata?.recorded != null ||
     metadata?.total_excluding_tax_usd != null
   ) {
     throw Error(
-      "metadata must not include 'purpose', 'account_id', 'cocalc_site', 'confirm', 'total_excluding_tax_usd', 'recorded', or 'processed' as a key",
+      "metadata must not include 'purpose', 'account_id', 'cocalc_site', 'checkout_key', 'confirm', 'lineItems', 'total_excluding_tax_usd', 'recorded', or 'processed' as a key",
     );
   }
 }
