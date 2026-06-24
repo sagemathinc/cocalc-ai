@@ -37,6 +37,7 @@ import initRootfsManifest from "./app/rootfs-manifest";
 import { getDatabase } from "./database";
 import initHttpServer from "./http";
 import initRobots from "./robots";
+import initSitemap from "./sitemap";
 import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
@@ -212,6 +213,7 @@ export default async function init(opts: Options): Promise<{
   settings.table.on("change", applyTrustProxy);
 
   router.use("/robots.txt", initRobots());
+  router.use("/sitemap.xml", initSitemap());
 
   // setup the analytics.js endpoint (skip for launchpad/minimal modes)
   if (!isLaunchpadMode() && !process.env.COCALC_DISABLE_ANALYTICS) {
