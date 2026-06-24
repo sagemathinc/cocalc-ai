@@ -24,6 +24,7 @@ import {
   consumeImpersonationGrantLocal,
   createImpersonationSessionLocal,
 } from "@cocalc/server/auth/impersonation";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 const CONTROL_PLANE_ORIGIN_STORAGE_KEY = `cocalc-control-plane-origin:${basePath}`;
 const REMEMBER_ME_STORAGE_KEY = `remember_me${basePath.startsWith("/") ? basePath.slice(1) : basePath}`;
@@ -91,9 +92,7 @@ async function doIt({ req, res }) {
         grant_id: grantId,
         account_id: `${account_id_param ?? ""}`.trim() || undefined,
         subject_email_address: account?.email_address,
-        subject_name:
-          `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
-          undefined,
+        subject_name: displayNameFromAccount(account) || undefined,
         home_bay_id,
         home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
         lang_temp: isLocale(lang_temp) ? lang_temp : undefined,
