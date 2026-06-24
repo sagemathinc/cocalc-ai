@@ -9,6 +9,7 @@ const listActiveAbuseReviewAnnotationsMock = jest.fn();
 const ensureAccountUsageWindowsForEventMock = jest.fn();
 const getActiveAccountUsageWindowsMock = jest.fn();
 const getManagedCpuAccountingClassificationForHostMock = jest.fn();
+const getAdminAccountMembershipStatusMapMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -25,6 +26,11 @@ jest.mock("./project-usage", () => ({
 jest.mock("./abuse-review-annotations", () => ({
   listActiveAbuseReviewAnnotations: (...args: any[]) =>
     listActiveAbuseReviewAnnotationsMock(...args),
+}));
+
+jest.mock("./admin-account-status", () => ({
+  getAdminAccountMembershipStatusMap: (...args: any[]) =>
+    getAdminAccountMembershipStatusMapMock(...args),
 }));
 
 jest.mock("./usage-windows", () => ({
@@ -62,7 +68,9 @@ describe("managed CPU usage accounting", () => {
     ensureAccountUsageWindowsForEventMock.mockReset();
     getActiveAccountUsageWindowsMock.mockReset();
     getManagedCpuAccountingClassificationForHostMock.mockReset();
+    getAdminAccountMembershipStatusMapMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockResolvedValue([]);
+    getAdminAccountMembershipStatusMapMock.mockResolvedValue(new Map());
     ensureAccountUsageWindowsForEventMock.mockResolvedValue({});
     getManagedCpuAccountingClassificationForHostMock.mockResolvedValue({
       scope: "shared_managed",
@@ -265,6 +273,7 @@ describe("managed CPU usage accounting", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: true,
               cpu_seconds: "3000",
             },
           ],
@@ -282,6 +291,7 @@ describe("managed CPU usage accounting", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: true,
               project_id: "project-1",
               project_title: "Number theory",
               host_id: "11111111-1111-4111-8111-111111111111",
@@ -323,6 +333,10 @@ describe("managed CPU usage accounting", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: true,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         cpu_seconds: 3000,
         active_abuse_annotations: [],
       },
@@ -333,6 +347,10 @@ describe("managed CPU usage accounting", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: true,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         project_id: "project-1",
         project_title: "Number theory",
         host_id: "11111111-1111-4111-8111-111111111111",
@@ -394,6 +412,7 @@ describe("managed CPU usage accounting", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: false,
               cpu_seconds: "500",
             },
           ],
@@ -411,6 +430,7 @@ describe("managed CPU usage accounting", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: false,
               project_id: "project-1",
               project_title: "Number theory",
               host_id: "11111111-1111-4111-8111-111111111111",
@@ -471,6 +491,10 @@ describe("managed CPU usage accounting", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: false,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         cpu_seconds: 500,
         active_abuse_annotations: [],
       },
@@ -481,6 +505,10 @@ describe("managed CPU usage accounting", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: false,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         project_id: "project-1",
         project_title: "Number theory",
         host_id: "11111111-1111-4111-8111-111111111111",

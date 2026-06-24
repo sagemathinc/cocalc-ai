@@ -126,6 +126,38 @@ function formatProjectSummary(project: {
   return `${projectPart}${hostPart}, ${formatAccountSummary(project)}`;
 }
 
+function AccountStatusTags({
+  account,
+}: {
+  account: {
+    banned?: boolean | null;
+    membership_class?: string | null;
+    membership_label?: string | null;
+    membership_source?: string | null;
+  };
+}) {
+  const membershipClass = `${account.membership_class ?? ""}`.trim();
+  const membershipLabel =
+    `${account.membership_label ?? ""}`.trim() ||
+    (membershipClass === "free" ? "Free" : membershipClass);
+
+  return (
+    <>
+      {account.banned ? <Tag color="red">Banned</Tag> : null}
+      {membershipClass ? (
+        <Tag
+          color={membershipClass === "free" ? "default" : "blue"}
+          title={`Membership: ${membershipClass}${
+            account.membership_source ? ` (${account.membership_source})` : ""
+          }`}
+        >
+          {membershipLabel}
+        </Tag>
+      ) : null}
+    </>
+  );
+}
+
 function numberedLines<T>(
   entries: T[],
   formatter: (entry: T) => string,
@@ -262,6 +294,7 @@ function TopCpuAccounts({
           <div key={account.account_id}>
             <Space wrap>
               <Text strong>{getAccountLabel(account)}</Text>
+              <AccountStatusTags account={account} />
               <Tag>{formatCpuSeconds(account.cpu_seconds)}</Tag>
               <AccountActions
                 account_id={account.account_id}
@@ -310,6 +343,7 @@ function TopCpuProjects({
               <Tag>{formatCpuSeconds(project.cpu_seconds)}</Tag>
               {project.host_id ? <Tag>Host {project.host_id}</Tag> : null}
               <Text type="secondary">{getAccountLabel(project)}</Text>
+              <AccountStatusTags account={project} />
               <AccountActions
                 account_id={project.account_id}
                 project_id={project.project_id}
@@ -357,6 +391,7 @@ function TopEgressAccounts({
         <div key={account.account_id}>
           <Space wrap>
             <Text strong>{getAccountLabel(account)}</Text>
+            <AccountStatusTags account={account} />
             <Tag>{humanSize(account.bytes)}</Tag>
             <AccountActions
               account_id={account.account_id}
@@ -395,6 +430,7 @@ function TopEgressProjects({
             <Text strong>{getProjectLabel(project)}</Text>
             <Tag>{humanSize(project.bytes)}</Tag>
             <Text type="secondary">{getAccountLabel(project)}</Text>
+            <AccountStatusTags account={project} />
             <AccountActions
               account_id={project.account_id}
               project_id={project.project_id}

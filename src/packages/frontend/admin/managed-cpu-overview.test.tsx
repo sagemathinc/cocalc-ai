@@ -188,6 +188,10 @@ describe("ManagedCpuAdminOverview", () => {
           email_address: "ada@example.com",
           first_name: "Ada",
           last_name: "Lovelace",
+          banned: true,
+          membership_class: "student-ucla-summer-2026",
+          membership_label: "UCLA Student",
+          membership_source: "grant",
           cpu_seconds: 7200,
         },
       ],
@@ -197,6 +201,10 @@ describe("ManagedCpuAdminOverview", () => {
           email_address: "ada@example.com",
           first_name: "Ada",
           last_name: "Lovelace",
+          banned: true,
+          membership_class: "student-ucla-summer-2026",
+          membership_label: "UCLA Student",
+          membership_source: "grant",
           project_id: "project-1",
           project_title: "Number theory",
           host_id: "host-1",
@@ -228,6 +236,10 @@ describe("ManagedCpuAdminOverview", () => {
           email_address: "grace@example.com",
           first_name: "Grace",
           last_name: "Hopper",
+          banned: false,
+          membership_class: "free",
+          membership_label: "Free",
+          membership_source: "free",
           bytes: 4096,
         },
       ],
@@ -237,6 +249,10 @@ describe("ManagedCpuAdminOverview", () => {
           email_address: "grace@example.com",
           first_name: "Grace",
           last_name: "Hopper",
+          banned: false,
+          membership_class: "free",
+          membership_label: "Free",
+          membership_source: "free",
           project_id: "project-2",
           project_title: "Downloader",
           bytes: 2048,
@@ -269,6 +285,9 @@ describe("ManagedCpuAdminOverview", () => {
       expect(
         screen.getAllByText("Ada Lovelace (ada@example.com)").length,
       ).toBeGreaterThan(0);
+      expect(screen.getAllByText("Banned").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("UCLA Student").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Free").length).toBeGreaterThan(0);
       expect(screen.getAllByText("Number theory").length).toBeGreaterThan(0);
       expect(screen.getByText("Downloader")).toBeTruthy();
       expect(screen.getAllByText(/2.00 CPU-hours/).length).toBeGreaterThan(0);
