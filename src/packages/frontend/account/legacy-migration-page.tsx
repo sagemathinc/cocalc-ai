@@ -462,6 +462,13 @@ export function LegacyMigrationPage() {
         R2 by a follow-up restore worker, so imported projects can temporarily
         show as file restore pending.
       </Paragraph>
+      <Paragraph type="secondary">
+        This page loads up to {PROJECT_LOAD_LIMIT.toLocaleString()} matching
+        projects at a time, sorted by most recent edit. These are the projects
+        available to migrate from your matched legacy account records. You can
+        return later, search for older projects, and migrate more projects at
+        any time.
+      </Paragraph>
 
       <Alert
         showIcon
