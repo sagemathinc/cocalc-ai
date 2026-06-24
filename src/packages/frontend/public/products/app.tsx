@@ -87,7 +87,7 @@ function CocalcRocketPage() {
   return (
     <PublicGrid columns={3}>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           What CoCalc Rocket is
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -103,7 +103,7 @@ function CocalcRocketPage() {
         </Paragraph>
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Choose Rocket, Launchpad, or Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -125,7 +125,7 @@ function CocalcRocketPage() {
         </Flex>
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Talk with us
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -151,7 +151,7 @@ function CocalcStarPage() {
     <>
       <PublicGrid columns={3}>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title level={2} style={{ margin: 0 }}>
             What CoCalc Star is
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -166,7 +166,7 @@ function CocalcStarPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title level={2} style={{ margin: 0 }}>
             Install CoCalc Star
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -189,7 +189,7 @@ function CocalcStarPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title level={2} style={{ margin: 0 }}>
             When to choose Star
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -205,7 +205,7 @@ function CocalcStarPage() {
         </PublicSection>
       </PublicGrid>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Star, Launchpad, and Rocket
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -235,7 +235,7 @@ function CocalcLaunchpadPage() {
     <>
       <PublicGrid columns={3}>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title level={2} style={{ margin: 0 }}>
             What CoCalc Launchpad is
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -250,7 +250,7 @@ function CocalcLaunchpadPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title level={2} style={{ margin: 0 }}>
             Install CoCalc Launchpad
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -272,7 +272,7 @@ function CocalcLaunchpadPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title level={2} style={{ margin: 0 }}>
             What the installer does
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -288,7 +288,7 @@ function CocalcLaunchpadPage() {
         </PublicSection>
       </PublicGrid>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Choose Star, Launchpad, or Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -318,7 +318,7 @@ function CocalcPlusPage() {
   return (
     <PublicGrid columns={3}>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           What CoCalc Plus is
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -332,7 +332,7 @@ function CocalcPlusPage() {
         </Paragraph>
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Install CoCalc Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -351,7 +351,7 @@ function CocalcPlusPage() {
         </Paragraph>
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={2} style={{ margin: 0 }}>
           Choose hosted CoCalc or CoCalc Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
