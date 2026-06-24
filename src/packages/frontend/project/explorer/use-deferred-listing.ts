@@ -149,6 +149,11 @@ export function useDeferredListing<T, E = undefined>({
     ? liveFP !== committed.fp
     : liveListing !== committed.listing;
   const pathChanged = prevPath != null && prevPath !== currentPath;
+  const updateWillPassThrough =
+    alwaysPassThrough ||
+    Date.now() < passThroughUntilRef.current ||
+    latchRef.current ||
+    graceRef.current;
 
   useEffect(() => {
     if (!contentChanged) return;
@@ -180,7 +185,7 @@ export function useDeferredListing<T, E = undefined>({
   return {
     displayListing: committed.listing,
     displayExtra: committed.extra,
-    hasPending: contentChanged && !pathChanged,
+    hasPending: contentChanged && !pathChanged && !updateWillPassThrough,
     flush,
     allowNextUpdate,
     allowUpdatesFor,
