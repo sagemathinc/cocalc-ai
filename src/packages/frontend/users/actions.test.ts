@@ -49,8 +49,9 @@ describe("UsersActions.fetch_non_collaborator", () => {
 
     (webapp_client.users_client.getNames as jest.Mock).mockResolvedValue({
       [remoteAccountId]: {
-        first_name: "Remote",
-        last_name: "Friend",
+        display_name: "Remote Friend",
+        first_name: "Legacy",
+        last_name: "Name",
         profile: { image: "remote.png" },
       },
     });
@@ -75,8 +76,9 @@ describe("UsersActions.fetch_non_collaborator", () => {
       [remoteAccountId]: {
         account_id: remoteAccountId,
         collaborator: true,
-        first_name: "Remote",
-        last_name: "Friend",
+        display_name: "Remote Friend",
+        first_name: "Legacy",
+        last_name: "Name",
         profile: { image: "remote.png" },
       },
     });

@@ -4,8 +4,6 @@ import { webapp_client } from "../webapp-client";
 
 interface AccountName {
   displayName: string;
-  firstName: string;
-  lastName: string;
 }
 
 export default function useAccountName(account_id: string): AccountName | null {
@@ -19,11 +17,8 @@ export default function useAccountName(account_id: string): AccountName | null {
         // TODO -- could have some sort of retry?
         return;
       }
-      const { first_name: firstName, last_name: lastName } = user;
       setName({
         displayName: displayNameFromAccount(user),
-        firstName,
-        lastName,
       });
     })();
   }, [account_id]);
