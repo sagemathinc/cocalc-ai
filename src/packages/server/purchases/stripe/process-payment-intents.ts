@@ -1,5 +1,10 @@
 import getConn from "@cocalc/server/stripe/connection";
-import { getStripeCustomerId, getAccountIdFromStripeCustomerId } from "./util";
+import {
+  getStripeCustomerId,
+  getAccountIdFromStripeCustomerId,
+  currentStripeSite,
+} from "./util";
+import { setStripeCustomerId } from "@cocalc/database/postgres/stripe";
 import getLogger from "@cocalc/backend/logger";
 import createCredit from "@cocalc/server/purchases/create-credit";
 import { LineItem } from "@cocalc/util/stripe/types";
@@ -35,10 +40,12 @@ import { recordPaymentIntent } from "./create-payment-intent";
 import purchaseMembershipPackage, {
   purchaseMembershipPackages,
 } from "@cocalc/server/purchases/membership-package";
+import { assignMembershipPackageSeat } from "@cocalc/server/membership/packages";
 import {
   verifyDirectStudentCourseProduct,
   verifyDirectStudentCourseProducts,
 } from "@cocalc/server/purchases/direct-student-course-product";
+import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import {
   processTeamLicenseRenewal,
   processTeamLicenseRenewalFailure,
@@ -85,6 +92,41 @@ export function assertInvoiceAccountBinding({
   if (stripeCustomerId(invoice.customer) !== expected_customer_id) {
     throw Error("payment invoice customer does not match payer");
   }
+}
+
+async function assertPaymentCustomerCanBeUsedForAccount({
+  account_id,
+  expectedCustomerId,
+  paymentIntentCustomerId,
+}: {
+  account_id: string;
+  expectedCustomerId: string;
+  paymentIntentCustomerId?: string;
+}) {
+  if (paymentIntentCustomerId === expectedCustomerId) {
+    return expectedCustomerId;
+  }
+  if (!paymentIntentCustomerId) {
+    throw Error("payment intent customer does not match payer");
+  }
+  const stripe = await getConn();
+  const customer = await stripe.customers.retrieve(paymentIntentCustomerId);
+  if (
+    !customer.deleted &&
+    `${customer.metadata?.account_id ?? ""}` === account_id
+  ) {
+    logger.warn(
+      "processPaymentIntent: accepting verified alternate Stripe customer",
+      {
+        account_id,
+        expectedCustomerId,
+        paymentIntentCustomerId,
+      },
+    );
+    await setStripeCustomerId(account_id, paymentIntentCustomerId);
+    return paymentIntentCustomerId;
+  }
+  throw Error("payment intent customer does not match payer");
 }
 
 function invoiceIdFromValue(value): string | undefined {
@@ -198,6 +240,36 @@ function getTeamLicenseTargetSeatsFromMetadata(
       Math.max(0, Math.floor(Number(value) || 0)),
     ]),
   );
+}
+
+function isDirectStudentCourseProduct(
+  product: MembershipPackageProduct,
+): boolean {
+  return (
+    product.kind === "course" &&
+    product.metadata?.direct_student_purchase === true &&
+    !!`${product.metadata?.project_id ?? ""}`.trim()
+  );
+}
+
+async function assignDirectStudentCoursePackage({
+  account_id,
+  package_id,
+  product,
+}: {
+  account_id: string;
+  package_id: string;
+  product: MembershipPackageProduct;
+}) {
+  if (!isDirectStudentCourseProduct(product)) {
+    return;
+  }
+  await assignMembershipPackageSeat({
+    package_id,
+    account_id,
+    assigned_by_account_id: account_id,
+    metadata: product.metadata ?? null,
+  });
 }
 
 export default async function processPaymentIntents({
@@ -341,13 +413,18 @@ async function getExplicitPaymentIntents({
     const paymentIntent =
       await stripe.paymentIntents.retrieve(payment_intent_id);
     if (account_id != null) {
-      const expectedCustomerId = await getStripeCustomerId({
+      let expectedCustomerId = await getStripeCustomerId({
         account_id,
         create: false,
       });
       if (!expectedCustomerId) {
         throw Error("payer does not have a Stripe customer");
       }
+      expectedCustomerId = await assertPaymentCustomerCanBeUsedForAccount({
+        account_id,
+        expectedCustomerId,
+        paymentIntentCustomerId: stripeCustomerId(paymentIntent.customer),
+      });
       assertPaymentIntentAccountBinding({
         paymentIntent,
         account_id,
@@ -363,16 +440,18 @@ async function getExplicitPaymentIntents({
     expand: ["payment_intent"],
   });
   if (account_id != null) {
-    const expectedCustomerId = await getStripeCustomerId({
+    let expectedCustomerId = await getStripeCustomerId({
       account_id,
       create: false,
     });
     if (!expectedCustomerId) {
       throw Error("payer does not have a Stripe customer");
     }
-    if (stripeCustomerId(session.customer) !== expectedCustomerId) {
-      throw Error("checkout session customer does not match payer");
-    }
+    await assertPaymentCustomerCanBeUsedForAccount({
+      account_id,
+      expectedCustomerId,
+      paymentIntentCustomerId: stripeCustomerId(session.customer),
+    });
   }
   const paymentIntent = session.payment_intent;
   if (paymentIntent == null) {
@@ -438,6 +517,28 @@ export function isReadyToProcess(paymentIntent) {
     paymentIntent.metadata["total_excluding_tax_usd"] &&
     paymentIntent.metadata["deleted"] != "true"
   );
+}
+
+async function belongsToCurrentStripeSite({
+  paymentIntent,
+  site,
+}: {
+  paymentIntent;
+  site: string;
+}): Promise<boolean> {
+  const paymentSite = `${paymentIntent.metadata?.cocalc_site ?? ""}`.trim();
+  if (paymentSite) {
+    return !site || paymentSite === site;
+  }
+
+  // Legacy payment intents were untagged.  During the cocalc.com/cocalc.ai
+  // overlap both sites can see the same Stripe account, so only treat untagged
+  // intents as local if their account_id exists here.
+  const account_id = `${paymentIntent.metadata?.account_id ?? ""}`.trim();
+  if (account_id) {
+    return await isValidAccount(account_id);
+  }
+  return false;
 }
 
 function paymentIntentNotReadyReason(paymentIntent): string {
@@ -724,6 +825,11 @@ customer.  So we don't know what to do with this.  Please manually investigate.
     if (!expectedCustomerId) {
       throw Error("payer does not have a Stripe customer");
     }
+    expectedCustomerId = await assertPaymentCustomerCanBeUsedForAccount({
+      account_id,
+      expectedCustomerId,
+      paymentIntentCustomerId,
+    });
     assertPaymentIntentAccountBinding({
       paymentIntent,
       account_id,
@@ -910,11 +1016,16 @@ ${await support()}`;
             product.package_id != null
               ? `expand membership package ${product.package_id}`
               : `purchase a ${product.kind} membership package`;
-          await purchaseMembershipPackage({
+          const { package_id } = await purchaseMembershipPackage({
             account_id,
             fulfillment_id: paymentIntent.id,
             product,
             amount,
+          });
+          await assignDirectStudentCoursePackage({
+            account_id,
+            package_id,
+            product,
           });
         } else {
           const verifiedProducts = await verifyDirectStudentCourseProducts({
@@ -922,12 +1033,22 @@ ${await support()}`;
             products,
           });
           reason = `purchase ${verifiedProducts.length} membership package changes`;
-          await purchaseMembershipPackages({
+          const purchases = await purchaseMembershipPackages({
             account_id,
             fulfillment_id: paymentIntent.id,
             products: verifiedProducts,
             amount,
           });
+          for (const [index, product] of verifiedProducts.entries()) {
+            const package_id = purchases[index]?.package_id;
+            if (package_id) {
+              await assignDirectStudentCoursePackage({
+                account_id,
+                package_id,
+                product,
+              });
+            }
+          }
         }
       } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_CHANGE) {
         reason = "change your team license";
@@ -1100,11 +1221,31 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
     `processAllRecentPaymentIntents: considering ${paymentIntents.data.length} payments...`,
   );
   const purchase_ids = new Set<number>([]);
+  const site = await currentStripeSite();
   for (const paymentIntent of paymentIntents.data) {
+    if (!(await belongsToCurrentStripeSite({ paymentIntent, site }))) {
+      logger.debug("processAllRecentPaymentIntents: skipping foreign site", {
+        payment_intent_id: paymentIntent.id,
+        cocalc_site: paymentIntent.metadata?.cocalc_site,
+        site,
+      });
+      continue;
+    }
     if (isReadyToProcess(paymentIntent)) {
-      const id = await processPaymentIntent(paymentIntent);
-      if (id) {
-        purchase_ids.add(id);
+      try {
+        const id = await processPaymentIntent(paymentIntent);
+        if (id) {
+          purchase_ids.add(id);
+        }
+      } catch (err) {
+        await alertUncreditedSucceededPayment({
+          err,
+          paymentIntent,
+          stage: "process",
+        });
+        logger.debug(
+          `WARNING: issue processing missed payment intent ${paymentIntent.id} -- ${err}`,
+        );
       }
     }
   }

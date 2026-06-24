@@ -15,7 +15,11 @@ import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
-import { getStripeCustomerId, sanityCheckAmount } from "./stripe/util";
+import {
+  currentStripeSite,
+  getStripeCustomerId,
+  sanityCheckAmount,
+} from "./stripe/util";
 import { decimalToStripe } from "@cocalc/util/stripe/calc";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
@@ -79,6 +83,12 @@ export const createStripeCheckoutSession = async (
 
   const stripe = await getConn();
   const customer = await getStripeCustomerId({ account_id, create: true });
+  const metadata = {
+    account_id,
+    service: "credit",
+    cocalc_site: await currentStripeSite(),
+    ...(token != null ? { token } : undefined),
+  };
   logger.debug("createStripeCheckoutSession", { customer });
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -95,17 +105,17 @@ export const createStripeCheckoutSession = async (
       quantity: 1,
     })),
     client_reference_id: account_id, // not sure we'll use this, but it's a good double check
+    metadata,
     customer,
     customer_email:
       customer == null ? await getEmailAddress(account_id) : undefined,
+    payment_intent_data: {
+      metadata,
+    },
     invoice_creation: {
       enabled: true,
       invoice_data: {
-        metadata: {
-          account_id,
-          service: "credit",
-          ...(token != null ? { token } : undefined),
-        },
+        metadata,
       },
     },
     tax_id_collection: { enabled: true },

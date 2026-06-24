@@ -185,6 +185,7 @@ import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/projec
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getSeedMembershipTierById } from "@cocalc/server/membership/tiers";
 import {
+  assignMembershipPackageSeat,
   listClaimableMembershipPackagesForAccount,
   listMembershipPackageDetailsForOwner,
 } from "@cocalc/server/membership/packages";
@@ -2181,6 +2182,8 @@ export async function getCourseStudentAccess({
   const assignedCourseMembership =
     await getAssignedDirectCoursePackageMembership({
       account_id,
+      project_id,
+      course_project_id: `${course.project_id ?? ""}`.trim(),
       requiredMembershipClass,
       requiredPriority,
     });
@@ -2261,10 +2264,14 @@ export async function getCourseStudentAccess({
 
 async function getAssignedDirectCoursePackageMembership({
   account_id,
+  project_id,
+  course_project_id,
   requiredMembershipClass,
   requiredPriority,
 }: {
   account_id: string;
+  project_id: string;
+  course_project_id: string;
   requiredMembershipClass: string;
   requiredPriority: number;
 }): Promise<
@@ -2295,13 +2302,18 @@ async function getAssignedDirectCoursePackageMembership({
     if (expiresAt && expiresAt <= new Date()) {
       continue;
     }
-    const assignedToAccount = membershipPackage.assignments.some(
+    const metadata = membershipPackage.metadata ?? {};
+    if (
+      metadata.direct_student_purchase !== true ||
+      `${metadata.project_id ?? ""}`.trim() !== project_id ||
+      `${metadata.course_project_id ?? ""}`.trim() !== course_project_id
+    ) {
+      continue;
+    }
+    const assignment = membershipPackage.assignments.find(
       (assignment) =>
         assignment.account_id === account_id && assignment.revoked_at == null,
     );
-    if (!assignedToAccount) {
-      continue;
-    }
     const tier = await getSeedMembershipTierById({
       id: membershipPackage.membership_class,
     });
@@ -2309,6 +2321,27 @@ async function getAssignedDirectCoursePackageMembership({
       membershipPackage.membership_class === requiredMembershipClass ||
       (tier?.priority ?? 0) >= requiredPriority
     ) {
+      if (!assignment?.grant_id) {
+        try {
+          await assignMembershipPackageSeat({
+            package_id: membershipPackage.id,
+            account_id,
+            assigned_by_account_id: account_id,
+            metadata,
+          });
+        } catch (err) {
+          log.warn(
+            "getCourseStudentAccess: unable to repair direct student course membership assignment",
+            {
+              account_id,
+              project_id,
+              package_id: membershipPackage.id,
+              err,
+            },
+          );
+          continue;
+        }
+      }
       return {
         membership_class: membershipPackage.membership_class,
         expires_at: membershipPackage.expires_at ?? null,

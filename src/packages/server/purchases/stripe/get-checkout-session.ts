@@ -5,6 +5,7 @@ import {
   getStripeCustomerId,
   sanityCheckAmount,
   getStripeLineItems,
+  currentStripeSite,
 } from "./util";
 import type {
   CheckoutSessionSecret,
@@ -61,6 +62,7 @@ export default async function getCheckoutSession({
     ...metadata,
     purpose,
     account_id,
+    cocalc_site: await currentStripeSite(),
   };
 
   if (!return_url) {
