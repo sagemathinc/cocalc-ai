@@ -32,6 +32,7 @@ import type {
   ProjectAccessRequestRow,
 } from "@cocalc/conat/hub/api/projects";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 const { Text } = Typography;
 
@@ -360,11 +361,11 @@ function AccessRequestsPanel({
           <Space orientation="vertical" size={8} style={{ width: "100%" }}>
             {requests.map((request) => {
               const name =
-                request.requester_name ||
-                `${request.requester_first_name ?? ""} ${
-                  request.requester_last_name ?? ""
-                }`.trim() ||
-                request.requester_account_id;
+                displayNameFromAccount({
+                  display_name: request.requester_name,
+                  first_name: request.requester_first_name,
+                  last_name: request.requester_last_name,
+                }) || request.requester_account_id;
               const approveKey = `${request.request_id}:approve`;
               const denyKey = `${request.request_id}:deny`;
               const blockKey = `${request.request_id}:block`;
@@ -385,6 +386,7 @@ function AccessRequestsPanel({
                     <Space>
                       <Avatar
                         account_id={request.requester_account_id}
+                        display_name={request.requester_name ?? undefined}
                         first_name={request.requester_first_name ?? undefined}
                         last_name={request.requester_last_name ?? undefined}
                         size={32}
@@ -472,11 +474,11 @@ function AccessRequestsPanel({
             </div>
             {blocks.map((block) => {
               const name =
-                block.blocked_name ||
-                `${block.blocked_first_name ?? ""} ${
-                  block.blocked_last_name ?? ""
-                }`.trim() ||
-                block.blocked_account_id;
+                displayNameFromAccount({
+                  display_name: block.blocked_name,
+                  first_name: block.blocked_first_name,
+                  last_name: block.blocked_last_name,
+                }) || block.blocked_account_id;
               return (
                 <Card
                   key={block.blocked_account_id}
@@ -495,6 +497,7 @@ function AccessRequestsPanel({
                     <Space>
                       <Avatar
                         account_id={block.blocked_account_id}
+                        display_name={block.blocked_name ?? undefined}
                         first_name={block.blocked_first_name ?? undefined}
                         last_name={block.blocked_last_name ?? undefined}
                         size={32}

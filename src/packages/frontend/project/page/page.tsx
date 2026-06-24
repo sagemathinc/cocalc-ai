@@ -99,6 +99,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import type { ProjectAccessLandingInfo } from "@cocalc/conat/hub/api/projects";
 import { lite } from "@cocalc/frontend/lite";
 import { shouldBypassWorkspaceStartupGuardForTab } from "./workspace-startup";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 const START_BANNER = false;
 
@@ -1284,6 +1285,7 @@ function ProjectAccessLandingPage({
               <Space>
                 <Avatar
                   account_id={owner.account_id}
+                  display_name={owner.name ?? undefined}
                   first_name={owner.first_name ?? undefined}
                   last_name={owner.last_name ?? undefined}
                   size={32}
@@ -1291,9 +1293,11 @@ function ProjectAccessLandingPage({
                 <span>
                   Owner:{" "}
                   <Text strong>
-                    {owner.name ||
-                      `${owner.first_name ?? ""} ${owner.last_name ?? ""}`.trim() ||
-                      "Unknown"}
+                    {displayNameFromAccount({
+                      display_name: owner.name,
+                      first_name: owner.first_name,
+                      last_name: owner.last_name,
+                    }) || "Unknown"}
                   </Text>
                 </span>
               </Space>

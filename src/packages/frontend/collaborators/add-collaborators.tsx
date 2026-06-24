@@ -55,6 +55,7 @@ import {
   DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
 type InviteRole = "collaborator" | "viewer";
@@ -62,6 +63,7 @@ type InviteRole = "collaborator" | "viewer";
 interface RegisteredUser {
   sort?: string;
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   last_active?: number;
@@ -78,6 +80,7 @@ interface NonregisteredUser {
   sort?: string;
   email_address: string;
   account_id?: undefined;
+  display_name?: undefined;
   first_name?: undefined;
   last_name?: undefined;
   last_active?: undefined;
@@ -93,6 +96,15 @@ type User = RegisteredUser | NonregisteredUser;
 
 function userKey(user: User): string {
   return user.account_id ?? user.email_address;
+}
+
+function userDisplayName(user: User): string {
+  return (
+    displayNameFromAccount(user) ||
+    user.email_address ||
+    user.account_id ||
+    "Anonymous User"
+  );
 }
 
 export function uniqueSelectedCollaboratorEntries(entries: string[]): string[] {
@@ -386,7 +398,10 @@ export const AddCollaborators: React.FC<Props> = ({
       if (c) return c;
       c = -cmp(x.last_active?.valueOf() ?? 0, y.last_active?.valueOf() ?? 0);
       if (c) return c;
-      return cmp(x.last_name?.toLowerCase(), y.last_name?.toLowerCase());
+      return cmp(
+        userDisplayName(x).toLowerCase(),
+        userDisplayName(y).toLowerCase(),
+      );
     });
 
     set_state("searched");
@@ -409,12 +424,7 @@ export const AddCollaborators: React.FC<Props> = ({
     const options: React.JSX.Element[] = [];
     for (const r of users) {
       if (r.label == null || r.tag == null || r.name == null) {
-        let name = r.account_id
-          ? (r.first_name ?? "") + " " + (r.last_name ?? "")
-          : r.email_address;
-        if (!name?.trim()) {
-          name = "Anonymous User";
-        }
+        const name = userDisplayName(r);
         const tag = trunc_middle(name, 20);
 
         const extra: string[] = [];
@@ -451,6 +461,7 @@ export const AddCollaborators: React.FC<Props> = ({
               size={36}
               no_tooltip={true}
               account_id={r.account_id}
+              display_name={r.account_id ? r.display_name || r.name : r.name}
               first_name={r.account_id ? r.first_name : "@"}
               last_name={r.last_name}
             />
