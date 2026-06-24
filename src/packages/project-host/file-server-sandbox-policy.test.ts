@@ -37,10 +37,12 @@ describe("file-server sandbox policy", () => {
     });
 
     await fs.writeFile("/home/user/home.txt", "home");
-    await fs.mkdir("/home", { recursive: true });
     await fs.writeFile("relative.txt", "relative");
     expect(await fs.readFile("/home/user/home.txt", "utf8")).toBe("home");
     expect(await fs.readFile("relative.txt", "utf8")).toBe("relative");
+    await expect(fs.readdir("/home")).rejects.toThrow(
+      "rootfs is not mounted; cannot access absolute path '/home'. Start the project and try again.",
+    );
     await expect(fs.readFile("/root/home.txt", "utf8")).rejects.toThrow(
       "rootfs is not mounted; cannot access absolute path '/root/home.txt'. Start the project and try again.",
     );
@@ -70,15 +72,23 @@ describe("file-server sandbox policy", () => {
     });
 
     await fs.mkdir("/root");
+    await fs.mkdir("/home");
     await fs.writeFile("/tmp/data.txt", "tmp");
     await fs.writeFile("/home/user/home.txt", "home");
+    await fs.writeFile("/home/rootfs-home.txt", "rootfs-home");
     await fs.writeFile("/root/root-home.txt", "rootfs-root");
 
     expect(await readFile(join(scratch, "data.txt"), "utf8")).toBe("tmp");
+    expect(
+      await readFile(join(rootfs, "home", "rootfs-home.txt"), "utf8"),
+    ).toBe("rootfs-home");
     expect(await readFile(join(rootfs, "root", "root-home.txt"), "utf8")).toBe(
       "rootfs-root",
     );
     expect(await readFile(join(home, "home.txt"), "utf8")).toBe("home");
+    const homeListing = (await fs.readdir("/home")) as string[];
+    expect(homeListing).toContain("rootfs-home.txt");
+    expect(homeListing).not.toContain("home.txt");
     await expect(fs.readFile("/root/home.txt", "utf8")).rejects.toThrow();
     expect(await fs.readFile("/root/root-home.txt", "utf8")).toBe(
       "rootfs-root",
