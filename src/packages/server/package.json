@@ -35,10 +35,7 @@
     "./test": "./dist/test/index.js",
     "./test/*": "./dist/test/*.js"
   },
-  "keywords": [
-    "utilities",
-    "cocalc"
-  ],
+  "keywords": ["utilities", "cocalc"],
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo",
@@ -50,7 +47,7 @@
     "test:psql": "NODE_NO_WARNINGS=1 TZ=UTC jest --maxWorkers=1",
     "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' TZ=UTC jest",
     "test:both": "pnpm test:psql && pnpm test:pglite",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @openai/agents",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\"",
     "prepublishOnly": "test"
   },
   "author": "SageMath, Inc.",
