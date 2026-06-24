@@ -4,6 +4,7 @@ import {
   type SnapshotPathTarget,
 } from "@cocalc/util/consts/snapshots";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
+import { posix } from "node:path";
 
 export function createProjectSandboxFilesystem({
   project_id,
@@ -30,6 +31,7 @@ export function createProjectSandboxFilesystem({
     // make project-home files appear to live directly in /home.
     homeAliases: [DEFAULT_PROJECT_RUNTIME_HOME],
   });
+  const baseMkdir = fs.mkdir.bind(fs);
   const baseRm = fs.rm.bind(fs);
   const baseRmdir = fs.rmdir.bind(fs);
   const classifySnapshotTarget = (
@@ -51,6 +53,20 @@ export function createProjectSandboxFilesystem({
     throw new Error(
       `Snapshots are read-only. Delete the snapshot '${target.name}' instead of files inside it (${inputPath}).`,
     );
+  };
+  fs.mkdir = async (path: string, options?) => {
+    // Recursive copies into stopped projects create parents for /home/user/...
+    // before writing into runtime HOME. Let that parent step succeed without
+    // making /home itself an alias for project HOME listings and reads.
+    if (
+      posix.resolve("/", path) === "/home" &&
+      options != null &&
+      typeof options === "object" &&
+      options.recursive
+    ) {
+      return;
+    }
+    await baseMkdir(path, options);
   };
   fs.rm = async (path: string | string[], options?) => {
     const paths = typeof path === "string" ? [path] : path;
