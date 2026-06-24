@@ -8,6 +8,7 @@ import type {
   RootfsImageEvent,
   RootfsImageEventType,
 } from "@cocalc/util/rootfs-images";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { v4 as uuid } from "uuid";
 
 type EventRow = {
@@ -19,6 +20,7 @@ type EventRow = {
   reason: string | null;
   payload: Record<string, any> | null;
   created: Date;
+  actor_display_name: string | null;
   actor_first_name: string | null;
   actor_last_name: string | null;
 };
@@ -29,9 +31,11 @@ function trimString(value?: string | null): string | undefined {
 }
 
 function fullName(row: EventRow): string | undefined {
-  const first = trimString(row.actor_first_name);
-  const last = trimString(row.actor_last_name);
-  const name = [first, last].filter(Boolean).join(" ").trim();
+  const name = displayNameFromAccount({
+    display_name: row.actor_display_name,
+    first_name: row.actor_first_name,
+    last_name: row.actor_last_name,
+  });
   return name || undefined;
 }
 
@@ -137,6 +141,7 @@ export async function listRecentRootfsImageEvents({
          e.reason,
          e.payload,
          e.created,
+         a.display_name AS actor_display_name,
          a.first_name AS actor_first_name,
          a.last_name AS actor_last_name,
          ROW_NUMBER() OVER (

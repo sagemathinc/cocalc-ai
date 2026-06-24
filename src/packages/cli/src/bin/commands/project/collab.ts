@@ -487,10 +487,11 @@ export function registerProjectCollabCommands(
         return (rows ?? []).map((row) => ({
           blocker_account_id: row.blocker_account_id,
           blocked_account_id: row.blocked_account_id,
-          blocked_name:
-            `${row.blocked_name ?? ""}`.trim() ||
-            `${row.blocked_first_name ?? ""} ${row.blocked_last_name ?? ""}`.trim() ||
-            null,
+          blocked_name: rowName({
+            name: row.blocked_name,
+            first_name: row.blocked_first_name,
+            last_name: row.blocked_last_name,
+          }),
           blocked_email_address: row.blocked_email_address ?? null,
           created: toIso(row.created),
           updated: toIso(row.updated),

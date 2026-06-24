@@ -36,6 +36,7 @@ import { currency, is_valid_uuid_string } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { MAX_COST, type Purchase } from "@cocalc/util/db-schema/purchases";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 import { adminPurchase } from "@cocalc/frontend/store/api";
 import { getPurchasesAdmin } from "@cocalc/frontend/purchases/api";
@@ -312,13 +313,14 @@ export function AdminPurchaseAdmin() {
               key: "user",
               render: (_, purchase) => {
                 const record = purchase as Purchase & {
+                  display_name?: string;
                   email_address?: string;
                   first_name?: string;
                   last_name?: string;
                 };
                 return (
+                  displayNameFromAccount(record) ||
                   record.email_address ||
-                  `${record.first_name ?? ""} ${record.last_name ?? ""}`.trim() ||
                   record.account_id
                 );
               },
@@ -373,7 +375,7 @@ export function AdminPurchaseAdmin() {
         {targetUser && (
           <Alert
             title={`Target: ${
-              `${targetUser.first_name ?? ""} ${targetUser.last_name ?? ""}`.trim() ||
+              displayNameFromAccount(targetUser) ||
               targetUser.email_address ||
               targetUser.account_id
             }`}

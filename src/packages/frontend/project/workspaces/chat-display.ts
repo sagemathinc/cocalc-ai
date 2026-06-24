@@ -4,6 +4,7 @@
  */
 
 import type { WorkspaceRecord } from "@cocalc/conat/workspaces";
+import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 
 interface GeneratedChatLabelOptions {
   currentAccountId?: string;
@@ -94,12 +95,5 @@ export function implicitNavigatorChatOwnerAccountId(
 function userNameFromMap(userMap: any, accountId: string): string | undefined {
   const user = userMap?.get?.(accountId) ?? userMap?.[accountId];
   if (user == null) return;
-  const display = `${user.get?.("display_name") ?? user.display_name ?? ""}`
-    .trim()
-    .replace(/\s+/g, " ");
-  if (display) return display;
-  const first = `${user.get?.("first_name") ?? user.first_name ?? ""}`.trim();
-  const last = `${user.get?.("last_name") ?? user.last_name ?? ""}`.trim();
-  const name = `${first} ${last}`.trim().replace(/\s+/g, " ");
-  return name || undefined;
+  return displayNameFromUserRecord(user) || undefined;
 }
