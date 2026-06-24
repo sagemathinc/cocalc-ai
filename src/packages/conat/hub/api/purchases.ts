@@ -593,6 +593,7 @@ export interface SiteLicenseExternalClaimConsumption {
 
 export interface SiteLicenseAccountDetails {
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   email_address?: string;
