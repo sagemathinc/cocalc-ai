@@ -11,6 +11,7 @@ import {
   Input,
   InputNumber,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -22,6 +23,7 @@ import { defineMessage } from "react-intl";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 import type {
   LegacyMigrationArchiveEntry,
   LegacyMigrationArchiveIndex,
@@ -335,6 +337,10 @@ export function LegacyMigrationPage() {
   const legacyMigrationPageMessage = `${
     useTypedRedux("customize", "legacy_migration_page_message") ?? ""
   }`.trim();
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const showLegacyProjectsButton = !!otherSettings?.get(
+    OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON,
+  );
   const [state, setState] = useState<LegacyMigrationState>({
     error: "",
     legacyAccounts: [],
@@ -410,6 +416,20 @@ export function LegacyMigrationPage() {
     } finally {
       setImportingMode("");
     }
+  }
+
+  function setShowLegacyProjectsButton(show: boolean): void {
+    redux
+      .getActions("account")
+      .set_other_settings(
+        OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON,
+        show,
+      );
+    void message.success(
+      show
+        ? "Legacy Projects button enabled on the Projects page."
+        : "Legacy Projects button hidden from the Projects page.",
+    );
   }
 
   const columns = [
@@ -537,6 +557,22 @@ export function LegacyMigrationPage() {
       {legacyMigrationPageMessage ? (
         <Alert showIcon type="info" message={legacyMigrationPageMessage} />
       ) : null}
+
+      <Card size="small">
+        <Space direction="vertical" size={4}>
+          <Space>
+            <Switch
+              checked={showLegacyProjectsButton}
+              onChange={setShowLegacyProjectsButton}
+            />
+            <Text strong>Show Legacy Projects button on the Projects page</Text>
+          </Space>
+          <Text type="secondary">
+            When enabled, the Projects page shows a Legacy Projects button that
+            opens this migration page without a browser refresh.
+          </Text>
+        </Space>
+      </Card>
 
       <Alert
         showIcon

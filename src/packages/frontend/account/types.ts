@@ -66,6 +66,7 @@ export interface AccountState {
     follow_current_path?: boolean;
     show_symbol_bar_labels?: boolean; // whether to show labels on the menu buttons
     admin_ux_latency_alerts_enabled?: boolean;
+    legacy_migration_projects_button?: boolean;
     codex_new_chat_defaults?: {
       model: string;
       reasoning?: CodexReasoningId;
