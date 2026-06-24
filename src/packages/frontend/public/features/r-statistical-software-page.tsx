@@ -34,6 +34,7 @@ function RWorkflowMock() {
   return (
     <div
       aria-label="Illustration of R workflows in a CoCalc project"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #f6fff4 100%)",
