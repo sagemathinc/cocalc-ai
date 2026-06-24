@@ -1,6 +1,7 @@
 export {};
 
 let queryMock: jest.Mock;
+const getAdminAccountMembershipStatusMapMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -27,9 +28,27 @@ jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-0"),
 }));
 
+jest.mock("@cocalc/server/membership/admin-account-status", () => ({
+  getAdminAccountMembershipStatusMap: (...args: any[]) =>
+    getAdminAccountMembershipStatusMapMock(...args),
+}));
+
 describe("accounts.cluster-directory", () => {
   beforeEach(() => {
     jest.resetModules();
+    getAdminAccountMembershipStatusMapMock.mockReset();
+    getAdminAccountMembershipStatusMapMock.mockResolvedValue(
+      new Map([
+        [
+          "11111111-1111-4111-8111-111111111111",
+          {
+            membership_class: "student-ucla-summer-2026",
+            membership_label: "UCLA Student",
+            membership_source: "grant",
+          },
+        ],
+      ]),
+    );
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("CREATE TABLE") || sql.includes("CREATE INDEX")) {
         return { rows: [], rowCount: 0 };
@@ -120,7 +139,13 @@ describe("accounts.cluster-directory", () => {
       account_id: "11111111-1111-4111-8111-111111111111",
       home_bay_id: "bay-2",
       is_admin: true,
+      membership_class: "student-ucla-summer-2026",
+      membership_label: "UCLA Student",
+      membership_source: "grant",
     });
+    expect(getAdminAccountMembershipStatusMapMock).toHaveBeenCalledWith([
+      "11111111-1111-4111-8111-111111111111",
+    ]);
   });
 
   it("does not add is_admin to non-admin cluster searches", async () => {
@@ -135,6 +160,8 @@ describe("accounts.cluster-directory", () => {
       home_bay_id: "bay-2",
     });
     expect(account.is_admin).toBeUndefined();
+    expect(account.membership_class).toBeUndefined();
+    expect(getAdminAccountMembershipStatusMapMock).not.toHaveBeenCalled();
   });
 
   it("upserts email address reservations through the directory", async () => {

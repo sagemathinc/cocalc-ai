@@ -29,6 +29,7 @@ import {
   ManagedEgressRateSummary,
   ManagedEgressTopProjectsSummary,
 } from "@cocalc/frontend/purchases/managed-egress-history";
+import { AccountStatusTags } from "../account-status-tags";
 
 interface State {
   projects: boolean;
@@ -39,22 +40,6 @@ interface State {
   password: boolean;
   ban: boolean;
   membership: boolean;
-}
-
-function BannedTag() {
-  return (
-    <Tag
-      color="red"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        marginLeft: "8px",
-        verticalAlign: "middle",
-      }}
-    >
-      BANNED
-    </Tag>
-  );
 }
 
 type More =
@@ -77,6 +62,9 @@ export function UserResult({
   home_bay_id,
   banned,
   is_admin,
+  membership_class,
+  membership_label,
+  membership_source,
 }: User) {
   const [details, setDetails] = useState<boolean>(false);
   const [state, setState] = useState<State>({
@@ -164,7 +152,14 @@ export function UserResult({
               "NO Email"
             )}
             {home_bay_id && <Tag>Home bay: {home_bay_id}</Tag>}
-            {banned && <BannedTag />}
+            <AccountStatusTags
+              account={{
+                banned,
+                membership_class,
+                membership_label,
+                membership_source,
+              }}
+            />
             {is_admin && <Tag color="gold">ADMIN</Tag>}
           </Space>
         </div>
@@ -178,7 +173,14 @@ export function UserResult({
               style={{ color: "#666" }}
               value={account_id}
             />
-            {banned && <BannedTag />}
+            <AccountStatusTags
+              account={{
+                banned,
+                membership_class,
+                membership_label,
+                membership_source,
+              }}
+            />
           </div>
           <Space style={{ marginTop: "5px" }}>
             {renderMoreLink("impersonate")}
