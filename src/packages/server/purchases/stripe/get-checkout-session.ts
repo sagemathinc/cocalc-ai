@@ -5,18 +5,47 @@ import {
   getStripeCustomerId,
   sanityCheckAmount,
   getStripeLineItems,
+  currentStripeSite,
 } from "./util";
 import type {
   CheckoutSessionSecret,
   CheckoutSessionOptions,
 } from "@cocalc/util/stripe/types";
 import { isEqual } from "lodash";
+import { createHash } from "node:crypto";
 import { decimalToStripe } from "@cocalc/util/stripe/calc";
 import { url } from "@cocalc/server/messages/send";
 import { toDecimal } from "@cocalc/util/money";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const logger = getLogger("purchases:stripe:get-checkout-session");
+
+function stableJson(value): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (value != null && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function checkoutSessionKey({
+  description,
+  lineItems,
+  metadata,
+}: {
+  description: string;
+  lineItems: unknown[];
+  metadata: Record<string, string>;
+}): string {
+  return createHash("sha256")
+    .update(stableJson({ description, lineItems, metadata }))
+    .digest("hex");
+}
 
 interface Options extends CheckoutSessionOptions {
   // user that is paying: assumed already authenticated/valid
@@ -57,10 +86,21 @@ export default async function getCheckoutSession({
     throw Error("bug");
   }
 
-  metadata = {
+  const baseMetadata = {
     ...metadata,
     purpose,
     account_id,
+    cocalc_site: await currentStripeSite(),
+  };
+  const checkout_key = checkoutSessionKey({
+    description,
+    lineItems,
+    metadata: baseMetadata,
+  });
+  metadata = {
+    ...baseMetadata,
+    checkout_key,
+    lineItems: JSON.stringify(lineItems),
   };
 
   if (!return_url) {
@@ -78,6 +118,7 @@ export default async function getCheckoutSession({
   for (const session of openSessions.data) {
     if (session.metadata?.purpose == purpose && session.client_secret) {
       if (
+        session.metadata?.checkout_key != checkout_key ||
         !isEqual(session.metadata?.lineItems, JSON.stringify(lineItems)) ||
         session.created <= cutoff
       ) {

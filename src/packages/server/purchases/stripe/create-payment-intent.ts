@@ -6,6 +6,7 @@ import {
   sanityCheckAmount,
   assertValidUserMetadata,
   getStripeLineItems,
+  currentStripeSite,
 } from "./util";
 import type {
   LineItem,
@@ -96,6 +97,7 @@ export default async function createPaymentIntent({
     ...metadata,
     purpose,
     account_id,
+    cocalc_site: await currentStripeSite(),
     confirm: "true",
     total_excluding_tax_usd: `${total_excluding_tax_usd}`,
   };

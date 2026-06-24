@@ -44,6 +44,7 @@ import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-
 import { startUxLatencyAlertMaintenance } from "@cocalc/server/monitoring/ux-latency";
 import { startServiceAdmissionAlertMaintenance } from "@cocalc/server/monitoring/service-admission";
 import { startAiSessionReconciliationMaintenance } from "@cocalc/server/ai/acp-sessions";
+import startPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 
 export { loadConatConfiguration };
 
@@ -76,6 +77,11 @@ function logProjectionReadModes(): void {
       process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS,
     ),
   });
+}
+
+function isPrimaryBayWorker(): boolean {
+  const workerId = `${process.env.COCALC_BAY_WORKER_ID ?? ""}`.trim();
+  return !workerId || workerId === "1";
 }
 
 export async function initConatApi() {
@@ -119,6 +125,13 @@ export async function initConatApi() {
   startUxLatencyAlertMaintenance();
   startServiceAdmissionAlertMaintenance();
   startAiSessionReconciliationMaintenance();
+  if (isPrimaryBayWorker()) {
+    startPurchasesMaintenanceLoop();
+  } else {
+    logger.info("purchase maintenance loop skipped on non-primary bay worker", {
+      worker_id: process.env.COCALC_BAY_WORKER_ID,
+    });
+  }
   startBayBackupMaintenance();
   startBayWalArchiveMaintenance();
   initInterBayServices().catch((err) => {
