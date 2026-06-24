@@ -31,6 +31,7 @@ import {
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
 import { listHosts } from "@cocalc/server/conat/api/hosts";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { isValidUUID } from "@cocalc/util/misc";
 
 function resolveStoredBayId(value: unknown): string | undefined {
@@ -255,7 +256,7 @@ export async function resolveAccountHomeBay({
   return {
     account_id: target_account_id,
     email_address: row.email_address ?? undefined,
-    display_name: row.display_name ?? undefined,
+    display_name: displayNameFromAccount(row) || undefined,
     first_name: row.first_name ?? undefined,
     last_name: row.last_name ?? undefined,
     home_bay_id: home_bay_id ?? getConfiguredBayId(),
@@ -471,7 +472,12 @@ async function resolveRoutingContextLocal({
     account: {
       account_id: row.account_id,
       email_address: row.account_email_address ?? undefined,
-      display_name: row.account_display_name ?? undefined,
+      display_name:
+        displayNameFromAccount({
+          display_name: row.account_display_name,
+          first_name: row.account_first_name,
+          last_name: row.account_last_name,
+        }) || undefined,
       first_name: row.account_first_name ?? undefined,
       last_name: row.account_last_name ?? undefined,
       home_bay_id: accountHomeBayId ?? getConfiguredBayId(),

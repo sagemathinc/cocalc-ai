@@ -204,6 +204,7 @@ describe("bay-directory", () => {
     ).resolves.toEqual({
       account_id: OTHER_ACCOUNT_ID,
       email_address: "user@example.com",
+      display_name: "Alice Example",
       first_name: "Alice",
       last_name: "Example",
       home_bay_id: "bay-0",
@@ -219,6 +220,7 @@ describe("bay-directory", () => {
             {
               account_id: params?.[0] ?? OTHER_ACCOUNT_ID,
               email_address: "remote@example.com",
+              display_name: "Unified Remote",
               first_name: "Remote",
               last_name: "User",
               home_bay_id: "bay-7",
@@ -239,6 +241,7 @@ describe("bay-directory", () => {
     ).resolves.toEqual({
       account_id: OTHER_ACCOUNT_ID,
       email_address: "remote@example.com",
+      display_name: "Unified Remote",
       first_name: "Remote",
       last_name: "User",
       home_bay_id: "bay-7",
@@ -250,6 +253,7 @@ describe("bay-directory", () => {
     getClusterAccountByIdMock = jest.fn(async () => ({
       account_id: OTHER_ACCOUNT_ID,
       email_address: "remote@example.com",
+      display_name: "Unified Directory",
       first_name: "Remote",
       last_name: "Directory",
       home_bay_id: "bay-2",
@@ -276,6 +280,7 @@ describe("bay-directory", () => {
     getClusterAccountByIdMock = jest.fn(async () => ({
       account_id: OTHER_ACCOUNT_ID,
       email_address: "remote@example.com",
+      display_name: "Unified Directory",
       first_name: "Remote",
       last_name: "Directory",
       home_bay_id: "bay-2",
@@ -294,6 +299,7 @@ describe("bay-directory", () => {
     ).resolves.toEqual({
       account_id: OTHER_ACCOUNT_ID,
       email_address: "remote@example.com",
+      display_name: "Unified Directory",
       first_name: "Remote",
       last_name: "Directory",
       home_bay_id: "bay-2",
@@ -498,6 +504,7 @@ describe("bay-directory", () => {
             {
               account_id: ACCOUNT_ID,
               account_email_address: "user@example.com",
+              account_display_name: null,
               account_first_name: "Alice",
               account_last_name: "Example",
               account_home_bay_id: "bay-0",
@@ -527,6 +534,7 @@ describe("bay-directory", () => {
       account: {
         account_id: ACCOUNT_ID,
         email_address: "user@example.com",
+        display_name: "Alice Example",
         first_name: "Alice",
         last_name: "Example",
         home_bay_id: "bay-0",
@@ -558,6 +566,7 @@ describe("bay-directory", () => {
             {
               account_id: ACCOUNT_ID,
               account_email_address: "user@example.com",
+              account_display_name: "Unified Alice",
               account_first_name: "Alice",
               account_last_name: "Example",
               account_home_bay_id: "bay-0",
