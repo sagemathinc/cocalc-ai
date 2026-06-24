@@ -19,7 +19,7 @@ import {
 import { useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
@@ -109,10 +109,26 @@ function importTag(project: LegacyMigrationProjectSummary) {
   return <Tag color="red">failed</Tag>;
 }
 
+async function openProject(project_id: string): Promise<void> {
+  try {
+    await (
+      redux.getActions("projects") as any
+    )?.ensureRealtimeFeedForCurrentAccount?.();
+    await redux.getActions("projects").open_project({
+      project_id,
+      target: "files",
+      switch_to: true,
+      restore_session: false,
+    });
+  } catch (err) {
+    void message.error(`${err}`);
+  }
+}
+
 function projectLink(project_id?: string | null) {
   if (!project_id) return null;
   return (
-    <Button href={`/projects/${project_id}/files/`} size="small">
+    <Button onClick={() => void openProject(project_id)} size="small">
       Open
     </Button>
   );
