@@ -37,7 +37,10 @@ type LegacyMigrationState = {
   legacyAccountIds: string[];
   loading: boolean;
   projects: LegacyMigrationProjectSummary[];
+  totalCount: number;
 };
+
+const PROJECT_LOAD_LIMIT = 1000;
 
 function formatDate(value?: Date | string | null): string {
   if (!value) return "Unknown";
@@ -290,9 +293,11 @@ export function LegacyMigrationPage() {
     legacyAccountIds: [],
     loading: true,
     projects: [],
+    totalCount: 0,
   });
   const [includeHidden, setIncludeHidden] = useState(false);
   const [query, setQuery] = useState("");
+  const [pageSize, setPageSize] = useState(25);
   const [selected, setSelected] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [lastResults, setLastResults] = useState<
@@ -306,6 +311,7 @@ export function LegacyMigrationPage() {
       const response =
         await webapp_client.conat_client.hub.legacyMigration.listProjects({
           include_hidden: includeHidden,
+          limit: PROJECT_LOAD_LIMIT,
           query: nextQuery,
         });
       setState({
@@ -313,6 +319,7 @@ export function LegacyMigrationPage() {
         legacyAccountIds: response.legacy_account_ids,
         loading: false,
         projects: response.projects,
+        totalCount: response.total_count ?? response.projects.length,
       });
     } catch (err) {
       setState((prev) => ({
@@ -495,8 +502,11 @@ export function LegacyMigrationPage() {
             <>
               <Space wrap>
                 <Text type="secondary">
-                  Matched {state.legacyAccountIds.length} legacy account
-                  {state.legacyAccountIds.length === 1 ? "" : "s"}.
+                  Matched {state.legacyAccountIds.length} legacy account record
+                  {state.legacyAccountIds.length === 1 ? "" : "s"}. Showing{" "}
+                  {state.projects.length.toLocaleString()} of{" "}
+                  {state.totalCount.toLocaleString()} matching project
+                  {state.totalCount === 1 ? "" : "s"}.
                 </Text>
                 <Button
                   disabled={selected.length === 0}
@@ -529,7 +539,15 @@ export function LegacyMigrationPage() {
                 columns={columns}
                 dataSource={state.projects}
                 loading={state.loading}
-                pagination={{ pageSize: 25, showSizeChanger: true }}
+                pagination={{
+                  pageSize,
+                  showSizeChanger: true,
+                  showTotal: (total, range) =>
+                    `${range[0]}-${range[1]} of ${total.toLocaleString()} loaded`,
+                  total: state.projects.length,
+                  onChange: (_page, size) => setPageSize(size),
+                  onShowSizeChange: (_page, size) => setPageSize(size),
+                }}
                 rowKey="legacy_project_id"
                 rowSelection={{
                   selectedRowKeys: selected,

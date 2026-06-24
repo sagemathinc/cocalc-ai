@@ -77,6 +77,7 @@ type LegacyProjectRow = {
   restore_error?: string | null;
   restore_result?: Record<string, any> | null;
   joined?: boolean | null;
+  total_count?: number | null;
 };
 
 let importSchemaReady: Promise<void> | undefined;
@@ -352,7 +353,7 @@ export async function listProjects({
   await ensureLegacyMigrationProjectImportSchema();
   const legacy_account_ids = await legacyAccountIds(account_id);
   if (legacy_account_ids.length === 0) {
-    return { legacy_account_ids, projects: [] };
+    return { legacy_account_ids, projects: [], total_count: 0 };
   }
   const search = `%${`${query ?? ""}`.trim().toLowerCase()}%`;
   const useSearch = search !== "%%";
@@ -398,6 +399,7 @@ export async function listProjects({
            i.restore_status,
            i.restore_error,
            i.restore_result,
+           COUNT(*) OVER()::INTEGER AS total_count,
            EXISTS (
              SELECT 1
                FROM legacy_migration_project_import_accounts a
@@ -417,6 +419,7 @@ export async function listProjects({
   return {
     legacy_account_ids,
     projects: rows.map(importStatus),
+    total_count: rows[0]?.total_count ?? 0,
   };
 }
 

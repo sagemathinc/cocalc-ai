@@ -74,6 +74,7 @@ export interface LegacyMigrationListProjectsOptions {
 export interface LegacyMigrationListProjectsResponse {
   legacy_account_ids: string[];
   projects: LegacyMigrationProjectSummary[];
+  total_count: number;
 }
 
 export interface LegacyMigrationImportProjectsOptions {
