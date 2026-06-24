@@ -20,6 +20,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { service2model } from "@cocalc/util/db-schema/ai-models";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { ensure_bound, startswith, trunc_middle } from "@cocalc/util/misc";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { avatar_fontcolor } from "./font-color";
 
 const CIRCLE_OUTER_STYLE: CSSProperties = {
@@ -46,7 +47,8 @@ interface Props {
   no_tooltip?: boolean; // if true, do not show a tooltip with full name info
   no_loading?: boolean; // if true, do not show a loading indicator (show nothing)
 
-  first_name?: string; // optional name to use
+  display_name?: string; // optional name to use
+  first_name?: string; // legacy optional name parts
   last_name?: string;
   style?: CSSProperties;
 }
@@ -164,42 +166,50 @@ const Avatar0: React.FC<Props> = (props) => {
     }
   }
 
+  function propsDisplayName(): string {
+    return displayNameFromAccount({
+      display_name: props.display_name,
+      first_name: props.first_name,
+      last_name: props.last_name,
+    });
+  }
+
+  function currentDisplayName(): string {
+    return displayNameFromAccount({
+      display_name: current_display_name,
+      first_name: current_first_name,
+      last_name: current_last_name,
+    });
+  }
+
+  function userMapDisplayName(): string {
+    if (!props.account_id) {
+      return "";
+    }
+    return displayNameFromAccount({
+      display_name: user_map.getIn([props.account_id, "display_name"]),
+      first_name: user_map.getIn([props.account_id, "first_name"]),
+      last_name: user_map.getIn([props.account_id, "last_name"]),
+    });
+  }
+
   function letter() {
-    if (props.first_name) {
-      return props.first_name.toUpperCase()[0];
-    }
-    if (isCurrentAccount && current_display_name) {
-      return current_display_name.toUpperCase()[0];
-    }
-    if (isCurrentAccount && current_first_name) {
-      return current_first_name.toUpperCase()[0];
-    }
-    if (!props.account_id) return "?";
-    const display_name = user_map.getIn([props.account_id, "display_name"]);
-    if (display_name) {
-      return display_name.toUpperCase()[0];
-    }
-    const first_name = user_map.getIn([props.account_id, "first_name"]);
-    if (first_name) {
-      return first_name.toUpperCase()[0];
-    } else {
-      return "?";
-    }
+    const name =
+      propsDisplayName() ||
+      (isCurrentAccount ? currentDisplayName() : "") ||
+      userMapDisplayName();
+    return name ? name.toUpperCase()[0] : "?";
   }
 
   function get_name() {
-    if (props.first_name != null || props.last_name != null) {
-      return trunc_middle(
-        `${props.first_name ?? ""} ${props.last_name ?? ""}`.trim(),
-        30,
-      );
+    const name = propsDisplayName();
+    if (name) {
+      return trunc_middle(name, 30);
     }
     if (isCurrentAccount) {
-      const name =
-        current_display_name ||
-        `${current_first_name ?? ""} ${current_last_name ?? ""}`.trim();
-      if (name) {
-        return trunc_middle(name, 30);
+      const currentName = currentDisplayName();
+      if (currentName) {
+        return trunc_middle(currentName, 30);
       }
     }
     if (!props.account_id) return "Unknown";

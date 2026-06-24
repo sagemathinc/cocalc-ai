@@ -22,6 +22,7 @@ import { PaymentsButton } from "@cocalc/frontend/purchases/payments";
 import { CreatePaymentButton } from "./create-payment";
 import { AdminBalanceAdjustmentButton } from "../admin-purchase";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import Money from "./money";
 import { AdminMembership } from "./admin-membership";
 import {
@@ -68,6 +69,7 @@ type More =
   | "membership";
 
 export function UserResult({
+  display_name,
   first_name,
   last_name,
   email_address,
@@ -78,6 +80,10 @@ export function UserResult({
   banned,
   is_admin,
 }: User) {
+  const userName =
+    displayNameFromAccount({ display_name, first_name, last_name }) ||
+    email_address ||
+    account_id;
   const [details, setDetails] = useState<boolean>(false);
   const [state, setState] = useState<State>({
     projects: false,
@@ -154,7 +160,7 @@ export function UserResult({
             </span>
           </div>
           <Space style={{ color: "#666" }}>
-            {first_name} {last_name}{" "}
+            {userName}{" "}
             {email_address ? (
               <CopyToClipBoard
                 style={{ color: "#666" }}
@@ -190,11 +196,7 @@ export function UserResult({
             {renderMoreLink("membership")}
           </Space>
           {state.impersonate && (
-            <Impersonate
-              account_id={account_id}
-              first_name={first_name ?? ""}
-              last_name={last_name ?? ""}
-            />
+            <Impersonate account_id={account_id} display_name={userName} />
           )}
           {state.password && (
             <Card title="Profile">
@@ -205,10 +207,7 @@ export function UserResult({
               <div style={{ marginTop: "20px" }}>
                 <AdminRole
                   account_id={account_id}
-                  name={
-                    `${first_name ?? ""} ${last_name ?? ""}`.trim() ||
-                    account_id
-                  }
+                  name={userName || account_id}
                   is_admin={is_admin}
                 />
               </div>
@@ -218,21 +217,21 @@ export function UserResult({
             <Card
               title={
                 <>
-                  Ban {first_name} {last_name} {email_address}
+                  Ban {userName} {email_address}
                 </>
               }
             >
               <Ban
                 account_id={account_id}
                 banned={banned}
-                name={`${first_name} ${last_name} ${email_address}`}
+                name={`${userName} ${email_address ?? ""}`}
               />
             </Card>
           )}
           {state.projects && (
             <Projects
               account_id={account_id}
-              title={`Recently active projects that ${first_name} ${last_name} collaborates on`}
+              title={`Recently active projects that ${userName} collaborates on`}
             />
           )}
           {state.purchases && (
