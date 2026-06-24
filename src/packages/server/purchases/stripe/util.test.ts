@@ -19,7 +19,7 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
-  getServerSettings: jest.fn(async () => ({})),
+  getServerSettings: jest.fn(async () => ({ dns: "cocalc.ai" })),
 }));
 
 jest.mock("@cocalc/server/accounts/is-valid-account", () => ({
@@ -111,12 +111,14 @@ describe("getStripeCustomerId", () => {
         email: "account-1@example.com",
         metadata: {
           account_id: "account-1",
+          cocalc_site: "cocalc.ai",
         },
       },
       {
         idempotencyKey: "cocalc-stripe-customer:account-1",
       },
     );
+    expect(mockGetTransactionClient).toHaveBeenCalledWith();
     expect(client.query).toHaveBeenCalledWith("COMMIT");
     expect(client.release).toHaveBeenCalled();
   });

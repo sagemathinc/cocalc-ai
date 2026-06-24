@@ -277,10 +277,16 @@ export async function getTransactionClient(
   let isolationLevel: IsolationLevel | undefined = undefined;
   let poolOptions: PoolOptionInput = {};
   if (typeof options === "string") {
-    poolOptions = options;
+    // Cached pools only implement query(), not connect(), and transactions need
+    // a real client.  Treat cache-time strings as "use the default write pool".
+    poolOptions = {};
   } else {
     isolationLevel = options?.isolationLevel;
-    const { isolationLevel: _unused, ...rest } = options ?? {};
+    const {
+      isolationLevel: _unusedIsolationLevel,
+      cacheTime: _unusedCacheTime,
+      ...rest
+    } = options ?? {};
     poolOptions = rest;
   }
   const client = await getPoolClient(poolOptions);
