@@ -541,4 +541,71 @@ describe("processPaymentIntents invoice-payment links", () => {
       }),
     );
   });
+
+  it("paginates missed-payment maintenance past foreign Stripe payments", async () => {
+    mockGetStripeCustomerId.mockImplementation(async ({ account_id }) =>
+      account_id === "acct-good" ? "cus_good" : "cus_current",
+    );
+    stripe.invoicePayments.list.mockResolvedValue({ data: [] });
+    const foreignPayments = Array.from({ length: 100 }, (_, i) => ({
+      customer: `cus_foreign_${i}`,
+      id: `pi_foreign_${i}`,
+      metadata: {
+        account_id: `acct-foreign-${i}`,
+        allow_downgrade: "true",
+        cocalc_site: "cocalc.com",
+        membership_class: "pro",
+        membership_interval: "month",
+        purpose: MEMBERSHIP_CHANGE,
+        total_excluding_tax_usd: "500",
+      },
+      status: "succeeded",
+    }));
+    stripe.paymentIntents.search.mockImplementation(async ({ page }) => {
+      if (!page) {
+        return {
+          data: foreignPayments,
+          has_more: true,
+          next_page: "page-2",
+        };
+      }
+      return {
+        data: [
+          {
+            customer: "cus_good",
+            id: "pi_good_on_second_page",
+            metadata: {
+              account_id: "acct-good",
+              allow_downgrade: "true",
+              membership_class: "pro",
+              membership_interval: "month",
+              purpose: MEMBERSHIP_CHANGE,
+              total_excluding_tax_usd: "500",
+            },
+            status: "succeeded",
+          },
+        ],
+        has_more: false,
+        next_page: null,
+      };
+    });
+
+    await expect(processAllRecentPaymentIntents()).resolves.toBe(1);
+
+    expect(stripe.paymentIntents.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 100,
+      }),
+    );
+    expect(stripe.paymentIntents.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: "page-2",
+      }),
+    );
+    expect(mockApplyMembershipChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-good",
+      }),
+    );
+  });
 });

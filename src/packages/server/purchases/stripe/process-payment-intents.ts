@@ -56,6 +56,8 @@ import sendEmail from "@cocalc/server/email/send-email";
 import { getUser } from "@cocalc/server/purchases/statements/email-statement";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
+const RECENT_PAYMENT_INTENT_SEARCH_LIMIT = 100;
+const RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES = 10;
 
 function stripeCustomerId(customer): string | undefined {
   if (typeof customer === "string") {
@@ -1210,45 +1212,79 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
 
   // payments that might have been missed. This might miss something from up to 1-2 minutes ago
   // due to time to update the index, but that is fine given the point of this function.
-  // We also use a small limit, since in almost all cases this will be empty, and if it is
-  // not empty, we would just call it again to get more results.
+  // This is also the backstop for legacy payments that were completed before the
+  // frontend/backend confirmation path was hardened. We scan several pages so
+  // unrelated Stripe objects from another CoCalc deployment sharing this Stripe
+  // account cannot starve local payment repair.
   const query = `status:"succeeded" AND -metadata["processed"]:"true" AND -metadata["purpose"]:null`;
-  const paymentIntents = await stripe.paymentIntents.search({
-    query,
-    limit: 10,
-  });
-  logger.debug(
-    `processAllRecentPaymentIntents: considering ${paymentIntents.data.length} payments...`,
-  );
   const purchase_ids = new Set<number>([]);
   const site = await currentStripeSite();
-  for (const paymentIntent of paymentIntents.data) {
-    if (!(await belongsToCurrentStripeSite({ paymentIntent, site }))) {
-      logger.debug("processAllRecentPaymentIntents: skipping foreign site", {
-        payment_intent_id: paymentIntent.id,
-        cocalc_site: paymentIntent.metadata?.cocalc_site,
-        site,
-      });
-      continue;
-    }
-    if (isReadyToProcess(paymentIntent)) {
-      try {
-        const id = await processPaymentIntent(paymentIntent);
-        if (id) {
-          purchase_ids.add(id);
-        }
-      } catch (err) {
-        await alertUncreditedSucceededPayment({
-          err,
-          paymentIntent,
-          stage: "process",
+  const seen = new Set<string>();
+  let page: string | undefined;
+  let pageCount = 0;
+  let considered = 0;
+  let skippedForeign = 0;
+  do {
+    const paymentIntents = await stripe.paymentIntents.search({
+      query,
+      limit: RECENT_PAYMENT_INTENT_SEARCH_LIMIT,
+      ...(page ? { page } : undefined),
+    });
+    pageCount += 1;
+    considered += paymentIntents.data.length;
+    logger.debug(
+      `processAllRecentPaymentIntents: considering ${paymentIntents.data.length} payments on page ${pageCount}...`,
+    );
+    for (const paymentIntent of paymentIntents.data) {
+      if (seen.has(paymentIntent.id)) {
+        continue;
+      }
+      seen.add(paymentIntent.id);
+      if (!(await belongsToCurrentStripeSite({ paymentIntent, site }))) {
+        skippedForeign += 1;
+        logger.debug("processAllRecentPaymentIntents: skipping foreign site", {
+          payment_intent_id: paymentIntent.id,
+          cocalc_site: paymentIntent.metadata?.cocalc_site,
+          site,
         });
-        logger.debug(
-          `WARNING: issue processing missed payment intent ${paymentIntent.id} -- ${err}`,
-        );
+        continue;
+      }
+      if (isReadyToProcess(paymentIntent)) {
+        try {
+          const id = await processPaymentIntent(paymentIntent);
+          if (id) {
+            purchase_ids.add(id);
+          }
+        } catch (err) {
+          await alertUncreditedSucceededPayment({
+            err,
+            paymentIntent,
+            stage: "process",
+          });
+          logger.debug(
+            `WARNING: issue processing missed payment intent ${paymentIntent.id} -- ${err}`,
+          );
+        }
       }
     }
-  }
+    if (paymentIntents.has_more && !paymentIntents.next_page) {
+      logger.warn(
+        "processAllRecentPaymentIntents: Stripe search had more results but no next_page",
+      );
+      break;
+    }
+    page = paymentIntents.has_more
+      ? (paymentIntents.next_page ?? undefined)
+      : undefined;
+  } while (page && pageCount < RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES);
+  logger.debug("processAllRecentPaymentIntents: finished", {
+    considered,
+    processed: purchase_ids.size,
+    skippedForeign,
+    pageCount,
+    hasMore:
+      page != null && pageCount >= RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES,
+  });
   return purchase_ids.size;
 }
 
