@@ -42,6 +42,7 @@ import {
 } from "@cocalc/frontend/passports";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { keys, startswith } from "@cocalc/util/misc";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { COLORS } from "@cocalc/util/theme";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import {
@@ -425,10 +426,7 @@ export function AccountSettings(props: Readonly<Props>) {
     return (
       <TextSetting
         label="Display name"
-        value={
-          props.display_name ||
-          `${props.first_name ?? ""} ${props.last_name ?? ""}`.trim()
-        }
+        value={displayNameFromAccount(props)}
         onChange={(e) => handle_change(e, "display_name")}
         onBlur={(e) => save_change(e, "display_name")}
         onPressEnter={(e) => save_change(e, "display_name")}

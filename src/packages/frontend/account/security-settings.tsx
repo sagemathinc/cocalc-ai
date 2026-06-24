@@ -12,6 +12,7 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { SettingBox } from "@cocalc/frontend/components";
 import { lite } from "@cocalc/frontend/lite";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 import { DeleteAccountButton } from "./delete-account";
 import { PasswordSetting } from "./settings/password-setting";
@@ -38,9 +39,11 @@ export function SecuritySettings({
   }
 
   const actions = () => redux.getActions("account");
-  const userName =
-    `${display_name ?? ""}`.trim() ||
-    `${first_name ?? ""} ${last_name ?? ""}`.trim();
+  const userName = displayNameFromAccount({
+    display_name,
+    first_name,
+    last_name,
+  });
 
   return (
     <SettingBox title="Security" icon="lock">
