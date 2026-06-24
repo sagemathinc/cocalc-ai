@@ -148,6 +148,7 @@ export function useDeferredListing<T, E = undefined>({
   const contentChanged = fingerprintFn
     ? liveFP !== committed.fp
     : liveListing !== committed.listing;
+  const pathChanged = prevPath != null && prevPath !== currentPath;
 
   useEffect(() => {
     if (!contentChanged) return;
@@ -179,7 +180,7 @@ export function useDeferredListing<T, E = undefined>({
   return {
     displayListing: committed.listing,
     displayExtra: committed.extra,
-    hasPending: contentChanged,
+    hasPending: contentChanged && !pathChanged,
     flush,
     allowNextUpdate,
     allowUpdatesFor,

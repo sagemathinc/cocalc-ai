@@ -154,6 +154,25 @@ describe("useDeferredListing", () => {
     expect(screen.getByTestId("pending").textContent).toBe("no");
   });
 
+  it("does not report pending updates during the render that changes paths", () => {
+    const { rerender } = render(
+      <TestComponent
+        liveListing={listing(["home"])}
+        currentPath="/home/user"
+      />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+
+    rerender(
+      <TestComponent liveListing={listing(["parent"])} currentPath="/home" />,
+    );
+
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
   it("lets user-triggered refreshes open the latch before refreshing", () => {
     const calls: string[] = [];
     refreshListingAfterUserAction({
