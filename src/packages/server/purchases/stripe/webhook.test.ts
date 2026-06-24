@@ -5,8 +5,6 @@
 
 /** @jest-environment node */
 
-import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
-
 const mockGetConn = jest.fn();
 const mockGetServerSettings = jest.fn();
 const mockProcessPaymentIntent = jest.fn();
@@ -18,6 +16,40 @@ const mockSetUsageSubscription = jest.fn();
 const mockCurrentStripeSite = jest.fn();
 const mockIsValidAccount = jest.fn();
 const mockAdminAlert = jest.fn();
+
+function createWebhookMocks({
+  body,
+  headers,
+  method,
+  url,
+}: {
+  body?: any;
+  headers?: Record<string, string>;
+  method: string;
+  url: string;
+}) {
+  const res = {
+    body: undefined as any,
+    headers: {} as Record<string, string>,
+    statusCode: 200,
+    setHeader: jest.fn(function (this: any, key: string, value: string) {
+      this.headers[key] = value;
+      return this;
+    }),
+    status: jest.fn(function (this: any, code: number) {
+      this.statusCode = code;
+      return this;
+    }),
+    json: jest.fn(function (this: any, value: any) {
+      this.body = value;
+      return this;
+    }),
+  };
+  return {
+    req: { body, headers: headers ?? {}, method, url },
+    res,
+  };
+}
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -191,7 +223,7 @@ describe("Stripe webhook processing", () => {
       type: "payment_intent.succeeded",
       data: { object: { id: "pi_123" } },
     });
-    const { req, res } = createMocks({
+    const { req, res } = createWebhookMocks({
       method: "POST",
       url: "/webhooks/stripe",
       body: Buffer.from("{}"),
