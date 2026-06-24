@@ -203,6 +203,10 @@ export class NBGraderActions {
     await actions.jupyter_actions.setToIpynb(
       await this.jupyter_actions.toIpynb(),
     );
+    // setToIpynb updates the target syncdb, but the Jupyter store is updated by
+    // the syncdb change handler. Hydrate it before transforming and saving, or
+    // the final save can serialize the target's initial blank notebook.
+    actions.jupyter_actions._syncdb_change("all");
 
     // Apply all the transformations.
     await actions.jupyter_actions.nbgrader_actions.apply_assign_transformations(

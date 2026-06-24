@@ -20,7 +20,7 @@ import "./output-messages/mime-types/init-frontend";
 // React components that implement parts of the Jupyter notebook.
 import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { ErrorDisplay, Icon, Text, Tooltip } from "@cocalc/frontend/components";
-import { A } from "@cocalc/frontend/components/A";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { Loading } from "@cocalc/frontend/components/loading";
 import { AITools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { Kernels as KernelsType } from "@cocalc/jupyter/util/misc";
@@ -533,9 +533,18 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
             }}
           >
             <Text strong>nbgrader:</Text>{" "}
-            <A href="/docs/teaching/nbgrader">
+            <Button
+              type="link"
+              size="small"
+              onClick={() =>
+                openProjectDocs({
+                  projectId: project_id,
+                  slug: "teaching/nbgrader",
+                })
+              }
+            >
               <Icon name="book" /> Docs
-            </A>
+            </Button>
             <Tooltip title="Generate the student version of this document, which strips out the extra instructor tests and cells.">
               <Button
                 style={{ margin: "5px 15px" }}
