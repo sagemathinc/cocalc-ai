@@ -157,6 +157,7 @@ export function buildProjectRecordFromFeedRow(
     title: row.title,
     description: row.description,
     theme: row.theme ?? null,
+    labels: row.labels ?? {},
     host_id: row.host_id,
     rootfs_image_id: row.rootfs_image_id ?? null,
     owning_bay_id: row.owning_bay_id,
@@ -196,6 +197,7 @@ function buildProjectRecordFromProjectIndexRow({
     title: row.title ?? "",
     description: row.description ?? "",
     theme: row.theme ?? null,
+    labels: row.labels ?? {},
     host_id: row.host_id ?? null,
     rootfs_image_id: row.rootfs_image_id ?? null,
     owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
@@ -956,7 +958,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       row,
       account_id,
     });
-    let nextProject = currentProject.mergeDeep(projectedRecord);
+    let nextProject = currentProject
+      .mergeDeep(projectedRecord)
+      .set("labels", projectedRecord.get("labels"));
     if (
       typeof currentHostId === "string" &&
       currentHostId &&
@@ -1098,6 +1102,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 title: null,
                 description: null,
                 theme: null,
+                labels: null,
                 users_summary: null,
                 state_summary: null,
                 last_edited: null,
@@ -1841,12 +1846,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     row: AccountFeedProjectRow,
   ): Map<string, any> {
     const incomingProject = buildProjectRecordFromFeedRow(row);
-    // Realtime feed rows contain the authoritative membership map.  Do not
-    // deep-merge users, since removed collaborators/previous owners must
-    // disappear immediately without requiring a browser refresh.
+    // Realtime feed rows contain authoritative maps for users and labels.  Do
+    // not deep-merge them, since removed collaborators/previous owners or
+    // unset labels must disappear immediately without requiring a browser
+    // refresh.
     return currentProject
       .mergeDeep(incomingProject)
-      .set("users", incomingProject.get("users"));
+      .set("users", incomingProject.get("users"))
+      .set("labels", incomingProject.get("labels"));
   }
 
   private releaseRoutingIfCurrentAccountRegainedMembership({

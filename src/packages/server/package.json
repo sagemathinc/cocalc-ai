@@ -30,6 +30,8 @@
     "./projects/*": "./dist/projects/*.js",
     "./settings": "./dist/settings/index.js",
     "./settings/*": "./dist/settings/*.js",
+    "./legacy-migration": "./dist/legacy-migration/index.js",
+    "./legacy-migration/*": "./dist/legacy-migration/*.js",
     "./test": "./dist/test/index.js",
     "./test/*": "./dist/test/*.js"
   },

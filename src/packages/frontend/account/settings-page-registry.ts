@@ -19,6 +19,7 @@ import {
   TEAM_LICENSES_SETTINGS_PAGE,
 } from "./licenses/licenses-page";
 import { MEMBERSHIP_SETTINGS_PAGE } from "./membership-page";
+import { LEGACY_MIGRATION_SETTINGS_PAGE } from "./legacy-migration-page";
 import { BALANCE_SETTINGS_PAGE } from "@cocalc/frontend/purchases/balance-page";
 import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payment-methods-page";
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
@@ -37,6 +38,7 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   editor: ACCOUNT_PREFERENCES_EDITOR_PAGE,
   keyboard: ACCOUNT_PREFERENCES_KEYBOARD_PAGE,
   keys: ACCOUNT_PREFERENCES_SECURITY_PAGE,
+  "legacy-migration": LEGACY_MIGRATION_SETTINGS_PAGE,
   membership: MEMBERSHIP_SETTINGS_PAGE,
   other: ACCOUNT_PREFERENCES_OTHER_PAGE,
   balance: BALANCE_SETTINGS_PAGE,

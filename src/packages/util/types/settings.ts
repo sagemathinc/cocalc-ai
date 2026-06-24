@@ -48,6 +48,7 @@ export const VALID_SETTINGS_PAGES = [
   "index",
   "profile",
   "membership",
+  "legacy-migration",
   "usage-limits",
   ...VALID_LICENSES_SUB_TYPES,
   ...VALID_PREFERENCES_SUB_TYPES,

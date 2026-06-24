@@ -553,6 +553,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "collaborator-authorized RootFS publish metadata defaults for the project",
   },
+  "projects.setProjectLabels": {
+    decision: "fresh-auth-not-required",
+    reason: "collaborator-authorized project metadata labels",
+  },
+  "projects.recordProjectRootfsBuildPublish": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "records an existing RootFS publish LRO on a collaborator-authorized build; publish creation enforces fresh auth separately",
+  },
   "projects.setLocalProjectManageUsersOwnerOnly": {
     decision: "internal-auth-only",
     reason: "owning-bay internal project policy mutation",

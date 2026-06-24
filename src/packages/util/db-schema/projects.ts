@@ -940,6 +940,9 @@ export interface CreateProjectOptions {
   start?: boolean;
   // Internal project-host control option: when false, only register metadata.
   ensure_volume?: boolean;
+  // Internal migration option: legacy cocalc.com imports may recreate all
+  // existing projects even when they exceed the new site's project-count tier.
+  skip_project_count_limit?: boolean;
 
   // admins can specify the project_id - nobody else can -- useful for debugging.
   project_id?: string;

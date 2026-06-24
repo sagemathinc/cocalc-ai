@@ -151,6 +151,26 @@ function isTerminalAsyncStatus(status: string | undefined): boolean {
   return status === "completed" || status === "error" || status === "killed";
 }
 
+function parseProjectLabelAssignments(
+  assignments: string[],
+): Record<string, string> {
+  const labels: Record<string, string> = {};
+  for (const assignment of assignments) {
+    const index = assignment.indexOf("=");
+    if (index <= 0) {
+      throw new Error(
+        `invalid label assignment '${assignment}'; expected key=value`,
+      );
+    }
+    const key = assignment.slice(0, index).trim();
+    if (!key) {
+      throw new Error("project label key must not be empty");
+    }
+    labels[key] = assignment.slice(index + 1).trim();
+  }
+  return labels;
+}
+
 export function registerProjectBasicCommands(
   project: Command,
   deps: ProjectCommandDeps,
@@ -236,6 +256,75 @@ export function registerProjectBasicCommands(
         };
       });
     });
+
+  const label = project.command("label").description("manage project labels");
+
+  label
+    .command("list")
+    .description("list project labels")
+    .option("-w, --project <project>", "project id or name")
+    .action(async (opts: { project?: string }, command: Command) => {
+      await withContext(command, "project label list", async (ctx) => {
+        const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+        const labels = await ctx.hub.projects.getProjectLabels({
+          project_id: ws.project_id,
+        });
+        return {
+          project_id: ws.project_id,
+          labels,
+        };
+      });
+    });
+
+  label
+    .command("set")
+    .description("set project labels from key=value assignments")
+    .argument("<labels...>", "label assignments")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        assignments: string[],
+        opts: { project?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "project label set", async (ctx) => {
+          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const labels = parseProjectLabelAssignments(assignments);
+          const updated = await ctx.hub.projects.setProjectLabels({
+            project_id: ws.project_id,
+            labels,
+          });
+          return {
+            project_id: ws.project_id,
+            labels: updated,
+          };
+        });
+      },
+    );
+
+  label
+    .command("unset")
+    .description("remove project labels by key")
+    .argument("<keys...>", "label keys")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (keys: string[], opts: { project?: string }, command: Command) => {
+        await withContext(command, "project label unset", async (ctx) => {
+          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const labels = Object.fromEntries(
+            keys.map((key) => [key, null] as const),
+          );
+          const updated = await ctx.hub.projects.setProjectLabels({
+            project_id: ws.project_id,
+            labels,
+          });
+          return {
+            project_id: ws.project_id,
+            labels: updated,
+          };
+        });
+      },
+    );
 
   project
     .command("runtime-slots")

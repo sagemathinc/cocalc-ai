@@ -86,6 +86,7 @@ import { createProjectSyncOps as createProjectSyncOps } from "./core/project-syn
 import { createProjectTasksOps } from "./core/project-tasks";
 import {
   commandExists,
+  ensureCloudflaredBinary,
   isLikelySshAuthFailure,
   resolveCloudflaredBinary,
   runCommand,
@@ -2465,6 +2466,7 @@ const projectCommandDeps = {
   runSsh,
   runLocalCommand,
   resolveCloudflaredBinary,
+  ensureCloudflaredBinary,
   normalizeProjectSshHostAlias,
   normalizeProjectSshConfigPath,
   projectSshConfigBlockMarkers,

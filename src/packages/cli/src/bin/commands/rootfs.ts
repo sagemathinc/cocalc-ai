@@ -427,6 +427,34 @@ async function startRootfsBuilderProject({
   return { project_id, created_project: true };
 }
 
+async function labelRootfsBuilderProject({
+  ctx,
+  project_id,
+  plan,
+  created_project,
+  build_id,
+}: {
+  ctx: any;
+  project_id: string;
+  plan: RootfsRecipeBuildPlan;
+  created_project: boolean;
+  build_id?: string;
+}): Promise<void> {
+  const labels: Record<string, string> = {
+    "cocalc.com/project-kind": "rootfs-build",
+    "cocalc.com/rootfs-recipe": plan.recipe,
+    "cocalc.com/rootfs-recipe-path": plan.recipe_path,
+    "cocalc.com/autocreated": created_project ? "true" : "false",
+  };
+  if (build_id) {
+    labels["cocalc.com/rootfs-build-id"] = build_id;
+  }
+  await ctx.hub.projects.setProjectLabels({
+    project_id,
+    labels,
+  });
+}
+
 async function waitForProjectStart({
   ctx,
   deps,
@@ -480,6 +508,71 @@ function heartbeatFresh(status: any): boolean | undefined {
   return Date.now() - time <= ROOTFS_BUILD_FRESH_HEARTBEAT_MS;
 }
 
+type RootfsBuildStatusPollState = {
+  consecutiveErrors: number;
+  lastWarningAt: number;
+};
+
+function isTransientRootfsBuildStatusPollError(err: unknown): boolean {
+  return /timeout waiting for hub response: projects\.getProjectRootfsBuildStatus|timeout waiting for project-host response|ECONNRESET|ECONNREFUSED|EPIPE|socket hang up|no subscribers/i.test(
+    `${err}`,
+  );
+}
+
+function maybeWarnRootfsBuildStatusPollError({
+  ctx,
+  state,
+  err,
+}: {
+  ctx: any;
+  state: RootfsBuildStatusPollState;
+  err: unknown;
+}) {
+  if (
+    ctx.globals?.quiet ||
+    ctx.globals?.json ||
+    ctx.globals?.output === "json"
+  ) {
+    return;
+  }
+  const now = Date.now();
+  if (state.lastWarningAt && now - state.lastWarningAt < 30_000) {
+    return;
+  }
+  state.lastWarningAt = now;
+  process.stderr.write(
+    `[rootfs build] status poll failed; continuing to follow logs (${err})\n`,
+  );
+}
+
+async function pollRootfsBuildStatusForFollow({
+  ctx,
+  project_id,
+  build_id,
+  state,
+}: {
+  ctx: any;
+  project_id: string;
+  build_id: string;
+  state: RootfsBuildStatusPollState;
+}): Promise<any | undefined> {
+  try {
+    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    state.consecutiveErrors = 0;
+    return current;
+  } catch (err) {
+    if (!isTransientRootfsBuildStatusPollError(err)) {
+      throw err;
+    }
+    state.consecutiveErrors += 1;
+    maybeWarnRootfsBuildStatusPollError({ ctx, state, err });
+    return undefined;
+  }
+}
+
 async function followRootfsBuildLog({
   ctx,
   deps,
@@ -494,6 +587,10 @@ async function followRootfsBuildLog({
   byte_offset?: number;
 }) {
   let byteOffset = byte_offset;
+  const statusPollState: RootfsBuildStatusPollState = {
+    consecutiveErrors: 0,
+    lastWarningAt: 0,
+  };
   const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
   while (true) {
     const chunk = await readRootfsBuildLogDirect({
@@ -513,13 +610,17 @@ async function followRootfsBuildLog({
       process.stderr.write(chunk.text);
     }
     byteOffset = chunk.next_byte_offset ?? byteOffset;
-    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+    const current = await pollRootfsBuildStatusForFollow({
+      ctx,
       project_id,
       build_id,
+      state: statusPollState,
     });
-    const status = current.status ?? "unknown";
-    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
-      return current;
+    if (current != null) {
+      const status = current.status ?? "unknown";
+      if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+        return current;
+      }
     }
     await new Promise((resolve) =>
       setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
@@ -620,6 +721,10 @@ async function followRootfsBuildEvents({
   byte_offset?: number;
 }) {
   let byteOffset = byte_offset;
+  const statusPollState: RootfsBuildStatusPollState = {
+    consecutiveErrors: 0,
+    lastWarningAt: 0,
+  };
   const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
   while (true) {
     const chunk = await readRootfsBuildEventsDirect({
@@ -640,13 +745,17 @@ async function followRootfsBuildEvents({
       }
     }
     byteOffset = chunk.next_byte_offset ?? byteOffset;
-    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+    const current = await pollRootfsBuildStatusForFollow({
+      ctx,
       project_id,
       build_id,
+      state: statusPollState,
     });
-    const status = current.status ?? "unknown";
-    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
-      return current;
+    if (current != null) {
+      const status = current.status ?? "unknown";
+      if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+        return current;
+      }
     }
     await new Promise((resolve) =>
       setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
@@ -661,6 +770,7 @@ function formatRootfsBuildStartHuman(result: {
   created_project: boolean;
   build: any;
   saved_rootfs_publish_config: boolean;
+  publish?: any;
 }): string {
   const lines = [
     `recipe: ${result.recipe}`,
@@ -677,11 +787,20 @@ function formatRootfsBuildStartHuman(result: {
   if (result.build.paths?.script) {
     lines.push(`script_path: ${result.build.paths.script}`);
   }
+  if (result.publish?.publish?.op_id) {
+    lines.push(`publish_op_id: ${result.publish.publish.op_id}`);
+  }
+  if (result.publish?.build?.publish_status) {
+    lines.push(`publish_status: ${result.publish.build.publish_status}`);
+  }
+  if (result.publish?.build?.publish_image_id) {
+    lines.push(`publish_image_id: ${result.publish.build.publish_image_id}`);
+  }
   lines.push(
     `saved_rootfs_publish_config: ${result.saved_rootfs_publish_config}`,
     `status: cocalc rootfs build-status ${result.build.build_id}`,
     `logs: cocalc rootfs build-logs ${result.build.build_id} --follow`,
-    `next: cocalc rootfs publish --project=${result.project_id}`,
+    `next: cocalc rootfs build-publish ${result.build.build_id} --project=${result.project_id}`,
   );
   return lines.join("\n");
 }
@@ -733,6 +852,18 @@ function formatRootfsBuildStatusHuman(status: any): string {
   if (status.error) {
     lines.push(`error: ${status.error}`);
   }
+  if (status.publish_op_id) {
+    lines.push(`publish_op_id: ${status.publish_op_id}`);
+  }
+  if (status.publish_status) {
+    lines.push(`publish_status: ${status.publish_status}`);
+  }
+  if (status.publish_image_id) {
+    lines.push(`publish_image_id: ${status.publish_image_id}`);
+  }
+  if (status.publish_error) {
+    lines.push(`publish_error: ${status.publish_error}`);
+  }
   if (status.paths?.log) {
     lines.push(`log_path: ${status.paths.log}`);
   }
@@ -770,6 +901,8 @@ function formatRootfsBuildListHuman({
         : undefined,
       build.created_at ? `created=${build.created_at}` : undefined,
       build.finished_at ? `finished=${build.finished_at}` : undefined,
+      build.publish_status ? `publish=${build.publish_status}` : undefined,
+      build.publish_image_id ? `image=${build.publish_image_id}` : undefined,
       build.paths?.log ? `log=${build.paths.log}` : undefined,
     ].filter(Boolean);
     lines.push(parts.join("  "));
@@ -852,6 +985,124 @@ function rootfsCatalogConfigPayload(
     return { ...payload, default_jupyter_kernel };
   }
   return payload;
+}
+
+async function publishRootfsBuild({
+  ctx,
+  project_id,
+  build_id,
+  opts,
+  wait,
+  waitForLroFn,
+}: {
+  ctx: any;
+  project_id: string;
+  build_id: string;
+  opts: {
+    browserId?: string;
+    configFile?: string;
+    label?: string;
+    slug?: string;
+    family?: string;
+    imageVersion?: string;
+    channel?: string;
+    supersedesImageId?: string;
+    defaultJupyterKernel?: string;
+    description?: string;
+    visibility?: string;
+    tags?: string;
+    themeJson?: string;
+    official?: boolean;
+    prepull?: boolean;
+    hidden?: boolean;
+    switchProject?: boolean;
+  };
+  wait?: boolean;
+  waitForLroFn: RootfsCommandDeps["waitForLro"];
+}) {
+  const status = await ctx.hub.projects.getProjectRootfsBuildStatus({
+    project_id,
+    build_id,
+  });
+  if (status.status !== "succeeded") {
+    throw new Error(
+      `RootFS build ${build_id} is not publishable: status=${status.status}`,
+    );
+  }
+  const config = await rootfsPublishConfigForProject({
+    ctx,
+    configFile: opts.configFile,
+    project_id,
+  });
+  const payload = rootfsCatalogConfigPayload(opts, config);
+  const publish = await ctx.hub.system.publishProjectRootfsImage({
+    project_id,
+    browser_id: `${opts.browserId ?? ""}`.trim() || undefined,
+    ...payload,
+    official: opts.official ? true : undefined,
+    prepull: opts.prepull ? true : undefined,
+    hidden: opts.hidden ? true : undefined,
+    switch_project: opts.switchProject ? true : undefined,
+  });
+  let recorded = await ctx.hub.projects.recordProjectRootfsBuildPublish({
+    project_id,
+    build_id,
+    publish_op_id: publish.op_id,
+  });
+  if (!wait) {
+    return {
+      project_id,
+      build_id,
+      publish,
+      build: recorded.build,
+      status: "queued",
+    };
+  }
+  const waited = await waitForLroFn(ctx, publish.op_id, {
+    timeoutMs: ctx.timeoutMs,
+    pollMs: ctx.pollMs,
+  });
+  recorded = await ctx.hub.projects.recordProjectRootfsBuildPublish({
+    project_id,
+    build_id,
+    publish_op_id: publish.op_id,
+  });
+  if (waited.timedOut) {
+    throw new Error(
+      `rootfs build publish timed out (op=${publish.op_id}, last_status=${waited.status})`,
+    );
+  }
+  const summary = await ctx.hub.lro.get({ op_id: publish.op_id });
+  if (summary?.status && summary.status !== "succeeded") {
+    throw new Error(
+      `rootfs build publish failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+    );
+  }
+  return {
+    project_id,
+    build_id,
+    publish,
+    build: recorded.build,
+    status: summary?.status ?? waited.status,
+    summary,
+  };
+}
+
+function formatRootfsBuildPublishHuman(result: any): string {
+  const lines = [
+    `build_id: ${result.build_id}`,
+    `project_id: ${result.project_id}`,
+    `publish_op_id: ${result.publish?.op_id}`,
+    `publish_status: ${result.build?.publish_status ?? result.status}`,
+  ];
+  if (result.build?.publish_image_id) {
+    lines.push(`publish_image_id: ${result.build.publish_image_id}`);
+  }
+  if (result.publish?.stream_name) {
+    lines.push(`stream_name: ${result.publish.stream_name}`);
+  }
+  lines.push(`status: cocalc rootfs build-status ${result.build_id}`);
+  return lines.join("\n");
 }
 
 function normalizeSection(value?: string): RootfsImageSection | undefined {
@@ -1651,6 +1902,12 @@ export function registerRootfsCommand(
       "--detach",
       "start the durable build and return without following logs",
     )
+    .option("--publish", "publish the project RootFS after the build succeeds")
+    .option("--publish-wait", "wait for publish completion after build")
+    .option(
+      "--switch-project",
+      "switch the builder project to the published image when publish succeeds",
+    )
     .option(
       "--step-timeout <seconds>",
       "default timeout for each recipe step command",
@@ -1666,6 +1923,16 @@ export function registerRootfsCommand(
           command,
           `preparing recipe ${recipePath}`,
         );
+        if ((opts as any).publish && opts.detach) {
+          throw new Error(
+            "rootfs build --publish is not supported with --detach",
+          );
+        }
+        if ((opts as any).publish && opts.here) {
+          throw new Error(
+            "rootfs build --publish is not supported with --here; run rootfs publish after the local build",
+          );
+        }
         await withContext(command, "rootfs build", async (ctx) => {
           const deps = {
             withContext,
@@ -1725,6 +1992,12 @@ export function registerRootfsCommand(
             options: opts,
             plan,
           });
+          await labelRootfsBuilderProject({
+            ctx,
+            project_id: project.project_id,
+            plan,
+            created_project: project.created_project,
+          });
           const publishConfig = projectRootfsPublishConfigEnvelope(plan);
           await ctx.hub.projects.setProjectRootfsPublishConfig({
             project_id: project.project_id,
@@ -1740,6 +2013,13 @@ export function registerRootfsCommand(
             recipe_ref: plan.recipe,
             resolved_recipe_json: plan.resolved_recipe,
             metadata_json: plan.config,
+          });
+          await labelRootfsBuilderProject({
+            ctx,
+            project_id: project.project_id,
+            plan,
+            created_project: project.created_project,
+            build_id: build.build_id,
           });
           emitRootfsBuildProgress(ctx, `started build ${build.build_id}`);
           if (opts.configOut) {
@@ -1759,6 +2039,16 @@ export function registerRootfsCommand(
                 project_id: project.project_id,
                 build_id: build.build_id,
               });
+          const publish = (opts as any).publish
+            ? await publishRootfsBuild({
+                ctx,
+                project_id: project.project_id,
+                build_id: finalBuild.build_id,
+                opts: opts as any,
+                wait: (opts as any).publishWait,
+                waitForLroFn: waitForLro,
+              })
+            : undefined;
           writeLastRootfsBuild({
             ctx,
             project_id: project.project_id,
@@ -1773,6 +2063,7 @@ export function registerRootfsCommand(
             build: finalBuild,
             config: plan.config,
             saved_rootfs_publish_config: true,
+            publish,
           };
           if (ctx.globals?.json || ctx.globals?.output === "json") {
             return result;
@@ -2020,6 +2311,86 @@ export function registerRootfsCommand(
             byte_offset: log.next_byte_offset,
           });
           return formatRootfsBuildStatusHuman(finalStatus);
+        });
+      },
+    );
+
+  rootfs
+    .command("build-publish [build]")
+    .description("publish a successful durable RootFS build")
+    .option("-w, --project <project>", "project id or name")
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
+    .option("--config-file <path>", "RootFS config JSON written by build")
+    .option("--label <label>", "catalog label")
+    .option("--slug <slug>", "public/catalog slug")
+    .option("--family <family>", "optional image family for upgrade grouping")
+    .option("--image-version <version>", "optional user-facing image version")
+    .option("--channel <channel>", "optional release channel, e.g. stable")
+    .option(
+      "--supersedes-image-id <id>",
+      "optional catalog image id superseded by this entry",
+    )
+    .option(
+      "--default-jupyter-kernel <name>",
+      "default kernelspec name for new generic notebooks in projects using this image",
+    )
+    .option("--description <text>", "catalog description")
+    .option("--visibility <visibility>", "private, collaborators, or public")
+    .option("--tags <csv>", "comma-separated tags")
+    .option("--theme-json <json>", "theme metadata as a JSON object")
+    .option("--official", "mark as official (admin only)")
+    .option("--prepull", "mark for automatic prepull on new hosts (admin only)")
+    .option("--hidden", "hide from normal catalog views")
+    .option(
+      "--switch-project",
+      "switch the project to the newly published image when publishing succeeds",
+    )
+    .option("--wait", "wait for the publish LRO to finish")
+    .action(
+      async (
+        build_id: string | undefined,
+        opts: {
+          project?: string;
+          browserId?: string;
+          configFile?: string;
+          label?: string;
+          slug?: string;
+          family?: string;
+          imageVersion?: string;
+          channel?: string;
+          supersedesImageId?: string;
+          defaultJupyterKernel?: string;
+          description?: string;
+          visibility?: string;
+          tags?: string;
+          themeJson?: string;
+          official?: boolean;
+          prepull?: boolean;
+          hidden?: boolean;
+          switchProject?: boolean;
+          wait?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs build-publish", async (ctx) => {
+          const resolvedBuildId = resolveLastRootfsBuildId(ctx, build_id);
+          const project = await resolveRootfsBuildProject({
+            ctx,
+            resolveProjectFromArgOrContext,
+            project: opts.project,
+          });
+          const result = await publishRootfsBuild({
+            ctx,
+            project_id: project.project_id,
+            build_id: resolvedBuildId,
+            opts,
+            wait: opts.wait,
+            waitForLroFn: waitForLro,
+          });
+          if (ctx.globals?.json || ctx.globals?.output === "json") {
+            return result;
+          }
+          return formatRootfsBuildPublishHuman(result);
         });
       },
     );

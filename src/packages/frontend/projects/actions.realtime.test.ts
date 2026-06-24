@@ -207,6 +207,70 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
   });
 
+  it("replaces labels from realtime project upserts", async () => {
+    projectMap = ImmutableMap<string, any>([
+      [
+        "project-1",
+        ImmutableMap({
+          title: "Label Project",
+          labels: ImmutableMap({
+            keep: "old",
+            foo2: "bar2",
+          }),
+        }),
+      ],
+    ]);
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.now(),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-1",
+        title: "Label Project",
+        description: "",
+        theme: null,
+        labels: {
+          keep: "new",
+        },
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {
+          "acct-1": { group: "owner" },
+        },
+        state: { state: "running" },
+        last_active: {},
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.getIn(["project-1", "labels", "keep"])).toBe("new");
+    expect(projectMap.getIn(["project-1", "labels", "foo2"])).toBeUndefined();
+  });
+
   it("reconciles one projected project row without bootstrapping the full account list", async () => {
     projectMap = ImmutableMap<string, any>([
       [
@@ -2483,6 +2547,76 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn([projectId, "state", "time"])).toBe(
       "2026-04-05T03:05:00.000Z",
     );
+  });
+
+  it("replaces labels from projected bootstrap rows", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000106";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          title: "Projected Label Project",
+          labels: ImmutableMap({
+            keep: "old",
+            foo2: "bar2",
+          }),
+        }),
+      ],
+    ]);
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: projectId,
+            owning_bay_id: "bay-0",
+            host_id: null,
+            title: "Projected Label Project",
+            description: "projected metadata",
+            theme: null,
+            labels: {
+              keep: "new",
+            },
+            users_summary: {
+              "acct-1": { group: "owner" },
+            },
+            state_summary: {
+              state: "opened",
+              time: "2026-04-05T03:00:00.000Z",
+            },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            sort_key: "2026-04-05T03:00:00.000Z",
+            updated_at: "2026-04-05T03:00:01.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    expect(projectMap.getIn([projectId, "labels", "keep"])).toBe("new");
+    expect(projectMap.getIn([projectId, "labels", "foo2"])).toBeUndefined();
   });
 
   it("keeps a newer local last_edited when projected bootstrap rows are older", async () => {

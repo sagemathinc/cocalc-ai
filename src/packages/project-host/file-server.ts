@@ -173,6 +173,7 @@ import {
   downloadBackupIndexObject,
   uploadBackupIndexObject,
 } from "./backup-index-object-store";
+import { createLegacyProjectArchiveHandlers } from "./legacy-migration/project-archive";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -228,6 +229,13 @@ const quotaInFlight = new Map<
     warning?: string;
   }>
 >();
+const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
+  getOrEnsureVolume,
+  projectMountpoint,
+  invalidateProjectFsServer,
+  touchProjectLastEdited,
+  logger,
+});
 
 function volName(project_id: string) {
   return `project-${project_id}`;
@@ -4338,6 +4346,12 @@ export async function initFileServer({
     // backups
     createBackup: reuseInFlight(createBackup),
     restoreBackup: reuseInFlight(restoreBackup),
+    restoreProjectArchive: reuseInFlight(
+      legacyProjectArchiveHandlers.restoreProjectArchive,
+    ),
+    cacheProjectArchive: reuseInFlight(
+      legacyProjectArchiveHandlers.cacheProjectArchive,
+    ),
     beginRestoreStaging,
     ensureRestoreStaging,
     finalizeRestoreStaging,

@@ -77,6 +77,7 @@ function buildProjectFeedRow(opts: {
     title: payload.title ?? "",
     description: payload.description ?? "",
     theme: payload.theme ?? null,
+    labels: payload.labels ?? {},
     host_id: payload.host_id ?? null,
     rootfs_image_id: payload.rootfs_image_id ?? null,
     owning_bay_id: `${payload.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
@@ -150,10 +151,10 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
   await getPool().query(
     `INSERT INTO account_project_index
       (account_id, project_id, owning_bay_id, host_id, rootfs_image_id, title, description,
-        theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
+        theme, labels, users_summary, state_summary, last_edited, last_backup, last_activity_at,
         last_opened_at, is_hidden, deletion_protection, sort_key, updated_at)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10::JSONB, $11, $12, $13, NULL, $14, $15, $16, $17)
+       ($1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10::JSONB, $11::JSONB, $12, $13, $14, NULL, $15, $16, $17, $18)
      ON CONFLICT (account_id, project_id)
      DO UPDATE SET
        owning_bay_id = EXCLUDED.owning_bay_id,
@@ -162,6 +163,7 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
        title = EXCLUDED.title,
        description = EXCLUDED.description,
        theme = EXCLUDED.theme,
+       labels = EXCLUDED.labels,
        users_summary = EXCLUDED.users_summary,
        state_summary = EXCLUDED.state_summary,
        last_edited = EXCLUDED.last_edited,
@@ -180,6 +182,7 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
       event.project.title ?? "",
       event.project.description ?? "",
       JSON.stringify(event.project.theme ?? {}),
+      JSON.stringify(event.project.labels ?? {}),
       JSON.stringify(event.project.users ?? {}),
       JSON.stringify(event.project.state ?? {}),
       parseDate(event.project.last_edited) ?? null,

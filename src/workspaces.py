@@ -12,7 +12,7 @@ TEST:
  - This should always work:  "mypy workspaces.py"
 """
 
-import argparse, json, os, platform, shutil, subprocess, sys, time
+import argparse, json, os, platform, shutil, subprocess, sys, tempfile, time
 
 from typing import Any, Optional, Callable, List
 
@@ -44,6 +44,24 @@ def scrub_live_cocalc_test_env() -> dict[str, str]:
 
 def restore_scrubbed_env(scrubbed: dict[str, str]) -> None:
     os.environ.update(scrubbed)
+
+
+def set_package_test_tmpdir(path: str) -> tuple[str, dict[str, Optional[str]]]:
+    safe_path = path.strip("/").replace("/", "-") or "workspace"
+    tmpdir = tempfile.mkdtemp(prefix=f"cocalc-test-{safe_path}-")
+    old = {key: os.environ.get(key) for key in ["TMPDIR", "TEMP", "TMP"]}
+    os.environ.update({"TMPDIR": tmpdir, "TEMP": tmpdir, "TMP": tmpdir})
+    return tmpdir, old
+
+
+def restore_package_test_tmpdir(tmpdir: str,
+                                old: dict[str, Optional[str]]) -> None:
+    for key, value in old.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def newest_file(path: str) -> str:
@@ -489,9 +507,11 @@ def test(args) -> None:
             if args.max_workers:
                 test_cmd += f' --maxWorkers={args.max_workers} '
             scrubbed = scrub_live_cocalc_test_env()
+            tmpdir, old_tmp_env = set_package_test_tmpdir(path)
             try:
                 cmd(test_cmd, package_path)
             finally:
+                restore_package_test_tmpdir(tmpdir, old_tmp_env)
                 restore_scrubbed_env(scrubbed)
             success.append(path)
 

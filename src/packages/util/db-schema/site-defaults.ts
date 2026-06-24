@@ -54,6 +54,7 @@ export const TAGS = [
   "Support",
   "SSO",
   "Cookie Banner",
+  "Migration",
 ] as const;
 
 export type Tag = (typeof TAGS)[number];
@@ -112,6 +113,7 @@ export type SiteSettingsKeys =
   | "signup_email_domain_show_allowed_domains"
   | "public_signup_without_registration_token"
   | "share_server"
+  | "legacy_migration_enabled"
   | "landing_pages"
   | "project_hosts_google-cloud_enabled"
   | "project_hosts_hyperstack_enabled"
@@ -884,6 +886,17 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     group: "Access & Identity",
     subgroup: "Sharing",
+  },
+  legacy_migration_enabled: {
+    name: "Enable legacy cocalc.com migration",
+    desc: "Expose the user-facing legacy cocalc.com migration page and allow the server-side migration APIs and restore worker to run. This should only be enabled on sites that have loaded the legacy migration tables and project archive configuration.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Migration"],
+    group: "Access & Identity",
+    subgroup: "Migration",
+    advanced: true,
   },
   landing_pages: {
     name: "Landing pages",

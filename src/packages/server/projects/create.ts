@@ -205,7 +205,9 @@ export default async function createProject(opts: CreateProjectOptions) {
   if (account_id) {
     await assertProjectCreationAllowed({ account_id });
     await assertAccountTrustedForProductAccess(account_id, "create projects");
-    await assertCanOwnAdditionalProject({ account_id });
+    if (opts.skip_project_count_limit !== true) {
+      await assertCanOwnAdditionalProject({ account_id });
+    }
     // Creating an empty project should not block on a fresh full-account
     // storage sweep across every provisioned project. If we already have a
     // recent cached over-cap measurement, still honor it here.
