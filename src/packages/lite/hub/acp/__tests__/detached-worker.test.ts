@@ -9,6 +9,7 @@ import {
   recoverDetachedWorkerStartupState,
   shouldStopDetachedWorkerForDrain,
   shouldStopDetachedWorkerForIdle,
+  shouldExitAcpWorkerAfterHeartbeatFailure,
   turnNeedsInterruptedRepair,
 } from "../index";
 import * as turns from "../../sqlite/acp-turns";
@@ -1273,6 +1274,45 @@ describe("isFatalAcpWorkerStorageError", () => {
     expect(isFatalAcpWorkerStorageError(new Error("network timeout"))).toBe(
       false,
     );
+  });
+});
+
+describe("shouldExitAcpWorkerAfterHeartbeatFailure", () => {
+  it("always exits on fatal worker storage errors", () => {
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 1,
+        failureExitThreshold: 0,
+        fatalStorageError: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not exit on repeated nonfatal heartbeat failures by default", () => {
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 100,
+        failureExitThreshold: 0,
+        fatalStorageError: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("can opt in to exiting after repeated nonfatal heartbeat failures", () => {
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 2,
+        failureExitThreshold: 3,
+        fatalStorageError: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 3,
+        failureExitThreshold: 3,
+        fatalStorageError: false,
+      }),
+    ).toBe(true);
   });
 });
 

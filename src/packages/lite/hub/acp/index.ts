@@ -402,8 +402,8 @@ const ACP_WORKER_HEARTBEAT_MS = envNumber(
   2_000,
 );
 const ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD = Math.max(
-  1,
-  envNumber("COCALC_ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD", 3),
+  0,
+  envNumber("COCALC_ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD", 0),
 );
 const ACP_WORKER_DRAIN_QUIESCE_MS = envNumber(
   "COCALC_ACP_WORKER_DRAIN_QUIESCE_MS",
@@ -5068,6 +5068,20 @@ export function isFatalAcpWorkerStorageError(err: unknown): boolean {
   ].some((needle) => message.includes(needle));
 }
 
+export function shouldExitAcpWorkerAfterHeartbeatFailure({
+  consecutiveFailures,
+  failureExitThreshold,
+  fatalStorageError,
+}: {
+  consecutiveFailures: number;
+  failureExitThreshold: number;
+  fatalStorageError: boolean;
+}): boolean {
+  if (fatalStorageError) return true;
+  if (failureExitThreshold <= 0) return false;
+  return consecutiveFailures >= failureExitThreshold;
+}
+
 export async function recoverDetachedWorkerStartupState(
   client: ConatClient,
   opts: {
@@ -5343,22 +5357,28 @@ export async function runDetachedAcpQueueWorker(
         } catch (err) {
           workerHeartbeatFailureCount += 1;
           const fatalStorageError = isFatalAcpWorkerStorageError(err);
+          const shouldExit = shouldExitAcpWorkerAfterHeartbeatFailure({
+            consecutiveFailures: workerHeartbeatFailureCount,
+            failureExitThreshold: ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD,
+            fatalStorageError,
+          });
           logger.warn("ACP worker heartbeat failed", {
             instance: ACP_INSTANCE_ID,
             consecutive_failures: workerHeartbeatFailureCount,
             failure_exit_threshold: ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD,
             fatal_storage_error: fatalStorageError,
+            exits_worker: shouldExit,
             err,
           });
-          if (
-            fatalStorageError ||
-            workerHeartbeatFailureCount >=
-              ACP_WORKER_HEARTBEAT_FAILURE_EXIT_THRESHOLD
-          ) {
+          // syncDetachedWorkerState only touches the ACP worker's own
+          // coordination SQLite state. Project-scoped persist/storage failures
+          // are handled by the affected turn and must not restart the
+          // project-host-wide ACP worker.
+          if (shouldExit) {
             markWorkerFatalError({
               err,
               reason: fatalStorageError
-                ? "fatal_storage_error"
+                ? "fatal_worker_storage_error"
                 : "heartbeat_failed",
             });
             logger.warn(
