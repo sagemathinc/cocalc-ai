@@ -29,7 +29,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     tagline:
       "Collaborative notebooks with shared kernels and full edit history.",
     summary:
-      "Run Jupyter notebooks directly in the browser with collaboration, synchronized output, time travel, and course workflows built in.",
+      "Use collaborative Jupyter notebooks when output, files, terminals, history, and review need to stay together.",
     image: "/public/features/cocalc-jupyter2-20170508.png",
     index: true,
     sections: [
@@ -56,7 +56,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "LaTeX Editor",
     tagline: "Write papers, notes, and handouts collaboratively online.",
     summary:
-      "Edit LaTeX in the browser with synchronized collaboration, build output, history, and the rest of the CoCalc project environment close by.",
+      "Edit LaTeX in the browser with collaboration, build output, history, and project files close by.",
     image: "/public/features/latex-editor-main-20251003.png",
     index: true,
   },
@@ -64,9 +64,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
     slug: "ai",
     aliases: ["openai-chatgpt"],
     title: "Codex Agent Chat",
-    tagline: "Use Codex in durable project chat threads.",
+    tagline: "Use Codex where the technical work already lives.",
     summary:
-      "Work with Codex inside collaborative chat threads that stay close to project files, notebooks, terminals, images, and review context.",
+      "Work with Codex alongside your files, notebooks, terminals, screenshots, review notes, and collaborators.",
     image: "/public/features/chatgpt-fix-code.png",
     docsUrl: "https://sagemathinc.github.io/cocalc-guides/codex-agent-chat/",
     index: true,
@@ -118,7 +118,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     tagline:
       "Use SageMath in the collaborative environment with deep roots in Sage.",
     summary:
-      "Use SageMath for teaching, notebooks, SageTeX documents, source development, and long-running mathematics computations in a real collaborative Linux project.",
+      "Use SageMath for computational math in notebooks, courses, SageTeX documents, and research.",
     image: "/public/features/sagemath-jupyter.png",
     index: true,
   },
@@ -145,7 +145,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "Julia",
     tagline: "Use Julia in notebooks, terminals, Pluto, and source files.",
     summary:
-      "Run Julia in a collaborative project with Jupyter notebooks, Pluto, package environments, source files, terminals, and course workflows.",
+      "Run Julia in Jupyter notebooks, Pluto, package environments, source files, and terminals.",
     image: "/public/features/julia-jupyter.png",
     index: true,
   },
@@ -154,7 +154,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "Linux Terminal",
     tagline: "A collaborative remote shell inside every project.",
     summary:
-      "Work in a shared Linux shell, keep tools and files near your notebooks and documents, and avoid local environment drift.",
+      "Work in a shared Linux shell with tools and files near notebooks, documents, and project history.",
     image: "/public/features/terminal.png",
     index: true,
     sections: [
@@ -173,7 +173,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "Online Linux Environment",
     tagline: "A browser-based Linux workspace for technical projects.",
     summary:
-      "Treat CoCalc projects as collaborative Linux environments with editors, terminals, files, and web-accessible services.",
+      "Use CoCalc projects as collaborative Linux environments with editors, terminals, files, and web services.",
     image: "/public/features/cocalc-shell-script-run.png",
     index: true,
   },
@@ -181,9 +181,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
     slug: "teaching",
     title: "Teaching a Course",
     tagline:
-      "Run technical courses with shared infrastructure and grading tools.",
+      "Run technical courses and labs with shared infrastructure and grading tools.",
     summary:
-      "Organize assignments, distribute files, collect work, and grade notebooks or other project files with a workflow built for technical classes.",
+      "Manage assignments, shared environments, collection, grading, and student help for technical courses and labs.",
     image: "/public/features/cocalc-course-assignments-2019.png",
     index: true,
     sections: [
@@ -200,9 +200,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "api",
     title: "HTTP API",
-    tagline: "Automate and integrate CoCalc from external systems.",
+    tagline: "Drive CoCalc projects from your own scripts and pipelines.",
     summary:
-      "Use the CoCalc HTTP API for automation, integration, and provisioning workflows without depending on the web UI.",
+      "A documented HTTP API to create projects and run notebooks, terminals, and computations from your own code — results land back in the project.",
     image: "/public/features/api-screenshot.png",
     index: true,
     sections: [
@@ -219,9 +219,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "compare",
     title: "Compare CoCalc",
-    tagline: "A concise view of what CoCalc bundles into one environment.",
+    tagline: "A concise view of what CoCalc bundles into one workspace.",
     summary:
-      "CoCalc combines notebooks, terminals, documents, course tools, sharing, and collaborative editing in one web-based technical workspace.",
+      "Compare when CoCalc's shared project model is a better fit than a single notebook, dashboard, or editor.",
     index: true,
   },
   {
