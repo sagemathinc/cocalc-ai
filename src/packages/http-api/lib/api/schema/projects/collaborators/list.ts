@@ -6,6 +6,7 @@ import { ProjectIdSchema } from "../common";
 
 export const ProjectCollaboratorSchema = z.object({
   account_id: z.string().uuid(),
+  display_name: z.string(),
   first_name: z.string(),
   last_name: z.string(),
 });

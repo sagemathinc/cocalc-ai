@@ -21,6 +21,7 @@ export type AccountEmail = z.infer<typeof AccountEmailSchema>;
 export const AccountUserSchema = z
   .object({
     account_id: AccountIdSchema,
+    display_name: z.string().describe("User's display name.").nullish(),
     first_name: z.string().describe("User's first name.").nullish(),
     last_name: z.string().describe("User's last name.").nullish(),
     name: z.string().describe("Customizable username").nullish(),
