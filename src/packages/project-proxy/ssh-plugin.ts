@@ -14,7 +14,11 @@ import { canonicalizeSshRemoteAddr } from "./ssh-remote-addr";
 import { SSHPIPER_PLUGIN_PROTO } from "./sshpiper-plugin-proto";
 
 const logger = getLogger("project-proxy:ssh:plugin");
-const CALLBACKS = ["NextAuthMethods", "PublicKeyAuth"] as const;
+const CALLBACKS = [
+  "NextAuthMethods",
+  "PublicKeyAuth",
+  "UpstreamAuthFailure",
+] as const;
 const SSH_AUTH_METHOD_PUBLICKEY = "PUBLICKEY" as const;
 const PROTO_PATH = join(tmpdir(), "cocalc-sshpiper-plugin.proto");
 
@@ -232,8 +236,9 @@ export async function startManagedSshPluginServer(
       });
       callback(null, {
         upstream: {
+          host: "127.0.0.1",
+          port: authorized.port,
           userName: authorized.ssh_user,
-          ignoreHostKey: true,
           uri: `tcp://127.0.0.1:${authorized.port}`,
           privateKey: {
             privateKey: Buffer.from(opts.proxy_private_key, "utf8"),
@@ -265,7 +270,13 @@ export async function startManagedSshPluginServer(
         ),
       );
     },
-    UpstreamAuthFailureNotice: unary<any, any>((_call, callback) => {
+    UpstreamAuthFailureNotice: unary<any, any>((call, callback) => {
+      logger.warn("sshpiper upstream auth failed", {
+        meta: call.request?.meta,
+        method: call.request?.method,
+        error: call.request?.error,
+        allowed_methods: call.request?.allowedMethods,
+      });
       callback(null, {});
     }),
     Banner: unary<any, any>((_call, callback) => {
