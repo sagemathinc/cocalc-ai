@@ -37,6 +37,7 @@ type ImportStats = {
 const DEFAULT_BATCH_SIZE = 2000;
 let poolUsed = false;
 let rawRecordsSchemaReady: Promise<void> | undefined;
+let projectsSchemaReady: Promise<void> | undefined;
 let repairedRows = 0;
 
 function pool() {
@@ -123,6 +124,20 @@ function positiveInt(value: string, name: string): number {
 function clean(value: unknown): string | null {
   const s = `${value ?? ""}`.trim();
   return s || null;
+}
+
+async function ensureProjectsSchema(): Promise<void> {
+  projectsSchemaReady ??= (async () => {
+    await pool().query(`
+      ALTER TABLE legacy_migration_projects
+        ADD COLUMN IF NOT EXISTS disk_mb DOUBLE PRECISION
+    `);
+    await pool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_projects_disk_mb_idx
+        ON legacy_migration_projects(disk_mb)
+    `);
+  })();
+  await projectsSchemaReady;
 }
 
 function targetForFile(file: string): ImportTarget | undefined {
@@ -235,6 +250,7 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
 }
 
 async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
+  await ensureProjectsSchema();
   await pool().query(
     `
     WITH input AS (
@@ -248,6 +264,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
           hidden BOOLEAN,
           last_edited TIMESTAMPTZ,
           last_active TIMESTAMPTZ,
+          disk_mb DOUBLE PRECISION,
           artifact_bucket TEXT,
           artifact_key TEXT,
           manifest_key TEXT,
@@ -265,6 +282,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
       hidden,
       last_edited,
       last_active,
+      disk_mb,
       artifact_bucket,
       artifact_key,
       manifest_key,
@@ -282,6 +300,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
            COALESCE(hidden, false),
            last_edited,
            last_active,
+           CASE WHEN disk_mb >= 0 THEN disk_mb ELSE NULL END,
            artifact_bucket,
            artifact_key,
            manifest_key,
@@ -300,6 +319,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
       hidden=EXCLUDED.hidden,
       last_edited=EXCLUDED.last_edited,
       last_active=EXCLUDED.last_active,
+      disk_mb=COALESCE(EXCLUDED.disk_mb, legacy_migration_projects.disk_mb),
       artifact_bucket=COALESCE(EXCLUDED.artifact_bucket, legacy_migration_projects.artifact_bucket),
       artifact_key=COALESCE(EXCLUDED.artifact_key, legacy_migration_projects.artifact_key),
       manifest_key=COALESCE(EXCLUDED.manifest_key, legacy_migration_projects.manifest_key),

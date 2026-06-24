@@ -123,6 +123,7 @@ export interface CustomizeState {
   organization_url: string;
   policy_pages: string;
   legacy_migration_enabled?: boolean;
+  legacy_migration_page_message?: string;
   share_server: boolean;
   site_description: string;
   site_name: string;

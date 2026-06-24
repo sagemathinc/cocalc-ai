@@ -63,6 +63,7 @@ type LegacyProjectRow = {
   hidden: boolean | null;
   last_edited: Date | string | null;
   last_active: Date | string | null;
+  disk_mb: number | string | null;
   artifact_bucket: string | null;
   artifact_key: string | null;
   manifest_key: string | null;
@@ -93,6 +94,14 @@ async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS restore_started TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_finished TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_result JSONB
+    `);
+    await getPool().query(`
+      ALTER TABLE legacy_migration_projects
+        ADD COLUMN IF NOT EXISTS disk_mb DOUBLE PRECISION
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_projects_disk_mb_idx
+        ON legacy_migration_projects(disk_mb)
     `);
   })();
   await importSchemaReady;
@@ -153,6 +162,12 @@ function normalizeRestoreMode(
 function positiveInteger(value: unknown): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+function nonnegativeNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function nestedValue(obj: any, path: string[]): unknown {
@@ -270,6 +285,7 @@ function importStatus(row: LegacyProjectRow): LegacyMigrationProjectSummary {
     last_edited: row.last_edited,
     last_active: row.last_active,
     hidden: row.hidden,
+    disk_mb: nonnegativeNumber(row.disk_mb),
     artifact_status: row.artifact_status,
     artifact_bucket: row.artifact_bucket,
     artifact_key: row.artifact_key,
@@ -382,6 +398,7 @@ export async function listProjects({
   account_id,
   include_hidden,
   limit,
+  max_disk_mb,
   query,
 }: LegacyMigrationListProjectsOptions): Promise<LegacyMigrationListProjectsResponse> {
   await assertLegacyMigrationEnabled();
@@ -395,6 +412,7 @@ export async function listProjects({
   }
   const search = `%${`${query ?? ""}`.trim().toLowerCase()}%`;
   const useSearch = search !== "%%";
+  const maxDiskMb = nonnegativeNumber(max_disk_mb);
   const { rows } = await getPool().query<LegacyProjectRow>(
     `
     WITH matched AS (
@@ -414,6 +432,10 @@ export async function listProjects({
            OR lower(COALESCE(p.title, '')) LIKE $4
            OR lower(p.legacy_project_id) LIKE $4
          )
+         AND (
+           $5::DOUBLE PRECISION IS NULL
+           OR p.disk_mb <= $5::DOUBLE PRECISION
+         )
        GROUP BY p.legacy_project_id
     )
     SELECT p.legacy_project_id,
@@ -424,6 +446,7 @@ export async function listProjects({
            p.hidden,
            p.last_edited,
            p.last_active,
+           p.disk_mb,
            p.artifact_bucket,
            p.artifact_key,
            p.manifest_key,
@@ -450,9 +473,16 @@ export async function listProjects({
       LEFT JOIN legacy_migration_project_imports i
         ON i.legacy_project_id=p.legacy_project_id
      ORDER BY p.last_edited DESC NULLS LAST, p.legacy_project_id
-     LIMIT $5
+     LIMIT $6
     `,
-    [account_id, !!include_hidden, useSearch, search, limitValue(limit)],
+    [
+      account_id,
+      !!include_hidden,
+      useSearch,
+      search,
+      maxDiskMb,
+      limitValue(limit),
+    ],
   );
   return {
     legacy_account_ids,

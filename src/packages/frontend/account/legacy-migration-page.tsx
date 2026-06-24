@@ -9,6 +9,7 @@ import {
   Card,
   Checkbox,
   Input,
+  InputNumber,
   Space,
   Table,
   Tag,
@@ -62,6 +63,12 @@ function restoreTag(project: LegacyMigrationProjectSummary) {
   if (status === "indexing") return <Tag color="blue">indexing archive</Tag>;
   if (status === "indexed") return <Tag color="cyan">archive indexed</Tag>;
   return <Tag>{status}</Tag>;
+}
+
+function formatDiskMb(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "Unknown";
+  if (value < 1024) return `${Math.round(value).toLocaleString()} MB`;
+  return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} GB`;
 }
 
 function importTag(project: LegacyMigrationProjectSummary) {
@@ -288,6 +295,9 @@ export function LegacyMigrationPage() {
     "customize",
     "legacy_migration_enabled",
   );
+  const legacyMigrationPageMessage = `${
+    useTypedRedux("customize", "legacy_migration_page_message") ?? ""
+  }`.trim();
   const [state, setState] = useState<LegacyMigrationState>({
     error: "",
     legacyAccountIds: [],
@@ -296,6 +306,7 @@ export function LegacyMigrationPage() {
     totalCount: 0,
   });
   const [includeHidden, setIncludeHidden] = useState(false);
+  const [maxDiskGb, setMaxDiskGb] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [pageSize, setPageSize] = useState(25);
   const [selected, setSelected] = useState<string[]>([]);
@@ -312,6 +323,7 @@ export function LegacyMigrationPage() {
         await webapp_client.conat_client.hub.legacyMigration.listProjects({
           include_hidden: includeHidden,
           limit: PROJECT_LOAD_LIMIT,
+          max_disk_mb: maxDiskGb == null ? undefined : maxDiskGb * 1024,
           query: nextQuery,
         });
       setState({
@@ -406,6 +418,17 @@ export function LegacyMigrationPage() {
         new Date(right.last_edited ?? 0).getTime(),
     },
     {
+      title: "Size",
+      dataIndex: "disk_mb",
+      key: "disk_mb",
+      width: 130,
+      render: (value: number | null | undefined) => formatDiskMb(value),
+      sorter: (
+        left: LegacyMigrationProjectSummary,
+        right: LegacyMigrationProjectSummary,
+      ) => (left.disk_mb ?? -1) - (right.disk_mb ?? -1),
+    },
+    {
       title: "Import",
       key: "import",
       width: 170,
@@ -465,10 +488,14 @@ export function LegacyMigrationPage() {
       <Paragraph type="secondary">
         This page loads up to {PROJECT_LOAD_LIMIT.toLocaleString()} matching
         projects at a time, sorted by most recent edit. These are the projects
-        available to migrate from your matched legacy account records. You can
-        return later, search for older projects, and migrate more projects at
-        any time.
+        available from your matched legacy account records, along with their
+        current migration status. You can return later, search for older
+        projects, and migrate more projects at any time.
       </Paragraph>
+
+      {legacyMigrationPageMessage ? (
+        <Alert showIcon type="info" message={legacyMigrationPageMessage} />
+      ) : null}
 
       <Alert
         showIcon
@@ -505,6 +532,21 @@ export function LegacyMigrationPage() {
             >
               Include hidden
             </Checkbox>
+            <InputNumber
+              min={0}
+              onChange={(value) =>
+                setMaxDiskGb(
+                  typeof value === "number" && Number.isFinite(value)
+                    ? value
+                    : null,
+                )
+              }
+              placeholder="Max size GB"
+              precision={1}
+              step={1}
+              style={{ width: 130 }}
+              value={maxDiskGb}
+            />
             <Button loading={state.loading} onClick={() => void loadProjects()}>
               Refresh
             </Button>
@@ -583,7 +625,7 @@ export function LegacyMigrationPage() {
                 columns={columns}
                 dataSource={state.projects}
                 loading={state.loading}
-                scroll={{ x: 1190 }}
+                scroll={{ x: 1320 }}
                 tableLayout="fixed"
                 pagination={{
                   pageSize,
