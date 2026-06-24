@@ -14,7 +14,12 @@ codemirror.min.js
 .*.sage-backup
 .*.sage-history
 .*.smc-backup
-data*/
+# Runtime data directories. Keep this anchored; unanchored data*/ also matches
+# source directories such as src/packages/database.
+/data*/
+/src/data/
+/src/packages/lite/data/
+/src/packages/project-host/data/
 .#*
 \#*
 node_modules
@@ -213,8 +218,8 @@ patchflow
 *.chat
 *.js.map
 
-data-0
-data-1
+/data-0
+/data-1
 
 publish*.sh
 !src/packages/launchpad/sea/publish-sea.sh
