@@ -291,11 +291,17 @@ async function verifiedAccountEmails(account_id: string): Promise<string[]> {
     [account_id],
   );
   const row = rows[0];
-  const email = normalizeEmail(row?.email_address);
-  if (!email || !row?.email_address_verified?.[email]) {
-    return [];
+  const verified = row?.email_address_verified ?? {};
+  const emails = new Set<string>();
+  for (const [email, value] of Object.entries(verified)) {
+    if (value) {
+      const normalized = normalizeEmail(email);
+      if (normalized) emails.add(normalized);
+    }
   }
-  return [email];
+  const primary = normalizeEmail(row?.email_address);
+  if (primary && verified[primary]) emails.add(primary);
+  return [...emails].sort();
 }
 
 async function ensureVerifiedEmailLinks(account_id: string): Promise<void> {
