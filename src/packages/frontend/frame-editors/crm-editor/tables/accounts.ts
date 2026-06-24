@@ -11,6 +11,7 @@ register({
     crm_accounts: [
       {
         account_id: null,
+        display_name: null,
         first_name: null,
         last_name: null,
         email_address: null,
