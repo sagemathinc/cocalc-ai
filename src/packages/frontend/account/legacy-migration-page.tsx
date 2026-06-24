@@ -448,7 +448,16 @@ export function LegacyMigrationPage() {
         showIcon
         type="warning"
         message="Legacy migration is still being rolled out"
-        description="This page lists projects for legacy accounts that match your verified email address or have already been linked by support."
+        description={
+          <span>
+            This page lists projects from legacy cocalc.com account records that
+            match a verified email on your current account. Gmail addresses also
+            match their Gmail dot/plus aliases. To match projects associated
+            with another email address, change and verify your email in{" "}
+            <a href="/settings/profile">profile settings</a>, then come back to
+            this page.
+          </span>
+        }
       />
 
       {state.error ? (
@@ -496,15 +505,24 @@ export function LegacyMigrationPage() {
               showIcon
               type="info"
               message="No linked cocalc.com account found"
-              description="Use the same verified email address as your old cocalc.com account, or contact support if your legacy account used another identity."
+              description={
+                <span>
+                  Use the same verified email address as your old cocalc.com
+                  account. To try another address, change and verify your email
+                  in <a href="/settings/profile">profile settings</a>, then
+                  refresh this page. Contact support if your legacy account used
+                  another identity.
+                </span>
+              }
             />
           ) : (
             <>
               <Space wrap>
                 <Text type="secondary">
-                  Matched {state.legacyAccountIds.length} legacy account record
-                  {state.legacyAccountIds.length === 1 ? "" : "s"}. Showing{" "}
-                  {state.projects.length.toLocaleString()} of{" "}
+                  Matched {state.legacyAccountIds.length} legacy cocalc.com
+                  account record
+                  {state.legacyAccountIds.length === 1 ? "" : "s"} by verified
+                  email. Showing {state.projects.length.toLocaleString()} of{" "}
                   {state.totalCount.toLocaleString()} matching project
                   {state.totalCount === 1 ? "" : "s"}.
                 </Text>

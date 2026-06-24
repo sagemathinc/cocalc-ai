@@ -102,6 +102,14 @@ function normalizeEmail(value: unknown): string {
   return `${value ?? ""}`.trim().toLowerCase();
 }
 
+function gmailCanonicalEmail(email: string): string | null {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return null;
+  if (domain !== "gmail.com" && domain !== "googlemail.com") return null;
+  const base = local.split("+")[0]?.replace(/\./g, "");
+  return base ? `${base}@gmail.com` : null;
+}
+
 function limitValue(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_LIMIT;
@@ -308,23 +316,53 @@ async function verifiedAccountEmails(account_id: string): Promise<string[]> {
 async function ensureVerifiedEmailLinks(account_id: string): Promise<void> {
   const emails = await verifiedAccountEmails(account_id);
   if (emails.length === 0) return;
+  const gmailCanonicalEmails = Array.from(
+    new Set(
+      emails
+        .map(gmailCanonicalEmail)
+        .filter((email): email is string => email != null),
+    ),
+  );
   await getPool().query(
     `
+    WITH candidates AS (
+      SELECT legacy_account_id,
+             email_address,
+             lower(email_address) AS exact_email,
+             CASE
+               WHEN split_part(lower(email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+                 THEN replace(split_part(split_part(lower(email_address), '@', 1), '+', 1), '.', '') || '@gmail.com'
+               ELSE NULL
+             END AS gmail_canonical_email
+        FROM legacy_migration_accounts
+       WHERE COALESCE(email_address_verified, false)=true
+    )
     INSERT INTO legacy_migration_account_links
       (legacy_account_id, account_id, claim_method, metadata, created, updated)
     SELECT legacy_account_id,
            $1::UUID,
            'verified-email',
-           jsonb_build_object('email_address', email_address),
+           jsonb_build_object(
+             'email_address', email_address,
+             'match_method',
+             CASE
+               WHEN exact_email=ANY($2::TEXT[]) THEN 'exact-email'
+               ELSE 'gmail-canonical'
+             END,
+             'gmail_canonical_email', gmail_canonical_email
+           ),
            NOW(),
            NOW()
-      FROM legacy_migration_accounts
-     WHERE COALESCE(email_address_verified, false)=true
-       AND lower(email_address)=ANY($2::TEXT[])
+      FROM candidates
+     WHERE exact_email=ANY($2::TEXT[])
+        OR (
+          gmail_canonical_email IS NOT NULL
+          AND gmail_canonical_email=ANY($3::TEXT[])
+        )
     ON CONFLICT (legacy_account_id, account_id)
     DO UPDATE SET updated=NOW()
     `,
-    [account_id, emails],
+    [account_id, emails, gmailCanonicalEmails],
   );
 }
 
