@@ -1069,7 +1069,8 @@ test("rootfs recipe from-binder generates a recipe and dry-run script", async ()
     ]);
 
     const recipe = JSON.parse(readFileSync(recipePath, "utf8"));
-    assert.equal(recipe.name, "binder-gh-elegant-scipy-elegant-scipy-master");
+    assert.ok(recipe.name.length <= 39);
+    assert.match(recipe.name, /^binder-elegant-scipy-master-[0-9a-f]{8}$/);
     assert.equal(recipe.steps[0].uses, "cocalc/uv-python");
     assert.match(
       recipe.steps[1].run,
@@ -1079,6 +1080,15 @@ test("rootfs recipe from-binder generates a recipe and dry-run script", async ()
     assert.match(recipe.steps[1].run, /postBuild/);
     assert.equal(recipe.publish.family, "binder");
     assert.equal(recipe.publish.content.actions[0].kind, "copy-to-home");
+    assert.equal(
+      recipe.publish.content.actions[0].source_path,
+      "/opt/cocalc-binder/elegant-scipy-elegant-scipy",
+    );
+    assert.equal(recipe.publish.content.actions[1].kind, "browse");
+    assert.equal(
+      recipe.publish.content.actions[1].path,
+      "/opt/cocalc-binder/elegant-scipy-elegant-scipy",
+    );
     assert.match(stdout, /recipe_path:/);
 
     stdout = "";
@@ -1317,9 +1327,9 @@ test("rootfs build-binder generates a Binder recipe and starts a durable build",
       globals: { quiet: true },
       projects: {
         createProject: async (opts: any) => {
-          assert.equal(
+          assert.match(
             opts.title,
-            "RootFS build: binder-gh-elegant-scipy-elegant-scipy-master",
+            /^RootFS build: binder-elegant-scipy-master-[0-9a-f]{8}$/,
           );
           return "binder-builder-project";
         },
@@ -1382,19 +1392,14 @@ test("rootfs build-binder generates a Binder recipe and starts a durable build",
     ]);
 
     const generatedRecipe = JSON.parse(readFileSync(recipeOut, "utf8"));
+    const generatedName = generatedRecipe.name;
     const lastBuild = JSON.parse(readFileSync(stateFile, "utf8"));
     assert.equal(lastBuild.project_id, "binder-builder-project");
     assert.equal(lastBuild.build_id, "binder-build-1");
-    assert.equal(
-      savedConfig.config.recipe.name,
-      "binder-gh-elegant-scipy-elegant-scipy-master",
-    );
+    assert.equal(savedConfig.config.recipe.name, generatedName);
     assert.equal(generatedRecipe.publish.family, "binder");
     assert.equal(buildRequest.project_id, "binder-builder-project");
-    assert.equal(
-      buildRequest.recipe_ref,
-      "binder-gh-elegant-scipy-elegant-scipy-master",
-    );
+    assert.equal(buildRequest.recipe_ref, generatedName);
     assert.match(
       buildRequest.script,
       /https:\/\/github.com\/elegant-scipy\/elegant-scipy\.git/,

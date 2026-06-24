@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createHash } from "node:crypto";
 import type { RootfsRecipe } from "./rootfs-recipe";
 
 export type BinderProvider = "gh";
@@ -66,15 +67,42 @@ function slug(value: string, fallback = "value"): string {
   return normalized || fallback;
 }
 
+function truncateSlug(
+  value: string,
+  maxLength: number,
+  fallback: string,
+): string {
+  const truncated = value.slice(0, maxLength).replace(/-+$/g, "");
+  return truncated || fallback;
+}
+
+function binderSpecHash(spec: BinderSpec): string {
+  return createHash("sha256")
+    .update(`${spec.provider}\0${spec.owner}\0${spec.repo}\0${spec.ref}`)
+    .digest("hex")
+    .slice(0, 8);
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export function binderRecipeName(spec: BinderSpec): string {
-  return `binder-${spec.provider}-${slug(spec.owner)}-${slug(spec.repo)}-${slug(
-    spec.ref,
-    "ref",
-  )}`;
+  const hash = binderSpecHash(spec);
+  const prefix = "binder";
+  const suffix = hash;
+  const middleBudget = 39 - prefix.length - suffix.length - 2;
+  const repo = slug(spec.repo, "repo");
+  const ref = slug(spec.ref, "ref");
+  const middle =
+    `${repo}-${ref}`.length <= middleBudget
+      ? `${repo}-${ref}`
+      : `${truncateSlug(repo, Math.max(1, middleBudget - 5), "repo")}-${truncateSlug(
+          ref,
+          4,
+          "ref",
+        )}`;
+  return `${prefix}-${middle}-${suffix}`;
 }
 
 export function binderRepoUrl(spec: BinderSpec): string {
@@ -181,9 +209,13 @@ if [ -f "$BINDER_CONFIG_DIR/apt.txt" ]; then
 fi
 
 if [ -f "$BINDER_CONFIG_DIR/environment.yml" ] || [ -f "$BINDER_CONFIG_DIR/environment.yaml" ]; then
-  echo "[binder] environment.yml detected but conda environment builds are not implemented in this first CoCalc Binder recipe generator."
-  echo "[binder] Add equivalent packages to requirements.txt or extend the generated recipe before building."
-  exit 1
+  if [ -f "$BINDER_CONFIG_DIR/requirements.txt" ]; then
+    echo "[binder] environment.yml detected; using requirements.txt as the pip-compatible fallback."
+  else
+    echo "[binder] environment.yml detected but conda environment builds are not implemented in this first CoCalc Binder recipe generator."
+    echo "[binder] Add equivalent packages to requirements.txt or extend the generated recipe before building."
+    exit 1
+  fi
 fi
 
 if [ -f "$BINDER_CONFIG_DIR/requirements.txt" ]; then
