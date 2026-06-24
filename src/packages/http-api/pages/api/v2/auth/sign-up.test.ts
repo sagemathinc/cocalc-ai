@@ -656,6 +656,35 @@ describe("/api/v2/auth/sign-up", () => {
     );
   });
 
+  it("creates accounts with display_name as the canonical name", async () => {
+    mockGetRequiresRegistrationToken.mockResolvedValue(false);
+    mockCreateClusterAccount.mockResolvedValue({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-0",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "admin@example.com",
+        password: "correct horse battery staple 12345!",
+        displayName: "AdmiN",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(mockCreateClusterAccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        display_name: "AdmiN",
+        first_name: undefined,
+        last_name: undefined,
+      }),
+    );
+  });
+
   it("sends the welcome email path for registration-token signup", async () => {
     mockRedeemRegistrationToken.mockResolvedValue({});
     mockCreateClusterAccount.mockResolvedValue({

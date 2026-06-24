@@ -6,7 +6,10 @@ Only call this for the account_id of the signed in user.
 */
 
 import getPool from "@cocalc/database/pool";
-import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import {
+  displayNameFromAccount,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import { Profile } from "./types";
 
 export default async function getPrivateProfile(
@@ -25,11 +28,13 @@ export default async function getPrivateProfile(
 
   const is_partner = !!rows[0].groups?.includes("partner");
 
+  const display_name = displayNameFromAccount(rows[0]) || "Anonymous User";
+  const legacyNameParts = legacyNamePartsFromDisplayName(display_name);
   return {
     account_id,
-    display_name: displayNameFromAccount(rows[0]) || "Anonymous User",
-    first_name: rows[0].first_name ?? "Anonymous",
-    last_name: rows[0].last_name ?? "User",
+    display_name,
+    first_name: legacyNameParts.first_name,
+    last_name: legacyNameParts.last_name,
     image: rows[0].profile?.image,
     color: rows[0].profile?.color,
     is_admin,

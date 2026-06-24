@@ -296,8 +296,6 @@ export async function createUser({
       first_name: firstName,
       last_name: lastName,
     }),
-    first_name: firstName,
-    last_name: lastName,
     account_id: new_account_id,
     owner_id: account_id,
     home_bay_id: getConfiguredBayId(),

@@ -46,6 +46,7 @@ interface SetAccountFields {
   db: PostgreSQL;
   account_id: string;
   email_address?: string | undefined;
+  display_name?: string | undefined;
   first_name?: string | undefined;
   last_name?: string | undefined;
 }
@@ -62,16 +63,17 @@ export async function set_account_info_if_different(
   opts: SetAccountFields,
   overwrite = true,
 ): Promise<void> {
-  const columns = ["email_address", "first_name", "last_name"];
+  const columns = ["email_address", "display_name", "first_name", "last_name"];
 
   // this could throw an error for "no such account"
   const account = await get_account<{
     email_address: string;
     first_name: string;
     last_name: string;
+    display_name: string;
   }>(opts.db, opts.account_id, columns);
 
-  const do_set: { [field: string]: string } = {};
+  const do_set: { [field: string]: string | null } = {};
   let do_email: string | undefined = undefined;
 
   for (const field of columns) {
@@ -84,6 +86,10 @@ export async function set_account_info_if_different(
         do_set[field] = opts[field];
       }
     }
+  }
+  if (typeof opts.display_name === "string") {
+    do_set.first_name = null;
+    do_set.last_name = null;
   }
   if (len(do_set) > 0) {
     await set_account(opts.db, opts.account_id, do_set);

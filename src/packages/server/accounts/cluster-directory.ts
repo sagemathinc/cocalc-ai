@@ -16,7 +16,10 @@ import {
   USER_SEARCH_LIMIT,
   type UserSearchResult,
 } from "@cocalc/util/db-schema/accounts";
-import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import {
+  displayNameFromAccount,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import {
   cmp,
   isValidUUID,
@@ -244,16 +247,18 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
 }
 
 function canonicalLocalEntry(row: any): AccountDirectoryEntry {
+  const display_name =
+    displayNameFromAccount({
+      display_name: row.display_name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+    }) || undefined;
+  const legacyNameParts = legacyNamePartsFromDisplayName(display_name);
   return {
     account_id: row.account_id,
-    display_name:
-      displayNameFromAccount({
-        display_name: row.display_name,
-        first_name: row.first_name,
-        last_name: row.last_name,
-      }) || undefined,
-    first_name: row.first_name ?? undefined,
-    last_name: row.last_name ?? undefined,
+    display_name,
+    first_name: legacyNameParts.first_name || undefined,
+    last_name: legacyNameParts.last_name || undefined,
     email_address: row.email_address ?? undefined,
     home_bay_id: `${row.home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
     created:
@@ -273,16 +278,18 @@ function canonicalLocalEntry(row: any): AccountDirectoryEntry {
 }
 
 function canonicalDirectoryEntry(row: any): AccountDirectoryEntry {
+  const display_name =
+    displayNameFromAccount({
+      display_name: row.display_name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+    }) || undefined;
+  const legacyNameParts = legacyNamePartsFromDisplayName(display_name);
   return {
     account_id: row.account_id,
-    display_name:
-      displayNameFromAccount({
-        display_name: row.display_name,
-        first_name: row.first_name,
-        last_name: row.last_name,
-      }) || undefined,
-    first_name: row.first_name ?? undefined,
-    last_name: row.last_name ?? undefined,
+    display_name,
+    first_name: legacyNameParts.first_name || undefined,
+    last_name: legacyNameParts.last_name || undefined,
     email_address: row.email_address ?? undefined,
     home_bay_id: normalizedHomeBayId(row.home_bay_id),
     created:
@@ -787,8 +794,8 @@ export async function reserveClusterAccountDirectoryEntry({
       account_id,
       normalizedEmail(email_address),
       displayNameFromAccount({ display_name, first_name, last_name }) || null,
-      first_name ?? null,
-      last_name ?? null,
+      null,
+      null,
       normalizedHomeBayId(home_bay_id),
     ],
   );
@@ -823,8 +830,8 @@ export async function markClusterAccountProvisioned({
       account_id,
       normalizedEmail(email_address),
       displayNameFromAccount({ display_name, first_name, last_name }) || null,
-      first_name ?? null,
-      last_name ?? null,
+      null,
+      null,
       normalizedHomeBayId(home_bay_id),
     ],
   );
@@ -893,8 +900,8 @@ export async function updateClusterAccountEmailAddressDirect({
       account_id,
       email,
       current.display_name ?? null,
-      current.first_name ?? null,
-      current.last_name ?? null,
+      null,
+      null,
       normalizedHomeBayId(current.home_bay_id ?? ""),
     ],
   );
@@ -936,8 +943,8 @@ export async function updateClusterAccountBannedDirect({
       account_id,
       normalizedEmail(current.email_address),
       current.display_name ?? null,
-      current.first_name ?? null,
-      current.last_name ?? null,
+      null,
+      null,
       normalizedHomeBayId(current.home_bay_id ?? ""),
       !!banned,
     ],

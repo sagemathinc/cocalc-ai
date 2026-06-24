@@ -546,8 +546,8 @@ export interface AccountDirectoryCreateRequest {
   email_address: string;
   password: string;
   display_name?: string;
-  first_name: string;
-  last_name: string;
+  first_name?: string;
+  last_name?: string;
   home_bay_id: string;
   account_id?: string;
   owner_id?: string;

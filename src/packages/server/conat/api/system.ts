@@ -5201,23 +5201,14 @@ export async function adminRevokeAdminRole({
   });
 }
 
-function defaultUserNameFromEmail(email: string): {
-  first_name: string;
-  last_name: string;
-} {
+function defaultDisplayNameFromEmail(email: string): string {
   const local = (email.split("@")[0] ?? "").trim();
   const cleaned = local.replace(/[._-]+/g, " ").trim();
   const parts = cleaned.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
-    return { first_name: "New", last_name: "User" };
+    return "New User";
   }
-  if (parts.length === 1) {
-    return { first_name: parts[0], last_name: "User" };
-  }
-  return {
-    first_name: parts[0],
-    last_name: parts.slice(1).join(" "),
-  };
+  return parts.join(" ");
 }
 
 export async function adminCreateUser({
@@ -5274,26 +5265,20 @@ export async function adminCreateUser({
     throw Error("password must be non-empty");
   }
 
-  const defaultName = defaultUserNameFromEmail(emailAddress);
   const displayName =
     normalizeDisplayName(display_name) ||
     displayNameFromParts({
       first_name,
       last_name,
     }) ||
-    displayNameFromParts(defaultName);
+    defaultDisplayNameFromEmail(emailAddress);
   const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
-  const firstName =
-    normalizeDisplayName(first_name) || legacyNameParts.first_name;
-  const lastName = normalizeDisplayName(last_name) || legacyNameParts.last_name;
   try {
     const created = await createClusterAccount({
       account_id: uuid(),
       email_address: emailAddress,
       password: finalPassword,
       display_name: displayName,
-      first_name: firstName,
-      last_name: lastName,
       home_bay_id: getConfiguredBayId(),
       owner_id: account_id,
       tags: Array.isArray(tags) && tags.length ? tags : undefined,
@@ -5303,8 +5288,8 @@ export async function adminCreateUser({
       account_id: created.account_id,
       email_address: emailAddress,
       display_name: displayName,
-      first_name: firstName,
-      last_name: lastName,
+      first_name: legacyNameParts.first_name,
+      last_name: legacyNameParts.last_name,
       created_by: account_id,
       password_generated: !!generatedPassword,
       generated_password: generatedPassword,

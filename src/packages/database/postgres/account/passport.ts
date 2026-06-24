@@ -129,6 +129,7 @@ export async function update_account_and_passport(
   const dbg = db._dbg("update_account_and_passport");
   dbg(
     `updating account info ${to_json({
+      display_name: opts.display_name,
       first_name: opts.first_name,
       last_name: opts.last_name,
     })}`,
@@ -136,6 +137,7 @@ export async function update_account_and_passport(
   await set_account_info_if_different({
     db: db,
     account_id: opts.account_id,
+    display_name: opts.display_name,
     first_name: opts.first_name,
     last_name: opts.last_name,
   });

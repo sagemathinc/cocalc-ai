@@ -3,7 +3,10 @@ Get the *PUBLIC* profile of a user.
 */
 
 import getPool from "@cocalc/database/pool";
-import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import {
+  displayNameFromAccount,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import { Profile } from "./types";
 
 export default async function getProfile(
@@ -19,11 +22,13 @@ export default async function getProfile(
   if (rows.length == 0) {
     throw Error(`no account with id ${account_id}`);
   }
+  const display_name = displayNameFromAccount(rows[0]) || "Anonymous User";
+  const legacyNameParts = legacyNamePartsFromDisplayName(display_name);
   return {
     account_id,
-    display_name: displayNameFromAccount(rows[0]) || "Anonymous User",
-    first_name: rows[0].first_name ?? "Anonymous",
-    last_name: rows[0].last_name ?? "User",
+    display_name,
+    first_name: legacyNameParts.first_name,
+    last_name: legacyNameParts.last_name,
     image: rows[0].profile?.image,
     color: rows[0].profile?.color,
   };

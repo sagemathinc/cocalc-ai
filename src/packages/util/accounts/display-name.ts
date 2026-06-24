@@ -27,11 +27,13 @@ export function displayNameFromParts({
   );
 }
 
-export function displayNameFromAccount(account?: {
-  display_name?: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
-}): string {
+export function displayNameFromAccount(
+  account?: {
+    display_name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  } | null,
+): string {
   return (
     normalizeDisplayName(account?.display_name) ||
     displayNameFromParts({
@@ -47,11 +49,24 @@ export function legacyNamePartsFromDisplayName(display_name?: string | null): {
 } {
   const normalized = normalizeDisplayName(display_name);
   if (!normalized) {
-    return { first_name: "New", last_name: "User" };
+    return { first_name: "", last_name: "" };
   }
   const parts = normalized.split(" ");
   return {
     first_name: parts.shift() ?? normalized,
-    last_name: parts.join(" ") || "User",
+    last_name: parts.join(" "),
   };
+}
+
+export function legacyNamePartsFromAccount(
+  account?: {
+    display_name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  } | null,
+): {
+  first_name: string;
+  last_name: string;
+} {
+  return legacyNamePartsFromDisplayName(displayNameFromAccount(account));
 }

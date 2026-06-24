@@ -16,6 +16,10 @@ import {
   SetAccountNameInputSchema,
   SetAccountNameOutputSchema,
 } from "@cocalc/http-api/lib/api/schema/accounts/set-name";
+import {
+  displayNameFromParts,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 
 async function handle(req, res) {
   try {
@@ -38,7 +42,7 @@ async function get(req) {
     throw Error("Must be signed in to edit account name.");
   }
 
-  const { first_name, last_name, account_id } = getParams(req);
+  const { display_name, first_name, last_name, account_id } = getParams(req);
 
   // This user MUST be an admin:
   if (account_id) {
@@ -59,15 +63,18 @@ async function get(req) {
     });
   }
 
+  const displayName =
+    normalizeDisplayName(display_name) ||
+    displayNameFromParts({ first_name, last_name });
+  if (!displayName) {
+    throw Error("display_name must be nonempty");
+  }
+
   return userQuery({
     account_id: account_id || client_account_id,
     query: {
       accounts: {
-        // Any provided values must be non-empty in order for userQuery to SET values
-        // instead of fetching them.
-        //
-        ...(first_name && { first_name }),
-        ...(last_name && { last_name }),
+        display_name: displayName,
       },
     },
   });

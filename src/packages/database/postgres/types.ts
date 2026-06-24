@@ -264,6 +264,7 @@ export interface CreatePassportOpts {
 
 export interface UpdateAccountInfoAndPassportOpts {
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   strategy: string; // our name of the strategy
@@ -273,6 +274,7 @@ export interface UpdateAccountInfoAndPassportOpts {
 }
 
 export interface CreateSsoAccountOpts {
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   created_by?: string;

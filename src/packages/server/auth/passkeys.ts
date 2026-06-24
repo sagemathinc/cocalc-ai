@@ -35,6 +35,7 @@ import {
   getRememberMeHash,
 } from "@cocalc/server/auth/remember-me";
 import { getWebAuthnRelyingPartyForRequest } from "@cocalc/server/auth/webauthn-origin";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import {
   generateRecoveryCodes,
   normalizeRecoveryCode,
@@ -231,12 +232,13 @@ export async function startPasskeySetup({
   const existing = await listActivePasskeyRows(accountId);
   const account = (
     await getPool().query<{
+      display_name?: string | null;
       email_address?: string | null;
       first_name?: string | null;
       last_name?: string | null;
     }>(
       `
-        SELECT email_address, first_name, last_name
+        SELECT display_name, email_address, first_name, last_name
           FROM accounts
          WHERE account_id = $1::UUID
          LIMIT 1
@@ -245,10 +247,7 @@ export async function startPasskeySetup({
     )
   ).rows[0];
   const email = `${account?.email_address ?? ""}`.trim();
-  const displayName =
-    `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
-    email ||
-    accountId;
+  const displayName = displayNameFromAccount(account) || email || accountId;
   const options = await generateRegistrationOptions({
     rpName: rp.rp_name,
     rpID: rp.rp_id,

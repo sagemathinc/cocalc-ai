@@ -7,7 +7,10 @@ import {
   getClusterAccountById,
   getClusterAccountsByIds,
 } from "@cocalc/server/inter-bay/accounts";
-import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import {
+  displayNameFromAccount,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import { isValidUUID } from "@cocalc/util/misc";
 import { MAX_GET_NAMES_ACCOUNT_IDS } from "@cocalc/util/security-limits";
 export { MAX_GET_NAMES_ACCOUNT_IDS };
@@ -82,23 +85,17 @@ export function validateGetNamesAccountIds(account_ids: unknown): string[] {
 
 function canonicalName(row) {
   // some accounts have these null for some reason sometimes, but it is nice if client code can assume not null.
-  let { display_name = "", first_name = "", last_name = "", profile } = row;
+  let { display_name = "", profile } = row;
   display_name = displayNameFromAccount({
     display_name,
-    first_name,
-    last_name,
+    first_name: row.first_name,
+    last_name: row.last_name,
   });
-  first_name = first_name.trim();
-  last_name = last_name.trim();
   if (!display_name) {
     display_name = "No Name";
   }
-  if (!first_name && !last_name) {
-    // Also ensure both are not empty so you can always see something.  I think the frontend and/or api doesn't
-    // allow a user to make their name empty, but *just in case* we do this.
-    first_name = "No";
-    last_name = "Name";
-  }
+  const { first_name, last_name } =
+    legacyNamePartsFromDisplayName(display_name);
   return { display_name, first_name, last_name, profile };
 }
 

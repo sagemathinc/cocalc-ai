@@ -4,6 +4,10 @@
  */
 
 import { is_valid_username } from "@cocalc/backend/misc";
+import {
+  displayNameFromParts,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import { lower_email_address, uuid } from "@cocalc/util/misc";
 
 import { _passport_key } from "./passport-key";
@@ -14,9 +18,22 @@ export async function createSsoAccount(
   opts: CreateSsoAccountOpts,
 ): Promise<string> {
   const dbg = db._dbg(
-    `create_sso_account(${opts.first_name}, ${opts.last_name}, ${opts.lti_id}, ${opts.email_address}, ${opts.passport_strategy}, ${opts.passport_id}), ${opts.usage_intent}`,
+    `create_sso_account(${opts.display_name}, ${opts.lti_id}, ${opts.email_address}, ${opts.passport_strategy}, ${opts.passport_id}), ${opts.usage_intent}`,
   );
   dbg();
+
+  const display_name =
+    normalizeDisplayName(opts.display_name) ||
+    displayNameFromParts({
+      first_name: opts.first_name,
+      last_name: opts.last_name,
+    }) ||
+    "Anonymous User";
+
+  const displayNameTest = is_valid_username(display_name);
+  if (displayNameTest != null) {
+    throw `display_name not valid: ${displayNameTest}`;
+  }
 
   for (const name of ["first_name", "last_name"] as const) {
     const value = opts[name];
@@ -67,8 +84,8 @@ export async function createSsoAccount(
       query: "INSERT INTO accounts",
       values: {
         "account_id     :: UUID": account_id,
-        "first_name     :: TEXT": opts.first_name,
-        "last_name      :: TEXT": opts.last_name,
+        "first_name     :: TEXT": null,
+        "last_name      :: TEXT": null,
         "lti_id         :: TEXT[]": opts.lti_id,
         "created        :: TIMESTAMP": new Date(),
         "created_by     :: INET": opts.created_by,
@@ -76,6 +93,16 @@ export async function createSsoAccount(
         "email_address  :: TEXT": email_address,
         "sign_up_usage_intent :: TEXT": opts.usage_intent,
       },
+    });
+    await db.async_query({
+      query: `
+        UPDATE accounts
+           SET display_name = $1::TEXT,
+               first_name = NULL,
+               last_name = NULL
+         WHERE account_id = $2::UUID
+      `,
+      params: [display_name, account_id],
     });
 
     if (opts.passport_strategy != null) {

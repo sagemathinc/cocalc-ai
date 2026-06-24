@@ -102,8 +102,7 @@ describe("/api/v2/accounts/set-name API-key scope", () => {
       account_id: accountId,
       query: {
         accounts: {
-          first_name: "Ada",
-          last_name: "Lovelace",
+          display_name: "Ada Lovelace",
         },
       },
     });
