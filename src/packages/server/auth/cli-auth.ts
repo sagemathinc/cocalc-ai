@@ -8,6 +8,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import basePath from "@cocalc/backend/base-path";
 import { conatPassword } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
@@ -161,17 +162,19 @@ async function assertCliLoginStartRateLimit({
 
 async function getAccountLabel(account_id: string): Promise<{
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
 }> {
   const row = (
     await getPool().query<{
       email_address?: string | null;
+      display_name?: string | null;
       first_name?: string | null;
       last_name?: string | null;
     }>(
       `
-        SELECT email_address, first_name, last_name
+        SELECT email_address, display_name, first_name, last_name
           FROM accounts
          WHERE account_id = $1::UUID
          LIMIT 1
@@ -561,6 +564,7 @@ export async function redeemCliLoginChallenge({
   home_bay_id: string;
   home_bay_url?: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
 }> {
@@ -620,6 +624,12 @@ export async function redeemCliLoginChallenge({
     home_bay_id,
     home_bay_url: undefined,
     email_address: account?.email_address ?? null,
+    display_name:
+      displayNameFromAccount({
+        display_name: account?.display_name,
+        first_name: account?.first_name,
+        last_name: account?.last_name,
+      }) || null,
     first_name: account?.first_name ?? null,
     last_name: account?.last_name ?? null,
   };
@@ -675,14 +685,12 @@ export async function getCliAuthApprovalInfo({
   const isPendingLogin =
     row.kind === "login" && row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID;
   const label = isPendingLogin ? {} : await getAccountLabel(row.account_id);
-  const display_name =
-    `${label.first_name ?? ""} ${label.last_name ?? ""}`.trim();
   return {
     challenge_id: row.id,
     kind: row.kind,
     account_id: isPendingLogin ? null : row.account_id,
     email_address: label.email_address ?? null,
-    display_name: display_name || null,
+    display_name: displayNameFromAccount(label) || null,
     email_hint:
       typeof row.metadata?.email_hint === "string"
         ? `${row.metadata.email_hint}`

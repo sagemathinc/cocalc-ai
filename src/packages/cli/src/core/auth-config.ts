@@ -12,6 +12,7 @@ export type AuthProfile = {
   api?: string;
   account_id?: string;
   email_address?: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   api_key?: string;
