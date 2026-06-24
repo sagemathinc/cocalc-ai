@@ -27,6 +27,7 @@ export interface ManagedSshSessionIdentity {
   remote_addr: string;
   project_id: string;
   account_id?: string;
+  authorized?: true;
 }
 
 export interface AuthorizedSshPublicKeyResult {
@@ -115,8 +116,12 @@ export class ManagedSshPluginState {
 
   async nextAuthMethods(
     meta: any,
-  ): Promise<readonly [typeof SSH_AUTH_METHOD_PUBLICKEY]> {
+  ): Promise<readonly (typeof SSH_AUTH_METHOD_PUBLICKEY)[]> {
     const normalized = this.normalizeMeta(meta);
+    const existing = this.getSession(normalized.from_addr);
+    if (existing?.authorized) {
+      return [];
+    }
     if (normalized.user_name) {
       await this.noteProjectTarget(normalized);
     }
@@ -141,6 +146,7 @@ export class ManagedSshPluginState {
       remote_addr,
       project_id: target.project_id,
       ...(current?.account_id ? { account_id: current.account_id } : {}),
+      ...(current?.authorized ? { authorized: true as const } : {}),
     };
     this.sessions.set(remote_addr, next);
     return next;
@@ -166,6 +172,7 @@ export class ManagedSshPluginState {
       remote_addr: placeholder.remote_addr,
       project_id: authorized.project_id,
       ...(authorized.account_id ? { account_id: authorized.account_id } : {}),
+      authorized: true,
     });
     return authorized;
   }
