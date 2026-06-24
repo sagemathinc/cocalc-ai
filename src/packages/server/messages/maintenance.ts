@@ -8,6 +8,7 @@ import { getNames } from "@cocalc/server/accounts/get-name";
 import get from "./get";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import siteUrl from "@cocalc/server/hub/site-url";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 const log = getLogger("server:messages:maintenance");
 
@@ -97,7 +98,7 @@ export async function sendAllEmailSummaries() {
     // The hardcoded "1 week" below is just assuming that this service isn't down for more than a week.
     const pool = getPool();
     const query = `
-SELECT a.account_id, a.first_name, a.last_name, a.unread_message_count,
+SELECT a.account_id, a.display_name, a.first_name, a.last_name, a.unread_message_count,
        a.email_address_verified, a.email_address, a.last_message_summary
 FROM accounts a
 JOIN messages m ON a.account_id = ANY(m.to_ids)
@@ -107,6 +108,7 @@ AND a.email_address IS NOT NULL
 AND m.sent > coalesce(a.last_message_summary, NOW() - interval '1 week')
 AND coalesce((a.other_settings#>'{no_email_new_messages}')::boolean, false) = false
 GROUP BY a.account_id,
+         a.display_name,
          a.first_name,
          a.last_name,
          a.unread_message_count,
@@ -126,6 +128,7 @@ GROUP BY a.account_id,
 
     for (const {
       account_id,
+      display_name,
       first_name,
       last_name,
       email_address_verified,
@@ -137,13 +140,19 @@ GROUP BY a.account_id,
         email_address,
       });
       if (!email) {
+        const name = displayNameFromAccount({
+          display_name,
+          first_name,
+          last_name,
+        });
         log.debug(
-          `sendAllEmailSummaries: no email for ${account_id}, ${first_name}, ${last_name} so skipping`,
+          `sendAllEmailSummaries: no email for ${account_id}, ${name} so skipping`,
         );
         continue;
       }
       await sendEmailSummary({
         account_id,
+        display_name,
         first_name,
         last_name,
         email,
@@ -163,15 +172,20 @@ function getEmailAddress({ email_address_verified, email_address }) {
 
 export async function sendEmailSummary({
   account_id,
+  display_name,
   first_name,
   last_name,
   email,
   last_message_summary,
 }) {
   try {
-    log.debug(
-      `sendEmailSummary for ${account_id}, ${first_name}, ${last_name} to ${email}`,
-    );
+    const name =
+      displayNameFromAccount({
+        display_name,
+        first_name,
+        last_name,
+      }) || email;
+    log.debug(`sendEmailSummary for ${account_id}, ${name} to ${email}`);
 
     const messages = await get({
       account_id,
@@ -189,8 +203,6 @@ export async function sendEmailSummary({
       return;
     }
 
-    const name = `${first_name} ${last_name}`;
-
     const { help_email: from, site_name: siteName } = await getServerSettings();
     const settings = await siteUrl("settings");
     const url = await siteUrl("notifications#page=messages-inbox");
@@ -202,8 +214,8 @@ export async function sendEmailSummary({
     const names0 = await getNames(messages.map(({ from_id }) => from_id));
     const names: { [account_id: string]: string } = {};
     for (const account_id in names0) {
-      const { first_name, last_name } = names0[account_id];
-      names[account_id] = `${first_name} ${last_name}`;
+      names[account_id] =
+        displayNameFromAccount(names0[account_id]) || "Unknown User";
     }
 
     const html = `
@@ -273,6 +285,7 @@ An unexpected bug occurred trying to send an email summary.  An admin should inv
 
 ${JSON.stringify({
   account_id,
+  display_name,
   first_name,
   last_name,
   email,
