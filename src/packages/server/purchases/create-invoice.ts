@@ -114,14 +114,14 @@ async function createStripeCustomer(account_id: string): Promise<string> {
   logger.debug("createStripeCustomer", account_id);
   const db = getPool();
   const { rows } = await db.query(
-    "SELECT email_address, first_name, last_name FROM accounts WHERE account_id=$1",
+    "SELECT email_address, display_name, first_name, last_name FROM accounts WHERE account_id=$1",
     [account_id],
   );
   if (rows.length == 0) {
     throw Error(`no account ${account_id}`);
   }
   const email = rows[0].email_address;
-  const description = stripeName(rows[0].first_name, rows[0].last_name);
+  const description = stripeName(rows[0]);
   const stripe = await getConn();
   const { id } = await stripe.customers.create({
     description,

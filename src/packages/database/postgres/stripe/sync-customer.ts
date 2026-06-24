@@ -72,13 +72,13 @@ export default async function syncCustomer({
 
   // update email, name or description in stripe if different from database.
   const { rows } = await pool.query(
-    "SELECT email_address, first_name, last_name FROM accounts WHERE account_id = $1::UUID",
+    "SELECT email_address, display_name, first_name, last_name FROM accounts WHERE account_id = $1::UUID",
     [account_id],
   );
   if (rows.length == 0) {
     throw Error(`no account ${account_id}`);
   }
-  const { email_address, first_name, last_name } = rows[0];
+  const { email_address } = rows[0];
 
   const update: any = {};
   if (
@@ -89,7 +89,7 @@ export default async function syncCustomer({
     update.email = email_address;
   }
 
-  const name = stripeName(first_name, last_name);
+  const name = stripeName(rows[0]);
   if (name != customer.name) {
     update.name = name;
   }
