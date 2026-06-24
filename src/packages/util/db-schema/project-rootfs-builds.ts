@@ -14,7 +14,9 @@ Table({
       "account_id",
       "host_id",
       "op_id",
+      "publish_op_id",
       "status",
+      "publish_status",
       "recipe_ref",
       "created_at",
       "updated",
@@ -42,6 +44,10 @@ Table({
     op_id: {
       type: "uuid",
       desc: "Associated long-running operation id.",
+    },
+    publish_op_id: {
+      type: "uuid",
+      desc: "Associated RootFS publish long-running operation id, if this build was published.",
     },
     status: {
       type: "string",
@@ -73,6 +79,20 @@ Table({
       type: "string",
       desc: "Latest known build error.",
     },
+    publish_status: {
+      type: "string",
+      pg_type: "VARCHAR(32)",
+      desc: "Latest known status of the associated RootFS publish operation.",
+    },
+    publish_image_id: {
+      type: "string",
+      pg_type: "VARCHAR(128)",
+      desc: "Published RootFS catalog image id, once known.",
+    },
+    publish_error: {
+      type: "string",
+      desc: "Latest known publish error, if any.",
+    },
     created_at: {
       type: "timestamp",
       desc: "Build creation time reported by the project host or hub.",
@@ -92,6 +112,14 @@ Table({
     last_output_at: {
       type: "timestamp",
       desc: "Latest output time reported by the project-host runner.",
+    },
+    publish_started_at: {
+      type: "timestamp",
+      desc: "When the associated publish operation started, if known.",
+    },
+    publish_finished_at: {
+      type: "timestamp",
+      desc: "When the associated publish operation finished, if known.",
     },
     updated: {
       type: "timestamp",

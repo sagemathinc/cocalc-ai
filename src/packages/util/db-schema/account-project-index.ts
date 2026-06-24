@@ -31,6 +31,7 @@ Table({
           title: "",
           description: "",
           theme: null,
+          labels: {},
           users_summary: {},
           state_summary: {},
           last_edited: null,
@@ -77,6 +78,10 @@ Table({
     theme: {
       type: "map",
       desc: "Projected project appearance theme for list, nav, and search views.",
+    },
+    labels: {
+      type: "map",
+      desc: "Projected project labels for list filtering, grouping, and automation.",
     },
     users_summary: {
       type: "map",

@@ -48,6 +48,9 @@ describe("server/account/project-feed remote home-bay apply", () => {
         title: "Shared Project",
         description: "available from another bay",
         theme: null,
+        labels: {
+          "cocalc.com/project-kind": "rootfs-build",
+        },
         host_id: HOST_ID,
         rootfs_image_id: "official-minimal",
         owning_bay_id: "bay-0",
@@ -70,7 +73,7 @@ describe("server/account/project-feed remote home-bay apply", () => {
     await expect(
       getPool().query(
         `SELECT project_id, owning_bay_id, host_id, title, description,
-                rootfs_image_id, is_hidden, deletion_protection, last_edited, last_backup
+                labels, rootfs_image_id, is_hidden, deletion_protection, last_edited, last_backup
            FROM account_project_index
           WHERE account_id = $1`,
         [ACCOUNT_ID],
@@ -84,6 +87,9 @@ describe("server/account/project-feed remote home-bay apply", () => {
           rootfs_image_id: "official-minimal",
           title: "Shared Project",
           description: "available from another bay",
+          labels: {
+            "cocalc.com/project-kind": "rootfs-build",
+          },
           is_hidden: false,
           deletion_protection: true,
           last_edited: new Date("2026-04-08T23:20:00.000Z"),

@@ -29,7 +29,6 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { useAppContext } from "@cocalc/frontend/app/context";
-import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   FrameContext,
   defaultFrameContext,
@@ -519,7 +518,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const flyoutLimit = useMemo(() => {
     return {
       left: FLYOUT_DEFAULT_WIDTH_PX / 2,
-      right: IS_MOBILE ? pageWidthPx * 0.9 : pageWidthPx / 2,
+      right: pageWidthPx * 0.9,
     };
   }, [pageWidthPx]);
 

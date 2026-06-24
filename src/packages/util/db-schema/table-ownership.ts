@@ -160,6 +160,8 @@ export const TABLE_OWNERSHIP = {
       "project_collab_invite_blocks",
       "project_collab_invites",
       "project_events_outbox",
+      "project_labels",
+      "project_rootfs_builds",
       "project_rootfs_states",
       "projects",
     ],

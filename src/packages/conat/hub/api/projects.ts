@@ -18,7 +18,10 @@ import {
   type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
-import type { RootfsConfigExport } from "@cocalc/util/rootfs-images";
+import type {
+  ProjectRootfsPublishLroRef,
+  RootfsConfigExport,
+} from "@cocalc/util/rootfs-images";
 import type { CodexUsageStatusInfo } from "./system";
 import type {
   ProjectUserRole,
@@ -628,6 +631,7 @@ export interface AccountProjectListWindowRow {
   title: string;
   description: string;
   theme: Record<string, any> | null;
+  labels: Record<string, string>;
   host_id: string | null;
   rootfs_image_id: string | null;
   owning_bay_id: string;
@@ -684,6 +688,12 @@ export interface ProjectRootfsPublishConfig {
 export type ProjectRootfsBuildStatusResponse = HostRootfsBuildStatusResponse & {
   host_id: string;
   op_id?: string | null;
+  publish_op_id?: string | null;
+  publish_status?: string | null;
+  publish_image_id?: string | null;
+  publish_error?: string | null;
+  publish_started_at?: string;
+  publish_finished_at?: string;
 };
 export type ProjectRootfsBuildLogResponse = HostRootfsBuildLogResponse & {
   host_id: string;
@@ -716,6 +726,12 @@ export type ProjectRootfsBuildRecord = Omit<
 > & {
   paths?: HostRootfsBuildStatusResponse["paths"];
   account_id?: string | null;
+  publish_op_id?: string | null;
+  publish_status?: string | null;
+  publish_image_id?: string | null;
+  publish_error?: string | null;
+  publish_started_at?: string;
+  publish_finished_at?: string;
   updated?: string;
 };
 export interface ProjectRootfsBuildListRequest {
@@ -723,9 +739,21 @@ export interface ProjectRootfsBuildListRequest {
   project_id: string;
   limit?: number;
 }
+export interface ProjectRootfsBuildPublishRecordRequest {
+  account_id?: string;
+  project_id: string;
+  build_id: string;
+  publish_op_id: string;
+}
+export interface ProjectRootfsBuildPublishRecordResponse {
+  build: ProjectRootfsBuildRecord;
+  publish: ProjectRootfsPublishLroRef;
+}
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
+export type ProjectLabels = Record<string, string>;
+export type ProjectLabelPatch = Record<string, string | null | undefined>;
 
 export const projects = {
   createProject: authFirstRequireAccount,
@@ -770,10 +798,13 @@ export const projects = {
   getProjectRootfs: authFirstRequireAccount,
   getProjectRootfsPublishConfig: authFirstRequireAccount,
   setProjectRootfsPublishConfig: authFirstRequireAccount,
+  getProjectLabels: authFirstRequireAccount,
+  setProjectLabels: authFirstRequireAccount,
   startProjectRootfsBuild: authFirstRequireAccount,
   getProjectRootfsBuildStatus: authFirstRequireAccount,
   getProjectRootfsBuildLog: authFirstRequireAccount,
   listProjectRootfsBuilds: authFirstRequireAccount,
+  recordProjectRootfsBuildPublish: authFirstRequireAccount,
   cancelProjectRootfsBuild: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
   getProjectRuntimeSponsorStatus: authFirstRequireAccount,
@@ -1010,6 +1041,17 @@ export interface Projects {
     config: ProjectRootfsPublishConfig | null;
   }) => Promise<void>;
 
+  getProjectLabels: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectLabels>;
+
+  setProjectLabels: (opts: {
+    account_id?: string;
+    project_id: string;
+    labels: ProjectLabelPatch;
+  }) => Promise<ProjectLabels>;
+
   startProjectRootfsBuild: (
     opts: ProjectRootfsBuildStartRequest,
   ) => Promise<ProjectRootfsBuildStatusResponse>;
@@ -1025,6 +1067,10 @@ export interface Projects {
   listProjectRootfsBuilds: (
     opts: ProjectRootfsBuildListRequest,
   ) => Promise<ProjectRootfsBuildRecord[]>;
+
+  recordProjectRootfsBuildPublish: (
+    opts: ProjectRootfsBuildPublishRecordRequest,
+  ) => Promise<ProjectRootfsBuildPublishRecordResponse>;
 
   cancelProjectRootfsBuild: (
     opts: ProjectRootfsBuildCancelRequest,
