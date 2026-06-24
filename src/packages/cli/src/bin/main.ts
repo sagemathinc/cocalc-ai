@@ -21,6 +21,7 @@ import {
 import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -1508,22 +1509,26 @@ async function resolveAccountByIdentifier(
 function serializeInviteRow(
   invite: ProjectCollabInviteRow,
 ): Record<string, unknown> {
+  const inviterName = displayNameFromAccount({
+    display_name: invite.inviter_name,
+    first_name: invite.inviter_first_name,
+    last_name: invite.inviter_last_name,
+  });
+  const inviteeName = displayNameFromAccount({
+    display_name: invite.invitee_name,
+    first_name: invite.invitee_first_name,
+    last_name: invite.invitee_last_name,
+  });
   return {
     invite_id: invite.invite_id,
     project_id: invite.project_id,
     project_title: invite.project_title ?? null,
     project_description: invite.project_description ?? null,
     inviter_account_id: invite.inviter_account_id,
-    inviter_name:
-      `${invite.inviter_name ?? ""}`.trim() ||
-      `${invite.inviter_first_name ?? ""} ${invite.inviter_last_name ?? ""}`.trim() ||
-      null,
+    inviter_name: inviterName || null,
     inviter_email_address: invite.inviter_email_address ?? null,
     invitee_account_id: invite.invitee_account_id,
-    invitee_name:
-      `${invite.invitee_name ?? ""}`.trim() ||
-      `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
-      null,
+    invitee_name: inviteeName || null,
     invitee_email_address: invite.invitee_email_address ?? null,
     status: invite.status,
     message: invite.message ?? null,
@@ -1544,13 +1549,17 @@ function compactInviteRow(
   accountId: string,
 ): Record<string, unknown> {
   const inviterName =
-    `${invite.inviter_name ?? ""}`.trim() ||
-    `${invite.inviter_first_name ?? ""} ${invite.inviter_last_name ?? ""}`.trim() ||
-    invite.inviter_account_id;
+    displayNameFromAccount({
+      display_name: invite.inviter_name,
+      first_name: invite.inviter_first_name,
+      last_name: invite.inviter_last_name,
+    }) || invite.inviter_account_id;
   const inviteeName =
-    `${invite.invitee_name ?? ""}`.trim() ||
-    `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
-    invite.invitee_account_id;
+    displayNameFromAccount({
+      display_name: invite.invitee_name,
+      first_name: invite.invitee_first_name,
+      last_name: invite.invitee_last_name,
+    }) || invite.invitee_account_id;
   const outbound = invite.inviter_account_id === accountId;
   const inbound = invite.invitee_account_id === accountId;
   const direction = outbound ? "outbound" : inbound ? "inbound" : "related";
