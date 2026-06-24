@@ -5,6 +5,7 @@
 
 const mockGetConn = jest.fn();
 const mockGetStripeCustomerId = jest.fn();
+const mockCurrentStripeSite = jest.fn();
 const mockCreateCredit = jest.fn();
 const mockApplyMembershipChange = jest.fn();
 const mockSend = jest.fn();
@@ -14,7 +15,10 @@ const mockName = jest.fn();
 const mockAdminAlert = jest.fn();
 const mockGetBalance = jest.fn();
 const mockPurchaseMembershipPackage = jest.fn();
+const mockAssignMembershipPackageSeat = jest.fn();
 const mockVerifyDirectStudentCourseProduct = jest.fn();
+const mockSetStripeCustomerId = jest.fn();
+const mockIsValidAccount = jest.fn();
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -22,6 +26,7 @@ jest.mock("@cocalc/server/stripe/connection", () => ({
 }));
 
 jest.mock("./util", () => ({
+  currentStripeSite: (...args: any[]) => mockCurrentStripeSite(...args),
   getAccountIdFromStripeCustomerId: jest.fn(),
   getStripeCustomerId: (...args: any[]) => mockGetStripeCustomerId(...args),
 }));
@@ -59,13 +64,29 @@ jest.mock("@cocalc/server/purchases/membership-package", () => ({
   purchaseMembershipPackages: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/membership/packages", () => ({
+  assignMembershipPackageSeat: (...args: any[]) =>
+    mockAssignMembershipPackageSeat(...args),
+}));
+
 jest.mock("@cocalc/server/purchases/direct-student-course-product", () => ({
   verifyDirectStudentCourseProduct: (...args: any[]) =>
     mockVerifyDirectStudentCourseProduct(...args),
   verifyDirectStudentCourseProducts: jest.fn(),
 }));
 
-import processPaymentIntents from "./process-payment-intents";
+jest.mock("@cocalc/database/postgres/stripe", () => ({
+  setStripeCustomerId: (...args: any[]) => mockSetStripeCustomerId(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/is-valid-account", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockIsValidAccount(...args),
+}));
+
+import processPaymentIntents, {
+  processAllRecentPaymentIntents,
+} from "./process-payment-intents";
 import {
   MEMBERSHIP_CHANGE,
   MEMBERSHIP_PACKAGE_PURCHASE,
@@ -79,8 +100,12 @@ describe("processPaymentIntents invoice-payment links", () => {
     invoices: {
       retrieve: jest.fn(),
     },
+    customers: {
+      retrieve: jest.fn(),
+    },
     paymentIntents: {
       retrieve: jest.fn(),
+      search: jest.fn(),
       update: jest.fn(),
     },
   };
@@ -89,6 +114,7 @@ describe("processPaymentIntents invoice-payment links", () => {
     jest.clearAllMocks();
     mockGetConn.mockResolvedValue(stripe);
     mockGetStripeCustomerId.mockResolvedValue("cus_123");
+    mockCurrentStripeSite.mockResolvedValue("cocalc.ai");
     mockCreateCredit.mockResolvedValue(101);
     mockApplyMembershipChange.mockResolvedValue({});
     mockSend.mockResolvedValue(undefined);
@@ -100,6 +126,13 @@ describe("processPaymentIntents invoice-payment links", () => {
       package_id: "package-1",
       purchase_id: 202,
     });
+    mockAssignMembershipPackageSeat.mockResolvedValue({
+      id: "assignment-1",
+      package_id: "package-1",
+      account_id: "acct-1",
+    });
+    mockSetStripeCustomerId.mockResolvedValue(undefined);
+    mockIsValidAccount.mockResolvedValue(true);
     mockVerifyDirectStudentCourseProduct.mockImplementation(
       async ({ product }) => ({
         ...product,
@@ -123,6 +156,11 @@ describe("processPaymentIntents invoice-payment links", () => {
       id: "in_123",
       lines: { data: [] },
     });
+    stripe.customers.retrieve.mockResolvedValue({
+      id: "cus_123",
+      deleted: false,
+      metadata: { account_id: "acct-1" },
+    });
     stripe.paymentIntents.retrieve.mockResolvedValue({
       customer: "cus_123",
       id: "pi_123",
@@ -137,6 +175,7 @@ describe("processPaymentIntents invoice-payment links", () => {
       status: "succeeded",
     });
     stripe.paymentIntents.update.mockResolvedValue({});
+    stripe.paymentIntents.search.mockResolvedValue({ data: [] });
   });
 
   it("processes invoice-created payment intents without a top-level invoice field", async () => {
@@ -223,6 +262,15 @@ describe("processPaymentIntents invoice-payment links", () => {
       },
       amount: expect.anything(),
     });
+    expect(mockAssignMembershipPackageSeat).toHaveBeenCalledWith({
+      package_id: "package-1",
+      account_id: "acct-1",
+      assigned_by_account_id: "acct-1",
+      metadata: expect.objectContaining({
+        direct_student_purchase: true,
+        verified_student_course_purchase: true,
+      }),
+    });
     expect(stripe.paymentIntents.update).toHaveBeenLastCalledWith("pi_123", {
       metadata: expect.objectContaining({
         credit_id: 101,
@@ -283,6 +331,15 @@ describe("processPaymentIntents invoice-payment links", () => {
         fulfillment_id: "pi_direct_course",
       }),
     );
+    expect(mockAssignMembershipPackageSeat).toHaveBeenCalledWith({
+      package_id: "package-1",
+      account_id: "acct-1",
+      assigned_by_account_id: "acct-1",
+      metadata: expect.objectContaining({
+        direct_student_purchase: true,
+        verified_student_course_purchase: true,
+      }),
+    });
     expect(stripe.paymentIntents.update).toHaveBeenLastCalledWith(
       "pi_direct_course",
       {
@@ -347,6 +404,140 @@ describe("processPaymentIntents invoice-payment links", () => {
       expect.objectContaining({
         account_id: "acct-1",
         fulfillment_id: "pi_missing_invoice",
+      }),
+    );
+  });
+
+  it("processes succeeded payments on verified duplicate Stripe customers", async () => {
+    mockGetStripeCustomerId.mockResolvedValue("cus_current");
+    stripe.customers.retrieve.mockResolvedValue({
+      id: "cus_paid_duplicate",
+      deleted: false,
+      metadata: { account_id: "acct-1" },
+    });
+    stripe.invoicePayments.list.mockResolvedValue({ data: [] });
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      customer: "cus_paid_duplicate",
+      id: "pi_duplicate_customer",
+      metadata: {
+        account_id: "acct-1",
+        allow_downgrade: "true",
+        membership_class: "pro",
+        membership_interval: "month",
+        purpose: MEMBERSHIP_CHANGE,
+        total_excluding_tax_usd: "500",
+      },
+      status: "succeeded",
+    });
+
+    await expect(
+      processPaymentIntents({
+        account_id: "acct-1",
+        payment_intent_id: "pi_duplicate_customer",
+        strict: true,
+      }),
+    ).resolves.toBe(1);
+
+    expect(stripe.customers.retrieve).toHaveBeenCalledWith(
+      "cus_paid_duplicate",
+    );
+    expect(mockSetStripeCustomerId).toHaveBeenCalledWith(
+      "acct-1",
+      "cus_paid_duplicate",
+    );
+    expect(mockApplyMembershipChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-1",
+      }),
+    );
+  });
+
+  it("continues missed-payment maintenance after one payment fails", async () => {
+    mockGetStripeCustomerId.mockImplementation(async ({ account_id }) =>
+      account_id === "acct-good" ? "cus_good" : "cus_current",
+    );
+    stripe.customers.retrieve.mockResolvedValue({
+      id: "cus_wrong",
+      deleted: false,
+      metadata: { account_id: "somebody-else" },
+    });
+    stripe.invoicePayments.list.mockResolvedValue({ data: [] });
+    stripe.paymentIntents.search.mockResolvedValue({
+      data: [
+        {
+          customer: "cus_wrong",
+          id: "pi_bad",
+          metadata: {
+            account_id: "acct-bad",
+            allow_downgrade: "true",
+            membership_class: "pro",
+            membership_interval: "month",
+            purpose: MEMBERSHIP_CHANGE,
+            total_excluding_tax_usd: "500",
+          },
+          status: "succeeded",
+        },
+        {
+          customer: "cus_foreign",
+          id: "pi_foreign",
+          metadata: {
+            account_id: "acct-foreign",
+            allow_downgrade: "true",
+            cocalc_site: "cocalc.com",
+            membership_class: "pro",
+            membership_interval: "month",
+            purpose: MEMBERSHIP_CHANGE,
+            total_excluding_tax_usd: "500",
+          },
+          status: "succeeded",
+        },
+        {
+          customer: "cus_legacy_foreign",
+          id: "pi_legacy_foreign",
+          metadata: {
+            account_id: "acct-legacy-foreign",
+            allow_downgrade: "true",
+            membership_class: "pro",
+            membership_interval: "month",
+            purpose: MEMBERSHIP_CHANGE,
+            total_excluding_tax_usd: "500",
+          },
+          status: "succeeded",
+        },
+        {
+          customer: "cus_good",
+          id: "pi_good",
+          metadata: {
+            account_id: "acct-good",
+            allow_downgrade: "true",
+            membership_class: "pro",
+            membership_interval: "month",
+            purpose: MEMBERSHIP_CHANGE,
+            total_excluding_tax_usd: "500",
+          },
+          status: "succeeded",
+        },
+      ],
+    });
+    mockIsValidAccount.mockImplementation(async (account_id) => {
+      return account_id !== "acct-legacy-foreign";
+    });
+
+    await expect(processAllRecentPaymentIntents()).resolves.toBe(1);
+
+    expect(mockAdminAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: "Issue Processing a User Payment Before Credit",
+      }),
+    );
+    expect(mockApplyMembershipChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-good",
+      }),
+    );
+    expect(mockApplyMembershipChange).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-legacy-foreign",
       }),
     );
   });

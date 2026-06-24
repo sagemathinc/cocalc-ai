@@ -10,6 +10,7 @@ const mockGetStripeCustomerId = jest.fn();
 const mockSanityCheckAmount = jest.fn();
 const mockAssertValidUserMetadata = jest.fn();
 const mockGetStripeLineItems = jest.fn();
+const mockCurrentStripeSite = jest.fn();
 const mockIsReadyToProcess = jest.fn();
 const mockProcessPaymentIntent = jest.fn();
 const mockAlertUncreditedSucceededPayment = jest.fn();
@@ -32,6 +33,7 @@ jest.mock("./util", () => ({
   getStripeCustomerId: (...args: any[]) => mockGetStripeCustomerId(...args),
   getStripeLineItems: (...args: any[]) => mockGetStripeLineItems(...args),
   sanityCheckAmount: (...args: any[]) => mockSanityCheckAmount(...args),
+  currentStripeSite: (...args: any[]) => mockCurrentStripeSite(...args),
 }));
 
 jest.mock("./process-payment-intents", () => ({
@@ -91,6 +93,7 @@ describe("createPaymentIntent", () => {
     mockGetStripeCustomerId.mockResolvedValue("cus_123");
     mockSanityCheckAmount.mockResolvedValue(undefined);
     mockAssertValidUserMetadata.mockReturnValue(undefined);
+    mockCurrentStripeSite.mockResolvedValue("cocalc.ai");
     mockGetStripeLineItems.mockReturnValue({
       lineItemsWithoutCredit: lineItems,
       total_excluding_tax_usd: 7200,
@@ -206,6 +209,7 @@ describe("createPaymentIntent", () => {
       description: "Basic membership, annual",
       metadata: expect.objectContaining({
         account_id: "acct-1",
+        cocalc_site: "cocalc.ai",
         invoice_id: "in_123",
         membership_class: "basic",
         purpose: "membership-change",
