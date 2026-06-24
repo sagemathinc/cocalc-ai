@@ -1079,6 +1079,7 @@ test("rootfs build runs recipe and saves publish config on the project", async (
   const oldStateFile = process.env.COCALC_ROOTFS_BUILD_STATE_FILE;
   let savedConfig: any;
   let buildRequest: any;
+  let statusPolls = 0;
   const labelRequests: any[] = [];
   try {
     process.env.COCALC_ROOTFS_BUILD_STATE_FILE = stateFile;
@@ -1140,20 +1141,28 @@ test("rootfs build runs recipe and saves publish config on the project", async (
           found: true,
           path: ".cocalc/rootfs-builds/build-1/build.log",
         }),
-        getProjectRootfsBuildStatus: async () => ({
-          build_id: "build-1",
-          project_id: "builder-project",
-          host_id: "host-1",
-          status: "succeeded",
-          created_at: "2026-06-22T00:00:00.000Z",
-          paths: {
-            dir: ".cocalc/rootfs-builds/build-1",
-            script: ".cocalc/rootfs-builds/build-1/run.sh",
-            log: ".cocalc/rootfs-builds/build-1/build.log",
-            status: ".cocalc/rootfs-builds/build-1/status.json",
-            events: ".cocalc/rootfs-builds/build-1/events.ndjson",
-          },
-        }),
+        getProjectRootfsBuildStatus: async () => {
+          statusPolls += 1;
+          if (statusPolls === 1) {
+            throw new Error(
+              "timeout waiting for hub response: projects.getProjectRootfsBuildStatus (30000ms)",
+            );
+          }
+          return {
+            build_id: "build-1",
+            project_id: "builder-project",
+            host_id: "host-1",
+            status: "succeeded",
+            created_at: "2026-06-22T00:00:00.000Z",
+            paths: {
+              dir: ".cocalc/rootfs-builds/build-1",
+              script: ".cocalc/rootfs-builds/build-1/run.sh",
+              log: ".cocalc/rootfs-builds/build-1/build.log",
+              status: ".cocalc/rootfs-builds/build-1/status.json",
+              events: ".cocalc/rootfs-builds/build-1/events.ndjson",
+            },
+          };
+        },
       },
       waitForLro: async () => ({ status: "succeeded" }),
     });
@@ -1177,6 +1186,7 @@ test("rootfs build runs recipe and saves publish config on the project", async (
     assert.equal(savedConfig.config.config.metadata.label, "Build demo");
     assert.equal(buildRequest.project_id, "builder-project");
     assert.equal(buildRequest.recipe_ref, "build-demo");
+    assert.equal(statusPolls, 2);
     assert.deepEqual(labelRequests, [
       {
         project_id: "builder-project",
@@ -1705,6 +1715,7 @@ test("rootfs build attach tails direct logs and follows to terminal status", asy
 
 test("rootfs build events tails direct events and follows to terminal status", async () => {
   const calls: any[] = [];
+  let followStatusPolls = 0;
   const harness = rootfsDeps({
     globals: { quiet: true },
     resolveProjectFromArgOrContext: async (_ctx: any, project: string) => {
@@ -1740,6 +1751,11 @@ test("rootfs build events tails direct events and follows to terminal status", a
     projects: {
       getProjectRootfsBuildStatus: async (opts: any) => {
         calls.push(["status", opts]);
+        if (opts.build_id === "build-1" && followStatusPolls++ === 0) {
+          throw new Error(
+            "timeout waiting for hub response: projects.getProjectRootfsBuildStatus (30000ms)",
+          );
+        }
         return {
           build_id: opts.build_id,
           project_id: opts.project_id,
@@ -1783,6 +1799,16 @@ test("rootfs build events tails direct events and follows to terminal status", a
       },
     ],
     ["project-api", "builder-project"],
+    [
+      "direct-events",
+      {
+        build_id: "build-1",
+        lines: undefined,
+        byte_offset: 20,
+        max_bytes: 65536,
+      },
+    ],
+    ["status", { project_id: "builder-project", build_id: "build-1" }],
     [
       "direct-events",
       {

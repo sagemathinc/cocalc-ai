@@ -508,6 +508,71 @@ function heartbeatFresh(status: any): boolean | undefined {
   return Date.now() - time <= ROOTFS_BUILD_FRESH_HEARTBEAT_MS;
 }
 
+type RootfsBuildStatusPollState = {
+  consecutiveErrors: number;
+  lastWarningAt: number;
+};
+
+function isTransientRootfsBuildStatusPollError(err: unknown): boolean {
+  return /timeout waiting for hub response: projects\.getProjectRootfsBuildStatus|timeout waiting for project-host response|ECONNRESET|ECONNREFUSED|EPIPE|socket hang up|no subscribers/i.test(
+    `${err}`,
+  );
+}
+
+function maybeWarnRootfsBuildStatusPollError({
+  ctx,
+  state,
+  err,
+}: {
+  ctx: any;
+  state: RootfsBuildStatusPollState;
+  err: unknown;
+}) {
+  if (
+    ctx.globals?.quiet ||
+    ctx.globals?.json ||
+    ctx.globals?.output === "json"
+  ) {
+    return;
+  }
+  const now = Date.now();
+  if (state.lastWarningAt && now - state.lastWarningAt < 30_000) {
+    return;
+  }
+  state.lastWarningAt = now;
+  process.stderr.write(
+    `[rootfs build] status poll failed; continuing to follow logs (${err})\n`,
+  );
+}
+
+async function pollRootfsBuildStatusForFollow({
+  ctx,
+  project_id,
+  build_id,
+  state,
+}: {
+  ctx: any;
+  project_id: string;
+  build_id: string;
+  state: RootfsBuildStatusPollState;
+}): Promise<any | undefined> {
+  try {
+    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+      project_id,
+      build_id,
+    });
+    state.consecutiveErrors = 0;
+    return current;
+  } catch (err) {
+    if (!isTransientRootfsBuildStatusPollError(err)) {
+      throw err;
+    }
+    state.consecutiveErrors += 1;
+    maybeWarnRootfsBuildStatusPollError({ ctx, state, err });
+    return undefined;
+  }
+}
+
 async function followRootfsBuildLog({
   ctx,
   deps,
@@ -522,6 +587,10 @@ async function followRootfsBuildLog({
   byte_offset?: number;
 }) {
   let byteOffset = byte_offset;
+  const statusPollState: RootfsBuildStatusPollState = {
+    consecutiveErrors: 0,
+    lastWarningAt: 0,
+  };
   const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
   while (true) {
     const chunk = await readRootfsBuildLogDirect({
@@ -541,13 +610,17 @@ async function followRootfsBuildLog({
       process.stderr.write(chunk.text);
     }
     byteOffset = chunk.next_byte_offset ?? byteOffset;
-    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+    const current = await pollRootfsBuildStatusForFollow({
+      ctx,
       project_id,
       build_id,
+      state: statusPollState,
     });
-    const status = current.status ?? "unknown";
-    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
-      return current;
+    if (current != null) {
+      const status = current.status ?? "unknown";
+      if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+        return current;
+      }
     }
     await new Promise((resolve) =>
       setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
@@ -648,6 +721,10 @@ async function followRootfsBuildEvents({
   byte_offset?: number;
 }) {
   let byteOffset = byte_offset;
+  const statusPollState: RootfsBuildStatusPollState = {
+    consecutiveErrors: 0,
+    lastWarningAt: 0,
+  };
   const { api } = await deps.resolveProjectProjectApi(ctx, project_id);
   while (true) {
     const chunk = await readRootfsBuildEventsDirect({
@@ -668,13 +745,17 @@ async function followRootfsBuildEvents({
       }
     }
     byteOffset = chunk.next_byte_offset ?? byteOffset;
-    const current = await ctx.hub.projects.getProjectRootfsBuildStatus({
+    const current = await pollRootfsBuildStatusForFollow({
+      ctx,
       project_id,
       build_id,
+      state: statusPollState,
     });
-    const status = current.status ?? "unknown";
-    if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
-      return current;
+    if (current != null) {
+      const status = current.status ?? "unknown";
+      if (ROOTFS_BUILD_TERMINAL_STATUSES.has(status)) {
+        return current;
+      }
     }
     await new Promise((resolve) =>
       setTimeout(resolve, Math.max(250, Number(ctx.pollMs ?? 1000))),
