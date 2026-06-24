@@ -274,6 +274,10 @@ import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getManagedProjectEgressPolicy as getManagedProjectEgressPolicyRaw } from "@cocalc/server/membership/managed-egress-policy";
 import { recordManagedProjectEgress as recordManagedProjectEgressRaw } from "@cocalc/server/membership/managed-egress";
 import { recordManagedProjectCpuUsage as recordManagedProjectCpuUsageRaw } from "@cocalc/server/membership/managed-cpu";
+import {
+  getManagedProjectCpuPolicy,
+  shouldStopRunningProjectForManagedCpuPolicy,
+} from "@cocalc/server/membership/managed-cpu-policy";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
@@ -6696,7 +6700,7 @@ export async function recordManagedProjectCpuUsage({
   if (!resolvedProjectId && !`${account_id ?? ""}`.trim()) {
     throw Error("project_id or account_id is required");
   }
-  return await recordManagedProjectCpuUsageRaw({
+  const result = await recordManagedProjectCpuUsageRaw({
     account_id,
     project_id: resolvedProjectId,
     host_id,
@@ -6706,6 +6710,35 @@ export async function recordManagedProjectCpuUsage({
     source,
     metadata,
   });
+  if (!result.recorded || !result.account_id || !resolvedProjectId) {
+    return result;
+  }
+  let policy;
+  try {
+    policy = await getManagedProjectCpuPolicy({
+      account_id: result.account_id,
+      project_id: resolvedProjectId,
+    });
+  } catch (err) {
+    logger.warn("failed to evaluate managed CPU stop policy", {
+      account_id: result.account_id,
+      project_id: resolvedProjectId,
+      err: `${err}`,
+    });
+    return result;
+  }
+  if (!shouldStopRunningProjectForManagedCpuPolicy(policy)) {
+    return result;
+  }
+  return {
+    ...result,
+    stop_project: {
+      reason: "managed_cpu_budget_exceeded" as const,
+      blocked_by: policy.blocked_by,
+      membership_class: policy.membership_class,
+      membership_source: policy.membership_source,
+    },
+  };
 }
 
 export async function getManagedProjectEgressPolicy({

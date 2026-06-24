@@ -114,6 +114,7 @@ export type SiteSettingsKeys =
   | "public_signup_without_registration_token"
   | "share_server"
   | "legacy_migration_enabled"
+  | "legacy_migration_page_message"
   | "landing_pages"
   | "project_hosts_google-cloud_enabled"
   | "project_hosts_hyperstack_enabled"
@@ -896,7 +897,15 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Migration"],
     group: "Access & Identity",
     subgroup: "Migration",
-    advanced: true,
+  },
+  legacy_migration_page_message: {
+    name: "Legacy migration page message",
+    desc: "Optional statement shown at the top of the user-facing legacy cocalc.com migration page. Use this for site-specific migration deadlines, support instructions, or rollout status.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Migration"],
+    group: "Access & Identity",
+    subgroup: "Migration",
   },
   landing_pages: {
     name: "Landing pages",

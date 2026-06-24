@@ -5,6 +5,7 @@
 
 const queryMock = jest.fn();
 const listActiveAbuseReviewAnnotationsMock = jest.fn();
+const getAdminAccountMembershipStatusMapMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -18,12 +19,19 @@ jest.mock("./abuse-review-annotations", () => ({
     listActiveAbuseReviewAnnotationsMock(...args),
 }));
 
+jest.mock("./admin-account-status", () => ({
+  getAdminAccountMembershipStatusMap: (...args: any[]) =>
+    getAdminAccountMembershipStatusMapMock(...args),
+}));
+
 describe("managed egress history", () => {
   beforeEach(() => {
     jest.resetModules();
     queryMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockReset();
+    getAdminAccountMembershipStatusMapMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockResolvedValue([]);
+    getAdminAccountMembershipStatusMapMock.mockResolvedValue(new Map());
     queryMock.mockImplementation(async (sql: string) => {
       if (
         sql.includes(
@@ -227,6 +235,7 @@ describe("managed egress history", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: true,
               bytes: "6000",
             },
             {
@@ -234,6 +243,7 @@ describe("managed egress history", () => {
               email_address: "alan@example.com",
               first_name: "Alan",
               last_name: "Turing",
+              banned: false,
               bytes: "2192",
             },
           ],
@@ -250,6 +260,7 @@ describe("managed egress history", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: true,
               project_id: "project-1",
               project_title: "Lite One",
               bytes: "4096",
@@ -292,6 +303,10 @@ describe("managed egress history", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: true,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         bytes: 6000,
         active_abuse_annotations: [],
       },
@@ -300,6 +315,10 @@ describe("managed egress history", () => {
         email_address: "alan@example.com",
         first_name: "Alan",
         last_name: "Turing",
+        banned: false,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         bytes: 2192,
         active_abuse_annotations: [],
       },
@@ -310,6 +329,10 @@ describe("managed egress history", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: true,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         project_id: "project-1",
         project_title: "Lite One",
         bytes: 4096,
@@ -385,6 +408,7 @@ describe("managed egress history", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: false,
               bytes: "450",
             },
           ],
@@ -401,6 +425,7 @@ describe("managed egress history", () => {
               email_address: "ada@example.com",
               first_name: "Ada",
               last_name: "Lovelace",
+              banned: false,
               project_id: "project-1",
               project_title: "Lite One",
               bytes: "450",
@@ -463,6 +488,10 @@ describe("managed egress history", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: false,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         bytes: 450,
         active_abuse_annotations: [],
       },
@@ -473,6 +502,10 @@ describe("managed egress history", () => {
         email_address: "ada@example.com",
         first_name: "Ada",
         last_name: "Lovelace",
+        banned: false,
+        membership_class: "free",
+        membership_label: "Free",
+        membership_source: "free",
         project_id: "project-1",
         project_title: "Lite One",
         bytes: 450,

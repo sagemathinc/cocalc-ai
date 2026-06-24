@@ -67,6 +67,7 @@ export default async function getCustomize(
 
       shareServer: !!settings.share_server,
       legacy_migration_enabled: !!settings.legacy_migration_enabled,
+      legacy_migration_page_message: settings.legacy_migration_page_message,
 
       // additionally restrict showing landing pages only in cocalc.com-mode
       landingPages:

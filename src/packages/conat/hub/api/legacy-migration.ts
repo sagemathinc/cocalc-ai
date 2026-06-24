@@ -49,6 +49,7 @@ export interface LegacyMigrationProjectSummary {
   last_active?: Date | string | null;
   hidden?: boolean | null;
   artifact_status?: string | null;
+  disk_mb?: number | null;
   artifact_bucket?: string | null;
   artifact_key?: string | null;
   manifest_key?: string | null;
@@ -68,12 +69,14 @@ export interface LegacyMigrationListProjectsOptions {
   account_id?: string;
   include_hidden?: boolean;
   limit?: number;
+  max_disk_mb?: number;
   query?: string;
 }
 
 export interface LegacyMigrationListProjectsResponse {
   legacy_account_ids: string[];
   projects: LegacyMigrationProjectSummary[];
+  total_count: number;
 }
 
 export interface LegacyMigrationImportProjectsOptions {

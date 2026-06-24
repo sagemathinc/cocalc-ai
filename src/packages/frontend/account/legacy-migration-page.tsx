@@ -9,6 +9,7 @@ import {
   Card,
   Checkbox,
   Input,
+  InputNumber,
   Space,
   Table,
   Tag,
@@ -37,7 +38,10 @@ type LegacyMigrationState = {
   legacyAccountIds: string[];
   loading: boolean;
   projects: LegacyMigrationProjectSummary[];
+  totalCount: number;
 };
+
+const PROJECT_LOAD_LIMIT = 1000;
 
 function formatDate(value?: Date | string | null): string {
   if (!value) return "Unknown";
@@ -59,6 +63,12 @@ function restoreTag(project: LegacyMigrationProjectSummary) {
   if (status === "indexing") return <Tag color="blue">indexing archive</Tag>;
   if (status === "indexed") return <Tag color="cyan">archive indexed</Tag>;
   return <Tag>{status}</Tag>;
+}
+
+function formatDiskMb(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "Unknown";
+  if (value < 1024) return `${Math.round(value).toLocaleString()} MB`;
+  return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} GB`;
 }
 
 function importTag(project: LegacyMigrationProjectSummary) {
@@ -285,14 +295,20 @@ export function LegacyMigrationPage() {
     "customize",
     "legacy_migration_enabled",
   );
+  const legacyMigrationPageMessage = `${
+    useTypedRedux("customize", "legacy_migration_page_message") ?? ""
+  }`.trim();
   const [state, setState] = useState<LegacyMigrationState>({
     error: "",
     legacyAccountIds: [],
     loading: true,
     projects: [],
+    totalCount: 0,
   });
   const [includeHidden, setIncludeHidden] = useState(false);
+  const [maxDiskGb, setMaxDiskGb] = useState<number | null>(null);
   const [query, setQuery] = useState("");
+  const [pageSize, setPageSize] = useState(25);
   const [selected, setSelected] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [lastResults, setLastResults] = useState<
@@ -306,6 +322,8 @@ export function LegacyMigrationPage() {
       const response =
         await webapp_client.conat_client.hub.legacyMigration.listProjects({
           include_hidden: includeHidden,
+          limit: PROJECT_LOAD_LIMIT,
+          max_disk_mb: maxDiskGb == null ? undefined : maxDiskGb * 1024,
           query: nextQuery,
         });
       setState({
@@ -313,6 +331,7 @@ export function LegacyMigrationPage() {
         legacyAccountIds: response.legacy_account_ids,
         loading: false,
         projects: response.projects,
+        totalCount: response.total_count ?? response.projects.length,
       });
     } catch (err) {
       setState((prev) => ({
@@ -357,12 +376,28 @@ export function LegacyMigrationPage() {
       title: "Project",
       dataIndex: "title",
       key: "title",
+      width: 520,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
-        <Space direction="vertical" size={2}>
-          <Text strong>{project.title}</Text>
-          <Text type="secondary">{project.legacy_project_id}</Text>
+        <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          <Text
+            strong
+            ellipsis={{ tooltip: project.title }}
+            style={{ display: "block", width: "100%" }}
+          >
+            {project.title}
+          </Text>
+          <Text
+            type="secondary"
+            style={{ display: "block", fontSize: 12, width: "100%" }}
+          >
+            {project.legacy_project_id}
+          </Text>
           {project.description ? (
-            <Text type="secondary" ellipsis>
+            <Text
+              type="secondary"
+              ellipsis={{ tooltip: project.description }}
+              style={{ display: "block", width: "100%" }}
+            >
               {project.description}
             </Text>
           ) : null}
@@ -373,6 +408,7 @@ export function LegacyMigrationPage() {
       title: "Last edited",
       dataIndex: "last_edited",
       key: "last_edited",
+      width: 220,
       render: (value: Date | string | null) => formatDate(value),
       sorter: (
         left: LegacyMigrationProjectSummary,
@@ -382,8 +418,20 @@ export function LegacyMigrationPage() {
         new Date(right.last_edited ?? 0).getTime(),
     },
     {
+      title: "Size",
+      dataIndex: "disk_mb",
+      key: "disk_mb",
+      width: 130,
+      render: (value: number | null | undefined) => formatDiskMb(value),
+      sorter: (
+        left: LegacyMigrationProjectSummary,
+        right: LegacyMigrationProjectSummary,
+      ) => (left.disk_mb ?? -1) - (right.disk_mb ?? -1),
+    },
+    {
       title: "Import",
       key: "import",
+      width: 170,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={4}>
           {importTag(project)}
@@ -394,6 +442,7 @@ export function LegacyMigrationPage() {
     {
       title: "Files",
       key: "files",
+      width: 280,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={4}>
           {restoreTag(project)}
@@ -436,12 +485,32 @@ export function LegacyMigrationPage() {
         R2 by a follow-up restore worker, so imported projects can temporarily
         show as file restore pending.
       </Paragraph>
+      <Paragraph type="secondary">
+        This page loads up to {PROJECT_LOAD_LIMIT.toLocaleString()} matching
+        projects at a time, sorted by most recent edit. These are the projects
+        available from your matched legacy account records, along with their
+        current migration status. You can return later, search for older
+        projects, and migrate more projects at any time.
+      </Paragraph>
+
+      {legacyMigrationPageMessage ? (
+        <Alert showIcon type="info" message={legacyMigrationPageMessage} />
+      ) : null}
 
       <Alert
         showIcon
         type="warning"
         message="Legacy migration is still being rolled out"
-        description="This page lists projects for legacy accounts that match your verified email address or have already been linked by support."
+        description={
+          <span>
+            This page lists projects from legacy cocalc.com account records that
+            match a verified email on your current account. Gmail addresses also
+            match their Gmail dot/plus aliases. To match projects associated
+            with another email address, change and verify your email in{" "}
+            <a href="/settings/profile">profile settings</a>, then come back to
+            this page.
+          </span>
+        }
       />
 
       {state.error ? (
@@ -463,6 +532,21 @@ export function LegacyMigrationPage() {
             >
               Include hidden
             </Checkbox>
+            <InputNumber
+              min={0}
+              onChange={(value) =>
+                setMaxDiskGb(
+                  typeof value === "number" && Number.isFinite(value)
+                    ? value
+                    : null,
+                )
+              }
+              placeholder="Max size GB"
+              precision={1}
+              step={1}
+              style={{ width: 130 }}
+              value={maxDiskGb}
+            />
             <Button loading={state.loading} onClick={() => void loadProjects()}>
               Refresh
             </Button>
@@ -489,14 +573,26 @@ export function LegacyMigrationPage() {
               showIcon
               type="info"
               message="No linked cocalc.com account found"
-              description="Use the same verified email address as your old cocalc.com account, or contact support if your legacy account used another identity."
+              description={
+                <span>
+                  Use the same verified email address as your old cocalc.com
+                  account. To try another address, change and verify your email
+                  in <a href="/settings/profile">profile settings</a>, then
+                  refresh this page. Contact support if your legacy account used
+                  another identity.
+                </span>
+              }
             />
           ) : (
             <>
               <Space wrap>
                 <Text type="secondary">
-                  Matched {state.legacyAccountIds.length} legacy account
-                  {state.legacyAccountIds.length === 1 ? "" : "s"}.
+                  Matched {state.legacyAccountIds.length} legacy cocalc.com
+                  account record
+                  {state.legacyAccountIds.length === 1 ? "" : "s"} by verified
+                  email. Showing {state.projects.length.toLocaleString()} of{" "}
+                  {state.totalCount.toLocaleString()} matching project
+                  {state.totalCount === 1 ? "" : "s"}.
                 </Text>
                 <Button
                   disabled={selected.length === 0}
@@ -529,7 +625,17 @@ export function LegacyMigrationPage() {
                 columns={columns}
                 dataSource={state.projects}
                 loading={state.loading}
-                pagination={{ pageSize: 25, showSizeChanger: true }}
+                scroll={{ x: 1320 }}
+                tableLayout="fixed"
+                pagination={{
+                  pageSize,
+                  showSizeChanger: true,
+                  showTotal: (total, range) =>
+                    `${range[0]}-${range[1]} of ${total.toLocaleString()} loaded`,
+                  total: state.projects.length,
+                  onChange: (_page, size) => setPageSize(size),
+                  onShowSizeChange: (_page, size) => setPageSize(size),
+                }}
                 rowKey="legacy_project_id"
                 rowSelection={{
                   selectedRowKeys: selected,

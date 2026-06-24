@@ -61,6 +61,8 @@ describe("getManagedProjectCpuPolicy", () => {
       getManagedProjectCpuPolicy({ project_id: "project-1" }),
     ).resolves.toMatchObject({
       account_id: "account-1",
+      membership_class: "free",
+      membership_source: "free",
       allowed: false,
       blocked_by: "5h",
       managed_cpu_5h_seconds: 4000,
@@ -106,8 +108,10 @@ describe("getManagedProjectCpuPolicy", () => {
   });
 
   it("renders a user-facing block message with CPU-hours and reset time", async () => {
-    const { formatManagedProjectCpuPolicyBlockMessage } =
-      await import("./managed-cpu-policy");
+    const {
+      formatManagedProjectCpuPolicyBlockMessage,
+      shouldStopRunningProjectForManagedCpuPolicy,
+    } = await import("./managed-cpu-policy");
     expect(
       formatManagedProjectCpuPolicyBlockMessage({
         allowed: false,
@@ -117,5 +121,19 @@ describe("getManagedProjectCpuPolicy", () => {
         managed_cpu_7d_reset_in: "3 hours",
       }),
     ).toContain("3.60 of 3.00 CPU-hours");
+    expect(
+      shouldStopRunningProjectForManagedCpuPolicy({
+        allowed: false,
+        membership_class: "free",
+        membership_source: "free",
+      }),
+    ).toBe(true);
+    expect(
+      shouldStopRunningProjectForManagedCpuPolicy({
+        allowed: false,
+        membership_class: "student",
+        membership_source: "grant",
+      }),
+    ).toBe(false);
   });
 });

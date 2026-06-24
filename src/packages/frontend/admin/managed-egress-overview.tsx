@@ -35,6 +35,7 @@ import {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { AccountStatusTags } from "./account-status-tags";
 
 const { Paragraph, Text } = Typography;
 
@@ -90,6 +91,7 @@ function TopAccounts({
         <div key={account.account_id}>
           <Space wrap>
             <Text strong>{getAccountLabel(account)}</Text>
+            <AccountStatusTags account={account} />
             <Tag>{humanSize(account.bytes)}</Tag>
             <ManagedEgressHistoryButton
               buttonText="Account history"
@@ -120,6 +122,7 @@ function TopProjects({
             <Text strong>{getProjectLabel(project)}</Text>
             <Tag>{humanSize(project.bytes)}</Tag>
             <Text type="secondary">{getAccountLabel(project)}</Text>
+            <AccountStatusTags account={project} />
             <ManagedEgressHistoryButton
               buttonText="Project history"
               user_account_id={project.account_id}

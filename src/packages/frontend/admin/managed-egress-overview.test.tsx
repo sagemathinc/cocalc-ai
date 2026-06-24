@@ -131,6 +131,10 @@ describe("ManagedEgressAdminOverview", () => {
           email_address: "ada@example.com",
           first_name: "Ada",
           last_name: "Lovelace",
+          banned: true,
+          membership_class: "student-ucla-summer-2026",
+          membership_label: "UCLA Student",
+          membership_source: "grant",
           bytes: 8192,
         },
       ],
@@ -140,6 +144,10 @@ describe("ManagedEgressAdminOverview", () => {
           email_address: "ada@example.com",
           first_name: "Ada",
           last_name: "Lovelace",
+          banned: true,
+          membership_class: "student-ucla-summer-2026",
+          membership_label: "UCLA Student",
+          membership_source: "grant",
           project_id: "project-1",
           project_title: "Lite One",
           bytes: 4096,
@@ -165,6 +173,8 @@ describe("ManagedEgressAdminOverview", () => {
       expect(
         screen.getAllByText("Ada Lovelace (ada@example.com)").length,
       ).toBeGreaterThan(0);
+      expect(screen.getAllByText("Banned").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("UCLA Student").length).toBeGreaterThan(0);
       expect(screen.getByText("Global history:24h")).toBeTruthy();
       expect(screen.getByText("Account history:acct-1:none")).toBeTruthy();
       expect(screen.getByText("Top recent egress projects (24h)")).toBeTruthy();

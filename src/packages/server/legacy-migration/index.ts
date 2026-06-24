@@ -63,6 +63,7 @@ type LegacyProjectRow = {
   hidden: boolean | null;
   last_edited: Date | string | null;
   last_active: Date | string | null;
+  disk_mb: number | string | null;
   artifact_bucket: string | null;
   artifact_key: string | null;
   manifest_key: string | null;
@@ -77,6 +78,7 @@ type LegacyProjectRow = {
   restore_error?: string | null;
   restore_result?: Record<string, any> | null;
   joined?: boolean | null;
+  total_count?: number | null;
 };
 
 let importSchemaReady: Promise<void> | undefined;
@@ -93,12 +95,28 @@ async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS restore_finished TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_result JSONB
     `);
+    await getPool().query(`
+      ALTER TABLE legacy_migration_projects
+        ADD COLUMN IF NOT EXISTS disk_mb DOUBLE PRECISION
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_projects_disk_mb_idx
+        ON legacy_migration_projects(disk_mb)
+    `);
   })();
   await importSchemaReady;
 }
 
 function normalizeEmail(value: unknown): string {
   return `${value ?? ""}`.trim().toLowerCase();
+}
+
+function gmailCanonicalEmail(email: string): string | null {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return null;
+  if (domain !== "gmail.com" && domain !== "googlemail.com") return null;
+  const base = local.split("+")[0]?.replace(/\./g, "");
+  return base ? `${base}@gmail.com` : null;
 }
 
 function limitValue(value: unknown): number {
@@ -144,6 +162,12 @@ function normalizeRestoreMode(
 function positiveInteger(value: unknown): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+function nonnegativeNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function nestedValue(obj: any, path: string[]): unknown {
@@ -261,6 +285,7 @@ function importStatus(row: LegacyProjectRow): LegacyMigrationProjectSummary {
     last_edited: row.last_edited,
     last_active: row.last_active,
     hidden: row.hidden,
+    disk_mb: nonnegativeNumber(row.disk_mb),
     artifact_status: row.artifact_status,
     artifact_bucket: row.artifact_bucket,
     artifact_key: row.artifact_key,
@@ -291,33 +316,69 @@ async function verifiedAccountEmails(account_id: string): Promise<string[]> {
     [account_id],
   );
   const row = rows[0];
-  const email = normalizeEmail(row?.email_address);
-  if (!email || !row?.email_address_verified?.[email]) {
-    return [];
+  const verified = row?.email_address_verified ?? {};
+  const emails = new Set<string>();
+  for (const [email, value] of Object.entries(verified)) {
+    if (value) {
+      const normalized = normalizeEmail(email);
+      if (normalized) emails.add(normalized);
+    }
   }
-  return [email];
+  const primary = normalizeEmail(row?.email_address);
+  if (primary && verified[primary]) emails.add(primary);
+  return [...emails].sort();
 }
 
 async function ensureVerifiedEmailLinks(account_id: string): Promise<void> {
   const emails = await verifiedAccountEmails(account_id);
   if (emails.length === 0) return;
+  const gmailCanonicalEmails = Array.from(
+    new Set(
+      emails
+        .map(gmailCanonicalEmail)
+        .filter((email): email is string => email != null),
+    ),
+  );
   await getPool().query(
     `
+    WITH candidates AS (
+      SELECT legacy_account_id,
+             email_address,
+             lower(email_address) AS exact_email,
+             CASE
+               WHEN split_part(lower(email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+                 THEN replace(split_part(split_part(lower(email_address), '@', 1), '+', 1), '.', '') || '@gmail.com'
+               ELSE NULL
+             END AS gmail_canonical_email
+        FROM legacy_migration_accounts
+       WHERE COALESCE(email_address_verified, false)=true
+    )
     INSERT INTO legacy_migration_account_links
       (legacy_account_id, account_id, claim_method, metadata, created, updated)
     SELECT legacy_account_id,
            $1::UUID,
            'verified-email',
-           jsonb_build_object('email_address', email_address),
+           jsonb_build_object(
+             'email_address', email_address,
+             'match_method',
+             CASE
+               WHEN exact_email=ANY($2::TEXT[]) THEN 'exact-email'
+               ELSE 'gmail-canonical'
+             END,
+             'gmail_canonical_email', gmail_canonical_email
+           ),
            NOW(),
            NOW()
-      FROM legacy_migration_accounts
-     WHERE COALESCE(email_address_verified, false)=true
-       AND lower(email_address)=ANY($2::TEXT[])
+      FROM candidates
+     WHERE exact_email=ANY($2::TEXT[])
+        OR (
+          gmail_canonical_email IS NOT NULL
+          AND gmail_canonical_email=ANY($3::TEXT[])
+        )
     ON CONFLICT (legacy_account_id, account_id)
     DO UPDATE SET updated=NOW()
     `,
-    [account_id, emails],
+    [account_id, emails, gmailCanonicalEmails],
   );
 }
 
@@ -337,6 +398,7 @@ export async function listProjects({
   account_id,
   include_hidden,
   limit,
+  max_disk_mb,
   query,
 }: LegacyMigrationListProjectsOptions): Promise<LegacyMigrationListProjectsResponse> {
   await assertLegacyMigrationEnabled();
@@ -346,10 +408,11 @@ export async function listProjects({
   await ensureLegacyMigrationProjectImportSchema();
   const legacy_account_ids = await legacyAccountIds(account_id);
   if (legacy_account_ids.length === 0) {
-    return { legacy_account_ids, projects: [] };
+    return { legacy_account_ids, projects: [], total_count: 0 };
   }
   const search = `%${`${query ?? ""}`.trim().toLowerCase()}%`;
   const useSearch = search !== "%%";
+  const maxDiskMb = nonnegativeNumber(max_disk_mb);
   const { rows } = await getPool().query<LegacyProjectRow>(
     `
     WITH matched AS (
@@ -369,6 +432,10 @@ export async function listProjects({
            OR lower(COALESCE(p.title, '')) LIKE $4
            OR lower(p.legacy_project_id) LIKE $4
          )
+         AND (
+           $5::DOUBLE PRECISION IS NULL
+           OR p.disk_mb <= $5::DOUBLE PRECISION
+         )
        GROUP BY p.legacy_project_id
     )
     SELECT p.legacy_project_id,
@@ -379,6 +446,7 @@ export async function listProjects({
            p.hidden,
            p.last_edited,
            p.last_active,
+           p.disk_mb,
            p.artifact_bucket,
            p.artifact_key,
            p.manifest_key,
@@ -392,6 +460,7 @@ export async function listProjects({
            i.restore_status,
            i.restore_error,
            i.restore_result,
+           COUNT(*) OVER()::INTEGER AS total_count,
            EXISTS (
              SELECT 1
                FROM legacy_migration_project_import_accounts a
@@ -404,13 +473,21 @@ export async function listProjects({
       LEFT JOIN legacy_migration_project_imports i
         ON i.legacy_project_id=p.legacy_project_id
      ORDER BY p.last_edited DESC NULLS LAST, p.legacy_project_id
-     LIMIT $5
+     LIMIT $6
     `,
-    [account_id, !!include_hidden, useSearch, search, limitValue(limit)],
+    [
+      account_id,
+      !!include_hidden,
+      useSearch,
+      search,
+      maxDiskMb,
+      limitValue(limit),
+    ],
   );
   return {
     legacy_account_ids,
     projects: rows.map(importStatus),
+    total_count: rows[0]?.total_count ?? 0,
   };
 }
 

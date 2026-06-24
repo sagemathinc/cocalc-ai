@@ -25,6 +25,7 @@ import {
   type ManagedCpuAccountingScope,
   type ManagedCpuHostFundingMode,
 } from "./managed-cpu-scope";
+import { getAdminAccountMembershipStatusMap } from "./admin-account-status";
 
 const TABLE = "account_cpu_usage_events";
 const DEFAULT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -438,6 +439,7 @@ export async function getManagedCpuAdminOverview(
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       cpu_seconds: string | number;
     }>(
       `
@@ -446,6 +448,7 @@ export async function getManagedCpuAdminOverview(
             accounts.email_address,
             accounts.first_name,
             accounts.last_name,
+            accounts.banned,
             COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
           FROM ${TABLE} AS events
           LEFT JOIN accounts ON accounts.account_id = events.account_id
@@ -454,7 +457,8 @@ export async function getManagedCpuAdminOverview(
             events.account_id,
             accounts.email_address,
             accounts.first_name,
-            accounts.last_name
+            accounts.last_name,
+            accounts.banned
           ORDER BY cpu_seconds DESC, events.account_id ASC
           LIMIT ${Math.max(1, Math.min(query.top_account_limit, 50))}
         `,
@@ -465,6 +469,7 @@ export async function getManagedCpuAdminOverview(
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       project_id: string | null;
       project_title: string | null;
       host_id: string | null;
@@ -476,6 +481,7 @@ export async function getManagedCpuAdminOverview(
             accounts.email_address,
             accounts.first_name,
             accounts.last_name,
+            accounts.banned,
             events.project_id,
             projects.title AS project_title,
             events.host_id,
@@ -489,6 +495,7 @@ export async function getManagedCpuAdminOverview(
             accounts.email_address,
             accounts.first_name,
             accounts.last_name,
+            accounts.banned,
             events.project_id,
             projects.title,
             events.host_id
@@ -530,6 +537,7 @@ export async function getManagedCpuAdminOverview(
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
     }),
   );
@@ -540,19 +548,26 @@ export async function getManagedCpuAdminOverview(
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       project_id: row.project_id ?? null,
       project_title: row.project_title ?? null,
       host_id: row.host_id ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
     }));
-  const activeAnnotations = await listActiveAbuseReviewAnnotations({
-    account_ids: [
-      ...top_accounts.map((account) => account.account_id),
-      ...top_projects.map((project) => project.account_id),
-    ],
-    project_ids: top_projects.map((project) => project.project_id),
-    categories: ["cpu", "general"],
-  });
+  const accountIds = [
+    ...top_accounts.map((account) => account.account_id),
+    ...top_projects.map((project) => project.account_id),
+  ];
+  const [activeAnnotations, membershipStatuses] = await Promise.all([
+    listActiveAbuseReviewAnnotations({
+      account_ids: accountIds,
+      project_ids: top_projects.map((project) => project.project_id),
+      categories: ["cpu", "general"],
+    }),
+    getAdminAccountMembershipStatusMap(accountIds),
+  ]);
+  attachMembershipStatus(top_accounts, membershipStatuses);
+  attachMembershipStatus(top_projects, membershipStatuses);
 
   return {
     start: query.startDate.toISOString(),
@@ -633,6 +648,7 @@ export async function getManagedCpuAdminHistory(opts: {
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       cpu_seconds: string | number;
     }>(
       `
@@ -641,6 +657,7 @@ export async function getManagedCpuAdminHistory(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
         FROM ${TABLE} AS events
         LEFT JOIN accounts ON accounts.account_id = events.account_id
@@ -649,7 +666,8 @@ export async function getManagedCpuAdminHistory(opts: {
           events.account_id,
           accounts.email_address,
           accounts.first_name,
-          accounts.last_name
+          accounts.last_name,
+          accounts.banned
         ORDER BY cpu_seconds DESC, events.account_id ASC
         LIMIT ${Math.max(1, Math.min(query.top_account_limit, 50))}
       `,
@@ -660,6 +678,7 @@ export async function getManagedCpuAdminHistory(opts: {
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       project_id: string | null;
       project_title: string | null;
       host_id: string | null;
@@ -671,6 +690,7 @@ export async function getManagedCpuAdminHistory(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           events.project_id,
           projects.title AS project_title,
           events.host_id,
@@ -684,6 +704,7 @@ export async function getManagedCpuAdminHistory(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           events.project_id,
           projects.title,
           events.host_id
@@ -739,6 +760,7 @@ export async function getManagedCpuAdminHistory(opts: {
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
     }),
   );
@@ -748,19 +770,26 @@ export async function getManagedCpuAdminHistory(opts: {
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       project_id: row.project_id ?? null,
       project_title: row.project_title ?? null,
       host_id: row.host_id ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
     }));
-  const activeAnnotations = await listActiveAbuseReviewAnnotations({
-    account_ids: [
-      ...top_accounts.map((account) => account.account_id),
-      ...top_projects.map((project) => project.account_id),
-    ],
-    project_ids: top_projects.map((project) => project.project_id),
-    categories: ["cpu", "general"],
-  });
+  const accountIds = [
+    ...top_accounts.map((account) => account.account_id),
+    ...top_projects.map((project) => project.account_id),
+  ];
+  const [activeAnnotations, membershipStatuses] = await Promise.all([
+    listActiveAbuseReviewAnnotations({
+      account_ids: accountIds,
+      project_ids: top_projects.map((project) => project.project_id),
+      categories: ["cpu", "general"],
+    }),
+    getAdminAccountMembershipStatusMap(accountIds),
+  ]);
+  attachMembershipStatus(top_accounts, membershipStatuses);
+  attachMembershipStatus(top_projects, membershipStatuses);
 
   return {
     start: query.startDate.toISOString(),
@@ -821,6 +850,25 @@ function attachActiveAnnotationsToProjects(
       project_id: project.project_id,
     }),
   }));
+}
+
+function attachMembershipStatus<
+  T extends {
+    account_id: string;
+    membership_class?: string | null;
+    membership_label?: string | null;
+    membership_source?: string | null;
+  },
+>(
+  accounts: T[],
+  statuses: Awaited<ReturnType<typeof getAdminAccountMembershipStatusMap>>,
+): void {
+  for (const account of accounts) {
+    const status = statuses.get(account.account_id);
+    account.membership_class = status?.membership_class ?? "free";
+    account.membership_label = status?.membership_label ?? "Free";
+    account.membership_source = status?.membership_source ?? "free";
+  }
 }
 
 type RawManagedCpuEventRow = {

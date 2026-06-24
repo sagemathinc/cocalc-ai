@@ -162,6 +162,7 @@ Table({
       "owner_legacy_account_id",
       "artifact_status",
       "last_edited",
+      "disk_mb",
       "updated",
     ],
     user_query: {
@@ -176,6 +177,7 @@ Table({
           hidden: null,
           last_edited: null,
           last_active: null,
+          disk_mb: null,
           artifact_bucket: null,
           artifact_key: null,
           manifest_key: null,
@@ -198,6 +200,7 @@ Table({
           hidden: null,
           last_edited: null,
           last_active: null,
+          disk_mb: null,
           artifact_bucket: null,
           artifact_key: null,
           manifest_key: null,
@@ -242,6 +245,10 @@ Table({
     last_active: {
       type: "timestamp",
       desc: "Last legacy project activity time.",
+    },
+    disk_mb: {
+      type: "number",
+      desc: "Last known cocalc.com project disk usage in megabytes, from project status.disk_MB.",
     },
     artifact_bucket: {
       type: "string",

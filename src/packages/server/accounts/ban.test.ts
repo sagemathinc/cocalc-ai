@@ -9,6 +9,7 @@ const revokeAllAuthSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const recordAccountSecurityStateMock = jest.fn();
 const clearIsBannedCacheMock = jest.fn();
+const stopRunningProjectsForBannedAccountMock = jest.fn();
 
 jest.mock("@cocalc/server/accounts/rehome-fence", () => ({
   __esModule: true,
@@ -43,6 +44,12 @@ jest.mock("./is-banned", () => ({
   clearIsBannedCache: (...args: any[]) => clearIsBannedCacheMock(...args),
 }));
 
+jest.mock("./stop-banned-projects", () => ({
+  __esModule: true,
+  stopRunningProjectsForBannedAccount: (...args: any[]) =>
+    stopRunningProjectsForBannedAccountMock(...args),
+}));
+
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("account ban", () => {
@@ -54,6 +61,9 @@ describe("account ban", () => {
     recordAccountRevocationMock.mockReset().mockResolvedValue(undefined);
     recordAccountSecurityStateMock.mockReset().mockResolvedValue(undefined);
     clearIsBannedCacheMock.mockReset();
+    stopRunningProjectsForBannedAccountMock
+      .mockReset()
+      .mockResolvedValue({ stopped: 0, failed: 0, total: 0 });
     withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
       await fn({
         query: jest.fn(async () => ({ rows: [], rowCount: 1 })),
@@ -78,6 +88,9 @@ describe("account ban", () => {
     recordAccountRevocationMock.mockImplementation(async () => {
       calls.push("record-host-revocation");
     });
+    stopRunningProjectsForBannedAccountMock.mockImplementation(async () => {
+      calls.push("stop-running-projects");
+    });
     recordAccountSecurityStateMock.mockImplementation(async () => {
       calls.push("record-security-state");
     });
@@ -93,11 +106,15 @@ describe("account ban", () => {
       expect.any(Number),
       { banned: true },
     );
+    expect(stopRunningProjectsForBannedAccountMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+    );
     expect(calls).toEqual([
       "mark-banned",
       "delete-remember-me",
       "revoke-auth-sessions",
       "record-host-revocation",
+      "stop-running-projects",
     ]);
   });
 
@@ -109,6 +126,7 @@ describe("account ban", () => {
     expect(deleteAllRememberMeMock).not.toHaveBeenCalled();
     expect(revokeAllAuthSessionsMock).not.toHaveBeenCalled();
     expect(recordAccountRevocationMock).not.toHaveBeenCalled();
+    expect(stopRunningProjectsForBannedAccountMock).not.toHaveBeenCalled();
     expect(recordAccountSecurityStateMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       banned: false,

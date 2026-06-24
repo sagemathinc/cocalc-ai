@@ -2675,7 +2675,16 @@ export interface System {
     sample_ended_at?: Date;
     source?: string;
     metadata?: Record<string, unknown>;
-  }) => Promise<{ recorded: boolean; account_id?: string }>;
+  }) => Promise<{
+    recorded: boolean;
+    account_id?: string;
+    stop_project?: {
+      reason: "managed_cpu_budget_exceeded";
+      blocked_by?: "5h" | "7d";
+      membership_class?: string;
+      membership_source?: string;
+    };
+  }>;
 
   recordServiceAdmissionDenial: (opts: {
     surface: string;

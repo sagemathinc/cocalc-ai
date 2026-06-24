@@ -49,6 +49,7 @@ import { ManagedEgressRecentEventsButton } from "@cocalc/frontend/purchases/mana
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { AccountStatusTags } from "./account-status-tags";
 
 const { Paragraph, Text } = Typography;
 
@@ -262,6 +263,7 @@ function TopCpuAccounts({
           <div key={account.account_id}>
             <Space wrap>
               <Text strong>{getAccountLabel(account)}</Text>
+              <AccountStatusTags account={account} />
               <Tag>{formatCpuSeconds(account.cpu_seconds)}</Tag>
               <AccountActions
                 account_id={account.account_id}
@@ -310,6 +312,7 @@ function TopCpuProjects({
               <Tag>{formatCpuSeconds(project.cpu_seconds)}</Tag>
               {project.host_id ? <Tag>Host {project.host_id}</Tag> : null}
               <Text type="secondary">{getAccountLabel(project)}</Text>
+              <AccountStatusTags account={project} />
               <AccountActions
                 account_id={project.account_id}
                 project_id={project.project_id}
@@ -357,6 +360,7 @@ function TopEgressAccounts({
         <div key={account.account_id}>
           <Space wrap>
             <Text strong>{getAccountLabel(account)}</Text>
+            <AccountStatusTags account={account} />
             <Tag>{humanSize(account.bytes)}</Tag>
             <AccountActions
               account_id={account.account_id}
@@ -395,6 +399,7 @@ function TopEgressProjects({
             <Text strong>{getProjectLabel(project)}</Text>
             <Tag>{humanSize(project.bytes)}</Tag>
             <Text type="secondary">{getAccountLabel(project)}</Text>
+            <AccountStatusTags account={project} />
             <AccountActions
               account_id={project.account_id}
               project_id={project.project_id}

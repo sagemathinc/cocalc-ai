@@ -741,6 +741,10 @@ export interface ManagedEgressAccountSummary {
   email_address?: string | null;
   first_name?: string | null;
   last_name?: string | null;
+  banned?: boolean | null;
+  membership_class?: string | null;
+  membership_label?: string | null;
+  membership_source?: string | null;
   bytes: number;
   active_abuse_annotations?: AbuseReviewAnnotation[];
 }
@@ -750,6 +754,10 @@ export interface ManagedEgressAdminProjectSummary {
   email_address?: string | null;
   first_name?: string | null;
   last_name?: string | null;
+  banned?: boolean | null;
+  membership_class?: string | null;
+  membership_label?: string | null;
+  membership_source?: string | null;
   project_id: string | null;
   project_title?: string | null;
   bytes: number;
@@ -843,6 +851,10 @@ export interface ManagedCpuAccountSummary {
   email_address?: string | null;
   first_name?: string | null;
   last_name?: string | null;
+  banned?: boolean | null;
+  membership_class?: string | null;
+  membership_label?: string | null;
+  membership_source?: string | null;
   cpu_seconds: number;
   active_abuse_annotations?: AbuseReviewAnnotation[];
 }
@@ -852,6 +864,10 @@ export interface ManagedCpuAdminProjectSummary {
   email_address?: string | null;
   first_name?: string | null;
   last_name?: string | null;
+  banned?: boolean | null;
+  membership_class?: string | null;
+  membership_label?: string | null;
+  membership_source?: string | null;
   project_id: string | null;
   project_title?: string | null;
   host_id?: string | null;
