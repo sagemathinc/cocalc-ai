@@ -364,12 +364,28 @@ export function LegacyMigrationPage() {
       title: "Project",
       dataIndex: "title",
       key: "title",
+      width: 520,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
-        <Space direction="vertical" size={2}>
-          <Text strong>{project.title}</Text>
-          <Text type="secondary">{project.legacy_project_id}</Text>
+        <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          <Text
+            strong
+            ellipsis={{ tooltip: project.title }}
+            style={{ display: "block", width: "100%" }}
+          >
+            {project.title}
+          </Text>
+          <Text
+            type="secondary"
+            style={{ display: "block", fontSize: 12, width: "100%" }}
+          >
+            {project.legacy_project_id}
+          </Text>
           {project.description ? (
-            <Text type="secondary" ellipsis>
+            <Text
+              type="secondary"
+              ellipsis={{ tooltip: project.description }}
+              style={{ display: "block", width: "100%" }}
+            >
               {project.description}
             </Text>
           ) : null}
@@ -380,6 +396,7 @@ export function LegacyMigrationPage() {
       title: "Last edited",
       dataIndex: "last_edited",
       key: "last_edited",
+      width: 220,
       render: (value: Date | string | null) => formatDate(value),
       sorter: (
         left: LegacyMigrationProjectSummary,
@@ -391,6 +408,7 @@ export function LegacyMigrationPage() {
     {
       title: "Import",
       key: "import",
+      width: 170,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={4}>
           {importTag(project)}
@@ -401,6 +419,7 @@ export function LegacyMigrationPage() {
     {
       title: "Files",
       key: "files",
+      width: 280,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={4}>
           {restoreTag(project)}
@@ -557,6 +576,8 @@ export function LegacyMigrationPage() {
                 columns={columns}
                 dataSource={state.projects}
                 loading={state.loading}
+                scroll={{ x: 1190 }}
+                tableLayout="fixed"
                 pagination={{
                   pageSize,
                   showSizeChanger: true,
