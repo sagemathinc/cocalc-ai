@@ -26,6 +26,7 @@ import type {
   LegacyMigrationArchiveEntry,
   LegacyMigrationArchiveIndex,
   LegacyMigrationImportProjectResult,
+  LegacyMigrationMatchedAccount,
   LegacyMigrationProjectRestoreMode,
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
@@ -35,6 +36,7 @@ const { Paragraph, Text } = Typography;
 
 type LegacyMigrationState = {
   error: string;
+  legacyAccounts: LegacyMigrationMatchedAccount[];
   legacyAccountIds: string[];
   loading: boolean;
   projects: LegacyMigrationProjectSummary[];
@@ -69,6 +71,25 @@ function formatDiskMb(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "Unknown";
   if (value < 1024) return `${Math.round(value).toLocaleString()} MB`;
   return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} GB`;
+}
+
+function matchedAccountLabel(account: LegacyMigrationMatchedAccount): string {
+  const email = `${account.email_address ?? ""}`.trim();
+  if (email) return email;
+  return `legacy account ${account.legacy_account_id}`;
+}
+
+function matchedAccountTitle(account: LegacyMigrationMatchedAccount): string {
+  const parts = [
+    `Legacy account: ${account.legacy_account_id}`,
+    account.match_method
+      ? `Match method: ${account.match_method.replace(/-/g, " ")}`
+      : "",
+    account.gmail_canonical_email
+      ? `Gmail canonical: ${account.gmail_canonical_email}`
+      : "",
+  ].filter(Boolean);
+  return parts.join("\n");
 }
 
 function importTag(project: LegacyMigrationProjectSummary) {
@@ -300,6 +321,7 @@ export function LegacyMigrationPage() {
   }`.trim();
   const [state, setState] = useState<LegacyMigrationState>({
     error: "",
+    legacyAccounts: [],
     legacyAccountIds: [],
     loading: true,
     projects: [],
@@ -330,6 +352,7 @@ export function LegacyMigrationPage() {
         });
       setState({
         error: "",
+        legacyAccounts: response.legacy_accounts ?? [],
         legacyAccountIds: response.legacy_account_ids,
         loading: false,
         projects: response.projects,
@@ -587,15 +610,47 @@ export function LegacyMigrationPage() {
             />
           ) : (
             <>
-              <Space wrap>
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
                 <Text type="secondary">
                   Matched {state.legacyAccountIds.length} legacy cocalc.com
                   account record
                   {state.legacyAccountIds.length === 1 ? "" : "s"} by verified
-                  email. Showing {state.projects.length.toLocaleString()} of{" "}
-                  {state.totalCount.toLocaleString()} matching project
-                  {state.totalCount === 1 ? "" : "s"}.
+                  email:
                 </Text>
+                <Space wrap size={[4, 4]}>
+                  {(state.legacyAccounts.length > 0
+                    ? state.legacyAccounts
+                    : state.legacyAccountIds.map((legacy_account_id) => ({
+                        legacy_account_id,
+                      }))
+                  ).map((account) => (
+                    <Tag
+                      key={account.legacy_account_id}
+                      title={matchedAccountTitle(account)}
+                    >
+                      {matchedAccountLabel(account)}
+                    </Tag>
+                  ))}
+                </Space>
+                <Text type="secondary">
+                  If you want to also include projects associated with a
+                  different email address, change your email address in{" "}
+                  <a href="/settings/profile">profile settings</a>, verify it,
+                  then come back to this page.
+                </Text>
+                <Text type="secondary">
+                  Showing the{" "}
+                  {state.projects.length === state.totalCount
+                    ? ""
+                    : "most recently edited "}
+                  {state.projects.length.toLocaleString()} of{" "}
+                  {state.totalCount.toLocaleString()} matching project
+                  {state.totalCount === 1 ? "" : "s"}. You can migrate projects
+                  in multiple sessions; use search, hidden-projects, or size
+                  filters to find projects outside this loaded list.
+                </Text>
+              </Space>
+              <Space wrap>
                 <Button
                   disabled={selected.length === 0 || !!importingMode}
                   loading={importingMode === "full"}
