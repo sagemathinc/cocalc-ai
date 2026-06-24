@@ -10,6 +10,8 @@ import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 
 export interface ManagedProjectCpuPolicy {
   account_id?: string;
+  membership_class?: string;
+  membership_source?: string;
   allowed: boolean;
   blocked_by?: "5h" | "7d";
   managed_cpu_5h_seconds?: number;
@@ -49,6 +51,8 @@ export async function getManagedProjectCpuPolicy(opts: {
       : undefined;
   return {
     account_id,
+    membership_class: resolution.class,
+    membership_source: resolution.source,
     allowed: blocked_by == null,
     blocked_by,
     managed_cpu_5h_seconds: usage.managed_cpu_5h_seconds,
@@ -60,6 +64,16 @@ export async function getManagedProjectCpuPolicy(opts: {
     cpu_5h_seconds,
     cpu_7d_seconds,
   };
+}
+
+export function shouldStopRunningProjectForManagedCpuPolicy(
+  policy: ManagedProjectCpuPolicy,
+): boolean {
+  return (
+    policy.membership_class === "free" &&
+    policy.membership_source === "free" &&
+    !policy.allowed
+  );
 }
 
 function formatCpuHours(seconds: number | undefined): string {
@@ -85,5 +99,5 @@ export function formatManagedProjectCpuPolicyBlockMessage(
       ? policy.managed_cpu_5h_reset_in
       : policy.managed_cpu_7d_reset_in;
   const resetText = reset ? ` The window begins freeing up in ${reset}.` : "";
-  return `This account has used ${formatCpuHours(used)} of ${formatCpuHours(limit)} CPU-hours in its rolling ${window} compute budget.${resetText} Existing running projects are not stopped, but starting another project is paused until the budget window frees up or the account is upgraded.`;
+  return `This account has used ${formatCpuHours(used)} of ${formatCpuHours(limit)} CPU-hours in its rolling ${window} compute budget.${resetText} Starting another project is paused until the budget window frees up or the account is upgraded.`;
 }
