@@ -22,7 +22,7 @@ type Capture = {
   projectCollaboratorListCalls: string[];
   myCollaboratorListCalls: number[];
   mentionQueryCalls: number[];
-  adminCreateCalls: string[];
+  adminCreateCalls: any[];
   userSearchCalls: string[];
   createCollabCalls: Array<{ project_id: string; invitee_account_id: string }>;
   removeCollabCalls: Array<{ project_id: string; account_id: string }>;
@@ -115,7 +115,7 @@ function makeDeps(capture: Capture): LoadCommandDeps {
               };
             },
             adminCreateUser: async (opts) => {
-              capture.adminCreateCalls.push(opts.email);
+              capture.adminCreateCalls.push(opts);
               if (opts.email === "fixture-0002@load.test") {
                 const err: any = new Error(
                   "an account with email already exists",
@@ -969,11 +969,18 @@ test("load seed users creates or reuses accounts and adds collaborators", async 
     "demo",
   ]);
 
-  assert.deepEqual(capture.adminCreateCalls, [
-    "fixture-0001@load.test",
-    "fixture-0002@load.test",
-    "fixture-0003@load.test",
-  ]);
+  assert.deepEqual(
+    capture.adminCreateCalls.map((opts) => opts.email),
+    [
+      "fixture-0001@load.test",
+      "fixture-0002@load.test",
+      "fixture-0003@load.test",
+    ],
+  );
+  assert.deepEqual(
+    capture.adminCreateCalls.map((opts) => opts.display_name),
+    ["Load fixture-1", "Load fixture-2", "Load fixture-3"],
+  );
   assert.deepEqual(capture.userSearchCalls, ["fixture-0002@load.test"]);
   assert.equal(capture.createCollabCalls.length, 3);
   assert.equal(capture.data.scenario, "seed-users");

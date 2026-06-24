@@ -2027,6 +2027,7 @@ export function registerLoadCommand(
               try {
                 let account = null as null | {
                   account_id: string;
+                  display_name?: string | null;
                   first_name?: string | null;
                   last_name?: string | null;
                   email_address?: string | null;
@@ -2036,6 +2037,7 @@ export function registerLoadCommand(
                   const createdAccount = await ctx.hub.system.adminCreateUser({
                     email,
                     password: opts.password,
+                    display_name: `Load ${prefix}-${index}`,
                     first_name: "Load",
                     last_name: `${prefix}-${index}`,
                     tags,
