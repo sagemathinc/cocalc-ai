@@ -16,6 +16,7 @@ import {
   isManagedRootfsImageName,
 } from "@cocalc/util/rootfs-images";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 type RootfsStateRow = {
   project_id: string;
@@ -197,13 +198,7 @@ async function loadProjectRootfsStateEntries(
     toEntry(
       row,
       row.set_by_account_id
-        ? [
-            names[row.set_by_account_id]?.first_name,
-            names[row.set_by_account_id]?.last_name,
-          ]
-            .filter(Boolean)
-            .join(" ")
-            .trim() || undefined
+        ? displayNameFromAccount(names[row.set_by_account_id]) || undefined
         : undefined,
     ),
   );
