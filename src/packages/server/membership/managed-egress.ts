@@ -18,6 +18,7 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { listActiveAbuseReviewAnnotations } from "./abuse-review-annotations";
 import { getProjectUsageAccountId } from "./project-usage";
+import { getAdminAccountMembershipStatusMap } from "./admin-account-status";
 import {
   ensureAccountUsageWindowsForEvent,
   getActiveAccountUsageWindows,
@@ -358,6 +359,7 @@ export async function getManagedEgressAdminOverview(opts: {
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       bytes: string | number;
     }>(
       `
@@ -366,6 +368,7 @@ export async function getManagedEgressAdminOverview(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           COALESCE(SUM(events.bytes), 0) AS bytes
         FROM ${TABLE} AS events
         LEFT JOIN accounts ON accounts.account_id = events.account_id
@@ -374,7 +377,8 @@ export async function getManagedEgressAdminOverview(opts: {
           events.account_id,
           accounts.email_address,
           accounts.first_name,
-          accounts.last_name
+          accounts.last_name,
+          accounts.banned
         ORDER BY bytes DESC, events.account_id ASC
         LIMIT ${Math.max(1, Math.min(query.top_account_limit, 50))}
       `,
@@ -385,6 +389,7 @@ export async function getManagedEgressAdminOverview(opts: {
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       project_id: string | null;
       project_title: string | null;
       bytes: string | number;
@@ -395,6 +400,7 @@ export async function getManagedEgressAdminOverview(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           events.project_id,
           projects.title AS project_title,
           COALESCE(SUM(events.bytes), 0) AS bytes
@@ -407,6 +413,7 @@ export async function getManagedEgressAdminOverview(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           events.project_id,
           projects.title
         ORDER BY bytes DESC, projects.title ASC NULLS LAST, events.project_id ASC NULLS LAST
@@ -448,6 +455,7 @@ export async function getManagedEgressAdminOverview(opts: {
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       bytes: Math.max(0, Number(row.bytes) || 0),
     }));
 
@@ -457,18 +465,25 @@ export async function getManagedEgressAdminOverview(opts: {
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       project_id: row.project_id ?? null,
       project_title: row.project_title ?? null,
       bytes: Math.max(0, Number(row.bytes) || 0),
     }));
-  const activeAnnotations = await listActiveAbuseReviewAnnotations({
-    account_ids: [
-      ...top_accounts.map((account) => account.account_id),
-      ...top_projects.map((project) => project.account_id),
-    ],
-    project_ids: top_projects.map((project) => project.project_id),
-    categories: ["egress", "general"],
-  });
+  const accountIds = [
+    ...top_accounts.map((account) => account.account_id),
+    ...top_projects.map((project) => project.account_id),
+  ];
+  const [activeAnnotations, membershipStatuses] = await Promise.all([
+    listActiveAbuseReviewAnnotations({
+      account_ids: accountIds,
+      project_ids: top_projects.map((project) => project.project_id),
+      categories: ["egress", "general"],
+    }),
+    getAdminAccountMembershipStatusMap(accountIds),
+  ]);
+  attachMembershipStatus(top_accounts, membershipStatuses);
+  attachMembershipStatus(top_projects, membershipStatuses);
 
   return {
     start: query.startDate.toISOString(),
@@ -543,6 +558,7 @@ export async function getManagedEgressAdminHistory(opts: {
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       bytes: string | number;
     }>(
       `
@@ -551,6 +567,7 @@ export async function getManagedEgressAdminHistory(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           COALESCE(SUM(events.bytes), 0) AS bytes
         FROM ${TABLE} AS events
         LEFT JOIN accounts ON accounts.account_id = events.account_id
@@ -559,7 +576,8 @@ export async function getManagedEgressAdminHistory(opts: {
           events.account_id,
           accounts.email_address,
           accounts.first_name,
-          accounts.last_name
+          accounts.last_name,
+          accounts.banned
         ORDER BY bytes DESC, events.account_id ASC
         LIMIT ${Math.max(1, Math.min(query.top_account_limit, 50))}
       `,
@@ -570,6 +588,7 @@ export async function getManagedEgressAdminHistory(opts: {
       email_address: string | null;
       first_name: string | null;
       last_name: string | null;
+      banned: boolean | null;
       project_id: string | null;
       project_title: string | null;
       bytes: string | number;
@@ -580,6 +599,7 @@ export async function getManagedEgressAdminHistory(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           events.project_id,
           projects.title AS project_title,
           COALESCE(SUM(events.bytes), 0) AS bytes
@@ -592,6 +612,7 @@ export async function getManagedEgressAdminHistory(opts: {
           accounts.email_address,
           accounts.first_name,
           accounts.last_name,
+          accounts.banned,
           events.project_id,
           projects.title
         ORDER BY bytes DESC, projects.title ASC NULLS LAST, events.project_id ASC NULLS LAST
@@ -650,6 +671,7 @@ export async function getManagedEgressAdminHistory(opts: {
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       bytes: Math.max(0, Number(row.bytes) || 0),
     }));
 
@@ -659,18 +681,25 @@ export async function getManagedEgressAdminHistory(opts: {
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
+      banned: row.banned ?? false,
       project_id: row.project_id ?? null,
       project_title: row.project_title ?? null,
       bytes: Math.max(0, Number(row.bytes) || 0),
     }));
-  const activeAnnotations = await listActiveAbuseReviewAnnotations({
-    account_ids: [
-      ...top_accounts.map((account) => account.account_id),
-      ...top_projects.map((project) => project.account_id),
-    ],
-    project_ids: top_projects.map((project) => project.project_id),
-    categories: ["egress", "general"],
-  });
+  const accountIds = [
+    ...top_accounts.map((account) => account.account_id),
+    ...top_projects.map((project) => project.account_id),
+  ];
+  const [activeAnnotations, membershipStatuses] = await Promise.all([
+    listActiveAbuseReviewAnnotations({
+      account_ids: accountIds,
+      project_ids: top_projects.map((project) => project.project_id),
+      categories: ["egress", "general"],
+    }),
+    getAdminAccountMembershipStatusMap(accountIds),
+  ]);
+  attachMembershipStatus(top_accounts, membershipStatuses);
+  attachMembershipStatus(top_projects, membershipStatuses);
 
   return {
     start: query.startDate.toISOString(),
@@ -904,6 +933,25 @@ function attachActiveAnnotationsToEgressProjects(
       project_id: project.project_id,
     }),
   }));
+}
+
+function attachMembershipStatus<
+  T extends {
+    account_id: string;
+    membership_class?: string | null;
+    membership_label?: string | null;
+    membership_source?: string | null;
+  },
+>(
+  accounts: T[],
+  statuses: Awaited<ReturnType<typeof getAdminAccountMembershipStatusMap>>,
+): void {
+  for (const account of accounts) {
+    const status = statuses.get(account.account_id);
+    account.membership_class = status?.membership_class ?? "free";
+    account.membership_label = status?.membership_label ?? "Free";
+    account.membership_source = status?.membership_source ?? "free";
+  }
 }
 
 function normalizeWindowBounds(opts: {

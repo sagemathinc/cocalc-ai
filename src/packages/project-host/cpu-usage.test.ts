@@ -1,10 +1,14 @@
 const recordManagedProjectCpuUsageMock = jest.fn();
+const stopProjectMock = jest.fn();
 
 jest.mock("@cocalc/lite/hub/api", () => ({
   hubApi: {
     system: {
       recordManagedProjectCpuUsage: (...args: any[]) =>
         recordManagedProjectCpuUsageMock(...args),
+    },
+    projects: {
+      stop: (...args: any[]) => stopProjectMock(...args),
     },
   },
 }));
@@ -25,6 +29,7 @@ describe("project-host CPU usage accounting", () => {
     process.env.COCALC_PROC_CLK_TCK = "100";
     recordManagedProjectCpuUsageMock.mockReset();
     recordManagedProjectCpuUsageMock.mockResolvedValue({ recorded: true });
+    stopProjectMock.mockReset().mockResolvedValue(undefined);
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-05-30T10:00:00.000Z"));
   });
@@ -251,6 +256,56 @@ describe("project-host CPU usage accounting", () => {
         sample_ended_at: expect.any(Date),
       }),
     );
+    expect(stopProjectMock).not.toHaveBeenCalled();
+  });
+
+  it("stops a project when CPU accounting reports a free quota violation", async () => {
+    recordManagedProjectCpuUsageMock.mockResolvedValue({
+      recorded: true,
+      account_id: "22222222-2222-4222-8222-222222222222",
+      stop_project: {
+        reason: "managed_cpu_budget_exceeded",
+        blocked_by: "5h",
+        membership_class: "free",
+        membership_source: "free",
+      },
+    });
+    const sample = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          container_id: "ctr-1",
+          pid: 1234,
+          runtime_key: "runtime-1",
+          source: "proc-tree",
+          cpu_seconds_total: 10,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          container_id: "ctr-1",
+          pid: 1234,
+          runtime_key: "runtime-1",
+          source: "proc-tree",
+          cpu_seconds_total: 20,
+        },
+      ]);
+
+    const stop = startManagedCpuUsageLoop({
+      intervalMs: 1000,
+      sample: sample as any,
+    });
+    await Promise.resolve();
+    jest.advanceTimersByTime(1000);
+    await Promise.resolve();
+    await Promise.resolve();
+    stop();
+
+    expect(stopProjectMock).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
   });
 
   it("does not sample when CPU usage tracking is disabled", async () => {

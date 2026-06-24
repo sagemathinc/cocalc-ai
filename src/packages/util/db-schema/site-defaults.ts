@@ -896,7 +896,6 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Migration"],
     group: "Access & Identity",
     subgroup: "Migration",
-    advanced: true,
   },
   landing_pages: {
     name: "Landing pages",

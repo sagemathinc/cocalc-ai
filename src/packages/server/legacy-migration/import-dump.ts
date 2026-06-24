@@ -29,6 +29,7 @@ type Options = {
 
 type ImportStats = {
   file: string;
+  repairedRows: number;
   rows: number;
   batches: number;
 };
@@ -36,6 +37,7 @@ type ImportStats = {
 const DEFAULT_BATCH_SIZE = 2000;
 let poolUsed = false;
 let rawRecordsSchemaReady: Promise<void> | undefined;
+let repairedRows = 0;
 
 function pool() {
   poolUsed = true;
@@ -150,11 +152,32 @@ async function* readRows(
   for await (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    yield JSON.parse(trimmed);
+    yield parseDumpRow(trimmed);
     count += 1;
     if (limit != null && count >= limit) break;
   }
   stream.destroy();
+}
+
+function parseDumpRow(line: string): Record<string, any> {
+  try {
+    return JSON.parse(line);
+  } catch (err) {
+    // Some legacy exports double-escaped embedded quotes inside JSON strings,
+    // e.g. "Edie \\"Danger\\"" instead of "Edie \"Danger\"".
+    const repaired = line.replace(/\\\\(?=")/g, "\\");
+    if (repaired === line) {
+      throw err;
+    }
+    try {
+      repairedRows += 1;
+      return JSON.parse(repaired);
+    } catch (repairErr) {
+      throw new Error(
+        `invalid legacy dump JSON row: ${err}; quote repair also failed: ${repairErr}`,
+      );
+    }
+  }
 }
 
 async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
@@ -443,6 +466,7 @@ async function importFile({
   options: Options;
 }): Promise<ImportStats> {
   const batch: Record<string, any>[] = [];
+  const repairedRowsStart = repairedRows;
   let rows = 0;
   let batches = 0;
   for await (const row of readRows(file, options.limit)) {
@@ -459,7 +483,12 @@ async function importFile({
     await writeBatch(target, batch, options.dryRun);
     batches += 1;
   }
-  return { file, rows, batches };
+  return {
+    file,
+    rows,
+    batches,
+    repairedRows: repairedRows - repairedRowsStart,
+  };
 }
 
 function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
@@ -532,6 +561,11 @@ async function main(): Promise<void> {
     console.log(
       `imported ${stats.rows} ${target} row(s) from ${basename(stats.file)} in ${stats.batches} batch(es)`,
     );
+    if (stats.repairedRows > 0) {
+      console.log(
+        `repaired ${stats.repairedRows} legacy over-escaped JSON row(s) in ${basename(stats.file)}`,
+      );
+    }
   }
 }
 

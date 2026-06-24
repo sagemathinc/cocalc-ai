@@ -13,6 +13,7 @@ const logger = getLogger("project-host:cpu-usage");
 
 const DEFAULT_INTERVAL_MS = 60_000;
 const MAX_DELTA_CPU_SECONDS = 24 * 60 * 60 * 256;
+const STOP_COOLDOWN_MS = 5 * 60_000;
 
 type PodmanLike = (
   args: string[],
@@ -343,6 +344,7 @@ export function startManagedCpuUsageLoop({
 } = {}): () => void {
   let previous = new Map<string, ProjectCpuSample>();
   let previousSampleAt: number | undefined;
+  const recentStops = new Map<string, number>();
   let running = false;
 
   const runOnce = async () => {
@@ -376,7 +378,7 @@ export function startManagedCpuUsageLoop({
       }
       for (const delta of deltas) {
         try {
-          await hubApi.system.recordManagedProjectCpuUsage({
+          const result = await hubApi.system.recordManagedProjectCpuUsage({
             project_id: delta.project_id,
             cpu_seconds: delta.cpu_seconds,
             sample_started_at,
@@ -395,6 +397,22 @@ export function startManagedCpuUsageLoop({
               mode: "project-host-proc-tree-v1",
             },
           });
+          if (result?.stop_project) {
+            const lastStoppedAt = recentStops.get(delta.project_id) ?? 0;
+            if (sampledAt - lastStoppedAt > STOP_COOLDOWN_MS) {
+              recentStops.set(delta.project_id, sampledAt);
+              logger.warn("stopping project after managed CPU quota exceeded", {
+                project_id: delta.project_id,
+                account_id: result.account_id,
+                blocked_by: result.stop_project.blocked_by,
+                membership_class: result.stop_project.membership_class,
+                membership_source: result.stop_project.membership_source,
+              });
+              await hubApi.projects.stop({
+                project_id: delta.project_id,
+              });
+            }
+          }
         } catch (err) {
           logger.warn("unable to record project CPU usage", {
             project_id: delta.project_id,

@@ -37,7 +37,10 @@ type LegacyMigrationState = {
   legacyAccountIds: string[];
   loading: boolean;
   projects: LegacyMigrationProjectSummary[];
+  totalCount: number;
 };
+
+const PROJECT_LOAD_LIMIT = 1000;
 
 function formatDate(value?: Date | string | null): string {
   if (!value) return "Unknown";
@@ -290,9 +293,11 @@ export function LegacyMigrationPage() {
     legacyAccountIds: [],
     loading: true,
     projects: [],
+    totalCount: 0,
   });
   const [includeHidden, setIncludeHidden] = useState(false);
   const [query, setQuery] = useState("");
+  const [pageSize, setPageSize] = useState(25);
   const [selected, setSelected] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [lastResults, setLastResults] = useState<
@@ -306,6 +311,7 @@ export function LegacyMigrationPage() {
       const response =
         await webapp_client.conat_client.hub.legacyMigration.listProjects({
           include_hidden: includeHidden,
+          limit: PROJECT_LOAD_LIMIT,
           query: nextQuery,
         });
       setState({
@@ -313,6 +319,7 @@ export function LegacyMigrationPage() {
         legacyAccountIds: response.legacy_account_ids,
         loading: false,
         projects: response.projects,
+        totalCount: response.total_count ?? response.projects.length,
       });
     } catch (err) {
       setState((prev) => ({
@@ -357,12 +364,28 @@ export function LegacyMigrationPage() {
       title: "Project",
       dataIndex: "title",
       key: "title",
+      width: 520,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
-        <Space direction="vertical" size={2}>
-          <Text strong>{project.title}</Text>
-          <Text type="secondary">{project.legacy_project_id}</Text>
+        <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          <Text
+            strong
+            ellipsis={{ tooltip: project.title }}
+            style={{ display: "block", width: "100%" }}
+          >
+            {project.title}
+          </Text>
+          <Text
+            type="secondary"
+            style={{ display: "block", fontSize: 12, width: "100%" }}
+          >
+            {project.legacy_project_id}
+          </Text>
           {project.description ? (
-            <Text type="secondary" ellipsis>
+            <Text
+              type="secondary"
+              ellipsis={{ tooltip: project.description }}
+              style={{ display: "block", width: "100%" }}
+            >
               {project.description}
             </Text>
           ) : null}
@@ -373,6 +396,7 @@ export function LegacyMigrationPage() {
       title: "Last edited",
       dataIndex: "last_edited",
       key: "last_edited",
+      width: 220,
       render: (value: Date | string | null) => formatDate(value),
       sorter: (
         left: LegacyMigrationProjectSummary,
@@ -384,6 +408,7 @@ export function LegacyMigrationPage() {
     {
       title: "Import",
       key: "import",
+      width: 170,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={4}>
           {importTag(project)}
@@ -394,6 +419,7 @@ export function LegacyMigrationPage() {
     {
       title: "Files",
       key: "files",
+      width: 280,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={4}>
           {restoreTag(project)}
@@ -436,12 +462,28 @@ export function LegacyMigrationPage() {
         R2 by a follow-up restore worker, so imported projects can temporarily
         show as file restore pending.
       </Paragraph>
+      <Paragraph type="secondary">
+        This page loads up to {PROJECT_LOAD_LIMIT.toLocaleString()} matching
+        projects at a time, sorted by most recent edit. These are the projects
+        available to migrate from your matched legacy account records. You can
+        return later, search for older projects, and migrate more projects at
+        any time.
+      </Paragraph>
 
       <Alert
         showIcon
         type="warning"
         message="Legacy migration is still being rolled out"
-        description="This page lists projects for legacy accounts that match your verified email address or have already been linked by support."
+        description={
+          <span>
+            This page lists projects from legacy cocalc.com account records that
+            match a verified email on your current account. Gmail addresses also
+            match their Gmail dot/plus aliases. To match projects associated
+            with another email address, change and verify your email in{" "}
+            <a href="/settings/profile">profile settings</a>, then come back to
+            this page.
+          </span>
+        }
       />
 
       {state.error ? (
@@ -489,14 +531,26 @@ export function LegacyMigrationPage() {
               showIcon
               type="info"
               message="No linked cocalc.com account found"
-              description="Use the same verified email address as your old cocalc.com account, or contact support if your legacy account used another identity."
+              description={
+                <span>
+                  Use the same verified email address as your old cocalc.com
+                  account. To try another address, change and verify your email
+                  in <a href="/settings/profile">profile settings</a>, then
+                  refresh this page. Contact support if your legacy account used
+                  another identity.
+                </span>
+              }
             />
           ) : (
             <>
               <Space wrap>
                 <Text type="secondary">
-                  Matched {state.legacyAccountIds.length} legacy account
-                  {state.legacyAccountIds.length === 1 ? "" : "s"}.
+                  Matched {state.legacyAccountIds.length} legacy cocalc.com
+                  account record
+                  {state.legacyAccountIds.length === 1 ? "" : "s"} by verified
+                  email. Showing {state.projects.length.toLocaleString()} of{" "}
+                  {state.totalCount.toLocaleString()} matching project
+                  {state.totalCount === 1 ? "" : "s"}.
                 </Text>
                 <Button
                   disabled={selected.length === 0}
@@ -529,7 +583,17 @@ export function LegacyMigrationPage() {
                 columns={columns}
                 dataSource={state.projects}
                 loading={state.loading}
-                pagination={{ pageSize: 25, showSizeChanger: true }}
+                scroll={{ x: 1190 }}
+                tableLayout="fixed"
+                pagination={{
+                  pageSize,
+                  showSizeChanger: true,
+                  showTotal: (total, range) =>
+                    `${range[0]}-${range[1]} of ${total.toLocaleString()} loaded`,
+                  total: state.projects.length,
+                  onChange: (_page, size) => setPageSize(size),
+                  onShowSizeChange: (_page, size) => setPageSize(size),
+                }}
                 rowKey="legacy_project_id"
                 rowSelection={{
                   selectedRowKeys: selected,
