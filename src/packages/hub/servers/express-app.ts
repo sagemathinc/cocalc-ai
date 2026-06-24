@@ -32,6 +32,7 @@ import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
 import initProjectHostSoftware from "./app/project-host-software";
 import initSelfHostConnector from "./app/self-host-connector";
+import initStripeWebhook from "./app/stripe-webhook";
 import initRootfsManifest from "./app/rootfs-manifest";
 import { getDatabase } from "./database";
 import initHttpServer from "./http";
@@ -284,6 +285,7 @@ export default async function init(opts: Options): Promise<{
   initProjectHostSoftware(router);
   initRootfsManifest(router);
   initSelfHostConnector(router);
+  initStripeWebhook(router);
   router.use("/api/conat", createConatRouter());
   logger.info("enabling api/v2 express router");
   router.use("/api/v2", createApiV2Router());
