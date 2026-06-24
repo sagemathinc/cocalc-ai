@@ -109,7 +109,7 @@ describe("UserResult egress entry points", () => {
     expect(screen.getByText("View egress history:acct-1")).toBeTruthy();
   });
 
-  it("shows the banned tag in the collapsed user header", () => {
+  it("shows account status tags in the collapsed user header", () => {
     render(
       <UserResult
         first_name="Ada"
@@ -119,10 +119,14 @@ describe("UserResult egress entry points", () => {
         last_active={"2026-04-28T00:00:00.000Z" as any}
         account_id="acct-1"
         banned={true}
+        membership_class="student-ucla-summer-2026"
+        membership_label="UCLA Student"
+        membership_source="grant"
       />,
     );
 
-    expect(screen.getByText("BANNED")).toBeTruthy();
+    expect(screen.getByText("Banned")).toBeTruthy();
+    expect(screen.getByText("UCLA Student")).toBeTruthy();
   });
 
   it("shows admin status in the collapsed user header and profile card", () => {

@@ -16,6 +16,7 @@ import {
   USER_SEARCH_LIMIT,
   type UserSearchResult,
 } from "@cocalc/util/db-schema/accounts";
+import { getAdminAccountMembershipStatusMap } from "@cocalc/server/membership/admin-account-status";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import {
   cmp,
@@ -665,7 +666,7 @@ export async function searchClusterAccountsDirect({
     ...row,
     home_bay_id: row.home_bay_id ?? getConfiguredBayId(),
   }));
-  return mergeEntries([...normalizedLocal, ...remote])
+  const result = mergeEntries([...normalizedLocal, ...remote])
     .sort(
       (a, b) =>
         -cmp(
@@ -674,6 +675,24 @@ export async function searchClusterAccountsDirect({
         ),
     )
     .slice(0, cappedLimit);
+  if (admin) {
+    await attachAdminMembershipStatus(result);
+  }
+  return result;
+}
+
+async function attachAdminMembershipStatus(
+  accounts: AccountDirectoryEntry[],
+): Promise<void> {
+  const statuses = await getAdminAccountMembershipStatusMap(
+    accounts.map((account) => account.account_id),
+  );
+  for (const account of accounts) {
+    const status = statuses.get(account.account_id);
+    account.membership_class = status?.membership_class ?? "free";
+    account.membership_label = status?.membership_label ?? "Free";
+    account.membership_source = status?.membership_source ?? "free";
+  }
 }
 
 export async function getClusterBanEquivalentEmailAccountsDirect({

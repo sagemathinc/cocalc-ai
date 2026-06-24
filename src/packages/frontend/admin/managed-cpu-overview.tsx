@@ -49,6 +49,7 @@ import { ManagedEgressRecentEventsButton } from "@cocalc/frontend/purchases/mana
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { AccountStatusTags } from "./account-status-tags";
 
 const { Paragraph, Text } = Typography;
 
@@ -124,38 +125,6 @@ function formatProjectSummary(project: {
   const projectPart = `${getProjectLabel(project)} (${project.project_id ?? "no project id"})`;
   const hostPart = project.host_id ? `, host ${project.host_id}` : "";
   return `${projectPart}${hostPart}, ${formatAccountSummary(project)}`;
-}
-
-function AccountStatusTags({
-  account,
-}: {
-  account: {
-    banned?: boolean | null;
-    membership_class?: string | null;
-    membership_label?: string | null;
-    membership_source?: string | null;
-  };
-}) {
-  const membershipClass = `${account.membership_class ?? ""}`.trim();
-  const membershipLabel =
-    `${account.membership_label ?? ""}`.trim() ||
-    (membershipClass === "free" ? "Free" : membershipClass);
-
-  return (
-    <>
-      {account.banned ? <Tag color="red">Banned</Tag> : null}
-      {membershipClass ? (
-        <Tag
-          color={membershipClass === "free" ? "default" : "blue"}
-          title={`Membership: ${membershipClass}${
-            account.membership_source ? ` (${account.membership_source})` : ""
-          }`}
-        >
-          {membershipLabel}
-        </Tag>
-      ) : null}
-    </>
-  );
 }
 
 function numberedLines<T>(
