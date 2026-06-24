@@ -38,9 +38,13 @@ describe("file-server sandbox policy", () => {
 
     await fs.writeFile("/home/user/home.txt", "home");
     await fs.writeFile("relative.txt", "relative");
+    await fs.mkdir("/home", { recursive: true });
     expect(await fs.readFile("/home/user/home.txt", "utf8")).toBe("home");
     expect(await fs.readFile("relative.txt", "utf8")).toBe("relative");
     await expect(fs.readdir("/home")).rejects.toThrow(
+      "rootfs is not mounted; cannot access absolute path '/home'. Start the project and try again.",
+    );
+    await expect(fs.mkdir("/home")).rejects.toThrow(
       "rootfs is not mounted; cannot access absolute path '/home'. Start the project and try again.",
     );
     await expect(fs.readFile("/root/home.txt", "utf8")).rejects.toThrow(
