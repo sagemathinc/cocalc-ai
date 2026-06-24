@@ -31,7 +31,7 @@ import {
   getStripeCustomer,
   processPaymentIntents,
 } from "./api";
-import { Alert, Button, Card, Modal, Space, Spin } from "antd";
+import { Alert, Button, Card, Modal, Progress, Space, Spin } from "antd";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -44,9 +44,9 @@ import { delay } from "awaiting";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { debounce } from "lodash";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { join } from "path";
 import { moneyToStripe, stripeToMoney } from "@cocalc/util/money";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { COLORS } from "@cocalc/util/theme";
 import {
   useEmailVerificationRequired,
   VerifyEmailRequiredPanel,
@@ -359,6 +359,9 @@ function StripeCheckout({
   const [secret, setSecret] = useState<CheckoutSessionSecret | null>(null);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const [progressPhase, setProgressPhase] = useState<
+    "loading-form" | "confirming" | null
+  >(null);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const updateSecret = useCallback(
@@ -367,6 +370,7 @@ function StripeCheckout({
         try {
           setError("");
           setLoading(true);
+          setProgressPhase("loading-form");
           let secret;
           let attempts = 3;
           for (let i = 0; i < attempts; i++) {
@@ -397,10 +401,12 @@ function StripeCheckout({
           // give stripe iframe extra time to load:
           setTimeout(() => {
             setLoading(false);
+            setProgressPhase(null);
           }, 3000);
         } catch (err) {
           setError(`${err}`);
           setLoading(false);
+          setProgressPhase(null);
         }
       }),
       PAYMENT_UPDATE_DEBOUNCE,
@@ -425,7 +431,12 @@ function StripeCheckout({
   if (secret == null) {
     return (
       <>
-        <BigSpin style={style} />
+        <PaymentProgress
+          title="Preparing secure checkout"
+          description="CoCalc is opening the Stripe payment form. This usually takes a few seconds."
+          targetSeconds={8}
+          style={style}
+        />
         <FreshAuthModal {...freshAuthModalProps} />
       </>
     );
@@ -433,36 +444,25 @@ function StripeCheckout({
 
   return (
     <div>
-      {loading && <BigSpin />}
-      {!hasPaymentMethods && (
-        <div>
-          {/* This is a workaround for a possible bug in our code or
-          any conflicts between the user's browser, extensions, etc.
-          and stripe checkout.  Purchasing with a payment method and
-          1-click doesn't use stripe checkout at all and is thus
-          much more reliable... but involves more steps and doesn't
-          show local pricing, etc. */}
-          <Alert
-            showIcon
-            style={{ width: "90%", margin: "15px auto", fontSize: "12pt" }}
-            type="warning"
-            title={
-              <b>
-                If you have a problem paying below, add a{" "}
-                <a
-                  href={join(
-                    appBasePath,
-                    "settings/payment-methods#page=unread",
-                  )}
-                  target="_blank"
-                >
-                  payment method
-                </a>
-                , then refresh this page and click "Buy Now With 1-Click".
-              </b>
-            }
-          />
-        </div>
+      {progressPhase === "loading-form" && (
+        <PaymentProgress
+          title="Preparing secure checkout"
+          description="CoCalc is opening the Stripe payment form. This usually takes a few seconds."
+          targetSeconds={8}
+        />
+      )}
+      {progressPhase === "confirming" && (
+        <PaymentProgress
+          title="Confirming your payment"
+          description="Stripe has your payment details. CoCalc is waiting for final confirmation and will activate your purchase automatically, usually within 30 seconds."
+          targetSeconds={30}
+        />
+      )}
+      {!loading && !hasPaymentMethods && (
+        <CheckoutNote>
+          Secure checkout is handled by Stripe. After payment, CoCalc confirms
+          your purchase automatically; this usually takes under 30 seconds.
+        </CheckoutNote>
       )}
       <EmbeddedCheckoutProvider
         options={{
@@ -471,6 +471,7 @@ function StripeCheckout({
             try {
               setError("");
               setLoading(true);
+              setProgressPhase("confirming");
               await processPaymentIntents({
                 checkout_session_id: secret.sessionId,
                 strict: true,
@@ -480,6 +481,7 @@ function StripeCheckout({
               setError(`${err}`);
             } finally {
               setLoading(false);
+              setProgressPhase(null);
             }
           },
         }}
@@ -649,6 +651,13 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
   return (
     <div style={style}>
       {!ready && <BigSpin />}
+      {isSubmitting && (
+        <PaymentProgress
+          title="Confirming your payment"
+          description="Stripe has your payment details. CoCalc is waiting for final confirmation and will finish this purchase automatically."
+          targetSeconds={30}
+        />
+      )}
       <PaymentElement
         onReady={() => {
           setReady(true);
@@ -686,6 +695,67 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
         setError={setMessage}
       />
     </div>
+  );
+}
+
+function CheckoutNote({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        color: COLORS.GRAY_M,
+        fontSize: "10pt",
+        margin: "0 auto 12px",
+        maxWidth: "620px",
+        textAlign: "center",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function PaymentProgress({
+  title,
+  description,
+  targetSeconds,
+  style,
+}: {
+  title: string;
+  description: string;
+  targetSeconds: number;
+  style?;
+}) {
+  const [percent, setPercent] = useState(8);
+
+  useEffect(() => {
+    const started = Date.now();
+    setPercent(8);
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - started;
+      const next = Math.min(95, 8 + (elapsed / (targetSeconds * 1000)) * 87);
+      setPercent(Math.round(next));
+    }, 500);
+    return () => clearInterval(interval);
+  }, [targetSeconds, title]);
+
+  return (
+    <Card
+      size="small"
+      style={{
+        ...style,
+        background: COLORS.ANTD_BG_BLUE_L,
+        borderColor: COLORS.GRAY_LL,
+        margin: "12px auto",
+        maxWidth: "640px",
+        textAlign: "left",
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: "6px" }}>{title}</div>
+      <Progress percent={percent} showInfo={false} status="active" />
+      <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
+        {description}
+      </div>
+    </Card>
   );
 }
 
