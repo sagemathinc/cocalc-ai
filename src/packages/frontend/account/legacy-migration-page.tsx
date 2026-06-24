@@ -310,7 +310,9 @@ export function LegacyMigrationPage() {
   const [query, setQuery] = useState("");
   const [pageSize, setPageSize] = useState(25);
   const [selected, setSelected] = useState<string[]>([]);
-  const [importing, setImporting] = useState(false);
+  const [importingMode, setImportingMode] = useState<
+    "" | LegacyMigrationProjectRestoreMode
+  >("");
   const [lastResults, setLastResults] = useState<
     LegacyMigrationImportProjectResult[]
   >([]);
@@ -350,7 +352,7 @@ export function LegacyMigrationPage() {
 
   async function importSelected(mode: LegacyMigrationProjectRestoreMode) {
     if (selected.length === 0) return;
-    setImporting(true);
+    setImportingMode(mode);
     setLastResults([]);
     try {
       const response =
@@ -367,7 +369,7 @@ export function LegacyMigrationPage() {
     } catch (err) {
       void message.error(`${err}`);
     } finally {
-      setImporting(false);
+      setImportingMode("");
     }
   }
 
@@ -595,16 +597,16 @@ export function LegacyMigrationPage() {
                   {state.totalCount === 1 ? "" : "s"}.
                 </Text>
                 <Button
-                  disabled={selected.length === 0}
-                  loading={importing}
+                  disabled={selected.length === 0 || !!importingMode}
+                  loading={importingMode === "full"}
                   onClick={() => void importSelected("full")}
                   type="primary"
                 >
                   Import selected
                 </Button>
                 <Button
-                  disabled={selected.length === 0}
-                  loading={importing}
+                  disabled={selected.length === 0 || !!importingMode}
+                  loading={importingMode === "select"}
                   onClick={() => void importSelected("select")}
                 >
                   Import selected for file selection

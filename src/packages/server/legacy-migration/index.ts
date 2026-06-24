@@ -4,10 +4,12 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import createProject from "@cocalc/server/projects/create";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import { setProjectLabels } from "@cocalc/server/projects/labels";
 import {
   ensureProjectFileServerClientReady,
   getProjectFileServerClient,
@@ -48,6 +50,9 @@ const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const PROJECT_ARCHIVE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_ARCHIVE_INDEX_MAX_ENTRIES = 5_000;
 const MAX_ARCHIVE_INDEX_MAX_ENTRIES = 50_000;
+const LEGACY_SOURCE_PROJECT_LABEL = "legacy.cocalc.com/project_id";
+
+const logger = getLogger("server:legacy-migration");
 
 type AccountEmailRow = {
   email_address: string | null;
@@ -578,6 +583,33 @@ async function recordImportAccount({
   );
 }
 
+async function setLegacySourceProjectLabelBestEffort({
+  account_id,
+  legacy_project_id,
+  project_id,
+}: {
+  account_id: string;
+  legacy_project_id: string;
+  project_id: string;
+}): Promise<void> {
+  try {
+    await setProjectLabels({
+      project_id,
+      account_id,
+      labels: {
+        [LEGACY_SOURCE_PROJECT_LABEL]: legacy_project_id,
+      },
+    });
+  } catch (err) {
+    logger.warn("failed to set legacy source project label", {
+      account_id,
+      legacy_project_id,
+      project_id,
+      err: `${err}`,
+    });
+  }
+}
+
 async function importOneProject({
   account_id,
   legacy_project_id,
@@ -671,6 +703,11 @@ async function importOneProject({
       project_id: migration.project_id,
       role: "collaborator",
     });
+    await setLegacySourceProjectLabelBestEffort({
+      account_id,
+      legacy_project_id,
+      project_id: migration.project_id,
+    });
     return {
       legacy_project_id,
       project_id: migration.project_id,
@@ -709,6 +746,11 @@ async function importOneProject({
       legacy_project_id,
       project_id,
       role: "owner",
+    });
+    await setLegacySourceProjectLabelBestEffort({
+      account_id,
+      legacy_project_id,
+      project_id,
     });
     return {
       legacy_project_id,

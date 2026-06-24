@@ -35,6 +35,10 @@ type ImportStats = {
 };
 
 const DEFAULT_BATCH_SIZE = 2000;
+const DEFAULT_ARTIFACT_BUCKET = "cocalc-projects";
+const DEFAULT_ARTIFACT_KEY_PREFIX = "prod3/default/";
+const DEFAULT_ARTIFACT_KEY_SUFFIX = ".tar.zst";
+const LEGACY_SOURCE_PROJECT_LABEL = "legacy.cocalc.com/project_id";
 let poolUsed = false;
 let rawRecordsSchemaReady: Promise<void> | undefined;
 let projectsSchemaReady: Promise<void> | undefined;
@@ -138,6 +142,62 @@ async function ensureProjectsSchema(): Promise<void> {
     `);
   })();
   await projectsSchemaReady;
+}
+
+function defaultArtifactKey(legacyProjectId: string | null): string | null {
+  return legacyProjectId
+    ? `${DEFAULT_ARTIFACT_KEY_PREFIX}${legacyProjectId}${DEFAULT_ARTIFACT_KEY_SUFFIX}`
+    : null;
+}
+
+async function requeueSkippedRestoresWithArtifacts(
+  rows: Record<string, any>[],
+): Promise<void> {
+  const ids = rows
+    .map((row) => clean(row.legacy_project_id))
+    .filter((id): id is string => id != null);
+  if (ids.length === 0) return;
+  await pool().query(
+    `
+    INSERT INTO project_labels
+      (project_id, key, value, created_by, updated_by, created_at, updated_at)
+    SELECT i.project_id,
+           $2,
+           i.legacy_project_id,
+           i.owner_account_id,
+           i.owner_account_id,
+           NOW(),
+           NOW()
+      FROM legacy_migration_project_imports i
+     WHERE i.legacy_project_id=ANY($1::TEXT[])
+       AND i.project_id IS NOT NULL
+    ON CONFLICT (project_id, key)
+    DO UPDATE SET value=EXCLUDED.value,
+                  updated_by=EXCLUDED.updated_by,
+                  updated_at=NOW()
+    `,
+    [ids, LEGACY_SOURCE_PROJECT_LABEL],
+  );
+  await pool().query(
+    `
+    UPDATE legacy_migration_project_imports i
+       SET restore_status='pending',
+           restore_error=NULL,
+           restore_mode='full',
+           restore_claimed_until=NULL,
+           restore_worker_id=NULL,
+           updated=NOW()
+      FROM legacy_migration_projects p
+     WHERE i.legacy_project_id=p.legacy_project_id
+       AND i.legacy_project_id=ANY($1::TEXT[])
+       AND i.project_id IS NOT NULL
+       AND COALESCE(i.restore_mode, 'full')='full'
+       AND i.restore_status='skipped'
+       AND COALESCE(p.artifact_status, '')='available'
+       AND COALESCE(p.artifact_key, '') <> ''
+    `,
+    [ids],
+  );
 }
 
 function targetForFile(file: string): ImportTarget | undefined {
@@ -247,6 +307,7 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
     `,
     [JSON.stringify(rows)],
   );
+  await requeueSkippedRestoresWithArtifacts(rows);
 }
 
 async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
@@ -334,6 +395,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
     `,
     [JSON.stringify(rows)],
   );
+  await requeueSkippedRestoresWithArtifacts(rows);
 }
 
 async function upsertArtifacts(rows: Record<string, any>[]): Promise<void> {
@@ -527,6 +589,11 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
     row.artifact_key = clean(row.artifact_key);
     row.manifest_key = clean(row.manifest_key);
     row.artifact_status = clean(row.artifact_status) ?? "unknown";
+    if (!row.artifact_key && row.legacy_project_id) {
+      row.artifact_bucket = row.artifact_bucket ?? DEFAULT_ARTIFACT_BUCKET;
+      row.artifact_key = defaultArtifactKey(row.legacy_project_id);
+      row.artifact_status = "available";
+    }
   } else if (target === "artifacts") {
     row.legacy_project_id = clean(row.legacy_project_id);
     row.artifact_bucket = clean(row.artifact_bucket);
