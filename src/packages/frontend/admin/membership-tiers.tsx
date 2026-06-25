@@ -98,6 +98,27 @@ function compactColumnTitle(label: string, title: string) {
   );
 }
 
+const GROUP_BOUNDARY = `2px solid ${COLORS.GRAY_L}`;
+
+function groupBoundaryCell({
+  left,
+  right,
+}: {
+  left?: boolean;
+  right?: boolean;
+}) {
+  return () => {
+    const style: React.CSSProperties = {};
+    if (left) style.borderLeft = GROUP_BOUNDARY;
+    if (right) style.borderRight = GROUP_BOUNDARY;
+    return { style };
+  };
+}
+
+const groupLeftBoundaryCell = groupBoundaryCell({ left: true });
+const groupRightBoundaryCell = groupBoundaryCell({ right: true });
+const groupBothBoundaryCell = groupBoundaryCell({ left: true, right: true });
+
 function visibilityCell(value: boolean | undefined) {
   return value ? (
     <Icon name="check" style={{ color: COLORS.BS_GREEN_D }} />
@@ -3621,7 +3642,6 @@ export function MembershipTiers() {
         {render_buttons()}
         <Table<Tier>
           size={"small"}
-          bordered
           dataSource={table_data}
           loading={loading}
           rowSelection={rowSelection}
@@ -3637,46 +3657,60 @@ export function MembershipTiers() {
           <Table.Column<Tier>
             title="Priority"
             dataIndex="priority"
+            align="center"
             defaultSortOrder={"descend"}
             sorter={(a, b) => prioritySortValue(a) - prioritySortValue(b)}
           />
           <Table.Column<Tier>
             title="ID"
             dataIndex="id"
+            align="center"
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
-          <Table.Column<Tier> title="Label" dataIndex="label" />
+          <Table.Column<Tier> title="Label" dataIndex="label" align="center" />
           <Table.Column<Tier>
-            title="Enabled"
+            title={compactColumnTitle(
+              "On",
+              "Enabled tiers can be selected for new purchases, assignments, team licenses, course memberships, and site-license pools.",
+            )}
             dataIndex="disabled"
             align="center"
-            width={72}
             render={(_text, tier) => visibilityCell(!tier.disabled)}
           />
-          <Table.ColumnGroup<Tier> title="Personal">
+          <Table.ColumnGroup<Tier>
+            title="Personal"
+            onHeaderCell={groupLeftBoundaryCell}
+          >
             <Table.Column<Tier>
               title={compactColumnTitle(
-                "V",
+                "On",
                 "Show in public pricing and purchase UI",
               )}
               dataIndex="store_visible"
               align="center"
-              width={36}
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
               render={visibilityCell}
             />
             <Table.Column<Tier>
               title="Monthly"
               dataIndex="price_monthly"
+              align="center"
               render={tableCurrency}
             />
             <Table.Column<Tier>
               title="Yearly"
               dataIndex="price_yearly"
+              align="center"
               render={tableCurrency}
             />
             <Table.Column<Tier>
-              title="Trial"
+              title={compactColumnTitle(
+                "Trial",
+                "Free trial days for personal membership purchases",
+              )}
               dataIndex="trial_days"
+              align="center"
               render={(val) => (val != null && val > 0 ? val : "")}
             />
             <Table.Column<Tier>
@@ -3685,20 +3719,29 @@ export function MembershipTiers() {
                 "Distinct accounts with personal membership subscriptions using this tier",
               )}
               dataIndex="subscribed_account_count"
+              align="center"
               render={(val) => val ?? 0}
             />
           </Table.ColumnGroup>
-          <Table.ColumnGroup<Tier> title="Team">
+          <Table.ColumnGroup<Tier>
+            title="Team"
+            onHeaderCell={groupLeftBoundaryCell}
+          >
             <Table.Column<Tier>
-              title={compactColumnTitle("V", "Available for team licenses")}
+              title={compactColumnTitle("On", "Available for team licenses")}
               dataIndex="team_visible"
               align="center"
-              width={36}
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
               render={visibilityCell}
             />
             <Table.Column<Tier>
-              title="Seats"
+              title={compactColumnTitle(
+                "Seats",
+                "Active purchased team-license seats using this tier",
+              )}
               dataIndex="team_seat_count"
+              align="center"
               render={(val) => val ?? 0}
             />
             <Table.Column<Tier>
@@ -3707,38 +3750,53 @@ export function MembershipTiers() {
                 "Distinct accounts assigned active team-license seats using this tier",
               )}
               dataIndex="team_account_count"
+              align="center"
               render={(val) => val ?? 0}
             />
           </Table.ColumnGroup>
-          <Table.ColumnGroup<Tier> title="Course">
+          <Table.ColumnGroup<Tier>
+            title="Course"
+            onHeaderCell={groupLeftBoundaryCell}
+          >
             <Table.Column<Tier>
               title={compactColumnTitle(
-                "V",
+                "On",
                 "Available for course student memberships",
               )}
               dataIndex="course_store_visible"
               align="center"
-              width={36}
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
               render={visibilityCell}
             />
             <Table.Column<Tier>
               title="Price"
               dataIndex="course_price"
+              align="center"
               render={tableCurrency}
             />
             <Table.Column<Tier>
               title="Days"
               dataIndex="course_duration_days"
+              align="center"
               render={(val) => (val != null ? val : "")}
             />
             <Table.Column<Tier>
-              title="Grace"
+              title={compactColumnTitle(
+                "Grace",
+                "Full-access days after the course start date before student payment is required",
+              )}
               dataIndex="course_grace_days"
+              align="center"
               render={(val) => (val != null ? val : "")}
             />
             <Table.Column<Tier>
-              title="Domains"
+              title={compactColumnTitle(
+                "Domains",
+                "Allowed instructor email domains for course student memberships",
+              )}
               dataIndex="course_allowed_domains"
+              align="center"
               render={(domains) =>
                 Array.isArray(domains) && domains.length > 0 ? (
                   <Space wrap size={[4, 4]}>
@@ -3757,16 +3815,23 @@ export function MembershipTiers() {
                 "Distinct accounts assigned active course membership seats using this tier",
               )}
               dataIndex="course_account_count"
+              align="center"
               render={(val) => val ?? 0}
             />
           </Table.ColumnGroup>
-          <Table.ColumnGroup<Tier> title="Sites">
+          <Table.ColumnGroup<Tier>
+            title="Sites"
+            onHeaderCell={groupBothBoundaryCell}
+          >
             <Table.Column<Tier>
               title={compactColumnTitle(
                 "#",
                 "Active site licenses with pools using this tier",
               )}
               dataIndex="site_license_count"
+              align="center"
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
               render={(val) => val ?? 0}
             />
             <Table.Column<Tier>
@@ -3775,6 +3840,9 @@ export function MembershipTiers() {
                 "Distinct accounts with active claimed site-license seats using this tier",
               )}
               dataIndex="site_account_count"
+              align="center"
+              onHeaderCell={groupRightBoundaryCell}
+              onCell={groupRightBoundaryCell}
               render={(val) => val ?? 0}
             />
           </Table.ColumnGroup>
@@ -3784,6 +3852,7 @@ export function MembershipTiers() {
               "Active admin-assigned memberships using this tier",
             )}
             dataIndex="admin_assigned_count"
+            align="center"
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
@@ -3792,21 +3861,28 @@ export function MembershipTiers() {
               "Distinct accounts using this tier through subscriptions, packages, or admin assignment",
             )}
             dataIndex="total_account_count"
+            align="center"
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
             title="Updated"
             dataIndex="updated"
+            align="center"
             render={(v) => (v != null ? <TimeAgo date={v} /> : "")}
           />
           <Table.Column<Tier>
-            title="History"
+            title={compactColumnTitle(
+              "History",
+              "Number of saved change-history entries for this tier",
+            )}
             dataIndex="history"
+            align="center"
             render={(val) => (Array.isArray(val) ? val.length : 0)}
           />
           <Table.Column<Tier>
             title="Actions"
             dataIndex="actions"
+            align="center"
             render={(_text, tier) => {
               const inUse =
                 (tier.subscription_count ?? 0) > 0 ||
