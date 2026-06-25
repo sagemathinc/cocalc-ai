@@ -7,8 +7,8 @@ import { Alert, Button, Progress, Space, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
-import { useProjectFromMap } from "@cocalc/frontend/app-framework";
-import { progressBarStatus } from "@cocalc/frontend/lro/utils";
+import { redux, useProjectFromMap } from "@cocalc/frontend/app-framework";
+import { isDismissed, progressBarStatus } from "@cocalc/frontend/lro/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   LEGACY_RESTORE_ERROR_LABEL,
@@ -25,6 +25,30 @@ function labelValue(value: unknown): string {
 
 function projectLabels(project: any): Record<string, unknown> {
   return project?.get?.("labels")?.toJS?.() ?? project?.get?.("labels") ?? {};
+}
+
+function reopenDismissKey({
+  project_id,
+  opId,
+}: {
+  project_id: string;
+  opId: string;
+}): string {
+  return `legacy-project-restore-reopened:${project_id}:${opId || "no-op"}`;
+}
+
+function wasReopenDismissed(key: string): boolean {
+  try {
+    return globalThis.sessionStorage?.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markReopenDismissed(key: string): void {
+  try {
+    globalThis.sessionStorage?.setItem(key, "1");
+  } catch {}
 }
 
 function progressPercent({
@@ -71,6 +95,18 @@ export function LegacyMigrationRestoreBanner({
   const [progress, setProgress] =
     useState<Extract<LroEvent, { type: "progress" }>>();
   const [retrying, setRetrying] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const dismissKey = useMemo(
+    () => reopenDismissKey({ project_id, opId }),
+    [opId, project_id],
+  );
+  const [reopenDismissed, setReopenDismissed] = useState(() =>
+    wasReopenDismissed(dismissKey),
+  );
+
+  useEffect(() => {
+    setReopenDismissed(wasReopenDismissed(dismissKey));
+  }, [dismissKey]);
 
   useEffect(() => {
     setSummary(undefined);
@@ -105,7 +141,67 @@ export function LegacyMigrationRestoreBanner({
   }, [opId, project_id]);
 
   if (!legacyProjectId) return null;
-  if (labeledStatus === "restored" || summary?.status === "succeeded") {
+
+  async function reopenProject() {
+    setReopening(true);
+    try {
+      if (opId) {
+        void webapp_client.conat_client.hub.lro
+          .dismiss({ op_id: opId })
+          .catch((err) => {
+            console.warn("failed to dismiss completed legacy restore LRO", err);
+          });
+      }
+      markReopenDismissed(dismissKey);
+      setReopenDismissed(true);
+      webapp_client.conat_client.releaseProjectHostRouting({ project_id });
+      redux.getActions("page").close_project_tab(project_id);
+      redux.removeProjectReferences(project_id);
+      await Promise.resolve();
+      await redux.getActions("projects").open_project({
+        project_id,
+        switch_to: true,
+        restore_session: true,
+        change_history: true,
+      });
+    } catch (err) {
+      setReopenDismissed(false);
+      void message.error(`${err}`);
+    } finally {
+      setReopening(false);
+    }
+  }
+
+  const restored =
+    labeledStatus === "restored" || summary?.status === "succeeded";
+  if (restored) {
+    if (reopenDismissed || isDismissed(summary)) return null;
+    return (
+      <Alert
+        showIcon
+        type="success"
+        message="Legacy project files restored"
+        description={
+          <Space direction="vertical" size={10}>
+            <Text>
+              The imported files are now available. Reopen the project to reset
+              the file browser state and show the restored directory listing.
+            </Text>
+            <Button
+              type="primary"
+              size="large"
+              loading={reopening}
+              onClick={() => void reopenProject()}
+            >
+              Reopen Project
+            </Button>
+          </Space>
+        }
+      />
+    );
+  }
+
+  if (summary != null && isDismissed(summary)) {
     return null;
   }
 

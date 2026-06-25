@@ -11,6 +11,7 @@ Table({
     primary_key: "legacy_account_id",
     pg_indexes: [
       "email_address",
+      "stripe_customer_id",
       "last_active",
       "email_address_verified",
       "updated",
@@ -25,6 +26,7 @@ Table({
           first_name: null,
           last_name: null,
           display_name: null,
+          stripe_customer_id: null,
           last_active: null,
           metadata: null,
           created: null,
@@ -41,6 +43,7 @@ Table({
           first_name: null,
           last_name: null,
           display_name: null,
+          stripe_customer_id: null,
           last_active: null,
           metadata: null,
         },
@@ -75,6 +78,11 @@ Table({
       type: "string",
       desc: "Best display name from the legacy account dump.",
     },
+    stripe_customer_id: {
+      type: "string",
+      pg_type: "VARCHAR(128)",
+      desc: "Best Stripe customer id associated with this legacy account, when known.",
+    },
     last_active: {
       type: "timestamp",
       desc: "Last known activity time on cocalc.com.",
@@ -90,6 +98,118 @@ Table({
     updated: {
       type: "timestamp",
       desc: "When this catalog row was last updated.",
+    },
+  },
+});
+
+Table({
+  name: "legacy_migration_financial_claims",
+  rules: {
+    primary_key: "legacy_account_id",
+    pg_indexes: [
+      "account_id",
+      "status",
+      "credit_purchase_id",
+      "subscription_id",
+      "updated",
+    ],
+    user_query: {
+      get: {
+        admin: true,
+        fields: {
+          legacy_account_id: null,
+          account_id: null,
+          status: null,
+          credit_amount: null,
+          credit_purchase_id: null,
+          selected_membership_class: null,
+          selected_membership_interval: null,
+          subscription_id: null,
+          stripe_customer_id: null,
+          applied_at: null,
+          metadata: null,
+          created: null,
+          updated: null,
+        },
+      },
+      set: {
+        admin: true,
+        delete: true,
+        fields: {
+          legacy_account_id: null,
+          account_id: null,
+          status: null,
+          credit_amount: null,
+          credit_purchase_id: null,
+          selected_membership_class: null,
+          selected_membership_interval: null,
+          subscription_id: null,
+          stripe_customer_id: null,
+          applied_at: null,
+          metadata: null,
+        },
+      },
+    },
+  },
+  fields: {
+    legacy_account_id: {
+      type: "string",
+      pg_type: "VARCHAR(128)",
+      desc: "Legacy account id whose financial migration has been claimed. A legacy account can be financially claimed only once.",
+    },
+    account_id: {
+      type: "uuid",
+      desc: "CoCalc-ai account that claimed this legacy account's financial migration.",
+      render: { type: "account" },
+    },
+    status: {
+      type: "string",
+      pg_type: "VARCHAR(32)",
+      desc: "Financial migration status: applying, applied, skipped, or failed.",
+    },
+    credit_amount: {
+      type: "number",
+      pg_type: "numeric(20,10)",
+      desc: "Positive legacy credit balance applied for this legacy account.",
+    },
+    credit_purchase_id: {
+      type: "integer",
+      desc: "CoCalc-ai purchases.id row for the migrated credit, if any.",
+    },
+    selected_membership_class: {
+      type: "string",
+      pg_type: "VARCHAR(128)",
+      desc: "Membership tier selected when applying this financial migration.",
+    },
+    selected_membership_interval: {
+      type: "string",
+      pg_type: "VARCHAR(16)",
+      desc: "Membership billing interval selected when applying this financial migration.",
+    },
+    subscription_id: {
+      type: "integer",
+      desc: "CoCalc-ai subscriptions.id created for the selected migrated membership, if any.",
+    },
+    stripe_customer_id: {
+      type: "string",
+      pg_type: "VARCHAR(128)",
+      desc: "Legacy Stripe customer id copied to the new account when applying this migration.",
+    },
+    applied_at: {
+      type: "timestamp",
+      desc: "When this financial migration was applied.",
+    },
+    metadata: {
+      type: "map",
+      desc: "Audit details for the financial migration preview and application.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When this financial claim row was created.",
+    },
+    updated: {
+      type: "timestamp",
+      desc: "When this financial claim row was last updated.",
     },
   },
 });

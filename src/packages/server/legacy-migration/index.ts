@@ -4,9 +4,14 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import createProject from "@cocalc/server/projects/create";
+import createCredit from "@cocalc/server/purchases/create-credit";
+import createSubscription from "@cocalc/server/purchases/create-subscription";
+import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
+import type { MembershipTierRecord } from "@cocalc/server/membership/tiers";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
@@ -35,6 +40,12 @@ import type {
 } from "@cocalc/conat/files/file-server";
 import type {
   LegacyMigrationArchiveIndex,
+  LegacyMigrationApplyFinancialOptions,
+  LegacyMigrationApplyFinancialResponse,
+  LegacyMigrationFinancialAccount,
+  LegacyMigrationFinancialPreviewOptions,
+  LegacyMigrationFinancialPreviewResponse,
+  LegacyMigrationMembershipPlan,
   LegacyMigrationImportProjectResult,
   LegacyMigrationImportProjectsOptions,
   LegacyMigrationImportProjectsResponse,
@@ -53,6 +64,7 @@ import type {
 } from "@cocalc/conat/hub/api/legacy-migration";
 
 import { assertLegacyMigrationEnabled } from "./enabled";
+import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
@@ -67,6 +79,13 @@ const logger = getLogger("server:legacy-migration");
 type AccountEmailRow = {
   email_address: string | null;
   email_address_verified: Record<string, unknown> | null;
+};
+
+type LegacyAccountRow = {
+  legacy_account_id: string;
+  email_address: string | null;
+  display_name: string | null;
+  stripe_customer_id: string | null;
 };
 
 type LegacyProjectRow = {
@@ -99,6 +118,7 @@ type LegacyProjectRow = {
 };
 
 let importSchemaReady: Promise<void> | undefined;
+let financialSchemaReady: Promise<void> | undefined;
 
 async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
   importSchemaReady ??= (async () => {
@@ -128,6 +148,71 @@ async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
     `);
   })();
   await importSchemaReady;
+}
+
+async function ensureLegacyMigrationFinancialSchema(): Promise<void> {
+  financialSchemaReady ??= (async () => {
+    await getPool().query(`
+      ALTER TABLE legacy_migration_accounts
+        ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(128)
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_accounts_stripe_customer_id_idx
+        ON legacy_migration_accounts(stripe_customer_id)
+    `);
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS legacy_migration_raw_records (
+        source VARCHAR(64) NOT NULL,
+        legacy_id TEXT NOT NULL,
+        payload JSONB NOT NULL,
+        created TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (source, legacy_id)
+      )
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_raw_records_updated_idx
+        ON legacy_migration_raw_records(updated)
+    `);
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS legacy_migration_financial_claims (
+        legacy_account_id VARCHAR(128) PRIMARY KEY,
+        account_id UUID NOT NULL,
+        status VARCHAR(32) NOT NULL,
+        credit_amount numeric(20,10),
+        credit_purchase_id INTEGER,
+        selected_membership_class VARCHAR(128),
+        selected_membership_interval VARCHAR(16),
+        subscription_id INTEGER,
+        stripe_customer_id VARCHAR(128),
+        applied_at TIMESTAMP,
+        metadata JSONB,
+        created TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_financial_claims_account_id_idx
+        ON legacy_migration_financial_claims(account_id)
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_financial_claims_status_idx
+        ON legacy_migration_financial_claims(status)
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_financial_claims_credit_purchase_id_idx
+        ON legacy_migration_financial_claims(credit_purchase_id)
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_financial_claims_subscription_id_idx
+        ON legacy_migration_financial_claims(subscription_id)
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_financial_claims_updated_idx
+        ON legacy_migration_financial_claims(updated)
+    `);
+  })();
+  await financialSchemaReady;
 }
 
 function normalizeEmail(value: unknown): string {
@@ -435,6 +520,7 @@ async function legacyAccounts(
   >(
     `SELECT linked.legacy_account_id,
             accounts.email_address,
+            accounts.display_name,
             linked.metadata->>'match_method' AS match_method,
             linked.metadata->>'gmail_canonical_email' AS gmail_canonical_email
        FROM legacy_migration_account_links linked
@@ -448,9 +534,510 @@ async function legacyAccounts(
   return rows.map((row) => ({
     legacy_account_id: row.legacy_account_id,
     email_address: normalizeEmail(row.email_address) || null,
+    display_name: row.display_name ?? null,
     match_method: row.match_method ?? null,
     gmail_canonical_email: normalizeEmail(row.gmail_canonical_email) || null,
   }));
+}
+
+function numberValue(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function positiveMoneyNumber(value: unknown): number {
+  return Math.max(0, numberValue(value));
+}
+
+function toMoneyNumber(value: unknown): number {
+  const numeric =
+    typeof value === "number" || typeof value === "string" ? value : 0;
+  const n = Number(toDecimal(numeric).toFixed(2));
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function membershipPlans(): Promise<LegacyMigrationMembershipPlan[]> {
+  const tiers = await getSeedMembershipTierMap({ includeDisabled: false });
+  return ["basic", "standard"]
+    .map((id) => tiers[id])
+    .filter((tier): tier is MembershipTierRecord => tier != null)
+    .map((tier) => ({
+      id: tier.id,
+      label: tier.label ?? tier.id,
+      price_monthly:
+        tier.price_monthly == null ? null : toMoneyNumber(tier.price_monthly),
+      price_yearly:
+        tier.price_yearly == null ? null : toMoneyNumber(tier.price_yearly),
+    }));
+}
+
+async function activeMembershipExists(account_id: string): Promise<boolean> {
+  const { rows } = await getPool().query(
+    `
+    SELECT 1
+      FROM subscriptions
+     WHERE account_id=$1
+       AND status='active'
+       AND metadata->>'type'='membership'
+       AND current_period_end >= NOW()
+     LIMIT 1
+    `,
+    [account_id],
+  );
+  return rows.length > 0;
+}
+
+async function currentStripeCustomerId(
+  account_id: string,
+  client?: PoolClient,
+): Promise<string | null> {
+  const { rows } = await (client ?? getPool()).query<{
+    stripe_customer_id: string | null;
+  }>(`SELECT stripe_customer_id FROM accounts WHERE account_id=$1 LIMIT 1`, [
+    account_id,
+  ]);
+  return clean(rows[0]?.stripe_customer_id) ?? null;
+}
+
+async function financialRowsForAccount(
+  account_id: string,
+  client?: PoolClient,
+): Promise<LegacyMigrationFinancialAccount[]> {
+  await ensureVerifiedEmailLinks(account_id);
+  await ensureLegacyMigrationFinancialSchema();
+  const { rows } = await (client ?? getPool()).query<
+    LegacyAccountRow & {
+      balance: string | number | null;
+      credit_amount: string | number | null;
+      active_subscription_annualized: string | number | null;
+      active_subscription_count: string | number | null;
+      claimed_by_account_id: string | null;
+      claimed_at: Date | string | null;
+    }
+  >(
+    `
+    WITH linked AS (
+      SELECT legacy_account_id
+        FROM legacy_migration_account_links
+       WHERE account_id=$1
+    ),
+    purchase_costs AS (
+      SELECT payload->>'legacy_account_id' AS legacy_account_id,
+             SUM((payload->>'cost')::numeric) AS cost_sum
+        FROM legacy_migration_raw_records
+       WHERE source='purchases'
+         AND payload->>'legacy_account_id' IN (SELECT legacy_account_id FROM linked)
+         AND COALESCE(payload->>'cost', '') ~ '^-?[0-9]+([.][0-9]+)?$'
+       GROUP BY payload->>'legacy_account_id'
+    ),
+    active_subscriptions AS (
+      SELECT payload->>'legacy_account_id' AS legacy_account_id,
+             COUNT(*)::integer AS active_subscription_count,
+             SUM(
+               (payload->>'cost')::numeric *
+               CASE WHEN payload->>'interval'='year' THEN 1 ELSE 12 END
+             ) AS active_subscription_annualized
+        FROM legacy_migration_raw_records
+       WHERE source='subscriptions'
+         AND payload->>'legacy_account_id' IN (SELECT legacy_account_id FROM linked)
+         AND payload->>'status'='active'
+         AND COALESCE(payload->>'cost', '') ~ '^[0-9]+([.][0-9]+)?$'
+       GROUP BY payload->>'legacy_account_id'
+    )
+    SELECT accounts.legacy_account_id,
+           accounts.email_address,
+           accounts.display_name,
+           accounts.stripe_customer_id,
+           COALESCE(-purchase_costs.cost_sum, 0) AS balance,
+           GREATEST(COALESCE(-purchase_costs.cost_sum, 0), 0) AS credit_amount,
+           COALESCE(active_subscriptions.active_subscription_annualized, 0)
+             AS active_subscription_annualized,
+           COALESCE(active_subscriptions.active_subscription_count, 0)
+             AS active_subscription_count,
+           claims.account_id AS claimed_by_account_id,
+           claims.applied_at AS claimed_at
+      FROM linked
+      JOIN legacy_migration_accounts accounts
+        ON accounts.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN purchase_costs
+        ON purchase_costs.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN active_subscriptions
+        ON active_subscriptions.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN legacy_migration_financial_claims claims
+        ON claims.legacy_account_id=linked.legacy_account_id
+       AND claims.status='applied'
+     ORDER BY COALESCE(active_subscriptions.active_subscription_annualized, 0) DESC,
+              GREATEST(COALESCE(-purchase_costs.cost_sum, 0), 0) DESC,
+              lower(COALESCE(accounts.email_address, '')),
+              accounts.legacy_account_id
+    `,
+    [account_id],
+  );
+  return rows.map((row) => ({
+    legacy_account_id: row.legacy_account_id,
+    email_address: normalizeEmail(row.email_address) || null,
+    display_name: row.display_name ?? null,
+    stripe_customer_id: clean(row.stripe_customer_id) ?? null,
+    balance: toMoneyNumber(row.balance),
+    credit_amount: toMoneyNumber(row.credit_amount),
+    active_subscription_annualized: toMoneyNumber(
+      row.active_subscription_annualized,
+    ),
+    active_subscription_count: numberValue(row.active_subscription_count),
+    claimed_by_account_id: row.claimed_by_account_id,
+    claimed_at: row.claimed_at,
+  }));
+}
+
+function suggestedMembershipClass({
+  active_subscription_annualized,
+  active_subscription_count,
+  membership_already_applied,
+}: {
+  active_subscription_annualized: number;
+  active_subscription_count: number;
+  membership_already_applied: boolean;
+}): string | null {
+  if (membership_already_applied || active_subscription_count <= 0) {
+    return null;
+  }
+  return active_subscription_annualized > 150 ? "standard" : "basic";
+}
+
+async function financialPreviewForAccount(
+  account_id: string,
+): Promise<LegacyMigrationFinancialPreviewResponse> {
+  const [legacy_accounts, plans, hasActiveMembership] = await Promise.all([
+    financialRowsForAccount(account_id),
+    membershipPlans(),
+    activeMembershipExists(account_id),
+  ]);
+  const pending = legacy_accounts.filter(
+    (account) => !account.claimed_by_account_id,
+  );
+  const claimedHere = legacy_accounts.filter(
+    (account) => account.claimed_by_account_id === account_id,
+  );
+  const pending_credit_amount = toMoneyNumber(
+    pending.reduce((total, account) => total + account.credit_amount, 0),
+  );
+  const applied_credit_amount = toMoneyNumber(
+    claimedHere.reduce((total, account) => total + account.credit_amount, 0),
+  );
+  const active_subscription_annualized = toMoneyNumber(
+    pending.reduce(
+      (total, account) => total + account.active_subscription_annualized,
+      0,
+    ),
+  );
+  const active_subscription_count = pending.reduce(
+    (total, account) => total + account.active_subscription_count,
+    0,
+  );
+  const membershipClaimExists = await legacyMembershipClaimExists(account_id);
+  const membership_already_applied =
+    hasActiveMembership || membershipClaimExists;
+  const stripe_customer_id =
+    (await currentStripeCustomerId(account_id)) ??
+    pending.map((account) => account.stripe_customer_id).find(Boolean) ??
+    null;
+  return {
+    legacy_accounts,
+    pending_credit_amount,
+    applied_credit_amount,
+    active_subscription_annualized,
+    active_subscription_count,
+    suggested_membership_class: suggestedMembershipClass({
+      active_subscription_annualized,
+      active_subscription_count,
+      membership_already_applied,
+    }),
+    suggested_membership_interval: "year",
+    membership_already_applied,
+    stripe_customer_id,
+    plans,
+    can_apply:
+      pending.length > 0 &&
+      (pending_credit_amount > 0 ||
+        active_subscription_count > 0 ||
+        pending.some((account) => account.stripe_customer_id)),
+  };
+}
+
+async function legacyMembershipClaimExists(
+  account_id: string,
+): Promise<boolean> {
+  await ensureLegacyMigrationFinancialSchema();
+  const { rows } = await getPool().query(
+    `
+    SELECT 1
+      FROM legacy_migration_financial_claims
+     WHERE account_id=$1
+       AND status='applied'
+       AND subscription_id IS NOT NULL
+     LIMIT 1
+    `,
+    [account_id],
+  );
+  return rows.length > 0;
+}
+
+function membershipEnd(interval: "month" | "year"): Date {
+  const end = new Date();
+  if (interval === "year") {
+    end.setFullYear(end.getFullYear() + 1);
+  } else {
+    end.setMonth(end.getMonth() + 1);
+  }
+  return end;
+}
+
+async function membershipCost({
+  membership_class,
+  interval,
+}: {
+  membership_class: string;
+  interval: "month" | "year";
+}): Promise<number> {
+  const plans = await membershipPlans();
+  const plan = plans.find((plan) => plan.id === membership_class);
+  if (!plan) {
+    throw new Error(`membership plan '${membership_class}' is not available`);
+  }
+  const cost = interval === "year" ? plan.price_yearly : plan.price_monthly;
+  if (cost == null || cost <= 0) {
+    throw new Error(
+      `membership plan '${membership_class}' does not have a ${interval} price`,
+    );
+  }
+  return cost;
+}
+
+async function claimPendingFinancialAccounts({
+  account_id,
+  rows,
+  client,
+}: {
+  account_id: string;
+  rows: LegacyMigrationFinancialAccount[];
+  client: PoolClient;
+}): Promise<LegacyMigrationFinancialAccount[]> {
+  const pending = rows.filter((row) => !row.claimed_by_account_id);
+  if (pending.length === 0) return [];
+  const payload = pending.map((row) => ({
+    legacy_account_id: row.legacy_account_id,
+    account_id,
+    credit_amount: moneyToDbString(row.credit_amount),
+    stripe_customer_id: row.stripe_customer_id,
+    metadata: {
+      email_address: row.email_address,
+      display_name: row.display_name,
+      balance: row.balance,
+      active_subscription_annualized: row.active_subscription_annualized,
+      active_subscription_count: row.active_subscription_count,
+    },
+  }));
+  const { rows: claimed } = await client.query<{ legacy_account_id: string }>(
+    `
+    WITH input AS (
+      SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS x(
+          legacy_account_id TEXT,
+          account_id UUID,
+          credit_amount numeric,
+          stripe_customer_id TEXT,
+          metadata JSONB
+        )
+    )
+    INSERT INTO legacy_migration_financial_claims
+      (legacy_account_id, account_id, status, credit_amount, stripe_customer_id,
+       metadata, created, updated)
+    SELECT legacy_account_id,
+           account_id,
+           'applying',
+           credit_amount,
+           NULLIF(stripe_customer_id, ''),
+           COALESCE(metadata, '{}'::jsonb),
+           NOW(),
+           NOW()
+      FROM input
+     WHERE COALESCE(legacy_account_id, '') <> ''
+    ON CONFLICT (legacy_account_id) DO NOTHING
+    RETURNING legacy_account_id
+    `,
+    [JSON.stringify(payload)],
+  );
+  const claimedIds = new Set(claimed.map((row) => row.legacy_account_id));
+  return pending.filter((row) => claimedIds.has(row.legacy_account_id));
+}
+
+async function finishFinancialClaim({
+  legacy_account_id,
+  credit_purchase_id,
+  subscription_id,
+  selected_membership_class,
+  selected_membership_interval,
+  client,
+}: {
+  legacy_account_id: string;
+  credit_purchase_id?: number | null;
+  subscription_id?: number | null;
+  selected_membership_class?: string | null;
+  selected_membership_interval?: "month" | "year" | null;
+  client: PoolClient;
+}): Promise<void> {
+  await client.query(
+    `
+    UPDATE legacy_migration_financial_claims
+       SET status='applied',
+           credit_purchase_id=$2,
+           subscription_id=$3,
+           selected_membership_class=$4,
+           selected_membership_interval=$5,
+           applied_at=NOW(),
+           updated=NOW()
+     WHERE legacy_account_id=$1
+    `,
+    [
+      legacy_account_id,
+      credit_purchase_id ?? null,
+      subscription_id ?? null,
+      selected_membership_class ?? null,
+      selected_membership_interval ?? null,
+    ],
+  );
+}
+
+export async function previewFinancialMigration({
+  account_id,
+}: LegacyMigrationFinancialPreviewOptions = {}): Promise<LegacyMigrationFinancialPreviewResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  return await financialPreviewForAccount(account_id);
+}
+
+export async function applyFinancialMigration({
+  account_id,
+  membership_class,
+  membership_interval,
+}: LegacyMigrationApplyFinancialOptions = {}): Promise<LegacyMigrationApplyFinancialResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  await ensureLegacyMigrationFinancialSchema();
+  const selectedClass =
+    clean(membership_class) === "none" ? undefined : clean(membership_class);
+  const selectedInterval = membership_interval === "month" ? "month" : "year";
+  const selectedCost =
+    selectedClass != null
+      ? await membershipCost({
+          membership_class: selectedClass,
+          interval: selectedInterval,
+        })
+      : undefined;
+  if (selectedClass != null && (await activeMembershipExists(account_id))) {
+    throw new Error("this account already has an active membership");
+  }
+
+  const client = await getTransactionClient();
+  try {
+    const rows = await financialRowsForAccount(account_id, client);
+    const claimed = await claimPendingFinancialAccounts({
+      account_id,
+      rows,
+      client,
+    });
+    if (claimed.length === 0) {
+      throw new Error("there are no unclaimed legacy financial records");
+    }
+    const stripe_customer_id =
+      (await currentStripeCustomerId(account_id, client)) ??
+      claimed.map((row) => row.stripe_customer_id).find(Boolean) ??
+      null;
+    if (stripe_customer_id) {
+      await client.query(
+        `
+        UPDATE accounts
+           SET stripe_customer_id=$2
+         WHERE account_id=$1
+           AND COALESCE(stripe_customer_id, '')=''
+        `,
+        [account_id, stripe_customer_id],
+      );
+    }
+
+    const creditPurchaseIds: number[] = [];
+    const creditPurchaseIdByLegacyAccount = new Map<string, number>();
+    for (const row of claimed) {
+      if (positiveMoneyNumber(row.credit_amount) <= 0) continue;
+      const purchaseId = await createCredit({
+        account_id,
+        amount: row.credit_amount,
+        invoice_id: `legacy-migration-credit:${row.legacy_account_id}`,
+        tag: "legacy-migration-credit",
+        notes: `Migrated positive cocalc.com account balance from legacy account ${row.legacy_account_id}.`,
+        description: {
+          purpose: "legacy-migration",
+          description: "Migrated cocalc.com credit balance",
+        },
+        client,
+      });
+      creditPurchaseIds.push(purchaseId);
+      creditPurchaseIdByLegacyAccount.set(row.legacy_account_id, purchaseId);
+    }
+
+    let subscription_id: number | undefined;
+    if (selectedClass != null && selectedCost != null) {
+      subscription_id = await createSubscription(
+        {
+          account_id,
+          cost: selectedCost,
+          interval: selectedInterval,
+          current_period_start: new Date(),
+          current_period_end: membershipEnd(selectedInterval),
+          status: "active",
+          metadata: {
+            type: "membership",
+            class: selectedClass,
+            source: "promo",
+            source_id: "legacy-migration",
+          },
+        },
+        client,
+      );
+    }
+
+    for (const row of claimed) {
+      await finishFinancialClaim({
+        legacy_account_id: row.legacy_account_id,
+        credit_purchase_id:
+          creditPurchaseIdByLegacyAccount.get(row.legacy_account_id) ?? null,
+        subscription_id,
+        selected_membership_class: selectedClass,
+        selected_membership_interval: selectedClass ? selectedInterval : null,
+        client,
+      });
+    }
+
+    await client.query("COMMIT");
+    return {
+      claimed_legacy_account_ids: claimed.map((row) => row.legacy_account_id),
+      credit_amount: toMoneyNumber(
+        claimed.reduce((total, row) => total + row.credit_amount, 0),
+      ),
+      credit_purchase_ids: creditPurchaseIds,
+      subscription_id,
+      stripe_customer_id,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function listProjects({

@@ -4,3 +4,12 @@ packages/*/build/
 packages/*/dist/
 packages/*/dist-*/
 packages/*/dist-ts/
+
+# Generated/minified bundle artifacts.  Keep these out of normal ripgrep
+# searches even when the artifact is tracked or a gitignore rule is ineffective.
+**/*.bundle.js
+**/*.bundle.css
+**/*.min.js
+**/*.min.css
+**/*.js.map
+**/*.css.map

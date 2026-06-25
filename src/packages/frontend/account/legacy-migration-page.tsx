@@ -37,6 +37,7 @@ import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/le
 import type {
   LegacyMigrationArchiveEntry,
   LegacyMigrationArchiveIndex,
+  LegacyMigrationFinancialPreviewResponse,
   LegacyMigrationMatchedAccount,
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
@@ -51,6 +52,13 @@ type LegacyMigrationState = {
   loading: boolean;
   projects: LegacyMigrationProjectSummary[];
   totalCount: number;
+};
+
+type LegacyFinancialState = {
+  applying: boolean;
+  error: string;
+  loading: boolean;
+  preview?: LegacyMigrationFinancialPreviewResponse;
 };
 
 const PROJECT_LOAD_LIMIT = 1000;
@@ -94,6 +102,15 @@ function formatBytes(value: number | null | undefined): string {
     unit = units[i];
   }
   return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${unit}`;
+}
+
+function formatMoney(value: number | null | undefined): string {
+  const amount =
+    typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return `$${amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function matchedAccountLabel(account: LegacyMigrationMatchedAccount): string {
@@ -581,6 +598,16 @@ export function LegacyMigrationPage() {
     projects: [],
     totalCount: 0,
   });
+  const [financialState, setFinancialState] = useState<LegacyFinancialState>({
+    applying: false,
+    error: "",
+    loading: true,
+  });
+  const [selectedMembershipClass, setSelectedMembershipClass] =
+    useState("none");
+  const [selectedMembershipInterval, setSelectedMembershipInterval] = useState<
+    "month" | "year"
+  >("year");
   const [includeHidden, setIncludeHidden] = useState(false);
   const [maxDiskGb, setMaxDiskGb] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -617,9 +644,63 @@ export function LegacyMigrationPage() {
     }
   }
 
+  async function loadFinancialPreview() {
+    if (!account_id || !legacyMigrationEnabled) return;
+    setFinancialState((prev) => ({ ...prev, error: "", loading: true }));
+    try {
+      const preview =
+        await webapp_client.conat_client.hub.legacyMigration.previewFinancialMigration();
+      setFinancialState({
+        applying: false,
+        error: "",
+        loading: false,
+        preview,
+      });
+      setSelectedMembershipClass(preview.suggested_membership_class ?? "none");
+      setSelectedMembershipInterval(preview.suggested_membership_interval);
+    } catch (err) {
+      setFinancialState((prev) => ({
+        ...prev,
+        error: `${err}`,
+        loading: false,
+      }));
+    }
+  }
+
+  async function applyFinancialMigration() {
+    setFinancialState((prev) => ({ ...prev, applying: true, error: "" }));
+    try {
+      const response =
+        await webapp_client.conat_client.hub.legacyMigration.applyFinancialMigration(
+          {
+            membership_class:
+              selectedMembershipClass === "none"
+                ? null
+                : selectedMembershipClass,
+            membership_interval: selectedMembershipInterval,
+          },
+        );
+      void message.success(
+        `Migrated ${formatMoney(response.credit_amount)} in legacy credit${
+          response.subscription_id
+            ? " and created a membership subscription"
+            : ""
+        }.`,
+      );
+      await loadFinancialPreview();
+    } catch (err) {
+      setFinancialState((prev) => ({
+        ...prev,
+        applying: false,
+        error: `${err}`,
+      }));
+    }
+  }
+
   useEffect(() => {
     if (legacyMigrationEnabled) {
       void loadProjects();
+      void loadFinancialPreview();
     }
   }, [account_id, includeHidden, legacyMigrationEnabled]);
 
@@ -877,6 +958,171 @@ export function LegacyMigrationPage() {
             When enabled, the Projects page shows a Legacy Projects button that
             opens this migration page without a browser refresh.
           </Text>
+        </Space>
+      </Card>
+
+      <Card
+        title={
+          <Space>
+            <Icon name="credit-card" />
+            <span>Financial migration</span>
+          </Space>
+        }
+        extra={
+          <Button
+            loading={financialState.loading}
+            onClick={() => void loadFinancialPreview()}
+          >
+            Refresh
+          </Button>
+        }
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            This explicitly migrates positive cocalc.com credit and optionally
+            creates a CoCalc membership subscription from your matched legacy
+            account records. It does not cancel old Stripe subscriptions.
+          </Paragraph>
+          {financialState.error ? (
+            <Alert showIcon type="error" message={financialState.error} />
+          ) : null}
+          {financialState.loading && !financialState.preview ? (
+            <Loading />
+          ) : financialState.preview ? (
+            <>
+              <Space wrap size="large">
+                <Space direction="vertical" size={0}>
+                  <Text type="secondary">Available legacy credit</Text>
+                  <Text strong>
+                    {formatMoney(financialState.preview.pending_credit_amount)}
+                  </Text>
+                </Space>
+                <Space direction="vertical" size={0}>
+                  <Text type="secondary">Already migrated credit</Text>
+                  <Text>
+                    {formatMoney(financialState.preview.applied_credit_amount)}
+                  </Text>
+                </Space>
+                <Space direction="vertical" size={0}>
+                  <Text type="secondary">Legacy active subscriptions</Text>
+                  <Text>
+                    {financialState.preview.active_subscription_count} totaling{" "}
+                    {formatMoney(
+                      financialState.preview.active_subscription_annualized,
+                    )}
+                    /year
+                  </Text>
+                </Space>
+                <Space direction="vertical" size={0}>
+                  <Text type="secondary">Stripe customer</Text>
+                  <Text copyable={!!financialState.preview.stripe_customer_id}>
+                    {financialState.preview.stripe_customer_id ?? "None found"}
+                  </Text>
+                </Space>
+              </Space>
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Text type="secondary">Matched financial records:</Text>
+                <Space wrap size={[4, 4]}>
+                  {financialState.preview.legacy_accounts.map((account) => (
+                    <Tag
+                      color={
+                        account.claimed_by_account_id
+                          ? account.claimed_by_account_id === account_id
+                            ? "green"
+                            : "red"
+                          : account.credit_amount > 0
+                            ? "gold"
+                            : undefined
+                      }
+                      key={account.legacy_account_id}
+                      title={[
+                        account.legacy_account_id,
+                        `credit: ${formatMoney(account.credit_amount)}`,
+                        account.active_subscription_count
+                          ? `subscriptions: ${account.active_subscription_count}, ${formatMoney(account.active_subscription_annualized)}/year`
+                          : "",
+                        account.claimed_by_account_id
+                          ? `claimed by ${account.claimed_by_account_id}`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join("\n")}
+                    >
+                      {account.email_address ??
+                        account.display_name ??
+                        account.legacy_account_id}
+                    </Tag>
+                  ))}
+                </Space>
+              </Space>
+              <Space wrap>
+                <Select
+                  disabled={
+                    financialState.applying ||
+                    financialState.preview.membership_already_applied
+                  }
+                  onChange={setSelectedMembershipClass}
+                  style={{ width: 240 }}
+                  value={
+                    financialState.preview.membership_already_applied
+                      ? "none"
+                      : selectedMembershipClass
+                  }
+                >
+                  <Select.Option value="none">
+                    No membership migration
+                  </Select.Option>
+                  {financialState.preview.plans.map((plan) => (
+                    <Select.Option key={plan.id} value={plan.id}>
+                      {plan.label} ({formatMoney(plan.price_monthly)}/month,{" "}
+                      {formatMoney(plan.price_yearly)}/year)
+                    </Select.Option>
+                  ))}
+                </Select>
+                <Select
+                  disabled={
+                    financialState.applying ||
+                    financialState.preview.membership_already_applied ||
+                    selectedMembershipClass === "none"
+                  }
+                  onChange={setSelectedMembershipInterval}
+                  style={{ width: 120 }}
+                  value={selectedMembershipInterval}
+                >
+                  <Select.Option value="year">Yearly</Select.Option>
+                  <Select.Option value="month">Monthly</Select.Option>
+                </Select>
+                <Button
+                  disabled={
+                    financialState.applying ||
+                    !financialState.preview.can_apply ||
+                    (financialState.preview.pending_credit_amount <= 0 &&
+                      selectedMembershipClass === "none" &&
+                      !financialState.preview.stripe_customer_id)
+                  }
+                  loading={financialState.applying}
+                  onClick={() => void applyFinancialMigration()}
+                  type="primary"
+                >
+                  Apply financial migration
+                </Button>
+              </Space>
+              {financialState.preview.membership_already_applied ? (
+                <Alert
+                  showIcon
+                  type="info"
+                  message="This account already has an active membership or migrated membership."
+                />
+              ) : selectedMembershipClass !== "none" ? (
+                <Alert
+                  showIcon
+                  type="warning"
+                  message="Membership migration creates a new CoCalc membership subscription."
+                  description="This first migrated period is recorded locally in CoCalc. Old cocalc.com Stripe subscriptions are not canceled by this button."
+                />
+              ) : null}
+            </>
+          ) : null}
         </Space>
       </Card>
 

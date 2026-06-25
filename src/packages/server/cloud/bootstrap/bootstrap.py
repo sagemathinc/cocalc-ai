@@ -1172,6 +1172,12 @@ keys.maxkeys = 20000
 keys.maxbytes = 25000000
 """
 
+INOTIFY_LIMITS_CONF = """[fs.inotify]
+max_user_instances = 8192
+max_user_watches = 2097152
+max_queued_events = 65536
+"""
+
 
 def configure_kernel_module_hardening(
     cfg: BootstrapConfig,
@@ -1196,6 +1202,32 @@ def configure_kernel_key_limits(
     conf.write_text(KERNEL_KEYS_LIMITS_CONF, encoding="utf-8")
     run_best_effort(cfg, ["sysctl", "-w", "kernel.keys.maxkeys=20000"], "sysctl kernel.keys.maxkeys")
     run_best_effort(cfg, ["sysctl", "-w", "kernel.keys.maxbytes=25000000"], "sysctl kernel.keys.maxbytes")
+
+
+def configure_inotify_limits(
+    cfg: BootstrapConfig,
+    *,
+    sysctl_dir: Path = Path("/etc/sysctl.d"),
+) -> None:
+    log_line(cfg, "bootstrap: configuring inotify limits for project workloads")
+    sysctl_dir.mkdir(parents=True, exist_ok=True)
+    conf = sysctl_dir / "60-cocalc-project-host-inotify.conf"
+    conf.write_text(INOTIFY_LIMITS_CONF, encoding="utf-8")
+    run_best_effort(
+        cfg,
+        ["sysctl", "-w", "fs.inotify.max_user_instances=8192"],
+        "sysctl fs.inotify.max_user_instances",
+    )
+    run_best_effort(
+        cfg,
+        ["sysctl", "-w", "fs.inotify.max_user_watches=2097152"],
+        "sysctl fs.inotify.max_user_watches",
+    )
+    run_best_effort(
+        cfg,
+        ["sysctl", "-w", "fs.inotify.max_queued_events=65536"],
+        "sysctl fs.inotify.max_queued_events",
+    )
 
 
 def detect_public_ip(cfg: BootstrapConfig) -> str | None:
@@ -4776,6 +4808,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         apt_update_install(cfg)
         configure_kernel_module_hardening(cfg)
         configure_kernel_key_limits(cfg)
+        configure_inotify_limits(cfg)
         report_bootstrap_status(cfg, "running", "Configuring storage and containers")
         install_gpu_support(cfg)
         configure_chrony(cfg)
@@ -4803,6 +4836,7 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         ensure_bootstrap_paths(cfg)
         configure_kernel_module_hardening(cfg)
         configure_kernel_key_limits(cfg)
+        configure_inotify_limits(cfg)
         configure_journald_limits(cfg)
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)
