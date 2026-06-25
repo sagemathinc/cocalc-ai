@@ -3585,13 +3585,13 @@ export function MembershipTiers() {
             sorter={(a, b) => prioritySortValue(a) - prioritySortValue(b)}
           />
           <Table.Column<Tier>
-            title="Tier ID"
+            title="ID"
             dataIndex="id"
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
           <Table.Column<Tier> title="Label" dataIndex="label" />
           <Table.Column<Tier>
-            title="Visible"
+            title="Public"
             dataIndex="store_visible"
             render={(val) => (val ? "Yes" : "")}
           />
@@ -3651,7 +3651,7 @@ export function MembershipTiers() {
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
-            title="Subscribed accounts"
+            title="Accounts"
             dataIndex="subscribed_account_count"
             render={(val) => val ?? 0}
           />
@@ -3661,12 +3661,12 @@ export function MembershipTiers() {
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
-            title="Site licenses"
+            title="Sites"
             dataIndex="site_license_count"
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
-            title="Active"
+            title="Enabled"
             dataIndex="disabled"
             render={(_text, tier) => {
               const click = () => save({ ...tier, active: !!tier.disabled });
@@ -3693,7 +3693,7 @@ export function MembershipTiers() {
             )}
           />
           <Table.Column<Tier>
-            title="Delete"
+            title="Del"
             dataIndex="delete"
             render={(_text, tier) => {
               const inUse =
