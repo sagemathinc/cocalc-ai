@@ -708,12 +708,15 @@ export function LegacyMigrationPage() {
           >
             {project.title}
           </Text>
-          <Text
-            type="secondary"
-            style={{ display: "block", fontSize: 12, width: "100%" }}
-          >
-            {project.legacy_project_id}
-          </Text>
+          <span onClick={(event) => event.stopPropagation()}>
+            <Text
+              copyable={{ text: project.legacy_project_id }}
+              type="secondary"
+              style={{ display: "block", fontSize: 12, width: "100%" }}
+            >
+              {project.legacy_project_id}
+            </Text>
+          </span>
           {project.description ? (
             <Text
               type="secondary"

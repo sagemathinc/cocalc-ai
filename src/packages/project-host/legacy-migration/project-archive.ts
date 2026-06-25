@@ -200,6 +200,7 @@ function runProjectArchiveTarCommand({
     let stderr = "";
     let settled = false;
     let inputError: Error | undefined;
+    let inputStreamClosedEarly = false;
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -258,12 +259,24 @@ function runProjectArchiveTarCommand({
         reject(inputError);
         return;
       }
+      if (inputStreamClosedEarly && code !== 0) {
+        reject(new Error("archive input stream closed before tar completed"));
+        return;
+      }
       resolve({ stderr });
     });
 
     const failInput = (err: unknown) => {
       if (settled) return;
-      inputError ??= err instanceof Error ? err : new Error(`${err}`);
+      const error = err instanceof Error ? err : new Error(`${err}`);
+      if (
+        (error as any).code === "ERR_STREAM_PREMATURE_CLOSE" ||
+        error.message === "Premature close"
+      ) {
+        inputStreamClosedEarly = true;
+        return;
+      }
+      inputError ??= error;
       child.kill("SIGTERM");
     };
     if (typeof createZstdDecompress !== "function") {
