@@ -3596,6 +3596,11 @@ export function MembershipTiers() {
             render={(val) => (val ? "Yes" : "")}
           />
           <Table.Column<Tier>
+            title="Team"
+            dataIndex="team_visible"
+            render={(val) => (val ? "Yes" : "")}
+          />
+          <Table.Column<Tier>
             title="Course"
             dataIndex="course_store_visible"
             render={(val) => (val ? "Yes" : "")}
@@ -3644,11 +3649,6 @@ export function MembershipTiers() {
             title="Grace days"
             dataIndex="course_grace_days"
             render={(val) => (val != null ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Subscriptions"
-            dataIndex="subscription_count"
-            render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
             title="Accounts"
