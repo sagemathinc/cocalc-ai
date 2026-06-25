@@ -48,6 +48,10 @@ function toJsonParam(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
+const LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER = `metadata->>'type'='membership'
+              AND status IN ('active','canceled')
+              AND current_period_end >= NOW()`;
+
 async function hasSiteLicenseUsageTables(db: PostgreSQL): Promise<boolean> {
   const { rows } = await callback2(db._query, {
     query: `SELECT to_regclass('public.site_licenses') IS NOT NULL
@@ -196,7 +200,7 @@ async function getTotalAccountTierCounts(
                 SELECT metadata->>'class' AS tier_id,
                        account_id
                   FROM subscriptions
-                 WHERE metadata->>'type'='membership'
+                 WHERE ${LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER}
                    AND account_id IS NOT NULL
                 UNION ALL
                 SELECT membership_class AS tier_id,
@@ -255,7 +259,7 @@ export default async function membershipTiersQuery(
                      COUNT(*)::int AS subscription_count,
                      COUNT(DISTINCT account_id)::int AS account_count
               FROM subscriptions
-              WHERE metadata->>'type'='membership'
+              WHERE ${LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER}
               GROUP BY tier_id`,
     });
     const byTier = (counts.rows ?? []).reduce((acc, row) => {
