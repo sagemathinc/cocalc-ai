@@ -168,3 +168,37 @@ describe("hosts start-worker wait cancellation", () => {
     ).rejects.toMatchObject({ code: "host-op-canceled" });
   });
 });
+
+describe("hosts start-worker billing drain completion metadata", () => {
+  test("marks billing-enforced drains as stopped with a succeeded final backup", () => {
+    const metadata = __test__.billingEnforcementDrainCompleteMetadata(
+      {
+        desired_state: "running",
+        billing: {
+          funding_mode: "account-prepaid",
+          funding_lane: "prepaid",
+          enforcement: {
+            state: "draining",
+            reason: "prepaid balance is exhausted",
+            final_backup_status: "running",
+          },
+        },
+      },
+      new Date("2026-06-25T00:00:00.000Z"),
+    );
+
+    expect(metadata.desired_state).toBe("stopped");
+    expect(metadata.billing.stop_reason).toBe("prepaid balance is exhausted");
+    expect(metadata.billing.stop_requested_at).toBe("2026-06-25T00:00:00.000Z");
+    expect(metadata.billing.enforcement).toEqual(
+      expect.objectContaining({
+        state: "stopped_billing_blocked",
+        reason: "prepaid balance is exhausted",
+        final_backup_status: "succeeded",
+        final_backup_completed_at: "2026-06-25T00:00:00.000Z",
+        grace_until: "2026-06-28T00:00:00.000Z",
+        deprovision_after: "2026-06-28T00:00:00.000Z",
+      }),
+    );
+  });
+});
