@@ -7,5 +7,6 @@ export {
   importProjects,
   listProjects,
   prepareArchiveSelection,
+  retryProjectRestore,
   restoreArchiveSelection,
 } from "@cocalc/server/legacy-migration";

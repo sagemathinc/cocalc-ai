@@ -14,6 +14,15 @@ import {
 } from "@cocalc/server/conat/file-server-client";
 import { getAccountStorageRemainingBytes } from "@cocalc/server/membership/project-limits";
 import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
+import { createLro, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
+import { setProjectLabels } from "@cocalc/server/projects/labels";
+import {
+  LEGACY_PROJECT_RESTORE_LRO_KIND,
+  LEGACY_RESTORE_ERROR_LABEL,
+  LEGACY_RESTORE_LRO_LABEL,
+  LEGACY_RESTORE_STATUS_LABEL,
+} from "@cocalc/util/legacy-migration";
 
 import { isLegacyMigrationEnabled } from "./enabled";
 import { legacyProjectArchiveUncompressedBytes } from "./index";
@@ -40,6 +49,7 @@ type LegacyRestoreRow = {
   artifact_bucket: string | null;
   artifact_key: string;
   artifact_manifest: Record<string, any> | null;
+  restore_lro_op_id: string | null;
 };
 
 function clean(value: unknown): string | undefined {
@@ -57,6 +67,8 @@ async function ensureLegacyMigrationRestoreSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS restore_claimed_until TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_started TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_finished TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS restore_lro_op_id UUID,
+        ADD COLUMN IF NOT EXISTS restore_progress JSONB,
         ADD COLUMN IF NOT EXISTS restore_result JSONB
     `);
     await getPool().query(`
@@ -193,14 +205,149 @@ async function claimRestoreRows(limit: number): Promise<LegacyRestoreRow[]> {
               i.owner_account_id,
               p.artifact_bucket,
               p.artifact_key,
-              p.artifact_manifest
+              p.artifact_manifest,
+              i.restore_lro_op_id
     `,
     [WORKER_ID, LEASE_MS, limit],
   );
   return rows;
 }
 
+function progressSummary({
+  phase,
+  message,
+  progress,
+  detail,
+}: {
+  phase: string;
+  message: string;
+  progress: number;
+  detail?: any;
+}): Record<string, any> {
+  return {
+    phase,
+    message,
+    progress,
+    ...(detail == null ? {} : { detail }),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function labelValue(value: unknown): string | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  return text.length > 512 ? text.slice(0, 512) : text;
+}
+
+async function setRestoreLabels({
+  row,
+  restore_status,
+  restore_error,
+}: {
+  row: LegacyRestoreRow;
+  restore_status: string;
+  restore_error?: string | null;
+}): Promise<void> {
+  await setProjectLabels({
+    project_id: row.project_id,
+    account_id: row.owner_account_id,
+    labels: {
+      [LEGACY_RESTORE_STATUS_LABEL]: labelValue(restore_status),
+      [LEGACY_RESTORE_LRO_LABEL]: labelValue(row.restore_lro_op_id),
+      [LEGACY_RESTORE_ERROR_LABEL]: labelValue(restore_error),
+    },
+  }).catch((err) => {
+    logger.warn("legacy migration restore label update failed", {
+      legacy_project_id: row.legacy_project_id,
+      project_id: row.project_id,
+      restore_status,
+      err: `${err}`,
+    });
+  });
+}
+
+async function ensureRestoreLro(row: LegacyRestoreRow): Promise<string> {
+  if (row.restore_lro_op_id) return row.restore_lro_op_id;
+  const op = await createLro({
+    kind: LEGACY_PROJECT_RESTORE_LRO_KIND,
+    scope_type: "project",
+    scope_id: row.project_id,
+    created_by: row.owner_account_id,
+    owner_type: "hub",
+    input: {
+      legacy_project_id: row.legacy_project_id,
+      project_id: row.project_id,
+    },
+    dedupe_key: `legacy-project-restore:${row.legacy_project_id}`,
+    expires_at: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+  });
+  row.restore_lro_op_id = op.op_id;
+  await getPool().query(
+    `
+    UPDATE legacy_migration_project_imports
+       SET restore_lro_op_id=$2,
+           updated=NOW()
+     WHERE legacy_project_id=$1
+    `,
+    [row.legacy_project_id, op.op_id],
+  );
+  return op.op_id;
+}
+
+async function publishRestoreProgress({
+  row,
+  phase,
+  message,
+  progress,
+  detail,
+}: {
+  row: LegacyRestoreRow;
+  phase: string;
+  message: string;
+  progress: number;
+  detail?: any;
+}): Promise<void> {
+  const op_id = await ensureRestoreLro(row);
+  const summary = progressSummary({ phase, message, progress, detail });
+  await getPool().query(
+    `
+    UPDATE legacy_migration_project_imports
+       SET restore_progress=$2::JSONB,
+           updated=NOW()
+     WHERE legacy_project_id=$1
+    `,
+    [row.legacy_project_id, JSON.stringify(summary)],
+  );
+  const updated = await updateLro({
+    op_id,
+    status: "running",
+    progress_summary: summary,
+    error: null,
+  });
+  if (updated) {
+    await publishLroSummary({
+      scope_type: updated.scope_type,
+      scope_id: updated.scope_id,
+      summary: updated,
+    });
+  }
+  await publishLroEvent({
+    scope_type: "project",
+    scope_id: row.project_id,
+    op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase,
+      message,
+      progress,
+      detail,
+    },
+  }).catch(() => {});
+}
+
 async function heartbeat(row: LegacyRestoreRow): Promise<void> {
+  const op_id = row.restore_lro_op_id;
   await getPool().query(
     `
     UPDATE legacy_migration_project_imports
@@ -212,6 +359,13 @@ async function heartbeat(row: LegacyRestoreRow): Promise<void> {
     `,
     [row.legacy_project_id, WORKER_ID, LEASE_MS],
   );
+  if (op_id) {
+    await touchLro({
+      op_id,
+      owner_type: "hub",
+      owner_id: WORKER_ID,
+    }).catch(() => {});
+  }
 }
 
 async function markRestored({
@@ -221,6 +375,13 @@ async function markRestored({
   row: LegacyRestoreRow;
   result: Record<string, any>;
 }): Promise<void> {
+  const op_id = await ensureRestoreLro(row);
+  const summary = progressSummary({
+    phase: "done",
+    message: "restore complete",
+    progress: 100,
+    detail: result,
+  });
   await getPool().query(
     `
     UPDATE legacy_migration_project_imports
@@ -229,12 +390,35 @@ async function markRestored({
            restore_claimed_until=NULL,
            restore_worker_id=$2,
            restore_finished=NOW(),
+           restore_lro_op_id=$4,
+           restore_progress=$5::JSONB,
            restore_result=$3::JSONB,
            updated=NOW()
      WHERE legacy_project_id=$1
     `,
-    [row.legacy_project_id, WORKER_ID, JSON.stringify(result)],
+    [
+      row.legacy_project_id,
+      WORKER_ID,
+      JSON.stringify(result),
+      op_id,
+      JSON.stringify(summary),
+    ],
   );
+  const updated = await updateLro({
+    op_id,
+    status: "succeeded",
+    result,
+    progress_summary: summary,
+    error: null,
+  });
+  if (updated) {
+    await publishLroSummary({
+      scope_type: updated.scope_type,
+      scope_id: updated.scope_id,
+      summary: updated,
+    });
+  }
+  await setRestoreLabels({ row, restore_status: "restored" });
 }
 
 async function markFailed({
@@ -244,6 +428,14 @@ async function markFailed({
   row: LegacyRestoreRow;
   err: unknown;
 }): Promise<void> {
+  const op_id = await ensureRestoreLro(row);
+  const error = `${err}`.slice(0, 4000);
+  const summary = progressSummary({
+    phase: "failed",
+    message: "restore failed",
+    progress: 100,
+    detail: { error },
+  });
   await getPool().query(
     `
     UPDATE legacy_migration_project_imports
@@ -252,11 +444,31 @@ async function markFailed({
            restore_claimed_until=NULL,
            restore_worker_id=$2,
            restore_finished=NOW(),
+           restore_lro_op_id=$4,
+           restore_progress=$5::JSONB,
            updated=NOW()
      WHERE legacy_project_id=$1
     `,
-    [row.legacy_project_id, WORKER_ID, `${err}`.slice(0, 4000)],
+    [row.legacy_project_id, WORKER_ID, error, op_id, JSON.stringify(summary)],
   );
+  const updated = await updateLro({
+    op_id,
+    status: "failed",
+    error,
+    progress_summary: summary,
+  });
+  if (updated) {
+    await publishLroSummary({
+      scope_type: updated.scope_type,
+      scope_id: updated.scope_id,
+      summary: updated,
+    });
+  }
+  await setRestoreLabels({
+    row,
+    restore_status: "failed",
+    restore_error: error,
+  });
 }
 
 async function accountStorageRestoreLimitBytes(
@@ -301,6 +513,18 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
   }, HEARTBEAT_MS);
   heartbeatTimer.unref?.();
   try {
+    const op_id = await ensureRestoreLro(row);
+    await setRestoreLabels({ row, restore_status: "restoring" });
+    await publishRestoreProgress({
+      row,
+      phase: "validate",
+      message: "validating restore request",
+      progress: 5,
+      detail: {
+        legacy_project_id: row.legacy_project_id,
+        project_id: row.project_id,
+      },
+    });
     const bucket =
       clean(row.artifact_bucket) ??
       clean(process.env.COCALC_LEGACY_PROJECTS_BUCKET) ??
@@ -311,6 +535,13 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
     }
     const max_uncompressed_bytes = await accountStorageRestoreLimitBytes(row);
     await assertKnownArchiveFitsLimit({ row, max_uncompressed_bytes });
+    await publishRestoreProgress({
+      row,
+      phase: "authorize",
+      message: "creating signed archive download",
+      progress: 10,
+      detail: { bucket, key },
+    });
     const { endpoint, accessKey, secretKey } = await getR2Credentials();
     const signed = issueSignedObjectDownload({
       endpoint,
@@ -318,6 +549,12 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
       secretKey,
       bucket,
       key,
+    });
+    await publishRestoreProgress({
+      row,
+      phase: "connect",
+      message: "connecting to project host",
+      progress: 15,
     });
     const client = await getProjectFileServerClient({
       project_id: row.project_id,
@@ -329,6 +566,16 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
       client,
       maxWait: FILE_SERVER_READY_TIMEOUT_MS,
     });
+    await publishRestoreProgress({
+      row,
+      phase: "restore",
+      message: "restoring archive on project host",
+      progress: 20,
+      detail: {
+        artifact_bytes: manifestCompressedBytes(row.artifact_manifest),
+        max_uncompressed_bytes,
+      },
+    });
     const result = await client.restoreProjectArchive({
       project_id: row.project_id,
       download: {
@@ -339,6 +586,7 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
         sha256: manifestSha256(row.artifact_manifest),
       },
       max_uncompressed_bytes,
+      lro: { op_id, scope_type: "project", scope_id: row.project_id },
     });
     await markRestored({
       row,

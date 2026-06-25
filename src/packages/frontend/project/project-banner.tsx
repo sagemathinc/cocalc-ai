@@ -5,9 +5,15 @@
 
 import { useProjectContext } from "./context";
 import { CourseMembershipBanner } from "./course-membership-banner";
+import { LegacyMigrationRestoreBanner } from "./legacy-migration-restore-banner";
 
 export function ProjectWarningBanner() {
   const { project_id } = useProjectContext();
 
-  return <CourseMembershipBanner project_id={project_id} />;
+  return (
+    <>
+      <LegacyMigrationRestoreBanner project_id={project_id} />
+      <CourseMembershipBanner project_id={project_id} />
+    </>
+  );
 }

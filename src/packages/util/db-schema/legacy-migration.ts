@@ -296,6 +296,7 @@ Table({
       "status",
       "restore_status",
       "restore_claimed_until",
+      "restore_lro_op_id",
       "updated",
     ],
     user_query: {
@@ -314,6 +315,8 @@ Table({
           restore_claimed_until: null,
           restore_started: null,
           restore_finished: null,
+          restore_lro_op_id: null,
+          restore_progress: null,
           restore_result: null,
           rootfs_image: null,
           rootfs_image_id: null,
@@ -337,6 +340,8 @@ Table({
           restore_claimed_until: null,
           restore_started: null,
           restore_finished: null,
+          restore_lro_op_id: null,
+          restore_progress: null,
           restore_result: null,
           rootfs_image: null,
           rootfs_image_id: null,
@@ -399,6 +404,14 @@ Table({
     restore_finished: {
       type: "timestamp",
       desc: "When the restore finished or failed.",
+    },
+    restore_lro_op_id: {
+      type: "uuid",
+      desc: "Long-running operation id for the current or most recent full file restore.",
+    },
+    restore_progress: {
+      type: "map",
+      desc: "Latest summarized full file restore progress for user-facing status.",
     },
     restore_result: {
       type: "map",
