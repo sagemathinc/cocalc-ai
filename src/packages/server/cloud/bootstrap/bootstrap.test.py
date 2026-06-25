@@ -336,6 +336,50 @@ class BootstrapKernelKeyLimitsTest(unittest.TestCase):
             )
 
 
+class BootstrapInotifyLimitsTest(unittest.TestCase):
+    def test_configures_inotify_quotas_for_project_workloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            calls: list[tuple[list[str], str]] = []
+
+            original = bootstrap.run_best_effort
+            bootstrap.run_best_effort = (
+                lambda _cfg, args, desc: calls.append((args, desc))
+            )
+            try:
+                bootstrap.configure_inotify_limits(
+                    cfg, sysctl_dir=Path(tmpdir) / "sysctl.d"
+                )
+            finally:
+                bootstrap.run_best_effort = original
+
+            conf = Path(tmpdir) / "sysctl.d" / "60-cocalc-project-host-inotify.conf"
+            self.assertEqual(
+                conf.read_text(encoding="utf-8"),
+                "[fs.inotify]\n"
+                "max_user_instances = 8192\n"
+                "max_user_watches = 2097152\n"
+                "max_queued_events = 65536\n",
+            )
+            self.assertEqual(
+                calls,
+                [
+                    (
+                        ["sysctl", "-w", "fs.inotify.max_user_instances=8192"],
+                        "sysctl fs.inotify.max_user_instances",
+                    ),
+                    (
+                        ["sysctl", "-w", "fs.inotify.max_user_watches=2097152"],
+                        "sysctl fs.inotify.max_user_watches",
+                    ),
+                    (
+                        ["sysctl", "-w", "fs.inotify.max_queued_events=65536"],
+                        "sysctl fs.inotify.max_queued_events",
+                    ),
+                ],
+            )
+
+
 class BootstrapSubidAllocationTest(unittest.TestCase):
     def test_rewrites_user_subid_ranges_to_the_exact_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
