@@ -16,6 +16,7 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { once, until } from "@cocalc/util/async-utils";
 
 const DEFAULT_TIMEOUT = 2 * 60 * 1000;
+const DEFAULT_UNACKED_RESEND_DELAY = 500;
 
 export interface TCP {
   send: Sender;
@@ -91,6 +92,10 @@ export class Receiver extends EventEmitter {
       this.incoming[seq] = mesg;
       // console.log("doing fetchMissing because: ", { seq, next: this.seq.next });
       this.fetchMissing();
+    } else {
+      // Duplicate data can mean our previous ACK request was dropped.  Report
+      // the last emitted sequence again so the sender can stop resending.
+      this.reportReceived();
     }
   };
 
@@ -187,6 +192,7 @@ export class Sender extends EventEmitter {
   private seq = 0;
   timeout = DEFAULT_TIMEOUT;
   private unsent: number = 0;
+  private resendTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private send: (mesg: Message) => void,
@@ -198,6 +204,10 @@ export class Sender extends EventEmitter {
   }
 
   close = () => {
+    if (this.resendTimer != null) {
+      clearTimeout(this.resendTimer);
+      this.resendTimer = undefined;
+    }
     this.removeAllListeners();
     // @ts-ignore
     delete this.outgoing;
@@ -219,6 +229,21 @@ export class Sender extends EventEmitter {
     mesg.headers = { ...mesg.headers, [SOCKET_HEADER_SEQ]: this.seq };
     // console.log(this.role, "send", { data: mesg.data, seq: this.seq });
     this.send(mesg);
+    this.scheduleResendLastUntilAcked();
+  };
+
+  private scheduleResendLastUntilAcked = () => {
+    if (this.resendTimer != null || this.lastAcked()) {
+      return;
+    }
+    this.resendTimer = setTimeout(() => {
+      this.resendTimer = undefined;
+      if (this.canSend()) {
+        this.resendLast();
+      }
+      void this.resendLastUntilAcked();
+    }, DEFAULT_UNACKED_RESEND_DELAY);
+    this.resendTimer.unref?.();
   };
 
   private lastAcked = (): boolean => {

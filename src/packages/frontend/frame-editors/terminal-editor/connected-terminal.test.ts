@@ -174,6 +174,18 @@ function loadTerminalModule({
     reuseInFlight: (fn: any) => fn,
   }));
 
+  jest.doMock("awaiting", () => ({
+    callback: (fn: any) =>
+      new Promise<void>((resolve, reject) => {
+        try {
+          fn((err?: unknown) => (err == null ? resolve() : reject(err)));
+        } catch (err) {
+          reject(err);
+        }
+      }),
+    delay: jest.fn(async () => {}),
+  }));
+
   jest.doMock("@cocalc/util/async-utils", () => ({
     asyncDebounce: (fn: any) => fn,
     asyncThrottle: (fn: any) => fn,
@@ -451,6 +463,59 @@ describe("connected terminal resizing", () => {
     });
 
     terminal.close();
+  });
+
+  it("reattaches the frontend socket when initial terminal output never arrives", async () => {
+    jest.useFakeTimers();
+    try {
+      const { Terminal, ptys, reconnectResources } = loadTerminalModule();
+      const parent = document.createElement("div");
+      document.body.appendChild(parent);
+      const actions = {
+        project_id: "project-1",
+        path: "/tmp/example.term",
+        get_term_env: jest.fn(() => ({})),
+        set_connection_status: jest.fn(),
+        set_title: jest.fn(),
+        set_error: jest.fn(),
+        _tree_is_single_leaf: jest.fn(() => false),
+        close_frame: jest.fn(),
+        open_code_editor_frame: jest.fn(),
+        _get_project_actions: jest.fn(() => ({
+          flag_file_activity: jest.fn(),
+          open_file: jest.fn(),
+          close_tab: jest.fn(),
+          isTabClosed: jest.fn(() => false),
+          open_directory: jest.fn(),
+        })),
+      } as any;
+
+      const terminal = new Terminal(actions, 0, "term-1", parent);
+      terminal.is_visible = true;
+      await terminal.connect();
+
+      actions.set_connection_status.mockClear();
+      reconnectResources[0].requestReconnect.mockClear();
+
+      jest.advanceTimersByTime(15000);
+      await Promise.resolve();
+
+      expect(ptys[0].close).toHaveBeenCalled();
+      expect(ptys[0].destroy).not.toHaveBeenCalled();
+      expect(actions.set_connection_status).toHaveBeenCalledWith(
+        "term-1",
+        "disconnected",
+      );
+      expect(reconnectResources[0].requestReconnect).toHaveBeenCalledWith({
+        reason: "terminal_initial_output_timeout",
+        resetBackoff: true,
+      });
+      expect(terminal["pty"]).toBeNull();
+
+      terminal.close();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("shows an inline manual-start message instead of connecting when automatic starts are disabled", async () => {

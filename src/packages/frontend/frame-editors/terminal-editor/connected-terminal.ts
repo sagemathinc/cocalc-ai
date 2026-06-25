@@ -62,7 +62,11 @@ const SCROLLBACK = 5000;
 const MAX_HISTORY_LENGTH = 100 * SCROLLBACK;
 
 const SPAWN_TIMEOUT = 5000;
+const INITIAL_OUTPUT_TIMEOUT = 15000;
+const MAX_INITIAL_OUTPUT_RECONNECTS = 2;
 const TRANSIENT_RECONNECT_OPACITY = "0.62";
+const TERMINAL_DEBUG_STORAGE_KEY = "cocalc.debug.terminal";
+const TERMINAL_DEBUG_SESSION_LIST_TIMEOUT = 1500;
 
 const EXIT_MESSAGE = "\r\n[Process completed - press any key]\r\n";
 const ANSI_RESET = "\x1b[0m";
@@ -74,6 +78,42 @@ const ANSI_DIM = "\x1b[2m";
 const ENABLE_WEBGL = false;
 
 const MAX_AUTO_BUFFER = 32768;
+
+function isTerminalDebugEnabled(): boolean {
+  try {
+    const value = globalThis.localStorage
+      ?.getItem(TERMINAL_DEBUG_STORAGE_KEY)
+      ?.trim()
+      .toLowerCase();
+    if (!value) return false;
+    return !["0", "false", "off", "no"].includes(value);
+  } catch {
+    return false;
+  }
+}
+
+function terminalDebugLog(event: string, details: Record<string, any>): void {
+  if (!isTerminalDebugEnabled()) {
+    return;
+  }
+  const payload = {
+    event,
+    at: new Date().toISOString(),
+    ms:
+      typeof performance === "undefined"
+        ? Date.now()
+        : Math.round(performance.now()),
+    ...details,
+  };
+  try {
+    const globalDebug = globalThis as any;
+    globalDebug.__cocalcTerminalDebugEvents ??= [];
+    globalDebug.__cocalcTerminalDebugEvents.push(payload);
+  } catch {
+    // Console logging below is the primary output; the global buffer is best effort.
+  }
+  console.log("[cocalc:terminal]", payload);
+}
 
 function shouldUseNativeTouchSelection(): boolean {
   if (typeof window === "undefined") {
@@ -276,6 +316,11 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private lastProjectRuntimeGeneration?: number;
   private projectStartingRetryTimer?: ReturnType<typeof setTimeout>;
   private autoStartProjectOnNextConnect = false;
+  private connectGeneration = 0;
+  private initialOutputTimer?: ReturnType<typeof setTimeout>;
+  private initialOutputReconnects = 0;
+  private currentConnectStartedAt?: number;
+  private projectDataDebugCount = 0;
 
   constructor(
     actions: Actions<T>,
@@ -421,6 +466,190 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
   }
 
+  private debug = (event: string, details: Record<string, any> = {}): void => {
+    terminalDebugLog(event, {
+      project_id: this.project_id,
+      path: this.path,
+      frame_id: this.id,
+      termPath: this.termPath,
+      visible: this.is_visible,
+      closed: this.isClosed(),
+      pty_socket_state: this.pty?.socket.state,
+      pty_socket_id: this.pty?.socket.id,
+      pty_pid: this.pty?.pid,
+      ...details,
+    });
+  };
+
+  private debugSocket = (
+    pty: TerminalClient,
+    generation: number,
+    event: string,
+  ): void => {
+    this.debug(`socket:${event}`, {
+      generation,
+      socket_id: pty.socket.id,
+      socket_state: pty.socket.state,
+    });
+  };
+
+  private traceSocketForDebug = (
+    pty: TerminalClient,
+    generation: number,
+  ): void => {
+    if (!isTerminalDebugEnabled()) {
+      return;
+    }
+    for (const event of [
+      "ready",
+      "connecting",
+      "disconnected",
+      "closed",
+      "recovered",
+      "recovering",
+      "paused",
+    ]) {
+      pty.socket.on(event, () => {
+        this.debugSocket(pty, generation, event);
+      });
+    }
+  };
+
+  private debugTerminalSessions = async (
+    pty: TerminalClient,
+    event: string,
+  ): Promise<void> => {
+    if (!isTerminalDebugEnabled()) {
+      return;
+    }
+    try {
+      const timeout = new Promise<"timeout">((resolve) =>
+        setTimeout(
+          () => resolve("timeout"),
+          TERMINAL_DEBUG_SESSION_LIST_TIMEOUT,
+        ),
+      );
+      const sessions = await Promise.race([pty.list(), timeout]);
+      if (sessions === "timeout") {
+        this.debug(event, { sessions: "timeout" });
+        return;
+      }
+      this.debug(event, {
+        sessions: sessions.map((session) => ({
+          id: session.id,
+          path: session.path,
+          pid: session.pid,
+          state: session.state,
+          history_chars: session.history_chars,
+          has_leader_socket: session.leader_socket_id != null,
+          leader_idle_ms: session.leader_idle_ms,
+        })),
+      });
+    } catch (err) {
+      this.debug(`${event}:error`, { error: `${err}` });
+    }
+  };
+
+  private debugWrite = (
+    pty: TerminalClient,
+    message: TerminalTransmit,
+  ): void => {
+    if (!isTerminalDebugEnabled()) {
+      return;
+    }
+    this.debug("write", {
+      kind: message.kind,
+      bytes: message.data.length,
+      socket_id: pty.socket.id,
+      socket_state: pty.socket.state,
+      ptyInputReady: this.ptyInputReady,
+    });
+    setTimeout(() => {
+      void this.debugTerminalSessions(pty, "write:sessions-after");
+    }, 1500);
+  };
+
+  private clearInitialOutputTimer = (): void => {
+    if (this.initialOutputTimer != null) {
+      clearTimeout(this.initialOutputTimer);
+      this.initialOutputTimer = undefined;
+    }
+  };
+
+  private scheduleInitialOutputCheck = ({
+    generation,
+    pty,
+    startedAt,
+  }: {
+    generation: number;
+    pty: TerminalClient;
+    startedAt: number;
+  }): void => {
+    this.clearInitialOutputTimer();
+    if (this.initialOutputReconnects >= MAX_INITIAL_OUTPUT_RECONNECTS) {
+      this.debug("initial-output-watchdog:max-retries", {
+        generation,
+        reconnects: this.initialOutputReconnects,
+      });
+      return;
+    }
+    this.debug("initial-output-watchdog:scheduled", {
+      generation,
+      timeout_ms: INITIAL_OUTPUT_TIMEOUT,
+      reconnects: this.initialOutputReconnects,
+    });
+    this.initialOutputTimer = setTimeout(() => {
+      this.initialOutputTimer = undefined;
+      const skipReason = this.isClosed()
+        ? "closed"
+        : this.ptyExited
+          ? "pty-exited"
+          : generation !== this.connectGeneration
+            ? "stale-generation"
+            : this.pty !== pty
+              ? "stale-pty"
+              : pty.socket.state !== "ready"
+                ? "socket-not-ready"
+                : this.lastProjectData >= startedAt
+                  ? "project-data-arrived"
+                  : undefined;
+      if (skipReason != null) {
+        this.debug("initial-output-watchdog:skip", {
+          generation,
+          reason: skipReason,
+          socket_state: pty.socket.state,
+          ms_since_start: Date.now() - startedAt,
+        });
+        return;
+      }
+      this.initialOutputReconnects += 1;
+      this.ptyInputReady = false;
+      this.set_connection_status("disconnected");
+      this.markTransientDisconnect();
+      this.debug("initial-output-watchdog:timeout", {
+        generation,
+        socket_id: pty.socket.id,
+        socket_state: pty.socket.state,
+        reconnects: this.initialOutputReconnects,
+        ms_since_start: Date.now() - startedAt,
+      });
+      // Close only this frontend socket/client. The project-host terminal
+      // service keeps the backend PTY session for this termPath and the next
+      // connect reattaches to it instead of restarting the shell.
+      void this.debugTerminalSessions(
+        pty,
+        "initial-output-watchdog:sessions",
+      ).finally(() => {
+        this.pty = null;
+        pty.close();
+        this.reconnectResource?.requestReconnect({
+          reason: "terminal_initial_output_timeout",
+          resetBackoff: true,
+        });
+      });
+    }, INITIAL_OUTPUT_TIMEOUT);
+  };
+
   // If the pty is configured and the socket is connected, but
   // for some reason the actual process is dead, then connect
   // again, which will start the process or reconnect to it.
@@ -523,6 +752,12 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
     const pty = this.getWritablePty();
     if (pty == null) {
+      this.debug("write:buffered", {
+        kind: message.kind,
+        bytes: message.data.length,
+        ptyInputReady: this.ptyInputReady,
+        socket_state: this.pty?.socket.state,
+      });
       this.writeBuffer.push(message);
       return;
     }
@@ -531,6 +766,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       this.flushWriteBuffer();
       return;
     }
+    this.debugWrite(pty, message);
     pty.socket.write(message);
     this.reconnectIfNotRunning();
   };
@@ -552,6 +788,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       return;
     }
     for (const message of this.writeBuffer) {
+      this.debugWrite(pty, message);
       pty.socket.write(message);
     }
     this.writeBuffer.length = 0;
@@ -564,6 +801,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.reconnectResource?.close();
     this.reconnectResource = undefined;
     this.clearProjectStartingRetry();
+    this.clearInitialOutputTimer();
     this.pty?.close();
     this.pty = null;
     this.ptyInputReady = false;
@@ -740,9 +978,20 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
   connect = reuseInFlight(async (options: TerminalConnectOptions = {}) => {
     if (this.isClosed() || this.ptyExited) return;
+    const generation = ++this.connectGeneration;
+    const connectStartedAt = Date.now();
+    this.currentConnectStartedAt = connectStartedAt;
+    this.projectDataDebugCount = 0;
     const readyTimer = startUxTimer();
     const autoStartProject =
       options.autoStartProject === true || this.autoStartProjectOnNextConnect;
+    this.debug("connect:start", {
+      generation,
+      autoStartProject,
+      command: this.command ?? "bash",
+      args_count: this.args?.length ?? 0,
+      workingDir: this.workingDir,
+    });
 
     try {
       const projectState =
@@ -752,15 +1001,25 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         this.project_id,
         projectState,
       );
+      this.debug("connect:project-state", {
+        generation,
+        projectState,
+        readiness,
+      });
       if (projectState === "starting") {
         this.set_connection_status("disconnected");
         this.scheduleProjectStartingRetry();
+        this.debug("connect:wait-project-starting", { generation });
         return;
       }
       if (projectState !== "running") {
         this.set_connection_status("disconnected");
         if (!autoStartProject) {
           await this.showManualStartMessage();
+          this.debug("connect:manual-start-required", {
+            generation,
+            projectState,
+          });
           return;
         }
         this.autoStartProjectOnNextConnect = false;
@@ -774,6 +1033,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           !(await ensure_project_running(this.project_id, "use this terminal"))
         ) {
           await this.showManualStartMessage();
+          this.debug("connect:autostart-declined", {
+            generation,
+            projectState,
+          });
           return;
         }
       }
@@ -781,9 +1044,20 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       this.clearProjectStartingRetry();
       this.manualStartMessageShown = false;
       const preserveVisibleContent = (this.history?.length ?? 0) > 0;
+      this.debug("connect:prepare-pty", {
+        generation,
+        preserveVisibleContent,
+        local_history_chars: this.history?.length ?? 0,
+      });
       this.setTransientReconnectStyle(preserveVisibleContent);
 
       if (this.pty != null) {
+        this.debug("connect:close-existing-client", {
+          generation,
+          socket_id: this.pty.socket.id,
+          socket_state: this.pty.socket.state,
+        });
+        this.clearInitialOutputTimer();
         this.pty.close();
         this.pty = null;
       }
@@ -807,8 +1081,14 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         // terminals may need one retry while browser-session auth is bootstrapped.
       });
       this.pty = pty;
+      this.debug("terminal-client:create", {
+        generation,
+        socket_id: pty.socket.id,
+        socket_state: pty.socket.state,
+      });
+      this.traceSocketForDebug(pty, generation);
       pty.socket.on("data", (data) => {
-        void this.handleDataFromProject(data);
+        void this.handleDataFromProject(data, { fromProject: true });
       });
 
       pty.on("exit", async () => {
@@ -842,6 +1122,11 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       pty.on("update-cwd", this.setCwd);
 
       pty.socket.on("disconnected", async () => {
+        this.debug("socket:disconnected-handler", {
+          generation,
+          socket_id: pty.socket.id,
+          socket_state: pty.socket.state,
+        });
         this.ptyInputReady = false;
         this.set_connection_status("disconnected");
         this.markTransientDisconnect();
@@ -851,6 +1136,11 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       });
 
       pty.socket.on("closed", async () => {
+        this.debug("socket:closed-handler", {
+          generation,
+          socket_id: pty.socket.id,
+          socket_state: pty.socket.state,
+        });
         this.ptyInputReady = false;
         this.set_connection_status("disconnected");
         this.markTransientDisconnect();
@@ -889,11 +1179,27 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           timeout: SPAWN_TIMEOUT,
         };
 
+        const spawnStartedAt = Date.now();
+        this.debug("spawn:start", {
+          generation,
+          socket_id: pty.socket.id,
+          command: this.command ?? "bash",
+          args_count: this.args?.length ?? 0,
+          cwd: options.cwd,
+        });
         const history = await pty.spawn(
           this.command ?? "bash",
           this.args,
           options,
         );
+        this.debug("spawn:done", {
+          generation,
+          socket_id: pty.socket.id,
+          socket_state: pty.socket.state,
+          pid: pty.pid,
+          duration_ms: Date.now() - spawnStartedAt,
+          history_chars: history?.length ?? 0,
+        });
 
         /*
         // Approach where just write the command -- but this is
@@ -914,7 +1220,17 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           this.terminal.reset();
         }
         if (history) {
-          await this.handleDataFromProject(history, { fromHistory: true });
+          await this.handleDataFromProject(history, {
+            fromHistory: true,
+            fromProject: true,
+          });
+        }
+        if (!history && this.lastProjectData < connectStartedAt) {
+          this.scheduleInitialOutputCheck({
+            generation,
+            pty,
+            startedAt: connectStartedAt,
+          });
         }
         this.setTransientReconnectStyle(false);
         this.ptyInputReady = true;
@@ -952,6 +1268,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       this.set_connection_status("disconnected");
       this.ptyInputReady = false;
       this.markTransientDisconnect();
+      this.debug("connect:error", {
+        generation,
+        error: `${err}`,
+      });
       this.reconnectResource?.requestReconnect({
         reason: "terminal_connect_failed",
       });
@@ -971,14 +1291,32 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   };
 
   private lastReceivedData: number = 0;
+  private lastProjectData: number = 0;
   private handleDataFromProject = async (
     data: any,
-    opts?: { fromHistory?: boolean },
+    opts?: { fromHistory?: boolean; fromProject?: boolean },
   ): Promise<void> => {
     this.lastReceivedData = Date.now();
     this.assert_not_closed();
     if (!data || typeof data != "string") {
       return;
+    }
+    if (opts?.fromProject === true) {
+      this.lastProjectData = Date.now();
+      this.initialOutputReconnects = 0;
+      this.clearInitialOutputTimer();
+      this.projectDataDebugCount += 1;
+      if (this.projectDataDebugCount <= 5 || opts?.fromHistory === true) {
+        this.debug("project-data", {
+          event_index: this.projectDataDebugCount,
+          bytes: data.length,
+          fromHistory: opts?.fromHistory === true,
+          ms_since_connect:
+            this.currentConnectStartedAt == null
+              ? undefined
+              : Date.now() - this.currentConnectStartedAt,
+        });
+      }
     }
     this.activity();
     const fromHistory = opts?.fromHistory === true;
