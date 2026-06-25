@@ -24,6 +24,7 @@ import {
   recordProjectionRepair,
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { Table, redux } from "../app-framework";
 import { COCALC_MINIMAL } from "../fullscreen";
 import { webapp_client } from "../webapp-client";
@@ -47,10 +48,11 @@ function dateOrNull(value: unknown): Date | null {
 export function buildCollaboratorRecord(
   row: AccountFeedCollaboratorRow,
 ): Map<string, any> {
+  const display_name = displayNameFromAccount(row);
   return (
     fromJS({
       account_id: row.account_id,
-      display_name: row.display_name ?? "",
+      display_name,
       first_name: row.first_name ?? "",
       last_name: row.last_name ?? "",
       name: row.name ?? "",

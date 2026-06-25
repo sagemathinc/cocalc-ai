@@ -11,6 +11,7 @@ import { Store, redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { cmp } from "@cocalc/util/misc";
 import { actions } from "./actions";
+import { displayNameFromUserRecord } from "./display-name";
 import { UsersState } from "./types";
 
 export const DEFAULT_COLOR = "rgb(170,170,170)";
@@ -45,6 +46,13 @@ export class UsersStore extends Store<UsersState> {
 
   public get_last_name(account_id: string): string {
     return this.getIn(["user_map", account_id, "last_name"], "User");
+  }
+
+  public get_sort_name(account_id: string): string {
+    return (
+      displayNameFromUserRecord(this.getIn(["user_map", account_id])) ||
+      account_id
+    );
   }
 
   /**
@@ -111,11 +119,7 @@ export class UsersStore extends Store<UsersState> {
       if (shouldHydrateUserIdentity(m)) {
         actions.fetch_non_collaborator(account_id);
       }
-      const name =
-        `${m.get("display_name") ?? ""}`.trim() ||
-        `${m.get("first_name") ?? ""} ${m.get("last_name") ?? ""}`
-          .trim()
-          .replace(/\s+/g, " ");
+      const name = displayNameFromUserRecord(m);
       return name || undefined;
     } else {
       // look it up, which causes it to get saved in the store, which causes a new render later.
@@ -150,8 +154,8 @@ export class UsersStore extends Store<UsersState> {
         return c;
       } else {
         return cmp(
-          this.get_last_name(a.account_id),
-          this.get_last_name(b.account_id),
+          this.get_sort_name(a.account_id),
+          this.get_sort_name(b.account_id),
         );
       }
     });

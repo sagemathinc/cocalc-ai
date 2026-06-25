@@ -16,12 +16,21 @@ export const SetAccountNameInputSchema = z
        not provided, it is assumed that this operation pertains to the account id of the 
        user making the request.`,
     ),
-    first_name: z.string().max(254).describe("First name").optional(),
-    last_name: z.string().max(254).describe("Last name").optional(),
+    display_name: z.string().max(254).describe("Display name").optional(),
+    first_name: z
+      .string()
+      .max(254)
+      .describe("Legacy first name; used only to derive display_name")
+      .optional(),
+    last_name: z
+      .string()
+      .max(254)
+      .describe("Legacy last name; used only to derive display_name")
+      .optional(),
   })
   .describe(
-    `Set the first name and/or last name for a user account. Only non-empty
-     field values are allowed; everything else will be omitted from the update query.`,
+    `Set the display name for a user account. Legacy first_name and last_name
+     inputs are accepted only to derive display_name for older clients.`,
   );
 
 export const SetAccountNameOutputSchema = z.union([

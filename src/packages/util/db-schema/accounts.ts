@@ -15,6 +15,7 @@ import {
 } from "./defaults";
 
 import { DEFAULT_LOCALE } from "@cocalc/util/consts/locale";
+import { normalizeDisplayName } from "@cocalc/util/accounts/display-name";
 
 export const USER_SEARCH_LIMIT = 250;
 export const ADMIN_SEARCH_LIMIT = 2500;
@@ -623,6 +624,16 @@ Table({
           auto_balance: true,
         },
         async check_hook(_db, obj, _account_id, _project_id, cb) {
+          if (obj["display_name"] != null) {
+            obj["display_name"] = normalizeDisplayName(obj["display_name"]);
+            if (!obj["display_name"]) {
+              cb("display_name must be nonempty");
+              return;
+            }
+            obj["first_name"] = null;
+            obj["last_name"] = null;
+          }
+
           // Hook to truncate some text fields to at most 254 characters, to avoid
           // further trouble down the line.
           for (const field of [

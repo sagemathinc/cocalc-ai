@@ -76,6 +76,10 @@ import {
 } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  displayNameFromParts,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 
 function currentBayId(): string {
   return getConfiguredBayId();
@@ -809,10 +813,20 @@ async function createClusterAccountDirect(
 export async function createClusterAccount(
   opts: AccountDirectoryCreateRequest,
 ): Promise<AccountDirectoryEntry> {
+  const display_name =
+    normalizeDisplayName(opts.display_name) ||
+    displayNameFromParts({
+      first_name: opts.first_name,
+      last_name: opts.last_name,
+    }) ||
+    "Anonymous User";
   const normalized: AccountDirectoryCreateRequest = {
     ...opts,
+    display_name,
     email_address: `${opts.email_address ?? ""}`.trim().toLowerCase(),
+    first_name: undefined,
     home_bay_id: `${opts.home_bay_id ?? ""}`.trim() || currentBayId(),
+    last_name: undefined,
   };
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
     return await createClusterAccountDirect(normalized);

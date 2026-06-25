@@ -76,6 +76,10 @@ import {
   ssoAuditProviderType,
 } from "./audit";
 import { buildMarketingConsentOtherSettings } from "@cocalc/util/notification-preferences";
+import {
+  displayNameFromParts,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 
 interface SsoAccountCreationContext {
   tokenInfo?: any;
@@ -155,6 +159,7 @@ export class PassportLogin {
       strategyName: opts.strategyName,
       profile: opts.profile,
       id: opts.id,
+      display_name: opts.display_name,
       first_name: opts.first_name,
       last_name: opts.last_name,
       full_name: opts.full_name,
@@ -643,11 +648,17 @@ export class PassportLogin {
     creationContext: SsoAccountCreationContext,
   ): Promise<string> {
     const email = normalizedEmail(email_address) ?? "";
+    const display_name =
+      normalizeDisplayName(opts.display_name) ||
+      displayNameFromParts({
+        first_name: opts.first_name,
+        last_name: opts.last_name,
+      }) ||
+      "Anonymous User";
     const created = await createClusterAccount({
       email_address: email,
       password: "",
-      first_name: opts.first_name ?? "",
-      last_name: opts.last_name ?? "",
+      display_name,
       home_bay_id: getConfiguredBayId(),
       ephemeral: creationContext.tokenInfo?.ephemeral,
       customize: creationContext.tokenInfo?.customize,
@@ -850,10 +861,16 @@ export class PassportLogin {
     // }
 
     L(`account exists and we update name of user based on SSO`);
+    const display_name =
+      normalizeDisplayName(opts.display_name) ||
+      displayNameFromParts({
+        first_name: opts.first_name,
+        last_name: opts.last_name,
+      }) ||
+      undefined;
     await this.database.update_account_and_passport({
       account_id: locals.account_id,
-      first_name: opts.first_name,
-      last_name: opts.last_name,
+      display_name,
       strategy: opts.strategyName,
       id: opts.id,
       profile: opts.profile,

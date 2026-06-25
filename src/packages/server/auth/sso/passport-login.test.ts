@@ -152,8 +152,7 @@ describe("PassportLogin SSO account creation", () => {
     expect(createClusterAccountMock).toHaveBeenCalledWith({
       email_address: "ada+sso@example.com",
       password: "",
-      first_name: "Ada",
-      last_name: "Lovelace",
+      display_name: "Ada Lovelace",
       home_bay_id: "bay-sso",
       customize: undefined,
       ephemeral: undefined,

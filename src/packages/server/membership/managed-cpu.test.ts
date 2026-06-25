@@ -271,6 +271,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: true,
@@ -289,6 +290,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: true,
@@ -331,6 +333,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: true,
@@ -345,6 +348,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: true,
@@ -410,6 +414,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: false,
@@ -428,6 +433,7 @@ describe("managed CPU usage accounting", () => {
             {
               account_id: "account-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: false,
@@ -489,6 +495,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: false,
@@ -503,6 +510,7 @@ describe("managed CPU usage accounting", () => {
       {
         account_id: "account-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: false,

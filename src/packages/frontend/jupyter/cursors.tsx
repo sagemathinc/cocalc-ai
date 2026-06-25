@@ -23,6 +23,7 @@ import { times_n } from "@cocalc/jupyter/util/misc";
 import { server_time, trunc_middle, is_different } from "@cocalc/util/misc";
 import { IS_SAFARI, IS_FIREFOX } from "@cocalc/frontend/feature";
 import { actions as usersActions } from "@cocalc/frontend/users/actions";
+import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import { shouldHydrateUserIdentity } from "@cocalc/frontend/users/store";
 
 const UNKNOWN_USER_PROFILE = {
@@ -383,8 +384,7 @@ export function getProfile(
     usersActions.fetch_non_collaborator(account_id);
   }
   const color = user.getIn(["profile", "color"], "rgb(170,170,170)");
-  const fullName =
-    `${user.get("first_name", "")} ${user.get("last_name", "")}`.trim();
+  const fullName = displayNameFromUserRecord(user);
   const fallbackName = `${user.get("name", "")}`.trim();
   const preferredName =
     needsHydration && fallbackName && fallbackName !== "Deleted User"

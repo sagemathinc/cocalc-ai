@@ -357,6 +357,7 @@ export async function getManagedEgressAdminOverview(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       banned: boolean | null;
@@ -366,6 +367,7 @@ export async function getManagedEgressAdminOverview(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
@@ -376,6 +378,7 @@ export async function getManagedEgressAdminOverview(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned
@@ -387,6 +390,7 @@ export async function getManagedEgressAdminOverview(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       banned: boolean | null;
@@ -398,6 +402,7 @@ export async function getManagedEgressAdminOverview(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
@@ -411,6 +416,7 @@ export async function getManagedEgressAdminOverview(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
@@ -453,6 +459,7 @@ export async function getManagedEgressAdminOverview(opts: {
     accountRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       banned: row.banned ?? false,
@@ -463,6 +470,7 @@ export async function getManagedEgressAdminOverview(opts: {
     projectRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       banned: row.banned ?? false,
@@ -556,6 +564,7 @@ export async function getManagedEgressAdminHistory(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       banned: boolean | null;
@@ -565,6 +574,7 @@ export async function getManagedEgressAdminHistory(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
@@ -575,6 +585,7 @@ export async function getManagedEgressAdminHistory(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned
@@ -586,6 +597,7 @@ export async function getManagedEgressAdminHistory(opts: {
     getPool("medium").query<{
       account_id: string;
       email_address: string | null;
+      display_name: string | null;
       first_name: string | null;
       last_name: string | null;
       banned: boolean | null;
@@ -597,6 +609,7 @@ export async function getManagedEgressAdminHistory(opts: {
         SELECT
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
@@ -610,6 +623,7 @@ export async function getManagedEgressAdminHistory(opts: {
         GROUP BY
           events.account_id,
           accounts.email_address,
+          accounts.display_name,
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
@@ -669,6 +683,7 @@ export async function getManagedEgressAdminHistory(opts: {
     accountRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       banned: row.banned ?? false,
@@ -679,6 +694,7 @@ export async function getManagedEgressAdminHistory(opts: {
     projectRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
+      display_name: row.display_name ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       banned: row.banned ?? false,

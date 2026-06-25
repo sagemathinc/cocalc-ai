@@ -5,6 +5,18 @@ import useAgents from "../querydb/use-agents";
 import { useEditableContext } from "./context";
 import { Button, Select, Space } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+
+type AgentIdentity = {
+  account_id: string;
+  display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+};
+
+function agentDisplayName(agent: AgentIdentity): string {
+  return displayNameFromAccount(agent) || agent.account_id;
+}
 
 render({ type: "assignee" }, ({ field, obj, spec, viewOnly }) => {
   const { agentsMap } = useAgents();
@@ -23,7 +35,7 @@ render({ type: "assignee" }, ({ field, obj, spec, viewOnly }) => {
         <Avatar key={account_id} account_id={account_id} size={AVATAR_SIZE} />
         {agent != null && (
           <span>
-            {agent.first_name} {agent.last_name}{" "}
+            {agentDisplayName(agent)}{" "}
             {your_account_id == account_id ? " (you)" : undefined}
           </span>
         )}
@@ -41,7 +53,7 @@ function EditAssignee({ obj, field, your_account_id }) {
         <Space>
           <Avatar account_id={agent.account_id} size={AVATAR_SIZE} />
           <span>
-            {agent.first_name} {agent.last_name}{" "}
+            {agentDisplayName(agent)}{" "}
             {your_account_id == agent.account_id ? " (you)" : undefined}
           </span>
         </Space>
@@ -59,7 +71,6 @@ function EditAssignee({ obj, field, your_account_id }) {
           value={obj[field]}
           options={options}
           onChange={(value) => {
-            console.log({ value });
             save(obj, value ? value : null);
           }}
         />

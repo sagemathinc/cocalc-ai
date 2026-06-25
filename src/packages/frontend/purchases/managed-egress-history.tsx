@@ -30,6 +30,7 @@ import {
   ManagedEgressRecentEventsList,
   formatManagedEgressCategory,
 } from "@cocalc/frontend/purchases/managed-egress-recent-events";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -971,7 +972,7 @@ function AdminTopAccounts({
       {accounts.map((account) => (
         <div key={account.account_id}>
           <Text>
-            {`${account.first_name ?? ""} ${account.last_name ?? ""}`.trim() ||
+            {displayNameFromAccount(account) ||
               account.email_address ||
               account.account_id}
           </Text>
@@ -1004,7 +1005,7 @@ function AdminTopProjects({
             {" "}
             · {humanSize(project.bytes)}
             {" · "}
-            {`${project.first_name ?? ""} ${project.last_name ?? ""}`.trim() ||
+            {displayNameFromAccount(project) ||
               project.email_address ||
               project.account_id}
           </Text>

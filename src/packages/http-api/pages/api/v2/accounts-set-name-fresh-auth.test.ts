@@ -104,8 +104,7 @@ describe("account set-name fresh auth", () => {
       account_id: "admin-1",
       query: {
         accounts: {
-          first_name: "Ada",
-          last_name: "Lovelace",
+          display_name: "Ada Lovelace",
         },
       },
     });
@@ -128,8 +127,7 @@ describe("account set-name fresh auth", () => {
       account_id: "user-1",
       query: {
         accounts: {
-          first_name: "Ada",
-          last_name: "Lovelace",
+          display_name: "Ada Lovelace",
         },
       },
     });

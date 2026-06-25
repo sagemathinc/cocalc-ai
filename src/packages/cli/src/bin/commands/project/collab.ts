@@ -5,6 +5,7 @@
  * and block list controls for collaboration access.
  */
 import { Command } from "commander";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { isValidUUID } from "@cocalc/util/misc";
 
 import type { ProjectCommandDeps } from "../project";
@@ -16,6 +17,21 @@ type ProjectCollabInviteDirection = any;
 type ProjectCollabInviteStatus = any;
 type ProjectCollabInviteAction = any;
 type ProjectCollabInviteBlockRow = any;
+
+function rowName(row: {
+  name?: string | null;
+  display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+}): string | null {
+  return (
+    displayNameFromAccount({
+      display_name: row.name ?? row.display_name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+    }) || null
+  );
+}
 
 export function registerProjectCollabCommands(
   project: Command,
@@ -85,10 +101,7 @@ export function registerProjectCollabCommands(
               project_title: project.title,
               account_id: row.account_id,
               group: row.group,
-              name:
-                `${row.name ?? ""}`.trim() ||
-                `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
-                null,
+              name: rowName(row),
               first_name: row.first_name ?? null,
               last_name: row.last_name ?? null,
               email_address: row.email_address ?? null,
@@ -104,10 +117,7 @@ export function registerProjectCollabCommands(
           })) as MyCollaboratorRow[];
           return (rows ?? []).map((row) => ({
             account_id: row.account_id,
-            name:
-              `${row.name ?? ""}`.trim() ||
-              `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
-              null,
+            name: rowName(row),
             first_name: row.first_name ?? null,
             last_name: row.last_name ?? null,
             email_address: row.email_address ?? null,
@@ -477,10 +487,11 @@ export function registerProjectCollabCommands(
         return (rows ?? []).map((row) => ({
           blocker_account_id: row.blocker_account_id,
           blocked_account_id: row.blocked_account_id,
-          blocked_name:
-            `${row.blocked_name ?? ""}`.trim() ||
-            `${row.blocked_first_name ?? ""} ${row.blocked_last_name ?? ""}`.trim() ||
-            null,
+          blocked_name: rowName({
+            name: row.blocked_name,
+            first_name: row.blocked_first_name,
+            last_name: row.blocked_last_name,
+          }),
           blocked_email_address: row.blocked_email_address ?? null,
           created: toIso(row.created),
           updated: toIso(row.updated),

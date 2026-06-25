@@ -17,6 +17,7 @@ import {
 } from "@cocalc/database/postgres/notifications-core";
 import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import {
   assertLocalProjectCollaborator,
   getLocalProjectAccessStatus,
@@ -603,12 +604,12 @@ async function fetchInviteById(
        p.title AS project_title,
        p.description AS project_description,
        i.inviter_account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), '') AS inviter_name,
+       COALESCE(NULLIF(BTRIM(inviter.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), '')) AS inviter_name,
        inviter.first_name AS inviter_first_name,
        inviter.last_name AS inviter_last_name,
        CASE WHEN $2::boolean THEN inviter.email_address ELSE NULL END AS inviter_email_address,
        i.invitee_account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', invitee.first_name, invitee.last_name)), '') AS invitee_name,
+       COALESCE(NULLIF(BTRIM(invitee.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', invitee.first_name, invitee.last_name)), '')) AS invitee_name,
        invitee.first_name AS invitee_first_name,
        invitee.last_name AS invitee_last_name,
        CASE WHEN $2::boolean THEN invitee.email_address ELSE NULL END AS invitee_email_address,
@@ -653,10 +654,15 @@ async function fetchInviteById(
 
 function fillNameParts(target: any, entry?: any): void {
   if (!entry) return;
+  const name = displayNameFromAccount({
+    display_name: entry.display_name ?? entry.name,
+    first_name: entry.first_name,
+    last_name: entry.last_name,
+  });
+  if (!target.name && name) target.name = name;
   if (!target.first_name && entry.first_name)
     target.first_name = entry.first_name;
   if (!target.last_name && entry.last_name) target.last_name = entry.last_name;
-  if (!target.name && entry.name) target.name = entry.name;
   if (!target.email_address && entry.email_address) {
     target.email_address = entry.email_address;
   }
@@ -680,6 +686,7 @@ async function hydrateInviteRows(
     rows.map(async (row) => {
       const inviter = {
         name: row.inviter_name,
+        display_name: row.inviter_name,
         first_name: row.inviter_first_name,
         last_name: row.inviter_last_name,
         email_address: row.inviter_email_address,
@@ -687,6 +694,7 @@ async function hydrateInviteRows(
       fillNameParts(inviter, byId.get(row.inviter_account_id));
       const invitee = {
         name: row.invitee_name,
+        display_name: row.invitee_name,
         first_name: row.invitee_first_name,
         last_name: row.invitee_last_name,
         email_address: row.invitee_email_address,
@@ -759,6 +767,7 @@ async function hydrateCollaboratorRows(
     const hydrated = {
       ...row,
       name: row.name,
+      display_name: row.name,
       first_name: row.first_name,
       last_name: row.last_name,
       email_address: row.email_address,
@@ -806,6 +815,7 @@ async function hydrateMyCollaboratorRows(
     const hydrated = {
       ...row,
       name: row.name,
+      display_name: row.name,
       first_name: row.first_name,
       last_name: row.last_name,
       email_address: row.email_address,
@@ -837,10 +847,12 @@ async function hydrateInviteBlockRows(
   return rows.map((row) => {
     const blocker = {
       name: row.blocker_name,
+      display_name: row.blocker_name,
     };
     fillNameParts(blocker, byId.get(row.blocker_account_id));
     const blocked = {
       name: row.blocked_name,
+      display_name: row.blocked_name,
       first_name: row.blocked_first_name,
       last_name: row.blocked_last_name,
       email_address: row.blocked_email_address,
@@ -1378,12 +1390,12 @@ export async function listCollabInvites({
       p.title AS project_title,
       p.description AS project_description,
       i.inviter_account_id,
-      NULLIF(BTRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), '') AS inviter_name,
+      COALESCE(NULLIF(BTRIM(inviter.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), '')) AS inviter_name,
       inviter.first_name AS inviter_first_name,
       inviter.last_name AS inviter_last_name,
       CASE WHEN $1::boolean THEN inviter.email_address ELSE NULL END AS inviter_email_address,
       i.invitee_account_id,
-      NULLIF(BTRIM(CONCAT_WS(' ', invitee.first_name, invitee.last_name)), '') AS invitee_name,
+      COALESCE(NULLIF(BTRIM(invitee.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', invitee.first_name, invitee.last_name)), '')) AS invitee_name,
       invitee.first_name AS invitee_first_name,
       invitee.last_name AS invitee_last_name,
       CASE WHEN $1::boolean THEN invitee.email_address ELSE NULL END AS invitee_email_address,
@@ -1920,7 +1932,7 @@ async function fetchProjectAccessRequestById({
     `SELECT
        r.*,
        p.title AS project_title,
-       NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '') AS requester_name,
+       COALESCE(NULLIF(BTRIM(a.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '')) AS requester_name,
        a.first_name AS requester_first_name,
        a.last_name AS requester_last_name,
        a.profile AS requester_profile
@@ -2254,7 +2266,7 @@ export async function getProjectAccessLandingInfo({
        p.title,
        p.users,
        owner_id.account_id AS owner_account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', owner.first_name, owner.last_name)), '') AS owner_name,
+       COALESCE(NULLIF(BTRIM(owner.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', owner.first_name, owner.last_name)), '')) AS owner_name,
        owner.first_name AS owner_first_name,
        owner.last_name AS owner_last_name,
        owner.profile AS owner_profile,
@@ -2525,7 +2537,7 @@ export async function listProjectAccessRequests({
     `SELECT
        r.*,
        p.title AS project_title,
-       NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '') AS requester_name,
+       COALESCE(NULLIF(BTRIM(a.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '')) AS requester_name,
        a.first_name AS requester_first_name,
        a.last_name AS requester_last_name,
        a.profile AS requester_profile
@@ -2710,9 +2722,9 @@ export async function listProjectAccessRequestBlocks({
     `SELECT
        b.project_id,
        b.blocker_account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', blocker.first_name, blocker.last_name)), '') AS blocker_name,
+       COALESCE(NULLIF(BTRIM(blocker.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', blocker.first_name, blocker.last_name)), '')) AS blocker_name,
        b.blocked_account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', blocked.first_name, blocked.last_name)), '') AS blocked_name,
+       COALESCE(NULLIF(BTRIM(blocked.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', blocked.first_name, blocked.last_name)), '')) AS blocked_name,
        blocked.first_name AS blocked_first_name,
        blocked.last_name AS blocked_last_name,
        blocked.profile AS blocked_profile,
@@ -2781,9 +2793,9 @@ export async function listCollabInviteBlocks({
   const { rows } = await pool.query<ProjectCollabInviteBlockRow>(
     `SELECT
        b.blocker_account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', blocker.first_name, blocker.last_name)), '') AS blocker_name,
+       COALESCE(NULLIF(BTRIM(blocker.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', blocker.first_name, blocker.last_name)), '')) AS blocker_name,
        b.blocked_account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', blocked.first_name, blocked.last_name)), '') AS blocked_name,
+       COALESCE(NULLIF(BTRIM(blocked.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', blocked.first_name, blocked.last_name)), '')) AS blocked_name,
        blocked.first_name AS blocked_first_name,
        blocked.last_name AS blocked_last_name,
        CASE WHEN $2::boolean THEN blocked.email_address ELSE NULL END AS blocked_email_address,
@@ -2854,7 +2866,7 @@ export async function listCollaborators({
   const { rows } = await pool.query<ProjectCollaboratorRow>(
     `SELECT
        u.account_id_text::uuid AS account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '') AS name,
+       COALESCE(NULLIF(BTRIM(a.display_name), ''), NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '')) AS name,
        a.first_name,
        a.last_name,
        CASE WHEN $2::boolean THEN a.email_address ELSE NULL END AS email_address,
@@ -2921,7 +2933,7 @@ export async function listMyCollaborators({
      )
      SELECT
        u.account_id_text::uuid AS account_id,
-       NULLIF(BTRIM(CONCAT_WS(' ', MAX(a.first_name), MAX(a.last_name))), '') AS name,
+       COALESCE(NULLIF(BTRIM(MAX(a.display_name)), ''), NULLIF(BTRIM(CONCAT_WS(' ', MAX(a.first_name), MAX(a.last_name))), '')) AS name,
        MAX(a.first_name) AS first_name,
        MAX(a.last_name) AS last_name,
        CASE WHEN $2::boolean THEN MAX(a.email_address) ELSE NULL END AS email_address,

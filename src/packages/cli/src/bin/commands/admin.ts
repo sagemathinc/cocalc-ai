@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
 import { currency } from "@cocalc/util/misc";
 import {
@@ -989,6 +990,7 @@ export function registerAdminCommand(
             only_email: !!opts.onlyEmail,
           })) as Array<{
             account_id: string;
+            display_name?: string;
             first_name?: string;
             last_name?: string;
             name?: string;
@@ -999,23 +1001,24 @@ export function registerAdminCommand(
             email_address_verified?: boolean;
           }>;
 
-          return (rows ?? []).map((row) => ({
-            account_id: row.account_id,
-            name:
-              `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
-              row.name ||
-              "",
-            first_name: row.first_name ?? "",
-            last_name: row.last_name ?? "",
-            email_address: row.email_address ?? null,
-            email_address_verified:
-              row.email_address_verified == null
-                ? null
-                : !!row.email_address_verified,
-            banned: row.banned == null ? null : !!row.banned,
-            last_active: row.last_active ?? null,
-            created: row.created ?? null,
-          }));
+          return (rows ?? []).map((row) => {
+            const displayName = displayNameFromAccount(row);
+            return {
+              account_id: row.account_id,
+              name: displayName || row.name || "",
+              display_name: displayName,
+              first_name: row.first_name ?? "",
+              last_name: row.last_name ?? "",
+              email_address: row.email_address ?? null,
+              email_address_verified:
+                row.email_address_verified == null
+                  ? null
+                  : !!row.email_address_verified,
+              banned: row.banned == null ? null : !!row.banned,
+              last_active: row.last_active ?? null,
+              created: row.created ?? null,
+            };
+          });
         });
       },
     );

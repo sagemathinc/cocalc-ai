@@ -41,7 +41,13 @@ export function create_sync_db(
       project_id,
       path,
       primary_keys: ["table", "handout_id", "student_id", "assignment_id"],
-      string_cols: ["note", "description", "title", "email_invite"],
+      string_cols: [
+        "note",
+        "description",
+        "title",
+        "email_invite",
+        "display_name",
+      ],
       change_throttle: 500, // helps when doing a lot of assign/collect, etc.
     });
 

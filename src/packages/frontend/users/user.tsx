@@ -6,6 +6,7 @@
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Gap, TimeAgo, Tip } from "@cocalc/frontend/components";
 import { is_valid_uuid_string, trunc_middle } from "@cocalc/util/misc";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { UserMap } from "./types";
 import { actions } from "./actions";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -52,18 +53,7 @@ function User_map_given(props: Props) {
   }
 
   function render_original(info) {
-    let full_name = `${info.display_name ?? ""}`.trim();
-    if (full_name) {
-      // already set
-    } else if (info.first_name && info.last_name) {
-      full_name = info.first_name + " " + info.last_name;
-    } else if (info.first_name) {
-      full_name = info.first_name;
-    } else if (info.last_name) {
-      full_name = info.last_name;
-    } else {
-      full_name = "No Name";
-    }
+    const full_name = displayNameFromAccount(info) || "No Name";
 
     if (props.show_original && full_name !== props.name) {
       return (
@@ -82,10 +72,7 @@ function User_map_given(props: Props) {
 
   function name(info) {
     const x = trunc_middle(
-      props.name != null
-        ? props.name
-        : `${info.display_name ?? ""}`.trim() ||
-            `${info.first_name} ${info.last_name}`,
+      props.name != null ? props.name : displayNameFromAccount(info),
       props.trunc ?? 50,
     ).trim();
     if (x) {
@@ -125,7 +112,7 @@ function User_map_given(props: Props) {
             <>
               <Avatar
                 account_id={props.account_id}
-                first_name={n}
+                display_name={n}
                 size={props.avatarSize}
                 no_tooltip={
                   true /* the tooltip just shows the name which is annoying/redundant since we are showing the name here anyways */

@@ -39,16 +39,18 @@ async function setStripeCustomerId({
 async function createStripeCustomer({
   account_id,
   email,
+  display_name,
   first_name,
   last_name,
 }: {
   account_id: string;
   email?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
 }): Promise<string> {
   logger.debug("createStripeCustomer", account_id);
-  const description = stripeName(first_name ?? "", last_name ?? "");
+  const description = stripeName({ display_name, first_name, last_name });
   const stripe = await getConn();
   const { id } = await stripe.customers.create(
     {
@@ -133,7 +135,7 @@ export async function getStripeCustomerId({
   const client = await getTransactionClient();
   try {
     const { rows } = await client.query(
-      "SELECT email_address, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
+      "SELECT email_address, display_name, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
       [account_id],
     );
     if (rows.length == 0) {
@@ -163,6 +165,7 @@ export async function getStripeCustomerId({
     const id = await createStripeCustomer({
       account_id,
       email: row.email_address,
+      display_name: row.display_name,
       first_name: row.first_name,
       last_name: row.last_name,
     });

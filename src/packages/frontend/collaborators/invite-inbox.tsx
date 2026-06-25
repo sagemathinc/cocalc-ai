@@ -40,6 +40,7 @@ import {
 } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { setUnreadIncomingInviteCount } from "./invite-count";
 import {
   notifyCollabInvitesChanged,
@@ -91,8 +92,11 @@ function userName(
 ): string {
   if (!value) return "Unknown user";
   return (
-    `${value.name ?? ""}`.trim() ||
-    `${value.first ?? ""} ${value.last ?? ""}`.trim() ||
+    displayNameFromAccount({
+      display_name: value.name,
+      first_name: value.first,
+      last_name: value.last,
+    }) ||
     `${value.account_id ?? ""}`.trim() ||
     "Unknown user"
   );
@@ -129,8 +133,11 @@ function inviteTrustSignals(invite: ProjectCollabInviteRow): string[] {
 
 function inviteeLabel(invite: ProjectCollabInviteRow): string {
   return (
-    `${invite.invitee_name ?? ""}`.trim() ||
-    `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
+    displayNameFromAccount({
+      display_name: invite.invitee_name,
+      first_name: invite.invitee_first_name,
+      last_name: invite.invitee_last_name,
+    }) ||
     `${invite.invitee_email_address ?? ""}`.trim() ||
     `${invite.target_email ?? ""}`.trim() ||
     `${invite.invitee_account_id ?? ""}`.trim() ||

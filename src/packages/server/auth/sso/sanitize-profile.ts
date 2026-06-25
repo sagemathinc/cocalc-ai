@@ -8,12 +8,24 @@ import {
   firstLetterUppercase,
   is_valid_email_address,
 } from "@cocalc/util/misc";
+import {
+  displayNameFromParts,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 
 // this processes the profile, based on our general experience
 // in particular, an interesting detail to add would be to derive a "name" if
 // there is just an email address given. (there are workarounds for OAuth2 elsewhere)
 
 export function sanitizeProfile(opts: PassportLoginOpts, L: Function): void {
+  opts.display_name =
+    normalizeDisplayName(opts.display_name) ||
+    normalizeDisplayName(opts.full_name) ||
+    displayNameFromParts({
+      first_name: opts.first_name,
+      last_name: opts.last_name,
+    });
+
   if (
     opts.full_name != null &&
     opts.first_name == null &&
@@ -62,4 +74,11 @@ export function sanitizeProfile(opts: PassportLoginOpts, L: Function): void {
       }
     }
   }
+
+  opts.display_name =
+    normalizeDisplayName(opts.display_name) ||
+    displayNameFromParts({
+      first_name: opts.first_name,
+      last_name: opts.last_name,
+    });
 }

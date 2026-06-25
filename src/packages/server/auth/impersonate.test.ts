@@ -218,6 +218,13 @@ describe("auth/impersonate", () => {
   });
 
   it("renders a non-consuming landing page before confirming impersonation", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-2",
+      display_name: "Unified Subject",
+      first_name: "Legacy",
+      last_name: "Subject",
+    }));
     const { signInUsingImpersonateToken } = await import("./impersonate");
     const req = {
       query: {
@@ -244,6 +251,8 @@ describe("auth/impersonate", () => {
     expect(`${res.send.mock.calls[0]?.[0]}`).toContain(
       "Confirm support impersonation",
     );
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain("Unified Subject");
+    expect(`${res.send.mock.calls[0]?.[0]}`).not.toContain("Legacy Subject");
     expect(`${res.send.mock.calls[0]?.[0]}`).toContain("confirm=1");
     expect(`${res.send.mock.calls[0]?.[0]}`).toContain(
       "https://bay-2-lite4b.cocalc.ai",

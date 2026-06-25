@@ -8,6 +8,7 @@ import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getCliAuthApprovalInfo } from "@cocalc/server/auth/cli-auth";
 import getAccountId from "@cocalc/server/auth/get-account";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 export default async function cliChallengeInfo(req, res) {
   if (!isPost(req, res)) {
@@ -27,8 +28,7 @@ export default async function cliChallengeInfo(req, res) {
       current_account_id != null
         ? await getClusterAccountById(current_account_id)
         : null;
-    const current_display_name =
-      `${current?.first_name ?? ""} ${current?.last_name ?? ""}`.trim() || null;
+    const current_display_name = displayNameFromAccount(current) || null;
     res.json({
       ...info,
       current_account_id: current_account_id ?? null,

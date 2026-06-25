@@ -62,6 +62,7 @@ describe("getStripeCustomerId", () => {
           rows: [
             {
               email_address: "account-1@example.com",
+              display_name: "Ada Byron Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
             },
@@ -101,13 +102,13 @@ describe("getStripeCustomerId", () => {
     ).resolves.toBe("cus_created");
 
     expect(client.query).toHaveBeenCalledWith(
-      "SELECT email_address, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
+      "SELECT email_address, display_name, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
       ["account-1"],
     );
     expect(stripe.customers.create).toHaveBeenCalledWith(
       {
-        description: "Ada Lovelace",
-        name: "Ada Lovelace",
+        description: "Ada Byron Lovelace",
+        name: "Ada Byron Lovelace",
         email: "account-1@example.com",
         metadata: {
           account_id: "account-1",

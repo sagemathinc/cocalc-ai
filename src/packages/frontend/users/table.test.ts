@@ -118,8 +118,9 @@ describe("users table helpers", () => {
 
     const record = buildCollaboratorRecord({
       account_id: "acct-1",
-      first_name: "Alice",
-      last_name: "Anderson",
+      display_name: "Alice A.",
+      first_name: "Legacy",
+      last_name: "Name",
       name: "alice",
       last_active: "2026-04-05T00:00:00.000Z",
       profile: { image: "alice.png" },
@@ -128,10 +129,31 @@ describe("users table helpers", () => {
     });
 
     expect(record.get("account_id")).toBe("acct-1");
+    expect(record.get("display_name")).toBe("Alice A.");
+    expect(record.get("first_name")).toBe("Legacy");
+    expect(record.get("last_name")).toBe("Name");
     expect(record.get("collaborator")).toBe(true);
     expect(record.get("last_active")).toEqual(
       new Date("2026-04-05T00:00:00.000Z"),
     );
+  });
+
+  it("derives collaborator display names from legacy parts", async () => {
+    const { buildCollaboratorRecord } = await import("./table");
+
+    const record = buildCollaboratorRecord({
+      account_id: "acct-1",
+      display_name: null,
+      first_name: "Alice",
+      last_name: "Anderson",
+      name: "alice",
+      last_active: null,
+      profile: null,
+      common_project_count: 2,
+      updated_at: null,
+    });
+
+    expect(record.get("display_name")).toBe("Alice Anderson");
   });
 
   it("merges full snapshot rows without forgetting non-collaborators", async () => {
@@ -155,8 +177,7 @@ describe("users table helpers", () => {
     const merged = mergeUsersSnapshot(
       fromJS({
         "acct-new-collab": {
-          first_name: "New",
-          last_name: "Collab",
+          display_name: "New Collab",
         },
       }) as Map<string, Map<string, any>>,
     );
@@ -164,6 +185,9 @@ describe("users table helpers", () => {
     expect(merged.getIn(["acct-old-collab", "collaborator"])).toBe(false);
     expect(merged.getIn(["acct-non-collab", "first_name"])).toBe("Fetched");
     expect(merged.getIn(["acct-new-collab", "collaborator"])).toBe(true);
+    expect(merged.getIn(["acct-new-collab", "display_name"])).toBe(
+      "New Collab",
+    );
   });
 
   it("does not create the collaborators table before account id is known", async () => {
@@ -195,6 +219,7 @@ describe("users table helpers", () => {
         ts: Date.now(),
         collaborator: {
           account_id: "acct-collab",
+          display_name: "Ada L.",
           first_name: "Ada",
           last_name: "Lovelace",
           name: "Ada Lovelace",
@@ -208,6 +233,7 @@ describe("users table helpers", () => {
     );
 
     expect(userMap.getIn(["acct-collab", "collaborator"])).toBe(true);
+    expect(userMap.getIn(["acct-collab", "display_name"])).toBe("Ada L.");
     expect(collectProjectionDiagnostics().consumers.users.last_event_type).toBe(
       "collaborator.upsert",
     );

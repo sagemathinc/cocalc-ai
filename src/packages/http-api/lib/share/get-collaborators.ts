@@ -29,7 +29,13 @@ export default async function getCollaborators(
   }
 
   const result = await pool.query(
-    `SELECT accounts.account_id, accounts.first_name, accounts.last_name FROM accounts, (${subQuery}) 
+    `SELECT accounts.account_id,
+            COALESCE(NULLIF(accounts.display_name, ''),
+              NULLIF(BTRIM(CONCAT_WS(' ', accounts.first_name, accounts.last_name)), ''),
+              '') AS display_name,
+            COALESCE(accounts.first_name, '') AS first_name,
+            COALESCE(accounts.last_name, '') AS last_name
+       FROM accounts, (${subQuery})
         AS users WHERE accounts.account_id=users.account_id::UUID 
                    AND accounts.unlisted IS NOT TRUE`,
     queryParams,

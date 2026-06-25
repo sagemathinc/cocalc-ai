@@ -214,11 +214,11 @@ export class StripeClient {
 
     dbg("get identifying info about user");
     const r = await callback2(this.client.database.get_account, {
-      columns: ["email_address", "first_name", "last_name"],
+      columns: ["email_address", "display_name", "first_name", "last_name"],
       account_id: this.client.account_id,
     });
     const email = r.email_address;
-    const description = stripeName(r.first_name, r.last_name);
+    const description = stripeName(r);
     dbg(`they are ${description} with email ${email}`);
 
     dbg("creating stripe customer");
@@ -418,6 +418,7 @@ export class StripeClient {
       columns: [
         "stripe_customer_id",
         "email_address",
+        "display_name",
         "first_name",
         "last_name",
         "account_id",
@@ -427,7 +428,7 @@ export class StripeClient {
     });
     let customer_id = r.stripe_customer_id;
     const email = r.email_address;
-    const description = stripeName(r.first_name, r.last_name);
+    const description = stripeName(r);
     mesg.account_id = r.account_id;
     const conn = await getConn();
     if (customer_id != null) {

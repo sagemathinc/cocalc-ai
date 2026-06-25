@@ -27,7 +27,6 @@ import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { signedInRedirectUrl } from "./util";
 import { COLORS } from "@cocalc/util/theme";
-import { legacyNamePartsFromDisplayName } from "@cocalc/util/accounts/display-name";
 
 const PolicyPrivacyPageUrl = joinUrlPath(appBasePath, "policies/privacy");
 const PolicyTOSPageUrl = joinUrlPath(appBasePath, "policies/terms");
@@ -153,7 +152,6 @@ export default function SignUpFormBase({
     setError("");
     setSigningUp(true);
     try {
-      const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
@@ -162,8 +160,6 @@ export default function SignUpFormBase({
           email,
           password,
           displayName,
-          firstName: legacyNameParts.first_name,
-          lastName: legacyNameParts.last_name,
           registrationToken: registrationToken.trim(),
         },
       });

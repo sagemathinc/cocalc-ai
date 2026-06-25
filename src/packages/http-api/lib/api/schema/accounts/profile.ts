@@ -24,6 +24,7 @@ export const AccountProfileOutputSchema = z.union([
     profile: z
       .object({
         account_id: AccountIdSchema,
+        display_name: z.string().describe("Display name of account holder."),
         first_name: z.string().describe("First name of account holder."),
         last_name: z.string().describe("Last name of account holder."),
         image: z

@@ -45,7 +45,6 @@ import {
 } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
-import { legacyNamePartsFromDisplayName } from "@cocalc/util/accounts/display-name";
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -1057,7 +1056,6 @@ export function PublicSignUpForm({
     setError("");
     setSigningUp(true);
     try {
-      const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
@@ -1066,8 +1064,6 @@ export function PublicSignUpForm({
           email,
           password,
           displayName,
-          firstName: legacyNameParts.first_name,
-          lastName: legacyNameParts.last_name,
           registrationToken: registrationToken.trim(),
         },
       });

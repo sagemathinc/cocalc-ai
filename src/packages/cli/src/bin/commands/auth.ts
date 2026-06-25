@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { describeProjectScopedAuth } from "../../core/auth-cookies";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 export type AuthCommandDeps = {
   env: NodeJS.ProcessEnv;
@@ -172,18 +173,22 @@ export function registerAuthCommand(
 
   async function maybeRefreshProfileIdentity(profile: any): Promise<{
     email_address?: string | null;
-    first_name?: string | null;
-    last_name?: string | null;
+    display_name?: string | null;
   }> {
     if (
       `${profile?.email_address ?? ""}`.trim() ||
+      `${profile?.display_name ?? ""}`.trim() ||
       `${profile?.first_name ?? ""}`.trim() ||
       `${profile?.last_name ?? ""}`.trim()
     ) {
       return {
         email_address: profile?.email_address ?? null,
-        first_name: profile?.first_name ?? null,
-        last_name: profile?.last_name ?? null,
+        display_name:
+          displayNameFromAccount({
+            display_name: profile?.display_name,
+            first_name: profile?.first_name,
+            last_name: profile?.last_name,
+          }) || null,
       };
     }
     const apiBaseUrl = `${profile?.api ?? ""}`.trim();
@@ -196,6 +201,7 @@ export function registerAuthCommand(
         profile?: {
           account_id?: string | null;
           email_address?: string | null;
+          display_name?: string | null;
           first_name?: string | null;
           last_name?: string | null;
         } | null;
@@ -217,8 +223,12 @@ export function registerAuthCommand(
       }
       return {
         email_address: `${next.email_address ?? ""}`.trim() || null,
-        first_name: `${next.first_name ?? ""}`.trim() || null,
-        last_name: `${next.last_name ?? ""}`.trim() || null,
+        display_name:
+          displayNameFromAccount({
+            display_name: next.display_name,
+            first_name: next.first_name,
+            last_name: next.last_name,
+          }) || null,
       };
     } catch {
       return {};
@@ -415,23 +425,20 @@ export function registerAuthCommand(
               if (
                 (identity.email_address != null &&
                   identity.email_address !== profile.email_address) ||
-                (identity.first_name != null &&
-                  identity.first_name !== profile.first_name) ||
-                (identity.last_name != null &&
-                  identity.last_name !== profile.last_name)
+                (identity.display_name != null &&
+                  identity.display_name !== profile.display_name)
               ) {
                 config.profiles[name] = {
                   ...profile,
                   ...(identity.email_address != null
                     ? { email_address: identity.email_address }
                     : {}),
-                  ...(identity.first_name != null
-                    ? { first_name: identity.first_name }
-                    : {}),
-                  ...(identity.last_name != null
-                    ? { last_name: identity.last_name }
+                  ...(identity.display_name != null
+                    ? { display_name: identity.display_name }
                     : {}),
                 };
+                delete config.profiles[name].first_name;
+                delete config.profiles[name].last_name;
                 changed = true;
               }
               const nextProfile = config.profiles[name] ?? profile;
@@ -441,8 +448,12 @@ export function registerAuthCommand(
                 api: nextProfile.api ?? null,
                 account_id: nextProfile.account_id ?? null,
                 email_address: nextProfile.email_address ?? null,
-                first_name: nextProfile.first_name ?? null,
-                last_name: nextProfile.last_name ?? null,
+                display_name:
+                  displayNameFromAccount({
+                    display_name: nextProfile.display_name,
+                    first_name: nextProfile.first_name,
+                    last_name: nextProfile.last_name,
+                  }) || null,
                 api_key: maskSecret(nextProfile.api_key),
                 cookie: maskSecret(nextProfile.cookie),
                 bearer: maskSecret(nextProfile.bearer),
@@ -536,6 +547,7 @@ export function registerAuthCommand(
       remember_me: string;
       expire: string | Date;
       email_address?: string | null;
+      display_name?: string | null;
       first_name?: string | null;
       last_name?: string | null;
     }>({
@@ -555,10 +567,16 @@ export function registerAuthCommand(
       api: apiBaseUrl,
       account_id: redeemed.account_id,
       email_address: `${redeemed.email_address ?? ""}`.trim() || null,
-      first_name: `${redeemed.first_name ?? ""}`.trim() || null,
-      last_name: `${redeemed.last_name ?? ""}`.trim() || null,
+      display_name:
+        displayNameFromAccount({
+          display_name: redeemed.display_name,
+          first_name: redeemed.first_name,
+          last_name: redeemed.last_name,
+        }) || null,
       cookie: buildRememberMeCookieHeader(apiBaseUrl, redeemed.remember_me),
     };
+    delete (next as any).first_name;
+    delete (next as any).last_name;
     delete (next as any).api_key;
     delete (next as any).bearer;
     delete (next as any).hub_password;
@@ -573,8 +591,7 @@ export function registerAuthCommand(
       api: apiBaseUrl,
       account_id: redeemed.account_id,
       email_address: next.email_address,
-      first_name: next.first_name,
-      last_name: next.last_name,
+      display_name: next.display_name,
       expires_at: new Date(redeemed.expire).toISOString(),
       interactive_session: true,
     };

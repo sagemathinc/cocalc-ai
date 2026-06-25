@@ -233,6 +233,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: true,
@@ -241,6 +242,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-2",
               email_address: "alan@example.com",
+              display_name: "Alan Turing",
               first_name: "Alan",
               last_name: "Turing",
               banned: false,
@@ -258,6 +260,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: true,
@@ -301,6 +304,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: true,
@@ -313,6 +317,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-2",
         email_address: "alan@example.com",
+        display_name: "Alan Turing",
         first_name: "Alan",
         last_name: "Turing",
         banned: false,
@@ -327,6 +332,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: true,
@@ -406,6 +412,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: false,
@@ -423,6 +430,7 @@ describe("managed egress history", () => {
             {
               account_id: "acct-1",
               email_address: "ada@example.com",
+              display_name: "Ada Lovelace",
               first_name: "Ada",
               last_name: "Lovelace",
               banned: false,
@@ -486,6 +494,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: false,
@@ -500,6 +509,7 @@ describe("managed egress history", () => {
       {
         account_id: "acct-1",
         email_address: "ada@example.com",
+        display_name: "Ada Lovelace",
         first_name: "Ada",
         last_name: "Lovelace",
         banned: false,

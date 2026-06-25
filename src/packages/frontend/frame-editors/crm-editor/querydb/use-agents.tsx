@@ -3,6 +3,7 @@ import { useTable } from "./use-table";
 
 interface Agent {
   account_id: string; // uuid
+  display_name?: string | null;
   first_name: string;
   last_name: string;
 }
@@ -27,7 +28,14 @@ export function AgentsProvider({ children }) {
     refresh,
   } = useTable({
     query: {
-      crm_agents: [{ account_id: null, first_name: null, last_name: null }],
+      crm_agents: [
+        {
+          account_id: null,
+          display_name: null,
+          first_name: null,
+          last_name: null,
+        },
+      ],
     },
     // NOTE: changefeeds are NOT supported for the agents table since it's
     // a weird 'admin'=ANY(...) query.  Instead clients periodically refresh

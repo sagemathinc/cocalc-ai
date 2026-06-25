@@ -116,6 +116,7 @@ export interface SyncDBRecordStudent {
   email_invite?: string;
   deleted?: boolean;
   deleted_account?: boolean;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   email_address?: string;

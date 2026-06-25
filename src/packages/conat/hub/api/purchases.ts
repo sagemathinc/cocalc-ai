@@ -593,6 +593,7 @@ export interface SiteLicenseExternalClaimConsumption {
 
 export interface SiteLicenseAccountDetails {
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   email_address?: string;
@@ -739,6 +740,7 @@ export interface ManagedEgressProjectSummary {
 export interface ManagedEgressAccountSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   banned?: boolean | null;
@@ -752,6 +754,7 @@ export interface ManagedEgressAccountSummary {
 export interface ManagedEgressAdminProjectSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   banned?: boolean | null;
@@ -849,6 +852,7 @@ export interface ManagedCpuEventSummary {
 export interface ManagedCpuAccountSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   banned?: boolean | null;
@@ -862,6 +866,7 @@ export interface ManagedCpuAccountSummary {
 export interface ManagedCpuAdminProjectSummary {
   account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   banned?: boolean | null;

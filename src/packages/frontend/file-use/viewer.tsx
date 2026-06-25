@@ -10,6 +10,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { Button } from "antd";
 import { Alert, Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import { SearchInput, Title, VisibleMDLG } from "@cocalc/frontend/components";
+import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import { search_match, search_split } from "@cocalc/util/misc";
 import { FileUseInfo } from "./info";
 import { open_file_use_entry } from "./util";
@@ -46,8 +47,7 @@ export default function FileUseViewer({
           project_map.getIn([row.project_id, "title"], ""),
         ];
         for (const recentAccountId of row.recent_account_ids ?? []) {
-          parts.push(user_map.getIn([recentAccountId, "first_name"], ""));
-          parts.push(user_map.getIn([recentAccountId, "last_name"], ""));
+          parts.push(displayNameFromUserRecord(user_map.get(recentAccountId)));
           if (recentAccountId === account_id) {
             parts.push("you");
           }
@@ -57,7 +57,7 @@ export default function FileUseViewer({
           search: parts.join(" ").toLowerCase(),
         };
       }),
-    [project_map, rows, user_map],
+    [account_id, project_map, rows, user_map],
   );
 
   const visibleRows = useMemo(() => {

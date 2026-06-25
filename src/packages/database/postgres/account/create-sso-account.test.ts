@@ -50,7 +50,7 @@ describe("create_sso_account", () => {
     });
 
     const { rows } = await pool.query(
-      "SELECT email_address, passports, sign_up_usage_intent, created_by, first_name, last_name FROM accounts WHERE account_id = $1",
+      "SELECT email_address, passports, sign_up_usage_intent, created_by, display_name, first_name, last_name FROM accounts WHERE account_id = $1",
       [account_id],
     );
 
@@ -58,8 +58,9 @@ describe("create_sso_account", () => {
     expect(rows[0].email_address).toBe(email_address.toLowerCase());
     expect(rows[0].sign_up_usage_intent).toBe(usage_intent);
     expect(rows[0].created_by).toBe(created_by);
-    expect(rows[0].first_name).toBe("Ada");
-    expect(rows[0].last_name).toBe("Lovelace");
+    expect(rows[0].display_name).toBe("Ada Lovelace");
+    expect(rows[0].first_name).toBeNull();
+    expect(rows[0].last_name).toBeNull();
 
     const passport_key = `${passport_strategy}-${passport_id}`;
     expect(rows[0].passports[passport_key]).toEqual(passport_profile);
@@ -77,12 +78,15 @@ describe("create_sso_account", () => {
     });
 
     const { rows } = await pool.query(
-      "SELECT email_address, lti_id, passports FROM accounts WHERE account_id = $1",
+      "SELECT email_address, lti_id, passports, display_name, first_name, last_name FROM accounts WHERE account_id = $1",
       [account_id],
     );
 
     expect(rows).toHaveLength(1);
     expect(rows[0].email_address).toBe(email_address.toLowerCase());
+    expect(rows[0].display_name).toBe("Grace Hopper");
+    expect(rows[0].first_name).toBeNull();
+    expect(rows[0].last_name).toBeNull();
     expect(rows[0].lti_id).toEqual(lti_id);
     expect(rows[0].passports).toBeNull();
   });
@@ -92,7 +96,7 @@ describe("create_sso_account", () => {
       createSsoAccountWrapper({
         first_name: "OPEN http://foo.com",
       }),
-    ).rejects.toMatch("first_name not valid");
+    ).rejects.toMatch("display_name not valid");
   });
 
   it("rejects repeated passport creation attempts", async () => {

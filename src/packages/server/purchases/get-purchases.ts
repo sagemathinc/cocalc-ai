@@ -35,15 +35,16 @@ interface Options {
   month_statement_id?: number;
   no_statement?: boolean; // only purchases not on any statement
   tag?: string;
-  // For admins - if true, include email_address, first_name, and last_name
+  // For admins - if true, include email_address and account name fields
   // fields from the accounts table, for each user. Ignored if group is true.
   includeName?: boolean;
 }
 
 interface PurchaseData extends Purchase {
-  first_name?: string;
-  last_name?: string;
-  email_address?: string;
+  display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  email_address?: string | null;
 }
 
 export default async function getPurchases({
@@ -75,7 +76,9 @@ export default async function getPurchases({
   } else {
     query =
       "SELECT p.id, p.time, p.cost, p.period_start, p.period_end, p.cost_per_hour, p.cost_so_far, p.service, p.description, p.invoice_id, p.project_id, p.notes" +
-      (includeName ? ", a.email_address, a.first_name, a.last_name " : "") +
+      (includeName
+        ? ", a.email_address, a.display_name, a.first_name, a.last_name "
+        : "") +
       " FROM purchases as p";
     if (includeName) {
       query += " INNER JOIN accounts as a ON p.account_id = a.account_id ";

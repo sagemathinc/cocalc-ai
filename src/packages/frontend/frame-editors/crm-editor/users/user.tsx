@@ -3,11 +3,13 @@ import { Card, Space, Tag } from "antd";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { PurchasesButton } from "@cocalc/frontend/purchases/purchases";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import Impersonate from "./impersonate";
 import Projects from "./projects";
 
 export default function User({
   account_id,
+  display_name,
   first_name,
   last_name,
   name,
@@ -16,6 +18,11 @@ export default function User({
   created,
   banned,
 }) {
+  const displayName =
+    displayNameFromAccount({ display_name, first_name, last_name }) ||
+    email_address ||
+    account_id;
+
   return (
     <Card
       style={{ margin: "5px" }}
@@ -40,8 +47,12 @@ export default function User({
           >
             {email_address}, {account_id}
           </div>
-          <Avatar account_id={account_id} style={{ marginRight: "15px" }} />
-          {first_name} {last_name} {name ? `(name: ${name})` : ""}
+          <Avatar
+            account_id={account_id}
+            display_name={displayName}
+            style={{ marginRight: "15px" }}
+          />
+          {displayName} {name ? `(name: ${name})` : ""}
         </>
       }
     >
@@ -56,11 +67,7 @@ export default function User({
           )}
         </div>
         <Projects account_id={account_id} />
-        <Impersonate
-          account_id={account_id}
-          first_name={first_name}
-          last_name={last_name}
-        />
+        <Impersonate account_id={account_id} display_name={displayName} />
         <PurchasesButton account_id={account_id} />
       </Space>
     </Card>

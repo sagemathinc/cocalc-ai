@@ -24,6 +24,7 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 import { ProjectRootfsRuntimeModal } from "./project-rootfs-badge";
@@ -134,30 +135,28 @@ export function ProjectsTable({
         const user = user_map.get(account_id);
         if (!user) return null;
 
-        const first_name = user.get("first_name") ?? "";
-        const last_name = user.get("last_name") ?? "";
-        const display_name = user.get("display_name") ?? "";
+        const display_name =
+          displayNameFromAccount({
+            display_name: user.get("display_name"),
+            first_name: user.get("first_name"),
+            last_name: user.get("last_name"),
+          }) || "Unknown User";
         const avatar = user.get("avatar_image_tiny");
+        const initial = display_name.trim().charAt(0) || "?";
 
         return {
-          text:
-            `${display_name}`.trim() ||
-            `${first_name} ${last_name}`.trim() ||
-            "Unknown User",
+          text: display_name,
           value: account_id,
-          first_name,
-          last_name,
-          display_name,
+          initial,
+          sort_name: display_name.toLowerCase(),
           avatar,
         };
       })
       .filter((f) => f != null);
 
-    // Sort by last name, then first name
+    // Sort by the unified display name shown in the filter.
     filters.sort((a, b) => {
-      const lastNameCmp = a!.last_name.localeCompare(b!.last_name);
-      if (lastNameCmp !== 0) return lastNameCmp;
-      return a!.first_name.localeCompare(b!.first_name);
+      return a!.sort_name.localeCompare(b!.sort_name);
     });
 
     return filters;

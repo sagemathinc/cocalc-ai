@@ -454,11 +454,15 @@ describe("PublicAuthApp", () => {
           endpoint: "auth/sign-up",
           body: expect.objectContaining({
             displayName: "New User",
-            firstName: "New",
-            lastName: "User",
             terms: true,
           }),
         }),
+      );
+      expect(mockedPostAuthApi.mock.calls[0][0].body).not.toHaveProperty(
+        "firstName",
+      );
+      expect(mockedPostAuthApi.mock.calls[0][0].body).not.toHaveProperty(
+        "lastName",
       );
     });
   });

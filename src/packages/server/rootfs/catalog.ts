@@ -55,6 +55,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { enqueueRootfsPrepullForRunningHosts } from "@cocalc/server/cloud/rootfs-prepull";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 const logger = getLogger("server:rootfs:catalog");
 const SEED_CATALOG_SYNC_TTL_MS = 60_000;
@@ -102,6 +103,7 @@ type RootfsImageRow = {
   theme: RootfsImageTheme | null;
   content: RootfsContentManifest | null;
   content_warnings: RootfsContentValidationWarning[] | null;
+  owner_display_name: string | null;
   owner_first_name: string | null;
   owner_last_name: string | null;
   release_gc_status: RootfsReleaseGcStatus | null;
@@ -244,10 +246,13 @@ function normalizeEntryArch(value?: RootfsImageEntry["arch"]): string {
 }
 
 function fullName(row: RootfsImageRow): string | undefined {
-  const first = trimString(row.owner_first_name);
-  const last = trimString(row.owner_last_name);
-  const name = [first, last].filter(Boolean).join(" ").trim();
-  return name || undefined;
+  return (
+    displayNameFromAccount({
+      display_name: row.owner_display_name,
+      first_name: row.owner_first_name,
+      last_name: row.owner_last_name,
+    }) || undefined
+  );
 }
 
 function decodeRusticArtifactPath(
@@ -637,7 +642,7 @@ function rootfsCatalogOrderBy(opts: RootfsCatalogPageRequest): string {
     case "storage_status":
       return `rel.gc_status ${direction} NULLS LAST, lower(r.label) ASC, r.image_id ASC`;
     case "owner":
-      return `lower(COALESCE(a.last_name, '') || ' ' || COALESCE(a.first_name, '') || ' ' || COALESCE(r.owner_id::TEXT, '')) ${direction}, lower(r.label) ASC, r.image_id ASC`;
+      return `lower(COALESCE(NULLIF(a.display_name, ''), NULLIF(CONCAT_WS(' ', a.first_name, a.last_name), ''), '') || ' ' || COALESCE(r.owner_id::TEXT, '')) ${direction}, lower(r.label) ASC, r.image_id ASC`;
     case "usage_count":
       return `COALESCE(project_refs.project_count, 0) ${direction}, lower(r.label) ASC, r.image_id ASC`;
     case "updated":
@@ -691,6 +696,7 @@ function addRootfsCatalogFilters({
       COALESCE(r.content->>'title', '') ILIKE ${p} OR
       COALESCE(r.content->>'subtitle', '') ILIKE ${p} OR
       COALESCE(r.content->>'description', '') ILIKE ${p} OR
+      COALESCE(a.display_name, '') ILIKE ${p} OR
       COALESCE(a.first_name, '') ILIKE ${p} OR
       COALESCE(a.last_name, '') ILIKE ${p} OR
       COALESCE(array_to_string(r.tags, ' '), '') ILIKE ${p} OR
@@ -841,6 +847,7 @@ async function queryRootfsCatalogRows(
       r.theme,
       r.content,
       r.content_warnings,
+      a.display_name AS owner_display_name,
       a.first_name AS owner_first_name,
       a.last_name AS owner_last_name,
       rel.gc_status AS release_gc_status,

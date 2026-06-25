@@ -10,6 +10,7 @@ import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { getImpersonationBootstrapInfo } from "@cocalc/server/auth/impersonation";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import isPost from "@cocalc/http-api/lib/api/is-post";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 export default async function bootstrap(req, res) {
   if (!isPost(req, res)) {
@@ -35,9 +36,7 @@ export default async function bootstrap(req, res) {
   const account = await getClusterAccountById(account_id);
   const home_bay_id =
     `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
-  const display_name =
-    `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
-    undefined;
+  const display_name = displayNameFromAccount(account) || undefined;
   res.json({
     signed_in: true,
     account_id,

@@ -14,6 +14,10 @@ import { Map, Set, List } from "immutable";
 import { TypedMap, createTypedMap } from "@cocalc/frontend/app-framework";
 import { SITE_NAME } from "@cocalc/util/theme";
 import {
+  displayNameFromAccount,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
+import {
   Datastore,
   EnvVars,
   EnvVarsRecord,
@@ -54,6 +58,7 @@ export type StudentRecord = TypedMap<{
   create_project?: number; // Time the student project was created
   account_id?: string;
   student_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   last_active?: number;
@@ -216,6 +221,19 @@ export interface CourseState {
   pageFilter?: Map<string, string>;
 }
 
+function getAssignedStudentName(student: StudentRecord): string {
+  return displayNameFromAccount({
+    display_name: student.get("display_name"),
+    first_name: student.get("first_name"),
+    last_name: student.get("last_name"),
+  });
+}
+
+function sortableDisplayName(name: string): string {
+  const { first_name, last_name } = legacyNamePartsFromDisplayName(name);
+  return [last_name, first_name].join(" ");
+}
+
 export class CourseStore extends Store<CourseState> {
   private assignment_status_cache?: {
     [assignment_id: string]: AssignmentStatus;
@@ -334,11 +352,9 @@ export class CourseStore extends Store<CourseState> {
       return "Unknown Student";
     }
     // Try instructor assigned name:
-    if (student.get("first_name")?.trim() || student.get("last_name")?.trim()) {
-      return [
-        student.get("first_name", "")?.trim(),
-        student.get("last_name", "")?.trim(),
-      ].join(" ");
+    const assignedName = getAssignedStudentName(student);
+    if (assignedName) {
+      return assignedName;
     }
     const account_id = student.get("account_id");
     if (account_id == null) {
@@ -385,17 +401,13 @@ export class CourseStore extends Store<CourseState> {
     const email = student.get("email_address");
     const simple = this.get_student_name(student_id);
     let extra: string = "";
-    if (
-      (student.has("first_name") || student.has("last_name")) &&
-      student.has("account_id")
-    ) {
+    const assignedName = getAssignedStudentName(student);
+    if (assignedName && student.has("account_id")) {
       const users = this.redux.getStore("users");
       if (users != null) {
         const name = users.get_name(student.get("account_id"));
         if (name != null) {
-          extra = ` (You call them "${student.get("first_name")} ${student.get(
-            "last_name",
-          )}", but they call themselves "${name}".)`;
+          extra = ` (You call them "${assignedName}", but they call themselves "${name}".)`;
         }
       }
     }
@@ -410,10 +422,9 @@ export class CourseStore extends Store<CourseState> {
     if (student == null) {
       return student_id; // keeps the sort stable
     }
-    if (student.has("first_name") || student.has("last_name")) {
-      return [student.get("last_name", ""), student.get("first_name", "")].join(
-        " ",
-      );
+    const assignedName = getAssignedStudentName(student);
+    if (assignedName) {
+      return sortableDisplayName(assignedName);
     }
     const account_id = student.get("account_id");
     if (account_id == null) {
@@ -424,10 +435,7 @@ export class CourseStore extends Store<CourseState> {
     }
     const users = this.redux.getStore("users");
     if (users == null) return student_id;
-    return [
-      users.get_last_name(account_id),
-      users.get_first_name(account_id),
-    ].join(" ");
+    return sortableDisplayName(users.get_sort_name(account_id));
   }
 
   public get_student_email(student_id: string): string {

@@ -156,12 +156,16 @@ describe("SignUpFormBase", () => {
       expect.objectContaining({
         body: expect.objectContaining({
           displayName: "New User",
-          firstName: "New",
-          lastName: "User",
           terms: true,
           marketing_consent: true,
         }),
       }),
+    );
+    expect(mockedPostAuthApi.mock.calls[0][0].body).not.toHaveProperty(
+      "firstName",
+    );
+    expect(mockedPostAuthApi.mock.calls[0][0].body).not.toHaveProperty(
+      "lastName",
     );
   });
 });

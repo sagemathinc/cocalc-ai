@@ -40,6 +40,10 @@ import {
   uuid,
 } from "@cocalc/util/misc";
 import {
+  displayNameFromAccount,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
+import {
   canonicalizeInstitutionalClaimEmail,
   getMembershipClaimIdentity,
   reserveMembershipClaimIdentity,
@@ -70,6 +74,7 @@ type SiteLicenseMembershipPackage = NonNullable<
 >;
 type SiteLicenseAccountDetailEntry = {
   account_id: string;
+  display_name?: string | null;
   email_address?: string | null;
   first_name?: string | null;
   last_name?: string | null;
@@ -1885,11 +1890,14 @@ async function addSiteLicenseAccountDetails(
   const entries = await getSiteLicenseAccountDetailEntries(accountIds, client);
   const account_details: Record<string, SiteLicenseAccountDetails> = {};
   for (const entry of entries) {
+    const display_name = displayNameFromAccount(entry) || undefined;
+    const legacyNameParts = legacyNamePartsFromDisplayName(display_name);
     account_details[entry.account_id] = {
       account_id: entry.account_id,
+      display_name,
       email_address: entry.email_address ?? undefined,
-      first_name: entry.first_name ?? undefined,
-      last_name: entry.last_name ?? undefined,
+      first_name: legacyNameParts.first_name || undefined,
+      last_name: legacyNameParts.last_name || undefined,
     };
   }
   return { ...overview, account_details };
@@ -1908,7 +1916,7 @@ async function getSiteLicenseAccountDetailEntries(
   }
   const entries = new Map<string, SiteLicenseAccountDetailEntry>();
   const localRows = await client.query<SiteLicenseAccountDetailEntry>(
-    `SELECT account_id, email_address, first_name, last_name, home_bay_id
+    `SELECT account_id, display_name, email_address, first_name, last_name, home_bay_id
        FROM accounts
       WHERE account_id = ANY($1::UUID[])
         AND deleted IS NOT TRUE`,
@@ -1923,7 +1931,7 @@ async function getSiteLicenseAccountDetailEntries(
   );
   if (directoryTable.rows[0]?.table_name) {
     const directoryRows = await client.query<SiteLicenseAccountDetailEntry>(
-      `SELECT account_id, email_address, first_name, last_name, home_bay_id
+      `SELECT account_id, display_name, email_address, first_name, last_name, home_bay_id
          FROM cluster_account_directory
         WHERE account_id = ANY($1::UUID[])
           AND provisioned = TRUE`,
@@ -1933,6 +1941,7 @@ async function getSiteLicenseAccountDetailEntries(
       const current = entries.get(row.account_id);
       entries.set(row.account_id, {
         account_id: row.account_id,
+        display_name: current?.display_name ?? row.display_name,
         email_address: current?.email_address ?? row.email_address,
         first_name: current?.first_name ?? row.first_name,
         last_name: current?.last_name ?? row.last_name,

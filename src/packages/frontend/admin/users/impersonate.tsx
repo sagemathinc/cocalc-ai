@@ -19,11 +19,10 @@ import {
 
 interface Props {
   account_id: string;
-  first_name: string;
-  last_name: string;
+  display_name: string;
 }
 
-export function Impersonate({ first_name, last_name, account_id }: Props) {
+export function Impersonate({ display_name, account_id }: Props) {
   const [impersonationUrl, setImpersonationUrl] = useState<string | null>(null);
   const [err, set_err] = useState<string | null>(null);
   const [extraWarning, setExtraWarning] = useState<boolean>(false);
@@ -89,7 +88,7 @@ export function Impersonate({ first_name, last_name, account_id }: Props) {
           >
             <Icon name="external-link" /> Right click and open this link in a
             new <b>Incognito Window</b>, where you will be signed in as "
-            {first_name} {last_name}"...
+            {display_name}"...
           </a>
           <br />
           <br />
@@ -125,13 +124,7 @@ export function Impersonate({ first_name, last_name, account_id }: Props) {
   }
 
   return (
-    <Card
-      title={
-        <>
-          Impersonate user "{first_name} {last_name}"
-        </>
-      }
-    >
+    <Card title={<>Impersonate user "{display_name}"</>}>
       {render_err()}
       {render_link()}
       <FreshAuthModal {...freshAuthModalProps} />

@@ -6,11 +6,13 @@
 import { Alert, Button } from "antd";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 export function ImpersonationBanner() {
   const rawImpersonation = useTypedRedux("account", "impersonation") as any;
   const impersonation =
     rawImpersonation?.toJS?.() ?? rawImpersonation ?? undefined;
+  const display_name = useTypedRedux("account", "display_name");
   const first_name = useTypedRedux("account", "first_name");
   const last_name = useTypedRedux("account", "last_name");
   const email_address = useTypedRedux("account", "email_address");
@@ -21,7 +23,7 @@ export function ImpersonationBanner() {
   }
 
   const subject =
-    `${first_name ?? ""} ${last_name ?? ""}`.trim() ||
+    displayNameFromAccount({ display_name, first_name, last_name }) ||
     `${email_address ?? ""}`.trim() ||
     impersonation.subject_account_id;
   const actor =

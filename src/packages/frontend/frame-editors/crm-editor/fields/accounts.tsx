@@ -25,6 +25,7 @@ import { CloseOutlined } from "@ant-design/icons";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components";
 import { AVATAR_SIZE } from "./account";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 render({ type: "accounts" }, ({ field, obj, spec, viewOnly }) => {
   if (spec.type != "accounts") throw Error("bug");
@@ -139,7 +140,7 @@ function AddAccount({
           allowClear
           autoFocus
           loading={loading}
-          placeholder="Search for accounts by first name, last name, or email address..."
+          placeholder="Search for accounts by display name or email address..."
           enterButton
           onSearch={async (value) => {
             setError("");
@@ -200,11 +201,13 @@ function Users({
 
   const options: SelectProps["options"] = [];
   for (const user of users) {
+    const displayName =
+      displayNameFromAccount(user) || user.email_address || user.account_id;
     options.push({
       label: (
         <div>
           <Avatar account_id={user.account_id} size={AVATAR_SIZE} />{" "}
-          {user.first_name} {user.last_name} -- {user.email_address},{" "}
+          {displayName} -- {user.email_address},{" "}
           {user.last_active ? (
             <>
               active <TimeAgo date={user.last_active} />

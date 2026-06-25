@@ -42,6 +42,7 @@ import {
 } from "@cocalc/frontend/passports";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { keys, startswith } from "@cocalc/util/misc";
+import { displayNameFromParts } from "@cocalc/util/accounts/display-name";
 import { COLORS } from "@cocalc/util/theme";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import {
@@ -100,6 +101,16 @@ interface Props {
   verify_emails?: boolean;
   created?: Date;
   strategies?: List<ImmutablePassportStrategy>;
+}
+
+export function editableDisplayNameValue({
+  display_name,
+  first_name,
+  last_name,
+}: Pick<Props, "display_name" | "first_name" | "last_name">): string {
+  return display_name != null
+    ? `${display_name}`
+    : displayNameFromParts({ first_name, last_name });
 }
 
 export function AccountSettings(props: Readonly<Props>) {
@@ -425,10 +436,7 @@ export function AccountSettings(props: Readonly<Props>) {
     return (
       <TextSetting
         label="Display name"
-        value={
-          props.display_name ||
-          `${props.first_name ?? ""} ${props.last_name ?? ""}`.trim()
-        }
+        value={editableDisplayNameValue(props)}
         onChange={(e) => handle_change(e, "display_name")}
         onBlur={(e) => save_change(e, "display_name")}
         onPressEnter={(e) => save_change(e, "display_name")}

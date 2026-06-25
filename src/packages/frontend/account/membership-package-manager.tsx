@@ -95,6 +95,7 @@ import {
 } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { COLORS } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import type { LineItem } from "@cocalc/util/stripe/types";
@@ -182,12 +183,7 @@ type SiteLicenseRecentAuditEvent = NonNullable<
 >[number];
 
 function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
-  const displayName =
-    user.display_name ||
-    [user.first_name, user.last_name]
-      .map((part) => `${part ?? ""}`.trim())
-      .filter(Boolean)
-      .join(" ");
+  const displayName = displayNameFromAccount(user);
   return (
     <Space orientation="vertical" size={0}>
       <Text>{displayName || user.email_address || user.account_id}</Text>
@@ -469,7 +465,7 @@ function getAccountDisplayName(
     return assignment.email_address ?? "Pending email claim";
   }
   const name = names[assignment.account_id];
-  const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
+  const fullName = displayNameFromAccount(name);
   return fullName || assignment.account_id;
 }
 
@@ -481,7 +477,7 @@ function getAccountSecondaryLabel(
     return "Reserved by email";
   }
   const name = names[assignment.account_id];
-  const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
+  const fullName = displayNameFromAccount(name);
   const email =
     `${assignment.email_address ?? ""}`.trim() ||
     `${assignment.account_email_address ?? ""}`.trim() ||
@@ -504,7 +500,7 @@ function getAccountIdentity(
     return { name: "Unknown account" };
   }
   const info = names[normalizedAccountId];
-  const fullName = `${info?.first_name ?? ""} ${info?.last_name ?? ""}`.trim();
+  const fullName = displayNameFromAccount(info);
   const email = `${info?.email_address ?? ""}`.trim() || undefined;
   return {
     email,
@@ -548,7 +544,7 @@ function getRequestAccountDisplay({
   name: string;
 } {
   const name = names[request.account_id];
-  const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
+  const fullName = displayNameFromAccount(name);
   const email = `${request.matched_email_address ?? ""}`.trim();
   return {
     email: fullName && email ? email : undefined,
@@ -5427,8 +5423,7 @@ function AssignMembershipSeatModal({
               style={{ width: "100%" }}
             >
               {results.map((result) => {
-                const fullName =
-                  `${result.first_name ?? ""} ${result.last_name ?? ""}`.trim();
+                const fullName = displayNameFromAccount(result);
                 return (
                   <Radio
                     key={result.account_id}

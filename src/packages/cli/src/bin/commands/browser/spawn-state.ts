@@ -30,14 +30,17 @@ export const SPAWN_MARKER_QUERY_PARAM = "_cocalc_browser_spawn";
 export const DEFAULT_READY_TIMEOUT_MS = 20_000;
 export const DEFAULT_DISCOVERY_TIMEOUT_MS = 45_000;
 export const DEFAULT_DESTROY_TIMEOUT_MS = 10_000;
-export const SPAWN_STATE_DIR = join(
-  homedir() || process.cwd(),
-  ".local",
-  "share",
-  "cocalc",
-  "browser-sessions",
-  "v1",
-);
+
+function defaultSpawnStateDir(): string {
+  const explicit = process.env.COCALC_BROWSER_SESSION_STATE_DIR?.trim();
+  if (explicit) return explicit;
+  const xdgDataHome = process.env.XDG_DATA_HOME?.trim();
+  const dataHome =
+    xdgDataHome || join(homedir() || process.cwd(), ".local", "share");
+  return join(dataHome, "cocalc", "browser-sessions", "v1");
+}
+
+export const SPAWN_STATE_DIR = defaultSpawnStateDir();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

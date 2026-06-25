@@ -92,6 +92,7 @@ describe("CLI auth login redemption", () => {
       account_id,
       home_bay_id: "bay-1",
       email_address: "user@example.com",
+      display_name: "User Example",
       first_name: "User",
       last_name: "Example",
     }));

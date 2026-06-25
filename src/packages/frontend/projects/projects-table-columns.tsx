@@ -55,8 +55,8 @@ export type SortState = {
 export interface CollaboratorFilter {
   text: string;
   value: string;
-  first_name: string;
-  last_name: string;
+  initial: string;
+  sort_name: string;
   avatar?: string;
 }
 
@@ -405,7 +405,7 @@ export function getProjectTableColumns(
                   {cf.avatar ? (
                     <Avatar src={cf.avatar} size={20} />
                   ) : (
-                    <Avatar size={20}>{cf.first_name[0]}</Avatar>
+                    <Avatar size={20}>{cf.initial}</Avatar>
                   )}
                   <span>{cf.text}</span>
                 </span>

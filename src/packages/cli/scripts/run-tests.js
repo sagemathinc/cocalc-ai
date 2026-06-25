@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const cwd = process.cwd();
 const testRoot = path.join(cwd, "build", "test");
+const testDataRoot = path.join(cwd, "build", "test-data");
 
 function listCompiledTests(dir = testRoot) {
   if (!fs.existsSync(dir)) {
@@ -78,6 +79,12 @@ const result = spawnSync(
   process.execPath,
   ["--test", ...nodeTestArgs, ...tests],
   {
+    env: {
+      ...process.env,
+      COCALC_BROWSER_SESSION_STATE_DIR:
+        process.env.COCALC_BROWSER_SESSION_STATE_DIR ||
+        path.join(testDataRoot, "browser-sessions"),
+    },
     stdio: "inherit",
   },
 );

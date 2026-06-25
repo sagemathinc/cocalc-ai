@@ -15,6 +15,7 @@ import {
 } from "@cocalc/server/accounts/rehome-fence";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import type { AuthSessionFactorLevel } from "@cocalc/server/auth/auth-sessions";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const IMPERSONATION_GRANT_TTL_MS = 10 * 60_000;
@@ -105,17 +106,19 @@ function activeSession(
 
 async function getAccountSummary(account_id: string): Promise<{
   email_address?: string | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
 }> {
   const row = (
     await getPool().query<{
       email_address?: string | null;
+      display_name?: string | null;
       first_name?: string | null;
       last_name?: string | null;
     }>(
       `
-        SELECT email_address, first_name, last_name
+        SELECT email_address, display_name, first_name, last_name
           FROM accounts
          WHERE account_id = $1::UUID
          LIMIT 1
@@ -587,8 +590,7 @@ export async function getImpersonationBootstrapInfo({
     return;
   }
   const actor = await getAccountSummary(session.actor_account_id);
-  const actor_name =
-    `${actor.first_name ?? ""} ${actor.last_name ?? ""}`.trim();
+  const actor_name = displayNameFromAccount(actor);
   return {
     active: true,
     actor_account_id: session.actor_account_id,

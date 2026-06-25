@@ -1,4 +1,5 @@
 import type { HubApi } from "@cocalc/conat/hub/api";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -402,10 +403,7 @@ export async function resolveProjectFromArgOrContext<
 }
 
 export function normalizeUserSearchName(row: UserSearchResult): string {
-  const first = `${row.first_name ?? ""}`.trim();
-  const last = `${row.last_name ?? ""}`.trim();
-  const full = `${first} ${last}`.trim();
-  return full || row.email_address || row.account_id;
+  return displayNameFromAccount(row) || row.email_address || row.account_id;
 }
 
 export async function resolveAccountByIdentifier(
@@ -436,9 +434,7 @@ export async function resolveAccountByIdentifier(
   const exact = rows.filter((row) => {
     if (`${row.account_id}`.toLowerCase() === lowerValue) return true;
     if (`${row.email_address ?? ""}`.toLowerCase() === lowerValue) return true;
-    const full = `${row.first_name ?? ""} ${row.last_name ?? ""}`
-      .trim()
-      .toLowerCase();
+    const full = displayNameFromAccount(row).toLowerCase();
     return full === lowerValue;
   });
 

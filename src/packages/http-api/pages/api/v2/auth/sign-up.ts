@@ -93,7 +93,6 @@ import {
 } from "@cocalc/util/auth";
 import {
   displayNameFromParts,
-  legacyNamePartsFromDisplayName,
   normalizeDisplayName,
 } from "@cocalc/util/accounts/display-name";
 
@@ -123,9 +122,8 @@ export async function signUp(req, res) {
       last_name: lastName,
     }) ||
     "Anonymous User";
-  const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
-  firstName = normalizeDisplayName(firstName) || legacyNameParts.first_name;
-  lastName = normalizeDisplayName(lastName) || legacyNameParts.last_name;
+  firstName = undefined;
+  lastName = undefined;
   registrationToken = (registrationToken ?? "").trim();
 
   if (isLaunchpadMode() && !(await isSoftwareLicenseActivated())) {

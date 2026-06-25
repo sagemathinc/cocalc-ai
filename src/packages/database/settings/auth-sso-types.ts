@@ -11,6 +11,7 @@ export interface PassportLoginOpts {
   strategyName: string;
   profile: any; // complex object
   id: string; // id is required. e.g. take the email address – see create_passport in postgres-server-queries.coffee
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   full_name?: string;

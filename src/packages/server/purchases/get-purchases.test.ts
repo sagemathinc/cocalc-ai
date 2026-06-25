@@ -57,8 +57,9 @@ describe("creates and get purchases using various options", () => {
     });
     expect(p.length).toBe(1);
     expect(p[0].email_address).toBe(email_address);
-    expect(p[0].first_name).toBe("Test");
-    expect(p[0].last_name).toBe("User");
+    expect(p[0].display_name).toBe("Test User");
+    expect(p[0].first_name).toBeNull();
+    expect(p[0].last_name).toBeNull();
   });
 
   it("tests cutoff param by creating another older purchase then gets it and also filters it using cutoff", async () => {
