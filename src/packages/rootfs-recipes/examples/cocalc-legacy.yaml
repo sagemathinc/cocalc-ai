@@ -80,6 +80,28 @@ steps:
       jobs: auto
     timeout: 28800
 
+  - name: Install legacy Python packages into Sage Python
+    run: |
+      set -euo pipefail
+      python3 -m pip install --no-cache-dir \
+        beautifulsoup4 \
+        ipykernel \
+        ipywidgets \
+        jupyter-console \
+        jupyterlab \
+        matplotlib \
+        notebook \
+        numpy \
+        pandas \
+        plotly \
+        requests \
+        scikit-learn \
+        scipy \
+        seaborn \
+        statsmodels \
+        sympy \
+        uv
+
   - uses: cocalc/julia
     with:
       version: "1.12.6"
