@@ -276,6 +276,111 @@ describe("dedicated host spend maintenance", () => {
     expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
   });
 
+  it("keeps a prepaid-funded host running when the site-default snapshot is site-funded", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              name: "GPU Host",
+              region: "us-central1",
+              status: "running",
+              metadata: {
+                owner: "acc-1",
+                size: "n1-standard-4",
+                pricing_model: "on_demand",
+                desired_state: "running",
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "n1-standard-4",
+                  disk_gb: 100,
+                  disk_type: "ssd",
+                  shared_disk_gb: 500,
+                  shared_disk_type: "balanced",
+                  storage_mode: "persistent",
+                  zone: "us-central1-a",
+                },
+                billing: {
+                  funding_mode: "account-prepaid",
+                  funding_lane: "prepaid",
+                  hourly_cost_usd: "12",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=$2")
+      ) {
+        expect(params?.[0]).toBe("host-1");
+        expect(params?.[1].billing.funding_mode).toBe("account-prepaid");
+        expect(params?.[1].billing.enforcement.state).toBe("ok");
+        return { rows: [] };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(
+      async ({ funding_mode_override }) => ({
+        account_id: "acc-1",
+        membership_class: "member",
+        can_create_hosts: true,
+        funding_mode: funding_mode_override ?? "site-funded",
+        effective_limits:
+          funding_mode_override === "account-prepaid"
+            ? {
+                prepaid_host_usage_limit_5h_usd: 300,
+                prepaid_host_usage_limit_7d_usd: 1000,
+              }
+            : {},
+        has_active_second_factor: true,
+        has_payment_method: false,
+        has_usage_subscription: false,
+        balance: funding_mode_override === "account-prepaid" ? "25" : "0",
+        postpaid_unbilled_exposure_usd: "0",
+        dedicated_host_window_usage: {
+          prepaid_5h_usd: "0",
+          prepaid_7d_usd: "0",
+          credit_5h_usd: "0",
+          credit_7d_usd: "0",
+        },
+      }),
+    );
+    isDedicatedHostLaneCurrentlyAllowedMock = jest.fn(({ snapshot }) => {
+      expect(snapshot.funding_mode).toBe("account-prepaid");
+      return true;
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(getDedicatedHostPolicySnapshotForAccountMock).toHaveBeenCalledWith({
+      account_id: "acc-1",
+      funding_mode_override: "account-prepaid",
+    });
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acc-1",
+        host_id: "host-1",
+        funding_lane: "prepaid",
+      }),
+    );
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+  });
+
   it("respects a host-level site-funded override even when the account snapshot is prepaid", async () => {
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("pg_try_advisory_lock")) {
