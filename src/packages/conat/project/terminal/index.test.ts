@@ -1,4 +1,5 @@
 import { mergeTerminalEnv0, terminalClient, terminalServer } from "./index";
+import { EventEmitter } from "events";
 
 describe("mergeTerminalEnv0", () => {
   it("does not leak ambient COCALC_* vars into generic terminals", () => {
@@ -151,5 +152,58 @@ describe("terminalServer", () => {
       keepAlive: 45_000,
       keepAliveTimeout: 30_000,
     });
+  });
+
+  it("forwards initial PTY output emitted during postHook", async () => {
+    const server = new EventEmitter() as any;
+    const client = {
+      socket: {
+        listen: jest.fn(() => server),
+      },
+    } as any;
+    const pty = new EventEmitter() as any;
+    pty.pid = 1234;
+    pty.pause = jest.fn();
+    pty.resume = jest.fn();
+    pty.destroy = jest.fn();
+    const socket = new EventEmitter() as any;
+    socket.id = "socket-1";
+    socket.subject = "terminal.project-project-1.0.server.server-1.socket-1";
+    socket.write = jest.fn();
+    socket.request = jest.fn(async () => ({ data: undefined }));
+    socket.end = jest.fn();
+
+    terminalServer({
+      client,
+      project_id: "project-1",
+      spawn: jest.fn(() => pty),
+      postHook: async () => {
+        pty.emit("data", "prompt");
+      },
+    });
+    server.emit("connection", socket);
+
+    const response = await new Promise<any>((resolve) => {
+      socket.emit("request", {
+        data: {
+          cmd: "spawn",
+          command: "bash",
+          options: { id: "post-hook-output", path: "a.term" },
+        },
+        respondSync: resolve,
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(response.history).toBe("prompt");
+    expect(socket.write).toHaveBeenCalledWith("prompt");
+
+    await new Promise<void>((resolve) => {
+      socket.emit("request", {
+        data: { cmd: "destroy" },
+        respondSync: () => resolve(),
+      });
+    });
+    socket.emit("closed");
   });
 });
