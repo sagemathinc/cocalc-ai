@@ -36,6 +36,7 @@ import {
   startProjectOnHost,
   stopProjectOnHost,
 } from "@cocalc/server/project-host/control";
+import { DEDICATED_HOST_BILLING_DISK_GRACE_HOURS } from "@cocalc/server/project-host/spend-enforcement";
 import { getProject } from "@cocalc/server/projects/control/base";
 import { loadProjectRuntimeSponsor } from "@cocalc/server/projects/runtime-sponsor-db";
 import {
@@ -1300,6 +1301,70 @@ function shouldStopTunnel(kind: HostOpKind): boolean {
   ].includes(kind);
 }
 
+async function markBillingEnforcementDrainComplete({
+  host_id,
+}: {
+  host_id: string;
+}) {
+  const { rows } = await getPool().query<{ metadata: any }>(
+    "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    [host_id],
+  );
+  const metadata = rows[0]?.metadata ?? {};
+  await getPool().query(
+    `
+      UPDATE project_hosts
+      SET metadata=$2, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL
+    `,
+    [host_id, billingEnforcementDrainCompleteMetadata(metadata)],
+  );
+}
+
+function billingEnforcementDrainCompleteMetadata(
+  metadata: any,
+  now: Date = new Date(),
+) {
+  const billing = metadata.billing ?? {};
+  const enforcement = billing.enforcement ?? {};
+  const nowIso = now.toISOString();
+  const graceUntil =
+    typeof enforcement.grace_until === "string" && enforcement.grace_until
+      ? enforcement.grace_until
+      : new Date(
+          now.valueOf() + DEDICATED_HOST_BILLING_DISK_GRACE_HOURS * 3600_000,
+        ).toISOString();
+  const reason =
+    typeof enforcement.reason === "string" && enforcement.reason
+      ? enforcement.reason
+      : "billing enforcement drain complete";
+  return {
+    ...metadata,
+    desired_state: "stopped",
+    billing: {
+      ...billing,
+      enforcement: {
+        ...enforcement,
+        state: "stopped_billing_blocked",
+        reason,
+        stopped_at: enforcement.stopped_at ?? nowIso,
+        grace_until: graceUntil,
+        deprovision_after: enforcement.deprovision_after ?? graceUntil,
+        final_backup_status: "succeeded",
+        final_backup_completed_at:
+          enforcement.final_backup_completed_at ?? nowIso,
+        recovery_actions: enforcement.recovery_actions ?? [
+          "add_funds",
+          "fix_payment",
+          "support_limit_increase",
+        ],
+      },
+      stop_reason: reason,
+      stop_requested_at: billing.stop_requested_at ?? nowIso,
+    },
+  };
+}
+
 async function runHostAction(
   kind: HostOpKind,
   host_id: string,
@@ -1330,7 +1395,7 @@ async function runHostAction(
       });
       return undefined;
     case "host-drain":
-      return await drainHostInternal({
+      const drain = await drainHostInternal({
         account_id,
         id: host_id,
         dest_host_id: input?.dest_host_id,
@@ -1351,6 +1416,17 @@ async function runHostAction(
           );
         },
       });
+      if (input?.billing_enforcement === true) {
+        await helpers?.progressStep?.(
+          "stopping",
+          "stopping drained host for billing enforcement",
+          { host_id },
+          70,
+        );
+        await markBillingEnforcementDrainComplete({ host_id });
+        await stopHostInternal({ account_id, id: host_id });
+      }
+      return drain;
     case "host-reconcile-software":
       await reconcileHostSoftwareInternal({ account_id, id: host_id });
       return undefined;
@@ -2278,4 +2354,5 @@ export const __test__ = {
   currentBootstrapFailure,
   completedProjectHostUpgradeVersion,
   waitForHostStatus,
+  billingEnforcementDrainCompleteMetadata,
 };
