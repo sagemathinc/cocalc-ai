@@ -4,9 +4,11 @@
  */
 
 export {
+  applyFinancialMigration,
   importProjects,
   listProjects,
   prepareArchiveSelection,
+  previewFinancialMigration,
   retryProjectRestore,
   restoreArchiveSelection,
 } from "@cocalc/server/legacy-migration";

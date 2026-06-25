@@ -44,6 +44,7 @@ const LEGACY_SOURCE_PROJECT_LABEL = "legacy.cocalc.com/project_id";
 let poolUsed = false;
 let rawRecordsSchemaReady: Promise<void> | undefined;
 let projectsSchemaReady: Promise<void> | undefined;
+let accountsSchemaReady: Promise<void> | undefined;
 let repairedRows = 0;
 
 function pool() {
@@ -243,6 +244,20 @@ async function ensureProjectsSchema(): Promise<void> {
   await projectsSchemaReady;
 }
 
+async function ensureAccountsSchema(): Promise<void> {
+  accountsSchemaReady ??= (async () => {
+    await pool().query(`
+      ALTER TABLE legacy_migration_accounts
+        ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(128)
+    `);
+    await pool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_accounts_stripe_customer_id_idx
+        ON legacy_migration_accounts(stripe_customer_id)
+    `);
+  })();
+  await accountsSchemaReady;
+}
+
 function defaultArtifactKey(legacyProjectId: string | null): string | null {
   return legacyProjectId
     ? `${DEFAULT_ARTIFACT_KEY_PREFIX}${legacyProjectId}${DEFAULT_ARTIFACT_KEY_SUFFIX}`
@@ -355,6 +370,7 @@ function parseDumpRow(line: string): Record<string, any> {
 }
 
 async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
+  await ensureAccountsSchema();
   await pool().query(
     `
     WITH input AS (
@@ -366,6 +382,7 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
           first_name TEXT,
           last_name TEXT,
           display_name TEXT,
+          stripe_customer_id TEXT,
           last_active TIMESTAMPTZ,
           metadata JSONB
         )
@@ -377,6 +394,7 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
       first_name,
       last_name,
       display_name,
+      stripe_customer_id,
       last_active,
       metadata,
       created,
@@ -388,6 +406,7 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
            first_name,
            last_name,
            display_name,
+           NULLIF(stripe_customer_id, ''),
            last_active,
            COALESCE(metadata, '{}'::jsonb),
            NOW(),
@@ -400,6 +419,7 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
       first_name=EXCLUDED.first_name,
       last_name=EXCLUDED.last_name,
       display_name=EXCLUDED.display_name,
+      stripe_customer_id=EXCLUDED.stripe_customer_id,
       last_active=EXCLUDED.last_active,
       metadata=EXCLUDED.metadata,
       updated=NOW()

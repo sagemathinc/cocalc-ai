@@ -79,6 +79,7 @@ export interface LegacyMigrationListProjectsOptions {
 export interface LegacyMigrationMatchedAccount {
   legacy_account_id: string;
   email_address?: string | null;
+  display_name?: string | null;
   match_method?: string | null;
   gmail_canonical_email?: string | null;
 }
@@ -151,6 +152,58 @@ export interface LegacyMigrationRetryProjectRestoreResponse {
   restore_lro_op_id?: string | null;
 }
 
+export interface LegacyMigrationMembershipPlan {
+  id: string;
+  label: string;
+  price_monthly?: number | null;
+  price_yearly?: number | null;
+}
+
+export interface LegacyMigrationFinancialAccount {
+  legacy_account_id: string;
+  email_address?: string | null;
+  display_name?: string | null;
+  stripe_customer_id?: string | null;
+  credit_amount: number;
+  balance: number;
+  active_subscription_annualized: number;
+  active_subscription_count: number;
+  claimed_by_account_id?: string | null;
+  claimed_at?: Date | string | null;
+}
+
+export interface LegacyMigrationFinancialPreviewOptions {
+  account_id?: string;
+}
+
+export interface LegacyMigrationFinancialPreviewResponse {
+  legacy_accounts: LegacyMigrationFinancialAccount[];
+  pending_credit_amount: number;
+  applied_credit_amount: number;
+  active_subscription_annualized: number;
+  active_subscription_count: number;
+  suggested_membership_class?: string | null;
+  suggested_membership_interval: "month" | "year";
+  membership_already_applied: boolean;
+  stripe_customer_id?: string | null;
+  plans: LegacyMigrationMembershipPlan[];
+  can_apply: boolean;
+}
+
+export interface LegacyMigrationApplyFinancialOptions {
+  account_id?: string;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year";
+}
+
+export interface LegacyMigrationApplyFinancialResponse {
+  claimed_legacy_account_ids: string[];
+  credit_amount: number;
+  credit_purchase_ids: number[];
+  subscription_id?: number | null;
+  stripe_customer_id?: string | null;
+}
+
 export interface LegacyMigration {
   listProjects: (
     opts?: LegacyMigrationListProjectsOptions,
@@ -167,6 +220,12 @@ export interface LegacyMigration {
   retryProjectRestore: (
     opts: LegacyMigrationRetryProjectRestoreOptions,
   ) => Promise<LegacyMigrationRetryProjectRestoreResponse>;
+  previewFinancialMigration: (
+    opts?: LegacyMigrationFinancialPreviewOptions,
+  ) => Promise<LegacyMigrationFinancialPreviewResponse>;
+  applyFinancialMigration: (
+    opts?: LegacyMigrationApplyFinancialOptions,
+  ) => Promise<LegacyMigrationApplyFinancialResponse>;
 }
 
 export const legacyMigration = {
@@ -175,4 +234,6 @@ export const legacyMigration = {
   prepareArchiveSelection: authFirstRequireAccount,
   restoreArchiveSelection: authFirstRequireAccount,
   retryProjectRestore: authFirstRequireAccount,
+  previewFinancialMigration: authFirstRequireAccount,
+  applyFinancialMigration: authFirstRequireAccount,
 } as const;

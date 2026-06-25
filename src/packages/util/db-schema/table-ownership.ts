@@ -250,6 +250,7 @@ export const TABLE_OWNERSHIP = {
       "instances",
       "legacy_migration_account_links",
       "legacy_migration_accounts",
+      "legacy_migration_financial_claims",
       "legacy_migration_project_import_accounts",
       "legacy_migration_project_imports",
       "legacy_migration_projects",
