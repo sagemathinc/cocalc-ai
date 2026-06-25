@@ -62,6 +62,8 @@ const SCROLLBACK = 5000;
 const MAX_HISTORY_LENGTH = 100 * SCROLLBACK;
 
 const SPAWN_TIMEOUT = 5000;
+const INITIAL_OUTPUT_TIMEOUT = 15000;
+const MAX_INITIAL_OUTPUT_RECONNECTS = 2;
 const TRANSIENT_RECONNECT_OPACITY = "0.62";
 
 const EXIT_MESSAGE = "\r\n[Process completed - press any key]\r\n";
@@ -276,6 +278,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private lastProjectRuntimeGeneration?: number;
   private projectStartingRetryTimer?: ReturnType<typeof setTimeout>;
   private autoStartProjectOnNextConnect = false;
+  private connectGeneration = 0;
+  private initialOutputTimer?: ReturnType<typeof setTimeout>;
+  private initialOutputReconnects = 0;
 
   constructor(
     actions: Actions<T>,
@@ -421,6 +426,54 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
   }
 
+  private clearInitialOutputTimer = (): void => {
+    if (this.initialOutputTimer != null) {
+      clearTimeout(this.initialOutputTimer);
+      this.initialOutputTimer = undefined;
+    }
+  };
+
+  private scheduleInitialOutputCheck = ({
+    generation,
+    pty,
+    startedAt,
+  }: {
+    generation: number;
+    pty: TerminalClient;
+    startedAt: number;
+  }): void => {
+    this.clearInitialOutputTimer();
+    if (this.initialOutputReconnects >= MAX_INITIAL_OUTPUT_RECONNECTS) {
+      return;
+    }
+    this.initialOutputTimer = setTimeout(() => {
+      this.initialOutputTimer = undefined;
+      if (
+        this.isClosed() ||
+        this.ptyExited ||
+        generation !== this.connectGeneration ||
+        this.pty !== pty ||
+        pty.socket.state !== "ready" ||
+        this.lastProjectData >= startedAt
+      ) {
+        return;
+      }
+      this.initialOutputReconnects += 1;
+      this.ptyInputReady = false;
+      this.set_connection_status("disconnected");
+      this.markTransientDisconnect();
+      // Close only this frontend socket/client. The project-host terminal
+      // service keeps the backend PTY session for this termPath and the next
+      // connect reattaches to it instead of restarting the shell.
+      this.pty = null;
+      pty.close();
+      this.reconnectResource?.requestReconnect({
+        reason: "terminal_initial_output_timeout",
+        resetBackoff: true,
+      });
+    }, INITIAL_OUTPUT_TIMEOUT);
+  };
+
   // If the pty is configured and the socket is connected, but
   // for some reason the actual process is dead, then connect
   // again, which will start the process or reconnect to it.
@@ -564,6 +617,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.reconnectResource?.close();
     this.reconnectResource = undefined;
     this.clearProjectStartingRetry();
+    this.clearInitialOutputTimer();
     this.pty?.close();
     this.pty = null;
     this.ptyInputReady = false;
@@ -740,6 +794,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
   connect = reuseInFlight(async (options: TerminalConnectOptions = {}) => {
     if (this.isClosed() || this.ptyExited) return;
+    const generation = ++this.connectGeneration;
+    const connectStartedAt = Date.now();
     const readyTimer = startUxTimer();
     const autoStartProject =
       options.autoStartProject === true || this.autoStartProjectOnNextConnect;
@@ -784,6 +840,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       this.setTransientReconnectStyle(preserveVisibleContent);
 
       if (this.pty != null) {
+        this.clearInitialOutputTimer();
         this.pty.close();
         this.pty = null;
       }
@@ -808,7 +865,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       });
       this.pty = pty;
       pty.socket.on("data", (data) => {
-        void this.handleDataFromProject(data);
+        void this.handleDataFromProject(data, { fromProject: true });
       });
 
       pty.on("exit", async () => {
@@ -914,7 +971,17 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           this.terminal.reset();
         }
         if (history) {
-          await this.handleDataFromProject(history, { fromHistory: true });
+          await this.handleDataFromProject(history, {
+            fromHistory: true,
+            fromProject: true,
+          });
+        }
+        if (!history && this.lastProjectData < connectStartedAt) {
+          this.scheduleInitialOutputCheck({
+            generation,
+            pty,
+            startedAt: connectStartedAt,
+          });
         }
         this.setTransientReconnectStyle(false);
         this.ptyInputReady = true;
@@ -971,14 +1038,20 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   };
 
   private lastReceivedData: number = 0;
+  private lastProjectData: number = 0;
   private handleDataFromProject = async (
     data: any,
-    opts?: { fromHistory?: boolean },
+    opts?: { fromHistory?: boolean; fromProject?: boolean },
   ): Promise<void> => {
     this.lastReceivedData = Date.now();
     this.assert_not_closed();
     if (!data || typeof data != "string") {
       return;
+    }
+    if (opts?.fromProject === true) {
+      this.lastProjectData = Date.now();
+      this.initialOutputReconnects = 0;
+      this.clearInitialOutputTimer();
     }
     this.activity();
     const fromHistory = opts?.fromHistory === true;
