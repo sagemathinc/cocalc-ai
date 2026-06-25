@@ -42,11 +42,22 @@ jest.mock("antd", () => {
   };
 });
 
-jest.mock("react-intl", () => ({
-  useIntl: () => ({
-    formatMessage: ({ defaultMessage, id }: any) => defaultMessage ?? id ?? "",
-  }),
-}));
+jest.mock("react-intl", () => {
+  const formatMessage = (message: any, values?: Record<string, any>) => {
+    let text = message?.defaultMessage ?? message?.id ?? "";
+    for (const [key, value] of Object.entries(values ?? {})) {
+      text = text.replaceAll(`{${key}}`, String(value));
+    }
+    return text;
+  };
+  return {
+    createIntl: () => ({ formatMessage }),
+    createIntlCache: () => ({}),
+    defineMessage: (message: any) => message,
+    defineMessages: (messages: any) => messages,
+    useIntl: () => ({ formatMessage }),
+  };
+});
 
 jest.mock("@cocalc/frontend/components", () => ({
   A: ({ children, href }: any) => <a href={href}>{children}</a>,
