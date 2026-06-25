@@ -914,7 +914,7 @@ export function LegacyMigrationPage() {
                     ? ""
                     : "most recently edited "}
                   {state.projects.length.toLocaleString()} of{" "}
-                  {state.totalCount.toLocaleString()} matching project
+                  {state.totalCount.toLocaleString()} available matching project
                   {state.totalCount === 1 ? "" : "s"}. You can migrate projects
                   in multiple sessions; use search, hidden-projects, or size
                   filters to find projects outside this loaded list.

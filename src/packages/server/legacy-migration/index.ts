@@ -458,6 +458,8 @@ export async function listProjects({
            OR COALESCE(p.legacy_users, '{}'::jsonb) ? linked.legacy_account_id
          )
        WHERE ($2::BOOLEAN OR COALESCE(p.hidden, false)=false)
+         AND COALESCE(p.artifact_status, '')='available'
+         AND COALESCE(p.artifact_key, '') <> ''
          AND (
            NOT $3::BOOLEAN
            OR lower(COALESCE(p.title, '')) LIKE $4
