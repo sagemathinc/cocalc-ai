@@ -1452,7 +1452,7 @@ export function MembershipTiers() {
                 `monthly ${currency(Number(get("price_monthly") ?? 0))}`,
                 `yearly ${currency(Number(get("price_yearly") ?? 0))}`,
                 get("store_visible") ? "public purchase" : "hidden",
-                get("active") ? "active" : "disabled",
+                get("active") ? "enabled" : "disabled",
               ),
             ),
             children: (
@@ -1461,6 +1461,35 @@ export function MembershipTiers() {
                   This card defines what users see and how the tier behaves as a
                   purchasable product.
                 </Paragraph>
+                <Row gutter={16}>
+                  <Col span={24}>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "12px 16px",
+                        alignItems: "center",
+                        marginBottom: "16px",
+                      }}
+                    >
+                      <Text
+                        type="secondary"
+                        style={{ flex: "1 1 520px", maxWidth: "760px" }}
+                      >
+                        Enabled tiers can be selected for new purchases,
+                        assignments, team licenses, course memberships, and
+                        site-license pools. Disable a tier to retire it from new
+                        use without removing existing memberships.
+                      </Text>
+                      <Form.Item name="active" valuePropName="checked" noStyle>
+                        <Switch
+                          checkedChildren="Enabled"
+                          unCheckedChildren="Disabled"
+                        />
+                      </Form.Item>
+                    </div>
+                  </Col>
+                </Row>
                 <Row gutter={16}>
                   <Col {...fieldCol}>
                     <Form.Item
@@ -1580,15 +1609,6 @@ export function MembershipTiers() {
                         tokenSeparators={[",", ";", " ", "\n"]}
                         style={{ width: "100%" }}
                       />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="active"
-                      label="Active"
-                      valuePropName="checked"
-                    >
-                      <Switch />
                     </Form.Item>
                   </Col>
                   <Col {...fieldCol}>
@@ -3607,6 +3627,13 @@ export function MembershipTiers() {
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
           <Table.Column<Tier> title="Label" dataIndex="label" />
+          <Table.Column<Tier>
+            title="Enabled"
+            dataIndex="disabled"
+            align="center"
+            width={72}
+            render={(_text, tier) => visibilityCell(!tier.disabled)}
+          />
           <Table.ColumnGroup<Tier> title="Visibility">
             <Table.Column<Tier>
               title={visibilityColumnTitle(
@@ -3695,16 +3722,6 @@ export function MembershipTiers() {
             title="Sites"
             dataIndex="site_license_count"
             render={(val) => val ?? 0}
-          />
-          <Table.Column<Tier>
-            title="Enabled"
-            dataIndex="disabled"
-            render={(_text, tier) => {
-              const click = () => save({ ...tier, active: !!tier.disabled });
-              return (
-                <Checkbox checked={!tier.disabled} onChange={click}></Checkbox>
-              );
-            }}
           />
           <Table.Column<Tier>
             title="Updated"
