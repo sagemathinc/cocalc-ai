@@ -867,8 +867,13 @@ async function startAccountLocalService(): Promise<void> {
         actor_account_id,
         reason,
       }),
-    getDedicatedHostPolicySnapshot: async ({ account_id }) =>
-      await getDedicatedHostPolicySnapshotLocal(account_id),
+    getDedicatedHostPolicySnapshot: async ({
+      account_id,
+      funding_mode_override,
+    }) =>
+      await getDedicatedHostPolicySnapshotLocal(account_id, {
+        funding_mode_override,
+      }),
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,

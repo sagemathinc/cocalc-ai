@@ -484,7 +484,10 @@ async function resolveBillableSharedScratchAutoGrowSession({
     );
   }
   const snapshot = applyDedicatedHostFundingModeOverride(
-    await getDedicatedHostPolicySnapshotForAccount({ account_id }),
+    await getDedicatedHostPolicySnapshotForAccount({
+      account_id,
+      funding_mode_override: currentBillingFundingMode(metadata),
+    }),
     currentBillingFundingMode(metadata),
   );
   if (snapshot.funding_mode === "site-funded") {

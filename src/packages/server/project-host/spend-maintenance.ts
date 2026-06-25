@@ -740,14 +740,29 @@ async function runPass(): Promise<void> {
     AccountLocalDedicatedHostPolicySnapshot
   >();
 
-  const getSnapshot = async (account_id: string) => {
-    const cached = snapshotCache.get(account_id);
+  const getSnapshot = async (
+    account_id: string,
+    funding_mode_override?:
+      | "account-prepaid"
+      | "account-postpaid"
+      | "site-funded",
+  ) => {
+    const cacheKey = `${account_id}:${funding_mode_override ?? ""}`;
+    const cached = snapshotCache.get(cacheKey);
     if (cached) return cached;
     const snapshot = await getDedicatedHostPolicySnapshotForAccount({
       account_id,
+      funding_mode_override,
     });
-    snapshotCache.set(account_id, snapshot);
+    snapshotCache.set(cacheKey, snapshot);
     return snapshot;
+  };
+  const deleteSnapshotCacheForAccount = (account_id: string) => {
+    for (const key of snapshotCache.keys()) {
+      if (key === account_id || key.startsWith(`${account_id}:`)) {
+        snapshotCache.delete(key);
+      }
+    }
   };
 
   for (const row of rows) {
@@ -761,6 +776,7 @@ async function runPass(): Promise<void> {
 
     const status = `${row.status ?? ""}`.trim().toLowerCase();
     if (!ACTIVE_BILLING_STATUSES.has(status)) {
+      const fundingMode = currentFundingMode(metadata);
       await closeDedicatedHostPurchaseSessionForAccount({
         account_id: owner,
         host_id: row.id,
@@ -769,14 +785,14 @@ async function runPass(): Promise<void> {
         await maybeClearRecoveredInactiveEnforcement({
           row,
           provider,
-          snapshot: await getSnapshot(owner),
+          snapshot: await getSnapshot(owner, fundingMode),
         })
       ) {
-        snapshotCache.delete(owner);
+        deleteSnapshotCacheForAccount(owner);
         continue;
       }
       if (await maybeProgressInactiveEnforcement({ row })) {
-        snapshotCache.delete(owner);
+        deleteSnapshotCacheForAccount(owner);
         continue;
       }
       if (metadata?.billing) {
@@ -789,7 +805,7 @@ async function runPass(): Promise<void> {
           metadata: nextMetadata,
         });
       }
-      snapshotCache.delete(owner);
+      deleteSnapshotCacheForAccount(owner);
       continue;
     }
 
@@ -804,12 +820,12 @@ async function runPass(): Promise<void> {
           finalBackupStatus: "succeeded",
         });
       }
-      snapshotCache.delete(owner);
+      deleteSnapshotCacheForAccount(owner);
       continue;
     }
 
     const snapshot = applyDedicatedHostFundingModeOverride(
-      await getSnapshot(owner),
+      await getSnapshot(owner, currentFundingMode(metadata)),
       currentFundingMode(metadata),
     );
     if (snapshot.funding_mode === "site-funded") {
@@ -830,7 +846,7 @@ async function runPass(): Promise<void> {
           metadata: { ...metadata, billing: nextBilling },
         });
       }
-      snapshotCache.delete(owner);
+      deleteSnapshotCacheForAccount(owner);
       continue;
     }
 
@@ -901,17 +917,18 @@ async function runPass(): Promise<void> {
       started_at: preserveStartedAt,
     });
 
-    snapshotCache.delete(owner);
+    deleteSnapshotCacheForAccount(owner);
+    const refreshedFundingMode = currentFundingMode({
+      ...metadata,
+      billing: {
+        ...(metadata.billing ?? {}),
+        funding_mode: snapshot.funding_mode,
+        funding_lane,
+      },
+    });
     const refreshedSnapshot = applyDedicatedHostFundingModeOverride(
-      await getSnapshot(owner),
-      currentFundingMode({
-        ...metadata,
-        billing: {
-          ...(metadata.billing ?? {}),
-          funding_mode: snapshot.funding_mode,
-          funding_lane,
-        },
-      }),
+      await getSnapshot(owner, refreshedFundingMode),
+      refreshedFundingMode,
     );
     const laneAllowed = isDedicatedHostLaneCurrentlyAllowed({
       snapshot: refreshedSnapshot,
@@ -949,7 +966,7 @@ async function runPass(): Promise<void> {
         provider,
         ownerSpendStatus,
       });
-      snapshotCache.delete(owner);
+      deleteSnapshotCacheForAccount(owner);
       continue;
     }
     const enforcementDecision = evaluateDedicatedHostBillingEnforcement({
@@ -995,7 +1012,7 @@ async function runPass(): Promise<void> {
         });
       }
     }
-    snapshotCache.delete(owner);
+    deleteSnapshotCacheForAccount(owner);
     if (enforcementDecision.action === "request_drain") {
       await requestHostDrainForBilling({
         row,

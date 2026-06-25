@@ -254,6 +254,9 @@ export function getDedicatedHostFundingModeFromSettings(
 
 export async function getDedicatedHostPolicySnapshotLocal(
   account_id: string,
+  {
+    funding_mode_override,
+  }: { funding_mode_override?: DedicatedHostFundingMode } = {},
 ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
   const [membership, settings, admin_override] = await Promise.all([
     resolveMembershipForAccount(account_id),
@@ -265,8 +268,11 @@ export async function getDedicatedHostPolicySnapshotLocal(
     admin_override?.dedicated_hosts?.funding_mode?.value ??
     getDedicatedHostFundingModeFromSettings(settings);
   const has_active_second_factor = await hasActiveSecondFactor(account_id);
+  const needs_account_billing_snapshot =
+    funding_mode !== "site-funded" ||
+    (funding_mode_override != null && funding_mode_override !== "site-funded");
 
-  if (funding_mode === "site-funded") {
+  if (!needs_account_billing_snapshot) {
     return {
       account_id,
       membership_class: membership.class,
@@ -289,19 +295,21 @@ export async function getDedicatedHostPolicySnapshotLocal(
     };
   }
 
-  const [
-    has_payment_method,
-    has_usage_subscription,
-    balance,
-    dedicated_host_window_usage,
-    postpaid_unbilled_exposure_usd,
-  ] = await Promise.all([
-    hasPaymentMethod(account_id),
-    hasUsageSubscription(account_id),
-    getBalance({ account_id }),
-    getDedicatedHostWindowUsageLocal(account_id),
-    getDedicatedHostPostpaidUnbilledExposureLocal(account_id),
-  ]);
+  const [balance, dedicated_host_window_usage, postpaid_unbilled_exposure_usd] =
+    await Promise.all([
+      getBalance({ account_id }),
+      getDedicatedHostWindowUsageLocal(account_id),
+      getDedicatedHostPostpaidUnbilledExposureLocal(account_id),
+    ]);
+  const needs_postpaid_snapshot =
+    funding_mode === "account-postpaid" ||
+    funding_mode_override === "account-postpaid";
+  const [has_payment_method, has_usage_subscription] = needs_postpaid_snapshot
+    ? await Promise.all([
+        hasPaymentMethod(account_id),
+        hasUsageSubscription(account_id),
+      ])
+    : [false, false];
 
   return {
     account_id,
@@ -321,6 +329,7 @@ export async function getDedicatedHostPolicySnapshotLocal(
 
 export async function getDedicatedHostPolicySnapshotForAccount({
   account_id,
+  funding_mode_override,
 }: AccountLocalGetDedicatedHostPolicySnapshotRequest): Promise<AccountLocalDedicatedHostPolicySnapshot> {
   const location = await resolveAccountHomeBay({
     account_id,
@@ -329,13 +338,16 @@ export async function getDedicatedHostPolicySnapshotForAccount({
   const home_bay_id =
     `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   if (home_bay_id === getConfiguredBayId()) {
-    return await getDedicatedHostPolicySnapshotLocal(account_id);
+    return await getDedicatedHostPolicySnapshotLocal(account_id, {
+      funding_mode_override,
+    });
   }
   return await createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
     dest_bay: home_bay_id,
   }).getDedicatedHostPolicySnapshot({
     account_id,
+    funding_mode_override,
   });
 }
 
@@ -358,7 +370,10 @@ export async function assertDedicatedHostAdmissionForAccount({
   const decision = evaluateDedicatedHostAdmission({
     action,
     machine_cloud,
-    snapshot: await getDedicatedHostPolicySnapshotForAccount({ account_id }),
+    snapshot: await getDedicatedHostPolicySnapshotForAccount({
+      account_id,
+      funding_mode_override,
+    }),
     has_active_second_factor_override,
     funding_mode_override,
   });

@@ -125,6 +125,50 @@ describe("evaluateDedicatedHostAdmission", () => {
     });
   });
 
+  it("uses real prepaid balance when overriding a site-funded snapshot to prepaid", () => {
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "create",
+        machine_cloud: "gcp",
+        funding_mode_override: "account-prepaid",
+        snapshot: snapshot({
+          funding_mode: "site-funded",
+          has_payment_method: false,
+          balance: "25",
+          effective_limits: {
+            prepaid_host_usage_limit_5h_usd: 300,
+            prepaid_host_usage_limit_7d_usd: 1000,
+          },
+        }) as any,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      funding_lane: "prepaid",
+    });
+  });
+
+  it("rejects prepaid overrides of site-funded snapshots without real prepaid balance", () => {
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "create",
+        machine_cloud: "gcp",
+        funding_mode_override: "account-prepaid",
+        snapshot: snapshot({
+          funding_mode: "site-funded",
+          has_payment_method: false,
+          balance: "0",
+          effective_limits: {
+            prepaid_host_usage_limit_5h_usd: 300,
+            prepaid_host_usage_limit_7d_usd: 1000,
+          },
+        }) as any,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      code: "prepaid_balance_required",
+    });
+  });
+
   it("allows prepaid-funded dedicated host actions when the tier enables prepaid use", () => {
     expect(
       evaluateDedicatedHostAdmission({

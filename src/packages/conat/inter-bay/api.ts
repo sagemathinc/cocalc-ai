@@ -765,6 +765,10 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
 
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
   account_id: string;
+  funding_mode_override?:
+    | "account-prepaid"
+    | "account-postpaid"
+    | "site-funded";
 }
 
 export interface AccountLocalReconcileDedicatedHostPurchaseSessionRequest {
