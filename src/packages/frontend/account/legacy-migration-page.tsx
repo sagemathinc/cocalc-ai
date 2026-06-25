@@ -72,8 +72,11 @@ function formatDate(value?: Date | string | null): string {
 
 function restoreTag(project: LegacyMigrationProjectSummary) {
   const status = project.restore_status;
-  if (!status) return <Tag>not started</Tag>;
   if (status === "restored") return <Tag color="green">files restored</Tag>;
+  if (!archiveAvailable(project)) {
+    return <Tag>Not yet available</Tag>;
+  }
+  if (!status) return <Tag>not started</Tag>;
   if (status === "pending") return <Tag color="gold">file restore pending</Tag>;
   if (status === "failed") return <Tag color="red">file restore failed</Tag>;
   if (status === "restoring") return <Tag color="blue">restoring files</Tag>;
@@ -189,6 +192,12 @@ function archiveAvailable(project: LegacyMigrationProjectSummary): boolean {
     typeof project.artifact_bytes === "number" &&
     Number.isFinite(project.artifact_bytes)
   );
+}
+
+function projectActionAvailable(
+  project: LegacyMigrationProjectSummary,
+): boolean {
+  return !!project.project_id || archiveAvailable(project);
 }
 
 function ignoreProjectRowClick(target: EventTarget | null): boolean {
@@ -734,6 +743,9 @@ export function LegacyMigrationPage() {
   async function handleProjectAction(
     project: LegacyMigrationProjectSummary,
   ): Promise<void> {
+    if (!projectActionAvailable(project)) {
+      return;
+    }
     if (project.project_id) {
       if (project.joined) {
         setOpeningLegacyProjectId(project.legacy_project_id);
@@ -867,12 +879,18 @@ export function LegacyMigrationPage() {
         <Space direction="vertical" size={4}>
           {importTag(project)}
           <Button
+            disabled={!projectActionAvailable(project)}
             loading={
               project.import_status === "creating" ||
               openingLegacyProjectId === project.legacy_project_id
             }
             onClick={() => void handleProjectAction(project)}
             size="small"
+            title={
+              projectActionAvailable(project)
+                ? undefined
+                : "Archived files for this legacy project are not available yet."
+            }
           >
             {project.project_id ? "Open" : "Import and Open"}
           </Button>
@@ -936,9 +954,11 @@ export function LegacyMigrationPage() {
       <Paragraph type="secondary">
         This page loads up to {PROJECT_LOAD_LIMIT.toLocaleString()} matching
         projects at a time, sorted by most recent edit. These are the projects
-        available from your matched legacy account records, along with their
-        current migration status. You can return later, search for older
-        projects, and migrate more projects at any time.
+        from your matched legacy account records, along with their current
+        migration status. Some very old projects may be marked{" "}
+        <Tag>Not yet available</Tag> while their archived files are still being
+        uploaded. You can return later, search for older projects, and migrate
+        more projects at any time.
       </Paragraph>
 
       {legacyMigrationPageMessage ? (
@@ -1248,7 +1268,7 @@ export function LegacyMigrationPage() {
                     ? ""
                     : "most recently edited "}
                   {state.projects.length.toLocaleString()} of{" "}
-                  {state.totalCount.toLocaleString()} available matching project
+                  {state.totalCount.toLocaleString()} matching legacy project
                   {state.totalCount === 1 ? "" : "s"}. You can migrate projects
                   in multiple sessions; use search, hidden-projects, or size
                   filters to find projects outside this loaded list.
@@ -1263,9 +1283,14 @@ export function LegacyMigrationPage() {
                 onRow={(project) => ({
                   onClick: (event) => {
                     if (ignoreProjectRowClick(event.target)) return;
+                    if (!projectActionAvailable(project)) return;
                     void handleProjectAction(project);
                   },
-                  style: { cursor: "pointer" },
+                  style: {
+                    cursor: projectActionAvailable(project)
+                      ? "pointer"
+                      : "default",
+                  },
                 })}
                 pagination={{
                   pageSize,
