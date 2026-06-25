@@ -106,6 +106,14 @@ function visibilityCell(value: boolean | undefined) {
   );
 }
 
+function tableCurrency(value: unknown) {
+  if (value == null) return "";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+  if (amount === 0) return "$0";
+  return currency(amount, Number.isInteger(amount) ? 0 : 2);
+}
+
 type ExpectedUsageEstimateKey =
   | "aiUnits7d"
   | "egress7dGb"
@@ -3613,6 +3621,7 @@ export function MembershipTiers() {
         {render_buttons()}
         <Table<Tier>
           size={"small"}
+          bordered
           dataSource={table_data}
           loading={loading}
           rowSelection={rowSelection}
@@ -3658,15 +3667,15 @@ export function MembershipTiers() {
             <Table.Column<Tier>
               title="Monthly"
               dataIndex="price_monthly"
-              render={(val) => (val != null ? currency(Number(val)) : "")}
+              render={tableCurrency}
             />
             <Table.Column<Tier>
               title="Yearly"
               dataIndex="price_yearly"
-              render={(val) => (val != null ? currency(Number(val)) : "")}
+              render={tableCurrency}
             />
             <Table.Column<Tier>
-              title="Trial days"
+              title="Trial"
               dataIndex="trial_days"
               render={(val) => (val != null && val > 0 ? val : "")}
             />
@@ -3715,7 +3724,7 @@ export function MembershipTiers() {
             <Table.Column<Tier>
               title="Price"
               dataIndex="course_price"
-              render={(val) => (val != null ? val : "")}
+              render={tableCurrency}
             />
             <Table.Column<Tier>
               title="Days"
@@ -3795,39 +3804,34 @@ export function MembershipTiers() {
             dataIndex="history"
             render={(val) => (Array.isArray(val) ? val.length : 0)}
           />
-          <Table.ColumnGroup<Tier> title="Actions">
-            <Table.Column<Tier>
-              title="Edit"
-              dataIndex="edit"
-              render={(_text, tier) => (
-                <Icon name="pencil" onClick={() => set_editing(tier)} />
-              )}
-            />
-            <Table.Column<Tier>
-              title="Del"
-              dataIndex="delete"
-              render={(_text, tier) => {
-                const inUse =
-                  (tier.subscription_count ?? 0) > 0 ||
-                  (tier.site_license_count ?? 0) > 0;
-                if (inUse) {
-                  return (
-                    <Text type="secondary" title="Tier in use">
-                      In use
-                    </Text>
-                  );
-                }
-                return (
-                  <Popconfirm
-                    title="Sure to delete?"
-                    onConfirm={() => delete_tier(tier.key, true)}
-                  >
-                    <Icon name="trash" />
-                  </Popconfirm>
-                );
-              }}
-            />
-          </Table.ColumnGroup>
+          <Table.Column<Tier>
+            title="Actions"
+            dataIndex="actions"
+            render={(_text, tier) => {
+              const inUse =
+                (tier.subscription_count ?? 0) > 0 ||
+                (tier.site_license_count ?? 0) > 0;
+              return (
+                <Space size="small">
+                  <Icon name="pencil" onClick={() => set_editing(tier)} />
+                  {inUse ? (
+                    <Tooltip title="Tier in use">
+                      <Text type="secondary">
+                        <Icon name="trash" />
+                      </Text>
+                    </Tooltip>
+                  ) : (
+                    <Popconfirm
+                      title="Sure to delete?"
+                      onConfirm={() => delete_tier(tier.key, true)}
+                    >
+                      <Icon name="trash" />
+                    </Popconfirm>
+                  )}
+                </Space>
+              );
+            }}
+          />
         </Table>
       </>
     );
