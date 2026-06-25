@@ -10,12 +10,28 @@ describe("membership tier templates", () => {
       "basic",
       "free",
       "instructor",
-      "member",
+      "standard",
       "pro",
       "student",
     ]);
-    expect(TIER_TEMPLATES).not.toHaveProperty("standard");
+    expect(TIER_TEMPLATES).not.toHaveProperty("member");
     expect(TIER_TEMPLATES).not.toHaveProperty("researcher");
+  });
+
+  it("does not include member as a built-in template", () => {
+    // IT SHOULD NOT BE RECREATED. Local admins may create a tier named
+    // "member", but the built-in template name is confusing.
+    expect(TIER_TEMPLATES).not.toHaveProperty("member");
+    expect(Object.keys(TIER_TEMPLATES)).not.toContain("member");
+  });
+
+  it("preconfigures a free trial only for the standard template", () => {
+    const trialTemplateIds = Object.entries(TIER_TEMPLATES)
+      .filter(([, template]) => (template.trial_days ?? 0) > 0)
+      .map(([id]) => id);
+
+    expect(trialTemplateIds).toEqual(["standard"]);
+    expect(TIER_TEMPLATES.standard.trial_days).toBe(7);
   });
 
   it("fills missing entitlements from the built-in tier template", () => {
@@ -58,7 +74,7 @@ describe("membership tier templates", () => {
 
   it("merges explicit entitlements over built-in defaults", () => {
     const tier = applyMembershipTierTemplateFallbacks({
-      id: "member",
+      id: "standard",
       course_store_visible: true,
       course_price: 10,
       course_duration_days: 30,
@@ -114,6 +130,17 @@ describe("membership tier templates", () => {
     );
   });
 
+  it("leaves local tiers named member untouched", () => {
+    const localTier = {
+      id: "member",
+      label: "Local Member",
+      store_visible: false,
+      usage_limits: { max_projects: 7 },
+    };
+
+    expect(applyMembershipTierTemplateFallbacks(localTier)).toBe(localTier);
+  });
+
   it("marks the student template as course-visible with the exported course price", () => {
     const tier = applyMembershipTierTemplateFallbacks({
       id: "student",
@@ -135,7 +162,7 @@ describe("membership tier templates", () => {
     );
   });
 
-  it("defines free, basic, member, instructor, pro, and admin visibility", () => {
+  it("defines free, basic, standard, instructor, pro, and admin visibility", () => {
     expect(applyMembershipTierTemplateFallbacks({ id: "free" })).toEqual(
       expect.objectContaining({
         label: "Free",
@@ -150,15 +177,18 @@ describe("membership tier templates", () => {
         label: "Basic",
         store_visible: true,
         team_visible: false,
-        trial_days: 7,
+        trial_days: null,
       }),
     );
-    expect(applyMembershipTierTemplateFallbacks({ id: "member" })).toEqual(
+    expect(applyMembershipTierTemplateFallbacks({ id: "standard" })).toEqual(
       expect.objectContaining({
-        label: "Member",
+        label: "Standard",
+        store_description: "A solid choice for everyday work.",
         store_visible: true,
         team_visible: true,
-        price_monthly: 25,
+        price_monthly: 24,
+        price_yearly: 216,
+        trial_days: 7,
       }),
     );
     expect(applyMembershipTierTemplateFallbacks({ id: "instructor" })).toEqual(

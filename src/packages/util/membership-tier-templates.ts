@@ -133,7 +133,7 @@ export const TIER_TEMPLATES = {
     priority: 10,
     price_monthly: 8,
     price_yearly: 72,
-    trial_days: 7,
+    trial_days: null,
     project_defaults: {
       disk_quota: 10000,
       memory: 4000,
@@ -457,11 +457,11 @@ export const TIER_TEMPLATES = {
     notes:
       "This is meant to be provided FOR FREE to instructors who will using student-pay or institute pay after we connect with them. ",
   },
-  member: {
-    id: "member",
-    label: "Member",
+  standard: {
+    id: "standard",
+    label: "Standard",
     store_visible: true,
-    store_description: "Solid everyday membership.",
+    store_description: "A solid choice for everyday work.",
     store_highlights: [
       "Higher priority",
       "More backups, snapshots, projects and collaborators.",
@@ -472,8 +472,8 @@ export const TIER_TEMPLATES = {
     course_store_visible: false,
     course_allowed_domains: [],
     priority: 20,
-    price_monthly: 25,
-    price_yearly: 225,
+    price_monthly: 24,
+    price_yearly: 216,
     trial_days: 7,
     course_price: null,
     course_duration_days: null,
