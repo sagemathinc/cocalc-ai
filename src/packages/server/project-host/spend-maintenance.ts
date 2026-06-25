@@ -740,13 +740,21 @@ async function runPass(): Promise<void> {
     AccountLocalDedicatedHostPolicySnapshot
   >();
 
-  const getSnapshot = async (account_id: string) => {
-    const cached = snapshotCache.get(account_id);
+  const getSnapshot = async (
+    account_id: string,
+    funding_mode_override?:
+      | "account-prepaid"
+      | "account-postpaid"
+      | "site-funded",
+  ) => {
+    const cacheKey = `${account_id}:${funding_mode_override ?? ""}`;
+    const cached = snapshotCache.get(cacheKey);
     if (cached) return cached;
     const snapshot = await getDedicatedHostPolicySnapshotForAccount({
       account_id,
+      funding_mode_override,
     });
-    snapshotCache.set(account_id, snapshot);
+    snapshotCache.set(cacheKey, snapshot);
     return snapshot;
   };
 
@@ -809,7 +817,7 @@ async function runPass(): Promise<void> {
     }
 
     const snapshot = applyDedicatedHostFundingModeOverride(
-      await getSnapshot(owner),
+      await getSnapshot(owner, currentFundingMode(metadata)),
       currentFundingMode(metadata),
     );
     if (snapshot.funding_mode === "site-funded") {

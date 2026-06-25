@@ -6555,7 +6555,10 @@ export async function updateHostMachine({
       );
     }
     const snapshot = applyDedicatedHostFundingModeOverride(
-      await getDedicatedHostPolicySnapshotForAccount({ account_id: owner }),
+      await getDedicatedHostPolicySnapshotForAccount({
+        account_id: owner,
+        funding_mode_override: nextBillingFundingMode,
+      }),
       nextBillingFundingMode,
     );
     if (snapshot.funding_mode === "site-funded") {

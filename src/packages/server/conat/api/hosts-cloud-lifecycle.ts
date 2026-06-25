@@ -211,6 +211,7 @@ async function resolveBillableHostSessionConfig({
   const snapshot = applyDedicatedHostFundingModeOverride(
     await getDedicatedHostPolicySnapshotForAccount({
       account_id,
+      funding_mode_override,
     }),
     funding_mode_override,
   );
