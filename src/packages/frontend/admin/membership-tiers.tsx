@@ -81,7 +81,7 @@ const TEMPLATE_KEYS = [
   "admin",
   "free",
   "basic",
-  "member",
+  "standard",
   "student",
   "instructor",
   "pro",
@@ -3215,7 +3215,7 @@ export function MembershipTiers() {
   function openCreateTierModal() {
     setCreateTierOpen(true);
     createTierForm.setFieldsValue({
-      template: "member",
+      template: "standard",
       id: "",
       label: "",
     });
@@ -3367,7 +3367,7 @@ export function MembershipTiers() {
         <Form
           layout="vertical"
           form={createTierForm}
-          initialValues={{ template: "member" }}
+          initialValues={{ template: "standard" }}
         >
           <Form.Item
             name="template"
