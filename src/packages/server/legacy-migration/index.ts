@@ -165,10 +165,13 @@ function projectDescription(row: LegacyProjectRow): string {
 }
 
 function restoreStatusForProject(
-  row: Pick<LegacyProjectRow, "artifact_status" | "artifact_key">,
+  row: Pick<
+    LegacyProjectRow,
+    "artifact_status" | "artifact_key" | "artifact_manifest"
+  >,
   restore_mode: LegacyMigrationProjectRestoreMode = "full",
 ): LegacyMigrationProjectRestoreStatus {
-  if (row.artifact_status !== "available" || !row.artifact_key) {
+  if (!legacyArchiveAvailable(row)) {
     return "skipped";
   }
   return restore_mode === "select" ? "selection-pending" : "pending";
@@ -258,6 +261,19 @@ function manifestCompressedBytes(
     ["archive", "object_bytes"],
     ["artifact", "bytes"],
   ]);
+}
+
+function legacyArchiveAvailable(
+  row: Pick<
+    LegacyProjectRow,
+    "artifact_status" | "artifact_key" | "artifact_manifest"
+  >,
+): boolean {
+  return (
+    row.artifact_status === "available" &&
+    !!clean(row.artifact_key) &&
+    manifestCompressedBytes(row.artifact_manifest) != null
+  );
 }
 
 function manifestSha256(
@@ -480,6 +496,7 @@ export async function listProjects({
        WHERE ($2::BOOLEAN OR COALESCE(p.hidden, false)=false)
          AND COALESCE(p.artifact_status, '')='available'
          AND COALESCE(p.artifact_key, '') <> ''
+         AND COALESCE(p.artifact_manifest, '{}'::jsonb) ? 'artifact_bytes'
          AND (
            NOT $3::BOOLEAN
            OR lower(COALESCE(p.title, '')) LIKE $4
@@ -1039,7 +1056,7 @@ export async function retryProjectRestore({
   if (row.restore_mode === "select") {
     throw new Error("selective restores must be retried from file selection");
   }
-  if (row.artifact_status !== "available" || !row.artifact_key) {
+  if (!legacyArchiveAvailable(row)) {
     throw new Error("legacy project archive is not available");
   }
   if (row.restore_status === "restored") {
@@ -1247,7 +1264,7 @@ function requireSelectableImport(
   if (row.restore_mode !== "select") {
     throw new Error("legacy project was not imported for selective restore");
   }
-  if (row.artifact_status !== "available" || !row.artifact_key) {
+  if (!legacyArchiveAvailable(row)) {
     throw new Error("legacy project archive is not available");
   }
   return row;

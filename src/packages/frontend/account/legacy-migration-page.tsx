@@ -166,7 +166,12 @@ async function openProject(project_id: string): Promise<void> {
 }
 
 function archiveAvailable(project: LegacyMigrationProjectSummary): boolean {
-  return project.artifact_status === "available" && !!project.artifact_key;
+  return (
+    project.artifact_status === "available" &&
+    !!project.artifact_key &&
+    typeof project.artifact_bytes === "number" &&
+    Number.isFinite(project.artifact_bytes)
+  );
 }
 
 function ignoreProjectRowClick(target: EventTarget | null): boolean {
