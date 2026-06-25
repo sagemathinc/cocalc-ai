@@ -45,7 +45,42 @@ export async function hasPaymentMethod(account_id: string) {
   const methods = await stripe.customers.listPaymentMethods(customer, {
     limit: 1,
   });
-  return methods.data.length >= 1;
+  if (methods.data.length >= 1) {
+    return true;
+  }
+
+  // Older CoCalc payment flows stored cards as legacy Stripe customer
+  // sources. Treat those as usable payment methods for billing readiness.
+  const c = await stripe.customers.retrieve(customer, {
+    expand: ["sources"],
+  });
+  if ((c as any)?.deleted) {
+    return false;
+  }
+  const default_source = (c as any)?.default_source;
+  if (typeof default_source === "string" && default_source.trim()) {
+    return true;
+  }
+  if (isUsableLegacySource(default_source)) {
+    return true;
+  }
+  return (
+    (c as any)?.sources?.data?.some((source: unknown) =>
+      isUsableLegacySource(source),
+    ) === true
+  );
+}
+
+function isUsableLegacySource(source: unknown): boolean {
+  if (source == null || typeof source !== "object") {
+    return false;
+  }
+  const value = source as any;
+  return (
+    value.deleted !== true &&
+    typeof value.id === "string" &&
+    (value.object === "card" || value.object === "source")
+  );
 }
 
 export async function getPaymentMethod({

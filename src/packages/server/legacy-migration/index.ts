@@ -4,10 +4,12 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import createProject from "@cocalc/server/projects/create";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import { setProjectLabels } from "@cocalc/server/projects/labels";
 import {
   ensureProjectFileServerClientReady,
   getProjectFileServerClient,
@@ -30,6 +32,7 @@ import type {
   LegacyMigrationImportProjectsResponse,
   LegacyMigrationListProjectsOptions,
   LegacyMigrationListProjectsResponse,
+  LegacyMigrationMatchedAccount,
   LegacyMigrationPrepareArchiveSelectionOptions,
   LegacyMigrationPrepareArchiveSelectionResponse,
   LegacyMigrationProjectRestoreMode,
@@ -48,6 +51,9 @@ const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const PROJECT_ARCHIVE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_ARCHIVE_INDEX_MAX_ENTRIES = 5_000;
 const MAX_ARCHIVE_INDEX_MAX_ENTRIES = 50_000;
+const LEGACY_SOURCE_PROJECT_LABEL = "legacy.cocalc.com/project_id";
+
+const logger = getLogger("server:legacy-migration");
 
 type AccountEmailRow = {
   email_address: string | null;
@@ -382,16 +388,33 @@ async function ensureVerifiedEmailLinks(account_id: string): Promise<void> {
   );
 }
 
-async function legacyAccountIds(account_id: string): Promise<string[]> {
+async function legacyAccounts(
+  account_id: string,
+): Promise<LegacyMigrationMatchedAccount[]> {
   await ensureVerifiedEmailLinks(account_id);
-  const { rows } = await getPool().query<{ legacy_account_id: string }>(
-    `SELECT legacy_account_id
-       FROM legacy_migration_account_links
-      WHERE account_id=$1
-      ORDER BY legacy_account_id`,
+  const { rows } = await getPool().query<
+    LegacyMigrationMatchedAccount & {
+      claim_method: string | null;
+    }
+  >(
+    `SELECT linked.legacy_account_id,
+            accounts.email_address,
+            linked.metadata->>'match_method' AS match_method,
+            linked.metadata->>'gmail_canonical_email' AS gmail_canonical_email
+       FROM legacy_migration_account_links linked
+       LEFT JOIN legacy_migration_accounts accounts
+         ON accounts.legacy_account_id=linked.legacy_account_id
+      WHERE linked.account_id=$1
+      ORDER BY lower(COALESCE(accounts.email_address, '')),
+               linked.legacy_account_id`,
     [account_id],
   );
-  return rows.map((row) => row.legacy_account_id);
+  return rows.map((row) => ({
+    legacy_account_id: row.legacy_account_id,
+    email_address: normalizeEmail(row.email_address) || null,
+    match_method: row.match_method ?? null,
+    gmail_canonical_email: normalizeEmail(row.gmail_canonical_email) || null,
+  }));
 }
 
 export async function listProjects({
@@ -406,9 +429,17 @@ export async function listProjects({
     throw Error("account_id is required");
   }
   await ensureLegacyMigrationProjectImportSchema();
-  const legacy_account_ids = await legacyAccountIds(account_id);
+  const legacy_accounts = await legacyAccounts(account_id);
+  const legacy_account_ids = legacy_accounts.map(
+    (account) => account.legacy_account_id,
+  );
   if (legacy_account_ids.length === 0) {
-    return { legacy_account_ids, projects: [], total_count: 0 };
+    return {
+      legacy_account_ids,
+      legacy_accounts,
+      projects: [],
+      total_count: 0,
+    };
   }
   const search = `%${`${query ?? ""}`.trim().toLowerCase()}%`;
   const useSearch = search !== "%%";
@@ -486,6 +517,7 @@ export async function listProjects({
   );
   return {
     legacy_account_ids,
+    legacy_accounts,
     projects: rows.map(importStatus),
     total_count: rows[0]?.total_count ?? 0,
   };
@@ -576,6 +608,33 @@ async function recordImportAccount({
     `,
     [legacy_project_id, account_id, project_id, legacy_account_id, role],
   );
+}
+
+async function setLegacySourceProjectLabelBestEffort({
+  account_id,
+  legacy_project_id,
+  project_id,
+}: {
+  account_id: string;
+  legacy_project_id: string;
+  project_id: string;
+}): Promise<void> {
+  try {
+    await setProjectLabels({
+      project_id,
+      account_id,
+      labels: {
+        [LEGACY_SOURCE_PROJECT_LABEL]: legacy_project_id,
+      },
+    });
+  } catch (err) {
+    logger.warn("failed to set legacy source project label", {
+      account_id,
+      legacy_project_id,
+      project_id,
+      err: `${err}`,
+    });
+  }
 }
 
 async function importOneProject({
@@ -671,6 +730,11 @@ async function importOneProject({
       project_id: migration.project_id,
       role: "collaborator",
     });
+    await setLegacySourceProjectLabelBestEffort({
+      account_id,
+      legacy_project_id,
+      project_id: migration.project_id,
+    });
     return {
       legacy_project_id,
       project_id: migration.project_id,
@@ -709,6 +773,11 @@ async function importOneProject({
       legacy_project_id,
       project_id,
       role: "owner",
+    });
+    await setLegacySourceProjectLabelBestEffort({
+      account_id,
+      legacy_project_id,
+      project_id,
     });
     return {
       legacy_project_id,

@@ -55,6 +55,8 @@ import {
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
 import { projectRootfsEntryLabel } from "./project-rootfs-badge";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 
 const LOADING_STYLE: CSS = {
   fontSize: "40px",
@@ -98,6 +100,14 @@ export const ProjectsPage: React.FC = () => {
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const legacyMigrationEnabled = !!useTypedRedux(
+    "customize",
+    "legacy_migration_enabled",
+  );
+  const showLegacyProjectsButton =
+    legacyMigrationEnabled &&
+    !!otherSettings?.get(OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON);
   const projectRootfsImageIds = useMemo(() => {
     const ids = new globalThis.Set<string>();
     project_map?.forEach((project) => {
@@ -554,6 +564,17 @@ export const ProjectsPage: React.FC = () => {
                       >
                         {capitalize(intl.formatMessage(labels.create))}
                       </Button>
+                      {showLegacyProjectsButton ? (
+                        <Button
+                          icon={<Icon name="exchange" />}
+                          onClick={() =>
+                            openAccountSettings({ page: "legacy-migration" })
+                          }
+                          title="View projects available from legacy migration."
+                        >
+                          Legacy Projects
+                        </Button>
+                      ) : null}
                       <div
                         ref={starredBarRef}
                         style={{

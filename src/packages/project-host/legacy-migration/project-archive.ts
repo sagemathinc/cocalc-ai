@@ -157,7 +157,7 @@ function runProjectArchiveTarCommand({
   const createZstdDecompress = (zlib as any).createZstdDecompress;
   return new Promise((resolve, reject) => {
     const child = spawn("tar", args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
     const stdin = child.stdin;
     if (stdin == null) {

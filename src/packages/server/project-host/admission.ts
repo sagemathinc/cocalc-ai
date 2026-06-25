@@ -171,14 +171,6 @@ export function evaluateDedicatedHostAdmission({
     return { allowed: true };
   }
 
-  if (!effectiveSnapshot.has_payment_method) {
-    return {
-      allowed: false,
-      code: "payment_method_required",
-      reason: `add a payment method before trying to ${actionLabel(action)}`,
-    };
-  }
-
   const limits = effectiveSnapshot.effective_limits ?? {};
   const funding_lane = selectDedicatedHostFundingLane(effectiveSnapshot);
   if (funding_lane) {
@@ -224,6 +216,13 @@ export function evaluateDedicatedHostAdmission({
       code: "membership_host_spend_not_configured",
       reason:
         "membership tier does not currently configure postpaid dedicated-host spending",
+    };
+  }
+  if (!effectiveSnapshot.has_payment_method) {
+    return {
+      allowed: false,
+      code: "payment_method_required",
+      reason: `add a payment method before trying to ${actionLabel(action)}`,
     };
   }
   if (!effectiveSnapshot.has_usage_subscription) {

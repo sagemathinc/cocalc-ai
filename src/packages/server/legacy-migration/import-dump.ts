@@ -10,6 +10,7 @@ import { createInterface } from "node:readline";
 import { createGunzip } from "node:zlib";
 
 import getPool from "@cocalc/database/pool";
+import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 
 type ImportTarget =
   | "accounts"
@@ -20,11 +21,12 @@ type ImportTarget =
   | "site_licenses";
 
 type Options = {
-  dir: string;
+  dir?: string;
   only?: Set<string>;
   limit?: number;
   batchSize: number;
   dryRun: boolean;
+  enableLegacyProjectsButton: boolean;
 };
 
 type ImportStats = {
@@ -35,6 +37,10 @@ type ImportStats = {
 };
 
 const DEFAULT_BATCH_SIZE = 2000;
+const DEFAULT_ARTIFACT_BUCKET = "cocalc-projects";
+const DEFAULT_ARTIFACT_KEY_PREFIX = "prod3/default/";
+const DEFAULT_ARTIFACT_KEY_SUFFIX = ".tar.zst";
+const LEGACY_SOURCE_PROJECT_LABEL = "legacy.cocalc.com/project_id";
 let poolUsed = false;
 let rawRecordsSchemaReady: Promise<void> | undefined;
 let projectsSchemaReady: Promise<void> | undefined;
@@ -51,10 +57,15 @@ function usage(): never {
 
 Options:
   --dir <path>          Directory containing *.ndjson.gz files from kucalc db legacy-migration-dump.
+                        Optional when only running --enable-legacy-projects-button.
   --only <list>         Comma-separated import targets: accounts,projects,artifacts,purchases,subscriptions,site_licenses.
   --limit <n>           Stop after importing n rows per file, useful for smoke tests.
   --batch-size <n>      Rows per database batch. Default: ${DEFAULT_BATCH_SIZE}.
   --dry-run             Parse files and report counts without writing to the database.
+  --enable-legacy-projects-button
+                        After import, enable the Projects-page Legacy Projects button
+                        for current accounts with matching primary or verified emails.
+                        Existing explicit user choices are preserved.
   --help                Show this help.
 `);
   process.exit(0);
@@ -64,12 +75,17 @@ function parseArgs(argv: string[]): Options {
   const options: Partial<Options> = {
     batchSize: DEFAULT_BATCH_SIZE,
     dryRun: false,
+    enableLegacyProjectsButton: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") usage();
     if (arg === "--dry-run") {
       options.dryRun = true;
+      continue;
+    }
+    if (arg === "--enable-legacy-projects-button") {
+      options.enableLegacyProjectsButton = true;
       continue;
     }
     const value = argv[++i];
@@ -93,8 +109,10 @@ function parseArgs(argv: string[]): Options {
       throw new Error(`unknown argument ${arg}`);
     }
   }
-  if (!options.dir) {
-    throw new Error("--dir is required");
+  if (!options.dir && !options.enableLegacyProjectsButton) {
+    throw new Error(
+      "--dir is required unless --enable-legacy-projects-button is set",
+    );
   }
   if (options.only) {
     const allowed = new Set([
@@ -126,6 +144,91 @@ function clean(value: unknown): string | null {
   return s || null;
 }
 
+function canonicalEmailSql(expression: string): string {
+  return `
+    CASE
+      WHEN split_part(${expression}, '@', 2) IN ('gmail.com', 'googlemail.com')
+        THEN regexp_replace(split_part(split_part(${expression}, '@', 1), '+', 1), '\\.', '', 'g') || '@gmail.com'
+      ELSE ${expression}
+    END
+  `;
+}
+
+async function enableLegacyProjectsButtonForMatchingAccounts(): Promise<number> {
+  const legacyCanonical = canonicalEmailSql("lower(email_address)");
+  const currentCanonical = canonicalEmailSql("email");
+  const { rowCount } = await pool().query(
+    `
+    WITH legacy_project_accounts AS (
+      SELECT owner_legacy_account_id AS legacy_account_id
+        FROM legacy_migration_projects
+       WHERE COALESCE(hidden, false) IS FALSE
+         AND owner_legacy_account_id IS NOT NULL
+      UNION
+      SELECT account_id AS legacy_account_id
+        FROM legacy_migration_projects p
+        CROSS JOIN LATERAL jsonb_object_keys(
+          CASE
+            WHEN jsonb_typeof(p.legacy_users) = 'object' THEN p.legacy_users
+            ELSE '{}'::jsonb
+          END
+        ) AS users(account_id)
+       WHERE COALESCE(p.hidden, false) IS FALSE
+    ),
+    legacy_email_keys AS (
+      SELECT DISTINCT lower(email_address) AS email_key
+        FROM legacy_migration_accounts legacy
+        JOIN legacy_project_accounts projects
+          ON projects.legacy_account_id = legacy.legacy_account_id
+       WHERE COALESCE(email_address, '') <> ''
+      UNION
+      SELECT DISTINCT ${legacyCanonical} AS email_key
+        FROM legacy_migration_accounts legacy
+        JOIN legacy_project_accounts projects
+          ON projects.legacy_account_id = legacy.legacy_account_id
+       WHERE COALESCE(email_address, '') <> ''
+    ),
+    current_email_keys AS (
+      SELECT account_id, lower(email_address) AS email
+        FROM accounts
+       WHERE COALESCE(deleted, false) IS FALSE
+         AND COALESCE(email_address, '') <> ''
+      UNION
+      SELECT account_id, lower(email)
+        FROM accounts
+        CROSS JOIN LATERAL jsonb_object_keys(
+          CASE
+            WHEN jsonb_typeof(email_address_verified) = 'object'
+              THEN email_address_verified
+            ELSE '{}'::jsonb
+          END
+        ) AS verified(email)
+       WHERE COALESCE(deleted, false) IS FALSE
+    ),
+    current_account_keys AS (
+      SELECT account_id, email AS email_key
+        FROM current_email_keys
+      UNION
+      SELECT account_id, ${currentCanonical} AS email_key
+        FROM current_email_keys
+    ),
+    target_accounts AS (
+      SELECT DISTINCT current_keys.account_id
+        FROM current_account_keys current_keys
+        JOIN legacy_email_keys legacy USING (email_key)
+    )
+    UPDATE accounts account
+       SET other_settings = COALESCE(account.other_settings, '{}'::jsonb)
+         || jsonb_build_object($1::text, true)
+      FROM target_accounts target
+     WHERE account.account_id = target.account_id
+       AND NOT (COALESCE(account.other_settings, '{}'::jsonb) ? $1::text)
+    `,
+    [OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON],
+  );
+  return rowCount ?? 0;
+}
+
 async function ensureProjectsSchema(): Promise<void> {
   projectsSchemaReady ??= (async () => {
     await pool().query(`
@@ -138,6 +241,62 @@ async function ensureProjectsSchema(): Promise<void> {
     `);
   })();
   await projectsSchemaReady;
+}
+
+function defaultArtifactKey(legacyProjectId: string | null): string | null {
+  return legacyProjectId
+    ? `${DEFAULT_ARTIFACT_KEY_PREFIX}${legacyProjectId}${DEFAULT_ARTIFACT_KEY_SUFFIX}`
+    : null;
+}
+
+async function requeueSkippedRestoresWithArtifacts(
+  rows: Record<string, any>[],
+): Promise<void> {
+  const ids = rows
+    .map((row) => clean(row.legacy_project_id))
+    .filter((id): id is string => id != null);
+  if (ids.length === 0) return;
+  await pool().query(
+    `
+    INSERT INTO project_labels
+      (project_id, key, value, created_by, updated_by, created_at, updated_at)
+    SELECT i.project_id,
+           $2,
+           i.legacy_project_id,
+           i.owner_account_id,
+           i.owner_account_id,
+           NOW(),
+           NOW()
+      FROM legacy_migration_project_imports i
+     WHERE i.legacy_project_id=ANY($1::TEXT[])
+       AND i.project_id IS NOT NULL
+    ON CONFLICT (project_id, key)
+    DO UPDATE SET value=EXCLUDED.value,
+                  updated_by=EXCLUDED.updated_by,
+                  updated_at=NOW()
+    `,
+    [ids, LEGACY_SOURCE_PROJECT_LABEL],
+  );
+  await pool().query(
+    `
+    UPDATE legacy_migration_project_imports i
+       SET restore_status='pending',
+           restore_error=NULL,
+           restore_mode='full',
+           restore_claimed_until=NULL,
+           restore_worker_id=NULL,
+           updated=NOW()
+      FROM legacy_migration_projects p
+     WHERE i.legacy_project_id=p.legacy_project_id
+       AND i.legacy_project_id=ANY($1::TEXT[])
+       AND i.project_id IS NOT NULL
+       AND COALESCE(i.restore_mode, 'full')='full'
+       AND i.restore_status='skipped'
+       AND COALESCE(p.artifact_status, '')='available'
+       AND COALESCE(p.artifact_key, '') <> ''
+    `,
+    [ids],
+  );
 }
 
 function targetForFile(file: string): ImportTarget | undefined {
@@ -247,6 +406,7 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
     `,
     [JSON.stringify(rows)],
   );
+  await requeueSkippedRestoresWithArtifacts(rows);
 }
 
 async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
@@ -334,6 +494,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
     `,
     [JSON.stringify(rows)],
   );
+  await requeueSkippedRestoresWithArtifacts(rows);
 }
 
 async function upsertArtifacts(rows: Record<string, any>[]): Promise<void> {
@@ -527,6 +688,11 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
     row.artifact_key = clean(row.artifact_key);
     row.manifest_key = clean(row.manifest_key);
     row.artifact_status = clean(row.artifact_status) ?? "unknown";
+    if (!row.artifact_key && row.legacy_project_id) {
+      row.artifact_bucket = row.artifact_bucket ?? DEFAULT_ARTIFACT_BUCKET;
+      row.artifact_key = defaultArtifactKey(row.legacy_project_id);
+      row.artifact_status = "available";
+    }
   } else if (target === "artifacts") {
     row.legacy_project_id = clean(row.legacy_project_id);
     row.artifact_bucket = clean(row.artifact_bucket);
@@ -543,10 +709,14 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
 async function filesToImport(
   options: Options,
 ): Promise<{ file: string; target: ImportTarget }[]> {
-  const entries = await readdir(options.dir);
+  if (!options.dir) {
+    throw new Error("--dir is required to import dump files");
+  }
+  const dir = options.dir;
+  const entries = await readdir(dir);
   const files = entries
     .filter((file) => file.endsWith(".ndjson.gz"))
-    .map((file) => join(options.dir, file))
+    .map((file) => join(dir, file))
     .map((file) => ({ file, target: targetForFile(file) }))
     .filter(
       (x): x is { file: string; target: ImportTarget } => x.target != null,
@@ -565,6 +735,19 @@ async function filesToImport(
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  if (!options.dir) {
+    if (options.dryRun) {
+      console.log(
+        "skipping Legacy Projects button backfill because --dry-run is set",
+      );
+    } else {
+      const changed = await enableLegacyProjectsButtonForMatchingAccounts();
+      console.log(
+        `enabled Legacy Projects button for ${changed} matching account(s)`,
+      );
+    }
+    return;
+  }
   const manifest = await loadManifest(options.dir);
   if (manifest) {
     console.log(
@@ -584,6 +767,18 @@ async function main(): Promise<void> {
     if (stats.repairedRows > 0) {
       console.log(
         `repaired ${stats.repairedRows} legacy over-escaped JSON row(s) in ${basename(stats.file)}`,
+      );
+    }
+  }
+  if (options.enableLegacyProjectsButton) {
+    if (options.dryRun) {
+      console.log(
+        "skipping Legacy Projects button backfill because --dry-run is set",
+      );
+    } else {
+      const changed = await enableLegacyProjectsButtonForMatchingAccounts();
+      console.log(
+        `enabled Legacy Projects button for ${changed} matching account(s)`,
       );
     }
   }
