@@ -90,7 +90,7 @@ const TEMPLATE_KEYS = [
 
 type TemplateKey = (typeof TEMPLATE_KEYS)[number];
 
-function visibilityColumnTitle(label: string, title: string) {
+function compactColumnTitle(label: string, title: string) {
   return (
     <Tooltip title={title}>
       <span style={{ cursor: "help" }}>{label}</span>
@@ -180,8 +180,13 @@ interface Tier {
   history?: any[];
   subscription_count?: number;
   subscribed_account_count?: number;
+  team_seat_count?: number;
+  team_account_count?: number;
+  course_account_count?: number;
+  site_account_count?: number;
   admin_assigned_count?: number;
   site_license_count?: number;
+  total_account_count?: number;
   created?: dayjs.Dayjs;
   updated?: dayjs.Dayjs;
 }
@@ -744,8 +749,13 @@ function useMembershipTiers() {
             history: null,
             subscription_count: null,
             subscribed_account_count: null,
+            team_seat_count: null,
+            team_account_count: null,
+            course_account_count: null,
+            site_account_count: null,
             admin_assigned_count: null,
             site_license_count: null,
+            total_account_count: null,
             created: null,
             updated: null,
           },
@@ -3634,10 +3644,10 @@ export function MembershipTiers() {
             width={72}
             render={(_text, tier) => visibilityCell(!tier.disabled)}
           />
-          <Table.ColumnGroup<Tier> title="Visibility">
+          <Table.ColumnGroup<Tier> title="Personal">
             <Table.Column<Tier>
-              title={visibilityColumnTitle(
-                "P",
+              title={compactColumnTitle(
+                "V",
                 "Show in public pricing and purchase UI",
               )}
               dataIndex="store_visible"
@@ -3646,15 +3656,55 @@ export function MembershipTiers() {
               render={visibilityCell}
             />
             <Table.Column<Tier>
-              title={visibilityColumnTitle("T", "Available for team licenses")}
+              title="Monthly"
+              dataIndex="price_monthly"
+              render={(val) => (val != null ? currency(Number(val)) : "")}
+            />
+            <Table.Column<Tier>
+              title="Yearly"
+              dataIndex="price_yearly"
+              render={(val) => (val != null ? currency(Number(val)) : "")}
+            />
+            <Table.Column<Tier>
+              title="Trial days"
+              dataIndex="trial_days"
+              render={(val) => (val != null && val > 0 ? val : "")}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts with personal membership subscriptions using this tier",
+              )}
+              dataIndex="subscribed_account_count"
+              render={(val) => val ?? 0}
+            />
+          </Table.ColumnGroup>
+          <Table.ColumnGroup<Tier> title="Team">
+            <Table.Column<Tier>
+              title={compactColumnTitle("V", "Available for team licenses")}
               dataIndex="team_visible"
               align="center"
               width={36}
               render={visibilityCell}
             />
             <Table.Column<Tier>
-              title={visibilityColumnTitle(
-                "C",
+              title="Seats"
+              dataIndex="team_seat_count"
+              render={(val) => val ?? 0}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts assigned active team-license seats using this tier",
+              )}
+              dataIndex="team_account_count"
+              render={(val) => val ?? 0}
+            />
+          </Table.ColumnGroup>
+          <Table.ColumnGroup<Tier> title="Course">
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "V",
                 "Available for course student memberships",
               )}
               dataIndex="course_store_visible"
@@ -3662,65 +3712,77 @@ export function MembershipTiers() {
               width={36}
               render={visibilityCell}
             />
+            <Table.Column<Tier>
+              title="Price"
+              dataIndex="course_price"
+              render={(val) => (val != null ? val : "")}
+            />
+            <Table.Column<Tier>
+              title="Days"
+              dataIndex="course_duration_days"
+              render={(val) => (val != null ? val : "")}
+            />
+            <Table.Column<Tier>
+              title="Grace"
+              dataIndex="course_grace_days"
+              render={(val) => (val != null ? val : "")}
+            />
+            <Table.Column<Tier>
+              title="Domains"
+              dataIndex="course_allowed_domains"
+              render={(domains) =>
+                Array.isArray(domains) && domains.length > 0 ? (
+                  <Space wrap size={[4, 4]}>
+                    {domains.map((domain) => (
+                      <Tag key={domain}>{domain}</Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  ""
+                )
+              }
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts assigned active course membership seats using this tier",
+              )}
+              dataIndex="course_account_count"
+              render={(val) => val ?? 0}
+            />
+          </Table.ColumnGroup>
+          <Table.ColumnGroup<Tier> title="Sites">
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "#",
+                "Active site licenses with pools using this tier",
+              )}
+              dataIndex="site_license_count"
+              render={(val) => val ?? 0}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts with active claimed site-license seats using this tier",
+              )}
+              dataIndex="site_account_count"
+              render={(val) => val ?? 0}
+            />
           </Table.ColumnGroup>
           <Table.Column<Tier>
-            title="Course domains"
-            dataIndex="course_allowed_domains"
-            render={(domains) =>
-              Array.isArray(domains) && domains.length > 0 ? (
-                <Space wrap size={[4, 4]}>
-                  {domains.map((domain) => (
-                    <Tag key={domain}>{domain}</Tag>
-                  ))}
-                </Space>
-              ) : (
-                ""
-              )
-            }
-          />
-          <Table.Column<Tier>
-            title="Monthly"
-            dataIndex="price_monthly"
-            render={(val) => (val != null ? currency(Number(val)) : "")}
-          />
-          <Table.Column<Tier>
-            title="Yearly"
-            dataIndex="price_yearly"
-            render={(val) => (val != null ? currency(Number(val)) : "")}
-          />
-          <Table.Column<Tier>
-            title="Trial days"
-            dataIndex="trial_days"
-            render={(val) => (val != null && val > 0 ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Course price"
-            dataIndex="course_price"
-            render={(val) => (val != null ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Course days"
-            dataIndex="course_duration_days"
-            render={(val) => (val != null ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Grace days"
-            dataIndex="course_grace_days"
-            render={(val) => (val != null ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Accounts"
-            dataIndex="subscribed_account_count"
-            render={(val) => val ?? 0}
-          />
-          <Table.Column<Tier>
-            title="Admin assigned"
+            title={compactColumnTitle(
+              "Admin assign",
+              "Active admin-assigned memberships using this tier",
+            )}
             dataIndex="admin_assigned_count"
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
-            title="Sites"
-            dataIndex="site_license_count"
+            title={compactColumnTitle(
+              "Total Accts",
+              "Distinct accounts using this tier through subscriptions, packages, or admin assignment",
+            )}
+            dataIndex="total_account_count"
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
@@ -3733,37 +3795,39 @@ export function MembershipTiers() {
             dataIndex="history"
             render={(val) => (Array.isArray(val) ? val.length : 0)}
           />
-          <Table.Column<Tier>
-            title="Edit"
-            dataIndex="edit"
-            render={(_text, tier) => (
-              <Icon name="pencil" onClick={() => set_editing(tier)} />
-            )}
-          />
-          <Table.Column<Tier>
-            title="Del"
-            dataIndex="delete"
-            render={(_text, tier) => {
-              const inUse =
-                (tier.subscription_count ?? 0) > 0 ||
-                (tier.site_license_count ?? 0) > 0;
-              if (inUse) {
+          <Table.ColumnGroup<Tier> title="Actions">
+            <Table.Column<Tier>
+              title="Edit"
+              dataIndex="edit"
+              render={(_text, tier) => (
+                <Icon name="pencil" onClick={() => set_editing(tier)} />
+              )}
+            />
+            <Table.Column<Tier>
+              title="Del"
+              dataIndex="delete"
+              render={(_text, tier) => {
+                const inUse =
+                  (tier.subscription_count ?? 0) > 0 ||
+                  (tier.site_license_count ?? 0) > 0;
+                if (inUse) {
+                  return (
+                    <Text type="secondary" title="Tier in use">
+                      In use
+                    </Text>
+                  );
+                }
                 return (
-                  <Text type="secondary" title="Tier in use">
-                    In use
-                  </Text>
+                  <Popconfirm
+                    title="Sure to delete?"
+                    onConfirm={() => delete_tier(tier.key, true)}
+                  >
+                    <Icon name="trash" />
+                  </Popconfirm>
                 );
-              }
-              return (
-                <Popconfirm
-                  title="Sure to delete?"
-                  onConfirm={() => delete_tier(tier.key, true)}
-                >
-                  <Icon name="trash" />
-                </Popconfirm>
-              );
-            }}
-          />
+              }}
+            />
+          </Table.ColumnGroup>
         </Table>
       </>
     );

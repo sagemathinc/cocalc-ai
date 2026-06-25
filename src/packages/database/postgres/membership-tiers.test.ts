@@ -13,12 +13,25 @@ type QueryCall = {
 
 function createDb({
   siteLicenseTablesExist = true,
+  membershipPackageTablesExist = true,
   siteLicenseRows = [],
+  teamSeatRows = [],
+  packageAccountRows = [],
   adminAssignedRows = [],
+  totalAccountRows = [],
 }: {
   siteLicenseTablesExist?: boolean;
+  membershipPackageTablesExist?: boolean;
   siteLicenseRows?: { tier_id: string; site_license_count: number }[];
+  teamSeatRows?: { tier_id: string; team_seat_count: number }[];
+  packageAccountRows?: {
+    tier_id: string;
+    team_account_count: number;
+    course_account_count: number;
+    site_account_count: number;
+  }[];
   adminAssignedRows?: { tier_id: string; admin_assigned_count: number }[];
+  totalAccountRows?: { tier_id: string; total_account_count: number }[];
 } = {}) {
   const calls: QueryCall[] = [];
   const db = {
@@ -28,10 +41,26 @@ function createDb({
       if (sql.includes("to_regclass('public.site_licenses')")) {
         opts.cb(null, { rows: [{ exists: siteLicenseTablesExist }] });
       } else if (
+        sql.includes("to_regclass('public.membership_packages')") &&
+        sql.includes("to_regclass('public.membership_package_assignments')")
+      ) {
+        opts.cb(null, { rows: [{ exists: membershipPackageTablesExist }] });
+      } else if (
         sql.includes("COUNT(DISTINCT s.id)") &&
         sql.includes("membership_packages")
       ) {
         opts.cb(null, { rows: siteLicenseRows });
+      } else if (
+        sql.includes("SUM(seat_count)") &&
+        sql.includes("kind = 'team'")
+      ) {
+        opts.cb(null, { rows: teamSeatRows });
+      } else if (
+        sql.includes("team_account_count") &&
+        sql.includes("course_account_count") &&
+        sql.includes("site_account_count")
+      ) {
+        opts.cb(null, { rows: packageAccountRows });
       } else if (sql === "SELECT * FROM membership_tiers") {
         opts.cb(null, {
           rows: [
@@ -39,6 +68,8 @@ function createDb({
             { id: "instructor", label: "Instructor" },
           ],
         });
+      } else if (sql.includes("total_account_count")) {
+        opts.cb(null, { rows: totalAccountRows });
       } else if (sql.includes("FROM subscriptions")) {
         opts.cb(null, {
           rows: [
@@ -62,12 +93,25 @@ function createDb({
 }
 
 describe("membershipTiersQuery", () => {
-  it("includes active site-license counts by membership tier", async () => {
+  it("includes usage counts by membership tier", async () => {
     const { db } = createDb({
       siteLicenseRows: [{ tier_id: "instructor", site_license_count: 2 }],
+      teamSeatRows: [{ tier_id: "student", team_seat_count: 7 }],
+      packageAccountRows: [
+        {
+          tier_id: "student",
+          team_account_count: 3,
+          course_account_count: 5,
+          site_account_count: 2,
+        },
+      ],
       adminAssignedRows: [
         { tier_id: "student", admin_assigned_count: 1 },
         { tier_id: "instructor", admin_assigned_count: 4 },
+      ],
+      totalAccountRows: [
+        { tier_id: "student", total_account_count: 10 },
+        { tier_id: "instructor", total_account_count: 4 },
       ],
     });
 
@@ -79,16 +123,26 @@ describe("membershipTiersQuery", () => {
         label: "Student",
         subscription_count: 3,
         subscribed_account_count: 2,
+        team_seat_count: 7,
+        team_account_count: 3,
+        course_account_count: 5,
+        site_account_count: 2,
         admin_assigned_count: 1,
         site_license_count: 0,
+        total_account_count: 10,
       },
       {
         id: "instructor",
         label: "Instructor",
         subscription_count: 0,
         subscribed_account_count: 0,
+        team_seat_count: 0,
+        team_account_count: 0,
+        course_account_count: 0,
+        site_account_count: 0,
         admin_assigned_count: 4,
         site_license_count: 2,
+        total_account_count: 4,
       },
     ]);
   });
