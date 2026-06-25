@@ -292,6 +292,7 @@ function importStatus(row: LegacyProjectRow): LegacyMigrationProjectSummary {
     last_active: row.last_active,
     hidden: row.hidden,
     disk_mb: nonnegativeNumber(row.disk_mb),
+    artifact_bytes: manifestCompressedBytes(row.artifact_manifest) ?? null,
     artifact_status: row.artifact_status,
     artifact_bucket: row.artifact_bucket,
     artifact_key: row.artifact_key,

@@ -83,6 +83,19 @@ function formatDiskMb(value: number | null | undefined): string {
   return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} GB`;
 }
 
+function formatBytes(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "Unknown";
+  if (value < 1024) return `${Math.round(value).toLocaleString()} B`;
+  const units = ["KB", "MB", "GB", "TB", "PB"];
+  let scaled = value / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && scaled >= 1024; i += 1) {
+    scaled /= 1024;
+    unit = units[i];
+  }
+  return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${unit}`;
+}
+
 function matchedAccountLabel(account: LegacyMigrationMatchedAccount): string {
   const email = `${account.email_address ?? ""}`.trim();
   if (email) return email;
@@ -276,7 +289,7 @@ function LegacyProjectImportModal({
             message={project.title}
             description={
               archiveAvailable(project)
-                ? `This will create a CoCalc project and restore files from the legacy archive. Size: ${formatDiskMb(project.disk_mb)}.`
+                ? `This will create a CoCalc project and restore files from the legacy archive. Last known disk use: ${formatDiskMb(project.disk_mb)}. Archived size: ${formatBytes(project.artifact_bytes)}.`
                 : "The archived files for this project are not available yet, so it cannot be imported without creating a blank project."
             }
           />
@@ -688,15 +701,40 @@ export function LegacyMigrationPage() {
         new Date(right.last_edited ?? 0).getTime(),
     },
     {
-      title: "Size",
+      title: "Disk size",
       dataIndex: "disk_mb",
       key: "disk_mb",
       width: 130,
-      render: (value: number | null | undefined) => formatDiskMb(value),
+      render: (value: number | null | undefined) => (
+        <Space direction="vertical" size={0}>
+          <Text>{formatDiskMb(value)}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            last known
+          </Text>
+        </Space>
+      ),
       sorter: (
         left: LegacyMigrationProjectSummary,
         right: LegacyMigrationProjectSummary,
       ) => (left.disk_mb ?? -1) - (right.disk_mb ?? -1),
+    },
+    {
+      title: "Archived size",
+      dataIndex: "artifact_bytes",
+      key: "artifact_bytes",
+      width: 150,
+      render: (value: number | null | undefined) => (
+        <Space direction="vertical" size={0}>
+          <Text>{formatBytes(value)}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            compressed tar.zst
+          </Text>
+        </Space>
+      ),
+      sorter: (
+        left: LegacyMigrationProjectSummary,
+        right: LegacyMigrationProjectSummary,
+      ) => (left.artifact_bytes ?? -1) - (right.artifact_bytes ?? -1),
     },
     {
       title: "Open",
@@ -924,7 +962,7 @@ export function LegacyMigrationPage() {
                 columns={columns}
                 dataSource={state.projects}
                 loading={state.loading}
-                scroll={{ x: 1320 }}
+                scroll={{ x: 1470 }}
                 tableLayout="fixed"
                 onRow={(project) => ({
                   onClick: (event) => {

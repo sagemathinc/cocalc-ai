@@ -50,6 +50,7 @@ export interface LegacyMigrationProjectSummary {
   hidden?: boolean | null;
   artifact_status?: string | null;
   disk_mb?: number | null;
+  artifact_bytes?: number | null;
   artifact_bucket?: string | null;
   artifact_key?: string | null;
   manifest_key?: string | null;
