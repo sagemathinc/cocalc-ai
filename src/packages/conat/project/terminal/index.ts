@@ -425,6 +425,7 @@ export function terminalServer({
     > | null = null;
     let flowControl: ReturnType<typeof createTerminalFlowControl> | null = null;
     let onTerminalData: ((data: string) => void) | null = null;
+    let onTerminalExit: (() => void) | null = null;
     const buffer: PendingMessage[] = [];
     const setPty = (p) => {
       pty = p;
@@ -523,6 +524,10 @@ export function terminalServer({
         outputThrottle.close();
         outputThrottle = null;
       }
+      if (onTerminalExit != null) {
+        pty.removeListener("exit", onTerminalExit);
+        onTerminalExit = null;
+      }
       flowControl?.close();
       flowControl = null;
       pty.removeListener("get-size", getClientSize);
@@ -531,6 +536,50 @@ export function terminalServer({
     };
 
     socket.on("closed", removeListeners);
+
+    const attachPtyListeners = () => {
+      if (pty == null || onTerminalData != null) {
+        return;
+      }
+      outputThrottle = createAdaptiveTerminalOutputThrottle({
+        messagesPerSecond: MAX_MSGS_PER_SECOND,
+        mediumMessagesPerSecond: ADAPTIVE_MEDIUM_MSGS_PER_SECOND,
+        slowMessagesPerSecond: ADAPTIVE_SLOW_MSGS_PER_SECOND,
+        mediumBytes: ADAPTIVE_MEDIUM_BYTES,
+        slowBytes: ADAPTIVE_SLOW_BYTES,
+        coolBytes: ADAPTIVE_COOL_BYTES,
+        publish: sendToClient,
+      });
+      flowControl = createTerminalFlowControl({
+        sampleMs: FLOW_CONTROL_SAMPLE_MS,
+        pauseMs: FLOW_CONTROL_PAUSE_MS,
+        minBytes: FLOW_CONTROL_MIN_BYTES,
+        maxBytesPerSecond: FLOW_CONTROL_MAX_BYTES_PER_SECOND,
+        maxEventsPerSecond: FLOW_CONTROL_MAX_EVENTS_PER_SECOND,
+        pause: () => pty?.pause(),
+        resume: () => pty?.resume(),
+      });
+      onTerminalData = (data) => {
+        flowControl?.onData(data);
+        outputThrottle?.write(data);
+      };
+      onTerminalExit = async () => {
+        removeListeners();
+        setPty(null);
+        if (sessionId) {
+          delete sessions[sessionId];
+          delete sessionPaths[sessionId];
+        }
+        updateSessionId(null);
+        try {
+          await socket.request({ cmd: "exit" });
+        } catch {}
+      };
+      pty.on("data", onTerminalData);
+      pty.once("exit", onTerminalExit);
+      pty.on("get-size", getClientSize);
+      pty.on("broadcast", broadcast);
+    };
 
     const handleRequest = async ({ data }) => {
       const { cmd } = data;
@@ -661,6 +710,7 @@ export function terminalServer({
           updateSessionId(id ?? null);
           if (id && sessions[id] != null) {
             setPty(sessions[id]);
+            attachPtyListeners();
           } else {
             if (id && Object.keys(sessions).length >= maxSessions) {
               recordServiceAdmissionDenial({
@@ -698,48 +748,14 @@ export function terminalServer({
                 }
               });
             }
-            await postHook?.({ command, args, options, pty });
-          }
-
-          outputThrottle = createAdaptiveTerminalOutputThrottle({
-            messagesPerSecond: MAX_MSGS_PER_SECOND,
-            mediumMessagesPerSecond: ADAPTIVE_MEDIUM_MSGS_PER_SECOND,
-            slowMessagesPerSecond: ADAPTIVE_SLOW_MSGS_PER_SECOND,
-            mediumBytes: ADAPTIVE_MEDIUM_BYTES,
-            slowBytes: ADAPTIVE_SLOW_BYTES,
-            coolBytes: ADAPTIVE_COOL_BYTES,
-            publish: sendToClient,
-          });
-          flowControl = createTerminalFlowControl({
-            sampleMs: FLOW_CONTROL_SAMPLE_MS,
-            pauseMs: FLOW_CONTROL_PAUSE_MS,
-            minBytes: FLOW_CONTROL_MIN_BYTES,
-            maxBytesPerSecond: FLOW_CONTROL_MAX_BYTES_PER_SECOND,
-            maxEventsPerSecond: FLOW_CONTROL_MAX_EVENTS_PER_SECOND,
-            pause: () => pty?.pause(),
-            resume: () => pty?.resume(),
-          });
-          onTerminalData = (data) => {
-            flowControl?.onData(data);
-            outputThrottle?.write(data);
-          };
-          pty.on("data", onTerminalData);
-
-          pty.once("exit", async () => {
-            removeListeners();
-            setPty(null);
-            if (sessionId) {
-              delete sessions[sessionId];
-              delete sessionPaths[sessionId];
-            }
-            updateSessionId(null);
+            attachPtyListeners();
             try {
-              await socket.request({ cmd: "exit" });
-            } catch {}
-          });
-
-          pty.on("get-size", getClientSize);
-          pty.on("broadcast", broadcast);
+              await postHook?.({ command, args, options, pty });
+            } catch (err) {
+              removeListeners();
+              throw err;
+            }
+          }
 
           return { pid: pty.pid, history: history[id ?? ""] };
 
