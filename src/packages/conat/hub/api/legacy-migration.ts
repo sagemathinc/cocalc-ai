@@ -73,8 +73,16 @@ export interface LegacyMigrationListProjectsOptions {
   query?: string;
 }
 
+export interface LegacyMigrationMatchedAccount {
+  legacy_account_id: string;
+  email_address?: string | null;
+  match_method?: string | null;
+  gmail_canonical_email?: string | null;
+}
+
 export interface LegacyMigrationListProjectsResponse {
   legacy_account_ids: string[];
+  legacy_accounts?: LegacyMigrationMatchedAccount[];
   projects: LegacyMigrationProjectSummary[];
   total_count: number;
 }

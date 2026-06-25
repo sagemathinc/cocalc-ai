@@ -4,10 +4,12 @@ import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
 import {
   ChatStreamWriter,
   disposeAllChatWritersForTests,
+  isFatalAcpWorkerStorageError,
   recoverCurrentWorkerStuckAcpTurns,
   recoverDetachedWorkerStartupState,
   shouldStopDetachedWorkerForDrain,
   shouldStopDetachedWorkerForIdle,
+  shouldExitAcpWorkerAfterHeartbeatFailure,
   turnNeedsInterruptedRepair,
 } from "../index";
 import * as turns from "../../sqlite/acp-turns";
@@ -1239,6 +1241,76 @@ describe("shouldStopDetachedWorkerForDrain", () => {
         exitRequestedAt: 10_000,
         quiesceMs: 30_000,
         now: 40_000,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("isFatalAcpWorkerStorageError", () => {
+  it("treats disk-full and SQLite I/O failures as worker-fatal", () => {
+    expect(
+      isFatalAcpWorkerStorageError(
+        Object.assign(new Error("ENOSPC: no space left on device, write"), {
+          code: "ENOSPC",
+        }),
+      ),
+    ).toBe(true);
+    expect(isFatalAcpWorkerStorageError(new Error("disk I/O error"))).toBe(
+      true,
+    );
+    expect(
+      isFatalAcpWorkerStorageError(
+        Object.assign(new Error("database or disk is full"), {
+          code: "SQLITE_FULL",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat ordinary transient lock errors as worker-fatal", () => {
+    expect(isFatalAcpWorkerStorageError(new Error("database is locked"))).toBe(
+      false,
+    );
+    expect(isFatalAcpWorkerStorageError(new Error("network timeout"))).toBe(
+      false,
+    );
+  });
+});
+
+describe("shouldExitAcpWorkerAfterHeartbeatFailure", () => {
+  it("always exits on fatal worker storage errors", () => {
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 1,
+        failureExitThreshold: 0,
+        fatalStorageError: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not exit on repeated nonfatal heartbeat failures by default", () => {
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 100,
+        failureExitThreshold: 0,
+        fatalStorageError: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("can opt in to exiting after repeated nonfatal heartbeat failures", () => {
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 2,
+        failureExitThreshold: 3,
+        fatalStorageError: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldExitAcpWorkerAfterHeartbeatFailure({
+        consecutiveFailures: 3,
+        failureExitThreshold: 3,
+        fatalStorageError: false,
       }),
     ).toBe(true);
   });

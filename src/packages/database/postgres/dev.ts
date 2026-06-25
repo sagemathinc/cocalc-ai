@@ -137,6 +137,13 @@ export function resolveLocalPostgresArchiveTimeout(): string {
   return raw || DEFAULT_LOCAL_PG_ARCHIVE_TIMEOUT;
 }
 
+function localPostgresArchiveEnabled(): boolean {
+  const raw = `${process.env.COCALC_LOCAL_PG_ARCHIVE ?? ""}`
+    .trim()
+    .toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 function writeEnvFile({
   socketDir,
   user,
@@ -237,37 +244,47 @@ function ensureConfig(dataDir: string, socketDir: string): void {
     );
   }
 
-  const backupRoot = resolveBackupRoot();
-  const bayId = resolveBayId();
-  const walRoot = join(backupRoot, "bay-backups", bayId, "wal");
-  const walArchiveDir = join(walRoot, "archive");
-  const archiveScript = join(walRoot, "pg-archive-wal.sh");
-  ensureDir(walArchiveDir, 0o700);
-  writeFileSync(
-    archiveScript,
-    [
-      "#!/bin/sh",
-      "set -eu",
-      `DEST_DIR=${shellQuote(walArchiveDir)}`,
-      'SRC_PATH="$1"',
-      'SEGMENT="$2"',
-      'DEST_PATH="$DEST_DIR/$SEGMENT"',
-      'TMP_PATH="$DEST_PATH.tmp.$$"',
-      'mkdir -p "$DEST_DIR"',
-      'if [ -f "$DEST_PATH" ]; then',
-      "  exit 0",
-      "fi",
-      'cp "$SRC_PATH" "$TMP_PATH"',
-      'mv "$TMP_PATH" "$DEST_PATH"',
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  chmodSync(archiveScript, 0o700);
-
   const managedConfName = "cocalc-dev.conf";
   const managedConf = join(dataDir, managedConfName);
-  const archiveCommand = `${shellQuote(archiveScript)} %p %f`;
+  const archiveEnabled = localPostgresArchiveEnabled();
+  let archiveLines = ["archive_mode = off"];
+  if (archiveEnabled) {
+    const backupRoot = resolveBackupRoot();
+    const bayId = resolveBayId();
+    const walRoot = join(backupRoot, "bay-backups", bayId, "wal");
+    const walArchiveDir = join(walRoot, "archive");
+    const archiveScript = join(walRoot, "pg-archive-wal.sh");
+    ensureDir(walArchiveDir, 0o700);
+    writeFileSync(
+      archiveScript,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        `DEST_DIR=${shellQuote(walArchiveDir)}`,
+        'SRC_PATH="$1"',
+        'SEGMENT="$2"',
+        'DEST_PATH="$DEST_DIR/$SEGMENT"',
+        'TMP_PATH="$DEST_PATH.tmp.$$"',
+        'mkdir -p "$DEST_DIR"',
+        'if [ -f "$DEST_PATH" ]; then',
+        "  exit 0",
+        "fi",
+        'cp "$SRC_PATH" "$TMP_PATH"',
+        'mv "$TMP_PATH" "$DEST_PATH"',
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    chmodSync(archiveScript, 0o700);
+    const archiveCommand = `${shellQuote(archiveScript)} %p %f`;
+    archiveLines = [
+      "archive_mode = on",
+      // Keep WAL archival bounded for PITR, but avoid forcing a mostly-empty
+      // 16MB WAL segment every minute in local hub/dev environments.
+      `archive_timeout = ${postgresConfQuote(resolveLocalPostgresArchiveTimeout())}`,
+      `archive_command = ${postgresConfQuote(archiveCommand)}`,
+    ];
+  }
   writeFileSync(
     managedConf,
     [
@@ -276,11 +293,7 @@ function ensureConfig(dataDir: string, socketDir: string): void {
       "listen_addresses = ''",
       "max_connections = 1000",
       "wal_level = replica",
-      "archive_mode = on",
-      // Keep WAL archival bounded for PITR, but avoid forcing a mostly-empty
-      // 16MB WAL segment every minute in local hub/dev environments.
-      `archive_timeout = ${postgresConfQuote(resolveLocalPostgresArchiveTimeout())}`,
-      `archive_command = ${postgresConfQuote(archiveCommand)}`,
+      ...archiveLines,
       "",
     ].join("\n"),
   );

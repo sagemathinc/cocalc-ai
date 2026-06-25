@@ -11,6 +11,7 @@ import {
   Input,
   InputNumber,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -19,13 +20,15 @@ import {
 import { useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 import type {
   LegacyMigrationArchiveEntry,
   LegacyMigrationArchiveIndex,
   LegacyMigrationImportProjectResult,
+  LegacyMigrationMatchedAccount,
   LegacyMigrationProjectRestoreMode,
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
@@ -35,6 +38,7 @@ const { Paragraph, Text } = Typography;
 
 type LegacyMigrationState = {
   error: string;
+  legacyAccounts: LegacyMigrationMatchedAccount[];
   legacyAccountIds: string[];
   loading: boolean;
   projects: LegacyMigrationProjectSummary[];
@@ -71,6 +75,25 @@ function formatDiskMb(value: number | null | undefined): string {
   return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} GB`;
 }
 
+function matchedAccountLabel(account: LegacyMigrationMatchedAccount): string {
+  const email = `${account.email_address ?? ""}`.trim();
+  if (email) return email;
+  return `legacy account ${account.legacy_account_id}`;
+}
+
+function matchedAccountTitle(account: LegacyMigrationMatchedAccount): string {
+  const parts = [
+    `Legacy account: ${account.legacy_account_id}`,
+    account.match_method
+      ? `Match method: ${account.match_method.replace(/-/g, " ")}`
+      : "",
+    account.gmail_canonical_email
+      ? `Gmail canonical: ${account.gmail_canonical_email}`
+      : "",
+  ].filter(Boolean);
+  return parts.join("\n");
+}
+
 function importTag(project: LegacyMigrationProjectSummary) {
   if (project.import_status === "not-imported") {
     return <Tag>not imported</Tag>;
@@ -88,10 +111,26 @@ function importTag(project: LegacyMigrationProjectSummary) {
   return <Tag color="red">failed</Tag>;
 }
 
+async function openProject(project_id: string): Promise<void> {
+  try {
+    await (
+      redux.getActions("projects") as any
+    )?.ensureRealtimeFeedForCurrentAccount?.();
+    await redux.getActions("projects").open_project({
+      project_id,
+      target: "files",
+      switch_to: true,
+      restore_session: false,
+    });
+  } catch (err) {
+    void message.error(`${err}`);
+  }
+}
+
 function projectLink(project_id?: string | null) {
   if (!project_id) return null;
   return (
-    <Button href={`/projects/${project_id}/files/`} size="small">
+    <Button onClick={() => void openProject(project_id)} size="small">
       Open
     </Button>
   );
@@ -298,8 +337,13 @@ export function LegacyMigrationPage() {
   const legacyMigrationPageMessage = `${
     useTypedRedux("customize", "legacy_migration_page_message") ?? ""
   }`.trim();
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const showLegacyProjectsButton = !!otherSettings?.get(
+    OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON,
+  );
   const [state, setState] = useState<LegacyMigrationState>({
     error: "",
+    legacyAccounts: [],
     legacyAccountIds: [],
     loading: true,
     projects: [],
@@ -310,7 +354,9 @@ export function LegacyMigrationPage() {
   const [query, setQuery] = useState("");
   const [pageSize, setPageSize] = useState(25);
   const [selected, setSelected] = useState<string[]>([]);
-  const [importing, setImporting] = useState(false);
+  const [importingMode, setImportingMode] = useState<
+    "" | LegacyMigrationProjectRestoreMode
+  >("");
   const [lastResults, setLastResults] = useState<
     LegacyMigrationImportProjectResult[]
   >([]);
@@ -328,6 +374,7 @@ export function LegacyMigrationPage() {
         });
       setState({
         error: "",
+        legacyAccounts: response.legacy_accounts ?? [],
         legacyAccountIds: response.legacy_account_ids,
         loading: false,
         projects: response.projects,
@@ -350,7 +397,7 @@ export function LegacyMigrationPage() {
 
   async function importSelected(mode: LegacyMigrationProjectRestoreMode) {
     if (selected.length === 0) return;
-    setImporting(true);
+    setImportingMode(mode);
     setLastResults([]);
     try {
       const response =
@@ -367,8 +414,22 @@ export function LegacyMigrationPage() {
     } catch (err) {
       void message.error(`${err}`);
     } finally {
-      setImporting(false);
+      setImportingMode("");
     }
+  }
+
+  function setShowLegacyProjectsButton(show: boolean): void {
+    redux
+      .getActions("account")
+      .set_other_settings(
+        OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON,
+        show,
+      );
+    void message.success(
+      show
+        ? "Legacy Projects button enabled on the Projects page."
+        : "Legacy Projects button hidden from the Projects page.",
+    );
   }
 
   const columns = [
@@ -497,6 +558,22 @@ export function LegacyMigrationPage() {
         <Alert showIcon type="info" message={legacyMigrationPageMessage} />
       ) : null}
 
+      <Card size="small">
+        <Space direction="vertical" size={4}>
+          <Space>
+            <Switch
+              checked={showLegacyProjectsButton}
+              onChange={setShowLegacyProjectsButton}
+            />
+            <Text strong>Show Legacy Projects button on the Projects page</Text>
+          </Space>
+          <Text type="secondary">
+            When enabled, the Projects page shows a Legacy Projects button that
+            opens this migration page without a browser refresh.
+          </Text>
+        </Space>
+      </Card>
+
       <Alert
         showIcon
         type="warning"
@@ -585,26 +662,58 @@ export function LegacyMigrationPage() {
             />
           ) : (
             <>
-              <Space wrap>
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
                 <Text type="secondary">
                   Matched {state.legacyAccountIds.length} legacy cocalc.com
                   account record
                   {state.legacyAccountIds.length === 1 ? "" : "s"} by verified
-                  email. Showing {state.projects.length.toLocaleString()} of{" "}
-                  {state.totalCount.toLocaleString()} matching project
-                  {state.totalCount === 1 ? "" : "s"}.
+                  email:
                 </Text>
+                <Space wrap size={[4, 4]}>
+                  {(state.legacyAccounts.length > 0
+                    ? state.legacyAccounts
+                    : state.legacyAccountIds.map((legacy_account_id) => ({
+                        legacy_account_id,
+                      }))
+                  ).map((account) => (
+                    <Tag
+                      key={account.legacy_account_id}
+                      title={matchedAccountTitle(account)}
+                    >
+                      {matchedAccountLabel(account)}
+                    </Tag>
+                  ))}
+                </Space>
+                <Text type="secondary">
+                  If you want to also include projects associated with a
+                  different email address, change your email address in{" "}
+                  <a href="/settings/profile">profile settings</a>, verify it,
+                  then come back to this page.
+                </Text>
+                <Text type="secondary">
+                  Showing the{" "}
+                  {state.projects.length === state.totalCount
+                    ? ""
+                    : "most recently edited "}
+                  {state.projects.length.toLocaleString()} of{" "}
+                  {state.totalCount.toLocaleString()} matching project
+                  {state.totalCount === 1 ? "" : "s"}. You can migrate projects
+                  in multiple sessions; use search, hidden-projects, or size
+                  filters to find projects outside this loaded list.
+                </Text>
+              </Space>
+              <Space wrap>
                 <Button
-                  disabled={selected.length === 0}
-                  loading={importing}
+                  disabled={selected.length === 0 || !!importingMode}
+                  loading={importingMode === "full"}
                   onClick={() => void importSelected("full")}
                   type="primary"
                 >
                   Import selected
                 </Button>
                 <Button
-                  disabled={selected.length === 0}
-                  loading={importing}
+                  disabled={selected.length === 0 || !!importingMode}
+                  loading={importingMode === "select"}
                   onClick={() => void importSelected("select")}
                 >
                   Import selected for file selection
