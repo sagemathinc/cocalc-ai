@@ -11,10 +11,9 @@ import * as awaiting from "awaiting";
 import { fromJS, Map, Set as iSet } from "immutable";
 import { debounce, isEqual } from "lodash";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import { lite } from "@cocalc/frontend/lite";
-import { open_new_tab } from "@cocalc/frontend/misc";
 import {
   delete_local_storage,
   get_local_storage,
@@ -45,7 +44,6 @@ import {
 } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { JUPYTER_CLASSIC_MODERN } from "@cocalc/util/theme";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import { cm_options } from "./cm_options";
 import { ConfirmDialogOptions } from "./confirm-dialog";
 import { parseHeadings } from "./contents";
@@ -2071,7 +2069,10 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   public custom_jupyter_kernel_docs(): void {
-    open_new_tab(joinUrlPath(appBasePath, "docs/jupyter/custom-kernels"));
+    openProjectDocs({
+      projectId: this.project_id,
+      slug: "jupyter/custom-kernels",
+    });
   }
 
   /* Wait until the syncdb is ready *and* there is at

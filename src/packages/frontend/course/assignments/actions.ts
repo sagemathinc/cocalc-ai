@@ -83,6 +83,7 @@ import {
   type CourseCopyDestination,
   waitForCourseCopyLro,
 } from "../copy-lro";
+import { projectRelativeCoursePath } from "./paths";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
 const TERMINAL_LRO_STATUSES = new Set([
@@ -122,13 +123,27 @@ export class AssignmentsActions {
     return this.course_actions.get_store();
   };
 
+  private project_relative_path = (path: string | undefined): string => {
+    return projectRelativeCoursePath(path);
+  };
+
+  private assignment_path = (
+    assignment: AssignmentRecord,
+    field: "path" | "target_path" | "collect_path" | "graded_path",
+  ): string => {
+    return this.project_relative_path(assignment.get(field));
+  };
+
   private collect_path = (path: string): string => {
     const store = this.get_store();
     if (store == undefined) {
       throw Error("store must be defined");
     }
-    const i = store.get("course_filename").lastIndexOf(".");
-    return store.get("course_filename").slice(0, i) + "-collect/" + path;
+    const course_filename = this.project_relative_path(
+      store.get("course_filename"),
+    );
+    const i = course_filename.lastIndexOf(".");
+    return course_filename.slice(0, i) + "-collect/" + path;
   };
 
   // slight warning -- this is linear in the number of assignments (so do not overuse)
@@ -137,10 +152,11 @@ export class AssignmentsActions {
   ): AssignmentRecord | undefined => {
     const store = this.get_store();
     if (store == null) return;
+    path = this.project_relative_path(path);
     return store
       .get("assignments")
       .valueSeq()
-      .filter((x) => x.get("path") == path)
+      .filter((x) => this.assignment_path(x, "path") == path)
       .get(0);
   };
 
@@ -155,6 +171,7 @@ export class AssignmentsActions {
       }
       return;
     }
+    path = this.project_relative_path(path);
     const cur = this.getAssignmentWithPath(path);
     if (cur != null) {
       // either undelete or nothing to do.
@@ -570,12 +587,10 @@ export class AssignmentsActions {
     const content = this.dueDateFileContent(assignment_id);
     const project_id = student.get("project_id");
     if (!project_id) return;
-    const path = join(assignment.get("target_path"), DUE_DATE_FILENAME);
-    console.log({
-      project_id,
-      path,
-      content,
-    });
+    const path = join(
+      this.assignment_path(assignment, "target_path"),
+      DUE_DATE_FILENAME,
+    );
     await webapp_client.project_client.write_text_file({
       project_id,
       path,
@@ -660,7 +675,7 @@ export class AssignmentsActions {
       return;
     }
     const target_path = join(
-      assignment.get("collect_path"),
+      this.assignment_path(assignment, "collect_path"),
       student.get("student_id"),
     );
     this.course_actions.set_activity({
@@ -671,7 +686,7 @@ export class AssignmentsActions {
       const op = await webapp_client.project_client.copyPathBetweenProjects({
         src: {
           project_id: student_project_id,
-          path: assignment.get("target_path"),
+          path: this.assignment_path(assignment, "target_path"),
         },
         dest: { project_id: store.get("course_project_id"), path: target_path },
         options: { recursive: true },
@@ -761,7 +776,7 @@ export class AssignmentsActions {
       id,
       desc: `Returning assignment to ${student_name}`,
     });
-    let src_path = assignment.get("collect_path");
+    let src_path = this.assignment_path(assignment, "collect_path");
     if (assignment.getIn(["peer_grade", "enabled"])) {
       peer_graded = true;
       src_path += "-peer-grade/";
@@ -850,7 +865,7 @@ ${details}
         src: { project_id: store.get("course_project_id"), path: src_path },
         dest: {
           project_id: student_project_id,
-          path: assignment.get("graded_path"),
+          path: this.assignment_path(assignment, "graded_path"),
         },
         options: {
           recursive: true,
@@ -859,7 +874,7 @@ ${details}
       if (peer_graded) {
         const actions = redux.getProjectActions(student_project_id);
         await actions.deleteMatchingFiles({
-          path: assignment.get("graded_path"),
+          path: this.assignment_path(assignment, "graded_path"),
           recursive: true,
           filter: (p) => p.includes("GRADER"),
         });
@@ -1094,7 +1109,7 @@ ${details}
         src: { project_id: store.get("course_project_id"), path: src_path },
         dest: {
           project_id: student_project_id,
-          path: assignment.get("target_path"),
+          path: this.assignment_path(assignment, "target_path"),
         },
         options: { recursive: true, force: !!overwrite },
       };
@@ -1126,7 +1141,7 @@ ${details}
   };
 
   private assignment_src_path = (assignment): string => {
-    let path = assignment.get("path");
+    let path = this.assignment_path(assignment, "path");
     if (assignment.get("has_student_subdir")) {
       path = join(path, STUDENT_SUBDIR);
     }
@@ -1286,7 +1301,7 @@ ${details}
         startedStudentIds.push(student_id);
         dests.push({
           project_id: student_project_id,
-          path: assignment.get("target_path"),
+          path: this.assignment_path(assignment, "target_path"),
           metadata: { student_id, course_item_id: assignment_id },
         });
         courseCopyDests.push({
@@ -1484,7 +1499,7 @@ ${details}
         target_student_count: patchDests.length,
       });
       const src_base_path = this.assignment_src_path(assignment);
-      const dest_base_path = assignment.get("target_path") ?? "";
+      const dest_base_path = this.assignment_path(assignment, "target_path");
       const op = await webapp_client.project_client.sendCourseAssignmentPatch({
         course_project_id: store.get("course_project_id"),
         assignment_id,
@@ -1594,9 +1609,13 @@ ${details}
         student_project_id,
         student_account_id: student.get("account_id"),
         student_name: store.get_student_name_extra(student_id).simple,
-        assignment_title: assignment.get("title") ?? assignment.get("path"),
-        src_path: assignment.get("target_path"),
-        dest_path: join(assignment.get("collect_path"), student_id),
+        assignment_title:
+          assignment.get("title") ?? this.assignment_path(assignment, "path"),
+        src_path: this.assignment_path(assignment, "target_path"),
+        dest_path: join(
+          this.assignment_path(assignment, "collect_path"),
+          student_id,
+        ),
       });
     }
     return { items, startedStudentIds, store };
@@ -1776,7 +1795,7 @@ ${details}
       });
       for (const peer_student_id of peer_student_ids) {
         const path = join(
-          `${assignment.get("collect_path")}-peer-grade`,
+          `${this.assignment_path(assignment, "collect_path")}-peer-grade`,
           student_id,
           peer_student_id,
           PEER_GRADING_GUIDE_FILENAME,
@@ -2003,12 +2022,16 @@ ${details}
         guidelines;
     }
 
-    const target_base_path = assignment.get("path") + "-peer-grade";
+    const target_base_path =
+      this.assignment_path(assignment, "path") + "-peer-grade";
     const f = async (peer_student_id: string) => {
       if (this.course_actions.is_closed()) {
         return;
       }
-      const src_path = join(assignment.get("collect_path"), peer_student_id);
+      const src_path = join(
+        this.assignment_path(assignment, "collect_path"),
+        peer_student_id,
+      );
       // write instructions file for the student, where they enter the grade,
       // and also it tells them what to do.
       await this.write_text_file_to_course_project({
@@ -2093,10 +2116,10 @@ ${details}
       // ignore deleted or non-existent students
       if (s == null || s.get("deleted")) return;
 
-      const path = assignment.get("path");
+      const path = this.assignment_path(assignment, "path");
       const src_path = join(`${path}-peer-grade`, our_student_id);
       const target_path = join(
-        `${assignment.get("collect_path")}-peer-grade`,
+        `${this.assignment_path(assignment, "collect_path")}-peer-grade`,
         our_student_id,
         student_id,
       );
@@ -2175,26 +2198,29 @@ ${details}
     let path, proj;
     switch (type) {
       case "assigned": // where project was copied in the student's project.
-        path = assignment.get("target_path");
+        path = this.assignment_path(assignment, "target_path");
         proj = student_project_id;
         break;
       case "collected": // where collected locally
-        path = join(assignment.get("collect_path"), student.get("student_id")); // TODO: refactor
+        path = join(
+          this.assignment_path(assignment, "collect_path"),
+          student.get("student_id"),
+        );
         proj = store.get("course_project_id");
         break;
       case "peer-assigned": // where peer-assigned (in student's project)
         proj = student_project_id;
-        path = assignment.get("path") + "-peer-grade";
+        path = this.assignment_path(assignment, "path") + "-peer-grade";
         break;
       case "peer-collected": // where collected peer-graded work (in our project)
         path =
-          assignment.get("collect_path") +
+          this.assignment_path(assignment, "collect_path") +
           "-peer-grade/" +
           student.get("student_id");
         proj = store.get("course_project_id");
         break;
       case "graded": // where project returned
-        path = assignment.get("graded_path"); // refactor
+        path = this.assignment_path(assignment, "graded_path");
         proj = student_project_id;
         break;
       default:
@@ -2247,7 +2273,7 @@ ${details}
     });
     if (assignment == null) return;
     const project_id = store.get("course_project_id");
-    const path = assignment.get("path");
+    const path = this.assignment_path(assignment, "path");
     if (project_id == null || path == null) return;
     let listing;
     try {
@@ -2311,7 +2337,7 @@ ${details}
     if (assignment == null) {
       return {}; // nothing case.
     }
-    const path = assignment.get("path");
+    const path = this.assignment_path(assignment, "path");
     const project_id = store.get("course_project_id");
     let files;
     try {
@@ -2586,7 +2612,7 @@ ${details}
 
       // grade in the path where we collected their work.
       student_path = join(
-        assignment.get("collect_path"),
+        this.assignment_path(assignment, "collect_path"),
         student.get("student_id"),
       );
 
@@ -2602,7 +2628,7 @@ ${details}
       }
       grade_project_id = student_project_id;
       // grade right where student did their work.
-      student_path = assignment.get("target_path");
+      student_path = this.assignment_path(assignment, "target_path");
     }
 
     const where_grade =
@@ -2643,7 +2669,7 @@ ${details}
       try {
         // fullpath = where their collected work is.
         const fullpath = join(
-          assignment.get("collect_path"),
+          this.assignment_path(assignment, "collect_path"),
           student.get("student_id"),
           file,
         );
@@ -2831,7 +2857,11 @@ ${details}
     filename: string,
   ): string => {
     return autograded_filename(
-      join(assignment.get("collect_path"), student_id, filename),
+      join(
+        this.assignment_path(assignment, "collect_path"),
+        student_id,
+        filename,
+      ),
     );
   };
 
@@ -2859,7 +2889,7 @@ ${details}
     }
     const course_project_id = store.get("course_project_id");
     const fullpath = join(
-      assignment.get("collect_path"),
+      this.assignment_path(assignment, "collect_path"),
       student.get("student_id"),
       file,
     );
@@ -2909,7 +2939,7 @@ ${details}
       throw Error("no such assignment");
     }
     const src_path = this.assignment_src_path(assignment);
-    const target_path = assignment.get("path");
+    const target_path = this.assignment_path(assignment, "path");
     await export_student_file_use_times(
       store.get("course_project_id"),
       src_path,
@@ -2934,10 +2964,12 @@ ${details}
       if (assignment == null) return;
       const students = store.get("students");
       const src_path = this.assignment_src_path(assignment);
-      const collect_path = assignment.get("collect_path");
-      const i = store.get("course_filename").lastIndexOf(".");
-      const base_export_path =
-        store.get("course_filename").slice(0, i) + "-export";
+      const collect_path = this.assignment_path(assignment, "collect_path");
+      const course_filename = this.project_relative_path(
+        store.get("course_filename"),
+      );
+      const i = course_filename.lastIndexOf(".");
+      const base_export_path = course_filename.slice(0, i) + "-export";
       const export_path = join(base_export_path, src_path);
 
       const student_name = function (student_id: string): string {

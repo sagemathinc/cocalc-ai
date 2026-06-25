@@ -15,7 +15,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { defineMessage } from "react-intl";
 
 import { redux } from "@cocalc/frontend/app-framework";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { FORMAT_SOURCE_ICON } from "@cocalc/frontend/frame-editors/frame-tree/config";
 import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
 import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
@@ -27,9 +27,7 @@ import {
   menu,
 } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
-import { open_new_tab } from "@cocalc/frontend/misc";
 import { NotebookMode } from "@cocalc/jupyter/types";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import { JupyterActions } from "./browser-actions";
 import {
   adjustMinimapWidth,
@@ -88,6 +86,12 @@ export interface AllActions {
 export function commands(actions: AllActions): {
   [name: string]: CommandDescription;
 } {
+  function open_docs(slug: string): void {
+    const projectId = actions.jupyter_actions?.project_id;
+    if (projectId == null) return;
+    openProjectDocs({ projectId, slug });
+  }
+
   function id(): string {
     return actions.frame_actions?.store.get("cur_id");
   }
@@ -1546,7 +1550,7 @@ export function commands(actions: AllActions): {
       i: "external-link",
       m: "Jupyter in CoCalc",
       f: () => {
-        open_new_tab(joinUrlPath(appBasePath, "docs/jupyter/use-jupyter"));
+        open_docs("jupyter/use-jupyter");
       },
       r: true,
     },
@@ -1555,7 +1559,7 @@ export function commands(actions: AllActions): {
       i: "external-link",
       m: "nbgrader in CoCalc",
       f: () => {
-        open_new_tab(joinUrlPath(appBasePath, "docs/teaching/nbgrader"));
+        open_docs("teaching/nbgrader");
       },
       r: true,
     },
@@ -1563,7 +1567,7 @@ export function commands(actions: AllActions): {
       i: "external-link",
       m: "Markdown in CoCalc",
       f: () => {
-        open_new_tab(joinUrlPath(appBasePath, "docs/files/markdown"));
+        open_docs("files/markdown");
       },
       r: true,
     },

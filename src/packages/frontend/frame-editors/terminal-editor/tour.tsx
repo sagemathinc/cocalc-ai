@@ -1,9 +1,7 @@
 import type { TourProps } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { A } from "@cocalc/frontend/components/A";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { redux } from "@cocalc/frontend/app-framework";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import { Checkbox } from "antd";
 import terminalImage from "./terminal.png";
 import splitImage from "./split-terminals.png";
@@ -11,12 +9,9 @@ import splitImage from "./split-terminals.png";
 // The any for the images is because nextjs also ingests this for some reason and
 // it has contradictory typescript defs for png.
 
-const TERMINAL_DOCS_URL = joinUrlPath(
-  appBasePath,
-  "docs/terminal/use-terminal",
-);
+const TERMINAL_DOCS_SLUG = "terminal/use-terminal";
 
-export default function getTour(refs) {
+export default function getTour(refs, projectId?: string) {
   const v: TourProps["steps"] = [];
 
   function step({
@@ -48,7 +43,9 @@ export default function getTour(refs) {
     title: (
       <div>
         Welcome to the CoCalc Terminal Tour!{" "}
-        <A href={TERMINAL_DOCS_URL}>(docs)</A>
+        <DocsLink projectId={projectId} slug={TERMINAL_DOCS_SLUG}>
+          (docs)
+        </DocsLink>
       </div>
     ),
     description: (
@@ -233,7 +230,9 @@ export default function getTour(refs) {
     description: (
       <>
         You can learn much more about using the terminal in CoCalc{" "}
-        <A href={TERMINAL_DOCS_URL}>in our documentation.</A>
+        <DocsLink projectId={projectId} slug={TERMINAL_DOCS_SLUG}>
+          in our documentation.
+        </DocsLink>
       </>
     ),
   });

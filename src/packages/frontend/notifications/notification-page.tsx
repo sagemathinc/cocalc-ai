@@ -9,7 +9,8 @@ import { useIntl } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useInviteInboxState } from "@cocalc/frontend/collaborators";
-import { A, Loading, Paragraph, Title } from "@cocalc/frontend/components";
+import { Loading, Paragraph, Title } from "@cocalc/frontend/components";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
@@ -60,9 +61,9 @@ export function NotificationPage() {
             easy to find something later.`,
           },
           {
-            A1: (c) => <A href="/docs/collaboration/chat">{c}</A>,
-            A2: (c) => <A href="/docs/collaboration/mentions">{c}</A>,
-            A3: (c) => <A href="/docs/collaboration/mentions">{c}</A>,
+            A1: (c) => <DocsLink slug="collaboration/chat">{c}</DocsLink>,
+            A2: (c) => <DocsLink slug="collaboration/mentions">{c}</DocsLink>,
+            A3: (c) => <DocsLink slug="collaboration/mentions">{c}</DocsLink>,
           },
         )}
       </Paragraph>

@@ -19,8 +19,9 @@ import {
 } from "@ant-design/icons";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import { CSS, ProjectActions } from "@cocalc/frontend/app-framework";
-import { A, Icon, Loading, Tip } from "@cocalc/frontend/components";
+import { Icon, Loading, Tip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   ManagedEgressHistoryButton,
@@ -829,7 +830,10 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               This process allows to SSH into this {projectLabelLower}. Do not
               terminate it!
               <br />
-              Learn more: <A href={SSH_KEYS_DOC}>SSH keys documentation</A>
+              Learn more:{" "}
+              <DocsLink href={SSH_KEYS_DOC} slug={SSH_KEYS_DOC}>
+                SSH keys documentation
+              </DocsLink>
             </div>
           </Modal>
         );

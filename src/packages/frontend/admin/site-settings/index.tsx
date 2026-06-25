@@ -30,6 +30,7 @@ import {
   TimeAgo,
 } from "@cocalc/frontend/components";
 import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { TAGS, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
@@ -1276,9 +1277,12 @@ export default function SiteSettings({ close }) {
                           <span>
                             These switches limit post-signup capabilities. If
                             the incident is new-account creation, use the{" "}
-                            <a href="/app-docs/admin/signup-emergency-controls">
+                            <DocsLink
+                              href="/app-docs/admin/signup-emergency-controls"
+                              slug="admin/signup-emergency-controls"
+                            >
                               signup emergency controls runbook
-                            </a>{" "}
+                            </DocsLink>{" "}
                             for registration-token, email-signup, domain, and
                             SSO account-creation controls.
                           </span>
