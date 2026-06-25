@@ -1,20 +1,26 @@
 #!/usr/bin/env node
 /**
- *  write an "open" event to $COCALC_CONTROL_DIR for the CoCalc spool server
+ *  Ask the CoCalc terminal frontend to open paths.
  *
  * Requirements
- *   - Zero dependencies
- *   - Durable write: tmp -> fsync(file) -> rename -> fsync(dir)
  *   - Preserve shell view of CWD via $PWD
  *   - Emit canonical absolute paths for frontend open handlers
  *   - Fail if a requested path does not exist
  *   - Ignore non-expanded globs when path does not exist
  *   - Message schema: { event: "open", paths: [{ file|directory: string }] }
+ *   - Prefer invisible terminal OSC messages; keep $COCALC_CONTROL_DIR as a
+ *     compatibility fallback for old terminal frontends.
  */
 
 import fs from "node:fs";
 import fsp, { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import {
+  COCALC_TERMINAL_OPEN_OSC_ENV,
+  makeTerminalOpenOsc,
+  type TerminalOpenMessage,
+  type TerminalOpenPath,
+} from "@cocalc/util/terminal/open-control";
 
 const MAX_FILES = 15 as const;
 function usage(): void {
@@ -83,20 +89,6 @@ async function fsyncDir(dirPath: string): Promise<void> {
   }
 }
 
-interface PathMsgFile {
-  file: string;
-}
-interface PathMsgDir {
-  directory: string;
-}
-
-type PathMsg = PathMsgFile | PathMsgDir;
-
-interface OpenMessage {
-  event: "open";
-  paths: PathMsg[];
-}
-
 async function writeDurable(
   dir: string,
   baseName: string,
@@ -121,17 +113,26 @@ async function writeDurable(
   await fsyncDir(dir);
 }
 
+function useTerminalOsc(): boolean {
+  const value = process.env[COCALC_TERMINAL_OPEN_OSC_ENV]?.trim();
+  if (!value) return false;
+  return !["0", "false", "off", "no"].includes(value.toLowerCase());
+}
+
+function writeTerminalOsc(osc: string): void {
+  try {
+    fs.writeFileSync("/dev/tty", osc);
+    return;
+  } catch {
+    process.stdout.write(osc);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     usage();
     process.exit(1);
-  }
-
-  const controlDir = process.env.COCALC_CONTROL_DIR;
-  if (!controlDir) {
-    console.error("COCALC_CONTROL_DIR not set");
-    process.exit(2);
   }
 
   const trimmed = args.map((s) => s.trim()).filter(Boolean);
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
     console.error(`You may open at most ${MAX_FILES} items; truncating.`);
   }
 
-  const out: PathMsg[] = [];
+  const out: TerminalOpenPath[] = [];
 
   for (const p of inputs) {
     const abs = resolveAbsPreservePWD(p);
@@ -161,7 +162,20 @@ async function main(): Promise<void> {
 
   if (out.length === 0) return;
 
-  const message: OpenMessage = { event: "open", paths: out };
+  const message: TerminalOpenMessage = { event: "open", paths: out };
+  if (useTerminalOsc()) {
+    writeTerminalOsc(makeTerminalOpenOsc(message));
+    return;
+  }
+
+  const controlDir = process.env.COCALC_CONTROL_DIR;
+  if (!controlDir) {
+    console.error(
+      `${COCALC_TERMINAL_OPEN_OSC_ENV} or COCALC_CONTROL_DIR must be set`,
+    );
+    process.exit(2);
+  }
+
   const json = Buffer.from(JSON.stringify(message) + "\n", "utf8");
   const base = `${hrtimeNs()}-${process.pid}-${randomHex8()}.json`;
 

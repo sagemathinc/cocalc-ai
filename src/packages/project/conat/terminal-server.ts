@@ -149,9 +149,23 @@ async function postHook({ options, pty }) {
     pty.emit("broadcast", "user-command", payload);
   });
   pty.once("exit", () => {
-    messageSpool.close();
+    void messageSpool.close();
   });
-  await messageSpool.start();
+  try {
+    await messageSpool.start();
+  } catch (err) {
+    // Legacy terminal frontends used COCALC_CONTROL_DIR to relay the shell
+    // `open` command. New frontends use OSC messages instead, and terminal
+    // startup must never depend on this optional side channel.
+    logger.warn("terminal control spool disabled", {
+      id: options?.id,
+      path: options?.path,
+      spoolDir,
+      error: `${err}`,
+      code: (err as any)?.code,
+    });
+    void messageSpool.close();
+  }
 
   if (supportsTerminalCwdLookup() && process.env.HOME != null) {
     let cur: string | undefined = "";

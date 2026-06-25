@@ -337,6 +337,21 @@ function normalizeIncoming(data: any): TerminalIncomingMessage | null {
   return null;
 }
 
+function terminalErrorHeaders(err: any) {
+  const error =
+    err instanceof Error ? (err.message ?? `${err}`) : `${err ?? "error"}`;
+  const error_attrs: Record<string, unknown> = {};
+  for (const key of ["code", "errno", "path", "syscall"]) {
+    if (err?.[key] != null) {
+      error_attrs[key] = err[key];
+    }
+  }
+  return {
+    error,
+    ...(Object.keys(error_attrs).length > 0 ? { error_attrs } : undefined),
+  };
+}
+
 export function terminalServer({
   client,
   project_id,
@@ -770,7 +785,7 @@ export function terminalServer({
         mesg.respondSync(resp ?? null);
       } catch (err) {
         logger.debug(err);
-        mesg.respondSync(err);
+        mesg.respondSync(null, { headers: terminalErrorHeaders(err) });
       }
     });
 
@@ -827,7 +842,7 @@ export class TerminalClient extends EventEmitter {
         mesg.respondSync(resp ?? null);
       } catch (err) {
         console.warn(err);
-        mesg.respondSync(err);
+        mesg.respondSync(null, { headers: terminalErrorHeaders(err) });
       }
     });
   }
@@ -853,7 +868,11 @@ export class TerminalClient extends EventEmitter {
       },
       { timeout: options?.timeout },
     );
-    // console.log("spawned terminal with pid", data.pid);
+    if (data == null || typeof data.pid !== "number") {
+      throw new Error(
+        "terminal spawn RPC did not return a pid; update or restart the project host",
+      );
+    }
     this.pid = data.pid;
     return data.history;
   };

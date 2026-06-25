@@ -128,6 +128,27 @@ describe("mergeTerminalEnv0", () => {
       kind: "auto",
     });
   });
+
+  it("rejects malformed spawn responses", async () => {
+    const client = {
+      socket: {
+        connect: jest.fn(() => ({
+          on: jest.fn(),
+          request: jest.fn(async () => ({ data: {} })),
+          close: jest.fn(),
+        })),
+      },
+    } as any;
+
+    const terminal = terminalClient({
+      client,
+      project_id: "project-1",
+    });
+
+    await expect(
+      terminal.spawn("bash", [], { id: "/home/user/a.term" }),
+    ).rejects.toThrow("terminal spawn RPC did not return a pid");
+  });
 });
 
 describe("terminalServer", () => {
@@ -203,6 +224,58 @@ describe("terminalServer", () => {
         data: { cmd: "destroy" },
         respondSync: () => resolve(),
       });
+    });
+    socket.emit("closed");
+  });
+
+  it("responds to spawn failures with Conat error headers", async () => {
+    const server = new EventEmitter() as any;
+    const client = {
+      socket: {
+        listen: jest.fn(() => server),
+      },
+    } as any;
+    const pty = new EventEmitter() as any;
+    pty.pid = 1234;
+    pty.pause = jest.fn();
+    pty.resume = jest.fn();
+    pty.destroy = jest.fn();
+    const socket = new EventEmitter() as any;
+    socket.id = "socket-1";
+    socket.subject = "terminal.project-project-1.0.server.server-1.socket-1";
+    socket.write = jest.fn();
+    socket.request = jest.fn(async () => ({ data: undefined }));
+    socket.end = jest.fn();
+
+    terminalServer({
+      client,
+      project_id: "project-1",
+      spawn: jest.fn(() => pty),
+      postHook: async () => {
+        throw Object.assign(new Error("too many open files"), {
+          code: "EMFILE",
+        });
+      },
+    });
+    server.emit("connection", socket);
+
+    const response = await new Promise<any>((resolve) => {
+      socket.emit("request", {
+        data: {
+          cmd: "spawn",
+          command: "bash",
+          options: { id: "post-hook-error", path: "a.term" },
+        },
+        respondSync: (data, opts) => resolve({ data, opts }),
+      });
+    });
+
+    expect(response.data).toBeNull();
+    expect(response.opts).toEqual({
+      headers: {
+        error: "too many open files",
+        error_attrs: { code: "EMFILE" },
+      },
     });
     socket.emit("closed");
   });

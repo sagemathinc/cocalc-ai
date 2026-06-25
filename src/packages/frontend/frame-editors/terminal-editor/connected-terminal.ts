@@ -47,6 +47,12 @@ import { ConnectedTerminalInterface } from "./connected-terminal-interface";
 import { open_init_file } from "./init-file";
 import { setTheme } from "./themes";
 import { termPath } from "@cocalc/util/terminal/names";
+import {
+  COCALC_TERMINAL_OPEN_OSC,
+  COCALC_TERMINAL_OPEN_OSC_ENV,
+  decodeTerminalOpenMessage,
+  type TerminalOpenPath,
+} from "@cocalc/util/terminal/open-control";
 import { dirname } from "path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { type TerminalClient } from "@cocalc/conat/project/terminal";
@@ -126,11 +132,6 @@ function shouldUseNativeTouchSelection(): boolean {
         (navigator.maxTouchPoints ?? 0) > 1)) &&
     (window.matchMedia?.("(hover: none) and (pointer: coarse)").matches ?? true)
   );
-}
-
-interface Path {
-  file?: string;
-  directory?: string;
 }
 
 type State = "ready" | "closed";
@@ -304,6 +305,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
   private fitAddon: FitAddon;
   private webLinksAddon: WebLinksAddon;
+  private openOscHandler?: { dispose: () => void };
 
   private render_done: Function[] = [];
   private ignoreData: number = 0;
@@ -361,6 +363,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
     this.terminal = new XTerminal(this.get_xtermjs_options());
     this.terminal.options.allowProposedApi = true;
+    this.initOpenOscHandler();
 
     this.webLinksAddon = new WebLinksAddon(handleLink);
     this.terminal.loadAddon(this.webLinksAddon);
@@ -804,6 +807,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.clearInitialOutputTimer();
     this.pty?.close();
     this.pty = null;
+    this.openOscHandler?.dispose();
+    this.openOscHandler = undefined;
     this.ptyInputReady = false;
     this.set_connection_status("disconnected");
     this.state = "closed";
@@ -1161,10 +1166,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       const HISTFILE = historyFile(this.path);
       const env0 = {
         ...this.actions.get_term_env(),
-        // setting COCALC_CONTROL_DIR enables the open and close
-        // commands. The backend sets this variable to the actual
-        // spool directory.
-        COCALC_CONTROL_DIR: "set-by-backend",
+        [COCALC_TERMINAL_OPEN_OSC_ENV]: "1",
         COCALC_TERMINAL_FILENAME: this.termPath,
         PROMPT_COMMAND: "history -a",
         ...(HISTFILE ? { HISTFILE } : undefined),
@@ -1662,7 +1664,27 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     return false;
   };
 
-  private openPaths = async (paths: Path[]) => {
+  private initOpenOscHandler = (): void => {
+    try {
+      this.openOscHandler = this.terminal.parser.registerOscHandler(
+        COCALC_TERMINAL_OPEN_OSC,
+        (payload) => {
+          const message = decodeTerminalOpenMessage(payload);
+          if (message == null) {
+            return true;
+          }
+          if (this.is_visible && this.historyReplayDepth === 0) {
+            void this.openPaths(message.paths);
+          }
+          return true;
+        },
+      );
+    } catch (err) {
+      console.warn(`unable to initialize CoCalc terminal open handler: ${err}`);
+    }
+  };
+
+  private openPaths = async (paths: TerminalOpenPath[]) => {
     if (!this.is_visible) {
       return;
     }
@@ -1677,7 +1699,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       if (i === paths.length) {
         foreground = true;
       }
-      if (x.file != null) {
+      if ("file" in x && x.file != null) {
         const path = x.file;
         if (this.use_subframe(path)) {
           this.actions.open_code_editor_frame({ path });
@@ -1689,7 +1711,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           });
         }
       }
-      if (x.directory != null && foreground) {
+      if ("directory" in x && x.directory != null && foreground) {
         project_actions.open_directory(x.directory);
       }
     }
@@ -1700,12 +1722,12 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     project_actions.close_tab(path);
   };
 
-  private closePaths = (paths: Path[]): void => {
+  private closePaths = (paths: TerminalOpenPath[]): void => {
     if (!this.is_visible) {
       return;
     }
     for (const x of paths) {
-      if (x.file != null) {
+      if ("file" in x && x.file != null) {
         this.closePath(x.file);
       }
     }

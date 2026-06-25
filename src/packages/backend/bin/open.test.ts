@@ -2,16 +2,30 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "./open";
+import {
+  COCALC_TERMINAL_OPEN_OSC_ENV,
+  makeTerminalOpenOsc,
+} from "@cocalc/util/terminal/open-control";
 
 describe("backend/bin/open", () => {
   const originalArgv = process.argv;
   const originalPwd = process.env.PWD;
   const originalControlDir = process.env.COCALC_CONTROL_DIR;
+  const originalTerminalOpenOsc = process.env[COCALC_TERMINAL_OPEN_OSC_ENV];
+
+  function restoreEnv(name: string, value: string | undefined): void {
+    if (value == null) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
 
   afterEach(() => {
     process.argv = originalArgv;
-    process.env.PWD = originalPwd;
-    process.env.COCALC_CONTROL_DIR = originalControlDir;
+    restoreEnv("PWD", originalPwd);
+    restoreEnv("COCALC_CONTROL_DIR", originalControlDir);
+    restoreEnv(COCALC_TERMINAL_OPEN_OSC_ENV, originalTerminalOpenOsc);
     jest.restoreAllMocks();
   });
 
@@ -67,6 +81,40 @@ describe("backend/bin/open", () => {
       event: "open",
       paths: [{ directory }],
     });
+  });
+
+  it("emits terminal OSC when enabled", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-open-"));
+    const file = path.join(tempDir, "a.txt");
+    fs.writeFileSync(file, "test");
+    process.argv = ["node", "open.ts", "a.txt"];
+    process.env.PWD = tempDir;
+    delete process.env.COCALC_CONTROL_DIR;
+    process.env[COCALC_TERMINAL_OPEN_OSC_ENV] = "1";
+    const writeFile = jest.spyOn(fs, "writeFileSync").mockImplementation(((
+      target,
+    ) => {
+      if (target === "/dev/tty") {
+        throw new Error("no tty");
+      }
+      throw new Error(`unexpected writeFileSync(${String(target)})`);
+    }) as typeof fs.writeFileSync);
+    const write = jest
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await main();
+
+    expect(write).toHaveBeenCalledWith(
+      makeTerminalOpenOsc({
+        event: "open",
+        paths: [{ file }],
+      }),
+    );
+    expect(writeFile).toHaveBeenCalledWith(
+      "/dev/tty",
+      expect.stringContaining("\x1b]7777;"),
+    );
   });
 });
 
