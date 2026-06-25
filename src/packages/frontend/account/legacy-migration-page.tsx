@@ -10,6 +10,8 @@ import {
   Checkbox,
   Input,
   InputNumber,
+  Modal,
+  Select,
   Space,
   Switch,
   Table,
@@ -17,19 +19,25 @@ import {
   Typography,
   message,
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { defineMessage } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
+import { isNewProjectRootfsSelectable } from "@cocalc/frontend/projects/create-project-rootfs";
+import { useProjectCreateDraft } from "@cocalc/frontend/projects/create/use-project-create-draft";
+import {
+  latestRootfsVersionEntries,
+  renderRootfsCatalogOption,
+} from "@cocalc/frontend/rootfs/catalog-ui";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { R2_REGION_LABELS } from "@cocalc/util/consts";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 import type {
   LegacyMigrationArchiveEntry,
   LegacyMigrationArchiveIndex,
-  LegacyMigrationImportProjectResult,
   LegacyMigrationMatchedAccount,
-  LegacyMigrationProjectRestoreMode,
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -127,28 +135,214 @@ async function openProject(project_id: string): Promise<void> {
   }
 }
 
-function projectLink(project_id?: string | null) {
-  if (!project_id) return null;
-  return (
-    <Button onClick={() => void openProject(project_id)} size="small">
-      Open
-    </Button>
+function archiveAvailable(project: LegacyMigrationProjectSummary): boolean {
+  return project.artifact_status === "available" && !!project.artifact_key;
+}
+
+function ignoreProjectRowClick(target: EventTarget | null): boolean {
+  const element = target instanceof HTMLElement ? target : null;
+  return !!element?.closest(
+    [
+      "a",
+      "button",
+      "input",
+      "textarea",
+      ".ant-checkbox-wrapper",
+      ".ant-input-number",
+      ".ant-pagination",
+      ".ant-select",
+      ".ant-switch",
+      ".ant-table-filter-trigger",
+    ].join(","),
   );
 }
 
-function resultSummary(results: LegacyMigrationImportProjectResult[]): string {
-  const imported = results.filter((result) => result.status === "imported");
-  const joined = results.filter((result) => result.status === "joined");
-  const failed = results.filter((result) => result.status === "failed");
-  const creating = results.filter((result) => result.status === "creating");
-  return [
-    imported.length ? `${imported.length} imported` : "",
-    joined.length ? `${joined.length} joined` : "",
-    creating.length ? `${creating.length} still creating` : "",
-    failed.length ? `${failed.length} failed` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
+function LegacyProjectImportModal({
+  project,
+  open,
+  onClose,
+  onImported,
+}: {
+  project?: LegacyMigrationProjectSummary;
+  open: boolean;
+  onClose: () => void;
+  onImported: (project_id: string) => Promise<void>;
+}) {
+  const [error, setError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const lastResetProjectRef = useRef<string | undefined>(undefined);
+  const {
+    draft,
+    summary,
+    rootfsImages,
+    rootfsLoading,
+    rootfsError,
+    isAdmin,
+    selectedHost,
+    setHost,
+    setRootfs,
+    reset,
+  } = useProjectCreateDraft({
+    defaultValue: project?.title ?? "",
+  });
+  const selectableRootfsImages = useMemo(
+    () =>
+      latestRootfsVersionEntries(
+        rootfsImages.filter((entry) =>
+          isNewProjectRootfsSelectable({
+            entry,
+            isGpu: summary.gpu,
+            isAdmin,
+          }),
+        ),
+        { preserveIds: [draft.rootfs_image_id] },
+      ),
+    [draft.rootfs_image_id, isAdmin, rootfsImages, summary.gpu],
+  );
+
+  useEffect(() => {
+    const legacyProjectId = open ? project?.legacy_project_id : undefined;
+    if (!legacyProjectId) {
+      lastResetProjectRef.current = undefined;
+      return;
+    }
+    if (lastResetProjectRef.current === legacyProjectId) return;
+    lastResetProjectRef.current = legacyProjectId;
+    reset();
+    setError("");
+    setImporting(false);
+  }, [open, project?.legacy_project_id, reset]);
+
+  async function importAndOpen() {
+    if (!project) return;
+    if (!archiveAvailable(project)) {
+      setError(
+        "The archived files for this legacy project are not available yet.",
+      );
+      return;
+    }
+    if (!draft.rootfs_image.trim()) {
+      setError("Choose an image before importing this project.");
+      return;
+    }
+    setImporting(true);
+    setError("");
+    try {
+      const response =
+        await webapp_client.conat_client.hub.legacyMigration.importProjects({
+          legacy_project_ids: [project.legacy_project_id],
+          restore_mode: "full",
+          rootfs_image: draft.rootfs_image,
+          rootfs_image_id: draft.rootfs_image_id,
+          host_id: draft.host_id,
+          region: draft.region,
+        });
+      const result = response.results[0];
+      if (!result?.project_id || result.status === "failed") {
+        throw new Error(result?.error ?? "Legacy project import failed.");
+      }
+      await onImported(result.project_id);
+      onClose();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      title="Import legacy project"
+      onCancel={onClose}
+      width="min(900px, 96vw)"
+      okText="Import and Open"
+      confirmLoading={importing}
+      onOk={() => void importAndOpen()}
+      okButtonProps={{
+        disabled:
+          !project ||
+          !archiveAvailable(project) ||
+          rootfsLoading ||
+          !draft.rootfs_image.trim(),
+      }}
+      destroyOnHidden
+    >
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        {project ? (
+          <Alert
+            showIcon
+            type={archiveAvailable(project) ? "info" : "error"}
+            message={project.title}
+            description={
+              archiveAvailable(project)
+                ? `This will create a CoCalc project and restore files from the legacy archive. Size: ${formatDiskMb(project.disk_mb)}.`
+                : "The archived files for this project are not available yet, so it cannot be imported without creating a blank project."
+            }
+          />
+        ) : null}
+        {error ? <Alert showIcon type="error" message={error} /> : null}
+        {rootfsError ? (
+          <Alert
+            showIcon
+            type="warning"
+            message={`Image catalog load issue: ${rootfsError}`}
+          />
+        ) : null}
+        <Space direction="vertical" size={6} style={{ width: "100%" }}>
+          <Text strong>Image</Text>
+          <Select
+            showSearch
+            loading={rootfsLoading}
+            disabled={importing || rootfsLoading}
+            value={draft.rootfs_image_id ?? draft.rootfs_image}
+            optionFilterProp="data-search"
+            style={{ width: "100%" }}
+            popupMatchSelectWidth={false}
+            onChange={(value) => {
+              const entry = selectableRootfsImages.find(
+                (entry) => (entry.id ?? entry.image) === value,
+              );
+              if (entry) {
+                setRootfs({ image: entry.image, image_id: entry.id });
+              }
+            }}
+          >
+            {selectableRootfsImages.map((entry) => (
+              <Select.Option
+                key={entry.id ?? entry.image}
+                value={entry.id ?? entry.image}
+                data-search={[
+                  entry.label,
+                  entry.image,
+                  entry.description,
+                  entry.theme?.title,
+                  entry.theme?.description,
+                  ...(entry.tags ?? []),
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+                  .toLowerCase()}
+              >
+                {renderRootfsCatalogOption(entry)}
+              </Select.Option>
+            ))}
+          </Select>
+        </Space>
+        <SelectNewHost
+          disabled={importing}
+          selectedHost={selectedHost}
+          onChange={setHost}
+          regionFilter={draft.region}
+          regionLabel={R2_REGION_LABELS[draft.region]}
+          wantsGpu={summary.gpu}
+          pickerMode="create"
+          pickerDisplay="modal"
+          showHelp={false}
+        />
+      </Space>
+    </Modal>
+  );
 }
 
 function pathLines(value: string): string[] {
@@ -353,13 +547,9 @@ export function LegacyMigrationPage() {
   const [maxDiskGb, setMaxDiskGb] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [pageSize, setPageSize] = useState(25);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [importingMode, setImportingMode] = useState<
-    "" | LegacyMigrationProjectRestoreMode
-  >("");
-  const [lastResults, setLastResults] = useState<
-    LegacyMigrationImportProjectResult[]
-  >([]);
+  const [importProject, setImportProject] =
+    useState<LegacyMigrationProjectSummary>();
+  const [openingLegacyProjectId, setOpeningLegacyProjectId] = useState("");
 
   async function loadProjects(nextQuery = query) {
     if (!account_id || !legacyMigrationEnabled) return;
@@ -395,29 +585,6 @@ export function LegacyMigrationPage() {
     }
   }, [account_id, includeHidden, legacyMigrationEnabled]);
 
-  async function importSelected(mode: LegacyMigrationProjectRestoreMode) {
-    if (selected.length === 0) return;
-    setImportingMode(mode);
-    setLastResults([]);
-    try {
-      const response =
-        await webapp_client.conat_client.hub.legacyMigration.importProjects({
-          legacy_project_ids: selected,
-          restore_mode: mode,
-        });
-      setLastResults(response.results);
-      void message.info(
-        resultSummary(response.results) || "No projects changed",
-      );
-      setSelected([]);
-      await loadProjects();
-    } catch (err) {
-      void message.error(`${err}`);
-    } finally {
-      setImportingMode("");
-    }
-  }
-
   function setShowLegacyProjectsButton(show: boolean): void {
     redux
       .getActions("account")
@@ -430,6 +597,48 @@ export function LegacyMigrationPage() {
         ? "Legacy Projects button enabled on the Projects page."
         : "Legacy Projects button hidden from the Projects page.",
     );
+  }
+
+  async function openImportedProject(project_id: string): Promise<void> {
+    await openProject(project_id);
+    await loadProjects();
+  }
+
+  async function handleProjectAction(
+    project: LegacyMigrationProjectSummary,
+  ): Promise<void> {
+    if (project.project_id) {
+      if (project.joined) {
+        await openProject(project.project_id);
+        return;
+      }
+      setOpeningLegacyProjectId(project.legacy_project_id);
+      try {
+        const response =
+          await webapp_client.conat_client.hub.legacyMigration.importProjects({
+            legacy_project_ids: [project.legacy_project_id],
+            restore_mode: "full",
+          });
+        const result = response.results[0];
+        if (!result?.project_id || result.status === "failed") {
+          throw new Error(result?.error ?? "Unable to join legacy project.");
+        }
+        await openProject(result.project_id);
+        await loadProjects();
+      } catch (err) {
+        void message.error(`${err}`);
+      } finally {
+        setOpeningLegacyProjectId("");
+      }
+      return;
+    }
+    if (!archiveAvailable(project)) {
+      void message.error(
+        "The archived files for this legacy project are not available yet.",
+      );
+      return;
+    }
+    setImportProject(project);
   }
 
   const columns = [
@@ -490,13 +699,22 @@ export function LegacyMigrationPage() {
       ) => (left.disk_mb ?? -1) - (right.disk_mb ?? -1),
     },
     {
-      title: "Import",
+      title: "Open",
       key: "import",
       width: 170,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={4}>
           {importTag(project)}
-          {projectLink(project.project_id)}
+          <Button
+            loading={
+              project.import_status === "creating" ||
+              openingLegacyProjectId === project.legacy_project_id
+            }
+            onClick={() => void handleProjectAction(project)}
+            size="small"
+          >
+            {project.project_id ? "Open" : "Import and Open"}
+          </Button>
         </Space>
       ),
     },
@@ -541,10 +759,10 @@ export function LegacyMigrationPage() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Paragraph type="secondary">
-        Import selected projects from the archived legacy cocalc.com snapshot.
-        Project metadata is created immediately. File archives are restored from
-        R2 by a follow-up restore worker, so imported projects can temporarily
-        show as file restore pending.
+        Open projects from the archived legacy cocalc.com snapshot. Already
+        imported projects open immediately. For projects that have not been
+        imported yet, choose an image and host, then CoCalc creates the project
+        and restores its files from the archive.
       </Paragraph>
       <Paragraph type="secondary">
         This page loads up to {PROJECT_LOAD_LIMIT.toLocaleString()} matching
@@ -702,40 +920,19 @@ export function LegacyMigrationPage() {
                   filters to find projects outside this loaded list.
                 </Text>
               </Space>
-              <Space wrap>
-                <Button
-                  disabled={selected.length === 0 || !!importingMode}
-                  loading={importingMode === "full"}
-                  onClick={() => void importSelected("full")}
-                  type="primary"
-                >
-                  Import selected
-                </Button>
-                <Button
-                  disabled={selected.length === 0 || !!importingMode}
-                  loading={importingMode === "select"}
-                  onClick={() => void importSelected("select")}
-                >
-                  Import selected for file selection
-                </Button>
-              </Space>
-              {lastResults.length > 0 ? (
-                <Alert
-                  showIcon
-                  type={
-                    lastResults.some((result) => result.status === "failed")
-                      ? "warning"
-                      : "success"
-                  }
-                  message={resultSummary(lastResults)}
-                />
-              ) : null}
               <Table<LegacyMigrationProjectSummary>
                 columns={columns}
                 dataSource={state.projects}
                 loading={state.loading}
                 scroll={{ x: 1320 }}
                 tableLayout="fixed"
+                onRow={(project) => ({
+                  onClick: (event) => {
+                    if (ignoreProjectRowClick(event.target)) return;
+                    void handleProjectAction(project);
+                  },
+                  style: { cursor: "pointer" },
+                })}
                 pagination={{
                   pageSize,
                   showSizeChanger: true,
@@ -746,13 +943,12 @@ export function LegacyMigrationPage() {
                   onShowSizeChange: (_page, size) => setPageSize(size),
                 }}
                 rowKey="legacy_project_id"
-                rowSelection={{
-                  selectedRowKeys: selected,
-                  onChange: (keys) => setSelected(keys.map((key) => `${key}`)),
-                  getCheckboxProps: (project) => ({
-                    disabled: project.import_status === "creating",
-                  }),
-                }}
+              />
+              <LegacyProjectImportModal
+                project={importProject}
+                open={importProject != null}
+                onClose={() => setImportProject(undefined)}
+                onImported={openImportedProject}
               />
             </>
           )}

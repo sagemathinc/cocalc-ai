@@ -93,6 +93,8 @@ export interface LegacyMigrationImportProjectsOptions {
   restore_mode?: LegacyMigrationProjectRestoreMode;
   rootfs_image?: string;
   rootfs_image_id?: string;
+  host_id?: string;
+  region?: string;
 }
 
 export interface LegacyMigrationImportProjectResult {

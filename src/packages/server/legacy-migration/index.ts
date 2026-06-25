@@ -643,12 +643,16 @@ async function importOneProject({
   restore_mode,
   rootfs_image,
   rootfs_image_id,
+  host_id,
+  region,
 }: {
   account_id: string;
   legacy_project_id: string;
   restore_mode: LegacyMigrationProjectRestoreMode;
   rootfs_image?: string;
   rootfs_image_id?: string;
+  host_id?: string;
+  region?: string;
 }): Promise<LegacyMigrationImportProjectResult> {
   await ensureLegacyMigrationProjectImportSchema();
   const legacy = await authorizedLegacyProject({
@@ -660,6 +664,49 @@ async function importOneProject({
       legacy_project_id,
       status: "failed",
       error: "legacy project is not available for this account",
+    };
+  }
+  const pool = getPool();
+  if (restoreStatusForProject(legacy, restore_mode) === "skipped") {
+    const { rows } = await pool.query<{
+      project_id: string | null;
+      restore_status: LegacyMigrationProjectRestoreStatus | null;
+    }>(
+      `SELECT project_id, restore_status
+         FROM legacy_migration_project_imports
+        WHERE legacy_project_id=$1`,
+      [legacy_project_id],
+    );
+    const existingProjectId = rows[0]?.project_id;
+    if (existingProjectId) {
+      await addMigrationCollaborator({
+        account_id,
+        project_id: existingProjectId,
+      });
+      await recordImportAccount({
+        account_id,
+        legacy_account_id: legacy.matched_legacy_account_id,
+        legacy_project_id,
+        project_id: existingProjectId,
+        role: "collaborator",
+      });
+      await setLegacySourceProjectLabelBestEffort({
+        account_id,
+        legacy_project_id,
+        project_id: existingProjectId,
+      });
+      return {
+        legacy_project_id,
+        project_id: existingProjectId,
+        status: "joined",
+        restore_status: rows[0]?.restore_status,
+      };
+    }
+    return {
+      legacy_project_id,
+      status: "failed",
+      error:
+        "The archived files for this legacy project are not available yet. Try again after the cocalc.com archive has been uploaded.",
     };
   }
   try {
@@ -676,7 +723,6 @@ async function importOneProject({
     };
   }
 
-  const pool = getPool();
   const created = await pool.query<{ legacy_project_id: string }>(
     `
     INSERT INTO legacy_migration_project_imports
@@ -750,6 +796,8 @@ async function importOneProject({
       description: projectDescription(legacy),
       rootfs_image,
       rootfs_image_id,
+      host_id,
+      region,
       skip_project_count_limit: true,
       start: false,
     });
@@ -811,6 +859,8 @@ export async function importProjects({
   restore_mode,
   rootfs_image,
   rootfs_image_id,
+  host_id,
+  region,
 }: LegacyMigrationImportProjectsOptions): Promise<LegacyMigrationImportProjectsResponse> {
   await assertLegacyMigrationEnabled();
   if (!account_id) {
@@ -837,6 +887,8 @@ export async function importProjects({
         restore_mode: mode,
         rootfs_image,
         rootfs_image_id,
+        host_id: clean(host_id),
+        region: clean(region),
       }),
     );
   }
