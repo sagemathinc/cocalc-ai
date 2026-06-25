@@ -40,6 +40,8 @@ const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
   envToInt("COCALC_PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS", 6 * 60 * 60 * 1000),
 );
 const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
+const LEGACY_PROJECT_ARCHIVE_UID = 2001;
+const LEGACY_PROJECT_ARCHIVE_GID = 2001;
 
 type LegacyProjectArchiveDeps = {
   getOrEnsureVolume: (project_id: string) => Promise<unknown>;
@@ -291,6 +293,78 @@ function runProjectArchiveTarCommand({
     pipeline(createReadStream(archivePath), decompressor, stdin).catch(
       failInput,
     );
+  });
+}
+
+function runProjectArchiveCommand({
+  command,
+  args,
+}: {
+  command: string;
+  args: string[];
+}): Promise<{ stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+      if (stderr.length > 20_000) {
+        stderr = stderr.slice(stderr.length - 20_000);
+      }
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) {
+        resolve({ stderr });
+        return;
+      }
+      reject(
+        new Error(
+          `${command} failed with code ${code ?? "null"} signal ${signal ?? "null"}: ${stderr.trim() || "unknown error"}`,
+        ),
+      );
+    });
+  });
+}
+
+async function mapLegacyArchiveOwnership({
+  dest,
+  progress,
+  lro,
+}: {
+  dest: string;
+  progress: number;
+  lro?: LroRef;
+}): Promise<void> {
+  const destStat = await stat(dest);
+  if (
+    destStat.uid === LEGACY_PROJECT_ARCHIVE_UID &&
+    destStat.gid === LEGACY_PROJECT_ARCHIVE_GID
+  ) {
+    return;
+  }
+  publishArchiveProgress({
+    lro,
+    phase: "permissions",
+    message: "mapping legacy archive ownership",
+    progress,
+    detail: {
+      legacy_uid: LEGACY_PROJECT_ARCHIVE_UID,
+      legacy_gid: LEGACY_PROJECT_ARCHIVE_GID,
+      project_uid: destStat.uid,
+      project_gid: destStat.gid,
+    },
+  });
+  await runProjectArchiveCommand({
+    command: "chown",
+    args: [
+      "-hR",
+      `--from=${LEGACY_PROJECT_ARCHIVE_UID}:${LEGACY_PROJECT_ARCHIVE_GID}`,
+      `${destStat.uid}:${destStat.gid}`,
+      dest,
+    ],
   });
 }
 
@@ -742,12 +816,17 @@ export function createLegacyProjectArchiveHandlers({
         if (useSelection && file_count === 0) {
           throw new Error("selected archive paths matched no files");
         }
+        // A legacy cocalc.com archive stores files as uid/gid 2001. On a
+        // rootless project host that literal host owner is wrong; project files
+        // must match the mapped uid/gid of the freshly created project volume.
+        await mapLegacyArchiveOwnership({ dest: home, progress: 68, lro });
         await extractProjectArchiveTar({
           archivePath,
           dest: home,
           member_list_path,
           lro,
         });
+        await mapLegacyArchiveOwnership({ dest: home, progress: 90, lro });
         publishArchiveProgress({
           lro,
           phase: "finish",
