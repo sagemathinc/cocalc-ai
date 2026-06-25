@@ -99,6 +99,7 @@ export interface Org {
 
   getUsers: (opts: { account_id?: string; name: string }) => Promise<
     {
+      display_name?: string;
       first_name: string;
       last_name: string;
       account_id: string;

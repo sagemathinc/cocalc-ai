@@ -1,5 +1,9 @@
 import getPool from "@cocalc/database/pool";
-import { displayNameFromParts } from "@cocalc/util/accounts/display-name";
+import {
+  displayNameFromAccount,
+  displayNameFromParts,
+  legacyNamePartsFromDisplayName,
+} from "@cocalc/util/accounts/display-name";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -398,6 +402,7 @@ export async function getUsers({
   name: string;
 }): Promise<
   {
+    display_name?: string;
     first_name: string;
     last_name: string;
     account_id: string;
@@ -408,10 +413,19 @@ export async function getUsers({
   await assertAllowed({ account_id, name });
   const pool = getPool();
   const { rows } = await pool.query(
-    "SELECT first_name, last_name, account_id, email_address, last_active FROM accounts WHERE org=$1",
+    "SELECT display_name, first_name, last_name, account_id, email_address, last_active FROM accounts WHERE org=$1",
     [name],
   );
-  return rows;
+  return rows.map((row) => {
+    const display_name = displayNameFromAccount(row);
+    const first_name = `${row.first_name ?? ""}`.trim();
+    const last_name = `${row.last_name ?? ""}`.trim();
+    if (first_name || last_name) {
+      return { ...row, display_name, first_name, last_name };
+    }
+    const legacy = legacyNamePartsFromDisplayName(display_name);
+    return { ...row, display_name, ...legacy };
+  });
 }
 
 export async function message({
