@@ -84,8 +84,13 @@ Table({
           history: null,
           subscription_count: null,
           subscribed_account_count: null,
+          team_seat_count: null,
+          team_account_count: null,
+          course_account_count: null,
+          site_account_count: null,
           admin_assigned_count: null,
           site_license_count: null,
+          total_account_count: null,
           created: null,
           updated: null,
         } as { [key in MembershipTierGetFields]: null },
@@ -202,6 +207,22 @@ Table({
       type: "number",
       desc: "Number of accounts with active paid subscriptions using this tier.",
     },
+    team_seat_count: {
+      type: "number",
+      desc: "Number of active purchased team-license seats using this tier.",
+    },
+    team_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts assigned active team-license seats using this tier.",
+    },
+    course_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts assigned active course membership seats using this tier.",
+    },
+    site_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts with active claimed site-license seats using this tier.",
+    },
     admin_assigned_count: {
       type: "number",
       desc: "Number of active admin-assigned memberships using this tier.",
@@ -209,6 +230,10 @@ Table({
     site_license_count: {
       type: "number",
       desc: "Number of active site licenses with pools using this tier.",
+    },
+    total_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts using this tier through subscriptions, packages, or admin assignment.",
     },
     created: {
       type: "timestamp",

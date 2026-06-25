@@ -57,6 +57,17 @@ async function hasSiteLicenseUsageTables(db: PostgreSQL): Promise<boolean> {
   return rows?.[0]?.exists === true;
 }
 
+async function hasMembershipPackageUsageTables(
+  db: PostgreSQL,
+): Promise<boolean> {
+  const { rows } = await callback2(db._query, {
+    query: `SELECT to_regclass('public.membership_packages') IS NOT NULL
+                     AND to_regclass('public.membership_package_assignments') IS NOT NULL
+                     AS exists`,
+  });
+  return rows?.[0]?.exists === true;
+}
+
 async function getActiveSiteLicenseTierCounts(
   db: PostgreSQL,
 ): Promise<Record<string, number>> {
@@ -84,6 +95,66 @@ async function getActiveSiteLicenseTierCounts(
   }, {});
 }
 
+async function getActiveTeamSeatTierCounts(
+  db: PostgreSQL,
+): Promise<Record<string, number>> {
+  if (!(await hasMembershipPackageUsageTables(db))) {
+    return {};
+  }
+  const { rows } = await callback2(db._query, {
+    query: `SELECT membership_class AS tier_id,
+                   SUM(seat_count)::int AS team_seat_count
+            FROM membership_packages
+            WHERE kind = 'team'
+              AND (starts_at IS NULL OR starts_at <= NOW())
+              AND (expires_at IS NULL OR expires_at > NOW())
+            GROUP BY membership_class`,
+  });
+  return (rows ?? []).reduce((acc, row) => {
+    if (!row?.tier_id) return acc;
+    acc[row.tier_id] = row.team_seat_count ?? 0;
+    return acc;
+  }, {});
+}
+
+type PackageAccountCounts = {
+  team_account_count: number;
+  course_account_count: number;
+  site_account_count: number;
+};
+
+async function getActivePackageAccountTierCounts(
+  db: PostgreSQL,
+): Promise<Record<string, PackageAccountCounts>> {
+  if (!(await hasMembershipPackageUsageTables(db))) {
+    return {};
+  }
+  const { rows } = await callback2(db._query, {
+    query: `SELECT p.membership_class AS tier_id,
+                   COUNT(DISTINCT CASE WHEN p.kind = 'team' THEN a.account_id END)::int AS team_account_count,
+                   COUNT(DISTINCT CASE WHEN p.kind = 'course' THEN a.account_id END)::int AS course_account_count,
+                   COUNT(DISTINCT CASE WHEN p.kind = 'site' THEN a.account_id END)::int AS site_account_count
+            FROM membership_packages p
+            JOIN membership_package_assignments a
+              ON a.package_id = p.id
+             AND a.revoked_at IS NULL
+             AND a.account_id IS NOT NULL
+            WHERE p.kind IN ('team', 'course', 'site')
+              AND (p.starts_at IS NULL OR p.starts_at <= NOW())
+              AND (p.expires_at IS NULL OR p.expires_at > NOW())
+            GROUP BY p.membership_class`,
+  });
+  return (rows ?? []).reduce((acc, row) => {
+    if (!row?.tier_id) return acc;
+    acc[row.tier_id] = {
+      team_account_count: row.team_account_count ?? 0,
+      course_account_count: row.course_account_count ?? 0,
+      site_account_count: row.site_account_count ?? 0,
+    };
+    return acc;
+  }, {});
+}
+
 async function getActiveAdminAssignedTierCounts(
   db: PostgreSQL,
 ): Promise<Record<string, number>> {
@@ -97,6 +168,51 @@ async function getActiveAdminAssignedTierCounts(
   return (rows ?? []).reduce((acc, row) => {
     if (!row?.tier_id) return acc;
     acc[row.tier_id] = row.admin_assigned_count ?? 0;
+    return acc;
+  }, {});
+}
+
+async function getTotalAccountTierCounts(
+  db: PostgreSQL,
+): Promise<Record<string, number>> {
+  const includePackageAccounts = await hasMembershipPackageUsageTables(db);
+  const packageAccountUnion = includePackageAccounts
+    ? `UNION ALL
+       SELECT p.membership_class AS tier_id,
+              a.account_id
+         FROM membership_packages p
+         JOIN membership_package_assignments a
+           ON a.package_id = p.id
+          AND a.revoked_at IS NULL
+          AND a.account_id IS NOT NULL
+        WHERE p.kind IN ('team', 'course', 'site')
+          AND (p.starts_at IS NULL OR p.starts_at <= NOW())
+          AND (p.expires_at IS NULL OR p.expires_at > NOW())`
+    : "";
+  const { rows } = await callback2(db._query, {
+    query: `SELECT tier_id,
+                   COUNT(DISTINCT account_id)::int AS total_account_count
+              FROM (
+                SELECT metadata->>'class' AS tier_id,
+                       account_id
+                  FROM subscriptions
+                 WHERE metadata->>'type'='membership'
+                   AND account_id IS NOT NULL
+                UNION ALL
+                SELECT membership_class AS tier_id,
+                       account_id
+                  FROM admin_assigned_memberships
+                 WHERE account_id IS NOT NULL
+                   AND (expires_at IS NULL OR expires_at > NOW())
+                ${packageAccountUnion}
+              ) accounts
+             WHERE tier_id IS NOT NULL
+               AND tier_id != ''
+             GROUP BY tier_id`,
+  });
+  return (rows ?? []).reduce((acc, row) => {
+    if (!row?.tier_id) return acc;
+    acc[row.tier_id] = row.total_account_count ?? 0;
     return acc;
   }, {});
 }
@@ -152,14 +268,24 @@ export default async function membershipTiersQuery(
     }, {});
     const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
     const adminAssignedByTier = await getActiveAdminAssignedTierCounts(db);
+    const teamSeatsByTier = await getActiveTeamSeatTierCounts(db);
+    const packageAccountsByTier = await getActivePackageAccountTierCounts(db);
+    const totalAccountsByTier = await getTotalAccountTierCounts(db);
     return rows.map((row) => ({
       ...mapStorageRow(row),
       ...(byTier[row.id] ?? {
         subscription_count: 0,
         subscribed_account_count: 0,
       }),
+      team_seat_count: teamSeatsByTier[row.id] ?? 0,
+      ...(packageAccountsByTier[row.id] ?? {
+        team_account_count: 0,
+        course_account_count: 0,
+        site_account_count: 0,
+      }),
       admin_assigned_count: adminAssignedByTier[row.id] ?? 0,
       site_license_count: siteLicenseByTier[row.id] ?? 0,
+      total_account_count: totalAccountsByTier[row.id] ?? 0,
     }));
   } else if (query.id) {
     const {
