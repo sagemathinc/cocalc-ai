@@ -181,6 +181,33 @@ export async function cleanupStaleProjectSecretsHostPaths(): Promise<void> {
   }
 }
 
+async function writeManagedRuntimeFile({
+  path,
+  content,
+  mode = 0o600,
+}: {
+  path: string;
+  content: string;
+  mode?: number;
+}): Promise<void> {
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700).catch(() => {});
+  const tmpPath = join(
+    dir,
+    `.tmp-${basename(path)}-${process.pid}-${Date.now()}`,
+  );
+  try {
+    await writeFile(tmpPath, content, { mode });
+    await chmod(tmpPath, mode).catch(() => {});
+    await rename(tmpPath, path);
+    await chmod(path, mode).catch(() => {});
+  } catch (err) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
 type PodmanProjectContainer = {
   name: string;
   state: string;
@@ -511,8 +538,7 @@ async function writeSshAuthorizedKeys({
   authorizedKeys?: string;
 }) {
   const write = async (path: string, content: string) => {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(path, content, { mode: 0o600 });
+    await writeManagedRuntimeFile({ path, content });
   };
 
   const proxyKeys = formatKeys(sshProxyPublicKey);
@@ -588,8 +614,7 @@ async function syncSshProxyKeyForDropbear({
   if (!output.endsWith("\n")) {
     output += "\n";
   }
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, output, { mode: 0o600 });
+  await writeManagedRuntimeFile({ path, content: output });
 }
 
 function projectContainerName(project_id) {

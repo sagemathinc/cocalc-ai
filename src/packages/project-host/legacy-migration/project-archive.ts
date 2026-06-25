@@ -42,6 +42,13 @@ const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
 const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
 const LEGACY_PROJECT_ARCHIVE_UID = 2001;
 const LEGACY_PROJECT_ARCHIVE_GID = 2001;
+const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
+  ".local/share/cocalc",
+  ".snapshots",
+  ".smc",
+  ".ssh/.cocalc",
+  ".ssh/authorized_keys",
+];
 
 type LegacyProjectArchiveDeps = {
   getOrEnsureVolume: (project_id: string) => Promise<unknown>;
@@ -121,6 +128,14 @@ function normalizeProjectArchivePathRoots(
     ),
   );
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function mergeProjectArchivePathRoots(
+  ...pathLists: (string[] | undefined)[]
+): string[] | undefined {
+  return normalizeProjectArchivePathRoots(
+    pathLists.flatMap((paths) => paths ?? []),
+  );
 }
 
 function archivePathMatchesRoot(path: string, root: string): boolean {
@@ -720,6 +735,9 @@ export function createLegacyProjectArchiveHandlers({
       const { file_count, uncompressed_bytes, entries, truncated } =
         await scanProjectArchiveTar({
           archivePath: paths.archive,
+          exclude: normalizeProjectArchivePathRoots(
+            LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
+          ),
           collect_entries: true,
           max_entries,
           lro,
@@ -789,7 +807,10 @@ export function createLegacyProjectArchiveHandlers({
               })
             : await hashProjectArchiveFile(archivePath);
         const include = normalizeProjectArchivePathRoots(include_paths);
-        const exclude = normalizeProjectArchivePathRoots(exclude_paths);
+        const exclude = mergeProjectArchivePathRoots(
+          LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
+          exclude_paths,
+        );
         const useSelection = include != null || exclude != null;
         let member_list_path: string | undefined;
         if (useSelection) {

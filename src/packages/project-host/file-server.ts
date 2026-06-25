@@ -11,6 +11,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -4627,11 +4628,19 @@ export async function writeManagedAuthorizedKeys(
     return;
   }
   const managedPath = join(vol.path, INTERNAL_SSH_CONFIG, "authorized_keys");
-  await mkdir(join(vol.path, INTERNAL_SSH_CONFIG), {
-    recursive: true,
-    mode: 0o700,
-  });
-  await writeFile(managedPath, formatted, { mode: 0o600 });
+  const managedDir = join(vol.path, INTERNAL_SSH_CONFIG);
+  await mkdir(managedDir, { recursive: true, mode: 0o700 });
+  await chmod(managedDir, 0o700).catch(() => {});
+  const tmpPath = join(managedDir, `.tmp-authorized_keys-${randomUUID()}`);
+  try {
+    await writeFile(tmpPath, formatted, { mode: 0o600 });
+    await chmod(tmpPath, 0o600).catch(() => {});
+    await rename(tmpPath, managedPath);
+    await chmod(managedPath, 0o600).catch(() => {});
+  } catch (err) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 export function closeFileServer() {

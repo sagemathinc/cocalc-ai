@@ -13,14 +13,46 @@ but is not in the array keys, it deletes it from the file.
 - it leaves everything else unchanged and writes the file back to disk.
 */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 const MARKER = "# Added by CoCalc";
 
 /** Normalize a key line for comparison (trim + collapse whitespace). */
 function normalizeKeyLine(s: string): string {
   return s.trim().replace(/\s+/g, " ");
+}
+
+async function writeAuthorizedKeysFile({
+  path,
+  content,
+}: {
+  path: string;
+  content: string;
+}): Promise<void> {
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700).catch(() => {});
+  const tmpPath = join(
+    dir,
+    `.tmp-${basename(path)}-${process.pid}-${Date.now()}`,
+  );
+  try {
+    await writeFile(tmpPath, content, { encoding: "utf8", mode: 0o600 });
+    await chmod(tmpPath, 0o600).catch(() => {});
+    await rename(tmpPath, path);
+    await chmod(path, 0o600).catch(() => {});
+  } catch (err) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 export async function updateAuthorizedKeys({
@@ -124,7 +156,6 @@ export async function updateAuthorizedKeys({
     // if no keys, do not create file
     return "";
   }
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, out, { encoding: "utf8", mode: 0o600 });
+  await writeAuthorizedKeysFile({ path, content: out });
   return out;
 }
