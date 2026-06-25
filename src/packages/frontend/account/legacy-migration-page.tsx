@@ -44,6 +44,9 @@ import type { SettingsPageDefinition } from "./settings-page";
 
 const { Paragraph, Text } = Typography;
 
+const RESTORE_POLL_INTERVAL_MS = 2000;
+const RESTORE_POLL_ATTEMPTS = 600;
+
 type LegacyMigrationState = {
   error: string;
   legacyAccounts: LegacyMigrationMatchedAccount[];
@@ -54,6 +57,10 @@ type LegacyMigrationState = {
 };
 
 const PROJECT_LOAD_LIMIT = 1000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function formatDate(value?: Date | string | null): string {
   if (!value) return "Unknown";
@@ -152,6 +159,13 @@ function archiveAvailable(project: LegacyMigrationProjectSummary): boolean {
   return project.artifact_status === "available" && !!project.artifact_key;
 }
 
+function projectFilesReady(project: LegacyMigrationProjectSummary): boolean {
+  return (
+    project.restore_status === "restored" ||
+    project.restore_status === "skipped"
+  );
+}
+
 function ignoreProjectRowClick(target: EventTarget | null): boolean {
   const element = target instanceof HTMLElement ? target : null;
   return !!element?.closest(
@@ -179,7 +193,10 @@ function LegacyProjectImportModal({
   project?: LegacyMigrationProjectSummary;
   open: boolean;
   onClose: () => void;
-  onImported: (project_id: string) => Promise<void>;
+  onImported: (
+    project: LegacyMigrationProjectSummary,
+    project_id: string,
+  ) => Promise<void>;
 }) {
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
@@ -254,7 +271,7 @@ function LegacyProjectImportModal({
       if (!result?.project_id || result.status === "failed") {
         throw new Error(result?.error ?? "Legacy project import failed.");
       }
-      await onImported(result.project_id);
+      await onImported(project, result.project_id);
       onClose();
     } catch (err) {
       setError(`${err}`);
@@ -612,7 +629,54 @@ export function LegacyMigrationPage() {
     );
   }
 
-  async function openImportedProject(project_id: string): Promise<void> {
+  async function waitForProjectFiles({
+    legacy_project_id,
+    project_id,
+  }: {
+    legacy_project_id: string;
+    project_id: string;
+  }): Promise<void> {
+    for (let attempt = 0; attempt < RESTORE_POLL_ATTEMPTS; attempt += 1) {
+      const response =
+        await webapp_client.conat_client.hub.legacyMigration.listProjects({
+          include_hidden: true,
+          limit: 1,
+          query: legacy_project_id,
+        });
+      const current = response.projects.find(
+        (project) => project.legacy_project_id === legacy_project_id,
+      );
+      if (current == null) {
+        throw new Error("Legacy project import status is not available.");
+      }
+      if (current.project_id && current.project_id !== project_id) {
+        throw new Error("Legacy project import target changed unexpectedly.");
+      }
+      if (projectFilesReady(current)) return;
+      if (current.restore_status === "failed") {
+        throw new Error(
+          current.restore_error ||
+            "Legacy project file restore failed. The project was created, but its archived files were not restored.",
+        );
+      }
+      await sleep(RESTORE_POLL_INTERVAL_MS);
+    }
+    throw new Error(
+      "Legacy project file restore is still running. Refresh this page later, then open the project after the file status says files restored.",
+    );
+  }
+
+  async function openRestoredProject(
+    project: LegacyMigrationProjectSummary,
+    project_id: string,
+  ): Promise<void> {
+    if (!projectFilesReady(project)) {
+      void message.info("Restoring archived project files before opening...");
+      await waitForProjectFiles({
+        legacy_project_id: project.legacy_project_id,
+        project_id,
+      });
+    }
     await openProject(project_id);
     await loadProjects();
   }
@@ -622,7 +686,14 @@ export function LegacyMigrationPage() {
   ): Promise<void> {
     if (project.project_id) {
       if (project.joined) {
-        await openProject(project.project_id);
+        setOpeningLegacyProjectId(project.legacy_project_id);
+        try {
+          await openRestoredProject(project, project.project_id);
+        } catch (err) {
+          void message.error(`${err}`);
+        } finally {
+          setOpeningLegacyProjectId("");
+        }
         return;
       }
       setOpeningLegacyProjectId(project.legacy_project_id);
@@ -636,8 +707,7 @@ export function LegacyMigrationPage() {
         if (!result?.project_id || result.status === "failed") {
           throw new Error(result?.error ?? "Unable to join legacy project.");
         }
-        await openProject(result.project_id);
-        await loadProjects();
+        await openRestoredProject(project, result.project_id);
       } catch (err) {
         void message.error(`${err}`);
       } finally {
@@ -986,7 +1056,7 @@ export function LegacyMigrationPage() {
                 project={importProject}
                 open={importProject != null}
                 onClose={() => setImportProject(undefined)}
-                onImported={openImportedProject}
+                onImported={openRestoredProject}
               />
             </>
           )}
