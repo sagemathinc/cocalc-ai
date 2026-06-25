@@ -25,11 +25,13 @@ import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import type {
+  LroRef,
   ProjectArchiveEntry,
   ProjectArchiveIndexResult,
   ProjectArchiveRestoreResult,
   SignedProjectArchiveDownload,
 } from "@cocalc/conat/files/file-server";
+import { publishLroEvent } from "../lro/stream";
 
 import { normalizeArchivePath } from "../archive-path";
 
@@ -37,6 +39,7 @@ const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
   60 * 60 * 1000,
   envToInt("COCALC_PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS", 6 * 60 * 60 * 1000),
 );
+const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
 
 type LegacyProjectArchiveDeps = {
   getOrEnsureVolume: (project_id: string) => Promise<unknown>;
@@ -50,6 +53,35 @@ type LegacyProjectArchiveDeps = {
 
 function archiveRestoreTmpRoot(): string {
   return join(data, "tmp", "legacy-project-restore");
+}
+
+function publishArchiveProgress({
+  lro,
+  phase,
+  message,
+  progress,
+  detail,
+}: {
+  lro?: LroRef;
+  phase: string;
+  message: string;
+  progress: number;
+  detail?: any;
+}): void {
+  if (!lro) return;
+  void publishLroEvent({
+    scope_type: lro.scope_type,
+    scope_id: lro.scope_id,
+    op_id: lro.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase,
+      message,
+      progress,
+      detail,
+    },
+  }).catch(() => {});
 }
 
 function assertSafeArchivePath(raw: string): void {
@@ -287,6 +319,7 @@ async function scanProjectArchiveTar({
   collect_entries,
   max_entries,
   max_uncompressed_bytes,
+  lro,
 }: {
   archivePath: string;
   include?: string[];
@@ -295,6 +328,7 @@ async function scanProjectArchiveTar({
   collect_entries?: boolean;
   max_entries?: number;
   max_uncompressed_bytes?: number;
+  lro?: LroRef;
 }): Promise<{
   file_count: number;
   uncompressed_bytes: number;
@@ -311,6 +345,7 @@ async function scanProjectArchiveTar({
       : 0;
   const memberList =
     member_list_path != null ? createWriteStream(member_list_path) : undefined;
+  let lastProgress = 0;
   const closeMemberList = async () => {
     if (memberList == null) return;
     await new Promise<void>((resolve, reject) => {
@@ -364,6 +399,20 @@ async function scanProjectArchiveTar({
           }
         }
         uncompressed_bytes += parsed.size;
+        const now = Date.now();
+        if (now - lastProgress >= PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS) {
+          lastProgress = now;
+          publishArchiveProgress({
+            lro,
+            phase: "scan",
+            message: "checking archive contents",
+            progress: 55,
+            detail: {
+              file_count,
+              uncompressed_bytes,
+            },
+          });
+        }
         if (
           max_uncompressed_bytes != null &&
           uncompressed_bytes > max_uncompressed_bytes
@@ -384,11 +433,19 @@ async function extractProjectArchiveTar({
   archivePath,
   dest,
   member_list_path,
+  lro,
 }: {
   archivePath: string;
   dest: string;
   member_list_path?: string;
+  lro?: LroRef;
 }): Promise<void> {
+  publishArchiveProgress({
+    lro,
+    phase: "extract",
+    message: "extracting archive files",
+    progress: 70,
+  });
   const args = [
     "--delay-directory-restore",
     "--no-overwrite-dir",
@@ -414,9 +471,11 @@ async function extractProjectArchiveTar({
 async function downloadSignedProjectArchive({
   download,
   dest,
+  lro,
 }: {
   download: SignedProjectArchiveDownload;
   dest: string;
+  lro?: LroRef;
 }): Promise<{ bytes: number; sha256: string }> {
   const response = await fetch(download.url, {
     headers: download.headers ?? {},
@@ -432,6 +491,7 @@ async function downloadSignedProjectArchive({
       ? download.bytes
       : undefined;
   let bytes = 0;
+  let lastProgress = 0;
   const monitor = new Transform({
     transform(chunk: Buffer, _encoding, cb) {
       bytes += chunk.length;
@@ -440,6 +500,23 @@ async function downloadSignedProjectArchive({
         return;
       }
       hash.update(chunk);
+      const now = Date.now();
+      if (now - lastProgress >= PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS) {
+        lastProgress = now;
+        publishArchiveProgress({
+          lro,
+          phase: "download",
+          message: "downloading archive",
+          progress:
+            expectedBytes != null && expectedBytes > 0
+              ? Math.min(45, 20 + (bytes / expectedBytes) * 25)
+              : 30,
+          detail: {
+            bytes,
+            expected_bytes: expectedBytes,
+          },
+        });
+      }
       cb(null, chunk);
     },
   });
@@ -499,6 +576,7 @@ export function createLegacyProjectArchiveHandlers({
     project_id: string;
     download: SignedProjectArchiveDownload;
     max_entries?: number;
+    lro?: LroRef;
   }) => Promise<ProjectArchiveIndexResult>;
   restoreProjectArchive: (opts: {
     project_id: string;
@@ -507,6 +585,7 @@ export function createLegacyProjectArchiveHandlers({
     include_paths?: string[];
     exclude_paths?: string[];
     max_uncompressed_bytes?: number;
+    lro?: LroRef;
   }) => Promise<ProjectArchiveRestoreResult>;
 } {
   return {
@@ -514,10 +593,12 @@ export function createLegacyProjectArchiveHandlers({
       project_id,
       download,
       max_entries,
+      lro,
     }: {
       project_id: string;
       download: SignedProjectArchiveDownload;
       max_entries?: number;
+      lro?: LroRef;
     }): Promise<ProjectArchiveIndexResult> {
       const started = Date.now();
       await getOrEnsureVolume(project_id);
@@ -547,12 +628,14 @@ export function createLegacyProjectArchiveHandlers({
         : await downloadSignedProjectArchive({
             download,
             dest: paths.archive,
+            lro,
           });
       const { file_count, uncompressed_bytes, entries, truncated } =
         await scanProjectArchiveTar({
           archivePath: paths.archive,
           collect_entries: true,
           max_entries,
+          lro,
         });
       const result: ProjectArchiveIndexResult = {
         cache_id,
@@ -574,6 +657,7 @@ export function createLegacyProjectArchiveHandlers({
       include_paths,
       exclude_paths,
       max_uncompressed_bytes,
+      lro,
     }: {
       project_id: string;
       download?: SignedProjectArchiveDownload;
@@ -581,6 +665,7 @@ export function createLegacyProjectArchiveHandlers({
       include_paths?: string[];
       exclude_paths?: string[];
       max_uncompressed_bytes?: number;
+      lro?: LroRef;
     }): Promise<ProjectArchiveRestoreResult> {
       const started = Date.now();
       await getOrEnsureVolume(project_id);
@@ -613,6 +698,7 @@ export function createLegacyProjectArchiveHandlers({
             ? await downloadSignedProjectArchive({
                 download,
                 dest: archivePath,
+                lro,
               })
             : await hashProjectArchiveFile(archivePath);
         const include = normalizeProjectArchivePathRoots(include_paths);
@@ -638,6 +724,7 @@ export function createLegacyProjectArchiveHandlers({
           exclude,
           member_list_path,
           max_uncompressed_bytes,
+          lro,
         });
         if (useSelection && file_count === 0) {
           throw new Error("selected archive paths matched no files");
@@ -646,6 +733,17 @@ export function createLegacyProjectArchiveHandlers({
           archivePath,
           dest: home,
           member_list_path,
+          lro,
+        });
+        publishArchiveProgress({
+          lro,
+          phase: "finish",
+          message: "legacy project files restored",
+          progress: 95,
+          detail: {
+            file_count,
+            uncompressed_bytes,
+          },
         });
         invalidateProjectFsServer(project_id);
         void touchProjectLastEdited(project_id, "legacy-migration-restore");

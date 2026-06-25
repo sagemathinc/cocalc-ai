@@ -44,9 +44,6 @@ import type { SettingsPageDefinition } from "./settings-page";
 
 const { Paragraph, Text } = Typography;
 
-const RESTORE_POLL_INTERVAL_MS = 2000;
-const RESTORE_POLL_ATTEMPTS = 600;
-
 type LegacyMigrationState = {
   error: string;
   legacyAccounts: LegacyMigrationMatchedAccount[];
@@ -57,10 +54,6 @@ type LegacyMigrationState = {
 };
 
 const PROJECT_LOAD_LIMIT = 1000;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function formatDate(value?: Date | string | null): string {
   if (!value) return "Unknown";
@@ -139,6 +132,23 @@ function importTag(project: LegacyMigrationProjectSummary) {
   return <Tag color="red">failed</Tag>;
 }
 
+function restoreProgressText(
+  progress: LegacyMigrationProjectSummary["restore_progress"],
+): string {
+  if (!progress || typeof progress !== "object") return "";
+  const phase = `${progress.phase ?? ""}`.trim();
+  const detail = `${progress.message ?? ""}`.trim();
+  return [phase, detail].filter(Boolean).join(": ");
+}
+
+function restoreProgressPercent(
+  progress: LegacyMigrationProjectSummary["restore_progress"],
+): number | undefined {
+  const value = progress?.progress;
+  if (typeof value !== "number" || !Number.isFinite(value)) return;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 async function openProject(project_id: string): Promise<void> {
   try {
     await (
@@ -157,13 +167,6 @@ async function openProject(project_id: string): Promise<void> {
 
 function archiveAvailable(project: LegacyMigrationProjectSummary): boolean {
   return project.artifact_status === "available" && !!project.artifact_key;
-}
-
-function projectFilesReady(project: LegacyMigrationProjectSummary): boolean {
-  return (
-    project.restore_status === "restored" ||
-    project.restore_status === "skipped"
-  );
 }
 
 function ignoreProjectRowClick(target: EventTarget | null): boolean {
@@ -306,7 +309,7 @@ function LegacyProjectImportModal({
             message={project.title}
             description={
               archiveAvailable(project)
-                ? `This will create a CoCalc project and restore files from the legacy archive. Last known disk use: ${formatDiskMb(project.disk_mb)}. Archived size: ${formatBytes(project.artifact_bytes)}.`
+                ? `This will create a CoCalc project, open it immediately, and restore files from the legacy archive in the background. Last known disk use: ${formatDiskMb(project.disk_mb)}. Archived size: ${formatBytes(project.artifact_bytes)}.`
                 : "The archived files for this project are not available yet, so it cannot be imported without creating a blank project."
             }
           />
@@ -629,53 +632,14 @@ export function LegacyMigrationPage() {
     );
   }
 
-  async function waitForProjectFiles({
-    legacy_project_id,
-    project_id,
-  }: {
-    legacy_project_id: string;
-    project_id: string;
-  }): Promise<void> {
-    for (let attempt = 0; attempt < RESTORE_POLL_ATTEMPTS; attempt += 1) {
-      const response =
-        await webapp_client.conat_client.hub.legacyMigration.listProjects({
-          include_hidden: true,
-          limit: 1,
-          query: legacy_project_id,
-        });
-      const current = response.projects.find(
-        (project) => project.legacy_project_id === legacy_project_id,
-      );
-      if (current == null) {
-        throw new Error("Legacy project import status is not available.");
-      }
-      if (current.project_id && current.project_id !== project_id) {
-        throw new Error("Legacy project import target changed unexpectedly.");
-      }
-      if (projectFilesReady(current)) return;
-      if (current.restore_status === "failed") {
-        throw new Error(
-          current.restore_error ||
-            "Legacy project file restore failed. The project was created, but its archived files were not restored.",
-        );
-      }
-      await sleep(RESTORE_POLL_INTERVAL_MS);
-    }
-    throw new Error(
-      "Legacy project file restore is still running. Refresh this page later, then open the project after the file status says files restored.",
-    );
-  }
-
-  async function openRestoredProject(
+  async function openImportedProject(
     project: LegacyMigrationProjectSummary,
     project_id: string,
   ): Promise<void> {
-    if (!projectFilesReady(project)) {
-      void message.info("Restoring archived project files before opening...");
-      await waitForProjectFiles({
-        legacy_project_id: project.legacy_project_id,
-        project_id,
-      });
+    if (project.restore_status !== "restored") {
+      void message.info(
+        "Opening project now. CoCalc will restore the legacy files in the background.",
+      );
     }
     await openProject(project_id);
     await loadProjects();
@@ -688,7 +652,7 @@ export function LegacyMigrationPage() {
       if (project.joined) {
         setOpeningLegacyProjectId(project.legacy_project_id);
         try {
-          await openRestoredProject(project, project.project_id);
+          await openImportedProject(project, project.project_id);
         } catch (err) {
           void message.error(`${err}`);
         } finally {
@@ -707,7 +671,7 @@ export function LegacyMigrationPage() {
         if (!result?.project_id || result.status === "failed") {
           throw new Error(result?.error ?? "Unable to join legacy project.");
         }
-        await openRestoredProject(project, result.project_id);
+        await openImportedProject(project, result.project_id);
       } catch (err) {
         void message.error(`${err}`);
       } finally {
@@ -835,6 +799,14 @@ export function LegacyMigrationPage() {
           {restoreTag(project)}
           {project.restore_error ? (
             <Text type="danger">{project.restore_error}</Text>
+          ) : null}
+          {restoreProgressText(project.restore_progress) ? (
+            <Text type="secondary">
+              {restoreProgressText(project.restore_progress)}
+              {restoreProgressPercent(project.restore_progress) != null
+                ? ` (${restoreProgressPercent(project.restore_progress)}%)`
+                : ""}
+            </Text>
           ) : null}
           {project.artifact_status && !project.restore_status ? (
             <Text type="secondary">{project.artifact_status}</Text>
@@ -1056,7 +1028,7 @@ export function LegacyMigrationPage() {
                 project={importProject}
                 open={importProject != null}
                 onClose={() => setImportProject(undefined)}
-                onImported={openRestoredProject}
+                onImported={openImportedProject}
               />
             </>
           )}

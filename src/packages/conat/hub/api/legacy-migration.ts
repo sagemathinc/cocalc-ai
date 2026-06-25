@@ -62,6 +62,8 @@ export interface LegacyMigrationProjectSummary {
   restore_mode?: LegacyMigrationProjectRestoreMode | null;
   restore_status?: LegacyMigrationProjectRestoreStatus | null;
   restore_error?: string | null;
+  restore_lro_op_id?: string | null;
+  restore_progress?: Record<string, any> | null;
   restore_result?: Record<string, any> | null;
   joined?: boolean;
 }
@@ -103,6 +105,7 @@ export interface LegacyMigrationImportProjectResult {
   project_id?: string;
   status: "imported" | "joined" | "creating" | "failed";
   restore_status?: LegacyMigrationProjectRestoreStatus | null;
+  restore_lro_op_id?: string | null;
   error?: string;
 }
 
@@ -136,6 +139,18 @@ export interface LegacyMigrationRestoreArchiveSelectionResponse {
   result?: Record<string, any>;
 }
 
+export interface LegacyMigrationRetryProjectRestoreOptions {
+  account_id?: string;
+  legacy_project_id: string;
+}
+
+export interface LegacyMigrationRetryProjectRestoreResponse {
+  legacy_project_id: string;
+  project_id: string;
+  restore_status: LegacyMigrationProjectRestoreStatus;
+  restore_lro_op_id?: string | null;
+}
+
 export interface LegacyMigration {
   listProjects: (
     opts?: LegacyMigrationListProjectsOptions,
@@ -149,6 +164,9 @@ export interface LegacyMigration {
   restoreArchiveSelection: (
     opts: LegacyMigrationRestoreArchiveSelectionOptions,
   ) => Promise<LegacyMigrationRestoreArchiveSelectionResponse>;
+  retryProjectRestore: (
+    opts: LegacyMigrationRetryProjectRestoreOptions,
+  ) => Promise<LegacyMigrationRetryProjectRestoreResponse>;
 }
 
 export const legacyMigration = {
@@ -156,4 +174,5 @@ export const legacyMigration = {
   importProjects: authFirstRequireAccount,
   prepareArchiveSelection: authFirstRequireAccount,
   restoreArchiveSelection: authFirstRequireAccount,
+  retryProjectRestore: authFirstRequireAccount,
 } as const;

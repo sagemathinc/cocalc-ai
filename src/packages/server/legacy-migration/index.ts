@@ -20,6 +20,14 @@ import {
   getAccountStorageRemainingBytes,
 } from "@cocalc/server/membership/project-limits";
 import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
+import { createLro } from "@cocalc/server/lro/lro-db";
+import {
+  LEGACY_PROJECT_RESTORE_LRO_KIND,
+  LEGACY_RESTORE_ERROR_LABEL,
+  LEGACY_RESTORE_LRO_LABEL,
+  LEGACY_RESTORE_STATUS_LABEL,
+  LEGACY_SOURCE_PROJECT_LABEL,
+} from "@cocalc/util/legacy-migration";
 import type {
   ProjectArchiveIndexResult,
   ProjectArchiveRestoreResult,
@@ -38,6 +46,8 @@ import type {
   LegacyMigrationProjectRestoreMode,
   LegacyMigrationProjectRestoreStatus,
   LegacyMigrationProjectSummary,
+  LegacyMigrationRetryProjectRestoreOptions,
+  LegacyMigrationRetryProjectRestoreResponse,
   LegacyMigrationRestoreArchiveSelectionOptions,
   LegacyMigrationRestoreArchiveSelectionResponse,
 } from "@cocalc/conat/hub/api/legacy-migration";
@@ -51,7 +61,6 @@ const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const PROJECT_ARCHIVE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_ARCHIVE_INDEX_MAX_ENTRIES = 5_000;
 const MAX_ARCHIVE_INDEX_MAX_ENTRIES = 50_000;
-const LEGACY_SOURCE_PROJECT_LABEL = "legacy.cocalc.com/project_id";
 
 const logger = getLogger("server:legacy-migration");
 
@@ -82,6 +91,8 @@ type LegacyProjectRow = {
   restore_mode?: LegacyMigrationProjectRestoreMode | null;
   restore_status?: LegacyMigrationProjectRestoreStatus | null;
   restore_error?: string | null;
+  restore_lro_op_id?: string | null;
+  restore_progress?: Record<string, any> | null;
   restore_result?: Record<string, any> | null;
   joined?: boolean | null;
   total_count?: number | null;
@@ -99,6 +110,8 @@ async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS restore_claimed_until TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_started TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_finished TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS restore_lro_op_id UUID,
+        ADD COLUMN IF NOT EXISTS restore_progress JSONB,
         ADD COLUMN IF NOT EXISTS restore_result JSONB
     `);
     await getPool().query(`
@@ -108,6 +121,10 @@ async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
     await getPool().query(`
       CREATE INDEX IF NOT EXISTS legacy_migration_projects_disk_mb_idx
         ON legacy_migration_projects(disk_mb)
+    `);
+    await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_project_imports_restore_lro_op_id_idx
+        ON legacy_migration_project_imports(restore_lro_op_id)
     `);
   })();
   await importSchemaReady;
@@ -309,6 +326,8 @@ function importStatus(row: LegacyProjectRow): LegacyMigrationProjectSummary {
           : "not-imported",
     restore_status: row.restore_status,
     restore_error: row.restore_error,
+    restore_lro_op_id: row.restore_lro_op_id,
+    restore_progress: row.restore_progress,
     restore_mode: row.restore_mode,
     restore_result: row.restore_result,
     joined: !!row.joined,
@@ -493,6 +512,8 @@ export async function listProjects({
            i.restore_mode,
            i.restore_status,
            i.restore_error,
+           i.restore_lro_op_id,
+           i.restore_progress,
            i.restore_result,
            COUNT(*) OVER()::INTEGER AS total_count,
            EXISTS (
@@ -640,6 +661,70 @@ async function setLegacySourceProjectLabelBestEffort({
   }
 }
 
+function labelValue(value: unknown): string | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  return text.length > 512 ? text.slice(0, 512) : text;
+}
+
+async function setLegacyRestoreLabelsBestEffort({
+  account_id,
+  project_id,
+  restore_status,
+  restore_lro_op_id,
+  restore_error,
+}: {
+  account_id?: string | null;
+  project_id: string;
+  restore_status?: LegacyMigrationProjectRestoreStatus | null;
+  restore_lro_op_id?: string | null;
+  restore_error?: string | null;
+}): Promise<void> {
+  try {
+    await setProjectLabels({
+      project_id,
+      account_id,
+      labels: {
+        [LEGACY_RESTORE_STATUS_LABEL]: labelValue(restore_status),
+        [LEGACY_RESTORE_LRO_LABEL]: labelValue(restore_lro_op_id),
+        [LEGACY_RESTORE_ERROR_LABEL]: labelValue(restore_error),
+      },
+    });
+  } catch (err) {
+    logger.warn("failed to set legacy restore project labels", {
+      account_id,
+      project_id,
+      restore_status,
+      restore_lro_op_id,
+      err: `${err}`,
+    });
+  }
+}
+
+async function createLegacyProjectRestoreLro({
+  account_id,
+  legacy_project_id,
+  project_id,
+}: {
+  account_id: string;
+  legacy_project_id: string;
+  project_id: string;
+}) {
+  return await createLro({
+    kind: LEGACY_PROJECT_RESTORE_LRO_KIND,
+    scope_type: "project",
+    scope_id: project_id,
+    created_by: account_id,
+    owner_type: "hub",
+    input: {
+      legacy_project_id,
+      project_id,
+    },
+    dedupe_key: `legacy-project-restore:${legacy_project_id}`,
+    expires_at: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+  });
+}
+
 async function importOneProject({
   account_id,
   legacy_project_id,
@@ -674,8 +759,9 @@ async function importOneProject({
     const { rows } = await pool.query<{
       project_id: string | null;
       restore_status: LegacyMigrationProjectRestoreStatus | null;
+      restore_lro_op_id: string | null;
     }>(
-      `SELECT project_id, restore_status
+      `SELECT project_id, restore_status, restore_lro_op_id
          FROM legacy_migration_project_imports
         WHERE legacy_project_id=$1`,
       [legacy_project_id],
@@ -703,6 +789,7 @@ async function importOneProject({
         project_id: existingProjectId,
         status: "joined",
         restore_status: rows[0]?.restore_status,
+        restore_lro_op_id: rows[0]?.restore_lro_op_id,
       };
     }
     return {
@@ -749,10 +836,11 @@ async function importOneProject({
     const { rows } = await pool.query<{
       project_id: string | null;
       restore_status: LegacyMigrationProjectRestoreStatus | null;
+      restore_lro_op_id: string | null;
       restore_mode: LegacyMigrationProjectRestoreMode | null;
       status: string | null;
     }>(
-      `SELECT project_id, restore_mode, restore_status, status
+      `SELECT project_id, restore_mode, restore_status, restore_lro_op_id, status
          FROM legacy_migration_project_imports
         WHERE legacy_project_id=$1`,
       [legacy_project_id],
@@ -789,6 +877,7 @@ async function importOneProject({
       project_id: migration.project_id,
       status: "joined",
       restore_status: migration.restore_status,
+      restore_lro_op_id: migration.restore_lro_op_id,
     };
   }
 
@@ -805,6 +894,16 @@ async function importOneProject({
       start: false,
     });
     const restore_status = restoreStatusForProject(legacy, restore_mode);
+    const restore_lro_op_id =
+      restore_status === "pending"
+        ? (
+            await createLegacyProjectRestoreLro({
+              account_id,
+              legacy_project_id,
+              project_id,
+            })
+          ).op_id
+        : null;
     await pool.query(
       `
       UPDATE legacy_migration_project_imports
@@ -812,11 +911,26 @@ async function importOneProject({
              status='imported',
              restore_mode=$4,
              restore_status=$3,
+             restore_lro_op_id=$5,
+             restore_progress=$6::JSONB,
              restore_error=NULL,
              updated=NOW()
        WHERE legacy_project_id=$1
       `,
-      [legacy_project_id, project_id, restore_status, restore_mode],
+      [
+        legacy_project_id,
+        project_id,
+        restore_status,
+        restore_mode,
+        restore_lro_op_id,
+        restore_lro_op_id
+          ? JSON.stringify({
+              phase: "queued",
+              message: "restore queued",
+              progress: 0,
+            })
+          : null,
+      ],
     );
     await recordImportAccount({
       account_id,
@@ -830,11 +944,19 @@ async function importOneProject({
       legacy_project_id,
       project_id,
     });
+    await setLegacyRestoreLabelsBestEffort({
+      account_id,
+      project_id,
+      restore_status,
+      restore_lro_op_id,
+      restore_error: null,
+    });
     return {
       legacy_project_id,
       project_id,
       status: "imported",
       restore_status,
+      restore_lro_op_id,
     };
   } catch (err) {
     await pool.query(
@@ -896,6 +1018,77 @@ export async function importProjects({
     );
   }
   return { results };
+}
+
+export async function retryProjectRestore({
+  account_id,
+  legacy_project_id,
+}: LegacyMigrationRetryProjectRestoreOptions): Promise<LegacyMigrationRetryProjectRestoreResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  await ensureLegacyMigrationProjectImportSchema();
+  const row = await importedProjectForAccount({
+    account_id,
+    legacy_project_id,
+  });
+  if (row == null || !row.project_id) {
+    throw new Error("legacy project import is not available for this account");
+  }
+  if (row.restore_mode === "select") {
+    throw new Error("selective restores must be retried from file selection");
+  }
+  if (row.artifact_status !== "available" || !row.artifact_key) {
+    throw new Error("legacy project archive is not available");
+  }
+  if (row.restore_status === "restored") {
+    return {
+      legacy_project_id,
+      project_id: row.project_id,
+      restore_status: "restored",
+      restore_lro_op_id: row.restore_lro_op_id,
+    };
+  }
+  const op = await createLegacyProjectRestoreLro({
+    account_id,
+    legacy_project_id,
+    project_id: row.project_id,
+  });
+  const restore_progress = {
+    phase: "queued",
+    message: "restore queued",
+    progress: 0,
+  };
+  await getPool().query(
+    `
+    UPDATE legacy_migration_project_imports
+       SET restore_status='pending',
+           restore_error=NULL,
+           restore_lro_op_id=$2,
+           restore_progress=$3::JSONB,
+           restore_worker_id=NULL,
+           restore_claimed_until=NULL,
+           restore_started=NULL,
+           restore_finished=NULL,
+           updated=NOW()
+     WHERE legacy_project_id=$1
+    `,
+    [legacy_project_id, op.op_id, JSON.stringify(restore_progress)],
+  );
+  await setLegacyRestoreLabelsBestEffort({
+    account_id,
+    project_id: row.project_id,
+    restore_status: "pending",
+    restore_lro_op_id: op.op_id,
+    restore_error: null,
+  });
+  return {
+    legacy_project_id,
+    project_id: row.project_id,
+    restore_status: "pending",
+    restore_lro_op_id: op.op_id,
+  };
 }
 
 function clean(value: unknown): string | undefined {
@@ -1019,6 +1212,8 @@ async function importedProjectForAccount({
            i.restore_mode,
            i.restore_status,
            i.restore_error,
+           i.restore_lro_op_id,
+           i.restore_progress,
            i.restore_result
       FROM legacy_migration_project_imports i
       JOIN legacy_migration_projects p
