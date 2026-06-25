@@ -38,6 +38,7 @@ import {
   ErrorDisplay,
   Saving,
   TimeAgo,
+  Tooltip,
 } from "@cocalc/frontend/components";
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
@@ -88,6 +89,22 @@ const TEMPLATE_KEYS = [
 ] as const;
 
 type TemplateKey = (typeof TEMPLATE_KEYS)[number];
+
+function visibilityColumnTitle(label: string, title: string) {
+  return (
+    <Tooltip title={title}>
+      <span style={{ cursor: "help" }}>{label}</span>
+    </Tooltip>
+  );
+}
+
+function visibilityCell(value: boolean | undefined) {
+  return value ? (
+    <Icon name="check" style={{ color: COLORS.BS_GREEN_D }} />
+  ) : (
+    ""
+  );
+}
 
 type ExpectedUsageEstimateKey =
   | "aiUnits7d"
@@ -3590,21 +3607,35 @@ export function MembershipTiers() {
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
           <Table.Column<Tier> title="Label" dataIndex="label" />
-          <Table.Column<Tier>
-            title="Public"
-            dataIndex="store_visible"
-            render={(val) => (val ? "Yes" : "")}
-          />
-          <Table.Column<Tier>
-            title="Team"
-            dataIndex="team_visible"
-            render={(val) => (val ? "Yes" : "")}
-          />
-          <Table.Column<Tier>
-            title="Course"
-            dataIndex="course_store_visible"
-            render={(val) => (val ? "Yes" : "")}
-          />
+          <Table.ColumnGroup<Tier> title="Visibility">
+            <Table.Column<Tier>
+              title={visibilityColumnTitle(
+                "P",
+                "Show in public pricing and purchase UI",
+              )}
+              dataIndex="store_visible"
+              align="center"
+              width={36}
+              render={visibilityCell}
+            />
+            <Table.Column<Tier>
+              title={visibilityColumnTitle("T", "Available for team licenses")}
+              dataIndex="team_visible"
+              align="center"
+              width={36}
+              render={visibilityCell}
+            />
+            <Table.Column<Tier>
+              title={visibilityColumnTitle(
+                "C",
+                "Available for course student memberships",
+              )}
+              dataIndex="course_store_visible"
+              align="center"
+              width={36}
+              render={visibilityCell}
+            />
+          </Table.ColumnGroup>
           <Table.Column<Tier>
             title="Course domains"
             dataIndex="course_allowed_domains"
