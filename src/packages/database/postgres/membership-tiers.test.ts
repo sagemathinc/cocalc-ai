@@ -147,6 +147,24 @@ describe("membershipTiersQuery", () => {
     ]);
   });
 
+  it("counts only live membership subscriptions in tier usage aggregates", async () => {
+    const { db, calls } = createDb();
+
+    await membershipTiersQuery(db, [], { id: "*" });
+
+    const subscriptionCountQuery = calls.find((call) =>
+      call.query.includes("subscription_count"),
+    )?.query;
+    const totalAccountQuery = calls.find((call) =>
+      call.query.includes("total_account_count"),
+    )?.query;
+    for (const query of [subscriptionCountQuery, totalAccountQuery]) {
+      expect(query).toContain("metadata->>'type'='membership'");
+      expect(query).toContain("status IN ('active','canceled')");
+      expect(query).toContain("current_period_end >= NOW()");
+    }
+  });
+
   it("blocks deleting a tier used by active site licenses", async () => {
     const { db, calls } = createDb({
       siteLicenseRows: [{ tier_id: "instructor", site_license_count: 1 }],
