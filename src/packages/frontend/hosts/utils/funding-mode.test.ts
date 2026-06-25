@@ -43,25 +43,25 @@ describe("host funding mode helpers", () => {
         label: "Site-funded",
       },
       {
-        value: "account-postpaid",
-        label: "Postpaid to this account",
-      },
-      {
         value: "account-prepaid",
         label: "Prepaid from this account",
+      },
+      {
+        value: "account-postpaid",
+        label: "Postpaid to this account",
       },
     ]);
   });
 
-  it("chooses the first allowed option as the default", () => {
+  it("prefers prepaid over postpaid by default", () => {
     expect(
       defaultHostFundingMode({
         options: [
-          { value: "account-postpaid", label: "Postpaid to this account" },
           { value: "account-prepaid", label: "Prepaid from this account" },
+          { value: "account-postpaid", label: "Postpaid to this account" },
         ],
       }),
-    ).toBe("account-postpaid");
+    ).toBe("account-prepaid");
   });
 
   it("detects billable providers", () => {

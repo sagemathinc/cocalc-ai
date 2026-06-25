@@ -51,16 +51,16 @@ export function getHostFundingModeOptions({
       label: "Site-funded",
     });
   }
-  if (isAdmin || hasPostpaidFunding(limits)) {
-    options.push({
-      value: "account-postpaid",
-      label: "Postpaid to this account",
-    });
-  }
   if (isAdmin || hasPrepaidFunding(limits)) {
     options.push({
       value: "account-prepaid",
       label: "Prepaid from this account",
+    });
+  }
+  if (isAdmin || hasPostpaidFunding(limits)) {
+    options.push({
+      value: "account-postpaid",
+      label: "Postpaid to this account",
     });
   }
   return options;
