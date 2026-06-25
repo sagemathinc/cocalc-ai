@@ -94,6 +94,10 @@ import {
   useDeferredListing,
 } from "@cocalc/frontend/project/explorer/use-deferred-listing";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
+import {
+  LEGACY_RESTORE_STATUS_LABEL,
+  LEGACY_SOURCE_PROJECT_LABEL,
+} from "@cocalc/util/legacy-migration";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -109,6 +113,11 @@ function isStartRequiredFilesystemError(error: unknown): boolean {
     text.includes("host routing info unavailable") ||
     text.includes("has no host assigned")
   );
+}
+
+function projectLabelValue(labels: unknown, key: string): string {
+  const values = (labels as any)?.toJS?.() ?? labels ?? {};
+  return `${values[key] ?? ""}`.trim();
 }
 
 export interface ActiveFileSort {
@@ -188,6 +197,16 @@ export function FilesFlyout({
   const openFiles = new Set<string>(
     useTypedRedux({ project_id }, "open_files_order")?.toJS() ?? [],
   );
+  const projectLabels = useProjectMapField(project_id, "labels");
+  const legacySourceProjectId = projectLabelValue(
+    projectLabels,
+    LEGACY_SOURCE_PROJECT_LABEL,
+  );
+  const legacyRestoreStatus = projectLabelValue(
+    projectLabels,
+    LEGACY_RESTORE_STATUS_LABEL,
+  );
+  const previousLegacyRestoreStatus = usePrevious(legacyRestoreStatus);
   // mainly controls what a single click does, plus additional UI elements
   const [mode, setMode] = useState<"open" | "select">("open");
   const [prevSelected, setPrevSelected] = useState<number | null>(null);
@@ -461,6 +480,26 @@ export function FilesFlyout({
     allowListingUpdatesFor,
     effectiveRefresh,
     registerUserFilesystemChangeHandler,
+  ]);
+  useEffect(() => {
+    if (!legacySourceProjectId) return;
+    if (legacyRestoreStatus !== "restored") return;
+    if (
+      previousLegacyRestoreStatus == null ||
+      previousLegacyRestoreStatus === "restored"
+    ) {
+      return;
+    }
+    refreshListingAfterUserAction({
+      allowUpdatesFor: allowListingUpdatesFor,
+      refresh: effectiveRefresh,
+    });
+  }, [
+    allowListingUpdatesFor,
+    effectiveRefresh,
+    legacyRestoreStatus,
+    legacySourceProjectId,
+    previousLegacyRestoreStatus,
   ]);
   const refreshSnapshotsAfterUserAction = () => {
     refreshListingAfterUserAction({
@@ -1078,6 +1117,9 @@ export function FilesFlyout({
         setTypeFilter={setTypeFilter}
         typeFilterOptions={typeFilterOptions}
         hasPendingUpdate={visiblePendingListingUpdate}
+        showRefreshListing={
+          !!legacySourceProjectId && legacyRestoreStatus === "restored"
+        }
         onRefreshListing={() =>
           refreshListingAfterUserAction({
             allowUpdatesFor: allowListingUpdatesFor,

@@ -150,6 +150,7 @@ interface Props {
   setTypeFilter: (filter: string | null) => void;
   typeFilterOptions: string[];
   hasPendingUpdate?: boolean;
+  showRefreshListing?: boolean;
   onRefreshListing?: () => void;
   onTerminalCommand?: () => void;
 }
@@ -181,6 +182,7 @@ export function FilesHeader({
   setTypeFilter,
   typeFilterOptions,
   hasPendingUpdate,
+  showRefreshListing,
   onRefreshListing,
   onTerminalCommand,
 }: Readonly<Props>): React.JSX.Element {
@@ -733,11 +735,13 @@ export function FilesHeader({
             showActions={false}
           />
           <div
-            aria-hidden={!hasPendingUpdate}
+            aria-hidden={!hasPendingUpdate && !showRefreshListing}
             style={{
               display: "inline-flex",
-              visibility: hasPendingUpdate ? "visible" : "hidden",
-              pointerEvents: hasPendingUpdate ? undefined : "none",
+              visibility:
+                hasPendingUpdate || showRefreshListing ? "visible" : "hidden",
+              pointerEvents:
+                hasPendingUpdate || showRefreshListing ? undefined : "none",
             }}
           >
             <RefreshButton onClick={onRefreshListing} />
