@@ -50,7 +50,7 @@ export default function BalanceButton({
     try {
       onRefresh?.();
       setLoading(true);
-      await webapp_client.purchases_client.getBalance();
+      setBalance(await webapp_client.purchases_client.getBalance());
     } catch (err) {
       console.warn("Issue updating balance", err);
     } finally {
