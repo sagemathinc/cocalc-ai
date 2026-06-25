@@ -3886,7 +3886,13 @@ export function MembershipTiers() {
             render={(_text, tier) => {
               const inUse =
                 (tier.subscription_count ?? 0) > 0 ||
-                (tier.site_license_count ?? 0) > 0;
+                (tier.team_seat_count ?? 0) > 0 ||
+                (tier.team_account_count ?? 0) > 0 ||
+                (tier.course_account_count ?? 0) > 0 ||
+                (tier.site_license_count ?? 0) > 0 ||
+                (tier.site_account_count ?? 0) > 0 ||
+                (tier.admin_assigned_count ?? 0) > 0 ||
+                (tier.total_account_count ?? 0) > 0;
               return (
                 <Space size="small">
                   <Icon name="pencil" onClick={() => set_editing(tier)} />
