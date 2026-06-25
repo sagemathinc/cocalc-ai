@@ -52,6 +52,11 @@ const LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER = `metadata->>'type'='membership'
               AND status IN ('active','canceled')
               AND current_period_end >= NOW()`;
 
+type LiveSubscriptionCounts = {
+  subscription_count: number;
+  subscribed_account_count: number;
+};
+
 async function hasSiteLicenseUsageTables(db: PostgreSQL): Promise<boolean> {
   const { rows } = await callback2(db._query, {
     query: `SELECT to_regclass('public.site_licenses') IS NOT NULL
@@ -70,6 +75,30 @@ async function hasMembershipPackageUsageTables(
                      AS exists`,
   });
   return rows?.[0]?.exists === true;
+}
+
+async function getLiveSubscriptionTierCounts(
+  db: PostgreSQL,
+): Promise<Record<string, LiveSubscriptionCounts>> {
+  const { rows } = await callback2(db._query, {
+    query: `SELECT metadata->>'class' AS tier_id,
+                   COUNT(*)::int AS subscription_count,
+                   COUNT(DISTINCT account_id)::int AS subscribed_account_count
+            FROM subscriptions
+            WHERE ${LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER}
+            GROUP BY tier_id`,
+  });
+  return (rows ?? []).reduce(
+    (acc, row) => {
+      if (!row?.tier_id) return acc;
+      acc[row.tier_id] = {
+        subscription_count: row.subscription_count ?? 0,
+        subscribed_account_count: row.subscribed_account_count ?? 0,
+      };
+      return acc;
+    },
+    {} as Record<string, LiveSubscriptionCounts>,
+  );
 }
 
 async function getActiveSiteLicenseTierCounts(
@@ -221,17 +250,87 @@ async function getTotalAccountTierCounts(
   }, {});
 }
 
-async function assertTierNotUsedByActiveSiteLicenses(
+async function assertTierNotUsedByActiveMembershipUsage(
   db: PostgreSQL,
   tier_id: string,
 ): Promise<void> {
-  const siteLicenseCount =
-    (await getActiveSiteLicenseTierCounts(db))[tier_id] ?? 0;
+  const [
+    subscriptionByTier,
+    siteLicenseByTier,
+    adminAssignedByTier,
+    teamSeatsByTier,
+    packageAccountsByTier,
+  ] = await Promise.all([
+    getLiveSubscriptionTierCounts(db),
+    getActiveSiteLicenseTierCounts(db),
+    getActiveAdminAssignedTierCounts(db),
+    getActiveTeamSeatTierCounts(db),
+    getActivePackageAccountTierCounts(db),
+  ]);
+  const subscriptionCount =
+    subscriptionByTier[tier_id]?.subscription_count ?? 0;
+  const siteLicenseCount = siteLicenseByTier[tier_id] ?? 0;
+  const adminAssignedCount = adminAssignedByTier[tier_id] ?? 0;
+  const teamSeatCount = teamSeatsByTier[tier_id] ?? 0;
+  const packageAccounts = packageAccountsByTier[tier_id];
+  const teamAccountCount = packageAccounts?.team_account_count ?? 0;
+  const courseAccountCount = packageAccounts?.course_account_count ?? 0;
+  const siteAccountCount = packageAccounts?.site_account_count ?? 0;
+
+  const usage: string[] = [];
+  if (subscriptionCount > 0) {
+    usage.push(
+      `${subscriptionCount} live personal subscription${
+        subscriptionCount === 1 ? "" : "s"
+      }`,
+    );
+  }
+  if (teamSeatCount > 0) {
+    usage.push(
+      `${teamSeatCount} active team seat${teamSeatCount === 1 ? "" : "s"}`,
+    );
+  }
+  if (teamAccountCount > 0) {
+    usage.push(
+      `${teamAccountCount} active team account${
+        teamAccountCount === 1 ? "" : "s"
+      }`,
+    );
+  }
+  if (courseAccountCount > 0) {
+    usage.push(
+      `${courseAccountCount} active course account${
+        courseAccountCount === 1 ? "" : "s"
+      }`,
+    );
+  }
   if (siteLicenseCount > 0) {
-    throw Error(
-      `cannot delete membership tier "${tier_id}" because it is used by ${siteLicenseCount} active site license${
+    usage.push(
+      `${siteLicenseCount} active site license${
         siteLicenseCount === 1 ? "" : "s"
       }`,
+    );
+  }
+  if (siteAccountCount > 0) {
+    usage.push(
+      `${siteAccountCount} active site-license account${
+        siteAccountCount === 1 ? "" : "s"
+      }`,
+    );
+  }
+  if (adminAssignedCount > 0) {
+    usage.push(
+      `${adminAssignedCount} active admin assignment${
+        adminAssignedCount === 1 ? "" : "s"
+      }`,
+    );
+  }
+
+  if (usage.length > 0) {
+    throw Error(
+      `cannot delete membership tier "${tier_id}" because it is used by ${usage.join(
+        ", ",
+      )}`,
     );
   }
 }
@@ -242,7 +341,7 @@ export default async function membershipTiersQuery(
   query: Query,
 ) {
   if (isDelete(options) && query.id) {
-    await assertTierNotUsedByActiveSiteLicenses(db, query.id);
+    await assertTierNotUsedByActiveMembershipUsage(db, query.id);
     await callback2(db._query, {
       query: "DELETE FROM membership_tiers WHERE id = $1",
       params: [query.id],
@@ -254,22 +353,7 @@ export default async function membershipTiersQuery(
     const { rows } = await callback2(db._query, {
       query: "SELECT * FROM membership_tiers",
     });
-    const counts = await callback2(db._query, {
-      query: `SELECT metadata->>'class' AS tier_id,
-                     COUNT(*)::int AS subscription_count,
-                     COUNT(DISTINCT account_id)::int AS account_count
-              FROM subscriptions
-              WHERE ${LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER}
-              GROUP BY tier_id`,
-    });
-    const byTier = (counts.rows ?? []).reduce((acc, row) => {
-      if (!row?.tier_id) return acc;
-      acc[row.tier_id] = {
-        subscription_count: row.subscription_count ?? 0,
-        subscribed_account_count: row.account_count ?? 0,
-      };
-      return acc;
-    }, {});
+    const subscriptionByTier = await getLiveSubscriptionTierCounts(db);
     const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
     const adminAssignedByTier = await getActiveAdminAssignedTierCounts(db);
     const teamSeatsByTier = await getActiveTeamSeatTierCounts(db);
@@ -277,7 +361,7 @@ export default async function membershipTiersQuery(
     const totalAccountsByTier = await getTotalAccountTierCounts(db);
     return rows.map((row) => ({
       ...mapStorageRow(row),
-      ...(byTier[row.id] ?? {
+      ...(subscriptionByTier[row.id] ?? {
         subscription_count: 0,
         subscribed_account_count: 0,
       }),

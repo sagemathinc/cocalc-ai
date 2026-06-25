@@ -14,6 +14,13 @@ type QueryCall = {
 function createDb({
   siteLicenseTablesExist = true,
   membershipPackageTablesExist = true,
+  subscriptionRows = [
+    {
+      tier_id: "student",
+      subscription_count: 3,
+      subscribed_account_count: 2,
+    },
+  ],
   siteLicenseRows = [],
   teamSeatRows = [],
   packageAccountRows = [],
@@ -22,6 +29,11 @@ function createDb({
 }: {
   siteLicenseTablesExist?: boolean;
   membershipPackageTablesExist?: boolean;
+  subscriptionRows?: {
+    tier_id: string;
+    subscription_count: number;
+    subscribed_account_count: number;
+  }[];
   siteLicenseRows?: { tier_id: string; site_license_count: number }[];
   teamSeatRows?: { tier_id: string; team_seat_count: number }[];
   packageAccountRows?: {
@@ -70,16 +82,8 @@ function createDb({
         });
       } else if (sql.includes("total_account_count")) {
         opts.cb(null, { rows: totalAccountRows });
-      } else if (sql.includes("FROM subscriptions")) {
-        opts.cb(null, {
-          rows: [
-            {
-              tier_id: "student",
-              subscription_count: 3,
-              account_count: 2,
-            },
-          ],
-        });
+      } else if (sql.includes("subscription_count")) {
+        opts.cb(null, { rows: subscriptionRows });
       } else if (sql.includes("FROM admin_assigned_memberships")) {
         opts.cb(null, { rows: adminAssignedRows });
       } else if (sql === "DELETE FROM membership_tiers WHERE id = $1") {
@@ -172,9 +176,62 @@ describe("membershipTiersQuery", () => {
 
     await expect(
       membershipTiersQuery(db, [{ delete: true }], { id: "instructor" }),
-    ).rejects.toThrow(
-      'cannot delete membership tier "instructor" because it is used by 1 active site license',
-    );
+    ).rejects.toThrow("1 active site license");
+
+    expect(
+      calls.some(
+        (call) => call.query === "DELETE FROM membership_tiers WHERE id = $1",
+      ),
+    ).toBe(false);
+  });
+
+  it("blocks deleting a tier used by live personal subscriptions", async () => {
+    const { db, calls } = createDb();
+
+    await expect(
+      membershipTiersQuery(db, [{ delete: true }], { id: "student" }),
+    ).rejects.toThrow("3 live personal subscriptions");
+
+    expect(
+      calls.some(
+        (call) => call.query === "DELETE FROM membership_tiers WHERE id = $1",
+      ),
+    ).toBe(false);
+  });
+
+  it("blocks deleting a tier used by active team package seats", async () => {
+    const { db, calls } = createDb({
+      subscriptionRows: [],
+      teamSeatRows: [{ tier_id: "student", team_seat_count: 2 }],
+    });
+
+    await expect(
+      membershipTiersQuery(db, [{ delete: true }], { id: "student" }),
+    ).rejects.toThrow("2 active team seats");
+
+    expect(
+      calls.some(
+        (call) => call.query === "DELETE FROM membership_tiers WHERE id = $1",
+      ),
+    ).toBe(false);
+  });
+
+  it("blocks deleting a tier used by active course package assignments", async () => {
+    const { db, calls } = createDb({
+      subscriptionRows: [],
+      packageAccountRows: [
+        {
+          tier_id: "student",
+          team_account_count: 0,
+          course_account_count: 1,
+          site_account_count: 0,
+        },
+      ],
+    });
+
+    await expect(
+      membershipTiersQuery(db, [{ delete: true }], { id: "student" }),
+    ).rejects.toThrow("1 active course account");
 
     expect(
       calls.some(
