@@ -105,6 +105,11 @@ type PartialClickEvent = Pick<
 >;
 
 const EMPTY_DIRECTORY_FILES: DirectoryListing = [];
+const LEGACY_RESTORE_ACTIVE_STATUSES = new Set([
+  "indexing",
+  "pending",
+  "restoring",
+]);
 
 function isStartRequiredFilesystemError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
@@ -118,6 +123,10 @@ function isStartRequiredFilesystemError(error: unknown): boolean {
 function projectLabelValue(labels: unknown, key: string): string {
   const values = (labels as any)?.toJS?.() ?? labels ?? {};
   return `${values[key] ?? ""}`.trim();
+}
+
+function isLegacyRestoreActive(status: string): boolean {
+  return LEGACY_RESTORE_ACTIVE_STATUSES.has(status);
 }
 
 export interface ActiveFileSort {
@@ -480,6 +489,25 @@ export function FilesFlyout({
     allowListingUpdatesFor,
     effectiveRefresh,
     registerUserFilesystemChangeHandler,
+  ]);
+  useEffect(() => {
+    if (!legacySourceProjectId) return;
+    if (!isLegacyRestoreActive(legacyRestoreStatus)) return;
+    if (inBackupsPath) return;
+    const refreshRestoringProject = () =>
+      refreshListingAfterUserAction({
+        allowUpdatesFor: allowListingUpdatesFor,
+        refresh,
+      });
+    refreshRestoringProject();
+    const timer = setInterval(refreshRestoringProject, 3000);
+    return () => clearInterval(timer);
+  }, [
+    allowListingUpdatesFor,
+    inBackupsPath,
+    legacyRestoreStatus,
+    legacySourceProjectId,
+    refresh,
   ]);
   useEffect(() => {
     if (!legacySourceProjectId) return;
