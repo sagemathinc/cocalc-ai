@@ -182,7 +182,24 @@ function isRemoteHostRunningAndOnline(row: {
   return { ok: true };
 }
 
+export async function createProjectWithInternalProjectId(
+  opts: CreateProjectOptions & { project_id: string },
+) {
+  return await createProjectImpl(opts, { allowExplicitProjectId: true });
+}
+
 export default async function createProject(opts: CreateProjectOptions) {
+  return await createProjectImpl(opts, { allowExplicitProjectId: false });
+}
+
+async function createProjectImpl(
+  opts: CreateProjectOptions,
+  {
+    allowExplicitProjectId,
+  }: {
+    allowExplicitProjectId: boolean;
+  },
+) {
   if (opts.account_id != null) {
     if (!isValidUUID(opts.account_id)) {
       throw Error("if account_id given, it must be a valid uuid v4");
@@ -215,7 +232,10 @@ export default async function createProject(opts: CreateProjectOptions) {
   }
   let project_id;
   if (opts.project_id) {
-    if (!account_id || !(await isAdmin(account_id))) {
+    if (
+      !allowExplicitProjectId &&
+      (!account_id || !(await isAdmin(account_id)))
+    ) {
       throw Error("only admins can specify the project_id");
     }
     if (!isValidUUID(opts.project_id)) {

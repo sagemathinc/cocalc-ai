@@ -7,7 +7,9 @@ import getPool from "@cocalc/database/pool";
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import createProject from "@cocalc/server/projects/create";
+import createProject, {
+  createProjectWithInternalProjectId,
+} from "@cocalc/server/projects/create";
 import createCredit from "@cocalc/server/purchases/create-credit";
 import createSubscription from "@cocalc/server/purchases/create-subscription";
 import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
@@ -65,6 +67,7 @@ import type {
 
 import { assertLegacyMigrationEnabled } from "./enabled";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
@@ -1326,6 +1329,66 @@ async function createLegacyProjectRestoreLro({
   });
 }
 
+function isExplicitProjectIdUnavailableError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err}`;
+  return (
+    message.includes("project_id already exists") ||
+    message.includes("project_id belongs to a permanently deleted workspace") ||
+    message.includes("if project_id is given, it must be a valid uuid")
+  );
+}
+
+async function createImportedLegacyProject({
+  account_id,
+  legacy,
+  legacy_project_id,
+  rootfs_image,
+  rootfs_image_id,
+  host_id,
+  region,
+}: {
+  account_id: string;
+  legacy: LegacyProjectRow;
+  legacy_project_id: string;
+  rootfs_image?: string;
+  rootfs_image_id?: string;
+  host_id?: string;
+  region?: string;
+}): Promise<string> {
+  const opts = {
+    account_id,
+    title: projectTitle(legacy),
+    description: projectDescription(legacy),
+    rootfs_image,
+    rootfs_image_id,
+    host_id,
+    region,
+    skip_project_count_limit: true,
+    start: false,
+  };
+  if (!isValidUUID(legacy_project_id)) {
+    return await createProject(opts);
+  }
+  try {
+    return await createProjectWithInternalProjectId({
+      ...opts,
+      project_id: legacy_project_id,
+    });
+  } catch (err) {
+    if (!isExplicitProjectIdUnavailableError(err)) {
+      throw err;
+    }
+    logger.warn(
+      "legacy migration project_id unavailable; falling back to fresh project_id",
+      {
+        legacy_project_id,
+        err: `${err}`,
+      },
+    );
+    return await createProject(opts);
+  }
+}
+
 async function importOneProject({
   account_id,
   legacy_project_id,
@@ -1483,16 +1546,14 @@ async function importOneProject({
   }
 
   try {
-    const project_id = await createProject({
+    const project_id = await createImportedLegacyProject({
       account_id,
-      title: projectTitle(legacy),
-      description: projectDescription(legacy),
+      legacy,
+      legacy_project_id,
       rootfs_image,
       rootfs_image_id,
       host_id,
       region,
-      skip_project_count_limit: true,
-      start: false,
     });
     const restore_status = restoreStatusForProject(legacy, restore_mode);
     const restore_lro_op_id =
