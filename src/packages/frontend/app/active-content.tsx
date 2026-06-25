@@ -13,10 +13,10 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { A } from "@cocalc/frontend/components/A";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { SiteName } from "@cocalc/frontend/customize";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { DocsPage } from "@cocalc/frontend/docs/page";
 import { FileUsePage } from "@cocalc/frontend/file-use/page";
 import { Connecting } from "@cocalc/frontend/landing-page/connecting";
@@ -32,10 +32,7 @@ import SiteLicenseClaimPage from "@cocalc/frontend/claim/site-license-page";
 import { ManagedEgressBlockedScreen } from "./managed-egress-blocked-screen";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
-const CONNECTIVITY_DOCS_URL = joinUrlPath(
-  appBasePath,
-  "docs/troubleshooting/connectivity",
-);
+const CONNECTIVITY_DOCS_SLUG = "troubleshooting/connectivity";
 
 const STYLE_SIGNIN_WARNING: CSS = {
   textAlign: "center",
@@ -165,7 +162,13 @@ export const ActiveContent: React.FC = React.memo(() => {
                 sign in
               </a>{" "}
               first, or otherwise check if you experience{" "}
-              <A href={CONNECTIVITY_DOCS_URL}>connectivity issues</A>.
+              <DocsLink
+                href={joinUrlPath(appBasePath, "docs", CONNECTIVITY_DOCS_SLUG)}
+                slug={CONNECTIVITY_DOCS_SLUG}
+              >
+                connectivity issues
+              </DocsLink>
+              .
             </Alert>
           </div>
         ) : null}

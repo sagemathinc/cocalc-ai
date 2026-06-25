@@ -39,13 +39,13 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import {
-  A,
   ErrorDisplay,
   Icon,
   SettingBox,
   Tip,
   Tooltip,
 } from "@cocalc/frontend/components";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import Password, {
   PasswordTextArea,
 } from "@cocalc/frontend/components/password";
@@ -558,9 +558,9 @@ export const Datastore: React.FC<Props> = React.memo((props: Props) => {
           p: (c) => <p>{c}</p>,
           projectLabelLower,
           doc: (
-            <A href={DOC_CLOUD_STORAGE_URL}>
+            <DocsLink href={DOC_CLOUD_STORAGE_URL} slug={DOC_CLOUD_STORAGE_URL}>
               {projectLabel} Settings / Cloud Storage & Remote File Systems
-            </A>
+            </DocsLink>
           ),
         }}
       />
@@ -654,7 +654,10 @@ export const Datastore: React.FC<Props> = React.memo((props: Props) => {
       <>
         {new_config.type.toUpperCase()}{" "}
         {intl.formatMessage(labels.configuration)} (
-        <A href={DOC_CLOUD_STORAGE_URL}>Help</A>)
+        <DocsLink href={DOC_CLOUD_STORAGE_URL} slug={DOC_CLOUD_STORAGE_URL}>
+          Help
+        </DocsLink>
+        )
       </>
     );
     return (

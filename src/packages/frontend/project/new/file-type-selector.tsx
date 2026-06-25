@@ -9,7 +9,7 @@ import { lazy, Suspense } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Available } from "@cocalc/comm/project-configuration";
 import { CSS } from "@cocalc/frontend/app-framework";
-import { A } from "@cocalc/frontend/components/A";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { Icon, isIconName } from "@cocalc/frontend/components/icon";
 import { Tip } from "@cocalc/frontend/components/tip";
 import { labels } from "@cocalc/frontend/i18n";
@@ -111,7 +111,14 @@ export function FileTypeSelector({
                     defaultMessage={`Chat with AI or human collaborators.
                       See <A>documentation</A> to learn more.`}
                     values={{
-                      A: (c) => <A href="/docs/collaboration/chat">{c}</A>,
+                      A: (c) => (
+                        <DocsLink
+                          projectId={projectActions?.project_id}
+                          slug="collaboration/chat"
+                        >
+                          {c}
+                        </DocsLink>
+                      ),
                     }}
                   />
                 }
@@ -233,7 +240,12 @@ export function FileTypeSelector({
                     See <A>documentation</A> to learn more.`}
                     values={{
                       A: (c) => (
-                        <A href="/docs/teaching/course-workflow">{c}</A>
+                        <DocsLink
+                          projectId={projectActions?.project_id}
+                          slug="teaching/course-workflow"
+                        >
+                          {c}
+                        </DocsLink>
                       ),
                     }}
                   />

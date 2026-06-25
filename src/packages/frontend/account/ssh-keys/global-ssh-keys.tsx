@@ -6,7 +6,8 @@
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useRedux } from "@cocalc/frontend/app-framework";
-import { A, Paragraph, Text } from "@cocalc/frontend/components";
+import { Paragraph, Text } from "@cocalc/frontend/components";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -55,7 +56,14 @@ export default function GlobalSSHKeys() {
               projectsLabel: projectsLabelLower,
               strong: (c) => <Text strong>{c}</Text>,
               i: (c) => <i>{c}</i>,
-              A: (c) => <A href="/app-docs/account/settings">{c}</A>,
+              A: (c) => (
+                <DocsLink
+                  href="/app-docs/account/settings"
+                  slug="account/settings"
+                >
+                  {c}
+                </DocsLink>
+              ),
             }}
           />
         </Paragraph>

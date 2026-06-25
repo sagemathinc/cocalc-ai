@@ -13,7 +13,7 @@ import {
   modelDisplayName,
   modelMentionMarkup,
 } from "@cocalc/frontend/frame-editors/ai/model-names";
-import { open_new_tab } from "@cocalc/frontend/misc";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -2237,7 +2237,10 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   help = () => {
-    open_new_tab("/docs/collaboration/chat");
+    const projectId = this.store?.get("project_id");
+    if (projectId != null) {
+      openProjectDocs({ projectId, slug: "collaboration/chat" });
+    }
   };
 
   undo = () => {

@@ -28,15 +28,13 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import {
   API_KEY_CAPABILITIES,
   type ApiKey,
   type ApiKeyCapability,
 } from "@cocalc/util/db-schema/api-keys";
-import { joinUrlPath } from "@cocalc/util/url-path";
-import { A } from "./A";
 import CopyToClipBoard from "./copy-to-clipboard";
 import { Icon } from "./icon";
 import { TimeAgo } from "./time-ago";
@@ -474,12 +472,9 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
           )}
         </Space.Compact>
         <Paragraph style={{ marginTop: "10px" }}>
-          Read the{" "}
-          <A href={joinUrlPath(appBasePath, "docs/api/http-api")}>
-            API documentation
-          </A>
-          . CoCalc-ai API keys are intentionally scoped; prefer the CoCalc CLI
-          for many automation workflows.
+          Read the <DocsLink slug="api/http-api">API documentation</DocsLink>.
+          CoCalc-ai API keys are intentionally scoped; prefer the CoCalc CLI for
+          many automation workflows.
         </Paragraph>
         <Modal
           open={addModalVisible || editModalVisible}

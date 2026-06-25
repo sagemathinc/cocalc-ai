@@ -4,7 +4,7 @@
  */
 
 import { Component, Rendered } from "../app-framework";
-import { A } from "@cocalc/frontend/components";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 
 export class FAQ extends Component {
   public render(): Rendered {
@@ -13,14 +13,17 @@ export class FAQ extends Component {
         <a id="faq" />
         <ul style={{ paddingLeft: "20px" }}>
           <li>
-            <A href="/app-docs/billing/settings">
+            <DocsLink href="/app-docs/billing/settings" slug="billing/settings">
               Billing, quotas, and upgrades
-            </A>
+            </DocsLink>
           </li>
           <li>
-            <A href="/app-docs/projects/project-list">
+            <DocsLink
+              href="/app-docs/projects/project-list"
+              slug="projects/project-list"
+            >
               Questions about projects
-            </A>
+            </DocsLink>
           </li>
         </ul>
       </div>

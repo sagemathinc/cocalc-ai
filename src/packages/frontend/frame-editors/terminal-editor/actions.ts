@@ -83,7 +83,7 @@ export class TerminalActions extends Actions {
   }
 
   tour(_id, refs) {
-    return getTour(refs);
+    return getTour(refs, this.project_id);
   }
 
   settings = () => {

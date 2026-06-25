@@ -2,8 +2,9 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { delay } from "awaiting";
 import * as immutable from "immutable";
+import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
+import { export_to_ipynb } from "@cocalc/jupyter/ipynb/export-to-ipynb";
 import { STUDENT_SUBDIR } from "@cocalc/frontend/course/assignments/consts";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
@@ -190,32 +191,20 @@ export class NBGraderActions {
     // filename, and modify by applying the assign transformations.
     const { project_id } = this.jupyter_actions;
     const project_actions = this.redux.getProjectActions(project_id);
-    await project_actions.createFile({
-      name: filename,
-      foreground: true,
-    });
-    let actions = this.redux.getEditorActions(project_id, filename);
-    while (actions == null) {
-      await delay(200);
-      actions = this.redux.getEditorActions(project_id, filename);
-    }
-    await actions.jupyter_actions.wait_until_ready();
-    actions.jupyter_actions.syncdb.from_str(
-      this.jupyter_actions.syncdb.to_str(),
-    );
-    // Important: we also have to fire a changes event with all
-    // records, since otherwise the Jupyter store doesn't get
-    // updated since we're using from_str.
-    // The complicated map/filter thing below is just to grab
-    // only the {type:?,id:?} parts of all the records.
-    actions.jupyter_actions.syncdb.emit("change", "all");
-
-    // Apply all the transformations.
-    await actions.jupyter_actions.nbgrader_actions.apply_assign_transformations(
+    const studentIpynb = buildStudentVersionIpynb(
+      await this.jupyter_actions.toIpynb(),
+      this.jupyter_actions.store.get_kernel_language(),
       minimal_stubs,
     );
-    // now save to disk
-    await actions.jupyter_actions.save();
+    await project_actions.ensureContainingDirectoryExists(filename);
+    await project_actions
+      .fs()
+      .writeFile(filename, JSON.stringify(studentIpynb, undefined, 2), true);
+    await project_actions.open_file({
+      path: filename,
+      explicit: true,
+      foreground: true,
+    });
   };
 
   // public because above we call this... on a different object!
@@ -435,4 +424,118 @@ export class NBGraderActions {
       this.jupyter_actions._sync();
     }
   };
+}
+
+export function buildStudentVersionIpynb(
+  sourceIpynb: any,
+  kernelLanguage: string | undefined,
+  minimalStubs: boolean = false,
+) {
+  const importer = new IPynbImporter();
+  importer.import({ ipynb: sourceIpynb });
+  try {
+    const importedCells = importer.cells();
+    let cells = immutable.Map<string, immutable.Map<string, any>>();
+    let cellList: string[] = [];
+    for (const id of Object.keys(importedCells)) {
+      cells = cells.set(id, immutable.fromJS(importedCells[id]));
+    }
+    cellList = Object.values(importedCells)
+      .sort((a: any, b: any) => a.pos - b.pos)
+      .map((cell: any) => cell.id);
+
+    const updateCell = (
+      id: string,
+      update: (cell: immutable.Map<string, any>) => immutable.Map<string, any>,
+    ) => {
+      const cell = cells.get(id);
+      if (cell != null) {
+        cells = cells.set(id, update(cell));
+      }
+    };
+
+    for (const id of cellList) {
+      updateCell(id, (cell) => {
+        if (!cell.getIn(["metadata", "nbgrader", "locked"])) return cell;
+        return cell
+          .setIn(["metadata", "editable"], true)
+          .setIn(["metadata", "deletable"], true);
+      });
+    }
+
+    for (const id of cellList) {
+      updateCell(id, (cell) => {
+        if (!cell.getIn(["metadata", "nbgrader", "solution"])) return cell;
+        if (cell.getIn(["metadata", "nbgrader", "multiple_choice"]) === true) {
+          return cell;
+        }
+        return clearSolution(cell, kernelLanguage, minimalStubs);
+      });
+    }
+
+    for (const id of cellList) {
+      updateCell(id, (cell) => {
+        if (!cell.getIn(["metadata", "nbgrader", "grade"])) return cell;
+        if (cell.getIn(["metadata", "nbgrader", "solution"])) return cell;
+        return clear_hidden_tests(cell);
+      });
+    }
+
+    for (const id of cellList) {
+      updateCell(id, (cell) => {
+        if (!cell.getIn(["metadata", "nbgrader", "grade"])) return cell;
+        return clear_mark_regions(cell);
+      });
+    }
+
+    cellList = cellList.filter((id) => {
+      const cell = cells.get(id);
+      if (cell?.getIn(["metadata", "nbgrader", "remove"])) {
+        cells = cells.delete(id);
+        return false;
+      }
+      return true;
+    });
+
+    for (const id of cellList) {
+      updateCell(id, (cell) =>
+        cell.get("output") != null || cell.get("exec_count")
+          ? cell.set("output", null).set("exec_count", null).delete("done")
+          : cell,
+      );
+    }
+
+    for (const id of cellList) {
+      updateCell(id, (cell) => {
+        if (!cell.getIn(["metadata", "nbgrader", "solution"])) return cell;
+        const cellWithChecksum = set_checksum(cell);
+        const nbgrader = cellWithChecksum.get("nbgrader");
+        return nbgrader == null
+          ? cell
+          : cell.setIn(["metadata", "nbgrader"], nbgrader);
+      });
+    }
+
+    for (const id of cellList) {
+      updateCell(id, (cell) => {
+        const nbgrader = cell.getIn(["metadata", "nbgrader"]) as any;
+        if (!nbgrader) return cell;
+        cell = cell.setIn(["metadata", "deletable"], false);
+        if (nbgrader.get("locked")) {
+          cell = cell.setIn(["metadata", "editable"], false);
+        }
+        return cell;
+      });
+    }
+
+    return export_to_ipynb({
+      cells: cells.toJS(),
+      cell_list: cellList,
+      metadata: importer.metadata(),
+      kernelspec: sourceIpynb?.metadata?.kernelspec,
+      language_info: sourceIpynb?.metadata?.language_info,
+    });
+  } finally {
+    importer.close();
+  }
 }
