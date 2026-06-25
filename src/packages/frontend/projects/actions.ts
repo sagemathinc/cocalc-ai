@@ -3664,7 +3664,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }): void {
     const started = Date.now();
     let stuckReported = false;
-    const poll = () => {
+    const terminalBlockedStart = async (): Promise<LroSummary | undefined> => {
+      if (!op_id) {
+        return undefined;
+      }
+      try {
+        const summary = await webapp_client.conat_client.hub.lro.get({
+          op_id,
+        });
+        if (
+          summary &&
+          isTerminal(summary.status) &&
+          summary.status !== "succeeded"
+        ) {
+          return summary;
+        }
+      } catch {
+        // If we cannot read the LRO summary, keep treating this as an
+        // observed stuck start. Missing telemetry should not hide real stalls.
+      }
+      return undefined;
+    };
+    const poll = async () => {
       const state = store.getIn([
         "project_map",
         project_id,
@@ -3696,6 +3717,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       const elapsedMs = Date.now() - started;
       if (!stuckReported && elapsedMs >= stuck_after_ms) {
+        const blocked = await terminalBlockedStart();
+        if (blocked) {
+          recordUxLatencyEvent({
+            event_type: "project_start",
+            metric: "project_start_running_blocked",
+            duration_ms: elapsedUxMs(timer),
+            project_id,
+            client_event_id,
+            segment,
+            details: {
+              ...details,
+              observed_state: state,
+              stuck_after_ms,
+              deadline_ms,
+              op_status: blocked.status,
+              op_error: blocked.error,
+            },
+          });
+          return;
+        }
         stuckReported = true;
         recordUxLatencyEvent({
           event_type: "project_start",
@@ -3727,10 +3768,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
         return;
       }
-      const timerId = setTimeout(poll, state === "starting" ? 250 : 1000);
+      const timerId = setTimeout(
+        () => void poll(),
+        state === "starting" ? 250 : 1000,
+      );
       (timerId as any).unref?.();
     };
-    poll();
+    void poll();
   }
 
   // return true, if it actually started the project

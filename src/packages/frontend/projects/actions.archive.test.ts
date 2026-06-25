@@ -74,6 +74,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         hosts: {
           listHosts: jest.fn(async () => []),
         },
+        lro: {
+          get: jest.fn(async () => undefined),
+        },
       },
       lroWait: jest.fn(async () => ({
         status: "succeeded",
@@ -227,6 +230,9 @@ describe("ProjectsActions archive flow", () => {
     );
     mockedWebappClient.conat_client.hub.hosts.listHosts.mockResolvedValue(
       [] as any,
+    );
+    mockedWebappClient.conat_client.hub.lro.get.mockResolvedValue(
+      undefined as any,
     );
     selectHostForProjectStartMock.mockResolvedValue(undefined);
   });
@@ -1009,6 +1015,49 @@ describe("ProjectsActions archive flow", () => {
         ([event]) => event?.metric === "project_start_running_stuck",
       );
       expect(stuckCalls).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("records an intentional blocked project start instead of stuck when the start LRO failed", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "opened",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      mockedWebappClient.conat_client.hub.lro.get.mockResolvedValue({
+        status: "failed",
+        error: "runtime CPU usage limit exceeded",
+      } as any);
+      const { actions } = makeActions();
+      jest
+        .spyOn(actions, "ensure_host_info" as any)
+        .mockResolvedValue(undefined as any);
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+
+      await expect(actions.start_project(project_id)).resolves.toBe(true);
+      await jest.advanceTimersByTimeAsync(60_000);
+
+      expect(mockRecordUxLatencyEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: "project_start",
+          metric: "project_start_running_blocked",
+          project_id,
+          details: expect.objectContaining({
+            op_id: "start-op-1",
+            op_status: "failed",
+            op_error: "runtime CPU usage limit exceeded",
+          }),
+        }),
+      );
+      expect(mockRecordUxLatencyEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ metric: "project_start_running_stuck" }),
+      );
     } finally {
       jest.useRealTimers();
     }
