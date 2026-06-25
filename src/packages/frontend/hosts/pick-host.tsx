@@ -206,6 +206,15 @@ function autoSelectCompare(a: Host, b: Host): number {
   return (a.name || "").localeCompare(b.name || "");
 }
 
+export function hostIsVisibleForRegionFilter(
+  host: Host,
+  regionFilter?: string,
+): boolean {
+  if (!regionFilter) return true;
+  if (host.scope === "owned" || host.scope === "collab") return true;
+  return mapCloudRegionToR2Region(host.region) === regionFilter;
+}
+
 export function HostPickerModal({
   open,
   onCancel,
@@ -354,11 +363,7 @@ export function HostPickerPanel({
   const filteredHosts = useMemo(() => {
     return hosts.filter((h) => {
       if (!showUnavailable && h.can_place === false) return false;
-      if (
-        regionFilterState &&
-        mapCloudRegionToR2Region(h.region) !== regionFilterState
-      )
-        return false;
+      if (!hostIsVisibleForRegionFilter(h, regionFilterState)) return false;
       return true;
     });
   }, [hosts, showUnavailable, regionFilterState]);
@@ -523,7 +528,8 @@ export function HostPickerPanel({
       !regionFilter ||
       loading ||
       autoExpandedRemote ||
-      regionFilterState !== regionFilter
+      regionFilterState !== regionFilter ||
+      selectableHosts.length > 0
     ) {
       return;
     }
@@ -542,6 +548,7 @@ export function HostPickerPanel({
     loading,
     regionFilter,
     regionFilterState,
+    selectableHosts.length,
   ]);
 
   useEffect(() => {

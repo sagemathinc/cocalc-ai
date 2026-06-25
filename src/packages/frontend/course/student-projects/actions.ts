@@ -120,10 +120,12 @@ export class StudentProjectsActions {
     });
     let project_id: string;
     const courseRootfs = await this.get_student_project_rootfs();
+    const courseHostId = store.get_student_project_host_id();
     try {
       project_id = await redux.getActions("projects").create_project({
         title: store.get("settings").get("title"),
         description: store.get("settings").get("description"),
+        host_id: courseHostId,
         rootfs_image: courseRootfs?.image,
         rootfs_image_id: courseRootfs?.image_id,
       });
@@ -502,6 +504,7 @@ export class StudentProjectsActions {
     const datastore: Datastore = store.get_datastore();
     const envvars: EnvVars = store.get_envvars();
     const courseRootfs = await this.get_student_project_rootfs();
+    const courseHostId = store.get_student_project_host_id();
     const student_project_functionality = normalizeStudentProjectFunctionality(
       store.getIn(["settings", "student_project_functionality"])?.toJS(),
     );
@@ -539,6 +542,7 @@ export class StudentProjectsActions {
           type: "student",
           student_project_functionality,
           envvars,
+          host_id: courseHostId,
           rootfs_image: courseRootfs?.image,
           rootfs_image_id: courseRootfs?.image_id,
         });

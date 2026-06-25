@@ -102,6 +102,13 @@ export class ConfigurationActions {
     });
   };
 
+  set_student_project_host = (opts?: { host_id?: string }): void => {
+    this.set({
+      student_project_host_id: opts?.host_id?.trim() || "",
+      table: "settings",
+    });
+  };
+
   set_email_invite = (body: string): void => {
     this.set({ email_invite: body, table: "settings" });
   };

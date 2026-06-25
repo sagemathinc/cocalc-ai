@@ -876,6 +876,7 @@ export interface CourseInfo {
   datastore: Datastore;
   student_project_functionality?: StudentProjectFunctionality;
   envvars?: EnvVars;
+  host_id?: string;
   rootfs_image?: string;
   rootfs_image_id?: string;
 }

@@ -27,6 +27,7 @@ import { DatastoreConfig } from "./datastore-config";
 import { EnvironmentVariablesConfig } from "./envvars-config";
 import { Nbgrader } from "./nbgrader";
 import { Parallel } from "./parallel";
+import { StudentProjectHostConfig } from "./student-project-host";
 import { StudentProjectRootfsConfig } from "./student-project-rootfs";
 import StudentPay from "./student-pay";
 import { getEmailInviteValidationError } from "./email-invite-validation";
@@ -96,6 +97,12 @@ export function ConfigurationPanel({
             actions={actions}
             settings={settings}
             name={name}
+          />
+          <br />
+          <StudentProjectHost
+            actions={actions}
+            settings={settings}
+            project_id={project_id}
           />
           <br />
           <EnvVariables
@@ -310,6 +317,24 @@ export function StudentProjectRootfs({
       actions={actions}
       settings={settings}
       name={name}
+    />
+  );
+}
+
+export function StudentProjectHost({
+  settings,
+  actions,
+  project_id,
+}: {
+  settings;
+  actions;
+  project_id: string;
+}) {
+  return (
+    <StudentProjectHostConfig
+      actions={actions}
+      settings={settings}
+      project_id={project_id}
     />
   );
 }

@@ -3030,6 +3030,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     type,
     student_project_functionality,
     envvars,
+    host_id,
     rootfs_image,
     rootfs_image_id,
   }: {
@@ -3049,6 +3050,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     type: "student" | "shared" | "nbgrader";
     student_project_functionality?: StudentProjectFunctionality | null;
     envvars?: EnvVars;
+    host_id?: string;
     rootfs_image?: string;
     rootfs_image_id?: string;
   }): Promise<void | { course: null | CourseInfo }> {
@@ -3088,6 +3090,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     if (typeof envvars?.inherit === "boolean") {
       course.envvars = envvars;
+    }
+    if (host_id?.trim()) {
+      course.host_id = host_id.trim();
     }
     if (rootfs_image?.trim()) {
       course.rootfs_image = rootfs_image.trim();

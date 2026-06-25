@@ -139,6 +139,7 @@ export type SortDescription = TypedMap<{
 export type CourseSettingsRecord = TypedMap<{
   allow_collabs: boolean;
   student_project_functionality?: StudentProjectFunctionality;
+  student_project_host_id?: string;
   student_project_rootfs_image?: string;
   student_project_rootfs_image_id?: string;
   description: string;
@@ -299,6 +300,12 @@ export class CourseStore extends Store<CourseState> {
         ...(explicitImageId ? { image_id: explicitImageId } : undefined),
       };
     }
+  }
+
+  public get_student_project_host_id(): string | undefined {
+    const host_id =
+      `${this.getIn(["settings", "student_project_host_id"]) ?? ""}`.trim();
+    return host_id || undefined;
   }
 
   public get_allow_collabs(): boolean {
