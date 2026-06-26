@@ -4,6 +4,7 @@
  */
 
 import { authFirstRequireAccount } from "./util";
+import type { CopyOptions } from "@cocalc/conat/files/fs";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 
 export type PublicDirectoryShareVisibility =
@@ -105,6 +106,28 @@ export interface UpsertPublicDirectoryShareOptions {
   disabled?: boolean;
 }
 
+export interface CopyPublicDirectoryShareToProjectOptions {
+  account_id?: string;
+  slug: string;
+  destination_project_id: string;
+  destination_path?: string;
+  options?: CopyOptions;
+}
+
+export interface CopyPublicDirectoryShareToProjectResponse {
+  destination_project_id: string;
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+  site_license_grant?: {
+    granted: boolean;
+    message?: string;
+    expires_at?: Date | string | null;
+  };
+}
+
 export interface PublicDirectoryShares {
   resolve: (
     opts: ResolvePublicDirectoryShareOptions,
@@ -118,6 +141,9 @@ export interface PublicDirectoryShares {
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
+  copyToProject: (
+    opts: CopyPublicDirectoryShareToProjectOptions,
+  ) => Promise<CopyPublicDirectoryShareToProjectResponse>;
 }
 
 export const publicDirectoryShares = {
@@ -125,4 +151,5 @@ export const publicDirectoryShares = {
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
+  copyToProject: authFirstRequireAccount,
 } as const;

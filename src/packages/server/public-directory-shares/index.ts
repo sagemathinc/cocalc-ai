@@ -4,9 +4,19 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
+import { lroStreamName } from "@cocalc/conat/lro/names";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { assertCollab } from "@cocalc/server/conat/api/util";
+import { createLro } from "@cocalc/server/lro/lro-db";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
+import {
+  assertCanIncreaseAccountStorage,
+  getProjectOwnerAccountId,
+} from "@cocalc/server/membership/project-limits";
+import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 import type {
@@ -16,6 +26,8 @@ import type {
   PublicDirectoryShareAvailability,
   PublicDirectoryShareSummary,
   PublicDirectoryShareVisibility,
+  CopyPublicDirectoryShareToProjectOptions,
+  CopyPublicDirectoryShareToProjectResponse,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
   UpsertPublicDirectoryShareOptions,
@@ -510,4 +522,102 @@ export async function upsert(
     [slug, bayId, row.id, row.project_id, row.disabled],
   );
   return rowToSummary(row);
+}
+
+export async function copyToProject({
+  account_id,
+  slug,
+  destination_project_id,
+  destination_path,
+  options,
+}: CopyPublicDirectoryShareToProjectOptions): Promise<CopyPublicDirectoryShareToProjectResponse> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(destination_project_id)) {
+    throw Error("invalid destination_project_id");
+  }
+  const share = await resolve({ account_id, slug });
+  if (!share.available) {
+    throw Error(
+      share.availability_message ||
+        "This shared directory is not available for copying yet.",
+    );
+  }
+  await assertCollab({
+    account_id,
+    project_id: destination_project_id,
+  });
+  const ownerAccountId = await getProjectOwnerAccountId(destination_project_id);
+  if (ownerAccountId) {
+    await assertCanIncreaseAccountStorage({ account_id: ownerAccountId });
+  }
+  const destPath = normalizePublicDirectorySharePath(destination_path ?? ".");
+  const op = await createLro({
+    kind: "copy-path-between-projects",
+    scope_type: "project",
+    scope_id: destination_project_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      src: {
+        project_id: share.project_id,
+        path: share.path,
+      },
+      src_read_policy: share.read_policy,
+      dests: [
+        {
+          project_id: destination_project_id,
+          path: destPath,
+        },
+      ],
+      options: {
+        recursive: true,
+        ...options,
+      },
+      public_directory_share: {
+        id: share.id,
+        slug: share.slug,
+        legacy_public_path_id: share.legacy_public_path_id,
+      },
+    },
+    status: "queued",
+  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch {
+    // Progress display is best-effort; the durable LRO row is authoritative.
+  }
+  publishLroEvent({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    op_id: op.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase: "queued",
+      message: "queued",
+      progress: 0,
+    },
+  }).catch(() => {});
+  triggerCopyLroWorker();
+  return {
+    destination_project_id,
+    op_id: op.op_id,
+    scope_type: "project",
+    scope_id: destination_project_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+    site_license_grant: share.site_license_grant_on_copy
+      ? {
+          granted: false,
+          message:
+            "Temporary site-license grant on copy is not implemented yet; the files are being copied without extra access.",
+        }
+      : undefined,
+  };
 }

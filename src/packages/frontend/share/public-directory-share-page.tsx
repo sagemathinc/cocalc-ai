@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Descriptions,
+  Input,
   Result,
   Skeleton,
   Space,
@@ -20,7 +21,7 @@ import { appUrl } from "@cocalc/frontend/auth/util";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 
 function authHref(view: "sign-in" | "sign-up"): string {
   const target = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -42,9 +43,15 @@ function availabilityColor(status?: string): string {
 
 export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
+  const projectActions = useActions("projects");
   const [loading, setLoading] = useState(false);
   const [share, setShare] = useState<ResolvedPublicDirectoryShare | null>(null);
   const [error, setError] = useState<string>("");
+  const [destinationProjectId, setDestinationProjectId] = useState("");
+  const [destinationPath, setDestinationPath] = useState(".");
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
   const normalizedSlug = `${slug ?? ""}`.trim();
 
   useEffect(() => {
@@ -127,6 +134,34 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     return null;
   }
 
+  async function copyToProject() {
+    if (!share || !destinationProjectId.trim()) return;
+    setCopying(true);
+    setCopyError("");
+    setCopyMessage("");
+    try {
+      const result =
+        await webapp_client.conat_client.hub.publicDirectoryShares.copyToProject(
+          {
+            slug: share.slug,
+            destination_project_id: destinationProjectId.trim(),
+            destination_path: destinationPath.trim() || ".",
+            options: { recursive: true },
+          },
+        );
+      setCopyMessage(`Copy queued as operation ${result.op_id}.`);
+      projectActions.open_project({
+        project_id: result.destination_project_id,
+        switch_to: true,
+        target: "files",
+      });
+    } catch (err) {
+      setCopyError(normalizeUserFacingError(err).message);
+    } finally {
+      setCopying(false);
+    }
+  }
+
   return (
     <div style={{ maxWidth: 960, margin: "32px auto", padding: "0 24px" }}>
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -147,12 +182,40 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
             </div>
 
             {share.available ? (
-              <Alert
-                type="info"
-                showIcon
-                message="File viewer integration is next"
-                description="This share resolves successfully. The next implementation step is connecting this route to the read-only project viewer and copy-to-project flow."
-              />
+              <Card size="small" title="Copy to one of your projects">
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="Read-only browser view is still being wired"
+                    description="Copying this shared directory to an existing project is available now. The inline read-only file browser is the next implementation step."
+                  />
+                  <Input
+                    placeholder="Destination project id"
+                    value={destinationProjectId}
+                    onChange={(e) => setDestinationProjectId(e.target.value)}
+                  />
+                  <Input
+                    placeholder="Destination path"
+                    value={destinationPath}
+                    onChange={(e) => setDestinationPath(e.target.value)}
+                  />
+                  <Button
+                    type="primary"
+                    loading={copying}
+                    disabled={!destinationProjectId.trim()}
+                    onClick={() => void copyToProject()}
+                  >
+                    Copy shared directory
+                  </Button>
+                  {copyMessage ? (
+                    <Alert type="success" showIcon message={copyMessage} />
+                  ) : null}
+                  {copyError ? (
+                    <Alert type="error" showIcon message={copyError} />
+                  ) : null}
+                </Space>
+              </Card>
             ) : (
               <Alert
                 type="warning"

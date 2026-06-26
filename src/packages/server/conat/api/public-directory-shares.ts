@@ -4,6 +4,7 @@
  */
 
 export {
+  copyToProject,
   list,
   listMine,
   resolve,
