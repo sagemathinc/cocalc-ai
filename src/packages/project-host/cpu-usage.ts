@@ -14,6 +14,10 @@ import type {
 import {
   buildCryptominingEvidence,
   detectCryptominingCommand,
+  detectCryptominingNetworkConnections,
+  getKnownMiningPoolAddressMap,
+  parseProcNetTcpConnections,
+  type KnownPoolAddressMap,
 } from "./cryptomining-detector";
 import { isProjectHostCpuUsageTrackingEnabled } from "./cpu-usage-runtime";
 
@@ -29,6 +33,7 @@ type PodmanLike = (
 
 type ReadFileLike = (path: string, encoding: BufferEncoding) => Promise<string>;
 type ReaddirLike = (path: string) => Promise<string[]>;
+type KnownPoolAddressesLike = () => Promise<KnownPoolAddressMap>;
 
 type ProjectContainer = {
   id: string;
@@ -301,14 +306,41 @@ async function readProcessCommand({
   }
 }
 
+async function collectProjectNetworkCryptominingSignals({
+  rootPid,
+  readFileFn,
+  knownPoolAddressesFn,
+}: {
+  rootPid: number;
+  readFileFn: ReadFileLike;
+  knownPoolAddressesFn: KnownPoolAddressesLike;
+}): Promise<ProjectCryptominingSignal[]> {
+  let tcp = "";
+  try {
+    tcp = await readFileFn(`/proc/${rootPid}/net/tcp`, "utf8");
+  } catch {
+    return [];
+  }
+  const connections = parseProcNetTcpConnections(tcp);
+  if (connections.length === 0) return [];
+  const knownPoolAddresses = await knownPoolAddressesFn();
+  if (knownPoolAddresses.size === 0) return [];
+  return detectCryptominingNetworkConnections({
+    connections,
+    knownPoolAddresses,
+  });
+}
+
 async function detectProjectCryptominingEvidence({
   rootPid,
   processSnapshot,
   readFileFn,
+  knownPoolAddressesFn,
 }: {
   rootPid: number;
   processSnapshot: ProcessCpuSnapshot;
   readFileFn: ReadFileLike;
+  knownPoolAddressesFn: KnownPoolAddressesLike;
 }): Promise<ProjectCryptominingEvidence | undefined> {
   const signals: ProjectCryptominingSignal[] = [];
   for (const pid of processTreePids(rootPid, processSnapshot)) {
@@ -316,6 +348,13 @@ async function detectProjectCryptominingEvidence({
     if (!command) continue;
     signals.push(...detectCryptominingCommand({ pid, command }));
   }
+  signals.push(
+    ...(await collectProjectNetworkCryptominingSignals({
+      rootPid,
+      readFileFn,
+      knownPoolAddressesFn,
+    })),
+  );
   return buildCryptominingEvidence(signals);
 }
 
@@ -323,10 +362,12 @@ async function getProjectCpuSample({
   container,
   processSnapshot,
   readFileFn,
+  knownPoolAddressesFn,
 }: {
   container: ProjectContainer & { pid: number };
   processSnapshot: ProcessCpuSnapshot;
   readFileFn: ReadFileLike;
+  knownPoolAddressesFn: KnownPoolAddressesLike;
 }): Promise<ProjectCpuSample | undefined> {
   const cpuTicks = sumProcessTreeCpuTicks(container.pid, processSnapshot);
   if (cpuTicks == null) return;
@@ -347,6 +388,7 @@ async function getProjectCpuSample({
     rootPid: container.pid,
     processSnapshot,
     readFileFn,
+    knownPoolAddressesFn,
   });
   if (evidence) {
     sample.cryptomining_evidence = evidence;
@@ -358,10 +400,12 @@ export async function collectRunningProjectCpuSamples({
   podmanCommand = podman,
   readdirFn = readdir,
   readFileFn = readFile,
+  knownPoolAddressesFn = getKnownMiningPoolAddressMap,
 }: {
   podmanCommand?: PodmanLike;
   readdirFn?: ReaddirLike;
   readFileFn?: ReadFileLike;
+  knownPoolAddressesFn?: KnownPoolAddressesLike;
 } = {}): Promise<ProjectCpuSample[]> {
   const containers = await listRunningProjectContainers(podmanCommand);
   const inspected = await inspectProjectContainerPids(
@@ -379,6 +423,7 @@ export async function collectRunningProjectCpuSamples({
           container,
           processSnapshot,
           readFileFn,
+          knownPoolAddressesFn,
         });
       } catch (err) {
         logger.debug("unable to sample project CPU counter", {
@@ -530,5 +575,6 @@ export const __test__ = {
   parseProcCgroup,
   sumProcessTreeCpuTicks,
   processTreePids,
+  collectProjectNetworkCryptominingSignals,
   summarizeManagedCpuUsageDeltas,
 };
