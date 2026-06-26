@@ -15,6 +15,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 export interface PublicConfig {
   account_display_name?: string;
   account_email_address?: string;
+  account_creation_email_instructions?: string;
   account_id?: string;
   cookie_banner_enabled?: boolean;
   cookie_banner_text?: string;
@@ -27,6 +28,7 @@ export interface PublicConfig {
   policies?: string;
   policy_pages?: PublicPolicyPages;
   site_name?: string;
+  sign_in_email_instructions?: string;
   signup_email_domain_public_policy?: SignupEmailDomainPublicPolicy;
   strategies?: PassportStrategyFrontend[];
   terms_of_service_url?: string;
