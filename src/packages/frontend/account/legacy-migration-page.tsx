@@ -36,6 +36,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 import type {
+  LegacyMigrationImportProjectResult,
   LegacyMigrationMatchedAccount,
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
@@ -208,6 +209,16 @@ function projectActionAvailable(
   project: LegacyMigrationProjectSummary,
 ): boolean {
   return !!project.project_id || archiveAvailable(project);
+}
+
+function bulkRestoreSelectable(
+  project: LegacyMigrationProjectSummary,
+): boolean {
+  return (
+    !project.project_id &&
+    project.import_status !== "creating" &&
+    archiveAvailable(project)
+  );
 }
 
 function ignoreProjectRowClick(target: EventTarget | null): boolean {
@@ -479,6 +490,13 @@ export function LegacyMigrationPage() {
   const [importProject, setImportProject] =
     useState<LegacyMigrationProjectSummary>();
   const [openingLegacyProjectId, setOpeningLegacyProjectId] = useState("");
+  const [selectedLegacyProjectIds, setSelectedLegacyProjectIds] = useState<
+    string[]
+  >([]);
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkResults, setBulkResults] = useState<
+    LegacyMigrationImportProjectResult[]
+  >([]);
 
   async function loadProjects(nextQuery = query) {
     if (!account_id || !legacyMigrationEnabled) return;
@@ -607,6 +625,95 @@ export function LegacyMigrationPage() {
       (project) => projectStatusFilter(project) === statusFilter,
     );
   }, [state.projects, statusFilter]);
+
+  const selectedProjects = useMemo(() => {
+    const ids = new Set(selectedLegacyProjectIds);
+    return filteredProjects.filter(
+      (project) =>
+        ids.has(project.legacy_project_id) && bulkRestoreSelectable(project),
+    );
+  }, [filteredProjects, selectedLegacyProjectIds]);
+
+  async function restoreSelectedProjects(): Promise<void> {
+    const projects = selectedProjects;
+    if (projects.length === 0) {
+      void message.info(
+        "Select one or more ready, not-yet-restored projects first.",
+      );
+      return;
+    }
+    const hasDiskEstimate = projects.some((project) => project.disk_mb != null);
+    const lastKnownDiskMb = hasDiskEstimate
+      ? projects.reduce((total, project) => total + (project.disk_mb ?? 0), 0)
+      : undefined;
+    const archivedBytes = projects.reduce(
+      (total, project) => total + (project.artifact_bytes ?? 0),
+      0,
+    );
+
+    Modal.confirm({
+      title: `Restore ${projects.length.toLocaleString()} legacy project${
+        projects.length === 1 ? "" : "s"
+      }?`,
+      width: 720,
+      okText: "Restore selected",
+      content: (
+        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <Text>
+            CoCalc will create these projects and start restoring files from
+            their legacy archives. The restore runs in the background; you can
+            leave this page and come back later.
+          </Text>
+          <Text type="secondary">
+            Last known disk size: {formatDiskMb(lastKnownDiskMb)}. Archived
+            size: {formatBytes(archivedBytes)}.
+          </Text>
+          <Alert
+            showIcon
+            type="warning"
+            message="Bulk restore uses default project placement."
+            description="Use Restore and Open on an individual project if you need to choose a specific image or host."
+          />
+        </Space>
+      ),
+      onOk: async () => {
+        setBulkImporting(true);
+        setBulkResults([]);
+        try {
+          const response =
+            await webapp_client.conat_client.hub.legacyMigration.importProjects(
+              {
+                legacy_project_ids: projects.map(
+                  (project) => project.legacy_project_id,
+                ),
+                restore_mode: "full",
+              },
+            );
+          setBulkResults(response.results);
+          setSelectedLegacyProjectIds([]);
+          await loadProjects();
+          const failed = response.results.filter(
+            (result) => result.status === "failed",
+          );
+          if (failed.length > 0) {
+            void message.warning(
+              `${failed.length.toLocaleString()} of ${response.results.length.toLocaleString()} selected restore request${
+                response.results.length === 1 ? "" : "s"
+              } failed.`,
+            );
+          } else {
+            void message.success(
+              `Started ${response.results.length.toLocaleString()} legacy project restore${
+                response.results.length === 1 ? "" : "s"
+              }.`,
+            );
+          }
+        } finally {
+          setBulkImporting(false);
+        }
+      },
+    });
+  }
 
   const columns = [
     {
@@ -860,6 +967,14 @@ export function LegacyMigrationPage() {
         }
         extra={
           <Space wrap>
+            <Button
+              disabled={selectedProjects.length === 0}
+              loading={bulkImporting}
+              onClick={() => void restoreSelectedProjects()}
+              type="primary"
+            >
+              Restore selected ({selectedProjects.length.toLocaleString()})
+            </Button>
             <Select
               onChange={setStatusFilter}
               style={{ width: 170 }}
@@ -991,6 +1106,42 @@ export function LegacyMigrationPage() {
                   filters to find projects outside this loaded list.
                 </Text>
               </Space>
+              {bulkResults.length > 0 ? (
+                <Alert
+                  showIcon
+                  type={
+                    bulkResults.some((result) => result.status === "failed")
+                      ? "warning"
+                      : "success"
+                  }
+                  message={`Bulk restore results: ${bulkResults
+                    .filter((result) => result.status !== "failed")
+                    .length.toLocaleString()} queued, ${bulkResults
+                    .filter((result) => result.status === "failed")
+                    .length.toLocaleString()} failed`}
+                  description={
+                    <Space direction="vertical" size={2}>
+                      {bulkResults.slice(0, 20).map((result) => (
+                        <Text
+                          key={result.legacy_project_id}
+                          type={
+                            result.status === "failed" ? "danger" : "secondary"
+                          }
+                        >
+                          {result.legacy_project_id}: {result.status}
+                          {result.error ? ` - ${result.error}` : ""}
+                        </Text>
+                      ))}
+                      {bulkResults.length > 20 ? (
+                        <Text type="secondary">
+                          Showing first 20 of{" "}
+                          {bulkResults.length.toLocaleString()} results.
+                        </Text>
+                      ) : null}
+                    </Space>
+                  }
+                />
+              ) : null}
               <Table<LegacyMigrationProjectSummary>
                 columns={columns}
                 dataSource={filteredProjects}
@@ -1019,6 +1170,18 @@ export function LegacyMigrationPage() {
                   onShowSizeChange: (_page, size) => setPageSize(size),
                 }}
                 rowKey="legacy_project_id"
+                rowSelection={{
+                  getCheckboxProps: (project) => ({
+                    disabled: !bulkRestoreSelectable(project),
+                    title: bulkRestoreSelectable(project)
+                      ? "Select this project for bulk restore."
+                      : "Only not-yet-restored projects with available archives can be selected.",
+                  }),
+                  onChange: (keys) =>
+                    setSelectedLegacyProjectIds(keys.map((key) => `${key}`)),
+                  preserveSelectedRowKeys: true,
+                  selectedRowKeys: selectedLegacyProjectIds,
+                }}
               />
               <LegacyProjectImportModal
                 project={importProject}
