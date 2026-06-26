@@ -40,6 +40,10 @@ const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
   60 * 60 * 1000,
   envToInt("COCALC_PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS", 6 * 60 * 60 * 1000),
 );
+const PROJECT_ARCHIVE_DOWNLOAD_STALL_TIMEOUT_MS = Math.max(
+  30 * 1000,
+  envToInt("COCALC_PROJECT_ARCHIVE_DOWNLOAD_STALL_TIMEOUT_MS", 2 * 60 * 1000),
+);
 const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
 const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
   ".cache/cocalc",
@@ -565,14 +569,7 @@ async function downloadSignedProjectArchive({
   dest: string;
   lro?: LroRef;
 }): Promise<{ bytes: number; sha256: string }> {
-  const response = await fetch(download.url, {
-    headers: download.headers ?? {},
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(
-      `project archive download failed (${response.status}): ${response.statusText || "unknown error"}`,
-    );
-  }
+  const controller = new AbortController();
   const hash = createHash("sha256");
   const expectedBytes =
     typeof download.bytes === "number" && Number.isFinite(download.bytes)
@@ -580,10 +577,26 @@ async function downloadSignedProjectArchive({
       : undefined;
   let bytes = 0;
   let lastProgress = 0;
+  let stallError: Error | undefined;
+  let stallTimer: NodeJS.Timeout | undefined;
+  const resetStallTimer = () => {
+    if (stallTimer != null) {
+      clearTimeout(stallTimer);
+    }
+    stallTimer = setTimeout(() => {
+      stallError = new Error(
+        `project archive download stalled after ${PROJECT_ARCHIVE_DOWNLOAD_STALL_TIMEOUT_MS}ms with ${bytes}${expectedBytes != null ? `/${expectedBytes}` : ""} bytes downloaded`,
+      );
+      controller.abort(stallError);
+    }, PROJECT_ARCHIVE_DOWNLOAD_STALL_TIMEOUT_MS);
+    stallTimer.unref?.();
+  };
+  resetStallTimer();
   const monitor = new Transform({
     transform(chunk: Buffer, _encoding, cb) {
       bytes += chunk.length;
       hash.update(chunk);
+      resetStallTimer();
       const now = Date.now();
       if (now - lastProgress >= PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS) {
         lastProgress = now;
@@ -604,11 +617,31 @@ async function downloadSignedProjectArchive({
       cb(null, chunk);
     },
   });
-  await pipeline(
-    Readable.fromWeb(response.body as NodeReadableStream),
-    monitor,
-    createWriteStream(dest),
-  );
+  try {
+    const response = await fetch(download.url, {
+      headers: download.headers ?? {},
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `project archive download failed (${response.status}): ${response.statusText || "unknown error"}`,
+      );
+    }
+    await pipeline(
+      Readable.fromWeb(response.body as NodeReadableStream),
+      monitor,
+      createWriteStream(dest),
+    );
+  } catch (err) {
+    if (stallError != null) {
+      throw stallError;
+    }
+    throw err;
+  } finally {
+    if (stallTimer != null) {
+      clearTimeout(stallTimer);
+    }
+  }
   const sha256 = hash.digest("hex");
   const expectedSha256 = `${download.sha256 ?? ""}`.trim().toLowerCase();
   if (expectedSha256 && sha256 !== expectedSha256) {
