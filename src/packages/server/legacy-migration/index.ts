@@ -1526,6 +1526,25 @@ async function createImportedLegacyProject({
   host_id?: string;
   region?: string;
 }): Promise<string> {
+  const account = await getClusterAccountById(account_id);
+  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
+  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+    const { project_id } = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: homeBayId,
+      timeout: PROJECT_ARCHIVE_TIMEOUT_MS,
+    }).createLegacyMigrationProject({
+      account_id,
+      legacy_project_id,
+      title: projectTitle(legacy),
+      description: projectDescription(legacy),
+      rootfs_image,
+      rootfs_image_id,
+      host_id,
+      region,
+    });
+    return project_id;
+  }
   const opts = {
     account_id,
     title: projectTitle(legacy),
