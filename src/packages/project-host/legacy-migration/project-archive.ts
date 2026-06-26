@@ -43,6 +43,7 @@ const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
 const LEGACY_PROJECT_ARCHIVE_UID = 2001;
 const LEGACY_PROJECT_ARCHIVE_GID = 2001;
 const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
+  ".cache/cocalc",
   ".local/share/cocalc",
   ".snapshots",
   ".smc",
@@ -52,6 +53,16 @@ const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
 
 type LegacyProjectArchiveDeps = {
   getOrEnsureVolume: (project_id: string) => Promise<unknown>;
+  getProjectQuota?: (project_id: string) => Promise<{
+    size: number;
+    used: number;
+    warning?: string;
+  }>;
+  setProjectQuota?: (
+    project_id: string,
+    size: number | string,
+  ) => Promise<void>;
+  setProjectQuotaGraceActive?: (project_id: string, active: boolean) => void;
   projectMountpoint: (project_id: string) => string;
   invalidateProjectFsServer: (project_id: string) => void;
   touchProjectLastEdited: (project_id: string, reason: string) => void;
@@ -350,6 +361,14 @@ function runProjectArchiveCommand({
   });
 }
 
+function managedArchiveExcludeFindArgs(dest: string): string[] {
+  return LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS.flatMap((root, index) => [
+    ...(index === 0 ? [] : ["-o"]),
+    "-path",
+    join(dest, root),
+  ]);
+}
+
 async function mapLegacyArchiveOwnership({
   dest,
   progress,
@@ -379,12 +398,21 @@ async function mapLegacyArchiveOwnership({
     },
   });
   await runProjectArchiveCommand({
-    command: "chown",
+    command: "find",
     args: [
-      "-hR",
+      dest,
+      "(",
+      ...managedArchiveExcludeFindArgs(dest),
+      ")",
+      "-prune",
+      "-o",
+      "-exec",
+      "chown",
+      "-h",
       `--from=${LEGACY_PROJECT_ARCHIVE_UID}:${LEGACY_PROJECT_ARCHIVE_GID}`,
       `${destStat.uid}:${destStat.gid}`,
-      dest,
+      "{}",
+      "+",
     ],
   });
 }
@@ -697,6 +725,9 @@ async function hashProjectArchiveFile(
 
 export function createLegacyProjectArchiveHandlers({
   getOrEnsureVolume,
+  getProjectQuota,
+  setProjectQuota,
+  setProjectQuotaGraceActive,
   projectMountpoint,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -715,6 +746,7 @@ export function createLegacyProjectArchiveHandlers({
     include_paths?: string[];
     exclude_paths?: string[];
     max_uncompressed_bytes?: number;
+    temporary_quota_grace?: boolean;
     lro?: LroRef;
   }) => Promise<ProjectArchiveRestoreResult>;
 } {
@@ -790,6 +822,7 @@ export function createLegacyProjectArchiveHandlers({
       include_paths,
       exclude_paths,
       max_uncompressed_bytes,
+      temporary_quota_grace,
       lro,
     }: {
       project_id: string;
@@ -798,6 +831,7 @@ export function createLegacyProjectArchiveHandlers({
       include_paths?: string[];
       exclude_paths?: string[];
       max_uncompressed_bytes?: number;
+      temporary_quota_grace?: boolean;
       lro?: LroRef;
     }): Promise<ProjectArchiveRestoreResult> {
       const started = Date.now();
@@ -806,6 +840,9 @@ export function createLegacyProjectArchiveHandlers({
       let tmpDir: string | undefined;
       let memberListTmpDir: string | undefined;
       let archivePath: string;
+      let savedQuotaSize: number | undefined;
+      let quotaGraceEnabled = false;
+      let quotaGraceMarkedActive = false;
       if (cache_id) {
         archivePath = projectArchiveCachePaths({
           project_id,
@@ -834,6 +871,41 @@ export function createLegacyProjectArchiveHandlers({
                 lro,
               })
             : await hashProjectArchiveFile(archivePath);
+        if (temporary_quota_grace) {
+          if (getProjectQuota == null || setProjectQuota == null) {
+            throw new Error(
+              "legacy project archive restore requested quota grace without quota helpers",
+            );
+          } else {
+            try {
+              setProjectQuotaGraceActive?.(project_id, true);
+              quotaGraceMarkedActive = true;
+              const quota = await getProjectQuota(project_id);
+              if (quota.size > 0) {
+                savedQuotaSize = quota.size;
+                publishArchiveProgress({
+                  lro,
+                  phase: "quota",
+                  message: "temporarily lifting project quota for migration",
+                  progress: 47,
+                  detail: {
+                    previous_quota_bytes: quota.size,
+                    used_bytes: quota.used,
+                    warning: quota.warning,
+                  },
+                });
+                await setProjectQuota(project_id, "none");
+                quotaGraceEnabled = true;
+              }
+            } catch (err) {
+              logger.warn(
+                "legacy project archive restore failed to enable quota grace",
+                { project_id, err: `${err}` },
+              );
+              throw err;
+            }
+          }
+        }
         const include = normalizeProjectArchivePathRoots(include_paths);
         const exclude = mergeProjectArchivePathRoots(
           LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
@@ -897,6 +969,28 @@ export function createLegacyProjectArchiveHandlers({
           duration_ms: Date.now() - started,
         };
       } finally {
+        if (quotaGraceEnabled && savedQuotaSize != null) {
+          try {
+            await setProjectQuota?.(project_id, savedQuotaSize);
+            publishArchiveProgress({
+              lro,
+              phase: "quota",
+              message: "restored project quota after migration",
+              progress: 98,
+              detail: {
+                quota_bytes: savedQuotaSize,
+              },
+            });
+          } catch (err) {
+            logger.warn(
+              "legacy project archive restore failed to restore project quota",
+              { project_id, savedQuotaSize, err: `${err}` },
+            );
+          }
+        }
+        if (quotaGraceMarkedActive) {
+          setProjectQuotaGraceActive?.(project_id, false);
+        }
         if (tmpDir) {
           await rm(tmpDir, { recursive: true, force: true }).catch((err) => {
             logger.warn("legacy project archive temp cleanup failed", {

@@ -230,8 +230,19 @@ const quotaInFlight = new Map<
     warning?: string;
   }>
 >();
+const projectQuotaGraceActive = new Set<string>();
 const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
   getOrEnsureVolume,
+  getProjectQuota: async (project_id) => await getQuota({ project_id }),
+  setProjectQuota: async (project_id, size) =>
+    await setQuota({ project_id, size }),
+  setProjectQuotaGraceActive: (project_id, active) => {
+    if (active) {
+      projectQuotaGraceActive.add(project_id);
+    } else {
+      projectQuotaGraceActive.delete(project_id);
+    }
+  },
   projectMountpoint,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -1737,6 +1748,10 @@ async function repairProjectQuotaLimits(
   };
   try {
     for (const project of listProjects()) {
+      if (projectQuotaGraceActive.has(project.project_id)) {
+        counts.skipped += 1;
+        continue;
+      }
       if (!shouldRepairProjectQuota(project)) {
         counts.inactive += 1;
         continue;

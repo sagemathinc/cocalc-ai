@@ -727,6 +727,21 @@ export interface AccountLocalGetVerifiedEmailAddressesResult {
   email_addresses: string[];
 }
 
+export interface AccountLocalCreateLegacyMigrationProjectRequest {
+  account_id: string;
+  legacy_project_id: string;
+  title: string;
+  description?: string | null;
+  rootfs_image?: string;
+  rootfs_image_id?: string;
+  host_id?: string;
+  region?: string;
+}
+
+export interface AccountLocalCreateLegacyMigrationProjectResult {
+  project_id: string;
+}
+
 export interface AccountLocalAdminAssignedMembershipRow {
   account_id: string;
   membership_class: string;
@@ -2032,6 +2047,7 @@ export type AccountLocalMethod =
   | "get-membership-details"
   | "get-account-usage-overview"
   | "get-verified-email-addresses"
+  | "create-legacy-migration-project"
   | "get-admin-assigned-membership"
   | "set-admin-assigned-membership"
   | "clear-admin-assigned-membership"
@@ -3083,6 +3099,9 @@ export interface InterBayAccountLocalApi {
   getVerifiedEmailAddresses: (
     opts: AccountLocalGetVerifiedEmailAddressesRequest,
   ) => Promise<AccountLocalGetVerifiedEmailAddressesResult>;
+  createLegacyMigrationProject: (
+    opts: AccountLocalCreateLegacyMigrationProjectRequest,
+  ) => Promise<AccountLocalCreateLegacyMigrationProjectResult>;
   getAdminAssignedMembership: (
     opts: AccountLocalGetAdminAssignedMembershipRequest,
   ) => Promise<AccountLocalAdminAssignedMembershipRow | undefined>;
@@ -5167,6 +5186,15 @@ export function createInterBayAccountLocalClient({
       method: "get-verified-email-addresses",
     }),
   });
+  const createLegacyMigrationProjectClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "createLegacyMigrationProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "create-legacy-migration-project",
+    }),
+  });
   const getAdminAssignedMembershipClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getAdminAssignedMembership">
   >({
@@ -5766,6 +5794,10 @@ export function createInterBayAccountLocalClient({
       await getAccountUsageOverviewClient.getAccountUsageOverview(opts),
     getVerifiedEmailAddresses: async (opts) =>
       await getVerifiedEmailAddressesClient.getVerifiedEmailAddresses(opts),
+    createLegacyMigrationProject: async (opts) =>
+      await createLegacyMigrationProjectClient.createLegacyMigrationProject(
+        opts,
+      ),
     getAdminAssignedMembership: async (opts) =>
       await getAdminAssignedMembershipClient.getAdminAssignedMembership(opts),
     setAdminAssignedMembership: async (opts) =>
@@ -6373,6 +6405,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getVerifiedEmailAddresses: async (opts) =>
           await impl.getVerifiedEmailAddresses(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "createLegacyMigrationProject">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "create-legacy-migration-project",
+      }),
+      impl: {
+        createLegacyMigrationProject: async (opts) =>
+          await impl.createLegacyMigrationProject(opts),
       },
     }),
     createServiceHandler<
