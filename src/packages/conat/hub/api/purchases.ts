@@ -1176,6 +1176,8 @@ export interface Purchases {
   }) => Promise<{ ids: MembershipClass[] }>;
   deleteMembershipTier: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     id?: MembershipClass;
   }) => Promise<{ id: MembershipClass }>;
   getMembershipPackageQuote: (opts?: {

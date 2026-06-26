@@ -2599,17 +2599,22 @@ describe("purchases membership tier admin", () => {
     expect(result).toEqual({ ids: ["standard"] });
   });
 
-  it("deletes a never-used tier without fresh auth", async () => {
+  it("deletes a never-used tier after fresh auth", async () => {
     isAdminMock.mockResolvedValue(true);
     deleteMembershipTierMock.mockResolvedValue({ id: "draft" });
 
     const { deleteMembershipTier } = await import("./purchases");
     const result = await deleteMembershipTier({
       account_id: "admin-1",
+      session_hash: "fresh-session-4",
       id: "draft",
     });
 
-    expect(requireFreshAuthForSessionHashMock).not.toHaveBeenCalled();
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-4",
+      allow_actor_impersonation: false,
+    });
     expect(deleteMembershipTierMock).toHaveBeenCalledWith({ id: "draft" });
     expect(result).toEqual({ id: "draft" });
   });

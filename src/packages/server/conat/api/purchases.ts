@@ -435,13 +435,16 @@ export async function importMembershipTiers({
 
 export async function deleteMembershipTier({
   account_id,
+  browser_id,
+  session_hash,
   id,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   id?: MembershipClass;
 } = {}): Promise<{ id: MembershipClass }> {
-  await requireAdmin(account_id);
-  assertMembershipTierAdminBay();
+  await requireFreshAuthAdmin({ account_id, browser_id, session_hash });
   return await deleteMembershipTier0({ id: requireMembershipTierId(id) });
 }
 
