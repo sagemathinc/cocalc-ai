@@ -686,6 +686,13 @@ export async function triggerLegacyMigrationProjectRestoreWorker({
       })
       .finally(() => {
         inFlight = Math.max(0, inFlight - 1);
+        void triggerLegacyMigrationProjectRestoreWorker({ maxParallel }).catch(
+          (err) => {
+            logger.warn("legacy migration restore follow-up trigger failed", {
+              err: `${err}`,
+            });
+          },
+        );
       });
   }
 }
