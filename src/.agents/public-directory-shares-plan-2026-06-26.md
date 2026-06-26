@@ -141,6 +141,12 @@ CREATE TABLE public_project_paths (
   license TEXT,
   image TEXT,
   redirect TEXT,
+  site_license_id UUID,
+  site_license_pool_id UUID,
+  site_license_membership_tier_id TEXT,
+  site_license_duration_days INTEGER,
+  site_license_grant_on_copy BOOLEAN NOT NULL DEFAULT FALSE,
+  site_license_copy_requires_grant BOOLEAN NOT NULL DEFAULT FALSE,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   legacy_public_path_id TEXT,
   legacy_url TEXT,
@@ -166,6 +172,10 @@ CREATE INDEX public_project_paths_visibility_idx
 CREATE INDEX public_project_paths_legacy_public_path_id_idx
   ON public_project_paths (legacy_public_path_id)
   WHERE legacy_public_path_id IS NOT NULL;
+
+CREATE INDEX public_project_paths_site_license_id_idx
+  ON public_project_paths (site_license_id)
+  WHERE site_license_id IS NOT NULL;
 ```
 
 Valid `visibility` values:
@@ -311,6 +321,8 @@ The page should:
 - render a read-only project explorer rooted at the share path;
 - show title/description/license metadata;
 - show a clear "Copy to My Project" action;
+- when a share has a license-on-copy policy, explain that copying may also
+  grant temporary access to the associated course/book resources;
 - show a small "Provided by <project/account/title>" attribution if available;
 - avoid exposing unrelated project folders.
 
@@ -328,6 +340,41 @@ Reuse the existing project viewer file listing where possible:
 
 The viewer should visually feel like a read-only project folder, not a separate
 old share-server site.
+
+### Copy to Project
+
+Copying should be a backend operation, not a client-side loop over files:
+
+```ts
+copyPublicProjectPathToProject({
+  slug: string;
+  destination_project_id?: string;
+  destination_path?: string;
+  rootfs_image?: string;
+  host_id?: string;
+}): Promise<{
+  destination_project_id: string;
+  copy_operation_id: string;
+  site_license_grant?: {
+    granted: boolean;
+    expires_at?: string;
+    message?: string;
+  };
+}>
+```
+
+Behavior:
+
+- if `destination_project_id` is omitted, show the standard project creation
+  modal and create a project first;
+- start a durable copy operation and open the destination project immediately;
+- show copy progress in the destination project, similar to legacy restore LROs;
+- if the share has `site_license_grant_on_copy=true`, apply the site-license
+  policy during the same server-side copy request;
+- if the license grant fails and `site_license_copy_requires_grant=false`,
+  allow the copy and show a warning;
+- if the license grant fails and `site_license_copy_requires_grant=true`, block
+  the copy before moving files so the user gets a clear explanation.
 
 ### Collection Pages
 
@@ -359,6 +406,107 @@ Later:
 - add right-click "Make directory public" from the file explorer;
 - add conflict warnings for slug collisions;
 - add per-share analytics.
+
+## Site License Claim Integration
+
+CUP's old workflow associated a cocalc.com license with a share. When a reader
+copied the share into a project, that project temporarily received the license.
+We should preserve that behavior for CUP without requiring CUP to build a new
+technical integration immediately.
+
+The practical replacement is **site-license grant on copy**:
+
+- a public directory share may reference a cocalc-ai site license, pool, and
+  membership tier;
+- when a signed-in reader copies the share into a destination project, the
+  backend grants temporary membership for that destination project;
+- the grant uses the same underlying membership/package machinery as
+  site-license external claims, but the reader does not see or handle a token;
+- the grant is explicitly attributed to the share copy with durable metadata.
+
+This keeps the data plane simple:
+
+- viewing the share only grants read-only access to the source directory;
+- copying creates or uses the reader's project;
+- the temporary site-license membership applies to the reader's destination
+  project, not the source CUP project;
+- file egress during viewing/copying is still charged to the reader account.
+
+### Grant Metadata
+
+Use the existing membership package metadata model and add a distinct grant
+source such as:
+
+```json
+{
+  "grant_source": "public-directory-share-copy",
+  "public_project_path_id": "...",
+  "legacy_public_path_id": "...",
+  "legacy_site_license_id": "...",
+  "site_license_id": "...",
+  "site_license_pool_id": "...",
+  "source_project_id": "...",
+  "destination_project_id": "..."
+}
+```
+
+This is intentionally similar to `site-license-external-claim`, but distinct
+enough for audit reports, revocation, and support.
+
+### Abuse and Capacity Controls
+
+The copy grant path must have explicit limits:
+
+- one active grant per `(public_project_path_id, account_id,
+destination_project_id)` unless an admin override is used;
+- optional max total consumptions per share;
+- optional max active grants per account from the same share or site license;
+- optional email-domain allowlist if CUP ever wants to restrict claims;
+- site-license pool exhaustion must be visible in the UI and admin reports;
+- all grants must have an expiration, e.g. 30, 90, or 180 days depending on the
+  CUP agreement;
+- disabling a share should stop new grants but not automatically revoke already
+  copied projects unless an admin explicitly chooses that.
+
+Use a durable consumption table if the existing site-license claim consumption
+records cannot naturally represent this source:
+
+```sql
+CREATE TABLE public_project_path_site_license_grants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  public_project_path_id UUID NOT NULL,
+  account_id UUID NOT NULL,
+  destination_project_id UUID NOT NULL,
+  site_license_id UUID NOT NULL,
+  site_license_pool_id UUID,
+  membership_package_id UUID,
+  status VARCHAR(16) NOT NULL DEFAULT 'granted',
+  error TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMP,
+  UNIQUE(public_project_path_id, account_id, destination_project_id)
+);
+```
+
+If the existing site-license external-claim tables can cleanly store
+non-token-based consumption, prefer extending them with `grant_source` instead
+of adding a parallel table. The important invariant is idempotency: retrying a
+copy must not create unlimited temporary memberships.
+
+### Admin UI
+
+Extend `admin/site-license-claims` or add a related "Public Share Claims" panel
+so admins can:
+
+- pick the site license, pool, tier, and duration used by a share or slug
+  prefix;
+- see counts of successful, failed, active, and expired grants;
+- disable grant-on-copy for a specific share or prefix;
+- export CUP reports showing share URL, license policy, consumption count, and
+  failures.
+
+For CUP migration, this can start as import-script configuration plus an admin
+report. Full per-share editing can come after the shutdown-critical path.
 
 ## Backend APIs
 
@@ -401,7 +549,21 @@ updatePublicProjectPath(opts: {
   license?: string | null;
   slug?: string;
   disabled?: boolean;
+  site_license_id?: string | null;
+  site_license_pool_id?: string | null;
+  site_license_membership_tier_id?: string | null;
+  site_license_duration_days?: number | null;
+  site_license_grant_on_copy?: boolean;
+  site_license_copy_requires_grant?: boolean;
 }): Promise<PublicProjectPathSummary>;
+
+copyPublicProjectPathToProject(opts: {
+  slug: string;
+  destination_project_id?: string;
+  destination_path?: string;
+  rootfs_image?: string;
+  host_id?: string;
+}): Promise<PublicProjectPathCopyResult>;
 ```
 
 Permission rules:
@@ -409,6 +571,7 @@ Permission rules:
 - `resolvePublicProjectPath` requires signed-in account for CUP records;
 - `listPublicProjectPaths` returns only listed, enabled records;
 - `listProjectPublicPaths`, `create`, and `update` require project owner/admin;
+- site-license policy fields require admin or a site-license manager role;
 - private records resolve only for project owner/collaborator/admin;
 - admins can override for migration/support.
 
@@ -473,9 +636,9 @@ For each old `public_paths` row:
      available;
    - for CUP, explicitly map rows to `Cambridge/...` slugs.
 3. Set `visibility`:
-   - `disabled=true` -> `disabled`;
-   - `unlisted=true` -> `unlisted`;
-   - otherwise -> `listed`;
+   - `disabled=true` -&gt; `disabled`;
+   - `unlisted=true` -&gt; `unlisted`;
+   - otherwise -&gt; `listed`;
    - legacy private/non-public rows should import as `private` or be skipped.
 4. Set `requires_auth=true` for CUP.
 5. Preserve legacy metadata in `metadata`, including:
@@ -487,6 +650,17 @@ For each old `public_paths` row:
    - old `vhost`;
    - old `image`.
 6. Store `legacy_public_path_id=id` and `legacy_url`.
+7. If `site_license_id` is present, map it through an explicit CUP migration
+   map:
+   - old `site_license_id` -&gt; new `site_license_id`;
+   - optional pool id;
+   - membership tier id;
+   - grant duration;
+   - whether copy requires the grant or merely warns on failure.
+
+Do not infer license mappings silently. Produce a report of old public paths
+with unmapped `site_license_id` values so CUP can verify coverage before
+redirects go live.
 
 ### CUP Validation Report
 
@@ -499,6 +673,8 @@ Before enabling redirects, generate a report:
 - rows with disabled/private status;
 - top-level slug summary under `Cambridge`;
 - sample of 20 generated old URL -> new URL redirects.
+- rows with legacy `site_license_id`, mapped new site license policy, and
+  unmapped/disabled license policies.
 
 ## Redirect Strategy
 
@@ -537,9 +713,12 @@ Case handling:
 - Rate limit share resolution and listing APIs.
 - Attribute file egress to the reader account.
 - Add audit logging for create/update/disable public path records.
+- Audit site-license grants created from public share copy operations.
 - Include an admin emergency disable path for a share or an entire slug prefix.
 - Treat public shares as read-only data-plane access, not collaborator
   membership.
+- Site-license grant-on-copy must be idempotent and rate limited so reloading or
+  retrying a copy cannot mint unlimited memberships.
 
 ## Implementation Phases
 
@@ -569,9 +748,20 @@ Case handling:
 - Add old cocalc.com public-path export support.
 - Add cocalc-ai import script for public paths.
 - Add CUP-specific slug mapping rules.
+- Add CUP-specific legacy `site_license_id` to cocalc-ai site-license mapping
+  support.
 - Generate validation report.
 - Import into lite4b for testing.
 - Fix project/path mismatches discovered in real data.
+
+### Phase 3.5: CUP License on Copy
+
+- Add share-level site-license policy fields or metadata.
+- Implement `copyPublicProjectPathToProject` as a durable backend operation.
+- Integrate temporary site-license membership grant on copy.
+- Add idempotent consumption tracking.
+- Add admin/CUP report for grants, failures, and unmapped legacy licenses.
+- Test copy with a real CUP share and a temporary site-license tier.
 
 ### Phase 4: Redirect and Production Cutover
 
@@ -615,6 +805,13 @@ Frontend:
 - notebook preview works without starting the project runtime;
 - markdown preview works;
 - copy-to-project works;
+- copy-to-project with a share license policy grants temporary membership to
+  the destination project;
+- duplicate/retried copy does not create unlimited site-license grants;
+- share license pool exhaustion produces a clear warning or blocking error
+  according to `site_license_copy_requires_grant`;
+- copied project grant metadata includes public share id, source project id,
+  destination project id, and legacy public path id;
 - listed collection page works for `/share/Cambridge`;
 - unlisted share is not listed but direct URL works.
 
@@ -626,12 +823,16 @@ Migration:
 - collision report is empty or explicitly resolved;
 - sampled old URLs redirect to correct cocalc-ai URLs;
 - sampled shares open and preview files.
+- sampled CUP shares with old `site_license_id` create the expected temporary
+  destination-project license on copy.
 
 ## Operational Notes
 
 - The feature should be disabled by default via site setting for self-hosted
   sites until owner UI is ready.
 - CUP migration can be enabled with imported records before general UI exists.
+- CUP license-on-copy can initially be configured by import scripts and admin
+  reports instead of polished owner-facing UI.
 - If a migrated project restore is still pending, the share page should show a
   clear "project files are still being restored" status rather than a blank
   directory.
@@ -646,8 +847,11 @@ Migration:
   no.
 - Should `/share/Cambridge` be an exact imported share, a generated collection
   page, or both? Prefer exact share if present; otherwise collection by prefix.
-- Should old `site_license_id` grant temporary membership on copy? This can be
-  layered on later using the new site-license invite-token work.
+- Which exact cocalc-ai site license, pool, tier, and duration should CUP shares
+  use for grant-on-copy?
+- Should a license grant failure block copying for CUP, or should copying
+  proceed with a warning? Prefer warn unless CUP requires otherwise.
+- What per-account/per-share consumption limits should CUP use?
 - How should we display projects whose files have not yet been restored from
   R2? The share page should have a pending/unavailable state, but details
   depend on legacy migration LRO availability.
