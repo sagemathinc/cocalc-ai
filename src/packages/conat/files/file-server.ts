@@ -77,6 +77,9 @@ export interface ProjectArchiveRestoreResult {
   sha256: string;
   file_count: number;
   uncompressed_bytes?: number;
+  skipped_file_count?: number;
+  skipped_bytes?: number;
+  skipped_files?: ProjectArchiveEntry[];
   duration_ms: number;
 }
 
@@ -94,6 +97,9 @@ export interface ProjectArchiveIndexResult {
   file_count: number;
   uncompressed_bytes: number;
   entries: ProjectArchiveEntry[];
+  skipped_file_count?: number;
+  skipped_bytes?: number;
+  skipped_files?: ProjectArchiveEntry[];
   truncated: boolean;
   duration_ms: number;
 }

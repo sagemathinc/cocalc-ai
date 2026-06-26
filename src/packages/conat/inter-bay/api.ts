@@ -72,6 +72,7 @@ import type {
   ProjectRuntimeSlotReport,
   RootfsQuotaReport,
   ServiceAdmissionDenialReport,
+  SiteSettingsReadResult,
   SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
 import type {
@@ -1585,6 +1586,12 @@ export interface BayOpsSetSiteSettingsRequest {
   source_bay_id?: string | null;
 }
 
+export interface BayOpsGetSiteSettingsRequest {
+  account_id?: string;
+  names?: string[];
+  source_bay_id?: string | null;
+}
+
 export interface BayOpsSyncSiteSettingsRequest {
   account_id?: string;
   source_bay_id?: string | null;
@@ -2125,6 +2132,7 @@ export type BayOpsMethod =
   | "get-membership-tiers"
   | "set-server-setting"
   | "set-site-settings"
+  | "get-site-settings"
   | "sync-site-settings"
   | "get-global-config-propagation-status";
 export type ProjectCollabInviteMethod =
@@ -3314,6 +3322,9 @@ export interface InterBayBayOpsApi {
   setSiteSettings: (
     opts: BayOpsSetSiteSettingsRequest,
   ) => Promise<SiteSettingsSyncResult>;
+  getSiteSettings: (
+    opts: BayOpsGetSiteSettingsRequest,
+  ) => Promise<SiteSettingsReadResult>;
   syncSiteSettings: (
     opts: BayOpsSyncSiteSettingsRequest,
   ) => Promise<SiteSettingsSyncResult>;
@@ -7319,6 +7330,12 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "set-site-settings" }),
   });
+  const getSiteSettingsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getSiteSettings">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "get-site-settings" }),
+  });
   const syncSiteSettingsClient = createServiceClient<
     Pick<InterBayBayOpsApi, "syncSiteSettings">
   >({
@@ -7411,6 +7428,8 @@ export function createInterBayBayOpsClient({
       await setServerSettingClient.setServerSetting(opts),
     setSiteSettings: async (opts) =>
       await setSiteSettingsClient.setSiteSettings(opts),
+    getSiteSettings: async (opts) =>
+      await getSiteSettingsClient.getSiteSettings(opts),
     syncSiteSettings: async (opts) =>
       await syncSiteSettingsClient.syncSiteSettings(opts),
     getGlobalConfigPropagationStatus: async (opts) =>
@@ -7502,6 +7521,17 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         setSiteSettings: async (opts) => await impl.setSiteSettings(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getSiteSettings">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-site-settings",
+      }),
+      impl: {
+        getSiteSettings: async (opts) => await impl.getSiteSettings(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "syncSiteSettings">>({

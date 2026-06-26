@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 
 import getLogger from "@cocalc/backend/logger";
+import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
@@ -31,8 +32,15 @@ const WORKER_ID = randomUUID();
 const TICK_MS = 10_000;
 const LEASE_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 30_000;
-const DEFAULT_MAX_PARALLEL = 1;
+const DEFAULT_MAX_PARALLEL = Math.max(
+  1,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_MAX_PARALLEL", 1),
+);
 const RESTORE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS = Math.max(
+  5 * 60 * 1000,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_HOST_RPC_TIMEOUT_MS", 30 * 60 * 1000),
+);
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_LEGACY_PROJECTS_BUCKET = "cocalc-projects";
 
@@ -53,6 +61,33 @@ type LegacyRestoreRow = {
 function clean(value: unknown): string | undefined {
   const s = `${value ?? ""}`.trim();
   return s || undefined;
+}
+
+function withTimeout<T>({
+  promise,
+  timeoutMs,
+  message,
+}: {
+  promise: Promise<T>;
+  timeoutMs: number;
+  message: string;
+}): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 async function ensureLegacyMigrationRestoreSchema(): Promise<void> {
@@ -323,13 +358,15 @@ async function publishRestoreProgress({
     error: null,
   });
   if (updated) {
-    await publishLroSummary({
+    await publishRestoreLroSummary({
+      row,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       summary: updated,
     });
   }
-  await publishLroEvent({
+  await publishRestoreLroEvent({
+    row,
     scope_type: "project",
     scope_id: row.project_id,
     op_id,
@@ -341,7 +378,55 @@ async function publishRestoreProgress({
       progress,
       detail,
     },
-  }).catch(() => {});
+  });
+}
+
+async function publishRestoreLroSummary({
+  row,
+  scope_type,
+  scope_id,
+  summary,
+}: {
+  row: LegacyRestoreRow;
+  scope_type: Parameters<typeof publishLroSummary>[0]["scope_type"];
+  scope_id: string;
+  summary: Parameters<typeof publishLroSummary>[0]["summary"];
+}): Promise<void> {
+  await publishLroSummary({ scope_type, scope_id, summary }).catch((err) => {
+    logger.debug("legacy migration restore LRO summary publish failed", {
+      legacy_project_id: row.legacy_project_id,
+      project_id: row.project_id,
+      op_id: summary.op_id,
+      scope_type,
+      scope_id,
+      err: `${err}`,
+    });
+  });
+}
+
+async function publishRestoreLroEvent({
+  row,
+  scope_type,
+  scope_id,
+  op_id,
+  event,
+}: {
+  row: LegacyRestoreRow;
+  scope_type: Parameters<typeof publishLroEvent>[0]["scope_type"];
+  scope_id: string;
+  op_id: string;
+  event: Parameters<typeof publishLroEvent>[0]["event"];
+}): Promise<void> {
+  await publishLroEvent({ scope_type, scope_id, op_id, event }).catch((err) => {
+    logger.debug("legacy migration restore LRO event publish failed", {
+      legacy_project_id: row.legacy_project_id,
+      project_id: row.project_id,
+      op_id,
+      scope_type,
+      scope_id,
+      err: `${err}`,
+    });
+  });
 }
 
 async function heartbeat(row: LegacyRestoreRow): Promise<void> {
@@ -410,7 +495,8 @@ async function markRestored({
     error: null,
   });
   if (updated) {
-    await publishLroSummary({
+    await publishRestoreLroSummary({
+      row,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       summary: updated,
@@ -456,7 +542,8 @@ async function markFailed({
     progress_summary: summary,
   });
   if (updated) {
-    await publishLroSummary({
+    await publishRestoreLroSummary({
+      row,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       summary: updated,
@@ -542,17 +629,21 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
         temporary_quota_grace: true,
       },
     });
-    const result = await client.restoreProjectArchive({
-      project_id: row.project_id,
-      download: {
-        ...signed,
-        bucket,
-        key,
-        bytes: manifestCompressedBytes(row.artifact_manifest),
-        sha256: manifestSha256(row.artifact_manifest),
-      },
-      temporary_quota_grace: true,
-      lro: { op_id, scope_type: "project", scope_id: row.project_id },
+    const result = await withTimeout({
+      timeoutMs: PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS,
+      message: `project-host restore RPC timed out after ${PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS}ms`,
+      promise: client.restoreProjectArchive({
+        project_id: row.project_id,
+        download: {
+          ...signed,
+          bucket,
+          key,
+          bytes: manifestCompressedBytes(row.artifact_manifest),
+          sha256: manifestSha256(row.artifact_manifest),
+        },
+        temporary_quota_grace: true,
+        lro: { op_id, scope_type: "project", scope_id: row.project_id },
+      }),
     });
     await markRestored({
       row,
@@ -598,6 +689,13 @@ export async function triggerLegacyMigrationProjectRestoreWorker({
       })
       .finally(() => {
         inFlight = Math.max(0, inFlight - 1);
+        void triggerLegacyMigrationProjectRestoreWorker({ maxParallel }).catch(
+          (err) => {
+            logger.warn("legacy migration restore follow-up trigger failed", {
+              err: `${err}`,
+            });
+          },
+        );
       });
   }
 }

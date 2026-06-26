@@ -133,6 +133,7 @@ import type {
   SiteSetupStepState,
   StarServerInfo,
   ProjectCryptominingEvidence,
+  SiteSettingsReadResult,
   UxLatencyEventInput,
   UxLatencySummary,
 } from "@cocalc/conat/hub/api/system";
@@ -755,6 +756,87 @@ function normalizeSiteSettingUpdate({
   return { name: normalizedName, value: `${value ?? ""}` };
 }
 
+function normalizeSiteSettingName(name: string): string {
+  const normalizedName = `${name ?? ""}`.trim();
+  if (!SITE_SETTING_NAMES.has(normalizedName)) {
+    throw Error(`setting name='${normalizedName}' not allowed`);
+  }
+  return normalizedName;
+}
+
+function siteSettingSpec(name: string): any {
+  return site_settings_conf[name] ?? SITE_SETTINGS_EXTRAS[name];
+}
+
+function siteSettingDefaultValue(name: string): unknown {
+  const spec = siteSettingSpec(name);
+  return spec?.to_val != null ? spec.to_val(spec.default, {}) : spec?.default;
+}
+
+function isSensitiveSiteSetting(name: string, spec: any): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    spec?.password === true ||
+    normalized.includes("secret") ||
+    normalized.includes("password") ||
+    normalized.includes("token") ||
+    normalized.endsWith("_api_key") ||
+    normalized.endsWith("_private_key") ||
+    normalized === "custom_openai_configuration"
+  );
+}
+
+export async function getSiteSettingsOnSeed({
+  names,
+}: {
+  names?: string[];
+} = {}): Promise<SiteSettingsReadResult> {
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    throw Error(
+      `getSiteSettingsOnSeed must run on seed bay '${seedBayId}', not '${localBayId}'`,
+    );
+  }
+  const normalizedNames =
+    names == null || names.length === 0
+      ? [...SITE_SETTING_NAMES].sort()
+      : [...new Set(names.map(normalizeSiteSettingName))].sort();
+  const settings = await getServerSettings();
+  const { rows } = await getPool().query(
+    "SELECT name, readonly FROM server_settings WHERE name = ANY($1::text[])",
+    [normalizedNames],
+  );
+  const configured = new Map<string, boolean>();
+  const readonly = new Map<string, boolean>();
+  for (const row of rows) {
+    const name = `${row.name ?? ""}`;
+    configured.set(name, true);
+    readonly.set(name, row.readonly === true);
+  }
+  return {
+    local_bay_id: localBayId,
+    seed_bay_id: seedBayId,
+    settings: normalizedNames.map((name) => {
+      const spec = siteSettingSpec(name);
+      const password = spec?.password === true;
+      const sensitive = isSensitiveSiteSetting(name, spec);
+      const isConfigured = configured.get(name) === true;
+      return {
+        name,
+        value: sensitive ? null : settings[name],
+        default_value: sensitive ? null : siteSettingDefaultValue(name),
+        configured: isConfigured,
+        readonly: readonly.get(name) === true,
+        password,
+        redacted: sensitive && isConfigured,
+        hidden: spec?.hidden === true,
+        description: `${spec?.desc ?? ""}`,
+      };
+    }),
+  };
+}
+
 async function assertSiteSettingWritable(name: string): Promise<void> {
   const { rows } = await getPool().query(
     "SELECT readonly FROM server_settings WHERE name=$1 LIMIT 1",
@@ -1284,6 +1366,28 @@ export async function setSiteSettings({
     account_id,
     settings: updates,
   });
+}
+
+export async function getSiteSettings({
+  account_id,
+  names,
+}: {
+  account_id?: string;
+  names?: string[];
+} = {}): Promise<SiteSettingsReadResult> {
+  await assertAdmin(account_id);
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .getSiteSettings({
+        account_id,
+        names,
+        source_bay_id: localBayId,
+      });
+  }
+  return await getSiteSettingsOnSeed({ names });
 }
 
 export async function manageApiKeys({
