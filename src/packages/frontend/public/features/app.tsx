@@ -213,7 +213,10 @@ function FeatureLinkCard({ page }: { page: FeaturePage }) {
           {meta.label}
         </Tag>
         <div>
-          <Title level={4} style={{ margin: "0 0 8px" }}>
+          <Title
+            level={3}
+            style={{ fontSize: 20, lineHeight: "28px", margin: "0 0 8px" }}
+          >
             {page.title}
           </Title>
           <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
@@ -261,7 +264,10 @@ function CapabilityCard({
           <Icon name={icon} />
         </div>
         <div>
-          <Title level={3} style={{ margin: "0 0 8px" }}>
+          <Title
+            level={2}
+            style={{ fontSize: 24, lineHeight: "32px", margin: "0 0 8px" }}
+          >
             {title}
           </Title>
           <Paragraph style={{ margin: 0 }}>{body}</Paragraph>
@@ -458,7 +464,14 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
                     <Text strong style={{ color: PUBLIC_COLORS.brand }}>
                       One project
                     </Text>
-                    <Title level={3} style={{ margin: "4px 0 0" }}>
+                    <Title
+                      level={2}
+                      style={{
+                        fontSize: 24,
+                        lineHeight: "32px",
+                        margin: "4px 0 0",
+                      }}
+                    >
                       The shared unit of work.
                     </Title>
                   </div>
