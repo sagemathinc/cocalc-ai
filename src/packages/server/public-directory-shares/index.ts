@@ -166,7 +166,7 @@ function rowToSummary(
   };
 }
 
-async function ensurePublicDirectorySharesSchema(): Promise<void> {
+export async function ensurePublicDirectorySharesSchema(): Promise<void> {
   schemaReady ??= (async () => {
     const pool = getPool();
     await pool.query(`
@@ -221,6 +221,11 @@ async function ensurePublicDirectorySharesSchema(): Promise<void> {
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS public_project_paths_legacy_public_path_id_idx
+        ON public_project_paths(legacy_public_path_id)
+        WHERE legacy_public_path_id IS NOT NULL
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS public_project_paths_legacy_public_path_id_unique
         ON public_project_paths(legacy_public_path_id)
         WHERE legacy_public_path_id IS NOT NULL
     `);
