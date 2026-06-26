@@ -166,6 +166,71 @@ describe("project-host CPU usage accounting", () => {
     ]);
   });
 
+  it("attaches high-confidence cryptomining evidence from project process commands", async () => {
+    const sample = await collectRunningProjectCpuSamples({
+      podmanCommand: jest
+        .fn()
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify([
+            {
+              Id: "ctr-1",
+              Names: ["project-11111111-1111-4111-8111-111111111111"],
+            },
+          ]),
+        })
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify([
+            {
+              Name: "/project-11111111-1111-4111-8111-111111111111",
+              State: { Pid: 1234 },
+            },
+          ]),
+        }),
+      readdirFn: jest.fn().mockResolvedValue(["1234", "1235"]),
+      readFileFn: jest.fn().mockImplementation(async (path: string) => {
+        if (path === "/proc/1234/stat") {
+          return procStat({ pid: 1234, ppid: 1, utime: 120, stime: 30 });
+        }
+        if (path === "/proc/1235/stat") {
+          return procStat({ pid: 1235, ppid: 1234, utime: 50, stime: 0 });
+        }
+        if (path === "/proc/1234/cmdline") {
+          return "bash\0";
+        }
+        if (path === "/proc/1235/cmdline") {
+          return [
+            "./unm-linux-amd64",
+            "-o",
+            "stratum+tcp://stratum.cereblix.com:3333",
+            "-threads",
+            "16",
+            "-smt",
+          ].join("\0");
+        }
+        throw new Error(`unexpected path: ${path}`);
+      }),
+    });
+
+    expect(sample[0]?.cryptomining_evidence).toEqual(
+      expect.objectContaining({
+        confidence: "high",
+        detector_version: "project-host-cryptomining-v1",
+        signals: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "process_command",
+            pattern: "unm-linux-binary",
+            pid: 1235,
+          }),
+          expect.objectContaining({
+            kind: "network_endpoint_argument",
+            pattern: "stratum-url",
+            pid: 1235,
+          }),
+        ]),
+      }),
+    );
+  });
+
   it("treats the first sample as a baseline and ignores counter resets", () => {
     const current = new Map([
       [
@@ -219,6 +284,17 @@ describe("project-host CPU usage accounting", () => {
           cgroup_version: "v2",
           cgroup_path: "/cg",
           cpu_seconds_total: 10,
+          cryptomining_evidence: {
+            confidence: "high",
+            detector_version: "test",
+            signals: [
+              {
+                kind: "network_endpoint_argument",
+                pattern: "stratum-url",
+                matched: "stratum+tcp://pool.example:3333",
+              },
+            ],
+          },
         },
       ])
       .mockResolvedValueOnce([
@@ -231,6 +307,17 @@ describe("project-host CPU usage accounting", () => {
           cgroup_version: "v2",
           cgroup_path: "/cg",
           cpu_seconds_total: 16.5,
+          cryptomining_evidence: {
+            confidence: "high",
+            detector_version: "test",
+            signals: [
+              {
+                kind: "network_endpoint_argument",
+                pattern: "stratum-url",
+                matched: "stratum+tcp://pool.example:3333",
+              },
+            ],
+          },
         },
       ]);
 
@@ -254,6 +341,9 @@ describe("project-host CPU usage accounting", () => {
         cpu_seconds: 6.5,
         sample_started_at: new Date("2026-05-30T10:00:00.000Z"),
         sample_ended_at: expect.any(Date),
+        cryptomining_evidence: expect.objectContaining({
+          confidence: "high",
+        }),
       }),
     );
     expect(stopProjectMock).not.toHaveBeenCalled();

@@ -7,6 +7,14 @@ import { readdir, readFile } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import { podman } from "@cocalc/backend/podman";
 import { hubApi } from "@cocalc/lite/hub/api";
+import type {
+  ProjectCryptominingEvidence,
+  ProjectCryptominingSignal,
+} from "@cocalc/conat/hub/api/system";
+import {
+  buildCryptominingEvidence,
+  detectCryptominingCommand,
+} from "./cryptomining-detector";
 import { isProjectHostCpuUsageTrackingEnabled } from "./cpu-usage-runtime";
 
 const logger = getLogger("project-host:cpu-usage");
@@ -38,6 +46,7 @@ export type ProjectCpuSample = {
   cgroup_path?: string;
   cpu_seconds_total: number;
   cpu_cores_limit?: number;
+  cryptomining_evidence?: ProjectCryptominingEvidence;
 };
 
 export type ProjectCpuDelta = ProjectCpuSample & {
@@ -250,12 +259,74 @@ function sumProcessTreeCpuTicks(
   return total;
 }
 
+function processTreePids(
+  rootPid: number,
+  snapshot: ProcessCpuSnapshot,
+): number[] {
+  if (!snapshot.cpuTicksByPid.has(rootPid)) return [];
+  const out: number[] = [];
+  const seen = new Set<number>();
+  const stack = [rootPid];
+  while (stack.length > 0) {
+    const pid = stack.pop()!;
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    out.push(pid);
+    for (const child of snapshot.childrenByParent.get(pid) ?? []) {
+      stack.push(child);
+    }
+  }
+  return out;
+}
+
+async function readProcessCommand({
+  pid,
+  readFileFn,
+}: {
+  pid: number;
+  readFileFn: ReadFileLike;
+}): Promise<string | undefined> {
+  try {
+    const cmdline = (await readFileFn(`/proc/${pid}/cmdline`, "utf8"))
+      .replace(/\0/g, " ")
+      .trim();
+    if (cmdline) return cmdline;
+  } catch {
+    // Processes can exit while we are walking their command lines.
+  }
+  try {
+    return (await readFileFn(`/proc/${pid}/comm`, "utf8")).trim();
+  } catch {
+    return;
+  }
+}
+
+async function detectProjectCryptominingEvidence({
+  rootPid,
+  processSnapshot,
+  readFileFn,
+}: {
+  rootPid: number;
+  processSnapshot: ProcessCpuSnapshot;
+  readFileFn: ReadFileLike;
+}): Promise<ProjectCryptominingEvidence | undefined> {
+  const signals: ProjectCryptominingSignal[] = [];
+  for (const pid of processTreePids(rootPid, processSnapshot)) {
+    const command = await readProcessCommand({ pid, readFileFn });
+    if (!command) continue;
+    signals.push(...detectCryptominingCommand({ pid, command }));
+  }
+  return buildCryptominingEvidence(signals);
+}
+
 async function getProjectCpuSample({
   container,
   processSnapshot,
+  readFileFn,
 }: {
   container: ProjectContainer & { pid: number };
   processSnapshot: ProcessCpuSnapshot;
+  readFileFn: ReadFileLike;
 }): Promise<ProjectCpuSample | undefined> {
   const cpuTicks = sumProcessTreeCpuTicks(container.pid, processSnapshot);
   if (cpuTicks == null) return;
@@ -264,7 +335,7 @@ async function getProjectCpuSample({
     return;
   }
   const runtime_key = `${container.id}:proc-tree:${container.pid}`;
-  return {
+  const sample: ProjectCpuSample = {
     project_id: container.project_id,
     container_id: container.id,
     pid: container.pid,
@@ -272,6 +343,15 @@ async function getProjectCpuSample({
     source: "proc-tree",
     cpu_seconds_total: cpu_seconds_total ?? 0,
   };
+  const evidence = await detectProjectCryptominingEvidence({
+    rootPid: container.pid,
+    processSnapshot,
+    readFileFn,
+  });
+  if (evidence) {
+    sample.cryptomining_evidence = evidence;
+  }
+  return sample;
 }
 
 export async function collectRunningProjectCpuSamples({
@@ -295,7 +375,11 @@ export async function collectRunningProjectCpuSamples({
   const samples = await Promise.all(
     inspected.map(async (container) => {
       try {
-        return await getProjectCpuSample({ container, processSnapshot });
+        return await getProjectCpuSample({
+          container,
+          processSnapshot,
+          readFileFn,
+        });
       } catch (err) {
         logger.debug("unable to sample project CPU counter", {
           project_id: container.project_id,
@@ -383,6 +467,7 @@ export function startManagedCpuUsageLoop({
             cpu_seconds: delta.cpu_seconds,
             sample_started_at,
             sample_ended_at: new Date(sampledAt),
+            cryptomining_evidence: delta.cryptomining_evidence,
             metadata: {
               container_id: delta.container_id,
               pid: delta.pid,
@@ -395,19 +480,25 @@ export function startManagedCpuUsageLoop({
                   ? undefined
                   : sampledAt - sample_started_at.getTime(),
               mode: "project-host-proc-tree-v1",
+              cryptomining_evidence: delta.cryptomining_evidence,
             },
           });
           if (result?.stop_project) {
             const lastStoppedAt = recentStops.get(delta.project_id) ?? 0;
             if (sampledAt - lastStoppedAt > STOP_COOLDOWN_MS) {
               recentStops.set(delta.project_id, sampledAt);
-              logger.warn("stopping project after managed CPU quota exceeded", {
-                project_id: delta.project_id,
-                account_id: result.account_id,
-                blocked_by: result.stop_project.blocked_by,
-                membership_class: result.stop_project.membership_class,
-                membership_source: result.stop_project.membership_source,
-              });
+              logger.warn(
+                "stopping project after hub CPU/abuse policy result",
+                {
+                  project_id: delta.project_id,
+                  account_id: result.account_id,
+                  reason: result.stop_project.reason,
+                  blocked_by: result.stop_project.blocked_by,
+                  membership_class: result.stop_project.membership_class,
+                  membership_source: result.stop_project.membership_source,
+                  auto_banned: result.stop_project.auto_banned,
+                },
+              );
               await hubApi.projects.stop({
                 project_id: delta.project_id,
               });
@@ -438,5 +529,6 @@ export const __test__ = {
   parseProcStat,
   parseProcCgroup,
   sumProcessTreeCpuTicks,
+  processTreePids,
   summarizeManagedCpuUsageDeltas,
 };
