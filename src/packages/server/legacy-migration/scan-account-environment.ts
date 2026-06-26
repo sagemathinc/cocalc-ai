@@ -219,6 +219,7 @@ import base64
 import json
 import os
 import re
+import stat
 import sys
 
 PROJECTS = json.loads(base64.b64decode("${encoded}").decode("utf-8"))
@@ -308,6 +309,7 @@ def sorted_counter(counter):
 def scan_project(project):
     project_id = project["project_id"]
     root = f"/mnt/cocalc/project-{project_id}"
+    print(f"scan project={project_id} title={project.get('title')}", file=sys.stderr, flush=True)
     result = {
         "legacy_project_id": project["legacy_project_id"],
         "project_id": project_id,
@@ -342,7 +344,12 @@ def scan_project(project):
                 continue
             path = os.path.join(current_root, filename)
             try:
-                if os.path.getsize(path) > MAX_FILE_BYTES:
+                info = os.lstat(path)
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                if stat.S_ISLNK(info.st_mode):
+                    continue
+                if info.st_size > MAX_FILE_BYTES:
                     continue
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
                     text = f.read()
