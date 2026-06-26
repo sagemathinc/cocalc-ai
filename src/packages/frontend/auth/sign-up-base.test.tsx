@@ -5,9 +5,16 @@ import api from "@cocalc/frontend/client/api";
 import { postAuthApi } from "./api";
 import SignUpFormBase from "./sign-up-base";
 
+const mockUseTypedRedux = jest.fn((_store: string, key: string) => {
+  if (key === "signup_email_domain_public_policy") {
+    return { mode: "allow_all" };
+  }
+  return "";
+});
+
 jest.mock("@cocalc/frontend/app-framework", () => ({
   ...jest.requireActual("@cocalc/frontend/app-framework"),
-  useTypedRedux: jest.fn(() => ({ mode: "allow_all" })),
+  useTypedRedux: (...args: any[]) => mockUseTypedRedux(...args),
 }));
 jest.mock("@cocalc/frontend/customize", () => ({
   PolicyPrivacyPageUrl: "/policies/privacy",
@@ -42,9 +49,35 @@ beforeAll(() => {
 beforeEach(() => {
   mockedApi.mockReset();
   mockedPostAuthApi.mockReset();
+  mockUseTypedRedux.mockImplementation((_store: string, key: string) => {
+    if (key === "signup_email_domain_public_policy") {
+      return { mode: "allow_all" };
+    }
+    return "";
+  });
 });
 
 describe("SignUpFormBase", () => {
+  it("shows custom account creation instructions", () => {
+    mockUseTypedRedux.mockImplementation((_store: string, key: string) => {
+      if (key === "account_creation_email_instructions") {
+        return "Create your account with your university email.";
+      }
+      if (key === "signup_email_domain_public_policy") {
+        return { mode: "allow_all" };
+      }
+      return "";
+    });
+
+    render(
+      <SignUpFormBase initialRequiresToken={false} onNavigate={jest.fn()} />,
+    );
+
+    expect(
+      screen.getByText("Create your account with your university email."),
+    ).not.toBeNull();
+  });
+
   it("shows Terms of Service and Privacy Policy notice near account creation", () => {
     render(
       <SignUpFormBase initialRequiresToken={false} onNavigate={jest.fn()} />,

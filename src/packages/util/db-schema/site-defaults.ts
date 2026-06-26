@@ -64,6 +64,7 @@ export type SiteSettingsKeys =
   | "site_name"
   | "site_description"
   | "account_creation_email_instructions"
+  | "sign_in_email_instructions"
   | "help_email"
   | "logo_square"
   | "logo_rectangular"
@@ -497,6 +498,16 @@ export const site_settings_conf: SiteSettings = {
   account_creation_email_instructions: {
     name: "Account creation",
     desc: `Instructions displayed above near the box where a user creates their account, e.g., "Let's begin the adventure!"`,
+    default: "",
+    clearable: true,
+    show: show_theming_vars,
+    tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Signup",
+  },
+  sign_in_email_instructions: {
+    name: "Sign in",
+    desc: `Instructions displayed above near the box where a user signs in, e.g., "Use your school email address."`,
     default: "",
     clearable: true,
     show: show_theming_vars,
