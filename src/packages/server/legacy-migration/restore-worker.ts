@@ -32,7 +32,10 @@ const WORKER_ID = randomUUID();
 const TICK_MS = 10_000;
 const LEASE_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 30_000;
-const DEFAULT_MAX_PARALLEL = 1;
+const DEFAULT_MAX_PARALLEL = Math.max(
+  1,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_MAX_PARALLEL", 1),
+);
 const RESTORE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS = Math.max(
   5 * 60 * 1000,

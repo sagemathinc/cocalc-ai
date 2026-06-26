@@ -58,6 +58,7 @@ type Options = {
   retryFailedRestore: boolean;
   rerunSuccess: boolean;
   resumeFile?: string;
+  concurrency: number;
   pollMs: number;
   restoreTimeoutMs: number;
 };
@@ -104,6 +105,8 @@ Options:
   --resume-file <path>          JSONL progress log. Successful rows are skipped
                               on rerun unless --rerun-success is set.
   --rerun-success               Do not skip successful rows from --resume-file.
+  --concurrency <n>             Number of projects to restore/start in parallel.
+                              Default: 1.
   --no-start                    Do not start projects after restore succeeds.
   --stop-after-start            Start each restored project to verify it, then
                               stop it to avoid accumulating running projects.
@@ -142,6 +145,7 @@ function parseArgs(argv: string[]): Options {
     stopAfterStart: false,
     retryFailedRestore: true,
     rerunSuccess: false,
+    concurrency: 1,
     pollMs: DEFAULT_POLL_MS,
     restoreTimeoutMs: DEFAULT_RESTORE_TIMEOUT_MS,
   };
@@ -200,6 +204,8 @@ function parseArgs(argv: string[]): Options {
       options.query = value;
     } else if (arg === "--limit") {
       options.limit = positiveInt(value, arg);
+    } else if (arg === "--concurrency") {
+      options.concurrency = positiveInt(value, arg);
     } else if (arg === "--poll-ms") {
       options.pollMs = positiveInt(value, arg);
     } else if (arg === "--restore-timeout-minutes") {
@@ -217,6 +223,30 @@ function parseArgs(argv: string[]): Options {
     throw new Error("--account-id must be a valid uuid");
   }
   return options;
+}
+
+async function runWithConcurrency<T>({
+  items,
+  concurrency,
+  worker,
+}: {
+  items: T[];
+  concurrency: number;
+  worker: (item: T) => Promise<void>;
+}): Promise<void> {
+  let next = 0;
+  const count = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: count }, async () => {
+      while (true) {
+        const index = next;
+        next += 1;
+        const item = items[index];
+        if (item == null) return;
+        await worker(item);
+      }
+    }),
+  );
 }
 
 async function idsFromFile(path: string | undefined): Promise<string[]> {
@@ -547,6 +577,7 @@ async function main(): Promise<void> {
       `total=${listed.total_count}`,
       `selected=${projects.length}`,
       `resume_skip=${successful.size}`,
+      `concurrency=${options.concurrency}`,
       options.dryRun ? "dry_run=true" : undefined,
     ]
       .filter(Boolean)
@@ -561,43 +592,49 @@ async function main(): Promise<void> {
   let ok = 0;
   let skipped = 0;
   let failed = 0;
-  for (const project of projects) {
-    const legacyProjectId = project.legacy_project_id;
-    if (successful.has(legacyProjectId)) {
-      skipped += 1;
-      console.log(`skip ${legacyProjectId}: already successful in resume log`);
-      continue;
-    }
-    if (!options.includeUnavailable && !archiveAvailable(project)) {
-      skipped += 1;
-      await writeResumeRecord(options.resumeFile, {
-        legacy_project_id: legacyProjectId,
-        project_id: project.project_id ?? undefined,
-        status: "skipped",
-        phase: "availability",
-        message: "legacy project archive is not available yet",
-      });
-      continue;
-    }
-    try {
-      console.log(`restore ${legacyProjectId}: ${project.title}`);
-      const status = await restoreOne({ accountId, project, options });
-      if (status === "ok") {
-        ok += 1;
-      } else {
+  await runWithConcurrency({
+    items: projects,
+    concurrency: options.concurrency,
+    worker: async (project) => {
+      const legacyProjectId = project.legacy_project_id;
+      if (successful.has(legacyProjectId)) {
         skipped += 1;
+        console.log(
+          `skip ${legacyProjectId}: already successful in resume log`,
+        );
+        return;
       }
-    } catch (err) {
-      failed += 1;
-      await writeResumeRecord(options.resumeFile, {
-        legacy_project_id: legacyProjectId,
-        project_id: project.project_id ?? undefined,
-        status: "failed",
-        phase: "error",
-        message: `${err}`,
-      });
-    }
-  }
+      if (!options.includeUnavailable && !archiveAvailable(project)) {
+        skipped += 1;
+        await writeResumeRecord(options.resumeFile, {
+          legacy_project_id: legacyProjectId,
+          project_id: project.project_id ?? undefined,
+          status: "skipped",
+          phase: "availability",
+          message: "legacy project archive is not available yet",
+        });
+        return;
+      }
+      try {
+        console.log(`restore ${legacyProjectId}: ${project.title}`);
+        const status = await restoreOne({ accountId, project, options });
+        if (status === "ok") {
+          ok += 1;
+        } else {
+          skipped += 1;
+        }
+      } catch (err) {
+        failed += 1;
+        await writeResumeRecord(options.resumeFile, {
+          legacy_project_id: legacyProjectId,
+          project_id: project.project_id ?? undefined,
+          status: "failed",
+          phase: "error",
+          message: `${err}`,
+        });
+      }
+    },
+  });
   console.log(`done: ok=${ok} skipped=${skipped} failed=${failed}`);
   if (failed > 0) {
     process.exitCode = 1;
