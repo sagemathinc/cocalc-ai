@@ -23,6 +23,8 @@ import { importProjects, listProjects, retryProjectRestore } from ".";
 const DEFAULT_LIMIT = 2000;
 const DEFAULT_POLL_MS = 5000;
 const DEFAULT_RESTORE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const STOP_AFTER_START_ATTEMPTS = 3;
+const STOP_AFTER_START_RETRY_MS = 5000;
 const TERMINAL_LRO_STATUSES = new Set([
   "succeeded",
   "failed",
@@ -367,6 +369,27 @@ async function latestProjectSummary({
   );
 }
 
+async function stopProjectAfterVerification(projectId: string): Promise<void> {
+  let lastError: unknown;
+  for (let i = 1; i <= STOP_AFTER_START_ATTEMPTS; i += 1) {
+    try {
+      await stopProjectOnHost(projectId);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (i < STOP_AFTER_START_ATTEMPTS) {
+        console.log(
+          `stop ${projectId} attempt ${i} failed after successful start verification; retrying: ${err}`,
+        );
+        await new Promise((resolve) =>
+          setTimeout(resolve, STOP_AFTER_START_RETRY_MS),
+        );
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function restoreOne({
   accountId,
   project,
@@ -459,8 +482,20 @@ async function restoreOne({
     await startProjectOnHost(result.project_id, { account_id: accountId });
     phase = "started";
     if (options.stopAfterStart) {
-      await stopProjectOnHost(result.project_id);
-      phase = "started-stopped";
+      try {
+        await stopProjectAfterVerification(result.project_id);
+        phase = "started-stopped";
+      } catch (err) {
+        phase = "started-stop-warning";
+        await writeResumeRecord(options.resumeFile, {
+          legacy_project_id: legacyProjectId,
+          project_id: result.project_id,
+          status: "ok",
+          phase,
+          message: `restore and start succeeded; stop cleanup failed after ${STOP_AFTER_START_ATTEMPTS} attempts: ${err}`,
+        });
+        return "ok";
+      }
     }
   }
   await writeResumeRecord(options.resumeFile, {
