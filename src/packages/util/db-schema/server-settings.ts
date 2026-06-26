@@ -114,6 +114,7 @@ export interface Customize {
   googleAnalytics?: string;
   emailSignup?: boolean;
   accountCreationInstructions?: string;
+  signInInstructions?: string;
   signupEmailDomainPolicy?: SignupEmailDomainPublicPolicy;
   zendesk?: boolean; // true if zendesk support is configured.
   stripePublishableKey?: string;

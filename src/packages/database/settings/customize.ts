@@ -59,6 +59,7 @@ export default async function getCustomize(
 
       emailSignup: settings.email_signup,
       accountCreationInstructions: settings.account_creation_email_instructions,
+      signInInstructions: settings.sign_in_email_instructions,
       signupEmailDomainPolicy: publicSignupEmailDomainPolicy(settings),
 
       logoSquareURL: settings.logo_square,

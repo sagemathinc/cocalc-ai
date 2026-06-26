@@ -24,6 +24,7 @@ import {
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
+import AuthInstructions from "./instructions";
 import type { AuthView } from "./types";
 import { signedInRedirectUrl } from "./util";
 import { COLORS } from "@cocalc/util/theme";
@@ -65,6 +66,10 @@ export default function SignUpFormBase({
     "customize",
     "signup_email_domain_public_policy",
   ) as SignupEmailDomainPublicPolicy | undefined;
+  const accountCreationInstructions = useTypedRedux(
+    "customize",
+    "account_creation_email_instructions",
+  ) as string | undefined;
   const emailAllowedByDomainPolicy = emailAllowedByPublicSignupPolicy({
     email_address: email,
     policy: signupEmailDomainPolicy,
@@ -206,6 +211,7 @@ export default function SignUpFormBase({
       onFocusCapture={syncBrowserFilledInputs}
       onInputCapture={syncBrowserFilledInputs}
     >
+      <AuthInstructions>{accountCreationInstructions}</AuthInstructions>
       {bootstrap && (
         <Alert
           type="info"

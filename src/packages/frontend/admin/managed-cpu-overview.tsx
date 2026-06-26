@@ -330,15 +330,6 @@ function TopCpuProjects({
                 }}
                 onAnnotationChange={onAnnotationChange}
               />
-              {project.project_id ? (
-                <Button
-                  size="small"
-                  href={`/projects/${project.project_id}/files/`}
-                  target="_blank"
-                >
-                  Open project
-                </Button>
-              ) : null}
             </Space>
             {project.project_id ? (
               <ProjectDirectorySummaryButton project_id={project.project_id} />
@@ -418,15 +409,6 @@ function TopEgressProjects({
               }}
               onAnnotationChange={onAnnotationChange}
             />
-            {project.project_id ? (
-              <Button
-                size="small"
-                href={`/projects/${project.project_id}/files/`}
-                target="_blank"
-              >
-                Open project
-              </Button>
-            ) : null}
           </Space>
         </div>
       ))}

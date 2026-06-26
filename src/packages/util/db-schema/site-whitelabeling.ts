@@ -25,6 +25,7 @@ export const ThemeKeys: SiteSettingsKeys[] = [
   "site_description",
   "dns", // this is a required field
   "account_creation_email_instructions",
+  "sign_in_email_instructions",
   "help_email",
   "logo_square",
   "logo_rectangular",

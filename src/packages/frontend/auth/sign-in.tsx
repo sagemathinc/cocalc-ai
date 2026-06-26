@@ -6,6 +6,7 @@ import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import { COLORS } from "@cocalc/util/theme";
 import type { AuthView } from "./types";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   isMfaRequiredAuthResponse,
   isWrongBayAuthResponse,
@@ -13,6 +14,7 @@ import {
   retryAuthOnHomeBay,
   type SecondFactorMethod,
 } from "./api";
+import AuthInstructions from "./instructions";
 import { signInWithPasskey } from "./passkeys";
 import { signedInRedirectUrl } from "./util";
 
@@ -30,6 +32,10 @@ export default function SignInForm({ onNavigate }: SignInProps) {
   const [mfaOrigin, setMfaOrigin] = useState<string | undefined>();
   const [signingIn, setSigningIn] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const signInInstructions = useTypedRedux(
+    "customize",
+    "sign_in_email_instructions",
+  ) as string | undefined;
 
   const canSubmit = challengeId
     ? factorMethod === "passkey"
@@ -116,6 +122,9 @@ export default function SignInForm({ onNavigate }: SignInProps) {
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      {!challengeId && (
+        <AuthInstructions>{signInInstructions}</AuthInstructions>
+      )}
       {error && <Alert type="error" showIcon title={error} />}
       {!challengeId ? (
         <>

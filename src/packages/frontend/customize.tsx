@@ -94,6 +94,7 @@ export interface CustomizeState {
   custom_openai_enabled: boolean;
   datastore: boolean;
   account_creation_email_instructions: string;
+  sign_in_email_instructions: string;
   signup_email_domain_public_policy?: SignupEmailDomainPublicPolicy;
   commercial: boolean;
   default_quotas: TypedMap<DefaultQuotaSetting>;
@@ -409,6 +410,7 @@ interface CustomizeStringReduxProps {
   site_description: string;
   terms_of_service: string;
   account_creation_email_instructions: string;
+  sign_in_email_instructions: string;
   help_email: string;
   logo_square: string;
   logo_rectangular: string;
@@ -432,6 +434,7 @@ const CustomizeStringElement = rclass<CustomizeStringProps>(
           site_description: rtypes.string,
           terms_of_service: rtypes.string,
           account_creation_email_instructions: rtypes.string,
+          sign_in_email_instructions: rtypes.string,
           help_email: rtypes.string,
           logo_square: rtypes.string,
           logo_rectangular: rtypes.string,
