@@ -742,6 +742,14 @@ test("rootfs recipe ls lists bundled examples and modules", () => {
   assert.ok(result.modules.some((module) => module.id === "cocalc/apt"));
 });
 
+test("rootfs recipe ls parses embedded bundled examples", () => {
+  const result = listRootfsRecipes();
+  assert.ok(result.examples.some((recipe) => recipe.name === "cocalc-base"));
+  assert.ok(
+    result.examples.some((recipe) => recipe.name === "cocalc-cambridge"),
+  );
+});
+
 test("rootfs recipe list is an alias for ls", async () => {
   const seen: string[] = [];
   const originalLog = console.log;

@@ -235,12 +235,7 @@ verify:
 publish:
   label: CoCalc Cambridge
   slug: cocalc-cambridge
-  description: >
-    Compact compatibility image for migrated Cambridge University Press notebooks
-    and code: Python/Jupyter scientific stack, R kernel with common packages,
-    historical Python kernel-name aliases, basic LaTeX, shell tools, and SFTP
-    support. It intentionally excludes SageMath, Anaconda, TensorFlow, and
-    PyTorch to keep the image practical.
+  description: "Compact compatibility image for migrated Cambridge University Press notebooks and code, with Python/Jupyter scientific packages, R kernel support, historical Python kernel-name aliases, basic LaTeX, shell tools, and SFTP support. It intentionally excludes SageMath, Anaconda, TensorFlow, and PyTorch to keep the image practical."
   family: cocalc-cambridge
   version: "2026.06"
   channel: stable
