@@ -26,7 +26,7 @@ steps:
         - libatomic1
         - libcurl4-openssl-dev
         - libgeos-dev
-        - libglib2.0-0
+        - libglib2.0-0t64
         - libgl1
         - libgomp1
         - libhdf5-dev
