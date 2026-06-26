@@ -5,6 +5,7 @@
 
 import { authFirstRequireAccount } from "./util";
 import type { CopyOptions } from "@cocalc/conat/files/fs";
+import type { FileTypeLabel } from "@cocalc/conat/files/listing";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 
 export type PublicDirectoryShareVisibility =
@@ -114,6 +115,30 @@ export interface CopyPublicDirectoryShareToProjectOptions {
   options?: CopyOptions;
 }
 
+export interface PublicDirectoryShareDirectoryEntry {
+  name: string;
+  path: string;
+  type?: FileTypeLabel;
+  size?: number;
+  mtime?: number;
+  isDir?: boolean;
+  isSymLink?: boolean;
+  linkTarget?: string;
+}
+
+export interface ListPublicDirectoryShareDirectoryOptions {
+  account_id?: string;
+  slug: string;
+  path?: string;
+}
+
+export interface ListPublicDirectoryShareDirectoryResponse {
+  share: ResolvedPublicDirectoryShare;
+  path: string;
+  entries: PublicDirectoryShareDirectoryEntry[];
+  truncated?: boolean;
+}
+
 export interface CopyPublicDirectoryShareToProjectResponse {
   destination_project_id: string;
   op_id: string;
@@ -141,6 +166,9 @@ export interface PublicDirectoryShares {
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
+  listDirectory: (
+    opts: ListPublicDirectoryShareDirectoryOptions,
+  ) => Promise<ListPublicDirectoryShareDirectoryResponse>;
   copyToProject: (
     opts: CopyPublicDirectoryShareToProjectOptions,
   ) => Promise<CopyPublicDirectoryShareToProjectResponse>;
@@ -151,5 +179,6 @@ export const publicDirectoryShares = {
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
+  listDirectory: authFirstRequireAccount,
   copyToProject: authFirstRequireAccount,
 } as const;

@@ -6,6 +6,7 @@
 export {
   copyToProject,
   list,
+  listDirectory,
   listMine,
   resolve,
   upsert,

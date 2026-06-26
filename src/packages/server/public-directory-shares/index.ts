@@ -10,6 +10,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { assertCollab } from "@cocalc/server/conat/api/util";
+import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import {
@@ -18,12 +19,19 @@ import {
 } from "@cocalc/server/membership/project-limits";
 import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
-import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
+import {
+  viewerReadPolicyAllowsPath,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
+import { posix } from "node:path";
 import type {
   ListMyPublicDirectorySharesOptions,
+  ListPublicDirectoryShareDirectoryOptions,
+  ListPublicDirectoryShareDirectoryResponse,
   ListPublicDirectorySharesOptions,
   ListPublicDirectorySharesResponse,
   PublicDirectoryShareAvailability,
+  PublicDirectoryShareDirectoryEntry,
   PublicDirectoryShareSummary,
   PublicDirectoryShareVisibility,
   CopyPublicDirectoryShareToProjectOptions,
@@ -142,6 +150,33 @@ function readPolicyForPath(path: string): ProjectViewerReadPolicy {
       { action: "exclude", path: ".local/share/cocalc/**" },
     ],
   };
+}
+
+function joinProjectSharePath(rootPath: string, relativePath: string): string {
+  if (relativePath === ".") {
+    return rootPath;
+  }
+  if (rootPath === ".") {
+    return relativePath;
+  }
+  return posix.join(rootPath, relativePath);
+}
+
+function childRelativePath(parent: string, name: string): string {
+  return parent === "." ? name : `${parent}/${name}`;
+}
+
+function entryAllowed({
+  share,
+  relativePath,
+}: {
+  share: ResolvedPublicDirectoryShare;
+  relativePath: string;
+}): boolean {
+  return viewerReadPolicyAllowsPath({
+    policy: share.read_policy,
+    path: joinProjectSharePath(share.path, relativePath),
+  });
 }
 
 function rowToSummary(
@@ -619,5 +654,61 @@ export async function copyToProject({
             "Temporary site-license grant on copy is not implemented yet; the files are being copied without extra access.",
         }
       : undefined,
+  };
+}
+
+export async function listDirectory({
+  account_id,
+  slug,
+  path,
+}: ListPublicDirectoryShareDirectoryOptions): Promise<ListPublicDirectoryShareDirectoryResponse> {
+  const share = await resolve({ account_id, slug });
+  if (!share.available) {
+    throw Error(
+      share.availability_message ||
+        "This shared directory is not available yet.",
+    );
+  }
+  const relativePath = normalizePublicDirectorySharePath(path ?? ".");
+  if (!entryAllowed({ share, relativePath })) {
+    throw Error("path is not part of this shared directory");
+  }
+  const fs = (
+    await getExplicitProjectRoutedClient({
+      project_id: share.project_id,
+    })
+  ).fs({
+    project_id: share.project_id,
+  });
+  const projectPath = joinProjectSharePath(share.path, relativePath);
+  const listing = await fs.getListing(projectPath);
+  const entries: PublicDirectoryShareDirectoryEntry[] = [];
+  for (const [name, data] of Object.entries(listing.files ?? {})) {
+    const entryPath = childRelativePath(relativePath, name);
+    if (!entryAllowed({ share, relativePath: entryPath })) {
+      continue;
+    }
+    entries.push({
+      name,
+      path: entryPath,
+      type: data.type,
+      size: data.size,
+      mtime: data.mtime,
+      isDir: data.isDir,
+      isSymLink: data.isSymLink,
+      linkTarget: data.linkTarget,
+    });
+  }
+  entries.sort((left, right) => {
+    const leftDir = left.type === "d" || left.isDir === true;
+    const rightDir = right.type === "d" || right.isDir === true;
+    if (leftDir !== rightDir) return leftDir ? -1 : 1;
+    return left.name.localeCompare(right.name);
+  });
+  return {
+    share,
+    path: relativePath,
+    entries,
+    truncated: listing.truncated,
   };
 }

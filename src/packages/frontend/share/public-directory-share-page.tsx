@@ -12,16 +12,23 @@ import {
   Result,
   Skeleton,
   Space,
+  Table,
   Tag,
+  Typography,
 } from "antd";
 import { useEffect, useState } from "react";
 
-import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
+import type {
+  PublicDirectoryShareDirectoryEntry,
+  ResolvedPublicDirectoryShare,
+} from "@cocalc/conat/hub/api/public-directory-shares";
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+
+const { Text } = Typography;
 
 function authHref(view: "sign-in" | "sign-up"): string {
   const target = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -41,6 +48,35 @@ function availabilityColor(status?: string): string {
   }
 }
 
+function formatBytes(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  if (value < 1024) return `${Math.round(value).toLocaleString()} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let scaled = value / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && scaled >= 1024; i += 1) {
+    scaled /= 1024;
+    unit = units[i];
+  }
+  return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${unit}`;
+}
+
+function formatMtime(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  return new Date(value).toLocaleString();
+}
+
+function parentPath(path: string): string {
+  if (path === ".") return ".";
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.length === 0 ? "." : parts.join("/");
+}
+
+function isDirectory(entry: PublicDirectoryShareDirectoryEntry): boolean {
+  return entry.type === "d" || entry.isDir === true;
+}
+
 export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
   const projectActions = useActions("projects");
@@ -52,7 +88,18 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [directoryPath, setDirectoryPath] = useState(".");
+  const [directoryEntries, setDirectoryEntries] = useState<
+    PublicDirectoryShareDirectoryEntry[]
+  >([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
+  const [directoryReload, setDirectoryReload] = useState(0);
   const normalizedSlug = `${slug ?? ""}`.trim();
+
+  useEffect(() => {
+    setDirectoryPath(".");
+  }, [normalizedSlug]);
 
   useEffect(() => {
     if (!isLoggedIn || !normalizedSlug) {
@@ -77,6 +124,40 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
       canceled = true;
     };
   }, [isLoggedIn, normalizedSlug]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !share?.available) {
+      setDirectoryEntries([]);
+      setDirectoryError("");
+      return;
+    }
+    let canceled = false;
+    setDirectoryLoading(true);
+    setDirectoryError("");
+    webapp_client.conat_client.hub.publicDirectoryShares
+      .listDirectory({ slug: share.slug, path: directoryPath })
+      .then((result) => {
+        if (canceled) return;
+        setDirectoryEntries(result.entries);
+      })
+      .catch((err) => {
+        if (canceled) return;
+        setDirectoryEntries([]);
+        setDirectoryError(normalizeUserFacingError(err).message);
+      })
+      .finally(() => {
+        if (!canceled) setDirectoryLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [
+    directoryPath,
+    directoryReload,
+    isLoggedIn,
+    share?.available,
+    share?.slug,
+  ]);
 
   if (!normalizedSlug) {
     return (
@@ -182,13 +263,100 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
             </div>
 
             {share.available ? (
+              <Card size="small" title="Shared files">
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <Space>
+                    <Button
+                      disabled={directoryPath === "."}
+                      onClick={() =>
+                        setDirectoryPath(parentPath(directoryPath))
+                      }
+                    >
+                      Up
+                    </Button>
+                    <Button
+                      onClick={() => setDirectoryReload((value) => value + 1)}
+                      loading={directoryLoading}
+                    >
+                      Refresh
+                    </Button>
+                    <Text type="secondary">
+                      {directoryPath === "." ? "Share root" : directoryPath}
+                    </Text>
+                  </Space>
+                  {directoryError ? (
+                    <Alert type="error" showIcon message={directoryError} />
+                  ) : null}
+                  <Table<PublicDirectoryShareDirectoryEntry>
+                    size="small"
+                    rowKey="path"
+                    dataSource={directoryEntries}
+                    loading={directoryLoading}
+                    pagination={{
+                      defaultPageSize: 50,
+                      showSizeChanger: true,
+                    }}
+                    columns={[
+                      {
+                        title: "Name",
+                        dataIndex: "name",
+                        render: (_value, entry) => {
+                          const directory = isDirectory(entry);
+                          return (
+                            <Space>
+                              <Icon name={directory ? "folder" : "file"} />
+                              {directory ? (
+                                <Button
+                                  type="link"
+                                  style={{ padding: 0 }}
+                                  onClick={() => setDirectoryPath(entry.path)}
+                                >
+                                  {entry.name}
+                                </Button>
+                              ) : (
+                                <Text>{entry.name}</Text>
+                              )}
+                              {entry.isSymLink ? <Tag>symlink</Tag> : null}
+                            </Space>
+                          );
+                        },
+                      },
+                      {
+                        title: "Size",
+                        dataIndex: "size",
+                        width: 120,
+                        render: (value) => formatBytes(value),
+                      },
+                      {
+                        title: "Modified",
+                        dataIndex: "mtime",
+                        width: 220,
+                        render: (value) => formatMtime(value),
+                      },
+                    ]}
+                  />
+                </Space>
+              </Card>
+            ) : (
+              <Alert
+                type="warning"
+                showIcon
+                message="Files are not available yet"
+                description={
+                  share.availability_message ||
+                  "This share was imported from the legacy share server, but the backing project files are not available on this site yet."
+                }
+              />
+            )}
+
+            {share.available ? (
               <Card size="small" title="Copy to one of your projects">
                 <Space direction="vertical" style={{ width: "100%" }}>
                   <Alert
                     type="info"
                     showIcon
-                    message="Read-only browser view is still being wired"
-                    description="Copying this shared directory to an existing project is available now. The inline read-only file browser is the next implementation step."
+                    message="Copy this directory when you want to work with it."
+                    description="The shared directory itself is read-only. Copying creates your own editable copy in a project you can access."
                   />
                   <Input
                     placeholder="Destination project id"
@@ -216,17 +384,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
                   ) : null}
                 </Space>
               </Card>
-            ) : (
-              <Alert
-                type="warning"
-                showIcon
-                message="Files are not available yet"
-                description={
-                  share.availability_message ||
-                  "This share was imported from the legacy share server, but the backing project files are not available on this site yet."
-                }
-              />
-            )}
+            ) : null}
 
             <Descriptions bordered size="small" column={1}>
               <Descriptions.Item label="Slug">{share.slug}</Descriptions.Item>
