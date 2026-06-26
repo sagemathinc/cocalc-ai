@@ -93,6 +93,12 @@ function publishArchiveProgress({
   }).catch(() => {});
 }
 
+function truncateProgressPath(path: string): string {
+  const value = path.trim();
+  if (value.length <= 240) return value;
+  return `...${value.slice(value.length - 237)}`;
+}
+
 function assertSafeArchivePath(raw: string): void {
   const value = raw.trim();
   if (!value || value === ".") return;
@@ -535,11 +541,15 @@ async function extractProjectArchiveTar({
   archivePath,
   dest,
   member_list_path,
+  expected_file_count,
+  expected_uncompressed_bytes,
   lro,
 }: {
   archivePath: string;
   dest: string;
   member_list_path?: string;
+  expected_file_count?: number;
+  expected_uncompressed_bytes?: number;
   lro?: LroRef;
 }): Promise<void> {
   publishArchiveProgress({
@@ -551,7 +561,7 @@ async function extractProjectArchiveTar({
   const args = [
     "--delay-directory-restore",
     "--no-overwrite-dir",
-    "-xf",
+    "-xvf",
     "-",
     "-C",
     dest,
@@ -564,9 +574,36 @@ async function extractProjectArchiveTar({
       member_list_path,
     );
   }
+  let extracted_count = 0;
+  let lastProgress = 0;
   await runProjectArchiveTarCommand({
     archivePath,
     args,
+    onStdoutLine: (line) => {
+      const path = normalizeProjectArchiveMemberPath(line);
+      if (!path) return;
+      assertSafeArchivePath(path);
+      extracted_count += 1;
+      const now = Date.now();
+      if (now - lastProgress < PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS) return;
+      lastProgress = now;
+      const progress =
+        expected_file_count != null && expected_file_count > 0
+          ? Math.min(88, 70 + (extracted_count / expected_file_count) * 18)
+          : 75;
+      publishArchiveProgress({
+        lro,
+        phase: "extract",
+        message: "extracting archive files",
+        progress,
+        detail: {
+          current_path: truncateProgressPath(path),
+          extracted_count,
+          file_count: expected_file_count,
+          uncompressed_bytes: expected_uncompressed_bytes,
+        },
+      });
+    },
   });
 }
 
@@ -836,6 +873,8 @@ export function createLegacyProjectArchiveHandlers({
           archivePath,
           dest: home,
           member_list_path,
+          expected_file_count: file_count,
+          expected_uncompressed_bytes: uncompressed_bytes,
           lro,
         });
         await mapLegacyArchiveOwnership({ dest: home, progress: 90, lro });

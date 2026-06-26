@@ -80,6 +80,62 @@ function progressText({
   return [phase, message].filter(Boolean).join(": ");
 }
 
+function formatCount(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value.toLocaleString()
+    : "";
+}
+
+function formatBytes(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "";
+  if (value < 1024) return `${Math.round(value).toLocaleString()} bytes`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let scaled = value / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && scaled >= 1024; i += 1) {
+    scaled /= 1024;
+    unit = units[i];
+  }
+  return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${unit}`;
+}
+
+function progressDetailText({
+  summary,
+  progress,
+}: {
+  summary?: LroSummary;
+  progress?: Extract<LroEvent, { type: "progress" }>;
+}): string {
+  const detail =
+    progress?.detail ??
+    (summary?.progress_summary?.detail as Record<string, unknown> | undefined);
+  if (!detail || typeof detail !== "object") return "";
+  const parts: string[] = [];
+  const bytes = formatBytes((detail as any).bytes);
+  const expectedBytes = formatBytes((detail as any).expected_bytes);
+  if (bytes && expectedBytes) {
+    parts.push(`${bytes} of ${expectedBytes}`);
+  } else if (bytes) {
+    parts.push(bytes);
+  }
+  const extracted = formatCount((detail as any).extracted_count);
+  const files = formatCount((detail as any).file_count);
+  if (extracted && files) {
+    parts.push(`${extracted} of ${files} entries`);
+  } else if (files) {
+    parts.push(`${files} entries`);
+  }
+  const uncompressed = formatBytes((detail as any).uncompressed_bytes);
+  if (uncompressed) {
+    parts.push(`${uncompressed} unpacked`);
+  }
+  const currentPath = labelValue((detail as any).current_path);
+  if (currentPath) {
+    parts.push(currentPath);
+  }
+  return parts.join(" • ");
+}
+
 type OptimisticRestoreState = {
   opId: string;
   status: string;
@@ -228,6 +284,7 @@ export function LegacyMigrationRestoreBanner({
     summary?.status === "expired";
   const percent = progressPercent({ summary, progress });
   const detail = progressText({ summary, progress });
+  const detailExtra = progressDetailText({ summary, progress });
   const error = failed ? labelValue(summary?.error) || effectiveError : "";
 
   async function retryRestore() {
@@ -275,6 +332,11 @@ export function LegacyMigrationRestoreBanner({
             come back later.
           </Text>
           {detail ? <Text type="secondary">{detail}</Text> : null}
+          {detailExtra ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {detailExtra}
+            </Text>
+          ) : null}
           {percent != null ? (
             <Progress
               percent={percent}

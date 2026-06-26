@@ -128,6 +128,16 @@ function matchedAccountTitle(account: LegacyMigrationMatchedAccount): string {
   return parts.join("\n");
 }
 
+function legacyMigrationErrorMessage(err: unknown): string {
+  const message = `${err}`;
+  if (
+    message.toLowerCase().includes("legacy cocalc.com migration is not enabled")
+  ) {
+    return "Legacy migration is not enabled for this site right now. If you are trying to match old projects, verify your email address in profile settings and refresh this page after migration is enabled.";
+  }
+  return message;
+}
+
 function restoreProgressText(
   progress: LegacyMigrationProjectSummary["restore_progress"],
 ): string {
@@ -491,7 +501,7 @@ export function LegacyMigrationPage() {
     } catch (err) {
       setState((prev) => ({
         ...prev,
-        error: `${err}`,
+        error: legacyMigrationErrorMessage(err),
         loading: false,
       }));
     }
