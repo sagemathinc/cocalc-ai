@@ -494,6 +494,11 @@ export interface AccountDirectoryUpdateEmailAddressRequest {
   email_address: string;
 }
 
+export interface AccountDirectoryUpdateEmailAddressVerifiedRequest {
+  account_id: string;
+  email_address_verified: boolean;
+}
+
 export interface AccountDirectoryUpdateBannedRequest {
   account_id: string;
   banned: boolean;
@@ -711,6 +716,14 @@ export interface AccountLocalGetMembershipDetailsRequest {
 
 export interface AccountLocalGetUsageOverviewRequest {
   account_id: string;
+}
+
+export interface AccountLocalGetVerifiedEmailAddressesRequest {
+  account_id: string;
+}
+
+export interface AccountLocalGetVerifiedEmailAddressesResult {
+  email_addresses: string[];
 }
 
 export interface AccountLocalAdminAssignedMembershipRow {
@@ -1961,6 +1974,7 @@ export type AccountDirectoryMethod =
   | "delete"
   | "update-home-bay"
   | "update-email-address"
+  | "update-email-address-verified"
   | "update-banned"
   | "touch"
   | "get-api-key"
@@ -2008,6 +2022,7 @@ export type AccountLocalMethod =
   | "get-membership"
   | "get-membership-details"
   | "get-account-usage-overview"
+  | "get-verified-email-addresses"
   | "get-admin-assigned-membership"
   | "set-admin-assigned-membership"
   | "clear-admin-assigned-membership"
@@ -2915,6 +2930,9 @@ export interface InterBayAccountDirectoryApi {
   updateEmailAddress: (
     opts: AccountDirectoryUpdateEmailAddressRequest,
   ) => Promise<AccountDirectoryEntry>;
+  updateEmailAddressVerified: (
+    opts: AccountDirectoryUpdateEmailAddressVerifiedRequest,
+  ) => Promise<AccountDirectoryEntry>;
   updateBanned: (
     opts: AccountDirectoryUpdateBannedRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -3052,6 +3070,9 @@ export interface InterBayAccountLocalApi {
   getAccountUsageOverview: (
     opts: AccountLocalGetUsageOverviewRequest,
   ) => Promise<AccountUsageOverview>;
+  getVerifiedEmailAddresses: (
+    opts: AccountLocalGetVerifiedEmailAddressesRequest,
+  ) => Promise<AccountLocalGetVerifiedEmailAddressesResult>;
   getAdminAssignedMembership: (
     opts: AccountLocalGetAdminAssignedMembershipRequest,
   ) => Promise<AccountLocalAdminAssignedMembershipRow | undefined>;
@@ -4426,6 +4447,14 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "update-email-address" }),
   });
+  const updateEmailAddressVerifiedClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "updateEmailAddressVerified">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "update-email-address-verified",
+    }),
+  });
   const updateBannedClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "updateBanned">
   >({
@@ -4547,6 +4576,8 @@ export function createInterBayAccountDirectoryClient({
       await updateHomeBayClient.updateHomeBay(opts),
     updateEmailAddress: async (opts) =>
       await updateEmailAddressClient.updateEmailAddress(opts),
+    updateEmailAddressVerified: async (opts) =>
+      await updateEmailAddressVerifiedClient.updateEmailAddressVerified(opts),
     updateBanned: async (opts) => await updateBannedClient.updateBanned(opts),
     touch: async (opts) => await touchClient.touch(opts),
     create: async (opts) => await createClient.create(opts),
@@ -4658,6 +4689,19 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "update-email-address" }),
       impl: {
         updateEmailAddress: async (opts) => await impl.updateEmailAddress(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "updateEmailAddressVerified">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "update-email-address-verified",
+      }),
+      impl: {
+        updateEmailAddressVerified: async (opts) =>
+          await impl.updateEmailAddressVerified(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "updateBanned">>({
@@ -5099,6 +5143,15 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "get-account-usage-overview",
+    }),
+  });
+  const getVerifiedEmailAddressesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getVerifiedEmailAddresses">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-verified-email-addresses",
     }),
   });
   const getAdminAssignedMembershipClient = createServiceClient<
@@ -5698,6 +5751,8 @@ export function createInterBayAccountLocalClient({
       await getMembershipDetailsClient.getMembershipDetails(opts),
     getAccountUsageOverview: async (opts) =>
       await getAccountUsageOverviewClient.getAccountUsageOverview(opts),
+    getVerifiedEmailAddresses: async (opts) =>
+      await getVerifiedEmailAddressesClient.getVerifiedEmailAddresses(opts),
     getAdminAssignedMembership: async (opts) =>
       await getAdminAssignedMembershipClient.getAdminAssignedMembership(opts),
     setAdminAssignedMembership: async (opts) =>
@@ -6291,6 +6346,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getAccountUsageOverview: async (opts) =>
           await impl.getAccountUsageOverview(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getVerifiedEmailAddresses">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-verified-email-addresses",
+      }),
+      impl: {
+        getVerifiedEmailAddresses: async (opts) =>
+          await impl.getVerifiedEmailAddresses(opts),
       },
     }),
     createServiceHandler<

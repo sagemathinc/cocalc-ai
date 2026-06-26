@@ -5,6 +5,7 @@
 
 import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/account-row-feed";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { updateClusterAccountEmailAddressVerified } from "@cocalc/server/inter-bay/account-directory-updates";
 
 export interface AdminVerifyEmailAddressResult {
   account_id: string;
@@ -60,6 +61,11 @@ export default async function adminVerifyEmailAddress({
         verified_at,
       };
     },
+  });
+
+  await updateClusterAccountEmailAddressVerified({
+    account_id,
+    email_address_verified: true,
   });
 
   if (!result.already_verified) {

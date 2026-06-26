@@ -175,11 +175,15 @@ export async function ensureClusterAccountDirectorySchema(): Promise<void> {
       created TIMESTAMP NOT NULL DEFAULT NOW(),
       last_active TIMESTAMP,
       banned BOOLEAN,
+      email_address_verified BOOLEAN,
       provisioned BOOLEAN NOT NULL DEFAULT TRUE
     )
   `);
   await pool.query(
     `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS display_name VARCHAR(254)`,
+  );
+  await pool.query(
+    `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS email_address_verified BOOLEAN`,
   );
   await pool.query(`
     UPDATE ${TABLE}
@@ -370,7 +374,7 @@ async function getDirectoryAccountById(
   // Direct directory lookups are the cluster routing source of truth.
   const { rows } = await getPool().query(
     `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
-            created, last_active, banned
+            created, last_active, banned, email_address_verified
        FROM ${TABLE}
       WHERE account_id=$1
         AND provisioned=TRUE
@@ -392,7 +396,7 @@ async function getDirectoryAccountByEmail(
   // Direct directory lookups are the cluster routing source of truth.
   const { rows } = await getPool().query(
     `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
-            created, last_active, banned
+            created, last_active, banned, email_address_verified
        FROM ${TABLE}
       WHERE email_address=$1
         AND provisioned=TRUE
@@ -454,7 +458,7 @@ async function searchDirectoryAccounts({
   if (email_queries.length > 0) {
     const { rows } = await pool.query(
       `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
-              created, last_active, banned
+              created, last_active, banned, email_address_verified
         FROM ${TABLE}
        WHERE provisioned=TRUE
          AND email_address = ANY($1::TEXT[])
@@ -499,7 +503,7 @@ async function searchDirectoryAccounts({
     if (clauses.length > 0) {
       const { rows } = await pool.query(
         `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
-                created, last_active, banned
+                created, last_active, banned, email_address_verified
           FROM ${TABLE}
           WHERE provisioned=TRUE
             AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$2")}
@@ -598,7 +602,7 @@ export async function getClusterAccountsByIdsDirect(
       await ensureClusterAccountDirectorySchema();
       return await pool.query(
         `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
-                created, last_active, banned
+                created, last_active, banned, email_address_verified
           FROM ${TABLE}
          WHERE account_id = ANY($1::UUID[])
             AND provisioned=TRUE
@@ -744,7 +748,7 @@ export async function getClusterBanEquivalentEmailAccountsDirect({
       await ensureClusterAccountDirectorySchema();
       return await pool.query(
         `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
-                created, last_active, banned
+                created, last_active, banned, email_address_verified
           FROM ${TABLE}
           WHERE (${equivalentWhere})
             AND provisioned=TRUE
@@ -905,9 +909,10 @@ export async function updateClusterAccountEmailAddressDirect({
        ($1, $2, $3, $4, $5, $6, TRUE)
      ON CONFLICT (account_id) DO UPDATE
         SET email_address=EXCLUDED.email_address,
+            email_address_verified=FALSE,
             provisioned=TRUE
      RETURNING account_id, display_name, first_name, last_name, email_address, home_bay_id,
-               created, last_active, banned`,
+               created, last_active, banned, email_address_verified`,
     [
       account_id,
       email,
@@ -916,6 +921,32 @@ export async function updateClusterAccountEmailAddressDirect({
       current.last_name ?? null,
       normalizedHomeBayId(current.home_bay_id ?? ""),
     ],
+  );
+  if (!rows[0]) {
+    throw new Error(`account ${account_id} not found`);
+  }
+  return canonicalDirectoryEntry(rows[0]);
+}
+
+export async function updateClusterAccountEmailAddressVerifiedDirect({
+  account_id,
+  email_address_verified,
+}: {
+  account_id: string;
+  email_address_verified: boolean;
+}): Promise<AccountDirectoryEntry> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  await ensureClusterAccountDirectorySchema();
+  const { rows } = await getPool().query(
+    `UPDATE ${TABLE}
+        SET email_address_verified=$2
+      WHERE account_id=$1
+        AND provisioned=TRUE
+      RETURNING account_id, display_name, first_name, last_name, email_address, home_bay_id,
+                created, last_active, banned, email_address_verified`,
+    [account_id, !!email_address_verified],
   );
   if (!rows[0]) {
     throw new Error(`account ${account_id} not found`);
@@ -950,7 +981,7 @@ export async function updateClusterAccountBannedDirect({
         SET banned=EXCLUDED.banned,
             provisioned=TRUE
      RETURNING account_id, display_name, first_name, last_name, email_address, home_bay_id,
-               created, last_active, banned`,
+               created, last_active, banned, email_address_verified`,
     [
       account_id,
       normalizedEmail(current.email_address),
