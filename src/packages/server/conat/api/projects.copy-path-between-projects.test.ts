@@ -11,6 +11,13 @@ let triggerCourseCollectLroWorkerMock: jest.Mock;
 let getProjectOwnerAccountIdMock: jest.Mock;
 let assertCanIncreaseAccountStorageMock: jest.Mock;
 let resolveProjectAccessAllowRemoteMock: jest.Mock;
+let assertCollabAllowRemoteProjectAccessMock: jest.Mock;
+let ensureCourseManagerAccessLocalMock: jest.Mock;
+let listCollaboratorsMock: jest.Mock;
+let resolveProjectBayMock: jest.Mock;
+
+const COURSE_PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const STUDENT_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -40,6 +47,13 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 
 jest.mock("@cocalc/server/projects/collaborators", () => ({
   __esModule: true,
+  listCollaborators: (...args: any[]) => listCollaboratorsMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/course/ensure-manager-access", () => ({
+  __esModule: true,
+  ensureCourseManagerAccessLocal: (...args: any[]) =>
+    ensureCourseManagerAccessLocalMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/project-remote-access", () => ({
@@ -61,6 +75,23 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/database", () => ({
   __esModule: true,
   db: jest.fn(() => ({})),
+}));
+
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  __esModule: true,
+  resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-config", () => ({
+  __esModule: true,
+  getConfiguredBayId: jest.fn(() => "local-bay"),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => {
+    throw new Error("inter-bay bridge should not be used in this test");
+  }),
 }));
 
 jest.mock("@cocalc/server/project-host/control", () => ({
@@ -133,6 +164,8 @@ jest.mock("@cocalc/conat/persist/util", () => ({
 jest.mock("./util", () => ({
   __esModule: true,
   assertCollab: (...args: any[]) => assertCollabMock(...args),
+  assertCollabAllowRemoteProjectAccess: (...args: any[]) =>
+    assertCollabAllowRemoteProjectAccessMock(...args),
 }));
 
 describe("projects.copyPathBetweenProjects", () => {
@@ -155,6 +188,17 @@ describe("projects.copyPathBetweenProjects", () => {
       role: "collaborator",
       capabilities: { writeProjectFiles: true },
     }));
+    assertCollabAllowRemoteProjectAccessMock = jest.fn(async () => undefined);
+    ensureCourseManagerAccessLocalMock = jest.fn(async ({ project_ids }) =>
+      project_ids.map((project_id) => ({
+        project_id,
+        added_account_ids: [],
+      })),
+    );
+    listCollaboratorsMock = jest.fn(async () => [
+      { account_id: "acct-1", group: "collaborator" },
+    ]);
+    resolveProjectBayMock = jest.fn(async () => ({ bay_id: "local-bay" }));
   });
 
   it("requires a signed-in user", async () => {
@@ -445,17 +489,17 @@ describe("projects.copyPathBetweenProjects", () => {
     createLroMock = jest.fn(async () => ({
       op_id: "collect-op-1",
       scope_type: "project",
-      scope_id: "course-project",
+      scope_id: COURSE_PROJECT_ID,
     }));
     const { collectAssignment } = await import("./projects");
     const result = await collectAssignment({
       account_id: "acct-1",
-      course_project_id: "course-project",
+      course_project_id: COURSE_PROJECT_ID,
       assignment_id: "assignment-1",
       items: [
         {
           student_id: "student-1",
-          student_project_id: "student-project-1",
+          student_project_id: STUDENT_PROJECT_ID,
           src_path: "Homework 1",
           dest_path: "course-collect/Homework 1/student-1",
           student_name: "Student One",
@@ -465,26 +509,26 @@ describe("projects.copyPathBetweenProjects", () => {
     });
     expect(assertCollabMock).toHaveBeenNthCalledWith(1, {
       account_id: "acct-1",
-      project_id: "course-project",
+      project_id: COURSE_PROJECT_ID,
     });
     expect(assertCollabMock).toHaveBeenNthCalledWith(2, {
       account_id: "acct-1",
-      project_id: "student-project-1",
+      project_id: STUDENT_PROJECT_ID,
     });
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "course-collect-assignment",
         scope_type: "project",
-        scope_id: "course-project",
+        scope_id: COURSE_PROJECT_ID,
         created_by: "acct-1",
         routing: "hub",
         input: expect.objectContaining({
-          course_project_id: "course-project",
+          course_project_id: COURSE_PROJECT_ID,
           assignment_id: "assignment-1",
           items: [
             {
               student_id: "student-1",
-              student_project_id: "student-project-1",
+              student_project_id: STUDENT_PROJECT_ID,
               src_path: "Homework 1",
               dest_path: "course-collect/Homework 1/student-1",
               student_name: "Student One",
@@ -499,7 +543,7 @@ describe("projects.copyPathBetweenProjects", () => {
     expect(result).toEqual({
       op_id: "collect-op-1",
       scope_type: "project",
-      scope_id: "course-project",
+      scope_id: COURSE_PROJECT_ID,
       service: "persist-service",
       stream_name: "stream:collect-op-1",
     });
@@ -509,13 +553,13 @@ describe("projects.copyPathBetweenProjects", () => {
     const { collectAssignment } = await import("./projects");
     await collectAssignment({
       account_id: "acct-1",
-      course_project_id: "course-project",
+      course_project_id: COURSE_PROJECT_ID,
       assignment_id: "assignment-1",
       run_at: "2026-05-14T17:00:00.000Z",
       items: [
         {
           student_id: "student-1",
-          student_project_id: "student-project-1",
+          student_project_id: STUDENT_PROJECT_ID,
           src_path: "Homework 1",
           dest_path: "course-collect/Homework 1/student-1",
         },
@@ -524,8 +568,7 @@ describe("projects.copyPathBetweenProjects", () => {
 
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        dedupe_key:
-          "course-collect:course-project:assignment-1:2026-05-14T17:00:00.000Z",
+        dedupe_key: `course-collect:${COURSE_PROJECT_ID}:assignment-1:2026-05-14T17:00:00.000Z`,
         input: expect.objectContaining({
           run_at: "2026-05-14T17:00:00.000Z",
         }),
@@ -537,7 +580,7 @@ describe("projects.copyPathBetweenProjects", () => {
     const { sendCourseAssignmentPatch } = await import("./projects");
     const result = await sendCourseAssignmentPatch({
       account_id: "acct-1",
-      course_project_id: "course-project",
+      course_project_id: COURSE_PROJECT_ID,
       assignment_id: "assignment-1",
       src_base_path: "Homework 1/student",
       dest_base_path: "Homework 1",
@@ -545,29 +588,29 @@ describe("projects.copyPathBetweenProjects", () => {
       dests: [
         {
           student_id: "student-1",
-          student_project_id: "student-project-1",
+          student_project_id: STUDENT_PROJECT_ID,
         },
       ],
     });
 
     expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: "acct-1",
-      project_id: "course-project",
+      project_id: COURSE_PROJECT_ID,
     });
     expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: "acct-1",
-      project_id: "student-project-1",
+      project_id: STUDENT_PROJECT_ID,
     });
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "copy-path-between-projects",
         scope_type: "project",
-        scope_id: "course-project",
+        scope_id: COURSE_PROJECT_ID,
         created_by: "acct-1",
         routing: "hub",
         input: {
           src: {
-            project_id: "course-project",
+            project_id: COURSE_PROJECT_ID,
             base_path: "Homework 1/student",
             path: [
               "Homework 1/student/lesson.ipynb",
@@ -576,7 +619,7 @@ describe("projects.copyPathBetweenProjects", () => {
           },
           dests: [
             {
-              project_id: "student-project-1",
+              project_id: STUDENT_PROJECT_ID,
               path: "Homework 1",
               metadata: {
                 student_id: "student-1",
@@ -597,7 +640,7 @@ describe("projects.copyPathBetweenProjects", () => {
     expect(result).toEqual({
       op_id: "op-1",
       scope_type: "project",
-      scope_id: "course-project",
+      scope_id: COURSE_PROJECT_ID,
       service: "persist-service",
       stream_name: "stream:op-1",
     });
@@ -608,7 +651,7 @@ describe("projects.copyPathBetweenProjects", () => {
     await expect(
       sendCourseAssignmentPatch({
         account_id: "acct-1",
-        course_project_id: "course-project",
+        course_project_id: COURSE_PROJECT_ID,
         assignment_id: "assignment-1",
         src_base_path: "Homework 1",
         dest_base_path: "Homework 1",
@@ -616,7 +659,7 @@ describe("projects.copyPathBetweenProjects", () => {
         dests: [
           {
             student_id: "student-1",
-            student_project_id: "student-project-1",
+            student_project_id: STUDENT_PROJECT_ID,
           },
         ],
       }),
