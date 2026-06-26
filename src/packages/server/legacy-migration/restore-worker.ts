@@ -32,9 +32,16 @@ const WORKER_ID = randomUUID();
 const TICK_MS = 10_000;
 const LEASE_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 30_000;
-const DEFAULT_MAX_PARALLEL = Math.max(
+const DEFAULT_MAX_PARALLEL_TOTAL = Math.max(
   1,
-  envToInt("COCALC_LEGACY_PROJECT_RESTORE_MAX_PARALLEL", 3),
+  envToInt(
+    "COCALC_LEGACY_PROJECT_RESTORE_MAX_PARALLEL_TOTAL",
+    envToInt("COCALC_LEGACY_PROJECT_RESTORE_MAX_PARALLEL", 30),
+  ),
+);
+const DEFAULT_MAX_PARALLEL_PER_HOST = Math.max(
+  1,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_MAX_PARALLEL_PER_HOST", 3),
 );
 const RESTORE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS = Math.max(
@@ -52,10 +59,16 @@ type LegacyRestoreRow = {
   legacy_project_id: string;
   project_id: string;
   owner_account_id: string;
+  host_id: string;
   artifact_bucket: string | null;
   artifact_key: string;
   artifact_manifest: Record<string, any> | null;
   restore_lro_op_id: string | null;
+};
+
+type RestoreCandidateRow = {
+  legacy_project_id: string;
+  host_id: string;
 };
 
 function clean(value: unknown): string | undefined {
@@ -192,17 +205,62 @@ async function getR2Credentials(): Promise<{
   return { endpoint, accessKey, secretKey };
 }
 
-async function claimRestoreRows(limit: number): Promise<LegacyRestoreRow[]> {
+async function claimRestoreRows({
+  maxParallelTotal,
+  maxParallelPerHost,
+}: {
+  maxParallelTotal: number;
+  maxParallelPerHost: number;
+}): Promise<LegacyRestoreRow[]> {
   await ensureLegacyMigrationRestoreSchema();
-  const { rows } = await getPool().query<LegacyRestoreRow>(
-    `
-    WITH next AS (
-      SELECT i.legacy_project_id
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext('legacy-migration-project-restore-claim'))",
+    );
+
+    const activeByHost = new Map<string, number>();
+    const active = await client.query<{
+      host_id: string;
+      active: string;
+    }>(`
+      SELECT projects.host_id::TEXT AS host_id,
+             COUNT(*)::TEXT AS active
+        FROM legacy_migration_project_imports i
+        JOIN projects
+          ON projects.project_id=i.project_id
+       WHERE i.restore_status='restoring'
+         AND i.restore_claimed_until IS NOT NULL
+         AND i.restore_claimed_until >= NOW()
+         AND projects.host_id IS NOT NULL
+       GROUP BY projects.host_id
+    `);
+    let activeTotal = 0;
+    for (const row of active.rows) {
+      const count = Math.max(0, Number(row.active) || 0);
+      activeByHost.set(row.host_id, count);
+      activeTotal += count;
+    }
+    const remainingTotal = Math.max(0, maxParallelTotal - activeTotal);
+    if (remainingTotal <= 0) {
+      await client.query("COMMIT");
+      return [];
+    }
+
+    const candidateWindow = Math.max(1000, remainingTotal * 20);
+    const candidates = await client.query<RestoreCandidateRow>(
+      `
+      SELECT i.legacy_project_id,
+             projects.host_id::TEXT AS host_id
         FROM legacy_migration_project_imports i
         JOIN legacy_migration_projects p
           ON p.legacy_project_id=i.legacy_project_id
+        JOIN projects
+          ON projects.project_id=i.project_id
        WHERE i.project_id IS NOT NULL
          AND i.owner_account_id IS NOT NULL
+         AND projects.host_id IS NOT NULL
          AND COALESCE(i.restore_mode, 'full') = 'full'
          AND COALESCE(p.artifact_key, '') <> ''
          AND COALESCE(p.artifact_status, '') = 'available'
@@ -217,33 +275,74 @@ async function claimRestoreRows(limit: number): Promise<LegacyRestoreRow[]> {
            )
          )
        ORDER BY i.updated ASC NULLS FIRST, i.legacy_project_id
-       LIMIT $3
-       FOR UPDATE SKIP LOCKED
-    )
-    UPDATE legacy_migration_project_imports i
-       SET restore_status='restoring',
-           restore_error=NULL,
-           restore_attempts=COALESCE(i.restore_attempts, 0) + 1,
-           restore_worker_id=$1,
-           restore_claimed_until=NOW() + ($2::INT * INTERVAL '1 millisecond'),
-           restore_started=NOW(),
-           restore_finished=NULL,
-           updated=NOW()
-      FROM next
-      JOIN legacy_migration_projects p
-        ON p.legacy_project_id=next.legacy_project_id
-     WHERE i.legacy_project_id=next.legacy_project_id
-    RETURNING i.legacy_project_id,
-              i.project_id,
-              i.owner_account_id,
-              p.artifact_bucket,
-              p.artifact_key,
-              p.artifact_manifest,
-              i.restore_lro_op_id
-    `,
-    [WORKER_ID, LEASE_MS, limit],
-  );
-  return rows;
+       LIMIT $1
+      `,
+      [candidateWindow],
+    );
+
+    const claimed: LegacyRestoreRow[] = [];
+    for (const candidate of candidates.rows) {
+      if (claimed.length >= remainingTotal) break;
+      const activeForHost = activeByHost.get(candidate.host_id) ?? 0;
+      if (activeForHost >= maxParallelPerHost) continue;
+
+      const updated = await client.query<LegacyRestoreRow>(
+        `
+        UPDATE legacy_migration_project_imports i
+           SET restore_status='restoring',
+               restore_error=NULL,
+               restore_attempts=COALESCE(i.restore_attempts, 0) + 1,
+               restore_worker_id=$1,
+               restore_claimed_until=NOW() + ($2::INT * INTERVAL '1 millisecond'),
+               restore_started=NOW(),
+               restore_finished=NULL,
+               updated=NOW()
+          FROM legacy_migration_projects p,
+               projects
+         WHERE i.legacy_project_id=$3
+           AND p.legacy_project_id=i.legacy_project_id
+           AND projects.project_id=i.project_id
+           AND projects.host_id::TEXT=$4
+           AND i.project_id IS NOT NULL
+           AND i.owner_account_id IS NOT NULL
+           AND COALESCE(i.restore_mode, 'full') = 'full'
+           AND COALESCE(p.artifact_key, '') <> ''
+           AND COALESCE(p.artifact_status, '') = 'available'
+           AND (
+             i.restore_status = 'pending'
+             OR (
+               i.restore_status = 'restoring'
+               AND (
+                 i.restore_claimed_until IS NULL
+                 OR i.restore_claimed_until < NOW()
+               )
+             )
+           )
+        RETURNING i.legacy_project_id,
+                  i.project_id,
+                  i.owner_account_id,
+                  projects.host_id::TEXT AS host_id,
+                  p.artifact_bucket,
+                  p.artifact_key,
+                  p.artifact_manifest,
+                  i.restore_lro_op_id
+        `,
+        [WORKER_ID, LEASE_MS, candidate.legacy_project_id, candidate.host_id],
+      );
+      const row = updated.rows[0];
+      if (!row) continue;
+      claimed.push(row);
+      activeByHost.set(candidate.host_id, activeForHost + 1);
+    }
+
+    await client.query("COMMIT");
+    return claimed;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function progressSummary({
@@ -664,15 +763,20 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
 }
 
 export async function triggerLegacyMigrationProjectRestoreWorker({
-  maxParallel = DEFAULT_MAX_PARALLEL,
+  maxParallelTotal = DEFAULT_MAX_PARALLEL_TOTAL,
+  maxParallelPerHost = DEFAULT_MAX_PARALLEL_PER_HOST,
 }: {
-  maxParallel?: number;
+  maxParallelTotal?: number;
+  maxParallelPerHost?: number;
 } = {}): Promise<void> {
   if (!(await isLegacyMigrationEnabled())) return;
-  if (inFlight >= maxParallel) return;
+  if (inFlight >= maxParallelTotal) return;
   let rows: LegacyRestoreRow[] = [];
   try {
-    rows = await claimRestoreRows(Math.max(1, maxParallel - inFlight));
+    rows = await claimRestoreRows({
+      maxParallelTotal,
+      maxParallelPerHost,
+    });
   } catch (err) {
     logger.warn("legacy migration restore claim failed", { err: `${err}` });
     return;
@@ -689,32 +793,39 @@ export async function triggerLegacyMigrationProjectRestoreWorker({
       })
       .finally(() => {
         inFlight = Math.max(0, inFlight - 1);
-        void triggerLegacyMigrationProjectRestoreWorker({ maxParallel }).catch(
-          (err) => {
-            logger.warn("legacy migration restore follow-up trigger failed", {
-              err: `${err}`,
-            });
-          },
-        );
+        void triggerLegacyMigrationProjectRestoreWorker({
+          maxParallelTotal,
+          maxParallelPerHost,
+        }).catch((err) => {
+          logger.warn("legacy migration restore follow-up trigger failed", {
+            err: `${err}`,
+          });
+        });
       });
   }
 }
 
 export function startLegacyMigrationProjectRestoreWorker({
   intervalMs = TICK_MS,
-  maxParallel = DEFAULT_MAX_PARALLEL,
+  maxParallelTotal = DEFAULT_MAX_PARALLEL_TOTAL,
+  maxParallelPerHost = DEFAULT_MAX_PARALLEL_PER_HOST,
 }: {
   intervalMs?: number;
-  maxParallel?: number;
+  maxParallelTotal?: number;
+  maxParallelPerHost?: number;
 } = {}) {
   if (running) return () => undefined;
   running = true;
   logger.info("starting legacy migration project restore worker", {
     worker_id: WORKER_ID,
-    max_parallel: maxParallel,
+    max_parallel_total: maxParallelTotal,
+    max_parallel_per_host: maxParallelPerHost,
   });
   const tick = () => {
-    void triggerLegacyMigrationProjectRestoreWorker({ maxParallel });
+    void triggerLegacyMigrationProjectRestoreWorker({
+      maxParallelTotal,
+      maxParallelPerHost,
+    });
   };
   const timer = setInterval(tick, intervalMs);
   timer.unref?.();
