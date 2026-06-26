@@ -2,11 +2,7 @@
  *  Membership tiers configuration.
  */
 
-import {
-  Table,
-  MembershipTierGetFields,
-  MembershipTierSetFields,
-} from "./types";
+import { Table, MembershipTierGetFields } from "./types";
 
 async function instead_of_query(db, opts: any, cb: Function): Promise<void> {
   const { options, query } = opts;
@@ -23,36 +19,6 @@ Table({
     primary_key: "id",
     anonymous: false,
     user_query: {
-      set: {
-        admin: true,
-        instead_of_query,
-        delete: true,
-        fields: {
-          id: null,
-          label: null,
-          store_visible: null,
-          store_description: null,
-          store_highlights: null,
-          site_license_pool_description: null,
-          team_visible: null,
-          course_store_visible: null,
-          course_allowed_domains: null,
-          priority: null,
-          price_monthly: null,
-          price_yearly: null,
-          trial_days: null,
-          course_price: null,
-          course_duration_days: null,
-          course_grace_days: null,
-          project_defaults: null,
-          ai_limits: null,
-          features: null,
-          usage_limits: null,
-          pricing_model: null,
-          disabled: null,
-          notes: null,
-        } as { [key in MembershipTierSetFields]: null },
-      },
       get: {
         admin: true,
         instead_of_query,
@@ -84,8 +50,14 @@ Table({
           history: null,
           subscription_count: null,
           subscribed_account_count: null,
+          team_seat_count: null,
+          team_account_count: null,
+          course_account_count: null,
+          site_account_count: null,
           admin_assigned_count: null,
           site_license_count: null,
+          total_account_count: null,
+          has_usage_history: null,
           created: null,
           updated: null,
         } as { [key in MembershipTierGetFields]: null },
@@ -202,6 +174,22 @@ Table({
       type: "number",
       desc: "Number of accounts with active paid subscriptions using this tier.",
     },
+    team_seat_count: {
+      type: "number",
+      desc: "Number of active purchased team-license seats using this tier.",
+    },
+    team_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts assigned active team-license seats using this tier.",
+    },
+    course_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts assigned active course membership seats using this tier.",
+    },
+    site_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts with active claimed site-license seats using this tier.",
+    },
     admin_assigned_count: {
       type: "number",
       desc: "Number of active admin-assigned memberships using this tier.",
@@ -209,6 +197,14 @@ Table({
     site_license_count: {
       type: "number",
       desc: "Number of active site licenses with pools using this tier.",
+    },
+    total_account_count: {
+      type: "number",
+      desc: "Number of distinct accounts using this tier through subscriptions, packages, or admin assignment.",
+    },
+    has_usage_history: {
+      type: "boolean",
+      desc: "Whether any durable membership, package, grant, trial, or site-license record has referenced this tier id.",
     },
     created: {
       type: "timestamp",

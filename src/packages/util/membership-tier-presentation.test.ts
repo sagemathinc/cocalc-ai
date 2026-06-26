@@ -41,7 +41,10 @@ describe("buildMembershipTierPresentation", () => {
   });
 
   it("includes course-specific terms for course-visible tiers", () => {
-    const tier = applyMembershipTierTemplateFallbacks({ id: "student" });
+    const tier = applyMembershipTierTemplateFallbacks({
+      id: "student",
+      course_store_visible: true,
+    });
     const presentation = buildMembershipTierPresentation(tier);
 
     expect(presentation.billing).toContain(

@@ -123,7 +123,7 @@ export const TIER_TEMPLATES = {
   basic: {
     id: "basic",
     label: "Basic",
-    store_visible: true,
+    store_visible: false,
     store_description: "For occasional light use.",
     store_highlights: ["More shared resources", "Access better shared hosts"],
     site_license_pool_description: "Light CoCalc access for occasional work.",
@@ -133,7 +133,7 @@ export const TIER_TEMPLATES = {
     priority: 10,
     price_monthly: 8,
     price_yearly: 72,
-    trial_days: 7,
+    trial_days: null,
     project_defaults: {
       disk_quota: 10000,
       memory: 4000,
@@ -230,7 +230,7 @@ export const TIER_TEMPLATES = {
   free: {
     id: "free",
     label: "Free",
-    store_visible: true,
+    store_visible: false,
     store_description:
       "Start using CoCalc with just enough resources to explore the platform and do basic work.",
     store_highlights: [],
@@ -457,23 +457,23 @@ export const TIER_TEMPLATES = {
     notes:
       "This is meant to be provided FOR FREE to instructors who will using student-pay or institute pay after we connect with them. ",
   },
-  member: {
-    id: "member",
-    label: "Member",
-    store_visible: true,
-    store_description: "Solid everyday membership.",
+  standard: {
+    id: "standard",
+    label: "Standard",
+    store_visible: false,
+    store_description: "A solid choice for everyday work.",
     store_highlights: [
       "Higher priority",
       "More backups, snapshots, projects and collaborators.",
       "Purchase pay as you go dedicated VMs.",
     ],
     site_license_pool_description: null,
-    team_visible: true,
+    team_visible: false,
     course_store_visible: false,
     course_allowed_domains: [],
     priority: 20,
-    price_monthly: 25,
-    price_yearly: 225,
+    price_monthly: 24,
+    price_yearly: 216,
     trial_days: 7,
     course_price: null,
     course_duration_days: null,
@@ -569,7 +569,7 @@ export const TIER_TEMPLATES = {
   pro: {
     id: "pro",
     label: "Pro",
-    store_visible: true,
+    store_visible: false,
     store_description: "For advanced users and researchers",
     store_highlights: [
       "Best shared resources",
@@ -578,7 +578,7 @@ export const TIER_TEMPLATES = {
     ],
     site_license_pool_description:
       "Advanced CoCalc access for demanding projects.",
-    team_visible: true,
+    team_visible: false,
     course_store_visible: false,
     course_allowed_domains: [],
     priority: 30,
@@ -695,7 +695,7 @@ export const TIER_TEMPLATES = {
     ],
     site_license_pool_description: "Course-focused CoCalc access for students.",
     team_visible: false,
-    course_store_visible: true,
+    course_store_visible: false,
     course_allowed_domains: [],
     priority: 10,
     price_monthly: 8,

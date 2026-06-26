@@ -1,10 +1,11 @@
 import { get_server_settings } from "@cocalc/database/postgres/settings/server-settings";
 import { getLogger } from "@cocalc/hub/logger";
+import { sitemapLocation } from "./sitemap";
 
 const logger = getLogger("hub:servers:robots");
 
 export default function getHandler() {
-  return async (_req, res) => {
+  return async (req, res) => {
     try {
       const settings = await get_server_settings(); // don't worry -- this is cached.
       res.header("Content-Type", "text/plain");
@@ -26,6 +27,7 @@ export default function getHandler() {
                Disallow: /*/port/
                Disallow: /*/server/
                Disallow: /haproxy
+               Sitemap: ${sitemapLocation(req, "/sitemap.xml")}
                `);
       }
       res.end();

@@ -100,6 +100,7 @@ function NotebookMock() {
   return (
     <div
       aria-label="Illustration of a CoCalc Jupyter notebook inside a project"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",

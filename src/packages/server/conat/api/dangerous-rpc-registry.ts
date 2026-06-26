@@ -27,6 +27,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "Admin Data Explorer shared view deletion",
   },
+  "adminData.importViews": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer shared view import mutation",
+  },
   "adminData.saveView": {
     decision: "fresh-auth-required",
     reason: "Admin Data Explorer shared view mutation",
@@ -540,6 +544,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "collaborator-authorized snapshot/rootfs restore; recoverable project state mutation with same impact class as normal project file writes",
   },
+  "projects.importPublicPath": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized import from checked public project content",
+  },
+  "projects.importPublicUrl": {
+    decision: "fresh-auth-not-required",
+    reason: "collaborator-authorized import from checked public URL content",
+  },
   "projects.setProjectEnv": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -661,13 +674,26 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin abuse-review annotation can mark accounts/projects as abusive or urgent",
   },
+  "purchases.createMembershipTier": {
+    decision: "fresh-auth-required",
+    reason: "admin membership tier catalog mutation",
+  },
   "purchases.createSiteLicenseExternalClaimPool": {
     decision: "fresh-auth-required",
     reason: "site-license external token claim authority mutation",
   },
+  "purchases.deleteMembershipTier": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin membership tier deletion changes durable entitlement catalog state",
+  },
   "purchases.disableSiteLicenseExternalClaimPool": {
     decision: "fresh-auth-required",
     reason: "site-license external token claim authority mutation",
+  },
+  "purchases.importMembershipTiers": {
+    decision: "fresh-auth-required",
+    reason: "admin bulk membership tier catalog mutation",
   },
   "purchases.purchaseMembershipPackage": {
     decision: "fresh-auth-required",
@@ -719,6 +745,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason:
       "site-license pool edits change commercial/domain entitlements; ordinary non-site package edits remain ordinary authz",
+  },
+  "purchases.updateMembershipTier": {
+    decision: "fresh-auth-required",
+    reason: "admin membership tier catalog mutation",
   },
   "purchases.updateSiteLicense": {
     decision: "fresh-auth-required",

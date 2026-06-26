@@ -92,6 +92,7 @@ function LinuxWorkspaceMock() {
   return (
     <div
       aria-label="Illustration of a CoCalc Linux project with sudo, apt, files, and notebooks"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",

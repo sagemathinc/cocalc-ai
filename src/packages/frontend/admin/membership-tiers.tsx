@@ -13,6 +13,7 @@ import {
   Checkbox,
   Col,
   Collapse,
+  Flex,
   Form,
   Input,
   InputNumber,
@@ -36,12 +37,18 @@ import { React } from "@cocalc/frontend/app-framework";
 import {
   Icon,
   ErrorDisplay,
-  Saving,
   TimeAgo,
+  Tooltip,
 } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { AdminMembershipTierPayload } from "@cocalc/conat/hub/api/purchases";
 import { currency } from "@cocalc/util/misc";
 import {
   applyMembershipTierTemplateFallbacks,
@@ -81,13 +88,58 @@ const TEMPLATE_KEYS = [
   "admin",
   "free",
   "basic",
-  "member",
+  "standard",
   "student",
   "instructor",
   "pro",
 ] as const;
 
 type TemplateKey = (typeof TEMPLATE_KEYS)[number];
+
+function compactColumnTitle(label: string, title: string) {
+  return (
+    <Tooltip title={title}>
+      <span style={{ cursor: "help" }}>{label}</span>
+    </Tooltip>
+  );
+}
+
+const GROUP_BOUNDARY = `2px solid ${COLORS.GRAY_L}`;
+
+function groupBoundaryCell({
+  left,
+  right,
+}: {
+  left?: boolean;
+  right?: boolean;
+}) {
+  return () => {
+    const style: React.CSSProperties = {};
+    if (left) style.borderLeft = GROUP_BOUNDARY;
+    if (right) style.borderRight = GROUP_BOUNDARY;
+    return { style };
+  };
+}
+
+const groupLeftBoundaryCell = groupBoundaryCell({ left: true });
+const groupRightBoundaryCell = groupBoundaryCell({ right: true });
+const groupBothBoundaryCell = groupBoundaryCell({ left: true, right: true });
+
+function visibilityCell(value: boolean | undefined) {
+  return value ? (
+    <Icon name="check" style={{ color: COLORS.BS_GREEN_D }} />
+  ) : (
+    ""
+  );
+}
+
+function tableCurrency(value: unknown) {
+  if (value == null) return "";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+  if (amount === 0) return "$0";
+  return currency(amount, Number.isInteger(amount) ? 0 : 2);
+}
 
 type ExpectedUsageEstimateKey =
   | "aiUnits7d"
@@ -131,7 +183,7 @@ interface MembershipTierImportCandidate {
   targetId: string;
   targetLabel?: string;
   match: "label" | "id" | "new";
-  payload: Tier;
+  payload: AdminMembershipTierPayload;
   disabledReason?: string;
 }
 
@@ -163,8 +215,14 @@ interface Tier {
   history?: any[];
   subscription_count?: number;
   subscribed_account_count?: number;
+  team_seat_count?: number;
+  team_account_count?: number;
+  course_account_count?: number;
+  site_account_count?: number;
   admin_assigned_count?: number;
   site_license_count?: number;
+  total_account_count?: number;
+  has_usage_history?: boolean;
   created?: dayjs.Dayjs;
   updated?: dayjs.Dayjs;
 }
@@ -449,7 +507,7 @@ function tierToFormValues(tier: Partial<Tier>) {
   };
 }
 
-function buildMembershipTierPayload(values): Tier {
+function buildMembershipTierPayload(values): AdminMembershipTierPayload {
   const project_defaults = cleanProjectDefaults(
     parseJsonField(values.project_defaults, "project_defaults"),
   );
@@ -637,7 +695,7 @@ function buildMembershipTierPayload(values): Tier {
       "disabled",
       "notes",
     ],
-  ) as Tier;
+  ) as AdminMembershipTierPayload;
 }
 
 function membershipTierExportPayload(tiers: Tier[]) {
@@ -652,7 +710,9 @@ function membershipTierExportPayload(tiers: Tier[]) {
   };
 }
 
-function parseMembershipTierImportJson(value: unknown): Tier[] {
+function parseMembershipTierImportJson(
+  value: unknown,
+): AdminMembershipTierPayload[] {
   const record = normalizedRecord(value);
   const rawTiers = Array.isArray(value)
     ? value
@@ -687,13 +747,27 @@ function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
   const [saving, set_saving] = React.useState<boolean>(false);
-  const [deleting, set_deleting] = React.useState<boolean>(false);
   const [loading, set_loading] = React.useState<boolean>(false);
   const [last_saved, set_last_saved] = React.useState<Tier | null>(null);
   const [error, set_error] = React.useState<string>("");
-  const [sel_rows, set_sel_rows] = React.useState<any>([]);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const [form] = Form.useForm();
+
+  async function runFreshTierMutation(
+    action: () => Promise<void>,
+  ): Promise<boolean> {
+    set_saving(true);
+    try {
+      return await runFreshAuthAction(async () => {
+        await action();
+        await load();
+        set_error("");
+      });
+    } finally {
+      set_saving(false);
+    }
+  }
 
   async function load() {
     let result: any;
@@ -727,8 +801,14 @@ function useMembershipTiers() {
             history: null,
             subscription_count: null,
             subscribed_account_count: null,
+            team_seat_count: null,
+            team_account_count: null,
+            course_account_count: null,
+            site_account_count: null,
             admin_assigned_count: null,
             site_license_count: null,
+            total_account_count: null,
+            has_usage_history: null,
             created: null,
             updated: null,
           },
@@ -753,7 +833,6 @@ function useMembershipTiers() {
   }
 
   React.useEffect(() => {
-    set_sel_rows([]);
     load();
   }, []);
 
@@ -766,7 +845,7 @@ function useMembershipTiers() {
     }
   }, [editing]);
 
-  async function save(values): Promise<void> {
+  async function save(values): Promise<boolean> {
     const formValues = form.getFieldsValue(true);
     const mergedValues = {
       ...(editing != null ? tierToFormValues(editing) : {}),
@@ -775,23 +854,24 @@ function useMembershipTiers() {
       id: values.id ?? formValues.id ?? editing?.id,
     };
     const val_orig: Tier = { ...mergedValues };
-    if (editing != null) set_editing(null);
 
     try {
-      set_saving(true);
       const payload = buildMembershipTierPayload(mergedValues);
-      await query({
-        query: {
-          membership_tiers: payload,
-        },
+      const completed = await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.updateMembershipTier({
+          browser_id: webapp_client.browser_id,
+          tier: payload,
+        });
       });
-      set_last_saved(val_orig);
-      await load();
+      if (completed) {
+        set_last_saved(val_orig);
+        set_editing(null);
+      }
+      return completed;
     } catch (err) {
       set_error(err.message ?? String(err));
       set_editing(val_orig);
-    } finally {
-      set_saving(false);
+      return false;
     }
   }
 
@@ -803,7 +883,7 @@ function useMembershipTiers() {
     id: string;
     label: string;
     template: TemplateKey;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const trimmedId = id.trim();
     const trimmedLabel = label.trim();
     if (data[trimmedId] != null) {
@@ -826,99 +906,57 @@ function useMembershipTiers() {
     } as Partial<Tier> & { id: string });
     const values = tierToFormValues(tier);
     const payload = buildMembershipTierPayload(values);
-    set_saving(true);
     try {
-      await query({
-        query: {
-          membership_tiers: payload,
-        },
-      });
-      await load();
-      set_editing(applyMembershipTierTemplateFallbacks(payload));
-    } catch (err) {
-      set_error(err.message ?? String(err));
-      throw err;
-    } finally {
-      set_saving(false);
-    }
-  }
-
-  async function import_tiers(payloads: Tier[]): Promise<void> {
-    set_saving(true);
-    try {
-      for (const payload of payloads) {
-        await query({
-          query: {
-            membership_tiers: payload,
-          },
+      const completed = await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.createMembershipTier({
+          browser_id: webapp_client.browser_id,
+          tier: payload,
         });
+      });
+      if (completed) {
+        set_editing(
+          applyMembershipTierTemplateFallbacks(
+            payload as Partial<Tier> & { id: string },
+          ) as Tier,
+        );
       }
-      await load();
-      set_error("");
+      return completed;
     } catch (err) {
       set_error(err.message ?? String(err));
       throw err;
-    } finally {
-      set_saving(false);
     }
   }
 
-  async function delete_tier(id: string | undefined, single = false) {
-    if (!id) return;
-    if (single) set_deleting(true);
+  async function import_tiers(
+    payloads: AdminMembershipTierPayload[],
+  ): Promise<boolean> {
     try {
-      if ((data[id]?.subscription_count ?? 0) > 0) {
-        throw Error("cannot delete a tier with active subscriptions");
-      }
-      if ((data[id]?.site_license_count ?? 0) > 0) {
-        throw Error("cannot delete a tier used by active site licenses");
-      }
-      await query({
-        query: {
-          membership_tiers: { id },
-        },
-        options: [{ delete: true }],
+      return await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.importMembershipTiers({
+          browser_id: webapp_client.browser_id,
+          tiers: payloads,
+        });
       });
-      if (single) load();
-    } catch (err) {
-      if (single) {
-        set_error(err.message ?? String(err));
-      } else {
-        throw err;
-      }
-    } finally {
-      if (single) set_deleting(false);
-    }
-  }
-
-  async function delete_tiers(): Promise<void> {
-    set_deleting(true);
-    try {
-      const blocked = sel_rows.filter(
-        (id) => (data[id]?.subscription_count ?? 0) > 0,
-      );
-      if (blocked.length > 0) {
-        throw Error(
-          `Cannot delete tiers with active subscriptions: ${blocked.join(", ")}`,
-        );
-      }
-      const siteLicenseBlocked = sel_rows.filter(
-        (id) => (data[id]?.site_license_count ?? 0) > 0,
-      );
-      if (siteLicenseBlocked.length > 0) {
-        throw Error(
-          `Cannot delete tiers used by active site licenses: ${siteLicenseBlocked.join(
-            ", ",
-          )}`,
-        );
-      }
-      await Promise.all(sel_rows.map(async (id) => await delete_tier(id)));
-      set_sel_rows([]);
-      load();
     } catch (err) {
       set_error(err.message ?? String(err));
-    } finally {
-      set_deleting(false);
+      throw err;
+    }
+  }
+
+  async function delete_tier(id: string | undefined) {
+    if (!id) return;
+    try {
+      if (data[id]?.has_usage_history !== false) {
+        throw Error("cannot delete a tier with usage history");
+      }
+      await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.deleteMembershipTier({
+          browser_id: webapp_client.browser_id,
+          id,
+        });
+      });
+    } catch (err) {
+      set_error(err.message ?? String(err));
     }
   }
 
@@ -927,16 +965,13 @@ function useMembershipTiers() {
     form,
     editing,
     saving,
-    deleting,
     delete_tier,
-    delete_tiers,
     loading,
     last_saved,
     error,
     set_error,
-    sel_rows,
-    set_sel_rows,
     set_editing,
+    freshAuthModalProps,
     create_tier_from_template,
     import_tiers,
     save,
@@ -959,16 +994,13 @@ export function MembershipTiers() {
     form,
     editing,
     saving,
-    deleting,
     delete_tier,
-    delete_tiers,
     loading,
     last_saved,
     error,
     set_error,
-    sel_rows,
-    set_sel_rows,
     set_editing,
+    freshAuthModalProps,
     create_tier_from_template,
     import_tiers,
     save,
@@ -1435,7 +1467,7 @@ export function MembershipTiers() {
                 `monthly ${currency(Number(get("price_monthly") ?? 0))}`,
                 `yearly ${currency(Number(get("price_yearly") ?? 0))}`,
                 get("store_visible") ? "public purchase" : "hidden",
-                get("active") ? "active" : "disabled",
+                get("active") ? "enabled" : "disabled",
               ),
             ),
             children: (
@@ -1444,6 +1476,35 @@ export function MembershipTiers() {
                   This card defines what users see and how the tier behaves as a
                   purchasable product.
                 </Paragraph>
+                <Row gutter={16}>
+                  <Col span={24}>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "12px 16px",
+                        alignItems: "center",
+                        marginBottom: "16px",
+                      }}
+                    >
+                      <Text
+                        type="secondary"
+                        style={{ flex: "1 1 520px", maxWidth: "760px" }}
+                      >
+                        Enabled tiers can be selected for new purchases,
+                        assignments, team licenses, course memberships, and
+                        site-license pools. Disable a tier to retire it from new
+                        use without removing existing memberships.
+                      </Text>
+                      <Form.Item name="active" valuePropName="checked" noStyle>
+                        <Switch
+                          checkedChildren="Enabled"
+                          unCheckedChildren="Disabled"
+                        />
+                      </Form.Item>
+                    </div>
+                  </Col>
+                </Row>
                 <Row gutter={16}>
                   <Col {...fieldCol}>
                     <Form.Item
@@ -1563,15 +1624,6 @@ export function MembershipTiers() {
                         tokenSeparators={[",", ";", " ", "\n"]}
                         style={{ width: "100%" }}
                       />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="active"
-                      label="Active"
-                      valuePropName="checked"
-                    >
-                      <Switch />
                     </Form.Item>
                   </Col>
                   <Col {...fieldCol}>
@@ -3160,7 +3212,12 @@ export function MembershipTiers() {
 
           <Form.Item>
             <Space.Compact>
-              <Button type="primary" htmlType="submit" disabled={hasJsonErrors}>
+              <Button
+                type="primary"
+                htmlType="submit"
+                disabled={hasJsonErrors}
+                loading={saving}
+              >
                 Save
               </Button>
               <Button
@@ -3195,11 +3252,12 @@ export function MembershipTiers() {
   async function createTierFromModal(): Promise<void> {
     try {
       const values = await createTierForm.validateFields();
-      await create_tier_from_template({
+      const completed = await create_tier_from_template({
         id: values.id,
         label: values.label,
         template: values.template,
       });
+      if (!completed) return;
       setCreateTierOpen(false);
       createTierForm.resetFields();
     } catch (err) {
@@ -3215,7 +3273,7 @@ export function MembershipTiers() {
   function openCreateTierModal() {
     setCreateTierOpen(true);
     createTierForm.setFieldsValue({
-      template: "member",
+      template: "standard",
       id: "",
       label: "",
     });
@@ -3239,7 +3297,7 @@ export function MembershipTiers() {
   }
 
   function buildImportCandidates(
-    tiers: Tier[],
+    tiers: AdminMembershipTierPayload[],
   ): MembershipTierImportCandidate[] {
     const byLabel = new Map<string, Tier>();
     const duplicateLabels = new Set<string>();
@@ -3269,12 +3327,12 @@ export function MembershipTiers() {
           ...tier,
           id: targetId,
           label: sourceLabel || tier.id,
-        }),
+        } as Partial<Tier> & { id: string }),
       );
       return {
         key: `${index}:${tier.id}`,
         sourceId: tier.id,
-        sourceLabel: tier.label,
+        sourceLabel: sourceLabel || undefined,
         targetId,
         targetLabel: target?.label,
         match,
@@ -3334,7 +3392,10 @@ export function MembershipTiers() {
     }
     setImporting(true);
     try {
-      await import_tiers(selected.map((candidate) => candidate.payload));
+      const completed = await import_tiers(
+        selected.map((candidate) => candidate.payload),
+      );
+      if (!completed) return;
       setImportModalOpen(false);
       setImportCandidates([]);
       setImportSelectedKeys([]);
@@ -3367,7 +3428,7 @@ export function MembershipTiers() {
         <Form
           layout="vertical"
           form={createTierForm}
-          initialValues={{ template: "member" }}
+          initialValues={{ template: "standard" }}
         >
           <Form.Item
             name="template"
@@ -3505,47 +3566,30 @@ export function MembershipTiers() {
   }
 
   function render_buttons() {
-    const any_selected = sel_rows.length > 0;
-    const selected_has_usage = sel_rows.some(
-      (id) =>
-        (data[id]?.subscription_count ?? 0) > 0 ||
-        (data[id]?.site_license_count ?? 0) > 0,
-    );
     return (
-      <Space.Compact style={{ margin: "10px 0" }}>
-        <Button
-          type={!any_selected ? "primary" : "default"}
-          disabled={any_selected}
-          onClick={() => openCreateTierModal()}
-        >
-          <Icon name="plus" /> Add
-        </Button>
-        <Button
-          type={any_selected ? "primary" : "default"}
-          onClick={delete_tiers}
-          disabled={!any_selected || selected_has_usage}
-          loading={deleting}
-        >
-          <Icon name="trash" />
-          {any_selected ? `Delete ${sel_rows.length} tier(s)` : "Delete"}
-        </Button>
+      <Flex justify="space-between">
+        <Space>
+          <Button type="primary" onClick={() => openCreateTierModal()}>
+            <Icon name="plus" /> Add
+          </Button>
+          <Button onClick={exportMembershipTiers}>
+            <Icon name="download" /> Export JSON
+          </Button>
+          <Button onClick={() => importFileInputRef.current?.click()}>
+            <Icon name="upload" /> Import JSON
+          </Button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: "none" }}
+            onChange={handleImportFileSelected}
+          />
+        </Space>
         <Button onClick={() => load()}>
           <Icon name="refresh" /> Refresh
         </Button>
-        <Button onClick={exportMembershipTiers}>
-          <Icon name="download" /> Export JSON
-        </Button>
-        <Button onClick={() => importFileInputRef.current?.click()}>
-          <Icon name="upload" /> Import JSON
-        </Button>
-        <input
-          ref={importFileInputRef}
-          type="file"
-          accept="application/json,.json"
-          style={{ display: "none" }}
-          onChange={handleImportFileSelected}
-        />
-      </Space.Compact>
+      </Flex>
     );
   }
 
@@ -3557,18 +3601,13 @@ export function MembershipTiers() {
       }),
       [(tier) => -prioritySortValue(tier), "id"],
     );
-    const rowSelection = {
-      selectedRowKeys: sel_rows,
-      onChange: set_sel_rows,
-    };
     return (
-      <>
+      <Space direction="vertical" style={{ width: "100%" }}>
         {render_buttons()}
         <Table<Tier>
           size={"small"}
           dataSource={table_data}
           loading={loading}
-          rowSelection={rowSelection}
           pagination={{
             position: ["bottomRight"],
             defaultPageSize: 10,
@@ -3581,185 +3620,270 @@ export function MembershipTiers() {
           <Table.Column<Tier>
             title="Priority"
             dataIndex="priority"
+            align="center"
             defaultSortOrder={"descend"}
             sorter={(a, b) => prioritySortValue(a) - prioritySortValue(b)}
           />
           <Table.Column<Tier>
-            title="Tier ID"
+            title="ID"
             dataIndex="id"
+            align="center"
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
-          <Table.Column<Tier> title="Label" dataIndex="label" />
+          <Table.Column<Tier> title="Label" dataIndex="label" align="center" />
           <Table.Column<Tier>
-            title="Visible"
-            dataIndex="store_visible"
-            render={(val) => (val ? "Yes" : "")}
-          />
-          <Table.Column<Tier>
-            title="Course"
-            dataIndex="course_store_visible"
-            render={(val) => (val ? "Yes" : "")}
-          />
-          <Table.Column<Tier>
-            title="Course domains"
-            dataIndex="course_allowed_domains"
-            render={(domains) =>
-              Array.isArray(domains) && domains.length > 0 ? (
-                <Space wrap size={[4, 4]}>
-                  {domains.map((domain) => (
-                    <Tag key={domain}>{domain}</Tag>
-                  ))}
-                </Space>
-              ) : (
-                ""
-              )
-            }
-          />
-          <Table.Column<Tier>
-            title="Monthly"
-            dataIndex="price_monthly"
-            render={(val) => (val != null ? currency(Number(val)) : "")}
-          />
-          <Table.Column<Tier>
-            title="Yearly"
-            dataIndex="price_yearly"
-            render={(val) => (val != null ? currency(Number(val)) : "")}
-          />
-          <Table.Column<Tier>
-            title="Trial days"
-            dataIndex="trial_days"
-            render={(val) => (val != null && val > 0 ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Course price"
-            dataIndex="course_price"
-            render={(val) => (val != null ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Course days"
-            dataIndex="course_duration_days"
-            render={(val) => (val != null ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Grace days"
-            dataIndex="course_grace_days"
-            render={(val) => (val != null ? val : "")}
-          />
-          <Table.Column<Tier>
-            title="Subscriptions"
-            dataIndex="subscription_count"
-            render={(val) => val ?? 0}
-          />
-          <Table.Column<Tier>
-            title="Subscribed accounts"
-            dataIndex="subscribed_account_count"
-            render={(val) => val ?? 0}
-          />
-          <Table.Column<Tier>
-            title="Admin assigned"
-            dataIndex="admin_assigned_count"
-            render={(val) => val ?? 0}
-          />
-          <Table.Column<Tier>
-            title="Site licenses"
-            dataIndex="site_license_count"
-            render={(val) => val ?? 0}
-          />
-          <Table.Column<Tier>
-            title="Active"
+            title={compactColumnTitle(
+              "On",
+              "Enabled tiers can be selected for new purchases, assignments, team licenses, course memberships, and site-license pools.",
+            )}
             dataIndex="disabled"
-            render={(_text, tier) => {
-              const click = () => save({ ...tier, active: !!tier.disabled });
-              return (
-                <Checkbox checked={!tier.disabled} onChange={click}></Checkbox>
-              );
-            }}
+            align="center"
+            render={(_text, tier) => visibilityCell(!tier.disabled)}
+          />
+          <Table.ColumnGroup<Tier>
+            title="Personal"
+            onHeaderCell={groupLeftBoundaryCell}
+          >
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "On",
+                "Show in public pricing and purchase UI",
+              )}
+              dataIndex="store_visible"
+              align="center"
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
+              render={visibilityCell}
+            />
+            <Table.Column<Tier>
+              title="Monthly"
+              dataIndex="price_monthly"
+              align="center"
+              render={tableCurrency}
+            />
+            <Table.Column<Tier>
+              title="Yearly"
+              dataIndex="price_yearly"
+              align="center"
+              render={tableCurrency}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Trial",
+                "Free trial days for personal membership purchases",
+              )}
+              dataIndex="trial_days"
+              align="center"
+              render={(val) => (val != null && val > 0 ? val : "")}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts with personal membership subscriptions using this tier",
+              )}
+              dataIndex="subscribed_account_count"
+              align="center"
+              render={(val) => val ?? 0}
+            />
+          </Table.ColumnGroup>
+          <Table.ColumnGroup<Tier>
+            title="Team"
+            onHeaderCell={groupLeftBoundaryCell}
+          >
+            <Table.Column<Tier>
+              title={compactColumnTitle("On", "Available for team licenses")}
+              dataIndex="team_visible"
+              align="center"
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
+              render={visibilityCell}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Seats",
+                "Active purchased team-license seats using this tier",
+              )}
+              dataIndex="team_seat_count"
+              align="center"
+              render={(val) => val ?? 0}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts assigned active team-license seats using this tier",
+              )}
+              dataIndex="team_account_count"
+              align="center"
+              render={(val) => val ?? 0}
+            />
+          </Table.ColumnGroup>
+          <Table.ColumnGroup<Tier>
+            title="Course"
+            onHeaderCell={groupLeftBoundaryCell}
+          >
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "On",
+                "Available for course student memberships",
+              )}
+              dataIndex="course_store_visible"
+              align="center"
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
+              render={visibilityCell}
+            />
+            <Table.Column<Tier>
+              title="Price"
+              dataIndex="course_price"
+              align="center"
+              render={tableCurrency}
+            />
+            <Table.Column<Tier>
+              title="Days"
+              dataIndex="course_duration_days"
+              align="center"
+              render={(val) => (val != null ? val : "")}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Grace",
+                "Full-access days after the course start date before student payment is required",
+              )}
+              dataIndex="course_grace_days"
+              align="center"
+              render={(val) => (val != null ? val : "")}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Domains",
+                "Allowed instructor email domains for course student memberships",
+              )}
+              dataIndex="course_allowed_domains"
+              align="center"
+              render={(domains) =>
+                Array.isArray(domains) && domains.length > 0 ? (
+                  <Space wrap size={[4, 4]}>
+                    {domains.map((domain) => (
+                      <Tag key={domain}>{domain}</Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  ""
+                )
+              }
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts assigned active course membership seats using this tier",
+              )}
+              dataIndex="course_account_count"
+              align="center"
+              render={(val) => val ?? 0}
+            />
+          </Table.ColumnGroup>
+          <Table.ColumnGroup<Tier>
+            title="Sites"
+            onHeaderCell={groupBothBoundaryCell}
+          >
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "#",
+                "Active site licenses with pools using this tier",
+              )}
+              dataIndex="site_license_count"
+              align="center"
+              onHeaderCell={groupLeftBoundaryCell}
+              onCell={groupLeftBoundaryCell}
+              render={(val) => val ?? 0}
+            />
+            <Table.Column<Tier>
+              title={compactColumnTitle(
+                "Accts",
+                "Distinct accounts with active claimed site-license seats using this tier",
+              )}
+              dataIndex="site_account_count"
+              align="center"
+              onHeaderCell={groupRightBoundaryCell}
+              onCell={groupRightBoundaryCell}
+              render={(val) => val ?? 0}
+            />
+          </Table.ColumnGroup>
+          <Table.Column<Tier>
+            title={compactColumnTitle(
+              "Admin assign",
+              "Active admin-assigned memberships using this tier",
+            )}
+            dataIndex="admin_assigned_count"
+            align="center"
+            render={(val) => val ?? 0}
+          />
+          <Table.Column<Tier>
+            title={compactColumnTitle(
+              "Total Accts",
+              "Distinct accounts using this tier through subscriptions, packages, or admin assignment",
+            )}
+            dataIndex="total_account_count"
+            align="center"
+            render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
             title="Updated"
             dataIndex="updated"
+            align="center"
             render={(v) => (v != null ? <TimeAgo date={v} /> : "")}
           />
           <Table.Column<Tier>
-            title="History"
+            title={compactColumnTitle(
+              "History",
+              "Number of saved change-history entries for this tier",
+            )}
             dataIndex="history"
+            align="center"
             render={(val) => (Array.isArray(val) ? val.length : 0)}
           />
           <Table.Column<Tier>
-            title="Edit"
-            dataIndex="edit"
-            render={(_text, tier) => (
-              <Icon name="pencil" onClick={() => set_editing(tier)} />
-            )}
-          />
-          <Table.Column<Tier>
-            title="Delete"
-            dataIndex="delete"
+            title="Actions"
+            dataIndex="actions"
+            align="center"
             render={(_text, tier) => {
-              const inUse =
-                (tier.subscription_count ?? 0) > 0 ||
-                (tier.site_license_count ?? 0) > 0;
-              if (inUse) {
-                return (
-                  <Text type="secondary" title="Tier in use">
-                    In use
-                  </Text>
-                );
-              }
               return (
-                <Popconfirm
-                  title="Sure to delete?"
-                  onConfirm={() => delete_tier(tier.key, true)}
-                >
-                  <Icon name="trash" />
-                </Popconfirm>
+                <Space size="small">
+                  <Tooltip title="Edit tier">
+                    <span>
+                      <Icon name="pencil" onClick={() => set_editing(tier)} />
+                    </span>
+                  </Tooltip>
+                  {tier.has_usage_history === false ? (
+                    <Popconfirm
+                      title="Sure to delete?"
+                      onConfirm={() => delete_tier(tier.key)}
+                    >
+                      <Tooltip title="Delete never-used tier">
+                        <span>
+                          <Icon name="trash" />
+                        </span>
+                      </Tooltip>
+                    </Popconfirm>
+                  ) : null}
+                </Space>
               );
             }}
           />
         </Table>
-      </>
-    );
-  }
-
-  function render_control() {
-    if (editing != null) {
-      return render_edit();
-    }
-    return render_view();
-  }
-
-  function render_error() {
-    if (error) {
-      return <ErrorDisplay error={error} onClose={() => set_error("")} />;
-    }
-    return null;
-  }
-
-  function render_info() {
-    return (
-      <div style={{ color: COLORS.GRAY, fontStyle: "italic" }}>
-        {saving && (
-          <>
-            <Saving />
-            <br />
-          </>
-        )}
-        <Paragraph style={{ marginBottom: 0 }}>
-          Tip: Use stable tier IDs, e.g. <Text code>standard</Text>. Set{" "}
-          <Text code>Visible</Text> for public purchase UI and{" "}
-          <Text code>Course visible</Text> for course student memberships.
-        </Paragraph>
-      </div>
+      </Space>
     );
   }
 
   return (
-    <div>
-      {render_error()}
-      {render_control()}
+    <>
+      <Space vertical style={{ width: "100%" }}>
+        {error && <ErrorDisplay error={error} onClose={() => set_error("")} />}
+        {editing != null ? render_edit() : render_view()}
+      </Space>
+      <FreshAuthModal {...freshAuthModalProps} />
       {render_create_tier_modal()}
       {render_import_tiers_modal()}
-      {render_info()}
-    </div>
+    </>
   );
 }
