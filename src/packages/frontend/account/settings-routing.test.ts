@@ -21,6 +21,9 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/usage-limits")).toEqual({
       page: "usage-limits",
     });
+    expect(parseAccountSettingsRoute("settings/public-shares")).toEqual({
+      page: "public-shares",
+    });
     expect(parseAccountSettingsRoute("settings/team-licenses")).toEqual({
       page: "team-licenses",
     });
@@ -49,6 +52,9 @@ describe("settings-routing", () => {
     expect(getSettingsTargetPath({ page: "balance" })).toBe("settings/balance");
     expect(getSettingsTargetPath({ page: "membership" })).toBe(
       "settings/membership",
+    );
+    expect(getSettingsTargetPath({ page: "public-shares" })).toBe(
+      "settings/public-shares",
     );
     expect(getSettingsTargetPath({ page: "software-licenses" })).toBe(
       "settings/software-licenses",
