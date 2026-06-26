@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 
 import getLogger from "@cocalc/backend/logger";
+import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
@@ -33,6 +34,10 @@ const LEASE_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_PARALLEL = 1;
 const RESTORE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS = Math.max(
+  5 * 60 * 1000,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_HOST_RPC_TIMEOUT_MS", 30 * 60 * 1000),
+);
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_LEGACY_PROJECTS_BUCKET = "cocalc-projects";
 
@@ -53,6 +58,33 @@ type LegacyRestoreRow = {
 function clean(value: unknown): string | undefined {
   const s = `${value ?? ""}`.trim();
   return s || undefined;
+}
+
+function withTimeout<T>({
+  promise,
+  timeoutMs,
+  message,
+}: {
+  promise: Promise<T>;
+  timeoutMs: number;
+  message: string;
+}): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 async function ensureLegacyMigrationRestoreSchema(): Promise<void> {
@@ -594,17 +626,21 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
         temporary_quota_grace: true,
       },
     });
-    const result = await client.restoreProjectArchive({
-      project_id: row.project_id,
-      download: {
-        ...signed,
-        bucket,
-        key,
-        bytes: manifestCompressedBytes(row.artifact_manifest),
-        sha256: manifestSha256(row.artifact_manifest),
-      },
-      temporary_quota_grace: true,
-      lro: { op_id, scope_type: "project", scope_id: row.project_id },
+    const result = await withTimeout({
+      timeoutMs: PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS,
+      message: `project-host restore RPC timed out after ${PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS}ms`,
+      promise: client.restoreProjectArchive({
+        project_id: row.project_id,
+        download: {
+          ...signed,
+          bucket,
+          key,
+          bytes: manifestCompressedBytes(row.artifact_manifest),
+          sha256: manifestSha256(row.artifact_manifest),
+        },
+        temporary_quota_grace: true,
+        lro: { op_id, scope_type: "project", scope_id: row.project_id },
+      }),
     });
     await markRestored({
       row,
