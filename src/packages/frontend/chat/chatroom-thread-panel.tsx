@@ -10,6 +10,7 @@ import {
   Modal,
   Popconfirm,
   Popover,
+  Radio,
   Select,
   Space,
   Switch,
@@ -1245,6 +1246,99 @@ export function ChatRoomThreadPanel({
       allowCodexRunKind: newThreadSetup.agentMode === "codex",
     });
     const automationEnabled = automationDraft.enabled === true;
+    const selectAgentMode = (mode: NewThreadAgentMode) => {
+      if (mode === "codex") {
+        const model = isCodexModelName(newThreadSetup.model)
+          ? newThreadSetup.model
+          : DEFAULT_CODEX_MODEL;
+        update({
+          agentMode: mode,
+          automationConfig: buildAutomationDraft({
+            config: newThreadSetup.automationConfig,
+            enabled: newThreadSetup.automationConfig?.enabled === true,
+            allowCodexRunKind: true,
+          }),
+          model,
+          codexConfig: {
+            ...newThreadSetup.codexConfig,
+            model,
+            sessionMode:
+              normalizeSessionMode(newThreadSetup.codexConfig) ??
+              defaultSessionMode,
+            reasoning: getReasoningForModel({
+              modelValue: model,
+              desired: newThreadSetup.codexConfig.reasoning,
+            }),
+          },
+        });
+        return;
+      }
+      update({
+        agentMode: mode,
+        automationConfig: buildAutomationDraft({
+          config: newThreadSetup.automationConfig,
+          enabled: newThreadSetup.automationConfig?.enabled === true,
+          allowCodexRunKind: false,
+        }),
+      });
+    };
+    const renderAgentModeChoice = ({
+      mode,
+      icon,
+      title,
+      description,
+    }: {
+      mode: NewThreadAgentMode;
+      icon: "robot" | "users";
+      title: string;
+      description: string;
+    }) => {
+      const selected = newThreadSetup.agentMode === mode;
+      return (
+        <Radio.Button
+          value={mode}
+          style={{
+            height: "auto",
+            flex: "1 1 220px",
+            minWidth: 210,
+            padding: "12px 16px",
+            textAlign: "left",
+            borderColor: selected ? COLORS.BLUE_D : COLORS.GRAY_L0,
+            background: selected ? COLORS.BLUE_LLLL : "white",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Icon
+              name={icon}
+              style={{
+                color: selected ? COLORS.BLUE_D : COLORS.GRAY_M,
+                fontSize: 18,
+              }}
+            />
+            <div>
+              <div
+                style={{
+                  fontWeight: 600,
+                  color: selected ? COLORS.BLUE_DD : COLORS.GRAY_DD,
+                }}
+              >
+                {title}
+              </div>
+              <div
+                style={{
+                  color: COLORS.GRAY_M,
+                  fontSize: 12,
+                  lineHeight: 1.3,
+                  whiteSpace: "normal",
+                }}
+              >
+                {description}
+              </div>
+            </div>
+          </div>
+        </Radio.Button>
+      );
+    };
     return (
       <div
         ref={panelRef}
@@ -1283,10 +1377,52 @@ export function ChatRoomThreadPanel({
               />
             </div>
           </div>
-          <div style={{ color: "#666", marginBottom: 14, fontSize: 13 }}>
+          <div style={{ color: COLORS.GRAY_M, marginBottom: 14, fontSize: 13 }}>
             All fields are optional and can be edited later from settings. Codex
             is selected by default.
           </div>
+          {!shouldHideChatType ? (
+            <div style={{ margin: "0 auto 16px", maxWidth: 620 }}>
+              <div
+                style={{
+                  textAlign: "center",
+                  fontWeight: 600,
+                  color: COLORS.GRAY_D,
+                  marginBottom: 8,
+                }}
+              >
+                Who should participate in this chat?
+              </div>
+              <Radio.Group
+                value={newThreadSetup.agentMode}
+                onChange={(e) =>
+                  selectAgentMode(e.target.value as NewThreadAgentMode)
+                }
+                optionType="button"
+                buttonStyle="solid"
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  gap: 12,
+                  width: "100%",
+                  flexWrap: "wrap",
+                }}
+              >
+                {renderAgentModeChoice({
+                  mode: "codex",
+                  icon: "robot",
+                  title: "AI agent",
+                  description: "Start with Codex available in the thread.",
+                })}
+                {renderAgentModeChoice({
+                  mode: "human",
+                  icon: "users",
+                  title: "Human chat",
+                  description: "Only project collaborators participate.",
+                })}
+              </Radio.Group>
+            </div>
+          ) : null}
           <div
             style={{
               display: "grid",
@@ -1302,63 +1438,6 @@ export function ChatRoomThreadPanel({
                 value={newThreadSetup.title}
                 onChange={(e) => update({ title: e.target.value })}
               />
-            </div>
-            <div>
-              {!shouldHideChatType ? (
-                <>
-                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                    Chat type
-                  </div>
-                  <Select
-                    value={newThreadSetup.agentMode}
-                    style={{ width: "100%" }}
-                    onChange={(value) => {
-                      const mode = value as NewThreadAgentMode;
-                      if (mode === "codex") {
-                        const model = isCodexModelName(newThreadSetup.model)
-                          ? newThreadSetup.model
-                          : DEFAULT_CODEX_MODEL;
-                        update({
-                          agentMode: mode,
-                          automationConfig: buildAutomationDraft({
-                            config: newThreadSetup.automationConfig,
-                            enabled:
-                              newThreadSetup.automationConfig?.enabled === true,
-                            allowCodexRunKind: true,
-                          }),
-                          model,
-                          codexConfig: {
-                            ...newThreadSetup.codexConfig,
-                            model,
-                            sessionMode:
-                              normalizeSessionMode(
-                                newThreadSetup.codexConfig,
-                              ) ?? defaultSessionMode,
-                            reasoning: getReasoningForModel({
-                              modelValue: model,
-                              desired: newThreadSetup.codexConfig.reasoning,
-                            }),
-                          },
-                        });
-                        return;
-                      }
-                      update({
-                        agentMode: mode,
-                        automationConfig: buildAutomationDraft({
-                          config: newThreadSetup.automationConfig,
-                          enabled:
-                            newThreadSetup.automationConfig?.enabled === true,
-                          allowCodexRunKind: false,
-                        }),
-                      });
-                    }}
-                    options={[
-                      { value: "codex", label: "Codex (agent)" },
-                      { value: "human", label: "Human only" },
-                    ]}
-                  />
-                </>
-              ) : null}
             </div>
             <div>
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>

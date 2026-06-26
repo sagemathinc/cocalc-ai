@@ -23,6 +23,7 @@ function OctaveProjectMock() {
   return (
     <div
       aria-label="Illustration of Octave scripts, notebooks, and terminal workflows in CoCalc"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #fff7f1 52%, #f4f9ff 100%)",

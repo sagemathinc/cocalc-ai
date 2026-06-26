@@ -13,7 +13,8 @@ describe("notification inbox mention adapter", () => {
           kind: "mention",
           project_id: "33333333-3333-4333-8333-333333333333",
           summary: {
-            path: "chat/chat.sage-chat",
+            path: "/home/user/chat/chat.sage-chat",
+            display_path: "chat/chat.sage-chat",
             description: "hello",
             actor_account_id: "44444444-4444-4444-8444-444444444444",
             fragment_id: "chat=true,id=abc",
@@ -62,7 +63,8 @@ describe("notification inbox mention adapter", () => {
     expect(map.size).toBe(2);
     const mention = map.get("22222222-2222-4222-8222-222222222222");
     expect(mention?.get("kind")).toBe("mention");
-    expect(mention?.get("path")).toBe("chat/chat.sage-chat");
+    expect(mention?.get("path")).toBe("/home/user/chat/chat.sage-chat");
+    expect(mention?.get("display_path")).toBe("chat/chat.sage-chat");
     expect(mention?.get("source")).toBe("44444444-4444-4444-8444-444444444444");
     expect(
       mention?.getIn([

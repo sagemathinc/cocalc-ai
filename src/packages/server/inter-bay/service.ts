@@ -6,6 +6,7 @@
 import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
+  createInterBayAccountNotificationFeedHandlers,
   createInterBayBayOpsHandlers,
   createInterBayBayRegistryHandlers,
   createInterBayAccountDirectoryHandlers,
@@ -37,6 +38,7 @@ import {
   createInterBayProjectControlStopHandler,
   type InterBayAuthTokenApi,
   type InterBayAccountProjectFeedApi,
+  type InterBayAccountNotificationFeedApi,
   type InterBayBayOpsApi,
   type InterBayBayRegistryApi,
   type InterBayAccountDirectoryApi,
@@ -253,6 +255,7 @@ import {
   upsertProjectCollabInviteDirectoryDirect,
 } from "@cocalc/server/projects/collab-invite-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { applyRemoteNotificationTargetOnHomeBay } from "@cocalc/server/notifications/remote-feed";
 import {
   handleProjectControlAddress,
   handleProjectControlActiveOperation,
@@ -452,6 +455,7 @@ export async function initInterBayServices(): Promise<void> {
     await startAccountDirectoryService();
     await startAccountLocalService();
     await startAccountProjectFeedService();
+    await startAccountNotificationFeedService();
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
@@ -1457,6 +1461,26 @@ async function startAccountProjectFeedService(): Promise<void> {
     ...createInterBayAccountProjectFeedHandlers({
       client,
       bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startAccountNotificationFeedService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const bay_id = getConfiguredBayId();
+  const impl: InterBayAccountNotificationFeedApi = {
+    upsert: async (opts) =>
+      await applyRemoteNotificationTargetOnHomeBay({
+        ...opts,
+        bay_id,
+      }),
+  };
+  services.push(
+    ...createInterBayAccountNotificationFeedHandlers({
+      client,
+      bay_id,
       parallel: true,
       impl,
     }),

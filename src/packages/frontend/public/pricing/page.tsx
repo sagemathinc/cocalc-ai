@@ -23,6 +23,7 @@ import {
 } from "@cocalc/frontend/account/membership-pricing-chooser";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicGrid, PublicSection } from "../layout/shell";
+import { publicPath } from "../routes";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { humanSize, round2 } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -438,6 +439,22 @@ export default function PricingPage({
 
   return (
     <>
+      <PublicSection>
+        <Title level={2} style={{ margin: 0 }}>
+          Find the right fit
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The right setup depends on two things: where CoCalc runs, and how your
+          team buys. Compare the operating models first — hosted, local, or
+          self-hosted — then choose a plan below.
+        </Paragraph>
+        <Flex gap={12} wrap>
+          <Button href={publicPath("products")}>
+            Compare operating models
+          </Button>
+        </Flex>
+      </PublicSection>
+
       {publicTiers.length > 0 ? (
         <Flex vertical gap="large">
           <MembershipBillingSelector

@@ -30,6 +30,7 @@ function JuliaProjectMock() {
   return (
     <div
       aria-label="Illustration of Julia workflows in a CoCalc project"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7f4ff 52%, #f4fff8 100%)",

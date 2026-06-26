@@ -119,6 +119,32 @@ describe("notification email outbox maintenance", () => {
     });
   });
 
+  it("uses display_path in immediate notification email body", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: {
+            description: "You were mentioned.",
+            path: "/home/user/b.chat",
+            display_path: "b.chat",
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    expect(message.text).toContain("Path: b.chat");
+    expect(message.text).not.toContain("/home/user/b.chat");
+  });
+
   it("renders mention spans as readable text in immediate notification email", async () => {
     claimQueuedNotificationEmails.mockResolvedValue([
       {

@@ -7,6 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import { drainAccountNotificationIndexProjection } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
+import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
 const logger = getLogger("server:projections:account-notification-index");
@@ -88,6 +89,7 @@ export interface AccountNotificationIndexProjectionMaintenanceStatus {
 export interface RunAccountNotificationIndexProjectionMaintenanceTickOptions extends RunAccountNotificationIndexProjectionPassOptions {
   pass_runner?: typeof runAccountNotificationIndexProjectionPass;
   publisher?: typeof publishProjectedNotificationFeedUpdatesBestEffort;
+  remote_forwarder?: typeof forwardRemoteNotificationTargetsBestEffort;
 }
 
 function clampInt(
@@ -191,6 +193,8 @@ export async function runAccountNotificationIndexProjectionMaintenanceTick(
     opts?.pass_runner ?? runAccountNotificationIndexProjectionPass;
   const publisher =
     opts?.publisher ?? publishProjectedNotificationFeedUpdatesBestEffort;
+  const remote_forwarder =
+    opts?.remote_forwarder ?? forwardRemoteNotificationTargetsBestEffort;
   const started = new Date();
   lastTickStartedAt = started;
   try {
@@ -222,6 +226,19 @@ export async function runAccountNotificationIndexProjectionMaintenanceTick(
         notification_ids,
       });
     }
+    void Promise.resolve(
+      remote_forwarder({
+        bay_id: result.bay_id,
+        limit:
+          (opts?.batch_limit ?? BATCH_LIMIT) *
+          (opts?.max_batches_per_tick ?? MAX_BATCHES_PER_TICK),
+      }),
+    ).catch((err) => {
+      logger.warn("remote account notification forwarding failed", {
+        bay_id: result.bay_id,
+        err: `${err}`,
+      });
+    });
     return result;
   } catch (err) {
     const finished = new Date();

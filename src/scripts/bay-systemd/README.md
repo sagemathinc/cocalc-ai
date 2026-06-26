@@ -45,6 +45,12 @@ package-managed `postgresql` service so it does not collide with the bay-local
 Postgres instance on `127.0.0.1:5432`. Use `--preserve-system-postgres` only if
 you intentionally want to keep that system service around.
 
+The host bootstrap also installs conservative OS logging limits for Rocket bay
+hosts: journald is capped at 1GB with 7-day retention, and the Ubuntu rsyslog
+logrotate stanza for `/var/log/syslog` gets `maxsize 512M` so spammy service
+logs rotate early instead of filling the root disk. Use `--skip-system-logging`
+only if the VM has an externally managed logging policy.
+
 2. Install the shared site master key before starting bay services:
 
 ```sh

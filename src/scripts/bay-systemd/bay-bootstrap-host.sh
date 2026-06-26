@@ -12,6 +12,7 @@ NODE_VERSION="26.2.0"
 NVM_VERSION="0.40.4"
 NVM_DIR="/opt/cocalc/nvm"
 PRESERVE_SYSTEM_POSTGRES=0
+CONFIGURE_SYSTEM_LOGGING=1
 
 usage() {
   cat <<'EOF'
@@ -33,6 +34,7 @@ Options:
   --node-major <n>         deprecated alias for --node-version
   --preserve-system-postgres
                            do not stop/disable Ubuntu's package-managed postgres service
+  --skip-system-logging    do not install CoCalc journald/logrotate limits
   -h, --help               show help
 EOF
 }
@@ -96,6 +98,109 @@ find_initdb() {
   find /usr/lib/postgresql -path '*/bin/initdb' 2>/dev/null | sort | tail -n1
 }
 
+configure_rsyslog_logrotate() {
+  local logrotate_file="/etc/logrotate.d/rsyslog"
+  local tmp
+
+  if [[ -f "$logrotate_file" ]]; then
+    if grep -Eq '^/var/log/syslog([[:space:]]|$)' "$logrotate_file"; then
+      tmp="$(mktemp)"
+      awk '
+        /^\/var\/log\/syslog([[:space:]]|$)/ {
+          in_syslog = 1
+          inserted = 0
+          print
+          next
+        }
+        in_syslog && /^[[:space:]]*(size|maxsize)[[:space:]]+/ {
+          if (!inserted) {
+            print "    maxsize 512M"
+            inserted = 1
+          }
+          next
+        }
+        in_syslog && /^[[:space:]]*}/ {
+          if (!inserted) {
+            print "    maxsize 512M"
+          }
+          in_syslog = 0
+          print
+          next
+        }
+        { print }
+      ' "$logrotate_file" >"$tmp"
+      run install -o root -g root -m 0644 "$tmp" "$logrotate_file"
+      rm -f "$tmp"
+      return 0
+    fi
+
+    cat >>"$logrotate_file" <<'EOF'
+
+/var/log/syslog
+{
+    daily
+    rotate 7
+    maxsize 512M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        if [ -x /usr/lib/rsyslog/rsyslog-rotate ]; then
+            /usr/lib/rsyslog/rsyslog-rotate
+        else
+            systemctl kill -s HUP rsyslog.service >/dev/null 2>&1 || true
+        fi
+    endscript
+}
+EOF
+    return 0
+  fi
+
+  cat >"$logrotate_file" <<'EOF'
+/var/log/syslog
+{
+    daily
+    rotate 7
+    maxsize 512M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        if [ -x /usr/lib/rsyslog/rsyslog-rotate ]; then
+            /usr/lib/rsyslog/rsyslog-rotate
+        else
+            systemctl kill -s HUP rsyslog.service >/dev/null 2>&1 || true
+        fi
+    endscript
+}
+EOF
+}
+
+configure_system_logging() {
+  if [[ "$CONFIGURE_SYSTEM_LOGGING" -ne 1 ]]; then
+    return 0
+  fi
+
+  run mkdir -p /etc/systemd/journald.conf.d
+  cat >/etc/systemd/journald.conf.d/99-cocalc-bay.conf <<'EOF'
+[Journal]
+SystemMaxUse=1G
+RuntimeMaxUse=256M
+SystemMaxFileSize=128M
+MaxRetentionSec=7day
+EOF
+
+  configure_rsyslog_logrotate
+
+  if command -v systemctl >/dev/null 2>&1; then
+    run systemctl restart systemd-journald || true
+  fi
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -151,6 +256,10 @@ main() {
         PRESERVE_SYSTEM_POSTGRES=1
         shift
         ;;
+      --skip-system-logging)
+        CONFIGURE_SYSTEM_LOGGING=0
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -167,8 +276,10 @@ main() {
 
   if [[ "$INSTALL_PACKAGES" -eq 1 ]]; then
     run apt-get update
-    run apt-get install -y openssl rsync jq postgresql postgresql-client sqlite3 zstd libatomic1
+    run apt-get install -y openssl rsync jq postgresql postgresql-client sqlite3 zstd libatomic1 logrotate
   fi
+
+  configure_system_logging
 
   ensure_node
 

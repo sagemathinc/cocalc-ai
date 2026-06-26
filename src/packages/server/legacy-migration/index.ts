@@ -31,6 +31,7 @@ import {
 } from "@cocalc/server/membership/project-limits";
 import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
 import { createLro } from "@cocalc/server/lro/lro-db";
+import { triggerLegacyMigrationProjectRestoreWorker } from "@cocalc/server/legacy-migration/restore-worker";
 import {
   LEGACY_PROJECT_RESTORE_LRO_KIND,
   LEGACY_RESTORE_ERROR_LABEL,
@@ -1865,6 +1866,9 @@ export async function importProjects({
       }),
     );
   }
+  if (results.some((result) => result.restore_status === "pending")) {
+    wakeLegacyRestoreWorker();
+  }
   return { results };
 }
 
@@ -1931,6 +1935,7 @@ export async function retryProjectRestore({
     restore_lro_op_id: op.op_id,
     restore_error: null,
   });
+  wakeLegacyRestoreWorker();
   return {
     legacy_project_id,
     project_id: row.project_id,
@@ -1942,6 +1947,14 @@ export async function retryProjectRestore({
 function clean(value: unknown): string | undefined {
   const s = `${value ?? ""}`.trim();
   return s || undefined;
+}
+
+function wakeLegacyRestoreWorker(): void {
+  void triggerLegacyMigrationProjectRestoreWorker().catch((err) => {
+    logger.warn("failed to wake legacy migration restore worker", {
+      err: `${err}`,
+    });
+  });
 }
 
 function archiveIndexSummary(

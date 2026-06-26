@@ -13,11 +13,12 @@ import {
   PublicSectionShell,
 } from "../common";
 import { publicPath } from "../routes";
+import { PUBLIC_COLORS } from "../theme";
 import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import { CodeCommand, CopyCommandButton } from "./components";
 import type { PublicProductsRoute } from "./routes";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 function titleForRoute(route: PublicProductsRoute): string {
   switch (route.view) {
@@ -33,6 +34,30 @@ function titleForRoute(route: PublicProductsRoute): string {
     default:
       return "Ways to Run CoCalc";
   }
+}
+
+function ProductSharedProjectNote() {
+  return (
+    <div
+      aria-label="Shared CoCalc project context"
+      role="note"
+      style={{
+        borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
+        color: PUBLIC_COLORS.mutedText,
+        lineHeight: 1.55,
+        maxWidth: "76ch",
+        padding: "2px 0 2px 14px",
+      }}
+    >
+      <Text strong>Same project, different operating path.</Text>{" "}
+      <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+        The product path changes where CoCalc runs and who operates it; the
+        project remains the durable, reviewable working context for files,
+        notebooks, terminals, chats, TimeTravel recovery, real-time
+        collaboration, and AI/agent context.
+      </Text>
+    </div>
+  );
 }
 
 function ProductsOverviewPage() {
@@ -85,61 +110,75 @@ function ProductsOverviewPage() {
 
 function CocalcRocketPage() {
   return (
-    <PublicGrid columns={3}>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          What CoCalc Rocket is
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          CoCalc Rocket is the full self-hosted multi-user deployment of CoCalc.
-          It is the closest match to the hosted service when you want
-          collaborative projects, managed compute, and the broader CoCalc user
-          model on infrastructure you control.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          It is also the right mental model for the hosted service itself:
-          hosted CoCalc is essentially Rocket run and managed by us instead of
-          by your own team.
-        </Paragraph>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Choose Rocket, Launchpad, or Plus
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Choose CoCalc Plus for a local single-user install. Choose CoCalc Star
-          when you want a one-command public VM appliance. Choose Launchpad for
-          lighter operator-controlled deployments. Choose Rocket when you want
-          the full multi-user CoCalc service model on your own infrastructure.
-        </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href={publicPath("products/cocalc-star")}>
-            Compare with Star
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-launchpad")}>
-            Compare with Launchpad
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-plus")}>
-            Compare with CoCalc Plus
-          </LinkButton>
-        </Flex>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Talk with us
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Rocket is the right path when you want a more complete deployment
-          story than Plus or Launchpad. For now, use our support and sales
-          channels to discuss deployment requirements, infrastructure, and
-          managed-service options.
-        </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href={appPath("support")}>Support</LinkButton>
-          <LinkButton href={appPath("pricing")}>Pricing</LinkButton>
-        </Flex>
-      </PublicSection>
-    </PublicGrid>
+    <>
+      <PublicGrid columns={3}>
+        <PublicSection>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
+            What CoCalc Rocket is
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            CoCalc Rocket is the full self-hosted multi-user deployment of
+            CoCalc. It is exactly the same as the hosted service
+            https://cocalc.ai, providing collaborative projects, managed
+            scalable compute, and the broader CoCalc user model on
+            infrastructure you control.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            It is also the right mental model for the hosted service itself:
+            hosted CoCalc is Rocket run and managed by us instead of
+            by your own team.
+          </Paragraph>
+        </PublicSection>
+        <PublicSection>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
+            Choose Rocket, Launchpad, or Plus
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Choose CoCalc Plus for a local single-user install. Choose CoCalc
+            Star when you want a one-command public VM appliance. Choose
+            Launchpad for lighter operator-controlled deployments. Choose Rocket
+            when you want the full multi-user CoCalc service model on your own
+            infrastructure.
+          </Paragraph>
+          <Flex gap={12} wrap>
+            <LinkButton href={publicPath("products/cocalc-star")}>
+              Compare with Star
+            </LinkButton>
+            <LinkButton href={publicPath("products/cocalc-launchpad")}>
+              Compare with Launchpad
+            </LinkButton>
+            <LinkButton href={publicPath("products/cocalc-plus")}>
+              Compare with CoCalc Plus
+            </LinkButton>
+          </Flex>
+        </PublicSection>
+        <PublicSection>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
+            Talk with us
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Rocket is the right path when you want a more complete deployment
+            story than Plus or Launchpad. For now, use our support and sales
+            channels to discuss deployment requirements, infrastructure, and
+            managed-service options.
+          </Paragraph>
+          <Flex gap={12} wrap>
+            <LinkButton href={appPath("support")}>Support</LinkButton>
+            <LinkButton href={appPath("pricing")}>Pricing</LinkButton>
+          </Flex>
+        </PublicSection>
+      </PublicGrid>
+      <ProductSharedProjectNote />
+    </>
   );
 }
 
@@ -151,7 +190,10 @@ function CocalcStarPage() {
     <>
       <PublicGrid columns={3}>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
             What CoCalc Star is
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -166,7 +208,10 @@ function CocalcStarPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
             Install CoCalc Star
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -189,7 +234,10 @@ function CocalcStarPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
             When to choose Star
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -205,7 +253,10 @@ function CocalcStarPage() {
         </PublicSection>
       </PublicGrid>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title
+          level={2}
+          style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+        >
           Star, Launchpad, and Rocket
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -223,6 +274,7 @@ function CocalcStarPage() {
           </LinkButton>
         </Flex>
       </PublicSection>
+      <ProductSharedProjectNote />
     </>
   );
 }
@@ -235,7 +287,10 @@ function CocalcLaunchpadPage() {
     <>
       <PublicGrid columns={3}>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
             What CoCalc Launchpad is
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -250,7 +305,10 @@ function CocalcLaunchpadPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
             Install CoCalc Launchpad
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -272,7 +330,10 @@ function CocalcLaunchpadPage() {
           </Paragraph>
         </PublicSection>
         <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
             What the installer does
           </Title>
           <Paragraph style={{ margin: 0 }}>
@@ -288,7 +349,10 @@ function CocalcLaunchpadPage() {
         </PublicSection>
       </PublicGrid>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title
+          level={2}
+          style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+        >
           Choose Star, Launchpad, or Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
@@ -307,6 +371,7 @@ function CocalcLaunchpadPage() {
           <LinkButton href={appPath("features/api")}>HTTP API</LinkButton>
         </Flex>
       </PublicSection>
+      <ProductSharedProjectNote />
     </>
   );
 }
@@ -316,64 +381,77 @@ function CocalcPlusPage() {
     "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
 
   return (
-    <PublicGrid columns={3}>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          What CoCalc Plus is
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          CoCalc Plus is the local single-user version of CoCalc. It is meant to
-          feel more like installing VS Code or JupyterLab on your own machine
-          than signing up for a hosted multi-user service.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          It brings notebooks, terminals, files, and the broader CoCalc
-          workspace model into a local single-user install.
-        </Paragraph>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Install CoCalc Plus
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          The current install flow uses the hosted software distribution:
-        </Paragraph>
-        <CodeCommand value={installCommand} />
-        <Flex gap={12} wrap>
-          <CopyCommandButton value={installCommand} />
-          <Button href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
-            Open install script
-          </Button>
-        </Flex>
-        <Paragraph style={{ margin: 0 }}>
-          Current target platforms are Linux and macOS. The installer places the
-          runtime in a user-owned location and adds a launcher if needed.
-        </Paragraph>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Choose hosted CoCalc or CoCalc Plus
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Hosted CoCalc is the right fit when you want multi-user collaboration,
-          shared projects, and managed infrastructure. CoCalc Plus is the right
-          fit when you want the same style of environment on your own machine.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          Both options matter for notebook-heavy technical work, and they share
-          the same overall approach to projects, files, terminals, and
-          computational workflows.
-        </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href={appPath("features/jupyter-notebook")}>
-            Jupyter notebooks
-          </LinkButton>
-          <LinkButton href={appPath("features/linux")}>
-            Linux workflow
-          </LinkButton>
-        </Flex>
-      </PublicSection>
-    </PublicGrid>
+    <>
+      <PublicGrid columns={3}>
+        <PublicSection>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
+            What CoCalc Plus is
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            CoCalc Plus is the local single-user version of CoCalc. It is meant
+            to feel more like installing VS Code or JupyterLab on your own
+            machine than signing up for a hosted multi-user service.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            It brings notebooks, terminals, files, and the broader CoCalc
+            workspace model into a local single-user install.
+          </Paragraph>
+        </PublicSection>
+        <PublicSection>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
+            Install CoCalc Plus
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            The current install flow uses the hosted software distribution:
+          </Paragraph>
+          <CodeCommand value={installCommand} />
+          <Flex gap={12} wrap>
+            <CopyCommandButton value={installCommand} />
+            <Button href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
+              Open install script
+            </Button>
+          </Flex>
+          <Paragraph style={{ margin: 0 }}>
+            Current target platforms are Linux and macOS. The installer places
+            the runtime in a user-owned location and adds a launcher if needed.
+          </Paragraph>
+        </PublicSection>
+        <PublicSection>
+          <Title
+            level={2}
+            style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+          >
+            Choose hosted CoCalc or CoCalc Plus
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Hosted CoCalc is the right fit when you want multi-user
+            collaboration, shared projects, and managed infrastructure. CoCalc
+            Plus is the right fit when you want the same style of environment on
+            your own machine.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            Both options matter for notebook-heavy technical work, and they
+            share the same overall approach to projects, files, terminals, and
+            computational workflows.
+          </Paragraph>
+          <Flex gap={12} wrap>
+            <LinkButton href={appPath("features/jupyter-notebook")}>
+              Jupyter notebooks
+            </LinkButton>
+            <LinkButton href={appPath("features/linux")}>
+              Linux workflow
+            </LinkButton>
+          </Flex>
+        </PublicSection>
+      </PublicGrid>
+      <ProductSharedProjectNote />
+    </>
   );
 }
 

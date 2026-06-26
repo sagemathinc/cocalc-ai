@@ -9,7 +9,10 @@ import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { getLro } from "@cocalc/server/lro/lro-db";
-import { startProjectOnHost } from "@cocalc/server/project-host/control";
+import {
+  startProjectOnHost,
+  stopProjectOnHost,
+} from "@cocalc/server/project-host/control";
 import type {
   LegacyMigrationProjectRestoreStatus,
   LegacyMigrationProjectSummary,
@@ -20,6 +23,8 @@ import { importProjects, listProjects, retryProjectRestore } from ".";
 const DEFAULT_LIMIT = 2000;
 const DEFAULT_POLL_MS = 5000;
 const DEFAULT_RESTORE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const STOP_AFTER_START_ATTEMPTS = 3;
+const STOP_AFTER_START_RETRY_MS = 5000;
 const TERMINAL_LRO_STATUSES = new Set([
   "succeeded",
   "failed",
@@ -49,9 +54,11 @@ type Options = {
   includeUnavailable: boolean;
   dryRun: boolean;
   startAfterRestore: boolean;
+  stopAfterStart: boolean;
   retryFailedRestore: boolean;
   rerunSuccess: boolean;
   resumeFile?: string;
+  concurrency: number;
   pollMs: number;
   restoreTimeoutMs: number;
 };
@@ -98,7 +105,11 @@ Options:
   --resume-file <path>          JSONL progress log. Successful rows are skipped
                               on rerun unless --rerun-success is set.
   --rerun-success               Do not skip successful rows from --resume-file.
+  --concurrency <n>             Number of projects to restore/start in parallel.
+                              Default: 1.
   --no-start                    Do not start projects after restore succeeds.
+  --stop-after-start            Start each restored project to verify it, then
+                              stop it to avoid accumulating running projects.
   --no-retry-failed-restore     Do not retry already-imported failed restores.
   --poll-ms <n>                 Restore LRO polling interval. Default: ${DEFAULT_POLL_MS}.
   --restore-timeout-minutes <n> Restore wait timeout per project. Default: 720.
@@ -131,8 +142,10 @@ function parseArgs(argv: string[]): Options {
     includeUnavailable: false,
     dryRun: false,
     startAfterRestore: true,
+    stopAfterStart: false,
     retryFailedRestore: true,
     rerunSuccess: false,
+    concurrency: 1,
     pollMs: DEFAULT_POLL_MS,
     restoreTimeoutMs: DEFAULT_RESTORE_TIMEOUT_MS,
   };
@@ -153,6 +166,10 @@ function parseArgs(argv: string[]): Options {
     }
     if (arg === "--no-start") {
       options.startAfterRestore = false;
+      continue;
+    }
+    if (arg === "--stop-after-start") {
+      options.stopAfterStart = true;
       continue;
     }
     if (arg === "--no-retry-failed-restore") {
@@ -187,6 +204,8 @@ function parseArgs(argv: string[]): Options {
       options.query = value;
     } else if (arg === "--limit") {
       options.limit = positiveInt(value, arg);
+    } else if (arg === "--concurrency") {
+      options.concurrency = positiveInt(value, arg);
     } else if (arg === "--poll-ms") {
       options.pollMs = positiveInt(value, arg);
     } else if (arg === "--restore-timeout-minutes") {
@@ -204,6 +223,30 @@ function parseArgs(argv: string[]): Options {
     throw new Error("--account-id must be a valid uuid");
   }
   return options;
+}
+
+async function runWithConcurrency<T>({
+  items,
+  concurrency,
+  worker,
+}: {
+  items: T[];
+  concurrency: number;
+  worker: (item: T) => Promise<void>;
+}): Promise<void> {
+  let next = 0;
+  const count = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: count }, async () => {
+      while (true) {
+        const index = next;
+        next += 1;
+        const item = items[index];
+        if (item == null) return;
+        await worker(item);
+      }
+    }),
+  );
 }
 
 async function idsFromFile(path: string | undefined): Promise<string[]> {
@@ -356,6 +399,27 @@ async function latestProjectSummary({
   );
 }
 
+async function stopProjectAfterVerification(projectId: string): Promise<void> {
+  let lastError: unknown;
+  for (let i = 1; i <= STOP_AFTER_START_ATTEMPTS; i += 1) {
+    try {
+      await stopProjectOnHost(projectId);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (i < STOP_AFTER_START_ATTEMPTS) {
+        console.log(
+          `stop ${projectId} attempt ${i} failed after successful start verification; retrying: ${err}`,
+        );
+        await new Promise((resolve) =>
+          setTimeout(resolve, STOP_AFTER_START_RETRY_MS),
+        );
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function restoreOne({
   accountId,
   project,
@@ -443,14 +507,32 @@ async function restoreOne({
   if (restoreStatus === "failed") {
     throw new Error(refreshed?.restore_error ?? "restore failed");
   }
+  let phase = "restored";
   if (options.startAfterRestore) {
     await startProjectOnHost(result.project_id, { account_id: accountId });
+    phase = "started";
+    if (options.stopAfterStart) {
+      try {
+        await stopProjectAfterVerification(result.project_id);
+        phase = "started-stopped";
+      } catch (err) {
+        phase = "started-stop-warning";
+        await writeResumeRecord(options.resumeFile, {
+          legacy_project_id: legacyProjectId,
+          project_id: result.project_id,
+          status: "ok",
+          phase,
+          message: `restore and start succeeded; stop cleanup failed after ${STOP_AFTER_START_ATTEMPTS} attempts: ${err}`,
+        });
+        return "ok";
+      }
+    }
   }
   await writeResumeRecord(options.resumeFile, {
     legacy_project_id: legacyProjectId,
     project_id: result.project_id,
     status: "ok",
-    phase: options.startAfterRestore ? "started" : "restored",
+    phase,
     message: restoreStatus ?? undefined,
   });
   return "ok";
@@ -495,6 +577,7 @@ async function main(): Promise<void> {
       `total=${listed.total_count}`,
       `selected=${projects.length}`,
       `resume_skip=${successful.size}`,
+      `concurrency=${options.concurrency}`,
       options.dryRun ? "dry_run=true" : undefined,
     ]
       .filter(Boolean)
@@ -509,43 +592,49 @@ async function main(): Promise<void> {
   let ok = 0;
   let skipped = 0;
   let failed = 0;
-  for (const project of projects) {
-    const legacyProjectId = project.legacy_project_id;
-    if (successful.has(legacyProjectId)) {
-      skipped += 1;
-      console.log(`skip ${legacyProjectId}: already successful in resume log`);
-      continue;
-    }
-    if (!options.includeUnavailable && !archiveAvailable(project)) {
-      skipped += 1;
-      await writeResumeRecord(options.resumeFile, {
-        legacy_project_id: legacyProjectId,
-        project_id: project.project_id ?? undefined,
-        status: "skipped",
-        phase: "availability",
-        message: "legacy project archive is not available yet",
-      });
-      continue;
-    }
-    try {
-      console.log(`restore ${legacyProjectId}: ${project.title}`);
-      const status = await restoreOne({ accountId, project, options });
-      if (status === "ok") {
-        ok += 1;
-      } else {
+  await runWithConcurrency({
+    items: projects,
+    concurrency: options.concurrency,
+    worker: async (project) => {
+      const legacyProjectId = project.legacy_project_id;
+      if (successful.has(legacyProjectId)) {
         skipped += 1;
+        console.log(
+          `skip ${legacyProjectId}: already successful in resume log`,
+        );
+        return;
       }
-    } catch (err) {
-      failed += 1;
-      await writeResumeRecord(options.resumeFile, {
-        legacy_project_id: legacyProjectId,
-        project_id: project.project_id ?? undefined,
-        status: "failed",
-        phase: "error",
-        message: `${err}`,
-      });
-    }
-  }
+      if (!options.includeUnavailable && !archiveAvailable(project)) {
+        skipped += 1;
+        await writeResumeRecord(options.resumeFile, {
+          legacy_project_id: legacyProjectId,
+          project_id: project.project_id ?? undefined,
+          status: "skipped",
+          phase: "availability",
+          message: "legacy project archive is not available yet",
+        });
+        return;
+      }
+      try {
+        console.log(`restore ${legacyProjectId}: ${project.title}`);
+        const status = await restoreOne({ accountId, project, options });
+        if (status === "ok") {
+          ok += 1;
+        } else {
+          skipped += 1;
+        }
+      } catch (err) {
+        failed += 1;
+        await writeResumeRecord(options.resumeFile, {
+          legacy_project_id: legacyProjectId,
+          project_id: project.project_id ?? undefined,
+          status: "failed",
+          phase: "error",
+          message: `${err}`,
+        });
+      }
+    },
+  });
   console.log(`done: ok=${ok} skipped=${skipped} failed=${failed}`);
   if (failed > 0) {
     process.exitCode = 1;
