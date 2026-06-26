@@ -245,6 +245,26 @@ export interface UxLatencyEventInput {
   details?: Record<string, unknown>;
 }
 
+export type ProjectCryptominingSignalKind =
+  | "process_command"
+  | "network_endpoint_argument"
+  | "known_pool_argument";
+
+export interface ProjectCryptominingSignal {
+  kind: ProjectCryptominingSignalKind;
+  pattern: string;
+  matched: string;
+  pid?: number;
+  command?: string;
+}
+
+export interface ProjectCryptominingEvidence {
+  confidence: "high";
+  detector_version?: string;
+  detected_at?: string;
+  signals: ProjectCryptominingSignal[];
+}
+
 export interface UxLatencyMetricSummary {
   metric: string;
   event_type: string;
@@ -2674,15 +2694,17 @@ export interface System {
     sample_started_at?: Date;
     sample_ended_at?: Date;
     source?: string;
+    cryptomining_evidence?: ProjectCryptominingEvidence;
     metadata?: Record<string, unknown>;
   }) => Promise<{
     recorded: boolean;
     account_id?: string;
     stop_project?: {
-      reason: "managed_cpu_budget_exceeded";
+      reason: "managed_cpu_budget_exceeded" | "cryptomining_detected";
       blocked_by?: "5h" | "7d";
       membership_class?: string;
       membership_source?: string;
+      auto_banned?: boolean;
     };
   }>;
 

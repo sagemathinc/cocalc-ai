@@ -132,6 +132,7 @@ import type {
   SiteSetupStep,
   SiteSetupStepState,
   StarServerInfo,
+  ProjectCryptominingEvidence,
   UxLatencyEventInput,
   UxLatencySummary,
 } from "@cocalc/conat/hub/api/system";
@@ -278,6 +279,7 @@ import {
   getManagedProjectCpuPolicy,
   shouldStopRunningProjectForManagedCpuPolicy,
 } from "@cocalc/server/membership/managed-cpu-policy";
+import { handleProjectCryptominingEvidence } from "@cocalc/server/membership/cryptomining-abuse";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
@@ -6664,6 +6666,7 @@ export async function recordManagedProjectCpuUsage({
   sample_started_at,
   sample_ended_at,
   source,
+  cryptomining_evidence,
   metadata,
 }: {
   account_id?: string;
@@ -6673,6 +6676,7 @@ export async function recordManagedProjectCpuUsage({
   sample_started_at?: Date;
   sample_ended_at?: Date;
   source?: string;
+  cryptomining_evidence?: ProjectCryptominingEvidence;
   metadata?: Record<string, unknown>;
 }) {
   const resolvedProjectId = `${project_id ?? ""}`.trim()
@@ -6697,6 +6701,30 @@ export async function recordManagedProjectCpuUsage({
   });
   if (!result.recorded || !result.account_id || !resolvedProjectId) {
     return result;
+  }
+  try {
+    const abuseDecision = await handleProjectCryptominingEvidence({
+      account_id: result.account_id,
+      project_id: resolvedProjectId,
+      evidence: cryptomining_evidence,
+    });
+    if (abuseDecision.should_stop_project) {
+      return {
+        ...result,
+        stop_project: {
+          reason: "cryptomining_detected" as const,
+          membership_class: abuseDecision.membership_class,
+          membership_source: abuseDecision.membership_source,
+          auto_banned: abuseDecision.auto_banned,
+        },
+      };
+    }
+  } catch (err) {
+    logger.warn("failed to evaluate cryptomining evidence", {
+      account_id: result.account_id,
+      project_id: resolvedProjectId,
+      err: `${err}`,
+    });
   }
   let policy;
   try {

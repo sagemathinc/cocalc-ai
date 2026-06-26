@@ -654,10 +654,12 @@ export async function banClusterAccountAndEquivalentEmails({
   account_id,
   actor_account_id,
   reason,
+  metadata,
 }: {
   account_id: string;
   actor_account_id?: string | null;
   reason?: string | null;
+  metadata?: Record<string, unknown> | null;
 }): Promise<AccountLocalSetBanResult[]> {
   const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
   if (!isValidUUID(normalizedAccountId)) {
@@ -687,6 +689,7 @@ export async function banClusterAccountAndEquivalentEmails({
         actor_account_id,
         reason,
         metadata: {
+          ...(metadata ?? {}),
           equivalent_email_ban: id !== normalizedAccountId,
           primary_account_id: normalizedAccountId,
           primary_email_address: account.email_address ?? null,
