@@ -24,6 +24,7 @@ function WhiteboardMock() {
   return (
     <div
       aria-label="Illustration of a CoCalc whiteboard with markdown, math, and Jupyter cells"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #fff8e8 100%)",
