@@ -430,6 +430,192 @@ function LegacyProjectImportModal({
   );
 }
 
+function LegacyProjectBulkImportModal({
+  projects,
+  open,
+  onClose,
+  onImported,
+}: {
+  projects: LegacyMigrationProjectSummary[];
+  open: boolean;
+  onClose: () => void;
+  onImported: (results: LegacyMigrationImportProjectResult[]) => Promise<void>;
+}) {
+  const [error, setError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const lastResetKeyRef = useRef<string | undefined>(undefined);
+  const {
+    draft,
+    summary,
+    rootfsImages,
+    rootfsLoading,
+    rootfsError,
+    isAdmin,
+    selectedHost,
+    setHost,
+    setRootfs,
+    reset,
+  } = useProjectCreateDraft({
+    defaultValue: "Legacy projects",
+  });
+  const selectableRootfsImages = useMemo(
+    () =>
+      latestRootfsVersionEntries(
+        rootfsImages.filter((entry) =>
+          isNewProjectRootfsSelectable({
+            entry,
+            isGpu: summary.gpu,
+            isAdmin,
+          }),
+        ),
+        { preserveIds: [draft.rootfs_image_id] },
+      ),
+    [draft.rootfs_image_id, isAdmin, rootfsImages, summary.gpu],
+  );
+  const hasDiskEstimate = projects.some((project) => project.disk_mb != null);
+  const lastKnownDiskMb = hasDiskEstimate
+    ? projects.reduce((total, project) => total + (project.disk_mb ?? 0), 0)
+    : undefined;
+  const archivedBytes = projects.reduce(
+    (total, project) => total + (project.artifact_bytes ?? 0),
+    0,
+  );
+
+  useEffect(() => {
+    const key = open
+      ? projects.map((project) => project.legacy_project_id).join(",")
+      : undefined;
+    if (!key) {
+      lastResetKeyRef.current = undefined;
+      return;
+    }
+    if (lastResetKeyRef.current === key) return;
+    lastResetKeyRef.current = key;
+    reset();
+    setError("");
+    setImporting(false);
+  }, [open, projects, reset]);
+
+  async function importSelected() {
+    if (projects.length === 0) {
+      setError("Select one or more ready legacy projects first.");
+      return;
+    }
+    if (!draft.rootfs_image.trim()) {
+      setError("Choose an image before restoring selected projects.");
+      return;
+    }
+    setImporting(true);
+    setError("");
+    try {
+      const response =
+        await webapp_client.conat_client.hub.legacyMigration.importProjects({
+          legacy_project_ids: projects.map(
+            (project) => project.legacy_project_id,
+          ),
+          restore_mode: "full",
+          rootfs_image: draft.rootfs_image,
+          rootfs_image_id: draft.rootfs_image_id,
+          host_id: draft.host_id,
+          region: draft.region,
+        });
+      await onImported(response.results);
+      onClose();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      title="Restore selected legacy projects"
+      onCancel={onClose}
+      width="min(900px, 96vw)"
+      okText="Restore selected"
+      confirmLoading={importing}
+      onOk={() => void importSelected()}
+      okButtonProps={{
+        disabled:
+          projects.length === 0 || rootfsLoading || !draft.rootfs_image.trim(),
+      }}
+      destroyOnHidden
+    >
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert
+          showIcon
+          type="info"
+          message={`Restore ${projects.length.toLocaleString()} selected legacy project${
+            projects.length === 1 ? "" : "s"
+          }`}
+          description={`CoCalc will create these projects using the same image and host, then restore their files in the background. Last known disk use: ${formatDiskMb(lastKnownDiskMb)}. Archived size: ${formatBytes(archivedBytes)}.`}
+        />
+        {error ? <Alert showIcon type="error" message={error} /> : null}
+        {rootfsError ? (
+          <Alert
+            showIcon
+            type="warning"
+            message={`Image catalog load issue: ${rootfsError}`}
+          />
+        ) : null}
+        <Space direction="vertical" size={6} style={{ width: "100%" }}>
+          <Text strong>Image</Text>
+          <Select
+            showSearch
+            loading={rootfsLoading}
+            disabled={importing || rootfsLoading}
+            value={draft.rootfs_image_id ?? draft.rootfs_image}
+            optionFilterProp="data-search"
+            style={{ width: "100%" }}
+            popupMatchSelectWidth={false}
+            onChange={(value) => {
+              const entry = selectableRootfsImages.find(
+                (entry) => (entry.id ?? entry.image) === value,
+              );
+              if (entry) {
+                setRootfs({ image: entry.image, image_id: entry.id });
+              }
+            }}
+          >
+            {selectableRootfsImages.map((entry) => (
+              <Select.Option
+                key={entry.id ?? entry.image}
+                value={entry.id ?? entry.image}
+                data-search={[
+                  entry.label,
+                  entry.image,
+                  entry.description,
+                  entry.theme?.title,
+                  entry.theme?.description,
+                  ...(entry.tags ?? []),
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+                  .toLowerCase()}
+              >
+                {renderRootfsCatalogOption(entry)}
+              </Select.Option>
+            ))}
+          </Select>
+        </Space>
+        <SelectNewHost
+          disabled={importing}
+          selectedHost={selectedHost}
+          onChange={setHost}
+          regionFilter={draft.region}
+          regionLabel={R2_REGION_LABELS[draft.region]}
+          wantsGpu={summary.gpu}
+          pickerMode="create"
+          pickerDisplay="modal"
+          showHelp={false}
+        />
+      </Space>
+    </Modal>
+  );
+}
+
 export const LEGACY_MIGRATION_SETTINGS_PAGE = {
   component: LegacyMigrationPage,
   description: defineMessage({
@@ -493,7 +679,7 @@ export function LegacyMigrationPage() {
   const [selectedLegacyProjectIds, setSelectedLegacyProjectIds] = useState<
     string[]
   >([]);
-  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [bulkResults, setBulkResults] = useState<
     LegacyMigrationImportProjectResult[]
   >([]);
@@ -634,85 +820,37 @@ export function LegacyMigrationPage() {
     );
   }, [filteredProjects, selectedLegacyProjectIds]);
 
-  async function restoreSelectedProjects(): Promise<void> {
-    const projects = selectedProjects;
-    if (projects.length === 0) {
+  async function handleBulkImported(
+    results: LegacyMigrationImportProjectResult[],
+  ): Promise<void> {
+    setBulkResults(results);
+    setSelectedLegacyProjectIds([]);
+    await loadProjects();
+    const failed = results.filter((result) => result.status === "failed");
+    if (failed.length > 0) {
+      void message.warning(
+        `${failed.length.toLocaleString()} of ${results.length.toLocaleString()} selected restore request${
+          results.length === 1 ? "" : "s"
+        } failed.`,
+      );
+    } else {
+      void message.success(
+        `Started ${results.length.toLocaleString()} legacy project restore${
+          results.length === 1 ? "" : "s"
+        }.`,
+      );
+    }
+  }
+
+  function openBulkImportModal(): void {
+    if (selectedProjects.length === 0) {
       void message.info(
         "Select one or more ready, not-yet-restored projects first.",
       );
       return;
     }
-    const hasDiskEstimate = projects.some((project) => project.disk_mb != null);
-    const lastKnownDiskMb = hasDiskEstimate
-      ? projects.reduce((total, project) => total + (project.disk_mb ?? 0), 0)
-      : undefined;
-    const archivedBytes = projects.reduce(
-      (total, project) => total + (project.artifact_bytes ?? 0),
-      0,
-    );
-
-    Modal.confirm({
-      title: `Restore ${projects.length.toLocaleString()} legacy project${
-        projects.length === 1 ? "" : "s"
-      }?`,
-      width: 720,
-      okText: "Restore selected",
-      content: (
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
-          <Text>
-            CoCalc will create these projects and start restoring files from
-            their legacy archives. The restore runs in the background; you can
-            leave this page and come back later.
-          </Text>
-          <Text type="secondary">
-            Last known disk size: {formatDiskMb(lastKnownDiskMb)}. Archived
-            size: {formatBytes(archivedBytes)}.
-          </Text>
-          <Alert
-            showIcon
-            type="warning"
-            message="Bulk restore uses default project placement."
-            description="Use Restore and Open on an individual project if you need to choose a specific image or host."
-          />
-        </Space>
-      ),
-      onOk: async () => {
-        setBulkImporting(true);
-        setBulkResults([]);
-        try {
-          const response =
-            await webapp_client.conat_client.hub.legacyMigration.importProjects(
-              {
-                legacy_project_ids: projects.map(
-                  (project) => project.legacy_project_id,
-                ),
-                restore_mode: "full",
-              },
-            );
-          setBulkResults(response.results);
-          setSelectedLegacyProjectIds([]);
-          await loadProjects();
-          const failed = response.results.filter(
-            (result) => result.status === "failed",
-          );
-          if (failed.length > 0) {
-            void message.warning(
-              `${failed.length.toLocaleString()} of ${response.results.length.toLocaleString()} selected restore request${
-                response.results.length === 1 ? "" : "s"
-              } failed.`,
-            );
-          } else {
-            void message.success(
-              `Started ${response.results.length.toLocaleString()} legacy project restore${
-                response.results.length === 1 ? "" : "s"
-              }.`,
-            );
-          }
-        } finally {
-          setBulkImporting(false);
-        }
-      },
-    });
+    setBulkResults([]);
+    setBulkImportOpen(true);
   }
 
   const columns = [
@@ -969,8 +1107,7 @@ export function LegacyMigrationPage() {
           <Space wrap>
             <Button
               disabled={selectedProjects.length === 0}
-              loading={bulkImporting}
-              onClick={() => void restoreSelectedProjects()}
+              onClick={openBulkImportModal}
               type="primary"
             >
               Restore selected ({selectedProjects.length.toLocaleString()})
@@ -1188,6 +1325,12 @@ export function LegacyMigrationPage() {
                 open={importProject != null}
                 onClose={() => setImportProject(undefined)}
                 onImported={openImportedProject}
+              />
+              <LegacyProjectBulkImportModal
+                projects={selectedProjects}
+                open={bulkImportOpen}
+                onClose={() => setBulkImportOpen(false)}
+                onImported={handleBulkImported}
               />
             </>
           )}
