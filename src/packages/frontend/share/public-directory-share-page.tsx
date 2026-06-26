@@ -27,6 +27,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
 
 const { Text } = Typography;
 
@@ -358,11 +359,17 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
                     message="Copy this directory when you want to work with it."
                     description="The shared directory itself is read-only. Copying creates your own editable copy in a project you can access."
                   />
-                  <Input
-                    placeholder="Destination project id"
-                    value={destinationProjectId}
-                    onChange={(e) => setDestinationProjectId(e.target.value)}
-                  />
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                      Destination project
+                    </div>
+                    <SelectProject
+                      value={destinationProjectId}
+                      onChange={(projectId) =>
+                        setDestinationProjectId(projectId ?? "")
+                      }
+                    />
+                  </div>
                   <Input
                     placeholder="Destination path"
                     value={destinationPath}
