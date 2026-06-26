@@ -158,6 +158,10 @@ import {
   resolveTeamLicenseQuote,
 } from "@cocalc/server/membership/team-licenses";
 import { purchaseTeamLicenseChange } from "@cocalc/server/purchases/team-license";
+import createProject, {
+  createProjectWithInternalProjectId,
+} from "@cocalc/server/projects/create";
+import { isValidUUID } from "@cocalc/util/misc";
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
@@ -397,6 +401,15 @@ import {
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
+
+function isLegacyProjectIdUnavailableError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err}`;
+  return (
+    message.includes("project_id already exists") ||
+    message.includes("project_id belongs to a permanently deleted workspace") ||
+    message.includes("if project_id is given, it must be a valid uuid")
+  );
+}
 
 function getSeedSiteLicenseBayId(): string {
   return getConfiguredClusterSeedBayId();
@@ -833,6 +846,48 @@ async function startAccountLocalService(): Promise<void> {
     getVerifiedEmailAddresses: async ({ account_id }) => ({
       email_addresses: await getVerifiedEmailAddressesForAccount(account_id),
     }),
+    createLegacyMigrationProject: async ({
+      account_id,
+      legacy_project_id,
+      title,
+      description,
+      rootfs_image,
+      rootfs_image_id,
+      host_id,
+      region,
+    }) => {
+      const opts = {
+        account_id,
+        title,
+        description: description ?? undefined,
+        rootfs_image,
+        rootfs_image_id,
+        host_id,
+        region,
+        skip_project_count_limit: true,
+        start: false,
+      };
+      if (!isValidUUID(legacy_project_id)) {
+        return { project_id: await createProject(opts) };
+      }
+      try {
+        return {
+          project_id: await createProjectWithInternalProjectId({
+            ...opts,
+            project_id: legacy_project_id,
+          }),
+        };
+      } catch (err) {
+        if (!isLegacyProjectIdUnavailableError(err)) {
+          throw err;
+        }
+        logger.warn(
+          "legacy migration project_id unavailable on account home bay; falling back to fresh project_id",
+          { legacy_project_id, err: `${err}` },
+        );
+        return { project_id: await createProject(opts) };
+      }
+    },
     getAdminAssignedMembership: async ({ account_id }) =>
       await getAdminAssignedMembershipLocal(account_id),
     setAdminAssignedMembership: async ({

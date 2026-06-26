@@ -21,6 +21,7 @@ import { Card } from "antd";
 import { Row, Col } from "@cocalc/frontend/antd-bootstrap";
 import { FormattedMessage } from "react-intl";
 import { labels } from "@cocalc/frontend/i18n";
+import { ProjectDirectorySummaryButton } from "../project-directory-summary-button";
 
 interface Project {
   project_id: string;
@@ -183,9 +184,12 @@ export class Projects extends Component<Props, State> {
   render_project(project: Project, style?: React.CSSProperties): Rendered {
     return (
       <Row key={project.project_id} style={style}>
-        <Col md={4}>{trunc_middle(project.title, 60)}</Col>
-        <Col md={4}>{this.render_description(project)}</Col>
-        <Col md={4}>{this.render_last_active(project)}</Col>
+        <Col md={3}>{trunc_middle(project.title, 60)}</Col>
+        <Col md={3}>{this.render_description(project)}</Col>
+        <Col md={3}>{this.render_last_active(project)}</Col>
+        <Col md={3}>
+          <ProjectDirectorySummaryButton project_id={project.project_id} />
+        </Col>
       </Row>
     );
   }
@@ -193,9 +197,10 @@ export class Projects extends Component<Props, State> {
   render_header(): Rendered {
     return (
       <Row key="header" style={{ fontWeight: "bold", color: "#666" }}>
-        <Col md={4}>Title</Col>
-        <Col md={4}>Description</Col>
-        <Col md={4}>Active</Col>
+        <Col md={3}>Title</Col>
+        <Col md={3}>Description</Col>
+        <Col md={3}>Active</Col>
+        <Col md={3}>Admin actions</Col>
       </Row>
     );
   }

@@ -190,6 +190,7 @@ export interface Fileserver {
     include_paths?: string[];
     exclude_paths?: string[];
     max_uncompressed_bytes?: number;
+    temporary_quota_grace?: boolean;
     lro?: LroRef;
   }) => Promise<ProjectArchiveRestoreResult>;
   // Download and index an archive once on the target project host. Later

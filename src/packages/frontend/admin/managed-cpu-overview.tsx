@@ -51,6 +51,7 @@ import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { AccountStatusTags } from "./account-status-tags";
+import { ProjectDirectorySummaryButton } from "./project-directory-summary-button";
 
 const { Paragraph, Text } = Typography;
 
@@ -339,6 +340,9 @@ function TopCpuProjects({
                 </Button>
               ) : null}
             </Space>
+            {project.project_id ? (
+              <ProjectDirectorySummaryButton project_id={project.project_id} />
+            ) : null}
           </div>
         ))}
     </Space>

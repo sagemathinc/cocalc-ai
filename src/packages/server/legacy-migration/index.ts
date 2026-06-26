@@ -26,7 +26,6 @@ import {
   getProjectFileServerClient,
 } from "@cocalc/server/conat/file-server-client";
 import {
-  assertCanAddAccountStorage,
   assertCanIncreaseAccountStorage,
   getAccountStorageRemainingBytes,
 } from "@cocalc/server/membership/project-limits";
@@ -387,25 +386,6 @@ function manifestSha256(
     if (value) return value.toLowerCase();
   }
   return undefined;
-}
-
-async function assertLegacyProjectArchiveFitsAccount({
-  account_id,
-  legacy,
-}: {
-  account_id: string;
-  legacy: LegacyProjectRow;
-}): Promise<void> {
-  if (restoreStatusForProject(legacy) !== "pending") return;
-  await assertCanIncreaseAccountStorage({ account_id });
-  const bytes = legacyProjectArchiveUncompressedBytes(legacy.artifact_manifest);
-  if (bytes == null) return;
-  await assertCanAddAccountStorage({
-    account_id,
-    additional_bytes: bytes,
-    fresh: true,
-    reason: `legacy project '${projectTitle(legacy)}' import`,
-  });
 }
 
 function importStatus(row: LegacyProjectRow): LegacyMigrationProjectSummary {
@@ -1526,6 +1506,25 @@ async function createImportedLegacyProject({
   host_id?: string;
   region?: string;
 }): Promise<string> {
+  const account = await getClusterAccountById(account_id);
+  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
+  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+    const { project_id } = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: homeBayId,
+      timeout: PROJECT_ARCHIVE_TIMEOUT_MS,
+    }).createLegacyMigrationProject({
+      account_id,
+      legacy_project_id,
+      title: projectTitle(legacy),
+      description: projectDescription(legacy),
+      rootfs_image,
+      rootfs_image_id,
+      host_id,
+      region,
+    });
+    return project_id;
+  }
   const opts = {
     account_id,
     title: projectTitle(legacy),
@@ -1634,18 +1633,16 @@ async function importOneProject({
         "The archived files for this legacy project are not available yet. Try again after the cocalc.com archive has been uploaded.",
     };
   }
-  try {
-    if (restore_mode === "full") {
-      await assertLegacyProjectArchiveFitsAccount({ account_id, legacy });
-    } else {
+  if (restore_mode !== "full") {
+    try {
       await assertCanIncreaseAccountStorage({ account_id });
+    } catch (err) {
+      return {
+        legacy_project_id,
+        status: "failed",
+        error: `${err}`,
+      };
     }
-  } catch (err) {
-    return {
-      legacy_project_id,
-      status: "failed",
-      error: `${err}`,
-    };
   }
 
   const created = await pool.query<{ legacy_project_id: string }>(
@@ -1654,7 +1651,25 @@ async function importOneProject({
       (legacy_project_id, owner_account_id, status, restore_mode, restore_status,
        rootfs_image, rootfs_image_id, created, updated)
     VALUES ($1, $2, 'creating', $3, $4, $5, $6, NOW(), NOW())
-    ON CONFLICT (legacy_project_id) DO NOTHING
+    ON CONFLICT (legacy_project_id) DO UPDATE
+      SET owner_account_id=EXCLUDED.owner_account_id,
+          status='creating',
+          restore_mode=EXCLUDED.restore_mode,
+          restore_status=EXCLUDED.restore_status,
+          restore_error=NULL,
+          restore_attempts=NULL,
+          restore_worker_id=NULL,
+          restore_claimed_until=NULL,
+          restore_started=NULL,
+          restore_finished=NULL,
+          restore_lro_op_id=NULL,
+          restore_progress=NULL,
+          restore_result=NULL,
+          rootfs_image=EXCLUDED.rootfs_image,
+          rootfs_image_id=EXCLUDED.rootfs_image_id,
+          updated=NOW()
+    WHERE legacy_migration_project_imports.project_id IS NULL
+      AND legacy_migration_project_imports.status = 'failed'
     RETURNING legacy_project_id
     `,
     [

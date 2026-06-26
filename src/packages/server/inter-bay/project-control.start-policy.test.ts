@@ -10,6 +10,8 @@ let startMock: jest.Mock;
 let reserveSlotMock: jest.Mock;
 let heartbeatSlotMock: jest.Mock;
 let isAdminMock: jest.Mock;
+let countsTowardManagedCpuBudgetForHostMock: jest.Mock;
+let getManagedProjectCpuPolicyMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -64,6 +66,22 @@ jest.mock("@cocalc/server/projects/runtime-slots", () => ({
   reserveProjectRuntimeSlot: (...args: any[]) => reserveSlotMock(...args),
   heartbeatProjectRuntimeSlot: (...args: any[]) => heartbeatSlotMock(...args),
   releaseProjectRuntimeSlot: jest.fn(async () => undefined),
+  getProjectRuntimeSlotDenial: jest.fn(async () => null),
+  RuntimeSponsorSlotsExhaustedError: class RuntimeSponsorSlotsExhaustedError extends Error {},
+}));
+
+jest.mock("@cocalc/server/membership/managed-cpu-scope", () => ({
+  __esModule: true,
+  countsTowardManagedCpuBudgetForHost: (...args: any[]) =>
+    countsTowardManagedCpuBudgetForHostMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/managed-cpu-policy", () => ({
+  __esModule: true,
+  getManagedProjectCpuPolicy: (...args: any[]) =>
+    getManagedProjectCpuPolicyMock(...args),
+  formatManagedProjectCpuPolicyBlockMessage: (policy: any) =>
+    `managed CPU budget exceeded (${policy.blocked_by})`,
 }));
 
 jest.mock("@cocalc/server/projects/active-operation", () => ({
@@ -127,6 +145,8 @@ describe("project-control runtime sponsor start policy", () => {
     reserveSlotMock = jest.fn(async () => undefined);
     heartbeatSlotMock = jest.fn(async () => undefined);
     isAdminMock = jest.fn(async () => false);
+    countsTowardManagedCpuBudgetForHostMock = jest.fn(async () => true);
+    getManagedProjectCpuPolicyMock = jest.fn(async () => ({ allowed: true }));
   });
 
   it("blocks ordinary collaborator starts when sponsor starts are disabled", async () => {
@@ -201,6 +221,54 @@ describe("project-control runtime sponsor start policy", () => {
 
     expect(reserveSlotMock).toHaveBeenCalled();
     expect(startMock).toHaveBeenCalled();
+  });
+
+  it("blocks start admission when the managed CPU budget is exhausted", async () => {
+    mockProjectRow({});
+    getManagedProjectCpuPolicyMock.mockResolvedValue({
+      allowed: false,
+      blocked_by: "5h",
+    });
+    const { handleProjectControlCheckStartAdmission } =
+      await import("./project-control");
+
+    await expect(
+      handleProjectControlCheckStartAdmission({
+        project_id: "project-1",
+        account_id: "owner",
+        source_bay_id: "bay-0",
+        epoch: 0,
+      }),
+    ).rejects.toThrow("managed CPU budget exceeded (5h)");
+
+    expect(countsTowardManagedCpuBudgetForHostMock).toHaveBeenCalledWith({
+      host_id: "host-1",
+      project_id: "project-1",
+    });
+    expect(reserveSlotMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks actual start before reserving a slot when the managed CPU budget is exhausted", async () => {
+    mockProjectRow({});
+    getManagedProjectCpuPolicyMock.mockResolvedValue({
+      allowed: false,
+      blocked_by: "7d",
+    });
+    const { handleProjectControlStart } = await import("./project-control");
+
+    await expect(
+      handleProjectControlStart({
+        project_id: "project-1",
+        account_id: "owner",
+        lro_op_id: "op-1",
+        source_bay_id: "bay-0",
+        epoch: 0,
+      }),
+    ).rejects.toThrow("managed CPU budget exceeded (7d)");
+
+    expect(reserveSlotMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
   });
 
   it("bypasses runtime sponsor admission for admin host drain restore starts", async () => {

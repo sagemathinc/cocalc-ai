@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -40,9 +41,8 @@ const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
   envToInt("COCALC_PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS", 6 * 60 * 60 * 1000),
 );
 const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
-const LEGACY_PROJECT_ARCHIVE_UID = 2001;
-const LEGACY_PROJECT_ARCHIVE_GID = 2001;
 const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
+  ".cache/cocalc",
   ".local/share/cocalc",
   ".snapshots",
   ".smc",
@@ -52,6 +52,16 @@ const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
 
 type LegacyProjectArchiveDeps = {
   getOrEnsureVolume: (project_id: string) => Promise<unknown>;
+  getProjectQuota?: (project_id: string) => Promise<{
+    size: number;
+    used: number;
+    warning?: string;
+  }>;
+  setProjectQuota?: (
+    project_id: string,
+    size: number | string,
+  ) => Promise<void>;
+  setProjectQuotaGraceActive?: (project_id: string, active: boolean) => void;
   projectMountpoint: (project_id: string) => string;
   invalidateProjectFsServer: (project_id: string) => void;
   touchProjectLastEdited: (project_id: string, reason: string) => void;
@@ -204,15 +214,19 @@ function runProjectArchiveTarCommand({
   archivePath,
   args,
   onStdoutLine,
+  runAs,
 }: {
   archivePath: string;
   args: string[];
   onStdoutLine?: (line: string) => void;
+  runAs?: { uid: number; gid: number };
 }): Promise<{ stderr: string }> {
   const createZstdDecompress = (zlib as any).createZstdDecompress;
   return new Promise((resolve, reject) => {
     const child = spawn("tar", args, {
+      gid: runAs?.gid,
       stdio: ["pipe", "pipe", "pipe"],
+      uid: runAs?.uid,
     });
     const stdin = child.stdin;
     if (stdin == null) {
@@ -314,78 +328,6 @@ function runProjectArchiveTarCommand({
     pipeline(createReadStream(archivePath), decompressor, stdin).catch(
       failInput,
     );
-  });
-}
-
-function runProjectArchiveCommand({
-  command,
-  args,
-}: {
-  command: string;
-  args: string[];
-}): Promise<{ stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-      if (stderr.length > 20_000) {
-        stderr = stderr.slice(stderr.length - 20_000);
-      }
-    });
-    child.on("error", reject);
-    child.on("close", (code, signal) => {
-      if (code === 0) {
-        resolve({ stderr });
-        return;
-      }
-      reject(
-        new Error(
-          `${command} failed with code ${code ?? "null"} signal ${signal ?? "null"}: ${stderr.trim() || "unknown error"}`,
-        ),
-      );
-    });
-  });
-}
-
-async function mapLegacyArchiveOwnership({
-  dest,
-  progress,
-  lro,
-}: {
-  dest: string;
-  progress: number;
-  lro?: LroRef;
-}): Promise<void> {
-  const destStat = await stat(dest);
-  if (
-    destStat.uid === LEGACY_PROJECT_ARCHIVE_UID &&
-    destStat.gid === LEGACY_PROJECT_ARCHIVE_GID
-  ) {
-    return;
-  }
-  publishArchiveProgress({
-    lro,
-    phase: "permissions",
-    message: "mapping legacy archive ownership",
-    progress,
-    detail: {
-      legacy_uid: LEGACY_PROJECT_ARCHIVE_UID,
-      legacy_gid: LEGACY_PROJECT_ARCHIVE_GID,
-      project_uid: destStat.uid,
-      project_gid: destStat.gid,
-    },
-  });
-  await runProjectArchiveCommand({
-    command: "chown",
-    args: [
-      "-hR",
-      `--from=${LEGACY_PROJECT_ARCHIVE_UID}:${LEGACY_PROJECT_ARCHIVE_GID}`,
-      `${destStat.uid}:${destStat.gid}`,
-      dest,
-    ],
   });
 }
 
@@ -540,6 +482,7 @@ async function scanProjectArchiveTar({
 async function extractProjectArchiveTar({
   archivePath,
   dest,
+  owner,
   member_list_path,
   expected_file_count,
   expected_uncompressed_bytes,
@@ -547,6 +490,7 @@ async function extractProjectArchiveTar({
 }: {
   archivePath: string;
   dest: string;
+  owner: { uid: number; gid: number };
   member_list_path?: string;
   expected_file_count?: number;
   expected_uncompressed_bytes?: number;
@@ -560,6 +504,7 @@ async function extractProjectArchiveTar({
   });
   const args = [
     "--delay-directory-restore",
+    "--no-same-owner",
     "--no-overwrite-dir",
     "-xvf",
     "-",
@@ -574,11 +519,15 @@ async function extractProjectArchiveTar({
       member_list_path,
     );
   }
+  const currentUid =
+    typeof process.getuid === "function" ? process.getuid() : undefined;
+  const runAs = currentUid === owner.uid ? undefined : owner;
   let extracted_count = 0;
   let lastProgress = 0;
   await runProjectArchiveTarCommand({
     archivePath,
     args,
+    runAs,
     onStdoutLine: (line) => {
       const path = normalizeProjectArchiveMemberPath(line);
       if (!path) return;
@@ -697,6 +646,9 @@ async function hashProjectArchiveFile(
 
 export function createLegacyProjectArchiveHandlers({
   getOrEnsureVolume,
+  getProjectQuota,
+  setProjectQuota,
+  setProjectQuotaGraceActive,
   projectMountpoint,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -715,6 +667,7 @@ export function createLegacyProjectArchiveHandlers({
     include_paths?: string[];
     exclude_paths?: string[];
     max_uncompressed_bytes?: number;
+    temporary_quota_grace?: boolean;
     lro?: LroRef;
   }) => Promise<ProjectArchiveRestoreResult>;
 } {
@@ -790,6 +743,7 @@ export function createLegacyProjectArchiveHandlers({
       include_paths,
       exclude_paths,
       max_uncompressed_bytes,
+      temporary_quota_grace,
       lro,
     }: {
       project_id: string;
@@ -798,6 +752,7 @@ export function createLegacyProjectArchiveHandlers({
       include_paths?: string[];
       exclude_paths?: string[];
       max_uncompressed_bytes?: number;
+      temporary_quota_grace?: boolean;
       lro?: LroRef;
     }): Promise<ProjectArchiveRestoreResult> {
       const started = Date.now();
@@ -806,6 +761,9 @@ export function createLegacyProjectArchiveHandlers({
       let tmpDir: string | undefined;
       let memberListTmpDir: string | undefined;
       let archivePath: string;
+      let savedQuotaSize: number | undefined;
+      let quotaGraceEnabled = false;
+      let quotaGraceMarkedActive = false;
       if (cache_id) {
         archivePath = projectArchiveCachePaths({
           project_id,
@@ -834,6 +792,41 @@ export function createLegacyProjectArchiveHandlers({
                 lro,
               })
             : await hashProjectArchiveFile(archivePath);
+        if (temporary_quota_grace) {
+          if (getProjectQuota == null || setProjectQuota == null) {
+            throw new Error(
+              "legacy project archive restore requested quota grace without quota helpers",
+            );
+          } else {
+            try {
+              setProjectQuotaGraceActive?.(project_id, true);
+              quotaGraceMarkedActive = true;
+              const quota = await getProjectQuota(project_id);
+              if (quota.size > 0) {
+                savedQuotaSize = quota.size;
+                publishArchiveProgress({
+                  lro,
+                  phase: "quota",
+                  message: "temporarily lifting project quota for migration",
+                  progress: 47,
+                  detail: {
+                    previous_quota_bytes: quota.size,
+                    used_bytes: quota.used,
+                    warning: quota.warning,
+                  },
+                });
+                await setProjectQuota(project_id, "none");
+                quotaGraceEnabled = true;
+              }
+            } catch (err) {
+              logger.warn(
+                "legacy project archive restore failed to enable quota grace",
+                { project_id, err: `${err}` },
+              );
+              throw err;
+            }
+          }
+        }
         const include = normalizeProjectArchivePathRoots(include_paths);
         const exclude = mergeProjectArchivePathRoots(
           LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
@@ -842,17 +835,16 @@ export function createLegacyProjectArchiveHandlers({
         const useSelection = include != null || exclude != null;
         let member_list_path: string | undefined;
         if (useSelection) {
-          if (tmpDir == null) {
-            const tmpRoot = archiveRestoreTmpRoot();
-            await mkdir(tmpRoot, { recursive: true });
-            memberListTmpDir = await mkdtemp(
-              join(tmpRoot, `${project_id}-list-`),
-            );
-          }
-          member_list_path = join(
-            tmpDir ?? memberListTmpDir!,
-            "selected-members.txt",
+          const tmpRoot = archiveRestoreTmpRoot();
+          await mkdir(tmpRoot, { recursive: true });
+          memberListTmpDir = await mkdtemp(
+            join(tmpRoot, `${project_id}-list-`),
           );
+          // The tar extractor runs as the project volume owner. Keep only the
+          // member list readable/traversable by that user; the archive itself
+          // is still streamed over stdin from the project-host process.
+          await chmod(memberListTmpDir, 0o711);
+          member_list_path = join(memberListTmpDir, "selected-members.txt");
         }
         const { file_count, uncompressed_bytes } = await scanProjectArchiveTar({
           archivePath,
@@ -865,19 +857,19 @@ export function createLegacyProjectArchiveHandlers({
         if (useSelection && file_count === 0) {
           throw new Error("selected archive paths matched no files");
         }
-        // A legacy cocalc.com archive stores files as uid/gid 2001. On a
-        // rootless project host that literal host owner is wrong; project files
-        // must match the mapped uid/gid of the freshly created project volume.
-        await mapLegacyArchiveOwnership({ dest: home, progress: 68, lro });
+        if (member_list_path != null) {
+          await chmod(member_list_path, 0o644);
+        }
+        const homeStat = await stat(home);
         await extractProjectArchiveTar({
           archivePath,
           dest: home,
+          owner: { uid: homeStat.uid, gid: homeStat.gid },
           member_list_path,
           expected_file_count: file_count,
           expected_uncompressed_bytes: uncompressed_bytes,
           lro,
         });
-        await mapLegacyArchiveOwnership({ dest: home, progress: 90, lro });
         publishArchiveProgress({
           lro,
           phase: "finish",
@@ -897,6 +889,28 @@ export function createLegacyProjectArchiveHandlers({
           duration_ms: Date.now() - started,
         };
       } finally {
+        if (quotaGraceEnabled && savedQuotaSize != null) {
+          try {
+            await setProjectQuota?.(project_id, savedQuotaSize);
+            publishArchiveProgress({
+              lro,
+              phase: "quota",
+              message: "restored project quota after migration",
+              progress: 98,
+              detail: {
+                quota_bytes: savedQuotaSize,
+              },
+            });
+          } catch (err) {
+            logger.warn(
+              "legacy project archive restore failed to restore project quota",
+              { project_id, savedQuotaSize, err: `${err}` },
+            );
+          }
+        }
+        if (quotaGraceMarkedActive) {
+          setProjectQuotaGraceActive?.(project_id, false);
+        }
         if (tmpDir) {
           await rm(tmpDir, { recursive: true, force: true }).catch((err) => {
             logger.warn("legacy project archive temp cleanup failed", {
