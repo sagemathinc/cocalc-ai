@@ -48,6 +48,19 @@ function toJsonParam(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
+async function getExistingTables(
+  db: PostgreSQL,
+  tableNames: readonly string[],
+): Promise<Set<string>> {
+  const { rows } = await callback2(db._query, {
+    query: `SELECT table_name
+              FROM unnest($1::text[]) AS tables(table_name)
+             WHERE to_regclass('public.' || table_name) IS NOT NULL`,
+    params: [tableNames],
+  });
+  return new Set((rows ?? []).map((row) => row.table_name).filter(Boolean));
+}
+
 const LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER = `metadata->>'type'='membership'
               AND status IN ('active','canceled')
               AND current_period_end >= NOW()`;
@@ -56,6 +69,76 @@ type LiveSubscriptionCounts = {
   subscription_count: number;
   subscribed_account_count: number;
 };
+
+type HistoricalTierReferenceSource = {
+  table: string;
+  expression: string;
+  where?: string;
+};
+
+const HISTORICAL_TIER_REFERENCE_SOURCES: readonly HistoricalTierReferenceSource[] =
+  [
+    {
+      table: "subscriptions",
+      expression: "metadata->>'class'",
+      where: "metadata->>'type'='membership'",
+    },
+    { table: "membership_packages", expression: "membership_class" },
+    { table: "membership_grants", expression: "membership_class" },
+    { table: "admin_assigned_memberships", expression: "membership_class" },
+    { table: "team_license_seat_lines", expression: "membership_class" },
+    { table: "membership_trial_claims", expression: "membership_class" },
+    {
+      table: "site_license_pool_requests",
+      expression: "requested_membership_class",
+    },
+    {
+      table: "site_license_external_claim_pools",
+      expression: "default_membership_class",
+    },
+    {
+      table: "site_license_external_claim_consumptions",
+      expression: "membership_class",
+    },
+  ];
+
+async function getHistoricalTierUsageCounts(
+  db: PostgreSQL,
+): Promise<Record<string, number>> {
+  const existingTables = await getExistingTables(
+    db,
+    HISTORICAL_TIER_REFERENCE_SOURCES.map(({ table }) => table),
+  );
+  const references = HISTORICAL_TIER_REFERENCE_SOURCES.filter(({ table }) =>
+    existingTables.has(table),
+  );
+  if (references.length === 0) return {};
+  const referenceUnion = references
+    .map(
+      ({ table, expression, where }) =>
+        `SELECT ${expression} AS tier_id
+           FROM ${table}${where ? ` WHERE ${where}` : ""}`,
+    )
+    .join("\nUNION ALL\n");
+  const { rows } = await callback2(db._query, {
+    query: `SELECT tier_id,
+                   COUNT(*)::int AS usage_history_count
+              FROM (
+                ${referenceUnion}
+              ) usage_history
+             WHERE tier_id IS NOT NULL
+               AND tier_id != ''
+             GROUP BY tier_id`,
+  });
+  return (rows ?? []).reduce(
+    (acc, row) => {
+      if (!row?.tier_id) return acc;
+      acc[row.tier_id] = row.usage_history_count ?? 0;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+}
 
 async function hasSiteLicenseUsageTables(db: PostgreSQL): Promise<boolean> {
   const { rows } = await callback2(db._query, {
@@ -335,12 +418,25 @@ async function assertTierNotUsedByActiveMembershipUsage(
   }
 }
 
+async function assertTierHasNoUsageHistory(
+  db: PostgreSQL,
+  tier_id: string,
+): Promise<void> {
+  const usageHistoryByTier = await getHistoricalTierUsageCounts(db);
+  if ((usageHistoryByTier[tier_id] ?? 0) > 0) {
+    throw Error(
+      `cannot delete membership tier "${tier_id}" because it has usage history`,
+    );
+  }
+}
+
 export default async function membershipTiersQuery(
   db: PostgreSQL,
   options: { delete?: boolean }[],
   query: Query,
 ) {
   if (isDelete(options) && query.id) {
+    await assertTierHasNoUsageHistory(db, query.id);
     await assertTierNotUsedByActiveMembershipUsage(db, query.id);
     await callback2(db._query, {
       query: "DELETE FROM membership_tiers WHERE id = $1",
@@ -353,6 +449,7 @@ export default async function membershipTiersQuery(
     const { rows } = await callback2(db._query, {
       query: "SELECT * FROM membership_tiers",
     });
+    const usageHistoryByTier = await getHistoricalTierUsageCounts(db);
     const subscriptionByTier = await getLiveSubscriptionTierCounts(db);
     const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
     const adminAssignedByTier = await getActiveAdminAssignedTierCounts(db);
@@ -371,6 +468,7 @@ export default async function membershipTiersQuery(
         course_account_count: 0,
         site_account_count: 0,
       }),
+      has_usage_history: (usageHistoryByTier[row.id] ?? 0) > 0,
       admin_assigned_count: adminAssignedByTier[row.id] ?? 0,
       site_license_count: siteLicenseByTier[row.id] ?? 0,
       total_account_count: totalAccountsByTier[row.id] ?? 0,
