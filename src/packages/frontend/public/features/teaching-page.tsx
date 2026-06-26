@@ -93,6 +93,7 @@ function CourseDashboardMock() {
   return (
     <div
       aria-label="Illustration of a CoCalc course dashboard connected to student projects"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
