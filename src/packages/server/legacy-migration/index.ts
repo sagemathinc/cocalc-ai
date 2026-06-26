@@ -15,6 +15,7 @@ import createSubscription from "@cocalc/server/purchases/create-subscription";
 import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
 import type { MembershipTierRecord } from "@cocalc/server/membership/tiers";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import {
@@ -446,6 +447,11 @@ async function verifiedAccountEmails(account_id: string): Promise<string[]> {
     [account_id],
   );
   const row = rows[0];
+  if (row == null) {
+    const account = await getClusterAccountById(account_id);
+    const primary = normalizeEmail(account?.email_address);
+    return primary && account?.email_address_verified ? [primary] : [];
+  }
   const verified = row?.email_address_verified ?? {};
   const emails = new Set<string>();
   for (const [email, value] of Object.entries(verified)) {

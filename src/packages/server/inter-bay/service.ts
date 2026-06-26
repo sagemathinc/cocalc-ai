@@ -200,6 +200,7 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
+import * as legacyMigration from "@cocalc/server/legacy-migration";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import {
   clearAccountEntitlementOverrideLocal,
@@ -1354,6 +1355,20 @@ async function startAccountLocalService(): Promise<void> {
         membership_package_assignments,
         membership_side_effects_outbox,
       }),
+    legacyMigrationListProjects: async (opts) =>
+      await legacyMigration.listProjects(opts ?? {}),
+    legacyMigrationImportProjects: async (opts) =>
+      await legacyMigration.importProjects(opts),
+    legacyMigrationPrepareArchiveSelection: async (opts) =>
+      await legacyMigration.prepareArchiveSelection(opts),
+    legacyMigrationRestoreArchiveSelection: async (opts) =>
+      await legacyMigration.restoreArchiveSelection(opts),
+    legacyMigrationRetryProjectRestore: async (opts) =>
+      await legacyMigration.retryProjectRestore(opts),
+    legacyMigrationPreviewFinancialMigration: async (opts) =>
+      await legacyMigration.previewFinancialMigration(opts ?? {}),
+    legacyMigrationApplyFinancialMigration: async (opts) =>
+      await legacyMigration.applyFinancialMigration(opts ?? {}),
   };
   services.push(
     ...createInterBayAccountLocalHandler({
