@@ -36,6 +36,7 @@ import type {
 } from "@cocalc/conat/hub/api/notifications";
 import { isValidUUID } from "@cocalc/util/misc";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
+import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
 
 const MAX_MENTION_TARGETS = 25;
 const MENTION_RATE_LIMIT_WINDOW_MINUTES = 60;
@@ -211,6 +212,16 @@ async function createNotificationResult(opts: {
     ...(await opts.buildEvent(target_home_bays)),
     targets: await opts.buildTargets(target_home_bays),
   });
+  const remoteOutboxIds = graph.outbox
+    .filter((outbox) => outbox.target_home_bay_id !== opts.source_bay_id)
+    .map((outbox) => outbox.outbox_id);
+  if (remoteOutboxIds.length > 0) {
+    await forwardRemoteNotificationTargetsBestEffort({
+      bay_id: opts.source_bay_id,
+      outbox_ids: remoteOutboxIds,
+      limit: remoteOutboxIds.length,
+    });
+  }
   return {
     event_id: graph.event.event_id,
     kind: graph.event.kind,

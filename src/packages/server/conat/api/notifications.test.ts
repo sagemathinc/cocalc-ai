@@ -6,6 +6,7 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { ensureClusterAccountDirectorySchema } from "@cocalc/server/accounts/cluster-directory";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
+import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
 import {
   MAX_NOTIFICATION_ID_BATCH,
   MAX_NOTIFICATION_INBOX_LIST_LIMIT,
@@ -23,6 +24,10 @@ import {
 
 jest.mock("@cocalc/server/notifications/feed", () => ({
   publishProjectedNotificationFeedUpdatesBestEffort: jest.fn(),
+}));
+
+jest.mock("@cocalc/server/notifications/remote-feed", () => ({
+  forwardRemoteNotificationTargetsBestEffort: jest.fn(async () => undefined),
 }));
 
 const LOCAL_BAY_ID = "bay-0";
@@ -122,6 +127,11 @@ describe("conat notifications api", () => {
         }),
       ],
     });
+    expect(forwardRemoteNotificationTargetsBestEffort).toHaveBeenCalledWith({
+      bay_id: LOCAL_BAY_ID,
+      outbox_ids: [expect.any(String)],
+      limit: 1,
+    });
 
     const { rows } = await getPool().query(
       `SELECT kind, source_project_id, source_path, source_fragment_id,
@@ -191,6 +201,11 @@ describe("conat notifications api", () => {
           target_home_bay_id: "bay-1",
         }),
       ],
+    });
+    expect(forwardRemoteNotificationTargetsBestEffort).toHaveBeenCalledWith({
+      bay_id: LOCAL_BAY_ID,
+      outbox_ids: [expect.any(String)],
+      limit: 1,
     });
 
     const { rows } = await getPool().query(

@@ -81,6 +81,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
 
   it("records maintenance success state after a tick", async () => {
     const publisher = jest.fn();
+    const remote_forwarder = jest.fn();
     const pass_runner = jest.fn(async () => ({
       bay_id: "bay-7",
       batches: 1,
@@ -101,6 +102,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       runAccountNotificationIndexProjectionMaintenanceTick({
         pass_runner,
         publisher,
+        remote_forwarder,
       }),
     ).resolves.toEqual({
       bay_id: "bay-7",
@@ -128,6 +130,10 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       account_id: "a-2",
       reason: "projected_upsert",
       notification_ids: ["n-2"],
+    });
+    expect(remote_forwarder).toHaveBeenCalledWith({
+      bay_id: "bay-7",
+      limit: 500,
     });
 
     const status = getAccountNotificationIndexProjectionMaintenanceStatus();

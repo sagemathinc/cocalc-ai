@@ -96,6 +96,7 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
   db: PoolClient;
   bay_id: string;
   event: NotificationTargetOutboxRow;
+  require_local_account?: boolean;
 }): Promise<{
   inserted_rows: number;
   deleted_rows: number;
@@ -109,6 +110,11 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
       account_id: event.target_account_id,
     }))
   ) {
+    if (opts.require_local_account === true) {
+      throw Error(
+        `notification target account '${event.target_account_id}' is not local to ${bay_id}`,
+      );
+    }
     return {
       inserted_rows: 0,
       deleted_rows: 0,
@@ -151,6 +157,36 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     affected_account_id: event.target_account_id,
     affected_notification_id: event.notification_id,
   };
+}
+
+export async function applyNotificationTargetOutboxRowToAccountNotificationIndex(opts: {
+  bay_id: string;
+  event: NotificationTargetOutboxRow;
+  require_local_account?: boolean;
+}): Promise<{
+  inserted_rows: number;
+  deleted_rows: number;
+  affected_account_id?: string;
+  affected_notification_id?: string;
+}> {
+  const bay_id = normalizeBayId(opts.bay_id);
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await applyNotificationEventToAccountNotificationIndex({
+      db: client,
+      bay_id,
+      event: opts.event,
+      require_local_account: opts.require_local_account,
+    });
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function enqueueProjectedNotificationEmail(opts: {
