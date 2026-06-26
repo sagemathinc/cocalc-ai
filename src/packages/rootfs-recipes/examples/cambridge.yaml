@@ -131,6 +131,7 @@ steps:
         - interegular
         - ipykernel
         - ipympl
+        - ipyvolume
         - ipywidgets
         - jupyter-console
         - jupyterlab
@@ -219,7 +220,7 @@ verify:
   - command -v R
   - command -v uv
   - test -e /usr/libexec/sftp-server
-  - python3 -c 'import cartopy, cmocean, colorcet, cv2, h5py, k3d, matplotlib, netCDF4, numpy, pandas, plotly, scipy, seaborn, sklearn, statsmodels, sympy, xarray'
+  - python3 -c 'import cartopy, cmocean, colorcet, cv2, h5py, ipyvolume, k3d, matplotlib, netCDF4, numpy, pandas, plotly, scipy, seaborn, sklearn, statsmodels, sympy, xarray'
   - Rscript --vanilla -e 'stopifnot(requireNamespace("IRkernel", quietly=TRUE), requireNamespace("ggplot2", quietly=TRUE), requireNamespace("quantmod", quietly=TRUE))'
   - kpsewhich article.cls
   - kpsewhich amsmath.sty
