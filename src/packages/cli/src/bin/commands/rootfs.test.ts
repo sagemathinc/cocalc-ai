@@ -809,6 +809,24 @@ test("rootfs recipe explain resolves bundled recipe examples by name", async () 
   assert.equal(harness.captured.publish.slug, "cocalc-minimal-base");
 });
 
+test("rootfs recipe explain resolves bundled example recipe.name aliases", async () => {
+  const harness = rootfsDeps();
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "explain",
+    "cocalc-cambridge",
+  ]);
+
+  assert.equal(harness.captured.recipe, "cocalc-cambridge");
+  assert.equal(harness.captured.publish.slug, "cocalc-cambridge");
+});
+
 test("rootfs recipe explain parses bundled code-server recipe", async () => {
   const harness = rootfsDeps();
   const program = new Command();

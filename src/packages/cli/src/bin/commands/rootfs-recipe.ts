@@ -421,7 +421,8 @@ function resolveBundledExamplePath(
           `examples/${recipe}.json`,
         ];
     const match = candidates.find((path) => hasBuiltinRecipeFile(path));
-    return match ? builtinRecipePath(match) : undefined;
+    if (match) return builtinRecipePath(match);
+    return resolveBundledExamplePathByRecipeName(recipe);
   }
   const examplesDir = join(moduleDir, "examples");
   const candidates = extname(recipe)
@@ -431,7 +432,42 @@ function resolveBundledExamplePath(
         join(examplesDir, `${recipe}.yml`),
         join(examplesDir, `${recipe}.json`),
       ];
-  return candidates.find((path) => existsSync(path));
+  const match = candidates.find((path) => existsSync(path));
+  if (match) return match;
+  return resolveFilesystemExamplePathByRecipeName(recipe, examplesDir);
+}
+
+function resolveBundledExamplePathByRecipeName(
+  recipe: string,
+): string | undefined {
+  for (const path of Object.keys(BUILTIN_ROOTFS_RECIPES.files)) {
+    if (
+      !path.startsWith("examples/") ||
+      ![".json", ".yaml", ".yml"].includes(extname(path))
+    ) {
+      continue;
+    }
+    const fullPath = builtinRecipePath(path);
+    const parsed = normalizeRecipe(
+      parseRecipeText(fullPath, readRootfsRecipeText(fullPath)),
+      fullPath,
+    );
+    if (parsed.name === recipe) return fullPath;
+  }
+}
+
+function resolveFilesystemExamplePathByRecipeName(
+  recipe: string,
+  examplesDir: string,
+): string | undefined {
+  if (!existsSync(examplesDir)) return;
+  for (const entry of readdirSync(examplesDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const path = join(examplesDir, entry.name);
+    if (![".json", ".yaml", ".yml"].includes(extname(path))) continue;
+    const parsed = loadRootfsRecipe(path);
+    if (parsed.name === recipe) return path;
+  }
 }
 
 function resolveRecipeModuleId(
