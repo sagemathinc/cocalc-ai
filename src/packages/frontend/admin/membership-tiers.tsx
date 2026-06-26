@@ -758,16 +758,16 @@ function useMembershipTiers() {
   async function runFreshTierMutation(
     action: () => Promise<void>,
   ): Promise<boolean> {
-    return await runFreshAuthAction(async () => {
-      set_saving(true);
-      try {
+    set_saving(true);
+    try {
+      return await runFreshAuthAction(async () => {
         await action();
         await load();
         set_error("");
-      } finally {
-        set_saving(false);
-      }
-    });
+      });
+    } finally {
+      set_saving(false);
+    }
   }
 
   async function load() {
