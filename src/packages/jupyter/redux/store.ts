@@ -72,6 +72,25 @@ export function normalizeLanguageInfo(
   return plain;
 }
 
+export function codemirrorModeForLanguage(
+  language?: string | null,
+): string | { name: string; version?: number } | undefined {
+  const normalized = `${language ?? ""}`.trim().toLowerCase();
+  switch (normalized) {
+    case "sage":
+    case "sagemath":
+      return { name: "python", version: 3 };
+    case "bash":
+    case "sh":
+    case "shell":
+      return "shell";
+    case "r":
+      return "r";
+    default:
+      return undefined;
+  }
+}
+
 export interface JupyterStoreState {
   about: boolean;
   backend_kernel_info: KernelInfo;
@@ -289,11 +308,14 @@ export class JupyterStore extends Store<JupyterStoreState> {
       if (language_info.codemirror_mode != null) {
         mode = language_info.codemirror_mode;
       } else if (language_info.name != null) {
-        mode = language_info.name;
+        mode =
+          codemirrorModeForLanguage(language_info.name) ?? language_info.name;
       }
     }
     if (mode == null && kernelspec?.language != null) {
-      mode = kernelspec.language.toLowerCase();
+      mode =
+        codemirrorModeForLanguage(kernelspec.language) ??
+        kernelspec.language.toLowerCase();
     }
     if (mode == null) {
       const metadataLanguage = this.unsafe_getIn([
@@ -302,7 +324,9 @@ export class JupyterStore extends Store<JupyterStoreState> {
         "language",
       ]);
       if (metadataLanguage != null) {
-        mode = `${metadataLanguage}`.toLowerCase();
+        mode =
+          codemirrorModeForLanguage(metadataLanguage) ??
+          `${metadataLanguage}`.toLowerCase();
       }
     }
     if (mode == null) {
