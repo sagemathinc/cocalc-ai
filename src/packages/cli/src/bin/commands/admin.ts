@@ -566,6 +566,29 @@ function yesNo(value: unknown): string {
   return value ? "yes" : "no";
 }
 
+function formatSettingValue(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return `${value}`;
+  }
+  return JSON.stringify(value);
+}
+
+function formatSiteSettingRow(row: any) {
+  return {
+    name: row.name ?? "",
+    value: row.redacted ? "[redacted]" : formatSettingValue(row.value),
+    default: row.redacted
+      ? "[redacted]"
+      : formatSettingValue(row.default_value),
+    configured: yesNo(row.configured),
+    readonly: yesNo(row.readonly),
+    password: yesNo(row.password),
+    hidden: yesNo(row.hidden),
+  };
+}
+
 function formatDate(value: unknown): string {
   if (value == null || value === "") return "";
   if (value instanceof Date) return value.toISOString();
@@ -935,6 +958,9 @@ export function registerAdminCommand(
   const adminDataAudit = adminData
     .command("audit")
     .description("Admin Data Explorer audit trail");
+  const adminSettings = admin
+    .command("settings")
+    .description("admin site settings inspection");
 
   async function resolveTargetAccountId(
     ctx: any,
@@ -1022,6 +1048,24 @@ export function registerAdminCommand(
         });
       },
     );
+
+  adminSettings
+    .command("get [names...]")
+    .description(
+      "read site settings from the seed bay without printing secret values (admin-only)",
+    )
+    .action(async (names: string[] | undefined, command: Command) => {
+      await withContext(command, "admin settings get", async (ctx) => {
+        const result = await ctx.hub.system.getSiteSettings({
+          names: (names ?? []).map((name) => `${name}`.trim()).filter(Boolean),
+        });
+        const wide =
+          ctx.globals?.json ||
+          ctx.globals?.output === "json" ||
+          ctx.globals?.output === "yaml";
+        return wide ? result : result.settings.map(formatSiteSettingRow);
+      });
+    });
 
   adminData
     .command("datasets")

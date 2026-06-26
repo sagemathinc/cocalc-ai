@@ -108,6 +108,7 @@ export const system = {
   adminGrantAdminRole: authFirst,
   adminRevokeAdminRole: authFirst,
   sendTestEmail: authFirst,
+  getSiteSettings: authFirstRequireAccount,
   setSiteSettings: authFirst,
   syncSiteSettingsToBays: authFirst,
   sendEmailVerification: authFirst,
@@ -1040,6 +1041,24 @@ export interface SiteSettingsSyncResult {
   scope?: string;
   version?: number;
   bays: SiteSettingsSyncBayResult[];
+}
+
+export interface SiteSettingsReadEntry {
+  name: string;
+  value: unknown;
+  default_value: unknown;
+  configured: boolean;
+  readonly: boolean;
+  password: boolean;
+  redacted: boolean;
+  hidden: boolean;
+  description: string;
+}
+
+export interface SiteSettingsReadResult {
+  local_bay_id: string;
+  seed_bay_id: string;
+  settings: SiteSettingsReadEntry[];
 }
 
 export type GlobalConfigPropagationBayState =
@@ -2241,6 +2260,11 @@ export interface System {
     session_hash?: string | null;
     settings: { name: string; value: string }[];
   }) => Promise<SiteSettingsSyncResult>;
+
+  getSiteSettings: (opts: {
+    account_id?: string;
+    names?: string[];
+  }) => Promise<SiteSettingsReadResult>;
 
   syncSiteSettingsToBays: (opts?: {
     account_id?: string;

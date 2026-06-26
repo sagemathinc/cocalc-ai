@@ -12,6 +12,7 @@ let dbMock: {
   set_server_setting: jest.Mock;
 };
 let getPoolQueryMock: jest.Mock;
+let getServerSettingsMock: jest.Mock;
 let centralLogMock: jest.Mock;
 let listClusterBayRegistryMock: jest.Mock;
 let getConfiguredBayIdMock: jest.Mock;
@@ -25,6 +26,10 @@ jest.mock("@cocalc/database", () => ({
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({ query: getPoolQueryMock }),
+}));
+
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
 }));
 
 jest.mock("@cocalc/database/postgres/central-log", () => ({
@@ -95,6 +100,7 @@ describe("site settings dangerous-session auth", () => {
       }
       return { rows: [] };
     });
+    getServerSettingsMock = jest.fn(async () => ({}));
     centralLogMock = jest.fn(async () => undefined);
     listClusterBayRegistryMock = jest.fn(async () => []);
     getConfiguredBayIdMock = jest.fn(() => "seed");
@@ -102,6 +108,7 @@ describe("site settings dangerous-session auth", () => {
     bayOpsMock = jest.fn(() => ({
       setServerSetting: jest.fn(),
       setSiteSettings: jest.fn(),
+      getSiteSettings: jest.fn(),
       syncSiteSettings: jest.fn(),
       getGlobalConfigPropagationStatus: jest.fn(),
     }));
@@ -130,6 +137,51 @@ describe("site settings dangerous-session auth", () => {
       session_hash: undefined,
       require_second_factor: true,
     });
+  });
+
+  it("allows admin site settings reads without fresh auth and redacts passwords", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      cryptomining_abuse_enforcement_enabled: true,
+      stripe_secret_key: "sk_live_should_not_print",
+    }));
+    getPoolQueryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT name, readonly FROM server_settings")) {
+        return {
+          rows: [
+            {
+              name: "cryptomining_abuse_enforcement_enabled",
+              readonly: false,
+            },
+            { name: "stripe_secret_key", readonly: true },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { getSiteSettings } = await import("./system");
+
+    const result = await getSiteSettings({
+      account_id: ACCOUNT_ID,
+      names: ["cryptomining_abuse_enforcement_enabled", "stripe_secret_key"],
+    });
+
+    expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+    expect(result.settings).toEqual([
+      expect.objectContaining({
+        name: "cryptomining_abuse_enforcement_enabled",
+        value: true,
+        configured: true,
+        redacted: false,
+      }),
+      expect.objectContaining({
+        name: "stripe_secret_key",
+        value: null,
+        configured: true,
+        readonly: true,
+        password: true,
+        redacted: true,
+      }),
+    ]);
   });
 
   it("logs signup email domain policy changes after fresh auth", async () => {
@@ -262,6 +314,44 @@ describe("site settings dangerous-session auth", () => {
     expect(setSiteSettingsOnSeed).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       settings: [{ name: "site_name", value: "Seed Name" }],
+      source_bay_id: "attached-a",
+    });
+  });
+
+  it("forwards attached-bay site settings reads to seed", async () => {
+    getConfiguredBayIdMock = jest.fn(() => "attached-a");
+    const getSiteSettingsOnSeed = jest.fn(async () => ({
+      local_bay_id: "seed",
+      seed_bay_id: "seed",
+      settings: [
+        {
+          name: "cryptomining_abuse_auto_ban_enabled",
+          value: true,
+          default_value: false,
+          configured: true,
+          readonly: false,
+          password: false,
+          redacted: false,
+          hidden: false,
+          description: "",
+        },
+      ],
+    }));
+    bayOpsMock = jest.fn(() => ({
+      getSiteSettings: getSiteSettingsOnSeed,
+    }));
+    const { getSiteSettings } = await import("./system");
+
+    const result = await getSiteSettings({
+      account_id: ACCOUNT_ID,
+      names: ["cryptomining_abuse_auto_ban_enabled"],
+    });
+
+    expect(result.local_bay_id).toBe("seed");
+    expect(bayOpsMock).toHaveBeenCalledWith("seed", { timeout_ms: 15_000 });
+    expect(getSiteSettingsOnSeed).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      names: ["cryptomining_abuse_auto_ban_enabled"],
       source_bay_id: "attached-a",
     });
   });
