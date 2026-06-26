@@ -13,6 +13,7 @@ import {
   Checkbox,
   Col,
   Collapse,
+  Flex,
   Form,
   Input,
   InputNumber,
@@ -3532,16 +3533,7 @@ export function MembershipTiers() {
 
   function render_buttons() {
     return (
-      <div
-        style={{
-          alignItems: "center",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "8px",
-          justifyContent: "space-between",
-          margin: "10px 0",
-        }}
-      >
+      <Flex justify="space-between">
         <Space>
           <Button type="primary" onClick={() => openCreateTierModal()}>
             <Icon name="plus" /> Add
@@ -3563,7 +3555,7 @@ export function MembershipTiers() {
         <Button onClick={() => load()}>
           <Icon name="refresh" /> Refresh
         </Button>
-      </div>
+      </Flex>
     );
   }
 
@@ -3576,7 +3568,7 @@ export function MembershipTiers() {
       [(tier) => -prioritySortValue(tier), "id"],
     );
     return (
-      <>
+      <Space direction="vertical" style={{ width: "100%" }}>
         {render_buttons()}
         <Table<Tier>
           size={"small"}
@@ -3823,7 +3815,11 @@ export function MembershipTiers() {
             render={(_text, tier) => {
               return (
                 <Space size="small">
-                  <Icon name="pencil" onClick={() => set_editing(tier)} />
+                  <Tooltip title="Edit tier">
+                    <span>
+                      <Icon name="pencil" onClick={() => set_editing(tier)} />
+                    </span>
+                  </Tooltip>
                   {tier.has_usage_history === false ? (
                     <Popconfirm
                       title="Sure to delete?"
@@ -3841,49 +3837,19 @@ export function MembershipTiers() {
             }}
           />
         </Table>
-      </>
-    );
-  }
-
-  function render_control() {
-    if (editing != null) {
-      return render_edit();
-    }
-    return render_view();
-  }
-
-  function render_error() {
-    if (error) {
-      return <ErrorDisplay error={error} onClose={() => set_error("")} />;
-    }
-    return null;
-  }
-
-  function render_info() {
-    return (
-      <div style={{ color: COLORS.GRAY, fontStyle: "italic" }}>
-        {saving && (
-          <>
-            <Saving />
-            <br />
-          </>
-        )}
-        <Paragraph style={{ marginBottom: 0 }}>
-          Tip: Use stable tier IDs, e.g. <Text code>standard</Text>. Set{" "}
-          <Text code>Visible</Text> for public purchase UI and{" "}
-          <Text code>Course visible</Text> for course student memberships.
-        </Paragraph>
-      </div>
+      </Space>
     );
   }
 
   return (
-    <div>
-      {render_error()}
-      {render_control()}
+    <>
+      <Space vertical style={{ width: "100%" }}>
+        {error && <ErrorDisplay error={error} onClose={() => set_error("")} />}
+        {saving && <Saving />}
+        {editing != null ? render_edit() : render_view()}
+      </Space>
       {render_create_tier_modal()}
       {render_import_tiers_modal()}
-      {render_info()}
-    </div>
+    </>
   );
 }
