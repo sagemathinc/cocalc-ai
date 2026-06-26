@@ -37,6 +37,16 @@ function reopenDismissKey({
   return `legacy-project-restore-reopened:${project_id}:${opId || "no-op"}`;
 }
 
+function activeRestoreSeenKey({
+  project_id,
+  opId,
+}: {
+  project_id: string;
+  opId: string;
+}): string {
+  return `legacy-project-restore-active-seen:${project_id}:${opId || "no-op"}`;
+}
+
 function wasReopenDismissed(key: string): boolean {
   try {
     return globalThis.sessionStorage?.getItem(key) === "1";
@@ -49,6 +59,26 @@ function markReopenDismissed(key: string): void {
   try {
     globalThis.sessionStorage?.setItem(key, "1");
   } catch {}
+}
+
+function wasActiveRestoreSeen(key: string): boolean {
+  try {
+    return globalThis.sessionStorage?.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markActiveRestoreSeen(key: string): void {
+  try {
+    globalThis.sessionStorage?.setItem(key, "1");
+  } catch {}
+}
+
+function isActiveRestoreStatus(status: string): boolean {
+  return (
+    status === "pending" || status === "restoring" || status === "indexing"
+  );
 }
 
 function progressPercent({
@@ -166,8 +196,15 @@ export function LegacyMigrationRestoreBanner({
     () => reopenDismissKey({ project_id, opId: effectiveOpId }),
     [effectiveOpId, project_id],
   );
+  const activeSeenKey = useMemo(
+    () => activeRestoreSeenKey({ project_id, opId: effectiveOpId }),
+    [effectiveOpId, project_id],
+  );
   const [reopenDismissed, setReopenDismissed] = useState(() =>
     wasReopenDismissed(dismissKey),
+  );
+  const [activeRestoreSeen, setActiveRestoreSeen] = useState(() =>
+    wasActiveRestoreSeen(activeSeenKey),
   );
 
   useEffect(() => {
@@ -179,6 +216,10 @@ export function LegacyMigrationRestoreBanner({
   useEffect(() => {
     setReopenDismissed(wasReopenDismissed(dismissKey));
   }, [dismissKey]);
+
+  useEffect(() => {
+    setActiveRestoreSeen(wasActiveRestoreSeen(activeSeenKey));
+  }, [activeSeenKey]);
 
   useEffect(() => {
     setSummary(undefined);
@@ -212,6 +253,33 @@ export function LegacyMigrationRestoreBanner({
     };
   }, [effectiveOpId, project_id]);
 
+  const failed =
+    effectiveStatus === "failed" ||
+    summary?.status === "failed" ||
+    summary?.status === "canceled" ||
+    summary?.status === "expired";
+  const restored =
+    effectiveStatus === "restored" || summary?.status === "succeeded";
+
+  useEffect(() => {
+    if (!legacyProjectId || restored || failed) return;
+    if (
+      isActiveRestoreStatus(effectiveStatus) ||
+      summary?.status === "queued" ||
+      summary?.status === "running"
+    ) {
+      markActiveRestoreSeen(activeSeenKey);
+      setActiveRestoreSeen(true);
+    }
+  }, [
+    activeSeenKey,
+    effectiveStatus,
+    failed,
+    legacyProjectId,
+    restored,
+    summary?.status,
+  ]);
+
   if (!legacyProjectId) return null;
 
   async function reopenProject() {
@@ -244,9 +312,8 @@ export function LegacyMigrationRestoreBanner({
     }
   }
 
-  const restored =
-    effectiveStatus === "restored" || summary?.status === "succeeded";
   if (restored) {
+    if (!activeRestoreSeen) return null;
     if (reopenDismissed || isDismissed(summary)) return null;
     return (
       <Alert
@@ -277,11 +344,6 @@ export function LegacyMigrationRestoreBanner({
     return null;
   }
 
-  const failed =
-    effectiveStatus === "failed" ||
-    summary?.status === "failed" ||
-    summary?.status === "canceled" ||
-    summary?.status === "expired";
   const percent = progressPercent({ summary, progress });
   const detail = progressText({ summary, progress });
   const detailExtra = progressDetailText({ summary, progress });

@@ -43,6 +43,7 @@ const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
 const LEGACY_PROJECT_ARCHIVE_UID = 2001;
 const LEGACY_PROJECT_ARCHIVE_GID = 2001;
 const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
+  ".cache/cocalc",
   ".local/share/cocalc",
   ".snapshots",
   ".smc",
@@ -360,6 +361,14 @@ function runProjectArchiveCommand({
   });
 }
 
+function managedArchiveExcludeFindArgs(dest: string): string[] {
+  return LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS.flatMap((root, index) => [
+    ...(index === 0 ? [] : ["-o"]),
+    "-path",
+    join(dest, root),
+  ]);
+}
+
 async function mapLegacyArchiveOwnership({
   dest,
   progress,
@@ -389,12 +398,21 @@ async function mapLegacyArchiveOwnership({
     },
   });
   await runProjectArchiveCommand({
-    command: "chown",
+    command: "find",
     args: [
-      "-hR",
+      dest,
+      "(",
+      ...managedArchiveExcludeFindArgs(dest),
+      ")",
+      "-prune",
+      "-o",
+      "-exec",
+      "chown",
+      "-h",
       `--from=${LEGACY_PROJECT_ARCHIVE_UID}:${LEGACY_PROJECT_ARCHIVE_GID}`,
       `${destStat.uid}:${destStat.gid}`,
-      dest,
+      "{}",
+      "+",
     ],
   });
 }
