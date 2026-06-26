@@ -247,6 +247,32 @@ export interface MembershipDetails {
   admin_override?: MembershipAdminOverrideSummary;
 }
 
+export interface AdminMembershipTierPayload {
+  id: MembershipClass;
+  label?: string | null;
+  store_visible?: boolean | null;
+  store_description?: string | null;
+  store_highlights?: string[] | null;
+  site_license_pool_description?: string | null;
+  team_visible?: boolean | null;
+  course_store_visible?: boolean | null;
+  course_allowed_domains?: string[] | null;
+  priority?: number | null;
+  price_monthly?: number | null;
+  price_yearly?: number | null;
+  trial_days?: number | null;
+  course_price?: number | null;
+  course_duration_days?: number | null;
+  course_grace_days?: number | null;
+  project_defaults?: Record<string, unknown> | null;
+  ai_limits?: Record<string, unknown> | null;
+  features?: Record<string, unknown> | null;
+  usage_limits?: Record<string, unknown> | null;
+  pricing_model?: Record<string, unknown> | null;
+  disabled?: boolean | null;
+  notes?: string | null;
+}
+
 export interface MembershipPackageQuote {
   package_id?: string;
   kind: MembershipPackageKind;
@@ -1130,6 +1156,28 @@ export interface Purchases {
     user_account_id?: string;
     refresh_usage_status?: boolean;
   }) => Promise<MembershipDetails>;
+  createMembershipTier: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    tier?: AdminMembershipTierPayload;
+  }) => Promise<{ id: MembershipClass }>;
+  updateMembershipTier: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    tier?: AdminMembershipTierPayload;
+  }) => Promise<{ id: MembershipClass }>;
+  importMembershipTiers: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    tiers?: AdminMembershipTierPayload[];
+  }) => Promise<{ ids: MembershipClass[] }>;
+  deleteMembershipTier: (opts?: {
+    account_id?: string;
+    id?: MembershipClass;
+  }) => Promise<{ id: MembershipClass }>;
   getMembershipPackageQuote: (opts?: {
     account_id?: string;
     package_id?: string;
@@ -1461,6 +1509,10 @@ export const purchases = {
   getMinBalance: authFirst,
   getMembership: authFirst,
   getMembershipDetails: authFirst,
+  createMembershipTier: authFirst,
+  updateMembershipTier: authFirst,
+  importMembershipTiers: authFirst,
+  deleteMembershipTier: authFirst,
   getMembershipPackageQuote: authFirst,
   purchaseMembershipPackage: authFirst,
   purchaseMembershipPackages: authFirst,

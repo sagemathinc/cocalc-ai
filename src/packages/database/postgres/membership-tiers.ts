@@ -5,30 +5,35 @@ function isDelete(options: { delete?: boolean }[]) {
   return options.some((v) => v?.delete === true);
 }
 
-interface Query {
+export interface MembershipTierMutationQuery {
   id: string;
-  label?: string;
-  store_visible?: boolean;
+  label?: string | null;
+  store_visible?: boolean | null;
   store_description?: string | null;
   store_highlights?: string[] | null;
   site_license_pool_description?: string | null;
-  team_visible?: boolean;
-  course_store_visible?: boolean;
+  team_visible?: boolean | null;
+  course_store_visible?: boolean | null;
   course_allowed_domains?: string[] | null;
-  priority?: number;
-  price_monthly?: number;
-  price_yearly?: number;
-  trial_days?: number;
-  course_price?: number;
-  course_duration_days?: number;
-  course_grace_days?: number;
+  priority?: number | null;
+  price_monthly?: number | null;
+  price_yearly?: number | null;
+  trial_days?: number | null;
+  course_price?: number | null;
+  course_duration_days?: number | null;
+  course_grace_days?: number | null;
   project_defaults?;
   ai_limits?;
   features?;
   usage_limits?;
   pricing_model?;
-  disabled?: boolean;
-  notes?: string;
+  disabled?: boolean | null;
+  notes?: string | null;
+}
+
+interface MembershipTierUpsertOptions {
+  rejectExisting?: boolean;
+  requireExisting?: boolean;
 }
 
 function mapStorageRow(row) {
@@ -430,87 +435,69 @@ async function assertTierHasNoUsageHistory(
   }
 }
 
-export default async function membershipTiersQuery(
+export async function deleteMembershipTier(
   db: PostgreSQL,
-  options: { delete?: boolean }[],
-  query: Query,
-) {
-  if (isDelete(options) && query.id) {
-    await assertTierHasNoUsageHistory(db, query.id);
-    await assertTierNotUsedByActiveMembershipUsage(db, query.id);
-    await callback2(db._query, {
-      query: "DELETE FROM membership_tiers WHERE id = $1",
-      params: [query.id],
-    });
-    return;
+  tier_id: string,
+): Promise<void> {
+  await assertTierHasNoUsageHistory(db, tier_id);
+  await assertTierNotUsedByActiveMembershipUsage(db, tier_id);
+  await callback2(db._query, {
+    query: "DELETE FROM membership_tiers WHERE id = $1",
+    params: [tier_id],
+  });
+}
+
+export async function upsertMembershipTier(
+  db: PostgreSQL,
+  query: MembershipTierMutationQuery,
+  {
+    rejectExisting = false,
+    requireExisting = false,
+  }: MembershipTierUpsertOptions = {},
+): Promise<unknown> {
+  const {
+    id,
+    label,
+    store_visible,
+    store_description,
+    store_highlights,
+    site_license_pool_description,
+    team_visible,
+    course_store_visible,
+    course_allowed_domains,
+    priority,
+    price_monthly,
+    price_yearly,
+    trial_days,
+    course_price,
+    course_duration_days,
+    course_grace_days,
+    project_defaults,
+    ai_limits,
+    features,
+    usage_limits,
+    pricing_model,
+    disabled,
+    notes,
+  } = query;
+
+  const existing = await callback2(db._query, {
+    query: "SELECT * FROM membership_tiers WHERE id = $1",
+    params: [id],
+  });
+  const previous = existing.rows?.[0];
+  if (rejectExisting && previous != null) {
+    throw Error(`membership tier "${id}" already exists`);
   }
+  if (requireExisting && previous == null) {
+    throw Error(`membership tier "${id}" does not exist`);
+  }
+  const history = Array.isArray(previous?.history) ? previous.history : [];
+  const nextHistory =
+    previous == null ? history : [...history, buildHistoryEntry(previous)];
 
-  if (query.id == "*") {
-    const { rows } = await callback2(db._query, {
-      query: "SELECT * FROM membership_tiers",
-    });
-    const usageHistoryByTier = await getHistoricalTierUsageCounts(db);
-    const subscriptionByTier = await getLiveSubscriptionTierCounts(db);
-    const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
-    const adminAssignedByTier = await getActiveAdminAssignedTierCounts(db);
-    const teamSeatsByTier = await getActiveTeamSeatTierCounts(db);
-    const packageAccountsByTier = await getActivePackageAccountTierCounts(db);
-    const totalAccountsByTier = await getTotalAccountTierCounts(db);
-    return rows.map((row) => ({
-      ...mapStorageRow(row),
-      ...(subscriptionByTier[row.id] ?? {
-        subscription_count: 0,
-        subscribed_account_count: 0,
-      }),
-      team_seat_count: teamSeatsByTier[row.id] ?? 0,
-      ...(packageAccountsByTier[row.id] ?? {
-        team_account_count: 0,
-        course_account_count: 0,
-        site_account_count: 0,
-      }),
-      has_usage_history: (usageHistoryByTier[row.id] ?? 0) > 0,
-      admin_assigned_count: adminAssignedByTier[row.id] ?? 0,
-      site_license_count: siteLicenseByTier[row.id] ?? 0,
-      total_account_count: totalAccountsByTier[row.id] ?? 0,
-    }));
-  } else if (query.id) {
-    const {
-      id,
-      label,
-      store_visible,
-      store_description,
-      store_highlights,
-      site_license_pool_description,
-      team_visible,
-      course_store_visible,
-      course_allowed_domains,
-      priority,
-      price_monthly,
-      price_yearly,
-      trial_days,
-      course_price,
-      course_duration_days,
-      course_grace_days,
-      project_defaults,
-      ai_limits,
-      features,
-      usage_limits,
-      pricing_model,
-      disabled,
-      notes,
-    } = query;
-
-    const existing = await callback2(db._query, {
-      query: "SELECT * FROM membership_tiers WHERE id = $1",
-      params: [id],
-    });
-    const previous = existing.rows?.[0];
-    const history = Array.isArray(previous?.history) ? previous.history : [];
-    const nextHistory =
-      previous == null ? history : [...history, buildHistoryEntry(previous)];
-
-    const { rows } = await callback2(db._query, {
-      query: `INSERT INTO membership_tiers (
+  const { rows } = await callback2(db._query, {
+    query: `INSERT INTO membership_tiers (
                 "id",
                 "label",
                 "store_visible",
@@ -565,34 +552,76 @@ export default async function membershipTiersQuery(
                 "notes" = EXCLUDED.notes,
                 "history" = EXCLUDED.history,
                 "updated" = NOW()`,
-      params: [
-        id,
-        label ?? null,
-        store_visible ?? false,
-        store_description ?? null,
-        store_highlights ?? null,
-        site_license_pool_description ?? null,
-        team_visible ?? false,
-        course_store_visible ?? false,
-        course_allowed_domains ?? null,
-        priority ?? 0,
-        price_monthly ?? null,
-        price_yearly ?? null,
-        trial_days ?? null,
-        course_price ?? null,
-        course_duration_days ?? null,
-        course_grace_days ?? null,
-        toJsonParam(project_defaults),
-        toJsonParam(ai_limits),
-        toJsonParam(features),
-        toJsonParam(usage_limits),
-        toJsonParam(pricing_model),
-        disabled ?? false,
-        notes ?? null,
-        toJsonParam(nextHistory ?? []),
-      ],
+    params: [
+      id,
+      label ?? null,
+      store_visible ?? false,
+      store_description ?? null,
+      store_highlights ?? null,
+      site_license_pool_description ?? null,
+      team_visible ?? false,
+      course_store_visible ?? false,
+      course_allowed_domains ?? null,
+      priority ?? 0,
+      price_monthly ?? null,
+      price_yearly ?? null,
+      trial_days ?? null,
+      course_price ?? null,
+      course_duration_days ?? null,
+      course_grace_days ?? null,
+      toJsonParam(project_defaults),
+      toJsonParam(ai_limits),
+      toJsonParam(features),
+      toJsonParam(usage_limits),
+      toJsonParam(pricing_model),
+      disabled ?? false,
+      notes ?? null,
+      toJsonParam(nextHistory ?? []),
+    ],
+  });
+  return rows;
+}
+
+export default async function membershipTiersQuery(
+  db: PostgreSQL,
+  options: { delete?: boolean }[],
+  query: MembershipTierMutationQuery,
+) {
+  if (isDelete(options) && query.id) {
+    await deleteMembershipTier(db, query.id);
+    return;
+  }
+
+  if (query.id == "*") {
+    const { rows } = await callback2(db._query, {
+      query: "SELECT * FROM membership_tiers",
     });
-    return rows;
+    const usageHistoryByTier = await getHistoricalTierUsageCounts(db);
+    const subscriptionByTier = await getLiveSubscriptionTierCounts(db);
+    const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
+    const adminAssignedByTier = await getActiveAdminAssignedTierCounts(db);
+    const teamSeatsByTier = await getActiveTeamSeatTierCounts(db);
+    const packageAccountsByTier = await getActivePackageAccountTierCounts(db);
+    const totalAccountsByTier = await getTotalAccountTierCounts(db);
+    return rows.map((row) => ({
+      ...mapStorageRow(row),
+      ...(subscriptionByTier[row.id] ?? {
+        subscription_count: 0,
+        subscribed_account_count: 0,
+      }),
+      team_seat_count: teamSeatsByTier[row.id] ?? 0,
+      ...(packageAccountsByTier[row.id] ?? {
+        team_account_count: 0,
+        course_account_count: 0,
+        site_account_count: 0,
+      }),
+      has_usage_history: (usageHistoryByTier[row.id] ?? 0) > 0,
+      admin_assigned_count: adminAssignedByTier[row.id] ?? 0,
+      site_license_count: siteLicenseByTier[row.id] ?? 0,
+      total_account_count: totalAccountsByTier[row.id] ?? 0,
+    }));
+  } else if (query.id) {
+    return await upsertMembershipTier(db, query);
   } else {
     throw new Error("don't know what to do with this query");
   }

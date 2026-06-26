@@ -41,9 +41,15 @@ import {
   TimeAgo,
   Tooltip,
 } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { AdminMembershipTierPayload } from "@cocalc/conat/hub/api/purchases";
 import { currency } from "@cocalc/util/misc";
 import {
   applyMembershipTierTemplateFallbacks,
@@ -178,7 +184,7 @@ interface MembershipTierImportCandidate {
   targetId: string;
   targetLabel?: string;
   match: "label" | "id" | "new";
-  payload: Tier;
+  payload: AdminMembershipTierPayload;
   disabledReason?: string;
 }
 
@@ -502,7 +508,7 @@ function tierToFormValues(tier: Partial<Tier>) {
   };
 }
 
-function buildMembershipTierPayload(values): Tier {
+function buildMembershipTierPayload(values): AdminMembershipTierPayload {
   const project_defaults = cleanProjectDefaults(
     parseJsonField(values.project_defaults, "project_defaults"),
   );
@@ -690,7 +696,7 @@ function buildMembershipTierPayload(values): Tier {
       "disabled",
       "notes",
     ],
-  ) as Tier;
+  ) as AdminMembershipTierPayload;
 }
 
 function membershipTierExportPayload(tiers: Tier[]) {
@@ -705,7 +711,9 @@ function membershipTierExportPayload(tiers: Tier[]) {
   };
 }
 
-function parseMembershipTierImportJson(value: unknown): Tier[] {
+function parseMembershipTierImportJson(
+  value: unknown,
+): AdminMembershipTierPayload[] {
   const record = normalizedRecord(value);
   const rawTiers = Array.isArray(value)
     ? value
@@ -743,8 +751,24 @@ function useMembershipTiers() {
   const [loading, set_loading] = React.useState<boolean>(false);
   const [last_saved, set_last_saved] = React.useState<Tier | null>(null);
   const [error, set_error] = React.useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const [form] = Form.useForm();
+
+  async function runFreshTierMutation(
+    action: () => Promise<void>,
+  ): Promise<boolean> {
+    return await runFreshAuthAction(async () => {
+      set_saving(true);
+      try {
+        await action();
+        await load();
+        set_error("");
+      } finally {
+        set_saving(false);
+      }
+    });
+  }
 
   async function load() {
     let result: any;
@@ -822,7 +846,7 @@ function useMembershipTiers() {
     }
   }, [editing]);
 
-  async function save(values): Promise<void> {
+  async function save(values): Promise<boolean> {
     const formValues = form.getFieldsValue(true);
     const mergedValues = {
       ...(editing != null ? tierToFormValues(editing) : {}),
@@ -831,23 +855,24 @@ function useMembershipTiers() {
       id: values.id ?? formValues.id ?? editing?.id,
     };
     const val_orig: Tier = { ...mergedValues };
-    if (editing != null) set_editing(null);
 
     try {
-      set_saving(true);
       const payload = buildMembershipTierPayload(mergedValues);
-      await query({
-        query: {
-          membership_tiers: payload,
-        },
+      const completed = await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.updateMembershipTier({
+          browser_id: webapp_client.browser_id,
+          tier: payload,
+        });
       });
-      set_last_saved(val_orig);
-      await load();
+      if (completed) {
+        set_last_saved(val_orig);
+        set_editing(null);
+      }
+      return completed;
     } catch (err) {
       set_error(err.message ?? String(err));
       set_editing(val_orig);
-    } finally {
-      set_saving(false);
+      return false;
     }
   }
 
@@ -859,7 +884,7 @@ function useMembershipTiers() {
     id: string;
     label: string;
     template: TemplateKey;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const trimmedId = id.trim();
     const trimmedLabel = label.trim();
     if (data[trimmedId] != null) {
@@ -882,40 +907,40 @@ function useMembershipTiers() {
     } as Partial<Tier> & { id: string });
     const values = tierToFormValues(tier);
     const payload = buildMembershipTierPayload(values);
-    set_saving(true);
     try {
-      await query({
-        query: {
-          membership_tiers: payload,
-        },
+      const completed = await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.createMembershipTier({
+          browser_id: webapp_client.browser_id,
+          tier: payload,
+        });
       });
-      await load();
-      set_editing(applyMembershipTierTemplateFallbacks(payload));
+      if (completed) {
+        set_editing(
+          applyMembershipTierTemplateFallbacks(
+            payload as Partial<Tier> & { id: string },
+          ) as Tier,
+        );
+      }
+      return completed;
     } catch (err) {
       set_error(err.message ?? String(err));
       throw err;
-    } finally {
-      set_saving(false);
     }
   }
 
-  async function import_tiers(payloads: Tier[]): Promise<void> {
-    set_saving(true);
+  async function import_tiers(
+    payloads: AdminMembershipTierPayload[],
+  ): Promise<boolean> {
     try {
-      for (const payload of payloads) {
-        await query({
-          query: {
-            membership_tiers: payload,
-          },
+      return await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.importMembershipTiers({
+          browser_id: webapp_client.browser_id,
+          tiers: payloads,
         });
-      }
-      await load();
-      set_error("");
+      });
     } catch (err) {
       set_error(err.message ?? String(err));
       throw err;
-    } finally {
-      set_saving(false);
     }
   }
 
@@ -925,11 +950,8 @@ function useMembershipTiers() {
       if (data[id]?.has_usage_history !== false) {
         throw Error("cannot delete a tier with usage history");
       }
-      await query({
-        query: {
-          membership_tiers: { id },
-        },
-        options: [{ delete: true }],
+      await webapp_client.conat_client.hub.purchases.deleteMembershipTier({
+        id,
       });
       await load();
     } catch (err) {
@@ -948,6 +970,7 @@ function useMembershipTiers() {
     error,
     set_error,
     set_editing,
+    freshAuthModalProps,
     create_tier_from_template,
     import_tiers,
     save,
@@ -976,6 +999,7 @@ export function MembershipTiers() {
     error,
     set_error,
     set_editing,
+    freshAuthModalProps,
     create_tier_from_template,
     import_tiers,
     save,
@@ -3222,11 +3246,12 @@ export function MembershipTiers() {
   async function createTierFromModal(): Promise<void> {
     try {
       const values = await createTierForm.validateFields();
-      await create_tier_from_template({
+      const completed = await create_tier_from_template({
         id: values.id,
         label: values.label,
         template: values.template,
       });
+      if (!completed) return;
       setCreateTierOpen(false);
       createTierForm.resetFields();
     } catch (err) {
@@ -3266,7 +3291,7 @@ export function MembershipTiers() {
   }
 
   function buildImportCandidates(
-    tiers: Tier[],
+    tiers: AdminMembershipTierPayload[],
   ): MembershipTierImportCandidate[] {
     const byLabel = new Map<string, Tier>();
     const duplicateLabels = new Set<string>();
@@ -3296,12 +3321,12 @@ export function MembershipTiers() {
           ...tier,
           id: targetId,
           label: sourceLabel || tier.id,
-        }),
+        } as Partial<Tier> & { id: string }),
       );
       return {
         key: `${index}:${tier.id}`,
         sourceId: tier.id,
-        sourceLabel: tier.label,
+        sourceLabel: sourceLabel || undefined,
         targetId,
         targetLabel: target?.label,
         match,
@@ -3361,7 +3386,10 @@ export function MembershipTiers() {
     }
     setImporting(true);
     try {
-      await import_tiers(selected.map((candidate) => candidate.payload));
+      const completed = await import_tiers(
+        selected.map((candidate) => candidate.payload),
+      );
+      if (!completed) return;
       setImportModalOpen(false);
       setImportCandidates([]);
       setImportSelectedKeys([]);
@@ -3848,6 +3876,7 @@ export function MembershipTiers() {
         {saving && <Saving />}
         {editing != null ? render_edit() : render_view()}
       </Space>
+      <FreshAuthModal {...freshAuthModalProps} />
       {render_create_tier_modal()}
       {render_import_tiers_modal()}
     </>
