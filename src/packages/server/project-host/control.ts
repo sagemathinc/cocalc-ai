@@ -270,7 +270,11 @@ async function filterRowsPlaceableByAccount<T extends HostRegistryRow>({
 async function saveProjectStateSnapshot(
   project_id: string,
   state: string | { state?: string; time?: string | Date } | undefined,
-  opts?: { runtime_started?: boolean },
+  opts?: {
+    runtime_started?: boolean;
+    project_bundle_version?: string | null;
+    tools_version?: string | null;
+  },
 ): Promise<void> {
   if (!state) return;
   const stateObj =
@@ -285,6 +289,14 @@ async function saveProjectStateSnapshot(
         };
   if (!stateObj.state) {
     return;
+  }
+  const projectBundleVersion = `${opts?.project_bundle_version ?? ""}`.trim();
+  if (projectBundleVersion) {
+    (stateObj as any).project_bundle_version = projectBundleVersion;
+  }
+  const toolsVersion = `${opts?.tools_version ?? ""}`.trim();
+  if (toolsVersion) {
+    (stateObj as any).tools_version = toolsVersion;
   }
   const runtimeStarted =
     opts?.runtime_started === true && stateObj.state === "running";
@@ -922,7 +934,10 @@ export async function startProjectOnHost(
               live_state: live.state,
             },
           );
-          await saveProjectStateSnapshot(project_id, live.state);
+          await saveProjectStateSnapshot(project_id, live.state, {
+            project_bundle_version: live.project_bundle_version,
+            tools_version: live.tools_version,
+          });
           return;
         }
       }
@@ -986,6 +1001,8 @@ export async function startProjectOnHost(
       });
       await saveProjectStateSnapshot(project_id, response.state ?? "running", {
         runtime_started: true,
+        project_bundle_version: response.project_bundle_version,
+        tools_version: response.tools_version,
       });
       if (opts?.lro_op_id && response.phase_timings_ms) {
         mergeStartProjectTimings(opts.lro_op_id, response.phase_timings_ms);
@@ -1015,6 +1032,8 @@ export async function startProjectOnHost(
         });
         await saveProjectStateSnapshot(project_id, retry.state ?? "running", {
           runtime_started: true,
+          project_bundle_version: retry.project_bundle_version,
+          tools_version: retry.tools_version,
         });
         if (opts?.lro_op_id && retry.phase_timings_ms) {
           mergeStartProjectTimings(opts.lro_op_id, retry.phase_timings_ms);

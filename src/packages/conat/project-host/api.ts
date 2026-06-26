@@ -33,6 +33,8 @@ export interface HostCreateProjectRequest extends CreateProjectOptions {
 export interface HostCreateProjectResponse {
   project_id: string;
   state?: ProjectState | string;
+  project_bundle_version?: string;
+  tools_version?: string;
   phase_timings_ms?: Record<string, number>;
 }
 

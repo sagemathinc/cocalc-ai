@@ -4119,6 +4119,34 @@ export async function getProjectState({
   });
 }
 
+export async function status({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}) {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  const state = await getInterBayBridge()
+    .projectControl(ownership.bay_id)
+    .state({
+      project_id,
+      epoch: ownership.epoch,
+    });
+  return {
+    state: state.state,
+    http_port: state.http_port,
+    ssh_port: state.ssh_port,
+    project_bundle_version: state.project_bundle_version,
+    tools_version: state.tools_version,
+    phase_timings_ms: state.phase_timings_ms,
+  };
+}
+
 export async function getProjectAddress({
   account_id,
   project_id,

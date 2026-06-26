@@ -410,7 +410,7 @@ Table({
     },
     state: {
       type: "map",
-      desc: 'Lightweight state info for the project runner: {state:"running|stopped|starting|stopping|error", time:"ISO timestamp", started_at?: "ISO timestamp", runtime_generation?: number, error?:string, ip?:string, ...}. The JSON is stored in the "state" column as jsonb. The "state" field inside the JSON is the compute state; the "time" field is when this state was recorded. See COMPUTE_STATES and the ProjectState interface below.',
+      desc: 'Lightweight state info for the project runner: {state:"running|stopped|starting|stopping|error", time:"ISO timestamp", started_at?: "ISO timestamp", runtime_generation?: number, project_bundle_version?: string, tools_version?: string, error?:string, ip?:string, ...}. The JSON is stored in the "state" column as jsonb. The "state" field inside the JSON is the compute state; the "time" field is when this state was recorded. See COMPUTE_STATES and the ProjectState interface below.',
       date: ["time", "started_at"],
     },
     last_edited: {
@@ -780,6 +780,11 @@ export interface ProjectState {
   time?: Date;
   started_at?: Date;
   runtime_generation?: number;
+  http_port?: number;
+  ssh_port?: number;
+  project_bundle_version?: string;
+  tools_version?: string;
+  phase_timings_ms?: Record<string, number>;
 }
 
 Table({
