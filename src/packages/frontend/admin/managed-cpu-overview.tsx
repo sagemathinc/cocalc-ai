@@ -51,6 +51,7 @@ import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { AccountStatusTags } from "./account-status-tags";
+import { ProjectDirectorySummaryButton } from "./project-directory-summary-button";
 
 const { Paragraph, Text } = Typography;
 
@@ -329,16 +330,10 @@ function TopCpuProjects({
                 }}
                 onAnnotationChange={onAnnotationChange}
               />
-              {project.project_id ? (
-                <Button
-                  size="small"
-                  href={`/projects/${project.project_id}/files/`}
-                  target="_blank"
-                >
-                  Open project
-                </Button>
-              ) : null}
             </Space>
+            {project.project_id ? (
+              <ProjectDirectorySummaryButton project_id={project.project_id} />
+            ) : null}
           </div>
         ))}
     </Space>
@@ -414,15 +409,6 @@ function TopEgressProjects({
               }}
               onAnnotationChange={onAnnotationChange}
             />
-            {project.project_id ? (
-              <Button
-                size="small"
-                href={`/projects/${project.project_id}/files/`}
-                target="_blank"
-              >
-                Open project
-              </Button>
-            ) : null}
           </Space>
         </div>
       ))}

@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -40,8 +41,6 @@ const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
   envToInt("COCALC_PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS", 6 * 60 * 60 * 1000),
 );
 const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
-const LEGACY_PROJECT_ARCHIVE_UID = 2001;
-const LEGACY_PROJECT_ARCHIVE_GID = 2001;
 const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
   ".cache/cocalc",
   ".local/share/cocalc",
@@ -215,15 +214,19 @@ function runProjectArchiveTarCommand({
   archivePath,
   args,
   onStdoutLine,
+  runAs,
 }: {
   archivePath: string;
   args: string[];
   onStdoutLine?: (line: string) => void;
+  runAs?: { uid: number; gid: number };
 }): Promise<{ stderr: string }> {
   const createZstdDecompress = (zlib as any).createZstdDecompress;
   return new Promise((resolve, reject) => {
     const child = spawn("tar", args, {
+      gid: runAs?.gid,
       stdio: ["pipe", "pipe", "pipe"],
+      uid: runAs?.uid,
     });
     const stdin = child.stdin;
     if (stdin == null) {
@@ -325,95 +328,6 @@ function runProjectArchiveTarCommand({
     pipeline(createReadStream(archivePath), decompressor, stdin).catch(
       failInput,
     );
-  });
-}
-
-function runProjectArchiveCommand({
-  command,
-  args,
-}: {
-  command: string;
-  args: string[];
-}): Promise<{ stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-      if (stderr.length > 20_000) {
-        stderr = stderr.slice(stderr.length - 20_000);
-      }
-    });
-    child.on("error", reject);
-    child.on("close", (code, signal) => {
-      if (code === 0) {
-        resolve({ stderr });
-        return;
-      }
-      reject(
-        new Error(
-          `${command} failed with code ${code ?? "null"} signal ${signal ?? "null"}: ${stderr.trim() || "unknown error"}`,
-        ),
-      );
-    });
-  });
-}
-
-function managedArchiveExcludeFindArgs(dest: string): string[] {
-  return LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS.flatMap((root, index) => [
-    ...(index === 0 ? [] : ["-o"]),
-    "-path",
-    join(dest, root),
-  ]);
-}
-
-async function mapLegacyArchiveOwnership({
-  dest,
-  progress,
-  lro,
-}: {
-  dest: string;
-  progress: number;
-  lro?: LroRef;
-}): Promise<void> {
-  const destStat = await stat(dest);
-  if (
-    destStat.uid === LEGACY_PROJECT_ARCHIVE_UID &&
-    destStat.gid === LEGACY_PROJECT_ARCHIVE_GID
-  ) {
-    return;
-  }
-  publishArchiveProgress({
-    lro,
-    phase: "permissions",
-    message: "mapping legacy archive ownership",
-    progress,
-    detail: {
-      legacy_uid: LEGACY_PROJECT_ARCHIVE_UID,
-      legacy_gid: LEGACY_PROJECT_ARCHIVE_GID,
-      project_uid: destStat.uid,
-      project_gid: destStat.gid,
-    },
-  });
-  await runProjectArchiveCommand({
-    command: "find",
-    args: [
-      dest,
-      "(",
-      ...managedArchiveExcludeFindArgs(dest),
-      ")",
-      "-prune",
-      "-o",
-      "-exec",
-      "chown",
-      "-h",
-      `--from=${LEGACY_PROJECT_ARCHIVE_UID}:${LEGACY_PROJECT_ARCHIVE_GID}`,
-      `${destStat.uid}:${destStat.gid}`,
-      "{}",
-      "+",
-    ],
   });
 }
 
@@ -568,6 +482,7 @@ async function scanProjectArchiveTar({
 async function extractProjectArchiveTar({
   archivePath,
   dest,
+  owner,
   member_list_path,
   expected_file_count,
   expected_uncompressed_bytes,
@@ -575,6 +490,7 @@ async function extractProjectArchiveTar({
 }: {
   archivePath: string;
   dest: string;
+  owner: { uid: number; gid: number };
   member_list_path?: string;
   expected_file_count?: number;
   expected_uncompressed_bytes?: number;
@@ -588,6 +504,7 @@ async function extractProjectArchiveTar({
   });
   const args = [
     "--delay-directory-restore",
+    "--no-same-owner",
     "--no-overwrite-dir",
     "-xvf",
     "-",
@@ -602,11 +519,15 @@ async function extractProjectArchiveTar({
       member_list_path,
     );
   }
+  const currentUid =
+    typeof process.getuid === "function" ? process.getuid() : undefined;
+  const runAs = currentUid === owner.uid ? undefined : owner;
   let extracted_count = 0;
   let lastProgress = 0;
   await runProjectArchiveTarCommand({
     archivePath,
     args,
+    runAs,
     onStdoutLine: (line) => {
       const path = normalizeProjectArchiveMemberPath(line);
       if (!path) return;
@@ -914,17 +835,16 @@ export function createLegacyProjectArchiveHandlers({
         const useSelection = include != null || exclude != null;
         let member_list_path: string | undefined;
         if (useSelection) {
-          if (tmpDir == null) {
-            const tmpRoot = archiveRestoreTmpRoot();
-            await mkdir(tmpRoot, { recursive: true });
-            memberListTmpDir = await mkdtemp(
-              join(tmpRoot, `${project_id}-list-`),
-            );
-          }
-          member_list_path = join(
-            tmpDir ?? memberListTmpDir!,
-            "selected-members.txt",
+          const tmpRoot = archiveRestoreTmpRoot();
+          await mkdir(tmpRoot, { recursive: true });
+          memberListTmpDir = await mkdtemp(
+            join(tmpRoot, `${project_id}-list-`),
           );
+          // The tar extractor runs as the project volume owner. Keep only the
+          // member list readable/traversable by that user; the archive itself
+          // is still streamed over stdin from the project-host process.
+          await chmod(memberListTmpDir, 0o711);
+          member_list_path = join(memberListTmpDir, "selected-members.txt");
         }
         const { file_count, uncompressed_bytes } = await scanProjectArchiveTar({
           archivePath,
@@ -937,19 +857,19 @@ export function createLegacyProjectArchiveHandlers({
         if (useSelection && file_count === 0) {
           throw new Error("selected archive paths matched no files");
         }
-        // A legacy cocalc.com archive stores files as uid/gid 2001. On a
-        // rootless project host that literal host owner is wrong; project files
-        // must match the mapped uid/gid of the freshly created project volume.
-        await mapLegacyArchiveOwnership({ dest: home, progress: 68, lro });
+        if (member_list_path != null) {
+          await chmod(member_list_path, 0o644);
+        }
+        const homeStat = await stat(home);
         await extractProjectArchiveTar({
           archivePath,
           dest: home,
+          owner: { uid: homeStat.uid, gid: homeStat.gid },
           member_list_path,
           expected_file_count: file_count,
           expected_uncompressed_bytes: uncompressed_bytes,
           lro,
         });
-        await mapLegacyArchiveOwnership({ dest: home, progress: 90, lro });
         publishArchiveProgress({
           lro,
           phase: "finish",

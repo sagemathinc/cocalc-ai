@@ -71,6 +71,11 @@ import {
 import { assertProjectNotHardDeleting } from "@cocalc/server/projects/hard-delete-state";
 import { mergeStartProjectTimings } from "@cocalc/server/projects/start-timings";
 import { assertFreeProjectStartAllowed } from "@cocalc/server/launch/kill-switches";
+import { countsTowardManagedCpuBudgetForHost } from "@cocalc/server/membership/managed-cpu-scope";
+import {
+  formatManagedProjectCpuPolicyBlockMessage,
+  getManagedProjectCpuPolicy,
+} from "@cocalc/server/membership/managed-cpu-policy";
 
 const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
   "succeeded",
@@ -81,6 +86,27 @@ const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
 const BACKUP_POLL_INTERVAL_MS = 1_000;
 const PROJECT_RUNTIME_SLOT_TTL_MS = 30 * 60 * 1000;
 const logger = getLogger("inter-bay:project-control");
+
+async function assertManagedCpuStartAllowed({
+  project_id,
+  host_id,
+}: {
+  project_id: string;
+  host_id?: string | null;
+}): Promise<void> {
+  if (
+    !(await countsTowardManagedCpuBudgetForHost({
+      host_id: host_id ?? undefined,
+      project_id,
+    }))
+  ) {
+    return;
+  }
+  const policy = await getManagedProjectCpuPolicy({ project_id });
+  if (!policy.allowed) {
+    throw new Error(formatManagedProjectCpuPolicyBlockMessage(policy));
+  }
+}
 
 function staleRoutingError({
   project_id,
@@ -175,6 +201,10 @@ export async function handleProjectControlStart(
         sponsor,
         account_id: req.account_id,
       });
+      await assertManagedCpuStartAllowed({
+        project_id: req.project_id,
+        host_id: sponsor.host_id,
+      });
       await reserveProjectRuntimeSlot({
         ...sponsor,
         project_id: req.project_id,
@@ -260,6 +290,10 @@ export async function handleProjectControlCheckStartAdmission(
   await assertCanStartUsingRuntimeSponsor({
     sponsor,
     account_id: req.account_id,
+  });
+  await assertManagedCpuStartAllowed({
+    project_id: req.project_id,
+    host_id: sponsor.host_id,
   });
   const denial = await getProjectRuntimeSlotDenial({
     sponsor_account_id: sponsor.sponsor_account_id,
