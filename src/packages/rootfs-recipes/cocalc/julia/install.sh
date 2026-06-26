@@ -66,15 +66,6 @@ Pkg.add(spec)
 Pkg.precompile()
 JL
 
-kernel_jl="$(
-  JULIA_DEPOT_PATH="$julia_depot" \
-    "$prefix/bin/julia" --startup-file=no -e 'using IJulia; print(joinpath(dirname(pathof(IJulia)), "kernel.jl"))'
-)"
-if [ ! -f "$kernel_jl" ]; then
-  echo "IJulia kernel entry point not found: $kernel_jl" >&2
-  exit 1
-fi
-
 kernel_dir="/usr/local/share/jupyter/kernels/$kernel_name"
 $SUDO rm -rf "$kernel_dir"
 $SUDO mkdir -p "$kernel_dir"
@@ -84,15 +75,16 @@ $SUDO tee "$kernel_dir/kernel.json" >/dev/null <<EOF
     "/usr/local/bin/julia",
     "-i",
     "--color=yes",
-    "--project=@.",
-    "$kernel_jl",
+    "-e",
+    "import IJulia; IJulia.run_kernel()",
     "{connection_file}"
   ],
   "display_name": "$kernel_display_name",
   "language": "julia",
   "env": {
     "JULIA_DEPOT_PATH": "$julia_depot"
-  }
+  },
+  "interrupt_mode": "signal"
 }
 EOF
 

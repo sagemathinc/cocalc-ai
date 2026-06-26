@@ -80,6 +80,28 @@ steps:
       jobs: auto
     timeout: 28800
 
+  - name: Install legacy Python packages into Sage Python
+    run: |
+      set -euo pipefail
+      python3 -m pip install --no-cache-dir \
+        beautifulsoup4 \
+        ipykernel \
+        ipywidgets \
+        jupyter-console \
+        jupyterlab \
+        matplotlib \
+        notebook \
+        numpy \
+        pandas \
+        plotly \
+        requests \
+        scikit-learn \
+        scipy \
+        seaborn \
+        statsmodels \
+        sympy \
+        uv
+
   - uses: cocalc/julia
     with:
       version: "1.12.6"
@@ -101,6 +123,51 @@ steps:
         - julialang.language-julia
     timeout: 1200
 
+  - name: Remove build-time caches and duplicate user state
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+
+      # Sage 10.9 is installed as an editable Meson package.  Do not remove
+      # /usr/local/sage/build/sage-distro; imports use that tree at runtime.
+      rm -rf "$HOME/.cache/pip" "$HOME/.cache/code-server"
+      rm -rf "$HOME/.local/share/jupyter/kernels/sagemath"
+
+      $SUDO rm -rf \
+        /root/.cache \
+        /root/.config \
+        /root/.ipython \
+        /root/.jupyter \
+        /root/.local \
+        /root/.sage
+
+      $SUDO rm -rf \
+        /usr/local/sage/autom4te.cache \
+        /usr/local/sage/logs \
+        /usr/local/sage/local/share/doc \
+        /usr/local/sage/local/share/info \
+        /usr/local/sage/local/share/man \
+        /usr/local/sage/local/var/tmp/sage/build \
+        /usr/local/sage/local/var/lib/sage/venv-python3.14/var/tmp/sage/build \
+        /usr/local/sage/src/doc/output
+
+      $SUDO apt-get clean
+      $SUDO rm -rf \
+        /var/lib/apt/lists/* \
+        /tmp/* \
+        /var/tmp/* \
+        /usr/share/doc \
+        /usr/share/info \
+        /usr/share/man \
+        /usr/share/texlive/texmf-dist/doc \
+        /usr/share/texlive/texmf-dist/source \
+        /usr/share/texmf/doc \
+        /usr/share/texmf/source
+
 verify:
   - command -v bash
   - command -v code-server
@@ -120,7 +187,10 @@ verify:
   - sage --version
   - sage -c 'from sage.all import ZZ; assert ZZ(2) + ZZ(2) == 4'
   - julia --version
+  - JULIA_DEPOT_PATH=/opt/julia-depot julia --startup-file=no -e 'using IJulia'
   - Rscript --vanilla -e 'stopifnot(requireNamespace("IRkernel", quietly=TRUE))'
+  - kpsewhich comment.sty
+  - kpsewhich french.ldf
   - jupyter kernelspec list | grep -q python3
   - jupyter kernelspec list | grep -qi sagemath
   - jupyter kernelspec list | grep -qi julia

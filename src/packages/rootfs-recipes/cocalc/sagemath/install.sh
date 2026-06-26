@@ -217,8 +217,8 @@ install_source_sage() {
   sage_python_bin="$(dirname "$sage_python")"
 
   log "Installing Jupyter packages into Sage Python"
-  "$sage_python" -m pip install --no-cache-dir --upgrade pip setuptools wheel
-  "$sage_python" -m pip install --no-cache-dir \
+  "$sage_bin" -python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+  "$sage_bin" -python -m pip install --no-cache-dir \
     ipykernel \
     jupyter-console \
     jupyterlab \
@@ -227,20 +227,20 @@ install_source_sage() {
   log "Installing SageMath entry points"
   write_exec_wrapper /usr/local/bin/sage "\"$sage_bin\""
   write_exec_wrapper /usr/local/bin/sagemath "\"$sage_bin\""
-  write_exec_wrapper /usr/local/bin/python "\"$sage_python\""
-  write_exec_wrapper /usr/local/bin/python3 "\"$sage_python\""
-  write_exec_wrapper /usr/local/bin/pip "\"$sage_python\" -m pip"
-  write_exec_wrapper /usr/local/bin/pip3 "\"$sage_python\" -m pip"
+  write_exec_wrapper /usr/local/bin/python "\"$sage_bin\" -python"
+  write_exec_wrapper /usr/local/bin/python3 "\"$sage_bin\" -python"
+  write_exec_wrapper /usr/local/bin/pip "\"$sage_bin\" -python -m pip"
+  write_exec_wrapper /usr/local/bin/pip3 "\"$sage_bin\" -python -m pip"
 
   for executable in jupyter jupyter-lab jupyter-notebook jupyter-console ipython; do
     link_executable "$sage_python_bin/$executable" "/usr/local/bin/$executable"
   done
 
   log "Installing Python Jupyter kernel"
-  $SUDO "$sage_python" -m ipykernel install --prefix=/usr/local --name python3 --display-name "Python 3 (Sage)"
+  $SUDO "$sage_bin" -python -m ipykernel install --prefix=/usr/local --name python3 --display-name "Python 3 (Sage)"
 
   log "Installing Sage Jupyter kernel"
-  if ! $SUDO "$sage_python" - <<'PY'
+  if ! $SUDO "$sage_bin" -python - <<'PY'
 from sage.repl.ipython_kernel.install import SageKernelSpec
 
 SageKernelSpec.update(prefix="/usr/local")
