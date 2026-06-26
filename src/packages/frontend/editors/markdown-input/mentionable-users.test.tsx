@@ -64,11 +64,14 @@ describe("mentionableUsers", () => {
     mockGetStore.mockReset();
   });
 
-  it("omits unresolved users instead of showing account ids", () => {
+  it("keeps unresolved collaborators visible while their names hydrate", () => {
     const getName = jest.fn().mockReturnValue(undefined);
     mockStores(getName);
 
-    expect(mentionableUsers({ search: undefined, project_id })).toEqual([]);
+    const items = mentionableUsers({ search: undefined, project_id });
+    expect(items).toHaveLength(1);
+    expect(items[0].value).toBe(alice);
+    expect(items[0].search).toContain(alice);
     expect(getName).toHaveBeenCalledWith(alice);
   });
 
@@ -79,7 +82,8 @@ describe("mentionableUsers", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0].value).toBe(alice);
-    expect(items[0].search).toBe("ada lovelace");
+    expect(items[0].search).toContain("ada lovelace");
+    expect(items[0].search).toContain(alice);
   });
 
   it("adds @all for other owner/collaborator users", () => {

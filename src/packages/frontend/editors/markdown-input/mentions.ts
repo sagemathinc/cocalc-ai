@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { isValidUUID, original_path } from "@cocalc/util/misc";
@@ -63,6 +64,10 @@ function chunk<T>(values: T[], size: number): T[][] {
   return chunks;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : `${err}`;
+}
+
 export async function submit_mentions(
   project_id: string,
   path: string,
@@ -95,9 +100,9 @@ export async function submit_mentions(
     return;
   }
 
-  const work: Promise<unknown>[] = [];
+  const legacyWork: Promise<unknown>[] = [];
   for (const { account_id, description, fragment_id } of validMentions) {
-    work.push(
+    legacyWork.push(
       Promise.resolve().then(() =>
         webapp_client.query_client.query({
           query: {
@@ -127,6 +132,7 @@ export async function submit_mentions(
     }
   }
 
+  const notificationWork: Promise<unknown>[] = [];
   for (const group of notificationGroups.values()) {
     const first = group[0];
     if (first == null) {
@@ -137,7 +143,7 @@ export async function submit_mentions(
       group.map(({ account_id }) => account_id),
       MAX_MENTION_TARGETS_PER_NOTIFICATION,
     )) {
-      work.push(
+      notificationWork.push(
         Promise.resolve().then(() =>
           webapp_client.conat_client.hub.notifications.createMention({
             source_project_id: project_id,
@@ -152,17 +158,28 @@ export async function submit_mentions(
     }
   }
 
-  try {
-    const results = await Promise.allSettled(work);
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.warn("Failed to submit mention ", result.reason);
-      }
+  const notificationResults = await Promise.allSettled(notificationWork);
+  const notificationFailures = notificationResults.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (notificationFailures.length > 0) {
+    for (const result of notificationFailures) {
+      console.warn("Failed to submit mention notification", result.reason);
     }
-  } catch (err) {
-    // TODO: this is just naively assuming that no errors happen.
-    // What if there is a network blip?
-    // Then we would just loose the mention, which is no good. Do better.
-    console.warn("Failed to submit mention ", err);
+    if (notificationFailures.length === notificationResults.length) {
+      const reason = errorMessage(notificationFailures[0]?.reason);
+      alert_message({
+        type: "warning",
+        title: "Mention notifications were not sent",
+        message: reason,
+      });
+    }
+  }
+
+  const legacyResults = await Promise.allSettled(legacyWork);
+  for (const result of legacyResults) {
+    if (result.status === "rejected") {
+      console.warn("Failed to submit legacy mention", result.reason);
+    }
   }
 }

@@ -7,7 +7,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { timestamp_cmp, trunc_middle } from "@cocalc/util/misc";
+import { isValidUUID, timestamp_cmp, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   ALL_PROJECT_COLLABORATORS_MENTION_ID,
@@ -42,6 +42,13 @@ interface Props {
   search: string | undefined;
   project_id: string;
   opts?: Opts;
+}
+
+function unresolvedUserLabel(account_id: string): string {
+  if (!isValidUUID(account_id)) {
+    return account_id;
+  }
+  return `User ${account_id.slice(0, 8)}`;
 }
 
 export function mentionableUsers({ search, project_id, opts }: Props): Item[] {
@@ -93,11 +100,10 @@ export function mentionableUsers({ search, project_id, opts }: Props): Item[] {
   }
 
   for (const { account_id } of projectUsers) {
-    const fullname = usersStore.get_name(account_id)?.trim();
-    if (!fullname) {
-      continue;
-    }
-    const searchText = fullname.toLowerCase();
+    const fullname =
+      usersStore.get_name(account_id)?.trim() ??
+      unresolvedUserLabel(account_id);
+    const searchText = `${fullname} ${account_id}`.toLowerCase();
     if (search != null && searchText.indexOf(search) === -1) continue;
     mentions.push({
       value: account_id,

@@ -1,6 +1,11 @@
 import { fromJS } from "immutable";
 
 const mockGetStore = jest.fn();
+const mockAlertMessage = jest.fn();
+
+jest.mock("@cocalc/frontend/alerts", () => ({
+  alert_message: (...args: any[]) => mockAlertMessage(...args),
+}));
 
 jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
   Avatar: () => null,
@@ -41,6 +46,7 @@ describe("submit_mentions", () => {
   beforeEach(() => {
     query.mockReset().mockResolvedValue(undefined);
     createMention.mockReset().mockResolvedValue(undefined);
+    mockAlertMessage.mockReset();
     mockGetStore.mockReset();
     mockGetStore.mockImplementation((name: string) => {
       if (name === "account") {
@@ -167,6 +173,36 @@ describe("submit_mentions", () => {
       ],
       description: "@all please read this",
       stable_source_id: "chat=true,id=all123",
+    });
+  });
+
+  it("shows a warning when notification delivery fails", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    createMention.mockRejectedValueOnce(
+      new Error("mention rate limit exceeded"),
+    );
+
+    try {
+      await submit_mentions(
+        "22222222-2222-4222-8222-222222222222",
+        "room.chat",
+        [
+          {
+            account_id: "33333333-3333-4333-8333-333333333333",
+            description: "ping",
+            fragment_id: "chat=true,id=fail123",
+          },
+        ],
+      );
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(mockAlertMessage).toHaveBeenCalledWith({
+      type: "warning",
+      title: "Mention notifications were not sent",
+      message: "mention rate limit exceeded",
     });
   });
 });
