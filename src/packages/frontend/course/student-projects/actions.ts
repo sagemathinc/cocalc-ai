@@ -60,6 +60,62 @@ export class StudentProjectsActions {
     return store;
   };
 
+  private get_managed_project_ids = (): string[] => {
+    const store = this.get_store();
+    const projectIds = new Set(store.get_student_project_ids());
+    const sharedProjectId = store.get_shared_project_id();
+    if (sharedProjectId) {
+      projectIds.add(sharedProjectId);
+    }
+    const nbgraderProjectId = `${
+      store.getIn(["settings", "nbgrader_grade_project"]) ?? ""
+    }`.trim();
+    if (
+      nbgraderProjectId &&
+      nbgraderProjectId !== store.get("course_project_id")
+    ) {
+      projectIds.add(nbgraderProjectId);
+    }
+    return [...projectIds];
+  };
+
+  ensure_course_manager_access = async ({
+    project_ids,
+    quiet = true,
+  }: {
+    project_ids?: string[];
+    quiet?: boolean;
+  } = {}): Promise<void> => {
+    const store = this.get_store();
+    const managedProjectIds = project_ids ?? this.get_managed_project_ids();
+    if (managedProjectIds.length === 0) {
+      return;
+    }
+    try {
+      const results =
+        await webapp_client.project_collaborators.ensure_course_manager_access({
+          course_project_id: store.get("course_project_id"),
+          course_path: store.get("course_filename"),
+          project_ids: managedProjectIds,
+        });
+      const errors = results.filter((result) => result.error);
+      if (!quiet && errors.length > 0) {
+        this.course_actions.set_error(
+          `Error configuring course manager access - ${errors
+            .slice(0, 3)
+            .map((result) => `${result.project_id}: ${result.error}`)
+            .join("; ")}`,
+        );
+      }
+    } catch (err) {
+      if (!quiet) {
+        this.course_actions.set_error(
+          `Error configuring course manager access - ${err}`,
+        );
+      }
+    }
+  };
+
   private get_student_project_rootfs = async (): Promise<
     | {
         image: string;
@@ -359,6 +415,10 @@ export class StudentProjectsActions {
     this.course_actions.shared_project.action_shared_project(action);
 
     const store = this.get_store();
+    const studentProjectIds = store.get_student_project_ids();
+    await this.ensure_course_manager_access({
+      project_ids: studentProjectIds,
+    });
 
     const projects_actions = redux.getActions("projects");
     if (projects_actions == null) {
@@ -386,7 +446,7 @@ export class StudentProjectsActions {
       }
     };
 
-    await awaitMap(store.get_student_project_ids(), MAX_PARALLEL_TASKS, task);
+    await awaitMap(studentProjectIds, MAX_PARALLEL_TASKS, task);
   };
 
   cancel_action_all_student_projects = (): void => {
@@ -408,6 +468,10 @@ export class StudentProjectsActions {
     this.cancel_action_all_student_projects();
 
     const store = this.get_store();
+    const student_project_ids = store.get_student_project_ids();
+    await this.ensure_course_manager_access({
+      project_ids: student_project_ids,
+    });
     // calling start also deals with possibility that it's in stop state.
     const id = this.course_actions.set_activity({
       desc: `Running a command across all student ${WORKSPACES_LABEL.toLowerCase()}…`,
@@ -416,7 +480,6 @@ export class StudentProjectsActions {
       desc: `Starting ${WORKSPACES_LABEL.toLowerCase()}…`,
     });
     let i = 0;
-    const student_project_ids = store.get_student_project_ids();
     const num = student_project_ids.length;
 
     const clear_id1 = () => {
@@ -738,6 +801,9 @@ export class StudentProjectsActions {
     if (store == null) return "";
     const ids = store.get_student_ids({ deleted: false });
     if (ids == undefined) return "";
+    await this.ensure_course_manager_access({
+      project_ids: store.get_student_project_ids(),
+    });
 
     const lines: string[] = [];
     for (const student_id of ids) {
@@ -779,6 +845,10 @@ export class StudentProjectsActions {
     if (student == null || !student_project_id) {
       throw new Error("Student project has not been created yet.");
     }
+    await this.ensure_course_manager_access({
+      project_ids: [student_project_id],
+      quiet: false,
+    });
     const invite = await this.get_course_invite({
       student_id,
       student_project_id,
@@ -830,6 +900,10 @@ export class StudentProjectsActions {
     if (student == null || !student_project_id) {
       throw new Error("Student project has not been created yet.");
     }
+    await this.ensure_course_manager_access({
+      project_ids: [student_project_id],
+      quiet: false,
+    });
     const invite = await this.get_course_invite({
       student_id,
       student_project_id,
@@ -869,6 +943,7 @@ export class StudentProjectsActions {
       direction: "outbound",
       status,
       limit: 100,
+      projectWide: true,
     });
     const email = `${email_address ?? ""}`.trim().toLowerCase();
     return (
@@ -926,6 +1001,7 @@ export class StudentProjectsActions {
       }
 
       // Make sure we're a collaborator on every student project.
+      await this.ensure_course_manager_access();
       let changed = false;
       for (const student_id of ids) {
         if (this.course_actions.is_closed()) return;
@@ -990,6 +1066,7 @@ export class StudentProjectsActions {
       // always re-invite students on running this.
       await this.course_actions.shared_project.configure();
       await this.set_all_student_project_course_info();
+      await this.ensure_course_manager_access();
     } catch (err) {
       console.warn(err);
       this.course_actions.set_error(

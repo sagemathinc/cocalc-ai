@@ -522,6 +522,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "course collaborator-authorized invite/account reconciliation for accepted student invites",
   },
+  "projects.ensureCourseManagerAccess": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "course collaborator-authorized access reconciliation for managed course projects",
+  },
   "projects.requestProjectAccess": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

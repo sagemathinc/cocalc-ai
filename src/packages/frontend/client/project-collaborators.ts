@@ -14,6 +14,7 @@ import type {
   ProjectAccessRequestRow,
   ProjectAccessRequestSource,
   ProjectAccessRequestStatus,
+  CourseManagerAccessResult,
   ProjectCollabInviteAction,
   ProjectCollabInviteBlockRow,
   ProjectCollabInviteDirection,
@@ -141,6 +142,14 @@ export class ProjectCollaborators {
     return await this.conat.hub.projects.repairAcceptedCourseStudentInviteAccounts(
       opts,
     );
+  }
+
+  public async ensure_course_manager_access(opts: {
+    course_project_id: string;
+    course_path?: string;
+    project_ids: string[];
+  }): Promise<CourseManagerAccessResult[]> {
+    return await this.conat.hub.projects.ensureCourseManagerAccess(opts);
   }
 
   public async respond_invite(opts: {

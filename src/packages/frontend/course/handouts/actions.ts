@@ -246,6 +246,9 @@ export class HandoutsActions {
       if (student_project_id == null) {
         throw Error("bug -- student project should have been created");
       }
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: [student_project_id],
+      });
 
       this.course_actions.set_activity({
         id,
@@ -309,6 +312,9 @@ export class HandoutsActions {
       finish,
     });
     if (!handout) return;
+    await this.course_actions.student_projects.ensure_course_manager_access({
+      project_ids: store.get_student_project_ids(),
+    });
 
     let errors = "";
     const dests: ProjectCopyDestination[] = [];
