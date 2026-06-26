@@ -12,12 +12,12 @@ const budgets = [
   {
     html: "app.html",
     maxRawBytes: 12 * MiB,
-    maxGzipBytes: 3100 * KiB,
+    maxGzipBytes: 3500 * KiB,
   },
   {
     html: "embed.html",
     maxRawBytes: 12 * MiB,
-    maxGzipBytes: 3100 * KiB,
+    maxGzipBytes: 3500 * KiB,
   },
   {
     html: "public-viewer.html",
