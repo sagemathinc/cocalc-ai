@@ -1,5 +1,6 @@
 import { buildHostSpec } from "./host-util";
 
+const loadGcpImagesMock = jest.fn();
 const loadNebiusImagesMock = jest.fn();
 const loadNebiusInstanceTypesMock = jest.fn();
 const getProviderPrefixMock = jest.fn(async () => "cocalc-host");
@@ -9,7 +10,7 @@ const getHostSshPublicKeysMock = jest.fn(async () => ["ssh-ed25519 AAAA"]);
 jest.mock("./providers", () => ({
   loadNebiusImages: () => loadNebiusImagesMock(),
   loadNebiusInstanceTypes: () => loadNebiusInstanceTypesMock(),
-  loadGcpImages: jest.fn(),
+  loadGcpImages: () => loadGcpImagesMock(),
   getServerProvider: () => getServerProviderMock(),
   gcpSafeName: (prefix: string, base: string) => `${prefix}-${base}`,
 }));
@@ -25,6 +26,7 @@ jest.mock("./ssh-key", () => ({
 
 describe("buildHostSpec", () => {
   beforeEach(() => {
+    loadGcpImagesMock.mockReset();
     loadNebiusImagesMock.mockReset();
     loadNebiusInstanceTypesMock.mockReset();
     getProviderPrefixMock.mockClear();
@@ -159,5 +161,46 @@ describe("buildHostSpec", () => {
     });
 
     expect(spec.metadata?.source_image_family).toBe("ubuntu24.04-cuda13.0");
+  });
+
+  it("filters GCP accelerator images to the machine type architecture", async () => {
+    loadGcpImagesMock.mockResolvedValue([
+      {
+        name: "ubuntu-accelerator-arm-2504",
+        family: "ubuntu-accelerator-2504-arm64",
+        project: "ubuntu-os-accelerator-images",
+        architecture: "ARM64",
+        gpuReady: true,
+        creationTimestamp: "2026-06-01T00:00:00.000Z",
+      },
+      {
+        name: "ubuntu-accelerator-x86-2404",
+        family: "ubuntu-accelerator-2404",
+        project: "ubuntu-os-accelerator-images",
+        architecture: "X86_64",
+        gpuReady: true,
+        creationTimestamp: "2026-05-01T00:00:00.000Z",
+      },
+    ]);
+
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      region: "us-central1",
+      metadata: {
+        gpu: true,
+        machine: {
+          cloud: "gcp",
+          zone: "us-central1-a",
+          machine_type: "g2-standard-4",
+          gpu_type: "nvidia-l4",
+          metadata: {},
+        },
+      },
+    });
+
+    expect(spec.metadata?.source_image_family).toBe("ubuntu-accelerator-2404");
+    expect(spec.metadata?.source_image_project).toBe(
+      "ubuntu-os-accelerator-images",
+    );
   });
 });
