@@ -67,13 +67,16 @@ describe("account_notification_index projector", () => {
     target_home_bay_id?: string;
     notification_id?: string;
     description?: string;
+    path?: string;
+    display_path?: string;
     created_at?: string;
   }) {
+    const path = opts?.path ?? "work/chat.chat";
     return await createNotificationEventGraph({
       kind: "mention",
       source_bay_id: LOCAL_BAY_ID,
       source_project_id: PROJECT_ID,
-      source_path: "work/chat.chat",
+      source_path: path,
       source_fragment_id: "thread=1",
       actor_account_id: SOURCE_ACCOUNT_ID,
       origin_kind: "project",
@@ -89,7 +92,8 @@ describe("account_notification_index projector", () => {
           notification_id: opts?.notification_id ?? NOTIFICATION_ID,
           summary_json: {
             description: opts?.description ?? "initial mention",
-            path: "work/chat.chat",
+            path,
+            ...(opts?.display_path ? { display_path: opts.display_path } : {}),
           },
         },
       ],
@@ -268,6 +272,35 @@ describe("account_notification_index projector", () => {
       [NOTIFICATION_ID],
     );
     expect(emailRows.rows).toHaveLength(1);
+  });
+
+  it("uses display_path for queued mention email subjects", async () => {
+    await seedAccounts();
+    await appendMentionOutboxRow({
+      path: "/home/user/b.chat",
+      display_path: "b.chat",
+    });
+
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+
+    await expect(
+      getPool().query(
+        `SELECT subject
+           FROM notification_email_outbox
+          WHERE notification_id = $1`,
+        [NOTIFICATION_ID],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          subject: "CoCalc mention in b.chat",
+        },
+      ],
+    });
   });
 
   it("ignores events for accounts homed in another bay", async () => {

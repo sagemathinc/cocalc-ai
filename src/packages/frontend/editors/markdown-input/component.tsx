@@ -33,6 +33,7 @@ import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/works
 import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/use-workspace-record";
 import { len, trunc, trunc_middle } from "@cocalc/util/misc";
 import { Complete, Item } from "./complete";
+import { ALL_PROJECT_COLLABORATORS_MENTION_ID } from "./mention-all";
 import { useMentionableUsers } from "./mentionable-users";
 import { normalizeMentionSearch } from "./mention-search";
 import { submit_mentions } from "./mentions";
@@ -1367,9 +1368,15 @@ export function MarkdownInput(props: Props) {
         onCancel={close_mentions}
         onSelect={(account_id) => {
           if (mentions_cursor_ref.current == null) return;
-          const name =
-            redux.getStore("users").get_name(account_id)?.trim() ?? account_id;
-          const text = "@" + trunc_middle(name, 64);
+          const text =
+            account_id === ALL_PROJECT_COLLABORATORS_MENTION_ID
+              ? "@all"
+              : "@" +
+                trunc_middle(
+                  redux.getStore("users").get_name(account_id)?.trim() ??
+                    account_id,
+                  64,
+                );
           if (cm.current == null) return;
           const from = mentions_cursor_ref.current.from;
           const to = cm.current.getCursor();

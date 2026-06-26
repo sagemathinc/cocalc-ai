@@ -2169,6 +2169,7 @@ export type ExternalCredentialMethod =
   | "list"
   | "revoke";
 export type AccountProjectFeedMethod = "upsert" | "remove";
+export type AccountNotificationFeedMethod = "upsert";
 
 interface ResolveProjectBayApi {
   resolveProjectBay: (
@@ -3412,6 +3413,20 @@ export interface InterBayAccountProjectFeedApi {
   remove: (opts: AccountFeedProjectRemoveEvent) => Promise<void>;
 }
 
+export interface AccountNotificationFeedUpsertRequest {
+  target_account_id: string;
+  target_home_bay_id: string;
+  notification_id: string;
+  kind: string;
+  event_type: string;
+  payload_json: Record<string, any>;
+  created_at: string;
+}
+
+export interface InterBayAccountNotificationFeedApi {
+  upsert: (opts: AccountNotificationFeedUpsertRequest) => Promise<void>;
+}
+
 function serviceClientOptions({
   client,
   timeout,
@@ -3751,6 +3766,16 @@ export function accountProjectFeedSubject({
   method: AccountProjectFeedMethod;
 }): string {
   return `bay.${dest_bay}.rpc.account-project-feed.${method}`;
+}
+
+export function accountNotificationFeedSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: AccountNotificationFeedMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.account-notification-feed.${method}`;
 }
 
 export function createInterBayDirectoryClient({
@@ -7966,6 +7991,26 @@ export function createInterBayAccountProjectFeedClient({
   };
 }
 
+export function createInterBayAccountNotificationFeedClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayAccountNotificationFeedApi {
+  const upsertClient = createServiceClient<
+    Pick<InterBayAccountNotificationFeedApi, "upsert">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountNotificationFeedSubject({ dest_bay, method: "upsert" }),
+  });
+  return {
+    upsert: async (opts) => await upsertClient.upsert(opts),
+  };
+}
+
 export function createInterBayProjectCollabInviteHandlers({
   bay_id,
   impl,
@@ -8329,6 +8374,29 @@ export function createInterBayAccountProjectFeedHandlers({
       }),
       impl: {
         remove: async (opts) => await impl.remove(opts),
+      },
+    }),
+  ];
+}
+
+export function createInterBayAccountNotificationFeedHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayAccountNotificationFeedApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayAccountNotificationFeedApi, "upsert">>({
+      ...options,
+      service: "inter-bay-account-notification-feed",
+      subject: accountNotificationFeedSubject({
+        dest_bay: bay_id,
+        method: "upsert",
+      }),
+      impl: {
+        upsert: async (opts) => await impl.upsert(opts),
       },
     }),
   ];

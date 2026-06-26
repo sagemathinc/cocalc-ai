@@ -4,7 +4,9 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { ensureClusterAccountDirectorySchema } from "@cocalc/server/accounts/cluster-directory";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
+import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
 import {
   MAX_NOTIFICATION_ID_BATCH,
   MAX_NOTIFICATION_INBOX_LIST_LIMIT,
@@ -24,6 +26,10 @@ jest.mock("@cocalc/server/notifications/feed", () => ({
   publishProjectedNotificationFeedUpdatesBestEffort: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/notifications/remote-feed", () => ({
+  forwardRemoteNotificationTargetsBestEffort: jest.fn(async () => undefined),
+}));
+
 const LOCAL_BAY_ID = "bay-0";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const ACTOR_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
@@ -35,6 +41,7 @@ const NON_COLLABORATOR_ACCOUNT_ID = "88888888-8888-4888-8888-888888888888";
 describe("conat notifications api", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
+    await ensureClusterAccountDirectorySchema();
   }, 15000);
 
   afterEach(async () => {
@@ -44,6 +51,7 @@ describe("conat notifications api", () => {
                 notification_targets,
                 notification_events,
                 projects,
+                cluster_account_directory,
                 accounts
          CASCADE`,
     );
@@ -119,6 +127,11 @@ describe("conat notifications api", () => {
         }),
       ],
     });
+    expect(forwardRemoteNotificationTargetsBestEffort).toHaveBeenCalledWith({
+      bay_id: LOCAL_BAY_ID,
+      outbox_ids: [expect.any(String)],
+      limit: 1,
+    });
 
     const { rows } = await getPool().query(
       `SELECT kind, source_project_id, source_path, source_fragment_id,
@@ -139,6 +152,107 @@ describe("conat notifications api", () => {
           stable_source_id: "chat-message-1",
         },
       },
+    ]);
+  });
+
+  it("creates mention notifications for remote collaborators without local account rows", async () => {
+    await seedMentionContext();
+    const remoteOnlyAccountId = NON_COLLABORATOR_ACCOUNT_ID;
+    await getPool().query("DELETE FROM accounts WHERE account_id=$1", [
+      remoteOnlyAccountId,
+    ]);
+    await getPool().query(
+      `INSERT INTO cluster_account_directory
+         (account_id, email_address, display_name, first_name, last_name,
+          home_bay_id, provisioned)
+       VALUES
+         ($1, 'remote@example.com', 'Remote Collaborator', 'Remote',
+          'Collaborator', 'bay-1', TRUE)`,
+      [remoteOnlyAccountId],
+    );
+    await getPool().query(
+      `UPDATE projects
+          SET users = users || $2::JSONB
+        WHERE project_id = $1`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          [remoteOnlyAccountId]: { group: "collaborator" },
+        }),
+      ],
+    );
+
+    await expect(
+      createMention({
+        account_id: ACTOR_ACCOUNT_ID,
+        source_project_id: PROJECT_ID,
+        source_path: "work/chat.chat",
+        source_fragment_id: "thread=remote",
+        target_account_ids: [remoteOnlyAccountId],
+        description: "Remote collaborator mentioned",
+        stable_source_id: "chat-message-remote",
+      }),
+    ).resolves.toMatchObject({
+      kind: "mention",
+      target_count: 1,
+      targets: [
+        expect.objectContaining({
+          target_account_id: remoteOnlyAccountId,
+          target_home_bay_id: "bay-1",
+        }),
+      ],
+    });
+    expect(forwardRemoteNotificationTargetsBestEffort).toHaveBeenCalledWith({
+      bay_id: LOCAL_BAY_ID,
+      outbox_ids: [expect.any(String)],
+      limit: 1,
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT target_account_id, target_home_bay_id
+         FROM notification_targets
+        WHERE target_account_id = $1`,
+      [remoteOnlyAccountId],
+    );
+    expect(rows).toEqual([
+      {
+        target_account_id: remoteOnlyAccountId,
+        target_home_bay_id: "bay-1",
+      },
+    ]);
+  });
+
+  it("stores home-relative mention display paths without changing source paths", async () => {
+    await seedMentionContext();
+
+    await createMention({
+      account_id: ACTOR_ACCOUNT_ID,
+      source_project_id: PROJECT_ID,
+      source_path: "/home/user/b.chat",
+      source_fragment_id: "thread=home",
+      target_account_ids: [TARGET_ACCOUNT_ID],
+      description: "Home relative path mention",
+      stable_source_id: "chat-message-home-path",
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT e.source_path, o.payload_json
+         FROM notification_events e
+         JOIN notification_target_outbox o
+           ON o.payload_json->>'event_id' = e.event_id::TEXT
+        WHERE e.source_fragment_id = 'thread=home'`,
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        source_path: "/home/user/b.chat",
+        payload_json: expect.objectContaining({
+          source_path: "/home/user/b.chat",
+          summary: expect.objectContaining({
+            path: "/home/user/b.chat",
+            display_path: "b.chat",
+          }),
+        }),
+      }),
     ]);
   });
 

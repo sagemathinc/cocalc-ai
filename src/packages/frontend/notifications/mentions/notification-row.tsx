@@ -78,6 +78,7 @@ export function NotificationRow(props: Props) {
   const {
     kind,
     path,
+    display_path,
     project_id,
     source,
     time,
@@ -94,6 +95,7 @@ export function NotificationRow(props: Props) {
     action_label,
     severity,
   } = mention.toJS();
+  const shownPath = display_path || path;
   const fragmentId = Fragment.decode(fragment_id);
   const is_read = mention.getIn(["users", target, "read"]);
 
@@ -398,7 +400,7 @@ export function NotificationRow(props: Props) {
         <strong>
           <User account_id={source} user_map={user_map} />
         </strong>{" "}
-        mentioned you in the file <code>{path}</code> in the project{" "}
+        mentioned you in the file <code>{shownPath}</code> in the project{" "}
         <ProjectTitle project_id={project_id} />.
         {description ? (
           <StaticMarkdown
