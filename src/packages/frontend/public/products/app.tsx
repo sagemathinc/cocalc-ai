@@ -121,13 +121,14 @@ function CocalcRocketPage() {
           </Title>
           <Paragraph style={{ margin: 0 }}>
             CoCalc Rocket is the full self-hosted multi-user deployment of
-            CoCalc. It is the closest match to the hosted service when you want
-            collaborative projects, managed compute, and the broader CoCalc user
-            model on infrastructure you control.
+            CoCalc. It is exactly the same as the hosted service
+            https://cocalc.ai, providing collaborative projects, managed
+            scalable compute, and the broader CoCalc user model on
+            infrastructure you control.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
             It is also the right mental model for the hosted service itself:
-            hosted CoCalc is essentially Rocket run and managed by us instead of
+            hosted CoCalc is Rocket run and managed by us instead of
             by your own team.
           </Paragraph>
         </PublicSection>
