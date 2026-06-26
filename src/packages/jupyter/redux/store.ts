@@ -72,23 +72,109 @@ export function normalizeLanguageInfo(
   return plain;
 }
 
+type CodeMirrorMode = string | { name: string; version?: number };
+
+const PYTHON3_CODEMIRROR_MODE = { name: "python", version: 3 } as const;
+
+const LANGUAGE_CODEMIRROR_MODES: { [language: string]: CodeMirrorMode } = {
+  ada: "ada",
+  asm: "text/x-gas",
+  assembly: "text/x-gas",
+  bash: "shell",
+  c: "text/x-c",
+  "c++": "text/x-c++src",
+  cpp: "text/x-c++src",
+  "c#": "text/x-csharp",
+  csharp: "text/x-csharp",
+  clojure: "text/x-clojure",
+  cobol: "text/x-cobol",
+  coffee: "coffeescript",
+  coffeescript: "coffeescript",
+  css: "css",
+  diff: "text/x-diff",
+  dockerfile: "dockerfile",
+  dtd: "application/xml-dtd",
+  eiffel: "text/x-eiffel",
+  elm: "text/x-elm",
+  erlang: "text/x-erlang",
+  fortran: "text/x-fortran",
+  f90: "text/x-fortran",
+  go: "text/x-go",
+  groovy: "groovy",
+  haskell: "text/x-haskell",
+  haxe: "haxe",
+  html: "htmlmixed",
+  http: "message/http",
+  java: "text/x-java",
+  javascript: "javascript",
+  js: "javascript",
+  node: "javascript",
+  nodejs: "javascript",
+  jsx: "jsx",
+  julia: "text/x-julia",
+  jl: "text/x-julia",
+  latex: "stex2",
+  tex: "stex2",
+  lua: "lua",
+  macaulay2: "macaulay2",
+  markdown: "gfm2",
+  md: "gfm2",
+  mojo: "mojo",
+  octave: "text/x-octave",
+  pari: "text/pari",
+  gp: "text/pari",
+  perl: "text/x-perl",
+  php: "php",
+  python: PYTHON3_CODEMIRROR_MODE,
+  python2: { name: "python", version: 2 },
+  python3: PYTHON3_CODEMIRROR_MODE,
+  r: "r",
+  ruby: "text/x-ruby",
+  rust: "text/x-rustsrc",
+  sage: PYTHON3_CODEMIRROR_MODE,
+  sagemath: PYTHON3_CODEMIRROR_MODE,
+  sass: "text/x-sass",
+  scala: "text/x-scala",
+  scheme: "text/x-scheme",
+  sh: "shell",
+  shell: "shell",
+  smalltalk: "smalltalk",
+  sparql: "sparql",
+  sql: "text/x-sql",
+  toml: "text/x-toml",
+  typescript: "application/typescript",
+  ts: "application/typescript",
+  verilog: "verilog",
+  xml: "xml",
+  xquery: "xquery",
+  yaml: "yaml",
+  yml: "yaml",
+};
+
 export function codemirrorModeForLanguage(
   language?: string | null,
-): string | { name: string; version?: number } | undefined {
+  fallback: CodeMirrorMode | undefined = PYTHON3_CODEMIRROR_MODE,
+): CodeMirrorMode | undefined {
   const normalized = `${language ?? ""}`.trim().toLowerCase();
-  switch (normalized) {
-    case "sage":
-    case "sagemath":
-      return { name: "python", version: 3 };
-    case "bash":
-    case "sh":
-    case "shell":
-      return "shell";
-    case "r":
-      return "r";
-    default:
-      return undefined;
+  if (!normalized) {
+    return fallback;
   }
+  return LANGUAGE_CODEMIRROR_MODES[normalized] ?? fallback;
+}
+
+function normalizeCodemirrorMode(mode: any): any {
+  if (typeof mode === "string") {
+    return codemirrorModeForLanguage(mode, undefined) ?? mode;
+  }
+  if (mode?.name != null) {
+    const normalized = codemirrorModeForLanguage(mode.name, undefined);
+    if (normalized != null) {
+      return typeof normalized === "string"
+        ? { ...mode, name: normalized }
+        : { ...mode, ...normalized };
+    }
+  }
+  return mode;
 }
 
 export interface JupyterStoreState {
@@ -306,16 +392,13 @@ export class JupyterStore extends Store<JupyterStoreState> {
       );
     if (language_info != null) {
       if (language_info.codemirror_mode != null) {
-        mode = language_info.codemirror_mode;
+        mode = normalizeCodemirrorMode(language_info.codemirror_mode);
       } else if (language_info.name != null) {
-        mode =
-          codemirrorModeForLanguage(language_info.name) ?? language_info.name;
+        mode = codemirrorModeForLanguage(language_info.name);
       }
     }
     if (mode == null && kernelspec?.language != null) {
-      mode =
-        codemirrorModeForLanguage(kernelspec.language) ??
-        kernelspec.language.toLowerCase();
+      mode = codemirrorModeForLanguage(kernelspec.language);
     }
     if (mode == null) {
       const metadataLanguage = this.unsafe_getIn([
@@ -324,9 +407,7 @@ export class JupyterStore extends Store<JupyterStoreState> {
         "language",
       ]);
       if (metadataLanguage != null) {
-        mode =
-          codemirrorModeForLanguage(metadataLanguage) ??
-          `${metadataLanguage}`.toLowerCase();
+        mode = codemirrorModeForLanguage(metadataLanguage);
       }
     }
     if (mode == null) {
