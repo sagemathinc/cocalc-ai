@@ -1,0 +1,18 @@
+# Generated package outputs. This file keeps ripgrep results focused when
+# commands use src/packages as the explicit search root.
+*/build/
+*/build/**
+*/dist/
+*/dist/**
+*/dist-*/
+*/dist-*/**
+*/dist-ts/
+*/dist-ts/**
+
+# Generated/minified bundle artifacts.
+**/*.bundle.js
+**/*.bundle.css
+**/*.min.js
+**/*.min.css
+**/*.js.map
+**/*.css.map

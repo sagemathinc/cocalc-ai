@@ -500,7 +500,7 @@ export function FilesFlyout({
         refresh,
       });
     refreshRestoringProject();
-    const timer = setInterval(refreshRestoringProject, 3000);
+    const timer = setInterval(refreshRestoringProject, 15000);
     return () => clearInterval(timer);
   }, [
     allowListingUpdatesFor,

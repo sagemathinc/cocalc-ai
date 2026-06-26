@@ -1,5 +1,13 @@
-import { join } from "node:path";
-import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readlink,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import { dataPath, secretTokenPath } from "./env";
 import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
@@ -42,6 +50,66 @@ function templateSources(file: string): string[] {
   return sources;
 }
 
+function hasCode(err: unknown, code: string): boolean {
+  return typeof err == "object" && err != null && (err as any).code === code;
+}
+
+async function existingShellFileIsUsable({
+  home,
+  target,
+}: {
+  home: string;
+  target: string;
+}): Promise<boolean> {
+  let fileStat;
+  try {
+    fileStat = await lstat(target);
+  } catch (err) {
+    if (hasCode(err, "ENOENT")) {
+      return false;
+    }
+    throw err;
+  }
+
+  if (!fileStat.isSymbolicLink()) {
+    return true;
+  }
+
+  const link = await readlink(target);
+  if (isAbsolute(link)) {
+    logger.warn("ensureConfFilesExists: replacing absolute shell symlink", {
+      target,
+      link,
+    });
+    return false;
+  }
+
+  const resolved = resolve(dirname(target), link);
+  const resolvedHome = resolve(home);
+  if (resolved != resolvedHome && !resolved.startsWith(`${resolvedHome}/`)) {
+    logger.warn("ensureConfFilesExists: replacing escaping shell symlink", {
+      target,
+      link,
+      resolved,
+    });
+    return false;
+  }
+
+  try {
+    await stat(target);
+    return true;
+  } catch (err) {
+    if (hasCode(err, "ENOENT")) {
+      logger.warn("ensureConfFilesExists: replacing broken shell symlink", {
+        target,
+        link,
+      });
+      return false;
+    }
+    throw err;
+  }
+}
+
 async function ensureShellFile({
   home,
   file,
@@ -50,13 +118,12 @@ async function ensureShellFile({
   file: "bashrc" | "bash_profile";
 }): Promise<void> {
   const target = join(home, `.${file}`);
-  try {
-    await stat(target);
+  if (await existingShellFileIsUsable({ home, target })) {
     logger.debug("ensureConfFilesExists: already exists", { target });
     return;
-  } catch {
-    // file does not exist
   }
+
+  await rm(target, { force: true });
 
   for (const source of templateSources(file)) {
     try {
