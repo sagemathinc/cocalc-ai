@@ -323,13 +323,15 @@ async function publishRestoreProgress({
     error: null,
   });
   if (updated) {
-    await publishLroSummary({
+    await publishRestoreLroSummary({
+      row,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       summary: updated,
     });
   }
-  await publishLroEvent({
+  await publishRestoreLroEvent({
+    row,
     scope_type: "project",
     scope_id: row.project_id,
     op_id,
@@ -341,7 +343,55 @@ async function publishRestoreProgress({
       progress,
       detail,
     },
-  }).catch(() => {});
+  });
+}
+
+async function publishRestoreLroSummary({
+  row,
+  scope_type,
+  scope_id,
+  summary,
+}: {
+  row: LegacyRestoreRow;
+  scope_type: Parameters<typeof publishLroSummary>[0]["scope_type"];
+  scope_id: string;
+  summary: Parameters<typeof publishLroSummary>[0]["summary"];
+}): Promise<void> {
+  await publishLroSummary({ scope_type, scope_id, summary }).catch((err) => {
+    logger.debug("legacy migration restore LRO summary publish failed", {
+      legacy_project_id: row.legacy_project_id,
+      project_id: row.project_id,
+      op_id: summary.op_id,
+      scope_type,
+      scope_id,
+      err: `${err}`,
+    });
+  });
+}
+
+async function publishRestoreLroEvent({
+  row,
+  scope_type,
+  scope_id,
+  op_id,
+  event,
+}: {
+  row: LegacyRestoreRow;
+  scope_type: Parameters<typeof publishLroEvent>[0]["scope_type"];
+  scope_id: string;
+  op_id: string;
+  event: Parameters<typeof publishLroEvent>[0]["event"];
+}): Promise<void> {
+  await publishLroEvent({ scope_type, scope_id, op_id, event }).catch((err) => {
+    logger.debug("legacy migration restore LRO event publish failed", {
+      legacy_project_id: row.legacy_project_id,
+      project_id: row.project_id,
+      op_id,
+      scope_type,
+      scope_id,
+      err: `${err}`,
+    });
+  });
 }
 
 async function heartbeat(row: LegacyRestoreRow): Promise<void> {
@@ -410,7 +460,8 @@ async function markRestored({
     error: null,
   });
   if (updated) {
-    await publishLroSummary({
+    await publishRestoreLroSummary({
+      row,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       summary: updated,
@@ -456,7 +507,8 @@ async function markFailed({
     progress_summary: summary,
   });
   if (updated) {
-    await publishLroSummary({
+    await publishRestoreLroSummary({
+      row,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       summary: updated,
