@@ -284,6 +284,13 @@ const NEWEST_MESSAGES_BUTTON_STYLE: CSSProperties = {
   zIndex: 5,
 } as const;
 
+// Chat messages can contain rich static render trees. Keep a modest offscreen
+// buffer for smooth scrolling without mounting a huge history window.
+const CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY = {
+  top: 1200,
+  bottom: 1600,
+} as const;
+
 const INSTANT_SCROLL_BEHAVIOR = "auto" as const;
 
 function isEditableOrOverlayInteractionTarget(
@@ -1581,6 +1588,7 @@ export function MessageList({
         totalCount={sortedDates.length + 1}
         cacheId={cacheId}
         persistState={false}
+        increaseViewportBy={CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY}
         initialTopMostItemIndex={initialIndex}
         atTopThreshold={240}
         itemSize={(el) => {
