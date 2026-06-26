@@ -37,7 +37,6 @@ import { React } from "@cocalc/frontend/app-framework";
 import {
   Icon,
   ErrorDisplay,
-  Saving,
   TimeAgo,
   Tooltip,
 } from "@cocalc/frontend/components";
@@ -3211,7 +3210,12 @@ export function MembershipTiers() {
 
           <Form.Item>
             <Space.Compact>
-              <Button type="primary" htmlType="submit" disabled={hasJsonErrors}>
+              <Button
+                type="primary"
+                htmlType="submit"
+                disabled={hasJsonErrors}
+                loading={saving}
+              >
                 Save
               </Button>
               <Button
@@ -3873,7 +3877,6 @@ export function MembershipTiers() {
     <>
       <Space vertical style={{ width: "100%" }}>
         {error && <ErrorDisplay error={error} onClose={() => set_error("")} />}
-        {saving && <Saving />}
         {editing != null ? render_edit() : render_view()}
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />
