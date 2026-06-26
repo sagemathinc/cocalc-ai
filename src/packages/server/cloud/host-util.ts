@@ -112,13 +112,38 @@ const gcpImageTimestamp = (img: GcpImage): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const gcpMachineTypeArchitecture = (
+  machineType?: string,
+): "ARM64" | "X86_64" => {
+  const family = `${machineType ?? ""}`.split("-")[0] ?? "";
+  return family.endsWith("a") ? "ARM64" : "X86_64";
+};
+
+const normalizeGcpImageArchitecture = (
+  value?: string | null,
+): "ARM64" | "X86_64" | undefined => {
+  const upper = `${value ?? ""}`.trim().toUpperCase();
+  if (!upper) return undefined;
+  if (upper === "ARM64" || upper === "AARCH64") return "ARM64";
+  if (upper === "X86_64" || upper === "AMD64" || upper === "X64") {
+    return "X86_64";
+  }
+  return undefined;
+};
+
 const pickGcpAcceleratorFamily = (
   images: GcpImage[],
+  opts: { machineType?: string } = {},
 ): { family?: string; project?: string } => {
+  const desiredArch = gcpMachineTypeArchitecture(opts.machineType);
   const ubuntuImages = images.filter((img) =>
     (img.family ?? img.name ?? "").toLowerCase().includes("ubuntu"),
   );
-  const gpuImages = ubuntuImages.filter((img) => img.gpuReady);
+  const gpuImages = ubuntuImages.filter((img) => {
+    if (!img.gpuReady) return false;
+    const imageArch = normalizeGcpImageArchitecture(img.architecture);
+    return !imageArch || imageArch === desiredArch;
+  });
   const versioned = gpuImages.filter((img) => {
     const version = parseGcpUbuntuVersion(img.family ?? img.name) ?? 0;
     return version >= MIN_UBUNTU_VERSION;
@@ -421,7 +446,9 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   }
   if (providerId === "gcp" && gpu) {
     const images = await loadGcpImages();
-    const { family, project } = pickGcpAcceleratorFamily(images);
+    const { family, project } = pickGcpAcceleratorFamily(images, {
+      machineType: machine.machine_type,
+    });
     if (!family) {
       throw new Error(
         `no GCP accelerator Ubuntu ${MIN_UBUNTU_VERSION / 100}+ images available`,

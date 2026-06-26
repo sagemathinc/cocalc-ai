@@ -10,6 +10,12 @@ import { createInterface } from "node:readline";
 import { createGunzip } from "node:zlib";
 
 import getPool from "@cocalc/database/pool";
+import {
+  ensurePublicDirectorySharesSchema,
+  normalizePublicDirectorySharePath,
+  normalizePublicDirectoryShareSlug,
+} from "@cocalc/server/public-directory-shares";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 
 type ImportTarget =
@@ -18,7 +24,8 @@ type ImportTarget =
   | "artifacts"
   | "purchases"
   | "subscriptions"
-  | "site_licenses";
+  | "site_licenses"
+  | "public_paths";
 
 type Options = {
   dir?: string;
@@ -59,7 +66,7 @@ function usage(): never {
 Options:
   --dir <path>          Directory containing *.ndjson.gz files from kucalc db legacy-migration-dump.
                         Optional when only running --enable-legacy-projects-button.
-  --only <list>         Comma-separated import targets: accounts,projects,artifacts,purchases,subscriptions,site_licenses.
+  --only <list>         Comma-separated import targets: accounts,projects,artifacts,purchases,subscriptions,site_licenses,public_paths.
   --limit <n>           Stop after importing n rows per file, useful for smoke tests.
   --batch-size <n>      Rows per database batch. Default: ${DEFAULT_BATCH_SIZE}.
   --dry-run             Parse files and report counts without writing to the database.
@@ -123,6 +130,7 @@ function parseArgs(argv: string[]): Options {
       "purchases",
       "subscriptions",
       "site_licenses",
+      "public_paths",
     ]);
     const unknown = [...options.only].filter((x) => !allowed.has(x));
     if (unknown.length > 0) {
@@ -322,6 +330,7 @@ function targetForFile(file: string): ImportTarget | undefined {
   if (name === "purchases.ndjson.gz") return "purchases";
   if (name === "subscriptions.ndjson.gz") return "subscriptions";
   if (name === "site_licenses.ndjson.gz") return "site_licenses";
+  if (name === "public_paths.ndjson.gz") return "public_paths";
   return undefined;
 }
 
@@ -565,6 +574,179 @@ async function upsertArtifacts(rows: Record<string, any>[]): Promise<void> {
   );
 }
 
+function legacyPublicPathSlug(row: Record<string, any>): string {
+  const raw =
+    clean(row.url) ??
+    clean(row.name) ??
+    (clean(row.project_id) && clean(row.path)
+      ? `${clean(row.project_id)}/${clean(row.path)}`
+      : null);
+  if (!raw) {
+    throw Error("public_paths row has no usable url, name, or project/path");
+  }
+  let slug = raw.trim();
+  try {
+    if (/^https?:\/\//i.test(slug)) {
+      slug = new URL(slug).pathname;
+    }
+  } catch {
+    // Fall through to path-style normalization below.
+  }
+  slug = slug.replace(/^\/+|\/+$/g, "");
+  if (slug.toLowerCase().startsWith("share/")) {
+    slug = slug.slice("share/".length);
+  }
+  return normalizePublicDirectoryShareSlug(slug);
+}
+
+async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
+  await ensurePublicDirectorySharesSchema();
+  const payload = rows
+    .map((row) => ({
+      legacy_public_path_id: clean(row.id),
+      project_id: clean(row.project_id),
+      path: clean(row.path) ?? ".",
+      slug: clean(row.slug),
+      visibility: row.disabled
+        ? "disabled"
+        : row.unlisted
+          ? "unlisted"
+          : "listed",
+      requires_auth: true,
+      title: clean(row.title) ?? clean(row.name),
+      description: clean(row.description),
+      license: clean(row.license),
+      image: clean(row.image),
+      redirect: clean(row.redirect),
+      site_license_id: clean(row.site_license_id),
+      legacy_url: clean(row.url),
+      metadata: {
+        authenticated: row.authenticated ?? null,
+        auth: row.auth ?? null,
+        compute_image: row.compute_image ?? null,
+        counter: row.counter ?? null,
+        jupyter_api: row.jupyter_api ?? null,
+        token: row.token ?? null,
+        vhost: row.vhost ?? null,
+      },
+      last_edited: row.last_edited ?? row.last_saved ?? null,
+      disabled: row.disabled === true,
+    }))
+    .filter((row) => row.legacy_public_path_id && row.project_id && row.slug);
+  if (payload.length === 0) return;
+  await pool().query(
+    `
+    WITH input AS (
+      SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS x(
+          legacy_public_path_id TEXT,
+          project_id UUID,
+          path TEXT,
+          slug TEXT,
+          visibility TEXT,
+          requires_auth BOOLEAN,
+          title TEXT,
+          description TEXT,
+          license TEXT,
+          image TEXT,
+          redirect TEXT,
+          site_license_id UUID,
+          legacy_url TEXT,
+          metadata JSONB,
+          last_edited TIMESTAMPTZ,
+          disabled BOOLEAN
+        )
+    ),
+    prepared AS (
+      SELECT input.*,
+             CASE
+               WHEN projects.project_id IS NOT NULL THEN 'available'
+               WHEN COALESCE(legacy.artifact_status, '') = 'available' THEN 'pending'
+               ELSE 'unavailable'
+             END AS availability_status,
+             CASE
+               WHEN projects.project_id IS NOT NULL THEN NULL
+               WHEN COALESCE(legacy.artifact_status, '') = 'available'
+                 THEN 'This shared directory has been imported, but its project files have not been restored yet.'
+               ELSE 'This shared directory exists in the legacy share catalog, but its project archive is not available on this site yet.'
+             END AS availability_message
+        FROM input
+        LEFT JOIN projects ON projects.project_id=input.project_id
+        LEFT JOIN legacy_migration_projects legacy
+          ON legacy.legacy_project_id=input.project_id::text
+    ),
+    upserted AS (
+      INSERT INTO public_project_paths (
+        project_id, path, slug, visibility, requires_auth,
+        availability_status, availability_message, title, description, license,
+        image, redirect, site_license_id, metadata, legacy_public_path_id,
+        legacy_url, last_edited, disabled, created_at, updated_at
+      )
+      SELECT project_id,
+             path,
+             slug,
+             visibility,
+             COALESCE(requires_auth, true),
+             availability_status,
+             availability_message,
+             title,
+             description,
+             license,
+             image,
+             redirect,
+             site_license_id,
+             COALESCE(metadata, '{}'::jsonb),
+             legacy_public_path_id,
+             legacy_url,
+             last_edited,
+             COALESCE(disabled, false) OR visibility='disabled',
+             NOW(),
+             NOW()
+        FROM prepared
+       WHERE legacy_public_path_id IS NOT NULL
+         AND project_id IS NOT NULL
+         AND COALESCE(slug, '') <> ''
+      ON CONFLICT (legacy_public_path_id)
+        WHERE legacy_public_path_id IS NOT NULL
+      DO UPDATE SET
+        project_id=EXCLUDED.project_id,
+        path=EXCLUDED.path,
+        slug=EXCLUDED.slug,
+        visibility=EXCLUDED.visibility,
+        requires_auth=EXCLUDED.requires_auth,
+        availability_status=EXCLUDED.availability_status,
+        availability_message=EXCLUDED.availability_message,
+        title=EXCLUDED.title,
+        description=EXCLUDED.description,
+        license=EXCLUDED.license,
+        image=EXCLUDED.image,
+        redirect=EXCLUDED.redirect,
+        site_license_id=EXCLUDED.site_license_id,
+        metadata=EXCLUDED.metadata,
+        legacy_url=EXCLUDED.legacy_url,
+        last_edited=EXCLUDED.last_edited,
+        disabled=EXCLUDED.disabled,
+        updated_at=NOW()
+      RETURNING id, project_id, slug, disabled
+    )
+    INSERT INTO public_project_path_slugs (
+      slug_lower, slug, owning_bay_id, public_project_path_id, project_id,
+      disabled, updated_at
+    )
+    SELECT lower(slug), slug, $2, id, project_id, disabled, NOW()
+      FROM upserted
+    ON CONFLICT (slug_lower) DO UPDATE SET
+      slug=EXCLUDED.slug,
+      owning_bay_id=EXCLUDED.owning_bay_id,
+      public_project_path_id=EXCLUDED.public_project_path_id,
+      project_id=EXCLUDED.project_id,
+      disabled=EXCLUDED.disabled,
+      updated_at=NOW()
+    `,
+    [JSON.stringify(payload), getConfiguredBayId()],
+  );
+}
+
 async function ensureRawRecordsSchema(): Promise<void> {
   rawRecordsSchemaReady ??= (async () => {
     await pool().query(`
@@ -652,6 +834,8 @@ async function writeBatch(
     await upsertProjects(rows);
   } else if (target === "artifacts") {
     await upsertArtifacts(rows);
+  } else if (target === "public_paths") {
+    await upsertPublicPaths(rows);
   } else {
     await upsertRawRecords(target, rows);
   }
@@ -719,6 +903,15 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
     row.artifact_key = clean(row.artifact_key);
     row.manifest_key = clean(row.manifest_key);
     row.artifact_status = clean(row.artifact_status) ?? "available";
+  } else if (target === "public_paths") {
+    row.id = clean(row.id);
+    row.project_id = clean(row.project_id);
+    row.path = normalizePublicDirectorySharePath(clean(row.path) ?? ".");
+    row.slug = legacyPublicPathSlug(row);
+    row.name = clean(row.name);
+    row.description = clean(row.description);
+    row.url = clean(row.url);
+    row.site_license_id = clean(row.site_license_id);
   } else {
     row.id = clean(row.id);
     row.legacy_account_id = clean(row.legacy_account_id);
@@ -749,6 +942,7 @@ async function filesToImport(
     purchases: 3,
     subscriptions: 4,
     site_licenses: 5,
+    public_paths: 6,
   };
   return files.sort((a, b) => order[a.target] - order[b.target]);
 }

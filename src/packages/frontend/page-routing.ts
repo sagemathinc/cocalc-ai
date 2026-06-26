@@ -29,6 +29,7 @@ export type PageTopTab =
   | "notifications"
   | "project"
   | "projects"
+  | "share"
   | "ssh";
 
 export type ParsedPageTarget =
@@ -46,6 +47,7 @@ export type ParsedPageTarget =
   | { page: "file-use" }
   | { page: "admin"; route: AdminRoute }
   | { page: "hosts" }
+  | { page: "share"; slug: string }
   | { page: "ssh" }
   | {
       page: "auth";
@@ -113,6 +115,11 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
       };
     case "hosts":
       return { page: "hosts" };
+    case "share":
+      return {
+        page: "share",
+        slug: segments.slice(1).filter(Boolean).join("/"),
+      };
     case "ssh":
       return { page: "ssh" };
     case "auth":
@@ -176,6 +183,8 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       return getAdminTargetPath(parsed.route);
     case "hosts":
       return "hosts";
+    case "share":
+      return `share/${parsed.slug}`;
     case "ssh":
       return "ssh";
     case "auth":

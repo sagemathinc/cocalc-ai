@@ -24,6 +24,7 @@ import { NotificationPage } from "@cocalc/frontend/notifications";
 import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { ProjectsPage } from "@cocalc/frontend/projects/projects-page";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
+import { PublicDirectorySharePage } from "@cocalc/frontend/share/public-directory-share-page";
 import { SshPage } from "@cocalc/frontend/ssh";
 import { KioskModeBanner } from "./kiosk-mode-banner";
 import { HostsPage } from "@cocalc/frontend/hosts/hosts-page";
@@ -81,6 +82,7 @@ export const ActiveContent: React.FC = React.memo(() => {
   const fullscreen = useTypedRedux("page", "fullscreen");
   const get_api_key = useTypedRedux("page", "get_api_key");
   const open_projects = useTypedRedux("projects", "open_projects");
+  const share_slug = useTypedRedux("page", "share_slug");
 
   // initially, we assume a user is signed in – most likely case
   const [notSignedIn, setNotSignedIn] = React.useState<boolean>(false);
@@ -208,6 +210,13 @@ export const ActiveContent: React.FC = React.memo(() => {
         break;
       case "hosts":
         overlay = renderLayer("hosts", true, <HostsPage />);
+        break;
+      case "share":
+        overlay = renderLayer(
+          "share",
+          true,
+          <PublicDirectorySharePage slug={share_slug} />,
+        );
         break;
       case "ssh":
         overlay = renderLayer("ssh", true, <SshPage />);

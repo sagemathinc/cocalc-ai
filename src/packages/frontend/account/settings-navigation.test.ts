@@ -11,6 +11,7 @@ const visibleContext: SettingsNavigationContext = {
   isAdmin: false,
   isLite: false,
   legacyMigrationEnabled: true,
+  publicDirectorySharesEnabled: true,
   stripeEnabled: true,
   zendesk: true,
 };
@@ -94,6 +95,11 @@ describe("settings-navigation", () => {
         (node) => node.type === "page" && node.page === "legacy-migration",
       ),
     ).toBe(false);
+    expect(
+      liteNavigation.some(
+        (node) => node.type === "page" && node.page === "public-shares",
+      ),
+    ).toBe(false);
   });
 
   it("hides legacy migration unless explicitly enabled", () => {
@@ -118,11 +124,34 @@ describe("settings-navigation", () => {
     ).toBe(true);
   });
 
+  it("hides public shares unless explicitly enabled", () => {
+    const disabledNavigation = getVisibleSettingsNavigation({
+      ...visibleContext,
+      publicDirectorySharesEnabled: false,
+    });
+    expect(
+      disabledNavigation.some(
+        (node) => node.type === "page" && node.page === "public-shares",
+      ),
+    ).toBe(false);
+
+    const enabledNavigation = getVisibleSettingsNavigation({
+      ...visibleContext,
+      publicDirectorySharesEnabled: true,
+    });
+    expect(
+      enabledNavigation.some(
+        (node) => node.type === "page" && node.page === "public-shares",
+      ),
+    ).toBe(true);
+  });
+
   it("derives overview sections from the visible navigation tree", () => {
     const overview = getSettingsOverviewSections(visibleContext);
 
     expect(overview.primaryPages).toContain("profile");
     expect(overview.primaryPages).toContain("membership");
+    expect(overview.primaryPages).toContain("public-shares");
     expect(overview.primaryPages).toContain("usage-limits");
     expect(overview.primaryPages).toContain("appearance");
     expect(overview.primaryPages).toContain("ai");

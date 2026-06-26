@@ -157,7 +157,8 @@ export function load_target(
     !redux.getStore("account").get("is_logged_in") &&
     !webapp_client.is_signed_in() &&
     parsed.page !== "auth" &&
-    parsed.page !== "claim"
+    parsed.page !== "claim" &&
+    parsed.page !== "share"
   ) {
     // this will redirect to the sign in page after a brief pause
     redux.getActions("page").set_active_tab("account", false);
@@ -206,6 +207,11 @@ export function load_target(
 
     case "hosts":
       redux.getActions("page").set_active_tab("hosts", change_history);
+      break;
+
+    case "share":
+      redux.getActions("page").setState({ share_slug: parsed.slug });
+      redux.getActions("page").set_active_tab("share", change_history);
       break;
 
     case "ssh":

@@ -22,6 +22,7 @@ import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/ac
 import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import { updateClusterAccountEmailAddress } from "@cocalc/server/inter-bay/accounts";
+import { updateClusterAccountEmailAddressVerified } from "@cocalc/server/inter-bay/account-directory-updates";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   isValidUUID,
@@ -139,6 +140,12 @@ export default async function setEmailAddress({
       });
       throw err;
     }
+    if (already_verified) {
+      await updateClusterAccountEmailAddressVerified({
+        account_id,
+        email_address_verified: true,
+      });
+    }
     const verification_email_error = already_verified
       ? undefined
       : await sendEmailVerification(account_id);
@@ -182,6 +189,12 @@ export default async function setEmailAddress({
       new_email_address: email_address,
     });
     throw err;
+  }
+  if (already_verified) {
+    await updateClusterAccountEmailAddressVerified({
+      account_id,
+      email_address_verified: true,
+    });
   }
 
   // sync new email address with stripe

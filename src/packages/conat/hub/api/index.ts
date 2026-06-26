@@ -17,6 +17,10 @@ import { type Notifications, notifications } from "./notifications";
 import { type AdminData, adminData } from "./admin-data-explorer";
 import { type AiSessionsApi, aiSessions } from "./ai-sessions";
 import { type LegacyMigration, legacyMigration } from "./legacy-migration";
+import {
+  type PublicDirectoryShares,
+  publicDirectoryShares,
+} from "./public-directory-shares";
 
 export interface HubApi {
   system: System;
@@ -36,6 +40,7 @@ export interface HubApi {
   adminData: AdminData;
   aiSessions: AiSessionsApi;
   legacyMigration: LegacyMigration;
+  publicDirectoryShares: PublicDirectoryShares;
 }
 
 const HubApiStructure = {
@@ -56,6 +61,7 @@ const HubApiStructure = {
   adminData,
   aiSessions,
   legacyMigration,
+  publicDirectoryShares,
 } as const;
 
 export function transformArgs({

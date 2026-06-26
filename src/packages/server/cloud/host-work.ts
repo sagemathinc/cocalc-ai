@@ -433,6 +433,23 @@ function sanitizedMetadataForFailedStart(opts: {
   return nextMetadata;
 }
 
+function clearDeletedProviderDiskIdentity(metadata: any, providerId?: string) {
+  const nextMetadata = { ...(metadata ?? {}) };
+  const machine = { ...(nextMetadata.machine ?? {}) };
+  const machineMetadata = { ...(machine.metadata ?? {}) };
+  if (providerId === "nebius") {
+    delete machineMetadata.data_disk_id;
+    delete machineMetadata.dataDiskId;
+    delete machineMetadata.shared_disk_id;
+    delete machineMetadata.sharedDiskId;
+    delete machineMetadata.shared_disk_name;
+    delete machineMetadata.sharedDiskName;
+  }
+  machine.metadata = machineMetadata;
+  nextMetadata.machine = machine;
+  return nextMetadata;
+}
+
 async function observeStoppedStartFailure(opts: {
   action?: string;
   row: any;
@@ -2112,9 +2129,10 @@ async function handleDelete(row: any) {
   });
   // set the project host to a deprovisioned state, which means all
   // the data stored there is definitely gone and no dns is setup.
-  const nextMetadata = {
-    ...(row.metadata ?? {}),
-  };
+  const nextMetadata = clearDeletedProviderDiskIdentity(
+    row.metadata ?? {},
+    providerId,
+  );
   delete nextMetadata.runtime;
   delete nextMetadata.dns;
   delete nextMetadata.cloudflare_tunnel;
