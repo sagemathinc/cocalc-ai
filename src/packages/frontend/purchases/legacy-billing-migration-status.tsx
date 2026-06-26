@@ -42,6 +42,7 @@ export default function LegacyBillingMigrationStatus() {
     "legacy_migration_enabled",
   );
   const [error, setError] = useState("");
+  const [applying, setApplying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] =
     useState<LegacyMigrationFinancialPreviewResponse>();
@@ -64,6 +65,29 @@ export default function LegacyBillingMigrationStatus() {
   useEffect(() => {
     void load();
   }, [account_id, legacyMigrationEnabled]);
+
+  async function apply() {
+    if (!preview?.can_apply) return;
+    setApplying(true);
+    setError("");
+    try {
+      await webapp_client.conat_client.hub.legacyMigration.applyFinancialMigration(
+        {
+          membership_class:
+            preview.active_subscription_count > 0 &&
+            !preview.membership_already_applied
+              ? "basic"
+              : null,
+          membership_interval: "month",
+        },
+      );
+      await load();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setApplying(false);
+    }
+  }
 
   if (!legacyMigrationEnabled) return null;
   if (loading && !preview) return <Loading />;
@@ -92,9 +116,21 @@ export default function LegacyBillingMigrationStatus() {
         </Space>
       }
       extra={
-        <Button loading={loading} onClick={() => void load()} size="small">
-          Refresh
-        </Button>
+        <Space>
+          {preview?.can_apply ? (
+            <Button
+              loading={applying}
+              onClick={() => void apply()}
+              size="small"
+              type="primary"
+            >
+              Apply now
+            </Button>
+          ) : null}
+          <Button loading={loading} onClick={() => void load()} size="small">
+            Refresh
+          </Button>
+        </Space>
       }
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -108,7 +144,7 @@ export default function LegacyBillingMigrationStatus() {
           }
           description={
             pending
-              ? "Positive credit, Stripe customer metadata, and a one-month Basic membership for active legacy subscriptions are applied automatically. No project restore action is required."
+              ? "Click Apply now to add positive credit, Stripe customer metadata, and a one-month Basic membership for active legacy subscriptions. No project restore action is required."
               : "Migrated legacy billing items are recorded in your CoCalc billing history and membership status."
           }
         />

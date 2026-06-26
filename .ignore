@@ -1,0 +1,30 @@
+# Generated package outputs. This root-level ignore keeps ripgrep fast and
+# relevant when commands are run from /home/user/cocalc-ai instead of src/.
+src/packages/*/build/
+src/packages/*/build/**
+src/packages/*/dist/
+src/packages/*/dist/**
+src/packages/*/dist-*/
+src/packages/*/dist-*/**
+src/packages/*/dist-ts/
+src/packages/*/dist-ts/**
+
+# Same generated-output rules when ripgrep is run with an explicit
+# src/packages search root, e.g. `rg foo src/packages`.
+*/build/
+*/build/**
+*/dist/
+*/dist/**
+*/dist-*/
+*/dist-*/**
+*/dist-ts/
+*/dist-ts/**
+
+# Generated/minified bundle artifacts. Keep these out of normal ripgrep
+# searches even when the artifact is tracked or a gitignore rule is ineffective.
+**/*.bundle.js
+**/*.bundle.css
+**/*.min.js
+**/*.min.css
+**/*.js.map
+**/*.css.map

@@ -19,11 +19,12 @@ import {
   Typography,
   message,
 } from "antd";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { defineMessage } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import { load_target } from "@cocalc/frontend/history";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import { isNewProjectRootfsSelectable } from "@cocalc/frontend/projects/create-project-rootfs";
 import { useProjectCreateDraft } from "@cocalc/frontend/projects/create/use-project-create-draft";
@@ -41,6 +42,28 @@ import type {
 import type { SettingsPageDefinition } from "./settings-page";
 
 const { Text } = Typography;
+
+function InternalRouteLink({
+  children,
+  href,
+  target,
+}: {
+  children: ReactNode;
+  href: string;
+  target: string;
+}) {
+  return (
+    <a
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        load_target(target);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 type LegacyMigrationState = {
   error: string;
@@ -740,8 +763,14 @@ export function LegacyMigrationPage() {
                 uploaded yet.
               </Text>
               <Text type="secondary">
-                Billing credit and legacy memberships are handled automatically
-                in <a href="/settings/balance">Billing</a>.
+                Billing credit and legacy memberships are handled in{" "}
+                <InternalRouteLink
+                  href="/settings/balance"
+                  target="settings/balance"
+                >
+                  Billing
+                </InternalRouteLink>
+                .
               </Text>
             </Space>
             <Space direction="vertical" size={4}>
@@ -853,9 +882,15 @@ export function LegacyMigrationPage() {
                 <span>
                   Use the same verified email address as your old cocalc.com
                   account. To try another address, change and verify your email
-                  in <a href="/settings/profile">profile settings</a>, then
-                  refresh this page. Contact support if your legacy account used
-                  another identity.
+                  in{" "}
+                  <InternalRouteLink
+                    href="/settings/profile"
+                    target="settings/profile"
+                  >
+                    profile settings
+                  </InternalRouteLink>
+                  , then refresh this page. Contact support if your legacy
+                  account used another identity.
                 </span>
               }
             />
@@ -886,8 +921,13 @@ export function LegacyMigrationPage() {
                 <Text type="secondary">
                   If you want to also include projects associated with a
                   different email address, change your email address in{" "}
-                  <a href="/settings/profile">profile settings</a>, verify it,
-                  then come back to this page.
+                  <InternalRouteLink
+                    href="/settings/profile"
+                    target="settings/profile"
+                  >
+                    profile settings
+                  </InternalRouteLink>
+                  , verify it, then come back to this page.
                 </Text>
                 <Text type="secondary">
                   Showing the{" "}

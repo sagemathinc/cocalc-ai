@@ -597,10 +597,6 @@ async function downloadSignedProjectArchive({
   const monitor = new Transform({
     transform(chunk: Buffer, _encoding, cb) {
       bytes += chunk.length;
-      if (expectedBytes != null && bytes > expectedBytes) {
-        cb(new Error("project archive exceeded expected byte count"));
-        return;
-      }
       hash.update(chunk);
       const now = Date.now();
       if (now - lastProgress >= PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS) {
@@ -628,11 +624,6 @@ async function downloadSignedProjectArchive({
     createWriteStream(dest),
   );
   const sha256 = hash.digest("hex");
-  if (expectedBytes != null && bytes !== expectedBytes) {
-    throw new Error(
-      `project archive byte count mismatch: expected ${expectedBytes}, got ${bytes}`,
-    );
-  }
   const expectedSha256 = `${download.sha256 ?? ""}`.trim().toLowerCase();
   if (expectedSha256 && sha256 !== expectedSha256) {
     throw new Error(
