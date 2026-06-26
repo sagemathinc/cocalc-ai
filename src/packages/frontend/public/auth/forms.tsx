@@ -20,6 +20,7 @@ import {
   retryAuthOnHomeBay,
   type SecondFactorMethod,
 } from "@cocalc/frontend/auth/api";
+import AuthInstructions from "@cocalc/frontend/auth/instructions";
 import { signInWithPasskey } from "@cocalc/frontend/auth/passkeys";
 import {
   getSecondFactorPlaceholder,
@@ -659,6 +660,11 @@ export function PublicSignInForm({
 
   return (
     <div style={STACK_STYLE}>
+      {!challengeId && (
+        <AuthInstructions>
+          {publicConfig?.sign_in_email_instructions}
+        </AuthInstructions>
+      )}
       {error && <Alert kind="error">{error}</Alert>}
       {initialInfo && challengeId && <Alert kind="info">{initialInfo}</Alert>}
       {!challengeId ? (
@@ -1113,6 +1119,9 @@ export function PublicSignUpForm({
       onFocusCapture={syncBrowserFilledInputs}
       onInputCapture={syncBrowserFilledInputs}
     >
+      <AuthInstructions>
+        {publicConfig?.account_creation_email_instructions}
+      </AuthInstructions>
       {bootstrap && (
         <Alert kind="info">
           You are creating the initial admin account for this server.
