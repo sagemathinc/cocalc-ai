@@ -131,7 +131,9 @@ function normalizeAvailability(
   return "unknown";
 }
 
-function readPolicyForPath(path: string): ProjectViewerReadPolicy {
+export function publicDirectoryShareReadPolicyForPath(
+  path: string,
+): ProjectViewerReadPolicy {
   const include =
     path === "."
       ? [{ action: "include" as const, path: "." }]
@@ -371,7 +373,7 @@ export async function resolve({
   return {
     ...summary,
     available: summary.availability_status === "available",
-    read_policy: readPolicyForPath(summary.path),
+    read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
   };
 }
 
