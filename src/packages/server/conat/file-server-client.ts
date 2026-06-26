@@ -10,6 +10,7 @@ import {
 import type { Client } from "@cocalc/conat/core/client";
 import {
   conatWithProjectRouting,
+  conatWithProjectRoutingForAccount,
   getExplicitProjectRoutedClient,
 } from "./route-client";
 import {
@@ -52,8 +53,10 @@ async function getProjectConatClient({
     throw new Error(`unable to route project ${project_id} to a host`);
   }
   return target.local
-    ? await getExplicitProjectRoutedClient({ project_id, fresh })
-    : getRoutedClient();
+    ? await getExplicitProjectRoutedClient({ project_id, fresh, account_id })
+    : account_id
+      ? conatWithProjectRoutingForAccount({ account_id })
+      : getRoutedClient();
 }
 
 async function resolveProjectFileServerTarget({
@@ -122,8 +125,9 @@ export async function getProjectFileServerClient({
     ensure_route,
     fresh,
   });
-  // File-server is a server-only service. account_id is used above only to
-  // discover a remote project route after caller-side permission checks.
+  // File-server is a server-only service. When account_id is provided, route
+  // through that account's project-host token so process-level env auth cannot
+  // leak into project-scoped file-server/persist subjects.
   return fileServerClient({
     client: conatClient,
     project_id,

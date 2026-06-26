@@ -390,6 +390,7 @@ import {
   getProjectRuntimeSlotReport,
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
+  getSiteSettingsOnSeed,
   setSiteSettingsOnSeed,
   syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
@@ -545,6 +546,8 @@ async function startBayOpsService(): Promise<void> {
       await callback2(db().set_server_setting, opts);
     },
     setSiteSettings: async (opts) => await setSiteSettingsOnSeed(opts),
+    getSiteSettings: async (opts) =>
+      await getSiteSettingsOnSeed({ names: opts.names }),
     syncSiteSettings: async (opts) =>
       await syncSiteSettingsToBays({ account_id: opts.account_id }),
     getGlobalConfigPropagationStatus: async (opts) =>

@@ -61,21 +61,15 @@ export async function ensureLroSchema(): Promise<void> {
     await client.query(
       "CREATE INDEX IF NOT EXISTS lro_updated_idx ON long_running_operations(updated_at)",
     );
-    try {
-      await client.query(
-        "ALTER TABLE long_running_operations ADD COLUMN dismissed_at TIMESTAMPTZ",
-      );
-    } catch {}
-    try {
-      await client.query(
-        "ALTER TABLE long_running_operations ADD COLUMN dismissed_by UUID",
-      );
-    } catch {}
-    try {
-      await client.query(
-        "ALTER TABLE long_running_operations ADD COLUMN parent_id UUID",
-      );
-    } catch {}
+    await client.query(
+      "ALTER TABLE long_running_operations ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ",
+    );
+    await client.query(
+      "ALTER TABLE long_running_operations ADD COLUMN IF NOT EXISTS dismissed_by UUID",
+    );
+    await client.query(
+      "ALTER TABLE long_running_operations ADD COLUMN IF NOT EXISTS parent_id UUID",
+    );
     await client.query(
       "CREATE INDEX IF NOT EXISTS lro_parent_idx ON long_running_operations(parent_id)",
     );
