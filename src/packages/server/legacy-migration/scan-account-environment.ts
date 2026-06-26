@@ -3,16 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
-import { promisify } from "node:util";
 
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
-
-const execFileAsync = promisify(execFile);
 
 type Options = {
   accountId?: string;
@@ -221,9 +218,11 @@ import os
 import re
 import stat
 import sys
+import warnings
 
 PROJECTS = json.loads(base64.b64decode("${encoded}").decode("utf-8"))
 MAX_FILE_BYTES = ${maxFileBytes}
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 SKIP_DIR_NAMES = {
     ".git", ".hg", ".svn", ".tox", ".mypy_cache", ".pytest_cache",
@@ -408,27 +407,70 @@ async function scanHost({
 }): Promise<ProjectScan[]> {
   const script = remoteScanner(projects, maxFileBytes);
   const target = `${sshUser}@${host}`;
-  const { stdout, stderr } = await execFileAsync(
-    "ssh",
-    [
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "ConnectTimeout=10",
-      "-o",
-      "StrictHostKeyChecking=accept-new",
-      target,
-      "python3",
-      "-",
-    ],
-    {
-      input: script,
-      maxBuffer: 1024 * 1024 * 100,
-      timeout: 30 * 60 * 1000,
-    } as any,
-  );
-  const stdoutText = stdout.toString();
-  const stderrText = stderr.toString();
+  const { stdoutText, stderrText } = await new Promise<{
+    stdoutText: string;
+    stderrText: string;
+  }>((resolve, reject) => {
+    const child = spawn(
+      "ssh",
+      [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        target,
+        "python3",
+        "-",
+      ],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    let stdoutText = "";
+    let stderrText = "";
+    let settled = false;
+    const timeout = setTimeout(
+      () => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGTERM");
+        reject(new Error(`ssh ${target} scanner timed out`));
+      },
+      30 * 60 * 1000,
+    );
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdoutText += chunk;
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderrText += chunk;
+    });
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve({ stdoutText, stderrText });
+      } else {
+        reject(
+          new Error(
+            `ssh ${target} scanner failed with code ${code} signal ${signal}: ${stderrText}`,
+          ),
+        );
+      }
+    });
+    child.stdin.end(script);
+  });
   if (stderrText.trim()) {
     console.error(`ssh ${target} stderr:\n${stderrText}`);
   }
