@@ -45,6 +45,14 @@ const PROJECT_ARCHIVE_DOWNLOAD_STALL_TIMEOUT_MS = Math.max(
   envToInt("COCALC_PROJECT_ARCHIVE_DOWNLOAD_STALL_TIMEOUT_MS", 2 * 60 * 1000),
 );
 const PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS = 1000;
+const PROJECT_ARCHIVE_MAX_FILE_BYTES = Math.max(
+  1,
+  envToInt("COCALC_PROJECT_ARCHIVE_MAX_FILE_BYTES", 8 * 1024 * 1024 * 1024),
+);
+const PROJECT_ARCHIVE_SKIPPED_FILE_REPORT_LIMIT = Math.max(
+  0,
+  envToInt("COCALC_PROJECT_ARCHIVE_SKIPPED_FILE_REPORT_LIMIT", 100),
+);
 const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
   ".cache/cocalc",
   ".local/share/cocalc",
@@ -387,11 +395,17 @@ async function scanProjectArchiveTar({
   file_count: number;
   uncompressed_bytes: number;
   entries: ProjectArchiveEntry[];
+  skipped_file_count: number;
+  skipped_bytes: number;
+  skipped_files: ProjectArchiveEntry[];
   truncated: boolean;
 }> {
   let file_count = 0;
   let uncompressed_bytes = 0;
+  let skipped_file_count = 0;
+  let skipped_bytes = 0;
   const entries: ProjectArchiveEntry[] = [];
+  const skipped_files: ProjectArchiveEntry[] = [];
   let truncated = false;
   const entryLimit =
     typeof max_entries === "number" && Number.isFinite(max_entries)
@@ -433,12 +447,33 @@ async function scanProjectArchiveTar({
         ) {
           return;
         }
+        const normalized = normalizeProjectArchiveMemberPath(parsed.path);
+        if (
+          parsed.type === "file" &&
+          parsed.size > PROJECT_ARCHIVE_MAX_FILE_BYTES
+        ) {
+          skipped_file_count += 1;
+          skipped_bytes += parsed.size;
+          if (
+            PROJECT_ARCHIVE_SKIPPED_FILE_REPORT_LIMIT === 0 ||
+            skipped_files.length < PROJECT_ARCHIVE_SKIPPED_FILE_REPORT_LIMIT
+          ) {
+            skipped_files.push({
+              path: normalized,
+              size: parsed.size,
+              type: parsed.type,
+              mtime: parsed.mtime,
+            });
+          } else {
+            truncated = true;
+          }
+          return;
+        }
         if (parsed.path.trim()) {
           file_count += 1;
           memberList?.write(`${parsed.path}\n`);
           if (collect_entries) {
             if (entryLimit === 0 || entries.length < entryLimit) {
-              const normalized = normalizeProjectArchiveMemberPath(parsed.path);
               if (normalized) {
                 entries.push({
                   path: normalized,
@@ -464,6 +499,8 @@ async function scanProjectArchiveTar({
             detail: {
               file_count,
               uncompressed_bytes,
+              skipped_file_count,
+              skipped_bytes,
             },
           });
         }
@@ -480,7 +517,15 @@ async function scanProjectArchiveTar({
   } finally {
     await closeMemberList();
   }
-  return { file_count, uncompressed_bytes, entries, truncated };
+  return {
+    file_count,
+    uncompressed_bytes,
+    entries,
+    skipped_file_count,
+    skipped_bytes,
+    skipped_files,
+    truncated,
+  };
 }
 
 async function extractProjectArchiveTar({
@@ -746,22 +791,32 @@ export function createLegacyProjectArchiveHandlers({
             dest: paths.archive,
             lro,
           });
-      const { file_count, uncompressed_bytes, entries, truncated } =
-        await scanProjectArchiveTar({
-          archivePath: paths.archive,
-          exclude: normalizeProjectArchivePathRoots(
-            LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
-          ),
-          collect_entries: true,
-          max_entries,
-          lro,
-        });
+      const {
+        file_count,
+        uncompressed_bytes,
+        entries,
+        skipped_file_count,
+        skipped_bytes,
+        skipped_files,
+        truncated,
+      } = await scanProjectArchiveTar({
+        archivePath: paths.archive,
+        exclude: normalizeProjectArchivePathRoots(
+          LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
+        ),
+        collect_entries: true,
+        max_entries,
+        lro,
+      });
       const result: ProjectArchiveIndexResult = {
         cache_id,
         ...downloaded,
         file_count,
         uncompressed_bytes,
         entries,
+        skipped_file_count,
+        skipped_bytes,
+        skipped_files,
         truncated,
         duration_ms: Date.now() - started,
       };
@@ -879,7 +934,13 @@ export function createLegacyProjectArchiveHandlers({
           await chmod(memberListTmpDir, 0o711);
           member_list_path = join(memberListTmpDir, "selected-members.txt");
         }
-        const { file_count, uncompressed_bytes } = await scanProjectArchiveTar({
+        const {
+          file_count,
+          uncompressed_bytes,
+          skipped_file_count,
+          skipped_bytes,
+          skipped_files,
+        } = await scanProjectArchiveTar({
           archivePath,
           include,
           exclude,
@@ -911,6 +972,9 @@ export function createLegacyProjectArchiveHandlers({
           detail: {
             file_count,
             uncompressed_bytes,
+            skipped_file_count,
+            skipped_bytes,
+            skipped_files,
           },
         });
         invalidateProjectFsServer(project_id);
@@ -919,6 +983,9 @@ export function createLegacyProjectArchiveHandlers({
           ...downloaded,
           file_count,
           uncompressed_bytes,
+          skipped_file_count,
+          skipped_bytes,
+          skipped_files,
           duration_ms: Date.now() - started,
         };
       } finally {
