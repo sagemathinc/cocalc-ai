@@ -90,7 +90,11 @@ function notificationBodyText(row: NotificationEmailOutboxRow): string {
       eventPayload.description,
     ),
   );
-  const path = firstNonEmpty(summary.path, row.summary_json?.source_path);
+  const path = firstNonEmpty(
+    summary.display_path,
+    summary.path,
+    row.summary_json?.source_path,
+  );
   return [body, path ? `Path: ${path}` : ""].filter(Boolean).join("\n\n");
 }
 

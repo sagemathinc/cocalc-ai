@@ -81,6 +81,7 @@ function buildNotificationMention(
     kind: row.kind,
     notification_id: row.notification_id,
     path: summary.path ?? "",
+    display_path: summary.display_path ?? summary.path ?? "",
     priority: summary.priority ?? 2,
     project_id: row.project_id,
     source: summary.actor_account_id ?? "",

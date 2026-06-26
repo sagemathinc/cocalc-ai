@@ -153,6 +153,18 @@ function requireNonEmptyString(
   return normalized;
 }
 
+function displayPathRelativeToHome(path: string | null | undefined): string {
+  const normalized = `${path ?? ""}`.trim();
+  if (normalized === "/home/user") {
+    return ".";
+  }
+  const homePrefix = "/home/user/";
+  if (normalized.startsWith(homePrefix)) {
+    return normalized.slice(homePrefix.length);
+  }
+  return normalized;
+}
+
 function normalizePriority(value?: string): NotificationPriority {
   const priority = `${value ?? "normal"}`.trim();
   if (!["low", "normal", "high"].includes(priority)) {
@@ -307,6 +319,7 @@ export async function createMention(
         summary_json: {
           description,
           path: source_path,
+          display_path: displayPathRelativeToHome(source_path),
           fragment_id: source_fragment_id,
           actor_account_id,
           priority,
@@ -403,6 +416,7 @@ export async function createAccountNotice(
           action_link,
           action_label,
           path: source_path,
+          display_path: displayPathRelativeToHome(source_path),
           fragment_id: source_fragment_id,
         },
       })),
@@ -499,6 +513,7 @@ export async function createCodexTurnNotice(
           origin_label: "Codex",
           notice_type: "codex_turn_completion",
           path: source_path,
+          display_path: displayPathRelativeToHome(source_path),
           fragment_id: source_fragment_id,
           thread_id,
           thread_label,

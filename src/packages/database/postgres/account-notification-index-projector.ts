@@ -277,7 +277,9 @@ function notificationEmailSubject(opts: {
     return title;
   }
   if (opts.event.kind === "mention") {
-    const path = `${summary.path ?? opts.payload.source_path ?? ""}`.trim();
+    const path = `${
+      summary.display_path ?? summary.path ?? opts.payload.source_path ?? ""
+    }`.trim();
     return path ? `CoCalc mention in ${path}` : "CoCalc mention";
   }
   return "CoCalc notification";

@@ -14,6 +14,7 @@ export type MentionInfo = TypedMap<{
   kind?: string;
   notification_id?: string;
   path: string;
+  display_path?: string;
   priority: number;
   project_id: string | null;
   source: string;

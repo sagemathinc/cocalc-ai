@@ -7,6 +7,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import { isValidUUID, timestamp_cmp, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -32,6 +33,7 @@ export function useMentionableUsers(): (
       return mentionableUsers({
         search,
         project_id,
+        user_map,
         opts,
       });
     };
@@ -41,6 +43,7 @@ export function useMentionableUsers(): (
 interface Props {
   search: string | undefined;
   project_id: string;
+  user_map?: any;
   opts?: Opts;
 }
 
@@ -51,7 +54,29 @@ function unresolvedUserLabel(account_id: string): string {
   return `User ${account_id.slice(0, 8)}`;
 }
 
-export function mentionableUsers({ search, project_id, opts }: Props): Item[] {
+function userRecordFromMap(user_map: any, account_id: string): any {
+  return user_map?.get?.(account_id) ?? user_map?.[account_id];
+}
+
+function mentionDisplayName(account_id: string, user_map: any): string {
+  const fromMap = displayNameFromUserRecord(
+    userRecordFromMap(user_map, account_id),
+  ).trim();
+  if (fromMap) {
+    return fromMap;
+  }
+  return (
+    redux.getStore("users").get_name(account_id)?.trim() ??
+    unresolvedUserLabel(account_id)
+  );
+}
+
+export function mentionableUsers({
+  search,
+  project_id,
+  user_map,
+  opts,
+}: Props): Item[] {
   const { avatarUserSize = 24 } = opts ?? {};
 
   const users = redux
@@ -84,7 +109,6 @@ export function mentionableUsers({ search, project_id, opts }: Props): Item[] {
     return timestamp_cmp(a, b, "last_active");
   });
 
-  const usersStore = redux.getStore("users");
   const mentions: Item[] = [];
   if (getMentionAllAccountIds(project_id).length > 0) {
     mentions.push({
@@ -100,9 +124,7 @@ export function mentionableUsers({ search, project_id, opts }: Props): Item[] {
   }
 
   for (const { account_id } of projectUsers) {
-    const fullname =
-      usersStore.get_name(account_id)?.trim() ??
-      unresolvedUserLabel(account_id);
+    const fullname = mentionDisplayName(account_id, user_map);
     const searchText = `${fullname} ${account_id}`.toLowerCase();
     if (search != null && searchText.indexOf(search) === -1) continue;
     mentions.push({

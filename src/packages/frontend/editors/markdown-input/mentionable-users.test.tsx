@@ -86,6 +86,26 @@ describe("mentionableUsers", () => {
     expect(items[0].search).toContain(alice);
   });
 
+  it("uses the subscribed user_map snapshot when the users store getter is stale", () => {
+    const getName = jest.fn().mockReturnValue(undefined);
+    mockStores(getName);
+
+    const items = mentionableUsers({
+      search: undefined,
+      project_id,
+      user_map: fromJS({
+        [alice]: {
+          first_name: "ws5",
+          last_name: "User",
+        },
+      }),
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0].search).toContain("ws5 user");
+    expect(getName).not.toHaveBeenCalled();
+  });
+
   it("adds @all for other owner/collaborator users", () => {
     mockStores(
       jest.fn((account_id: string) => {

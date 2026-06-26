@@ -222,6 +222,40 @@ describe("conat notifications api", () => {
     ]);
   });
 
+  it("stores home-relative mention display paths without changing source paths", async () => {
+    await seedMentionContext();
+
+    await createMention({
+      account_id: ACTOR_ACCOUNT_ID,
+      source_project_id: PROJECT_ID,
+      source_path: "/home/user/b.chat",
+      source_fragment_id: "thread=home",
+      target_account_ids: [TARGET_ACCOUNT_ID],
+      description: "Home relative path mention",
+      stable_source_id: "chat-message-home-path",
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT e.source_path, o.payload_json
+         FROM notification_events e
+         JOIN notification_target_outbox o
+           ON o.payload_json->>'event_id' = e.event_id::TEXT
+        WHERE e.source_fragment_id = 'thread=home'`,
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        source_path: "/home/user/b.chat",
+        payload_json: expect.objectContaining({
+          source_path: "/home/user/b.chat",
+          summary: expect.objectContaining({
+            path: "/home/user/b.chat",
+            display_path: "b.chat",
+          }),
+        }),
+      }),
+    ]);
+  });
+
   it("rejects mention targets outside the source project collaborators", async () => {
     await seedMentionContext();
 
