@@ -228,7 +228,7 @@ export function LegacyMigrationRestoreBanner({
     summary?.status === "expired";
   const percent = progressPercent({ summary, progress });
   const detail = progressText({ summary, progress });
-  const error = labelValue(summary?.error) || effectiveError;
+  const error = failed ? labelValue(summary?.error) || effectiveError : "";
 
   async function retryRestore() {
     setRetrying(true);
