@@ -10,6 +10,12 @@ They have hundreds of `public_paths` records, including URLs such as:
 - `https://cocalc.com/cambridge`
 - `https://cocalc.com/Cambridge/9781009209090/Code`
 
+There are also many non-CUP `public_paths` records created by ordinary users
+over the years. Those shares should not disappear just because they are outside
+the CUP migration. The first migration should import all viable public share
+metadata, while clearly marking shares whose backing project files are not yet
+available.
+
 The old share server implementation under `/home/user/cocalc/src/packages/next/pages/share`
 is not implemented in cocalc-ai. Reimplementing it is not the right target:
 
@@ -29,6 +35,8 @@ that directory read-only through the existing project viewer filesystem path.
 ## Goals
 
 - Preserve CUP's legacy URLs through redirects to stable cocalc-ai share URLs.
+- Import and support non-CUP historical public shares where the backing project
+  can be mapped.
 - Avoid reimplementing the old share server publication pipeline.
 - Use live project files as the source of truth.
 - Require sign-in before reading shared content.
@@ -37,7 +45,7 @@ that directory read-only through the existing project viewer filesystem path.
   possible.
 - Support viewing notebooks, markdown, code, data files, directories, and
   copying a shared directory into a user's own project.
-- Support CUP's visibility modes: listed, unlisted, private/disabled.
+- Support legacy visibility modes: listed, unlisted, private/disabled.
 - Make this generally useful beyond CUP as "make this project directory visible
   to signed-in users with a link."
 
@@ -190,6 +198,39 @@ Use `disabled` as an explicit boolean as well because the old schema had this
 field and it is operationally useful for emergency takedowns. Treat either
 `visibility='disabled'` or `disabled=true` as disabled.
 
+### Global Slug Directory
+
+In the multibay architecture, the authoritative `public_project_paths` row
+belongs with the project on the project owning bay. However, resolving a URL
+like `/share/Cambridge/9781009209090/Code` starts with a slug and does not yet
+know the owning bay.
+
+Use a small seed/global directory table for slug routing:
+
+```sql
+CREATE TABLE public_project_path_slugs (
+  slug_lower TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  owning_bay_id TEXT NOT NULL,
+  public_project_path_id UUID NOT NULL,
+  project_id UUID NOT NULL,
+  disabled BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+```
+
+Resolution flow:
+
+1. Normalize the requested slug.
+2. Look up `lower(slug)` in the seed/global directory.
+3. Route to `owning_bay_id`.
+4. Resolve and authorize against the authoritative `public_project_paths` row
+   on the owning bay.
+
+For current one-bay lite/launchpad deployments, the directory and authoritative
+row are local. This avoids premature distributed machinery while keeping the API
+shape compatible with Rocket.
+
 ### Slug Rules
 
 Slug rules should be strict enough to avoid routing/security surprises but
@@ -325,6 +366,8 @@ The page should:
   grant temporary access to the associated course/book resources;
 - show a small "Provided by <project/account/title>" attribution if available;
 - avoid exposing unrelated project folders.
+- if the share metadata exists but the backing project/files are not available
+  yet, show a clear unavailable/pending message instead of 404.
 
 ### Directory Viewer
 
@@ -378,20 +421,22 @@ Behavior:
 
 ### Collection Pages
 
-Support collection routes by prefix:
+Collection routes by prefix are not shutdown-critical:
 
 ```text
 /share/Cambridge
 ```
 
-If an exact slug exists, show that share. Otherwise, show listed shares under
-the prefix:
+If implemented later, exact slug wins. Otherwise, listed shares under a prefix
+can be shown with:
 
 ```ts
 listPublicProjectPaths({ prefix: "Cambridge", visibility: "listed" });
 ```
 
-This is useful for CUP's `/cambridge` landing page.
+CUP does not require a public `/share/Cambridge` collection page for shutdown.
+Their `/cambridge` page was effectively internal/unlisted. The required owner
+view is an account/project settings page listing all public shares they own.
 
 ### Manage UI
 
@@ -406,6 +451,8 @@ Later:
 - add right-click "Make directory public" from the file explorer;
 - add conflict warnings for slug collisions;
 - add per-share analytics.
+- add an account settings page that lists all public shares owned by the user's
+  projects, including slug, visibility, availability, and license policy.
 
 ## Site License Claim Integration
 
@@ -620,9 +667,10 @@ WHERE project_id IN (<migrated project ids>)
    OR lower(description) LIKE '%cambridge%';
 ```
 
-For the broad final export, dump all `public_paths` rows and filter/import only
-rows whose projects have been migrated or whose owner/customer is in the
-migration allowlist.
+For the broad final export, dump all `public_paths` rows. Import metadata for
+rows whose project can be mapped even if the backing files are not yet restored.
+Those rows should resolve to a signed-in "not available yet" page until the
+project and path are available.
 
 ### Import Mapping
 
@@ -676,11 +724,24 @@ Before enabling redirects, generate a report:
 - rows with legacy `site_license_id`, mapped new site license policy, and
   unmapped/disabled license policies.
 
+### General Public Share Validation Report
+
+Also generate a non-CUP report:
+
+- total historical `public_paths` rows imported;
+- rows skipped because the project id cannot be mapped;
+- rows imported but not yet available because the project/files are not
+  restored;
+- rows with slug collisions;
+- rows that are disabled/private/unlisted/listed;
+- sampled old URL -> new URL redirects for non-CUP shares.
+
 ## Redirect Strategy
 
 On cocalc.com shutdown site:
 
 - redirect known CUP legacy URLs to cocalc-ai share URLs;
+- redirect other known legacy public share URLs when a slug mapping exists;
 - preserve path suffixes when possible;
 - do not keep the old share server running;
 - show a migration/sign-in landing page if the user is not signed in on
@@ -831,6 +892,8 @@ Migration:
 - The feature should be disabled by default via site setting for self-hosted
   sites until owner UI is ready.
 - CUP migration can be enabled with imported records before general UI exists.
+- Non-CUP public share metadata should also be imported; unavailable shares
+  should show a clear "not available yet" state instead of disappearing.
 - CUP license-on-copy can initially be configured by import scripts and admin
   reports instead of polished owner-facing UI.
 - If a migrated project restore is still pending, the share page should show a
@@ -841,20 +904,28 @@ Migration:
 - For long-term cleanup, this feature can replace most old share-server use
   cases without ever reintroducing anonymous publication.
 
-## Open Questions
+## Decisions
 
-- Should the first release support any `requires_auth=false` records? For CUP,
-  no.
-- Should `/share/Cambridge` be an exact imported share, a generated collection
-  page, or both? Prefer exact share if present; otherwise collection by prefix.
-- Which exact cocalc-ai site license, pool, tier, and duration should CUP shares
-  use for grant-on-copy?
-- Should a license grant failure block copying for CUP, or should copying
-  proceed with a warning? Prefer warn unless CUP requires otherwise.
-- What per-account/per-share consumption limits should CUP use?
-- How should we display projects whose files have not yet been restored from
-  R2? The share page should have a pending/unavailable state, but details
-  depend on legacy migration LRO availability.
-- Should slug lookup be global or bay-local in Rocket? First implementation can
-  be bay-local, but the API should be written so global slug lookup can route to
-  the owning bay later.
+- Do not support anonymous `requires_auth=false` records in the first release.
+  All public directory shares require sign-in.
+- Import non-CUP historical public shares too. If the share metadata exists but
+  the backing project/files are not available yet, show a signed-in "not
+  available yet" page instead of hiding the share.
+- Do not build a shutdown-critical public `/share/Cambridge` collection page.
+  Exact share URLs matter. CUP owners instead need an account/project settings
+  page that lists all public shares they control.
+- Configure CUP grant-on-copy through an ordinary cocalc-ai site license named
+  `cambridge` and a tier/pool such as `readers`. Each imported CUP public path
+  with legacy `site_license_id` should be mapped to explicit
+  `site_license_id`, tier/pool, duration, and grant-on-copy fields.
+- Site-license grant failure should warn and still allow copy. Most content
+  remains usable on the free tier.
+- Per-account/per-share consumption limits should be configured by site admins
+  on the site license or share policy, not hardcoded globally.
+- CUP's backing content is expected to be in two restored projects, so CUP
+  redirects should only be enabled after those projects are restored and
+  validated.
+- Store authoritative public path records on the project owning bay. Store a
+  small seed/global slug directory mapping `lower(slug)` to owning bay, public
+  path id, and project id so `/share/...` can route correctly in future
+  multibay deployments.
