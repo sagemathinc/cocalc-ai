@@ -228,6 +228,9 @@ export type SiteSettingsExtrasKeys =
   | "launch_disable_user_host_create"
   | "launch_disable_ai"
   | "launch_disable_payment_checkout"
+  | "cryptomining_abuse_heading"
+  | "cryptomining_abuse_enforcement_enabled"
+  | "cryptomining_abuse_auto_ban_enabled"
   | "launch_sla_heading"
   | "launch_sla_project_start_warm_p95_ms"
   | "launch_sla_project_start_overall_p95_ms"
@@ -415,6 +418,35 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Security", "Commercialization"],
     group: "System / Advanced",
     subgroup: "Launch Emergency Controls",
+  },
+  cryptomining_abuse_heading: {
+    name: "Cryptomining Abuse Detection",
+    desc: "Operator controls for high-confidence cryptomining abuse detection on project hosts. These settings are off by default for self-hosted sites.",
+    default: "",
+    type: "header",
+    tags: ["Security", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Abuse Detection",
+  },
+  cryptomining_abuse_enforcement_enabled: {
+    name: "Enable Cryptomining Abuse Enforcement",
+    desc: "When enabled, the hub acts on high-confidence cryptomining evidence from project hosts by stopping the affected project. Leave disabled for self-hosted sites where users may intentionally mine on their own hardware.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Abuse Detection",
+  },
+  cryptomining_abuse_auto_ban_enabled: {
+    name: "Enable Automatic Cryptomining Bans",
+    desc: "When enabled together with cryptomining abuse enforcement, new free accounts with high-confidence cryptomining evidence are automatically banned using the normal account ban path. Paid or older accounts are stopped but not automatically banned.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Abuse Detection",
   },
   launch_sla_heading: {
     name: "Launch SLA Thresholds",

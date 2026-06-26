@@ -231,6 +231,65 @@ describe("project-host CPU usage accounting", () => {
     );
   });
 
+  it("attaches high-confidence cryptomining evidence from known pool network connections", async () => {
+    const sample = await collectRunningProjectCpuSamples({
+      podmanCommand: jest
+        .fn()
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify([
+            {
+              Id: "ctr-1",
+              Names: ["project-11111111-1111-4111-8111-111111111111"],
+            },
+          ]),
+        })
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify([
+            {
+              Name: "/project-11111111-1111-4111-8111-111111111111",
+              State: { Pid: 1234 },
+            },
+          ]),
+        }),
+      readdirFn: jest.fn().mockResolvedValue(["1234"]),
+      readFileFn: jest.fn().mockImplementation(async (path: string) => {
+        if (path === "/proc/1234/stat") {
+          return procStat({ pid: 1234, ppid: 1, utime: 120, stime: 30 });
+        }
+        if (path === "/proc/1234/cmdline") {
+          return "python\0script.py\0";
+        }
+        if (path === "/proc/1234/net/tcp") {
+          return [
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+            "   0: 00000000:0000 04030201:0D05 01 00000000:00000000 00:00000000 00000000 1000 0 1",
+          ].join("\n");
+        }
+        throw new Error(`unexpected path: ${path}`);
+      }),
+      knownPoolAddressesFn: jest
+        .fn()
+        .mockResolvedValue(new Map([["1.2.3.4", "stratum.cereblix.com"]])),
+    });
+
+    expect(sample[0]?.cryptomining_evidence).toEqual(
+      expect.objectContaining({
+        confidence: "high",
+        detector_version: "project-host-cryptomining-v1",
+        signals: [
+          expect.objectContaining({
+            kind: "network_endpoint",
+            pattern: "known-pool-ip-established",
+            matched: "1.2.3.4:3333",
+            remote_address: "1.2.3.4",
+            remote_port: 3333,
+            pool_host: "stratum.cereblix.com",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("treats the first sample as a baseline and ignores counter resets", () => {
     const current = new Map([
       [

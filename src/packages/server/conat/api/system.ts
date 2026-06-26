@@ -279,7 +279,11 @@ import {
   getManagedProjectCpuPolicy,
   shouldStopRunningProjectForManagedCpuPolicy,
 } from "@cocalc/server/membership/managed-cpu-policy";
-import { handleProjectCryptominingEvidence } from "@cocalc/server/membership/cryptomining-abuse";
+import {
+  getProjectCryptominingAbuseSettings,
+  handleProjectCryptominingEvidence,
+  sanitizeCryptominingEvidenceMetadata,
+} from "@cocalc/server/membership/cryptomining-abuse";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
@@ -6689,6 +6693,24 @@ export async function recordManagedProjectCpuUsage({
   if (!resolvedProjectId && !`${account_id ?? ""}`.trim()) {
     throw Error("project_id or account_id is required");
   }
+  let abuseSettings;
+  try {
+    abuseSettings = cryptomining_evidence
+      ? await getProjectCryptominingAbuseSettings()
+      : undefined;
+  } catch (err) {
+    logger.warn("failed to load cryptomining abuse settings", {
+      project_id: resolvedProjectId,
+      err: `${err}`,
+    });
+  }
+  const effectiveCryptominingEvidence = abuseSettings?.enforcement_enabled
+    ? cryptomining_evidence
+    : undefined;
+  const effectiveMetadata = sanitizeCryptominingEvidenceMetadata({
+    metadata,
+    enforcement_enabled: abuseSettings?.enforcement_enabled === true,
+  });
   const result = await recordManagedProjectCpuUsageRaw({
     account_id,
     project_id: resolvedProjectId,
@@ -6697,7 +6719,7 @@ export async function recordManagedProjectCpuUsage({
     sample_started_at,
     sample_ended_at,
     source,
-    metadata,
+    metadata: effectiveMetadata,
   });
   if (!result.recorded || !result.account_id || !resolvedProjectId) {
     return result;
@@ -6706,7 +6728,8 @@ export async function recordManagedProjectCpuUsage({
     const abuseDecision = await handleProjectCryptominingEvidence({
       account_id: result.account_id,
       project_id: resolvedProjectId,
-      evidence: cryptomining_evidence,
+      evidence: effectiveCryptominingEvidence,
+      settings: abuseSettings,
     });
     if (abuseDecision.should_stop_project) {
       return {

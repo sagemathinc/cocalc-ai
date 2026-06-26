@@ -6,6 +6,7 @@
 const getClusterAccountByIdMock = jest.fn();
 const banClusterAccountAndEquivalentEmailsMock = jest.fn();
 const resolveMembershipForAccountMock = jest.fn();
+const getServerSettingsMock = jest.fn();
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   __esModule: true,
@@ -20,8 +21,16 @@ jest.mock("./resolve", () => ({
     resolveMembershipForAccountMock(...args),
 }));
 
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  __esModule: true,
+  getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
+}));
+
 import type { ProjectCryptominingEvidence } from "@cocalc/conat/hub/api/system";
-import { handleProjectCryptominingEvidence } from "./cryptomining-abuse";
+import {
+  handleProjectCryptominingEvidence,
+  sanitizeCryptominingEvidenceMetadata,
+} from "./cryptomining-abuse";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
@@ -55,7 +64,54 @@ describe("cryptomining abuse policy", () => {
     banClusterAccountAndEquivalentEmailsMock
       .mockReset()
       .mockResolvedValue([{ account_id: ACCOUNT_ID, banned: true }]);
+    getServerSettingsMock.mockReset().mockResolvedValue({
+      cryptomining_abuse_enforcement_enabled: true,
+      cryptomining_abuse_auto_ban_enabled: true,
+    });
     delete process.env.COCALC_CRYPTOMINING_AUTO_BAN_ACCOUNT_MAX_AGE_MS;
+  });
+
+  it("does nothing by default when site settings are disabled", async () => {
+    getServerSettingsMock.mockResolvedValueOnce({});
+
+    const decision = await handleProjectCryptominingEvidence({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      evidence: EVIDENCE,
+      now: NOW,
+    });
+
+    expect(decision).toEqual({
+      should_stop_project: false,
+      auto_banned: false,
+    });
+    expect(getClusterAccountByIdMock).not.toHaveBeenCalled();
+    expect(resolveMembershipForAccountMock).not.toHaveBeenCalled();
+    expect(banClusterAccountAndEquivalentEmailsMock).not.toHaveBeenCalled();
+  });
+
+  it("strips evidence from stored metadata when enforcement is disabled", () => {
+    expect(
+      sanitizeCryptominingEvidenceMetadata({
+        enforcement_enabled: false,
+        metadata: {
+          runtime_key: "runtime-1",
+          cryptomining_evidence: EVIDENCE,
+        },
+      }),
+    ).toEqual({ runtime_key: "runtime-1" });
+    expect(
+      sanitizeCryptominingEvidenceMetadata({
+        enforcement_enabled: true,
+        metadata: {
+          runtime_key: "runtime-1",
+          cryptomining_evidence: EVIDENCE,
+        },
+      }),
+    ).toEqual({
+      runtime_key: "runtime-1",
+      cryptomining_evidence: EVIDENCE,
+    });
   });
 
   it("auto-bans new free accounts with high-confidence miner evidence", async () => {
@@ -93,6 +149,30 @@ describe("cryptomining abuse policy", () => {
       account_id: ACCOUNT_ID,
       created: NOW.getTime() - 30 * 24 * 60 * 60 * 1000,
       banned: false,
+    });
+
+    const decision = await handleProjectCryptominingEvidence({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      evidence: EVIDENCE,
+      now: NOW,
+    });
+
+    expect(decision).toEqual(
+      expect.objectContaining({
+        should_stop_project: true,
+        auto_banned: false,
+        membership_class: "free",
+        membership_source: "free",
+      }),
+    );
+    expect(banClusterAccountAndEquivalentEmailsMock).not.toHaveBeenCalled();
+  });
+
+  it("stops but does not auto-ban when automatic bans are disabled", async () => {
+    getServerSettingsMock.mockResolvedValueOnce({
+      cryptomining_abuse_enforcement_enabled: true,
+      cryptomining_abuse_auto_ban_enabled: false,
     });
 
     const decision = await handleProjectCryptominingEvidence({

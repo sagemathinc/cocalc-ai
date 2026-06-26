@@ -5,6 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import type { ProjectCryptominingEvidence } from "@cocalc/conat/hub/api/system";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   banClusterAccountAndEquivalentEmails,
   getClusterAccountById,
@@ -13,6 +14,11 @@ import { resolveMembershipForAccount } from "./resolve";
 
 const logger = getLogger("server:membership:cryptomining-abuse");
 const DEFAULT_NEW_ACCOUNT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface ProjectCryptominingAbuseSettings {
+  enforcement_enabled: boolean;
+  auto_ban_enabled: boolean;
+}
 
 export interface ProjectCryptominingAbuseDecision {
   should_stop_project: boolean;
@@ -28,6 +34,41 @@ function positiveIntEnv(name: string, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function settingEnabled(value: unknown): boolean {
+  return value === true || value === "yes" || value === "true";
+}
+
+export async function getProjectCryptominingAbuseSettings(): Promise<ProjectCryptominingAbuseSettings> {
+  const settings = await getServerSettings();
+  return {
+    enforcement_enabled: settingEnabled(
+      settings.cryptomining_abuse_enforcement_enabled,
+    ),
+    auto_ban_enabled: settingEnabled(
+      settings.cryptomining_abuse_auto_ban_enabled,
+    ),
+  };
+}
+
+export function sanitizeCryptominingEvidenceMetadata({
+  metadata,
+  enforcement_enabled,
+}: {
+  metadata?: Record<string, unknown>;
+  enforcement_enabled: boolean;
+}): Record<string, unknown> | undefined {
+  if (
+    enforcement_enabled ||
+    !metadata ||
+    !("cryptomining_evidence" in metadata)
+  ) {
+    return metadata;
+  }
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => key !== "cryptomining_evidence"),
+  );
 }
 
 export function isHighConfidenceCryptominingEvidence(
@@ -50,13 +91,20 @@ export async function handleProjectCryptominingEvidence({
   project_id,
   evidence,
   now = new Date(),
+  settings,
 }: {
   account_id: string;
   project_id?: string;
   evidence?: ProjectCryptominingEvidence;
   now?: Date;
+  settings?: ProjectCryptominingAbuseSettings;
 }): Promise<ProjectCryptominingAbuseDecision> {
   if (!isHighConfidenceCryptominingEvidence(evidence)) {
+    return { should_stop_project: false, auto_banned: false };
+  }
+  const resolvedSettings =
+    settings ?? (await getProjectCryptominingAbuseSettings());
+  if (!resolvedSettings.enforcement_enabled) {
     return { should_stop_project: false, auto_banned: false };
   }
 
@@ -75,7 +123,8 @@ export async function handleProjectCryptominingEvidence({
         DEFAULT_NEW_ACCOUNT_MAX_AGE_MS,
       );
   const isFree = membership.class === "free" && membership.source === "free";
-  const shouldAutoBan = !account?.banned && isNew && isFree;
+  const shouldAutoBan =
+    resolvedSettings.auto_ban_enabled && !account?.banned && isNew && isFree;
 
   if (!shouldAutoBan) {
     logger.warn("high-confidence cryptomining detected; stopping project", {

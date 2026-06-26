@@ -248,7 +248,8 @@ export interface UxLatencyEventInput {
 export type ProjectCryptominingSignalKind =
   | "process_command"
   | "network_endpoint_argument"
-  | "known_pool_argument";
+  | "known_pool_argument"
+  | "network_endpoint";
 
 export interface ProjectCryptominingSignal {
   kind: ProjectCryptominingSignalKind;
@@ -256,6 +257,9 @@ export interface ProjectCryptominingSignal {
   matched: string;
   pid?: number;
   command?: string;
+  remote_address?: string;
+  remote_port?: number;
+  pool_host?: string;
 }
 
 export interface ProjectCryptominingEvidence {
