@@ -12,6 +12,10 @@ const createAbuseReviewAnnotationMock = jest.fn();
 const listAbuseReviewAnnotationsMock = jest.fn();
 const revokeAbuseReviewAnnotationMock = jest.fn();
 const resetAccountUsageEpochMock = jest.fn();
+const createMembershipTierMock = jest.fn();
+const updateMembershipTierMock = jest.fn();
+const importMembershipTiersMock = jest.fn();
+const deleteMembershipTierMock = jest.fn();
 const getAccountUsageOverviewForAccountMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
@@ -117,6 +121,13 @@ jest.mock("@cocalc/server/membership/abuse-review-annotations", () => ({
 jest.mock("@cocalc/server/membership/usage-windows", () => ({
   resetAccountUsageEpoch: (...args: any[]) =>
     resetAccountUsageEpochMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/tier-admin", () => ({
+  createMembershipTier: (...args: any[]) => createMembershipTierMock(...args),
+  updateMembershipTier: (...args: any[]) => updateMembershipTierMock(...args),
+  importMembershipTiers: (...args: any[]) => importMembershipTiersMock(...args),
+  deleteMembershipTier: (...args: any[]) => deleteMembershipTierMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/account-usage-overview", () => ({
@@ -304,6 +315,10 @@ beforeEach(() => {
   getBrowserAuthSessionHashMock.mockReset();
   requireFreshAuthForSessionHashMock.mockReset();
   assertAccountTrustedForProductAccessMock.mockReset();
+  createMembershipTierMock.mockReset();
+  updateMembershipTierMock.mockReset();
+  importMembershipTiersMock.mockReset();
+  deleteMembershipTierMock.mockReset();
   purchaseMembershipPackageMock.mockReset();
   purchaseMembershipPackagesMock.mockReset();
   purchaseTeamLicenseChangeMock.mockReset();
@@ -2463,6 +2478,140 @@ describe("purchases abuse review annotations", () => {
       revoked_by: "admin-1",
       revoked_reason: "superseded",
     });
+  });
+});
+
+describe("purchases membership tier admin", () => {
+  const tier = { id: "standard", label: "Standard" };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    requireFreshAuthForSessionHashMock.mockResolvedValue(undefined);
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-0");
+  });
+
+  it("requires admin permission before creating a tier", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { createMembershipTier } = await import("./purchases");
+    await expect(
+      createMembershipTier({
+        account_id: "viewer-1",
+        session_hash: "fresh-session-1",
+        tier,
+      }),
+    ).rejects.toThrow("must be an admin");
+
+    expect(requireFreshAuthForSessionHashMock).not.toHaveBeenCalled();
+    expect(createMembershipTierMock).not.toHaveBeenCalled();
+  });
+
+  it("requires fresh auth before creating a tier", async () => {
+    isAdminMock.mockResolvedValue(true);
+
+    const { createMembershipTier } = await import("./purchases");
+    await expect(
+      createMembershipTier({
+        account_id: "admin-1",
+        tier,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(createMembershipTierMock).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate tiers from a non-seed bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
+
+    const { createMembershipTier } = await import("./purchases");
+    await expect(
+      createMembershipTier({
+        account_id: "admin-1",
+        session_hash: "fresh-session-1",
+        tier,
+      }),
+    ).rejects.toThrow(
+      "membership tier configuration must be changed on the seed bay",
+    );
+
+    expect(requireFreshAuthForSessionHashMock).not.toHaveBeenCalled();
+    expect(createMembershipTierMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a tier after fresh auth", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getBrowserAuthSessionHashMock.mockReturnValue("fresh-session-1");
+    createMembershipTierMock.mockResolvedValue({ id: "standard" });
+
+    const { createMembershipTier } = await import("./purchases");
+    const result = await createMembershipTier({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+      tier,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: false,
+    });
+    expect(createMembershipTierMock).toHaveBeenCalledWith({ tier });
+    expect(result).toEqual({ id: "standard" });
+  });
+
+  it("updates a tier after fresh auth", async () => {
+    isAdminMock.mockResolvedValue(true);
+    updateMembershipTierMock.mockResolvedValue({ id: "standard" });
+
+    const { updateMembershipTier } = await import("./purchases");
+    await updateMembershipTier({
+      account_id: "admin-1",
+      session_hash: "fresh-session-2",
+      tier,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-2",
+      allow_actor_impersonation: false,
+    });
+    expect(updateMembershipTierMock).toHaveBeenCalledWith({ tier });
+  });
+
+  it("imports tiers after fresh auth", async () => {
+    isAdminMock.mockResolvedValue(true);
+    importMembershipTiersMock.mockResolvedValue({ ids: ["standard"] });
+
+    const { importMembershipTiers } = await import("./purchases");
+    const result = await importMembershipTiers({
+      account_id: "admin-1",
+      session_hash: "fresh-session-3",
+      tiers: [tier],
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-3",
+      allow_actor_impersonation: false,
+    });
+    expect(importMembershipTiersMock).toHaveBeenCalledWith({ tiers: [tier] });
+    expect(result).toEqual({ ids: ["standard"] });
+  });
+
+  it("deletes a never-used tier without fresh auth", async () => {
+    isAdminMock.mockResolvedValue(true);
+    deleteMembershipTierMock.mockResolvedValue({ id: "draft" });
+
+    const { deleteMembershipTier } = await import("./purchases");
+    const result = await deleteMembershipTier({
+      account_id: "admin-1",
+      id: "draft",
+    });
+
+    expect(requireFreshAuthForSessionHashMock).not.toHaveBeenCalled();
+    expect(deleteMembershipTierMock).toHaveBeenCalledWith({ id: "draft" });
+    expect(result).toEqual({ id: "draft" });
   });
 });
 

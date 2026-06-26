@@ -2,11 +2,7 @@
  *  Membership tiers configuration.
  */
 
-import {
-  Table,
-  MembershipTierGetFields,
-  MembershipTierSetFields,
-} from "./types";
+import { Table, MembershipTierGetFields } from "./types";
 
 async function instead_of_query(db, opts: any, cb: Function): Promise<void> {
   const { options, query } = opts;
@@ -23,36 +19,6 @@ Table({
     primary_key: "id",
     anonymous: false,
     user_query: {
-      set: {
-        admin: true,
-        instead_of_query,
-        delete: true,
-        fields: {
-          id: null,
-          label: null,
-          store_visible: null,
-          store_description: null,
-          store_highlights: null,
-          site_license_pool_description: null,
-          team_visible: null,
-          course_store_visible: null,
-          course_allowed_domains: null,
-          priority: null,
-          price_monthly: null,
-          price_yearly: null,
-          trial_days: null,
-          course_price: null,
-          course_duration_days: null,
-          course_grace_days: null,
-          project_defaults: null,
-          ai_limits: null,
-          features: null,
-          usage_limits: null,
-          pricing_model: null,
-          disabled: null,
-          notes: null,
-        } as { [key in MembershipTierSetFields]: null },
-      },
       get: {
         admin: true,
         instead_of_query,

@@ -19,13 +19,21 @@ import {
   resetAccountUsageEpoch,
   type AccountUsageWindowName,
 } from "@cocalc/server/membership/usage-windows";
+import {
+  createMembershipTier as createMembershipTier0,
+  deleteMembershipTier as deleteMembershipTier0,
+  importMembershipTiers as importMembershipTiers0,
+  updateMembershipTier as updateMembershipTier0,
+} from "@cocalc/server/membership/tier-admin";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import type {
   AbuseReviewCategory,
   AbuseReviewDisposition,
+  AdminMembershipTierPayload,
   AccountUsageWindowEpoch,
   AdminResetMembershipUsageWindowsResult,
   AbuseReviewPriorityAdjustment,
+  MembershipClass,
   MembershipUsageWindowResetTarget,
 } from "@cocalc/conat/hub/api/purchases";
 import {
@@ -181,6 +189,51 @@ function requireAccount(account_id?: string): string {
   return owner;
 }
 
+function requireMembershipTierId(id?: string | null): MembershipClass {
+  const tierId = `${id ?? ""}`.trim();
+  if (!tierId) {
+    throw Error("membership tier id is required");
+  }
+  return tierId;
+}
+
+function requireMembershipTierPayload(
+  tier?: AdminMembershipTierPayload,
+): AdminMembershipTierPayload {
+  if (tier == null || typeof tier !== "object" || Array.isArray(tier)) {
+    throw Error("membership tier payload is required");
+  }
+  return {
+    ...tier,
+    id: requireMembershipTierId(tier.id),
+  };
+}
+
+function requireMembershipTierPayloads(
+  tiers?: AdminMembershipTierPayload[],
+): AdminMembershipTierPayload[] {
+  if (!Array.isArray(tiers) || tiers.length === 0) {
+    throw Error("at least one membership tier is required");
+  }
+  return tiers.map(requireMembershipTierPayload);
+}
+
+async function requireAdmin(account_id?: string): Promise<string> {
+  const accountId = requireAccount(account_id);
+  if (!(await isAdmin(accountId))) {
+    throw Error("must be an admin");
+  }
+  return accountId;
+}
+
+function assertMembershipTierAdminBay(): void {
+  if (!isSeedBay()) {
+    throw Error(
+      "membership tier configuration must be changed on the seed bay",
+    );
+  }
+}
+
 function normalizeAllowedDomain(domain: string): string {
   const value = `${domain ?? ""}`.trim().toLowerCase().replace(/^@+/, "");
   if (
@@ -265,6 +318,26 @@ async function requireFreshAuthForPurchaseAction({
   });
 }
 
+async function requireFreshAuthAdmin({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+}): Promise<string> {
+  const accountId = await requireAdmin(account_id);
+  assertMembershipTierAdminBay();
+  await validatePurchaseFreshAuth({
+    account_id: accountId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  return accountId;
+}
+
 export async function getMembershipDetails({
   account_id,
   user_account_id,
@@ -307,6 +380,69 @@ export async function getMembershipDetails({
   return await resolveMembershipDetailsForAccount(targetId, {
     refresh_usage_status,
   });
+}
+
+export async function createMembershipTier({
+  account_id,
+  browser_id,
+  session_hash,
+  tier,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  tier?: AdminMembershipTierPayload;
+} = {}): Promise<{ id: MembershipClass }> {
+  await requireFreshAuthAdmin({ account_id, browser_id, session_hash });
+  return await createMembershipTier0({
+    tier: requireMembershipTierPayload(tier),
+  });
+}
+
+export async function updateMembershipTier({
+  account_id,
+  browser_id,
+  session_hash,
+  tier,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  tier?: AdminMembershipTierPayload;
+} = {}): Promise<{ id: MembershipClass }> {
+  await requireFreshAuthAdmin({ account_id, browser_id, session_hash });
+  return await updateMembershipTier0({
+    tier: requireMembershipTierPayload(tier),
+  });
+}
+
+export async function importMembershipTiers({
+  account_id,
+  browser_id,
+  session_hash,
+  tiers,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  tiers?: AdminMembershipTierPayload[];
+} = {}): Promise<{ ids: MembershipClass[] }> {
+  await requireFreshAuthAdmin({ account_id, browser_id, session_hash });
+  return await importMembershipTiers0({
+    tiers: requireMembershipTierPayloads(tiers),
+  });
+}
+
+export async function deleteMembershipTier({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id?: MembershipClass;
+} = {}): Promise<{ id: MembershipClass }> {
+  await requireAdmin(account_id);
+  assertMembershipTierAdminBay();
+  return await deleteMembershipTier0({ id: requireMembershipTierId(id) });
 }
 
 export async function getAccountUsageOverview({
