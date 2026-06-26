@@ -9,7 +9,10 @@ import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { getLro } from "@cocalc/server/lro/lro-db";
-import { startProjectOnHost } from "@cocalc/server/project-host/control";
+import {
+  startProjectOnHost,
+  stopProjectOnHost,
+} from "@cocalc/server/project-host/control";
 import type {
   LegacyMigrationProjectRestoreStatus,
   LegacyMigrationProjectSummary,
@@ -49,6 +52,7 @@ type Options = {
   includeUnavailable: boolean;
   dryRun: boolean;
   startAfterRestore: boolean;
+  stopAfterStart: boolean;
   retryFailedRestore: boolean;
   rerunSuccess: boolean;
   resumeFile?: string;
@@ -99,6 +103,8 @@ Options:
                               on rerun unless --rerun-success is set.
   --rerun-success               Do not skip successful rows from --resume-file.
   --no-start                    Do not start projects after restore succeeds.
+  --stop-after-start            Start each restored project to verify it, then
+                              stop it to avoid accumulating running projects.
   --no-retry-failed-restore     Do not retry already-imported failed restores.
   --poll-ms <n>                 Restore LRO polling interval. Default: ${DEFAULT_POLL_MS}.
   --restore-timeout-minutes <n> Restore wait timeout per project. Default: 720.
@@ -131,6 +137,7 @@ function parseArgs(argv: string[]): Options {
     includeUnavailable: false,
     dryRun: false,
     startAfterRestore: true,
+    stopAfterStart: false,
     retryFailedRestore: true,
     rerunSuccess: false,
     pollMs: DEFAULT_POLL_MS,
@@ -153,6 +160,10 @@ function parseArgs(argv: string[]): Options {
     }
     if (arg === "--no-start") {
       options.startAfterRestore = false;
+      continue;
+    }
+    if (arg === "--stop-after-start") {
+      options.stopAfterStart = true;
       continue;
     }
     if (arg === "--no-retry-failed-restore") {
@@ -443,14 +454,20 @@ async function restoreOne({
   if (restoreStatus === "failed") {
     throw new Error(refreshed?.restore_error ?? "restore failed");
   }
+  let phase = "restored";
   if (options.startAfterRestore) {
     await startProjectOnHost(result.project_id, { account_id: accountId });
+    phase = "started";
+    if (options.stopAfterStart) {
+      await stopProjectOnHost(result.project_id);
+      phase = "started-stopped";
+    }
   }
   await writeResumeRecord(options.resumeFile, {
     legacy_project_id: legacyProjectId,
     project_id: result.project_id,
     status: "ok",
-    phase: options.startAfterRestore ? "started" : "restored",
+    phase,
     message: restoreStatus ?? undefined,
   });
   return "ok";
