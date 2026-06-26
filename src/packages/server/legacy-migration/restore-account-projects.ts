@@ -561,4 +561,5 @@ main()
     if (poolUsed) {
       await getPool().end();
     }
+    process.exit(process.exitCode ?? 0);
   });
