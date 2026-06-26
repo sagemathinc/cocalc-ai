@@ -35,15 +35,12 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 import type {
-  LegacyMigrationArchiveEntry,
-  LegacyMigrationArchiveIndex,
-  LegacyMigrationFinancialPreviewResponse,
   LegacyMigrationMatchedAccount,
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
 import type { SettingsPageDefinition } from "./settings-page";
 
-const { Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 type LegacyMigrationState = {
   error: string;
@@ -54,38 +51,20 @@ type LegacyMigrationState = {
   totalCount: number;
 };
 
-type LegacyFinancialState = {
-  applying: boolean;
-  error: string;
-  loading: boolean;
-  preview?: LegacyMigrationFinancialPreviewResponse;
-};
-
 const PROJECT_LOAD_LIMIT = 1000;
+type LegacyProjectStatusFilter =
+  | "all"
+  | "ready"
+  | "restoring"
+  | "restored"
+  | "not-available"
+  | "failed";
 
 function formatDate(value?: Date | string | null): string {
   if (!value) return "Unknown";
   const date = new Date(value);
   if (!Number.isFinite(date.valueOf())) return "Unknown";
   return date.toLocaleString();
-}
-
-function restoreTag(project: LegacyMigrationProjectSummary) {
-  const status = project.restore_status;
-  if (status === "restored") return <Tag color="green">files restored</Tag>;
-  if (!archiveAvailable(project)) {
-    return <Tag>Not yet available</Tag>;
-  }
-  if (!status) return <Tag>not started</Tag>;
-  if (status === "pending") return <Tag color="gold">file restore pending</Tag>;
-  if (status === "failed") return <Tag color="red">file restore failed</Tag>;
-  if (status === "restoring") return <Tag color="blue">restoring files</Tag>;
-  if (status === "selection-pending") {
-    return <Tag color="gold">waiting for file selection</Tag>;
-  }
-  if (status === "indexing") return <Tag color="blue">indexing archive</Tag>;
-  if (status === "indexed") return <Tag color="cyan">archive indexed</Tag>;
-  return <Tag>{status}</Tag>;
 }
 
 function formatDiskMb(value: number | null | undefined): string {
@@ -107,15 +86,6 @@ function formatBytes(value: number | null | undefined): string {
   return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${unit}`;
 }
 
-function formatMoney(value: number | null | undefined): string {
-  const amount =
-    typeof value === "number" && Number.isFinite(value) ? value : 0;
-  return `$${amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
 function matchedAccountLabel(account: LegacyMigrationMatchedAccount): string {
   const email = `${account.email_address ?? ""}`.trim();
   if (email) return email;
@@ -135,23 +105,6 @@ function matchedAccountTitle(account: LegacyMigrationMatchedAccount): string {
   return parts.join("\n");
 }
 
-function importTag(project: LegacyMigrationProjectSummary) {
-  if (project.import_status === "not-imported") {
-    return <Tag>not imported</Tag>;
-  }
-  if (project.import_status === "imported") {
-    return project.joined ? (
-      <Tag color="green">imported for you</Tag>
-    ) : (
-      <Tag color="blue">already imported</Tag>
-    );
-  }
-  if (project.import_status === "creating") {
-    return <Tag color="gold">creating</Tag>;
-  }
-  return <Tag color="red">failed</Tag>;
-}
-
 function restoreProgressText(
   progress: LegacyMigrationProjectSummary["restore_progress"],
 ): string {
@@ -159,6 +112,40 @@ function restoreProgressText(
   const phase = `${progress.phase ?? ""}`.trim();
   const detail = `${progress.message ?? ""}`.trim();
   return [phase, detail].filter(Boolean).join(": ");
+}
+
+function projectStatusFilter(
+  project: LegacyMigrationProjectSummary,
+): Exclude<LegacyProjectStatusFilter, "all"> {
+  if (
+    project.import_status === "failed" ||
+    project.restore_status === "failed"
+  ) {
+    return "failed";
+  }
+  if (
+    project.import_status === "creating" ||
+    project.restore_status === "pending" ||
+    project.restore_status === "restoring" ||
+    project.restore_status === "indexing"
+  ) {
+    return "restoring";
+  }
+  if (project.restore_status === "restored") return "restored";
+  if (!archiveAvailable(project) && !project.project_id) {
+    return "not-available";
+  }
+  return "ready";
+}
+
+function projectStatusTag(project: LegacyMigrationProjectSummary) {
+  const status = projectStatusFilter(project);
+  if (status === "restored") return <Tag color="green">Restored</Tag>;
+  if (status === "restoring") return <Tag color="blue">Restoring</Tag>;
+  if (status === "failed") return <Tag color="red">Failed</Tag>;
+  if (status === "not-available") return <Tag>Not yet available</Tag>;
+  if (project.project_id) return <Tag color="green">Imported</Tag>;
+  return <Tag color="gold">Ready to restore</Tag>;
 }
 
 function restoreProgressPercent(
@@ -409,164 +396,6 @@ function LegacyProjectImportModal({
   );
 }
 
-function pathLines(value: string): string[] {
-  return Array.from(
-    new Set(
-      value
-        .split(/\r?\n/g)
-        .map((line) => line.trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
-function archiveSummaryFromProject(
-  project: LegacyMigrationProjectSummary,
-): Partial<LegacyMigrationArchiveIndex> | undefined {
-  const index = project.restore_result?.archive_index;
-  return index && typeof index === "object"
-    ? (index as Partial<LegacyMigrationArchiveIndex>)
-    : undefined;
-}
-
-function SelectiveRestoreControls({
-  project,
-  reload,
-}: {
-  project: LegacyMigrationProjectSummary;
-  reload: () => Promise<void>;
-}) {
-  const [index, setIndex] = useState<LegacyMigrationArchiveIndex>();
-  const [includePaths, setIncludePaths] = useState("");
-  const [excludePaths, setExcludePaths] = useState("");
-  const [working, setWorking] = useState<"" | "index" | "restore">("");
-  const summary = index ?? archiveSummaryFromProject(project);
-  const include = pathLines(includePaths);
-  const exclude = pathLines(excludePaths);
-  const hasSelection = include.length > 0 || exclude.length > 0;
-  const canRestore =
-    !!summary?.cache_id &&
-    (project.restore_status === "indexed" ||
-      project.restore_status === "failed" ||
-      index != null);
-
-  async function indexArchive() {
-    setWorking("index");
-    try {
-      const response =
-        await webapp_client.conat_client.hub.legacyMigration.prepareArchiveSelection(
-          {
-            legacy_project_id: project.legacy_project_id,
-            max_entries: 5000,
-          },
-        );
-      setIndex(response.index);
-      void message.success("Archive indexed on the project host.");
-      await reload();
-    } catch (err) {
-      void message.error(`${err}`);
-    } finally {
-      setWorking("");
-    }
-  }
-
-  async function restoreSelected() {
-    if (!hasSelection) return;
-    setWorking("restore");
-    try {
-      await webapp_client.conat_client.hub.legacyMigration.restoreArchiveSelection(
-        {
-          legacy_project_id: project.legacy_project_id,
-          include_paths: include,
-          exclude_paths: exclude,
-        },
-      );
-      void message.success("Selected files restored.");
-      setIndex(undefined);
-      await reload();
-    } catch (err) {
-      void message.error(`${err}`);
-    } finally {
-      setWorking("");
-    }
-  }
-
-  return (
-    <Space direction="vertical" size={6} style={{ maxWidth: 520 }}>
-      <Button
-        disabled={project.restore_status === "indexing"}
-        loading={working === "index" || project.restore_status === "indexing"}
-        onClick={() => void indexArchive()}
-        size="small"
-      >
-        {summary?.cache_id ? "Refresh file list" : "Index archive"}
-      </Button>
-      {summary?.cache_id ? (
-        <Text type="secondary">
-          {summary.file_count ?? "Unknown"} entries,{" "}
-          {summary.uncompressed_bytes ?? "unknown"} bytes expanded
-          {summary.truncated ? " (list truncated)" : ""}
-        </Text>
-      ) : null}
-      {index?.entries?.length ? (
-        <Table<LegacyMigrationArchiveEntry>
-          columns={[
-            {
-              title: "Path",
-              dataIndex: "path",
-              key: "path",
-              ellipsis: true,
-            },
-            {
-              title: "Type",
-              dataIndex: "type",
-              key: "type",
-              width: 90,
-            },
-            {
-              title: "Bytes",
-              dataIndex: "size",
-              key: "size",
-              width: 100,
-            },
-          ]}
-          dataSource={index.entries}
-          pagination={{ pageSize: 8, size: "small" }}
-          rowKey="path"
-          size="small"
-        />
-      ) : null}
-      {canRestore ? (
-        <>
-          <Input.TextArea
-            autoSize={{ minRows: 2, maxRows: 5 }}
-            onChange={(event) => setIncludePaths(event.target.value)}
-            placeholder="Include paths, one per line. Example: src or assignments/week1"
-            value={includePaths}
-          />
-          <Input.TextArea
-            autoSize={{ minRows: 2, maxRows: 5 }}
-            onChange={(event) => setExcludePaths(event.target.value)}
-            placeholder="Exclude paths, one per line. Example: .conda or node_modules"
-            value={excludePaths}
-          />
-          <Button
-            disabled={!hasSelection}
-            loading={
-              working === "restore" || project.restore_status === "restoring"
-            }
-            onClick={() => void restoreSelected()}
-            size="small"
-            type="primary"
-          >
-            Restore selected files
-          </Button>
-        </>
-      ) : null}
-    </Space>
-  );
-}
-
 export const LEGACY_MIGRATION_SETTINGS_PAGE = {
   component: LegacyMigrationPage,
   description: defineMessage({
@@ -607,19 +436,11 @@ export function LegacyMigrationPage() {
     projects: [],
     totalCount: 0,
   });
-  const [financialState, setFinancialState] = useState<LegacyFinancialState>({
-    applying: false,
-    error: "",
-    loading: true,
-  });
-  const [selectedMembershipClass, setSelectedMembershipClass] =
-    useState("none");
-  const [selectedMembershipInterval, setSelectedMembershipInterval] = useState<
-    "month" | "year"
-  >("year");
   const [includeHidden, setIncludeHidden] = useState(false);
   const [maxDiskGb, setMaxDiskGb] = useState<number | null>(null);
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] =
+    useState<LegacyProjectStatusFilter>("all");
   const [pageSize, setPageSize] = useState(25);
   const [importProject, setImportProject] =
     useState<LegacyMigrationProjectSummary>();
@@ -653,63 +474,9 @@ export function LegacyMigrationPage() {
     }
   }
 
-  async function loadFinancialPreview() {
-    if (!account_id || !legacyMigrationEnabled) return;
-    setFinancialState((prev) => ({ ...prev, error: "", loading: true }));
-    try {
-      const preview =
-        await webapp_client.conat_client.hub.legacyMigration.previewFinancialMigration();
-      setFinancialState({
-        applying: false,
-        error: "",
-        loading: false,
-        preview,
-      });
-      setSelectedMembershipClass(preview.suggested_membership_class ?? "none");
-      setSelectedMembershipInterval(preview.suggested_membership_interval);
-    } catch (err) {
-      setFinancialState((prev) => ({
-        ...prev,
-        error: `${err}`,
-        loading: false,
-      }));
-    }
-  }
-
-  async function applyFinancialMigration() {
-    setFinancialState((prev) => ({ ...prev, applying: true, error: "" }));
-    try {
-      const response =
-        await webapp_client.conat_client.hub.legacyMigration.applyFinancialMigration(
-          {
-            membership_class:
-              selectedMembershipClass === "none"
-                ? null
-                : selectedMembershipClass,
-            membership_interval: selectedMembershipInterval,
-          },
-        );
-      void message.success(
-        `Migrated ${formatMoney(response.credit_amount)} in legacy credit${
-          response.subscription_id
-            ? " and created a membership subscription"
-            : ""
-        }.`,
-      );
-      await loadFinancialPreview();
-    } catch (err) {
-      setFinancialState((prev) => ({
-        ...prev,
-        applying: false,
-        error: `${err}`,
-      }));
-    }
-  }
-
   useEffect(() => {
     if (legacyMigrationEnabled) {
       void loadProjects();
-      void loadFinancialPreview();
     }
   }, [account_id, includeHidden, legacyMigrationEnabled]);
 
@@ -786,12 +553,33 @@ export function LegacyMigrationPage() {
     setImportProject(project);
   }
 
+  const projectStats = useMemo(() => {
+    const stats: Record<Exclude<LegacyProjectStatusFilter, "all">, number> = {
+      failed: 0,
+      ready: 0,
+      restored: 0,
+      restoring: 0,
+      "not-available": 0,
+    };
+    for (const project of state.projects) {
+      stats[projectStatusFilter(project)] += 1;
+    }
+    return stats;
+  }, [state.projects]);
+
+  const filteredProjects = useMemo(() => {
+    if (statusFilter === "all") return state.projects;
+    return state.projects.filter(
+      (project) => projectStatusFilter(project) === statusFilter,
+    );
+  }, [state.projects, statusFilter]);
+
   const columns = [
     {
       title: "Project",
       dataIndex: "title",
       key: "title",
-      width: 520,
+      width: 560,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
         <Space direction="vertical" size={2} style={{ width: "100%" }}>
           <Text
@@ -823,10 +611,33 @@ export function LegacyMigrationPage() {
       ),
     },
     {
+      title: "Status",
+      key: "status",
+      width: 180,
+      render: (_: unknown, project: LegacyMigrationProjectSummary) => (
+        <Space direction="vertical" size={4}>
+          {projectStatusTag(project)}
+          {project.restore_error ? (
+            <Text type="danger" ellipsis={{ tooltip: project.restore_error }}>
+              {project.restore_error}
+            </Text>
+          ) : null}
+          {restoreProgressText(project.restore_progress) ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {restoreProgressText(project.restore_progress)}
+              {restoreProgressPercent(project.restore_progress) != null
+                ? ` (${restoreProgressPercent(project.restore_progress)}%)`
+                : ""}
+            </Text>
+          ) : null}
+        </Space>
+      ),
+    },
+    {
       title: "Last edited",
       dataIndex: "last_edited",
       key: "last_edited",
-      width: 220,
+      width: 180,
       render: (value: Date | string | null) => formatDate(value),
       sorter: (
         left: LegacyMigrationProjectSummary,
@@ -839,7 +650,7 @@ export function LegacyMigrationPage() {
       title: "Disk size",
       dataIndex: "disk_mb",
       key: "disk_mb",
-      width: 130,
+      width: 125,
       render: (value: number | null | undefined) => (
         <Space direction="vertical" size={0}>
           <Text>{formatDiskMb(value)}</Text>
@@ -857,7 +668,7 @@ export function LegacyMigrationPage() {
       title: "Archived size",
       dataIndex: "artifact_bytes",
       key: "artifact_bytes",
-      width: 150,
+      width: 135,
       render: (value: number | null | undefined) => (
         <Space direction="vertical" size={0}>
           <Text>{formatBytes(value)}</Text>
@@ -872,62 +683,31 @@ export function LegacyMigrationPage() {
       ) => (left.artifact_bytes ?? -1) - (right.artifact_bytes ?? -1),
     },
     {
-      title: "Open",
+      title: "Action",
       key: "import",
-      width: 170,
+      width: 160,
       render: (_: unknown, project: LegacyMigrationProjectSummary) => (
-        <Space direction="vertical" size={4}>
-          {importTag(project)}
-          <Button
-            disabled={!projectActionAvailable(project)}
-            loading={
-              project.import_status === "creating" ||
-              openingLegacyProjectId === project.legacy_project_id
-            }
-            onClick={() => void handleProjectAction(project)}
-            size="small"
-            title={
-              projectActionAvailable(project)
-                ? undefined
-                : "Archived files for this legacy project are not available yet."
-            }
-          >
-            {project.project_id ? "Open" : "Import and Open"}
-          </Button>
-        </Space>
-      ),
-    },
-    {
-      title: "Files",
-      key: "files",
-      width: 280,
-      render: (_: unknown, project: LegacyMigrationProjectSummary) => (
-        <Space direction="vertical" size={4}>
-          {restoreTag(project)}
-          {project.restore_error ? (
-            <Text type="danger">{project.restore_error}</Text>
-          ) : null}
-          {restoreProgressText(project.restore_progress) ? (
-            <Text type="secondary">
-              {restoreProgressText(project.restore_progress)}
-              {restoreProgressPercent(project.restore_progress) != null
-                ? ` (${restoreProgressPercent(project.restore_progress)}%)`
-                : ""}
-            </Text>
-          ) : null}
-          {project.artifact_status && !project.restore_status ? (
-            <Text type="secondary">{project.artifact_status}</Text>
-          ) : null}
-          {project.restore_mode === "select" &&
-          project.project_id &&
-          project.restore_status !== "restored" &&
-          project.restore_status !== "restoring" ? (
-            <SelectiveRestoreControls
-              project={project}
-              reload={() => loadProjects()}
-            />
-          ) : null}
-        </Space>
+        <Button
+          disabled={!projectActionAvailable(project)}
+          loading={
+            project.import_status === "creating" ||
+            openingLegacyProjectId === project.legacy_project_id
+          }
+          onClick={() => void handleProjectAction(project)}
+          size="small"
+          title={
+            projectActionAvailable(project)
+              ? undefined
+              : "Archived files for this legacy project are not available yet."
+          }
+          type={project.project_id ? "default" : "primary"}
+        >
+          {project.project_id
+            ? "Open"
+            : archiveAvailable(project)
+              ? "Restore and Open"
+              : "Unavailable"}
+        </Button>
       ),
     },
   ];
@@ -945,222 +725,55 @@ export function LegacyMigrationPage() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <Paragraph type="secondary">
-        Open projects from the archived legacy cocalc.com snapshot. Already
-        imported projects open immediately. For projects that have not been
-        imported yet, choose an image and host, then CoCalc creates the project
-        and restores its files from the archive.
-      </Paragraph>
-      <Paragraph type="secondary">
-        This page loads up to {PROJECT_LOAD_LIMIT.toLocaleString()} matching
-        projects at a time, sorted by most recent edit. These are the projects
-        from your matched legacy account records, along with their current
-        migration status. Some very old projects may be marked{" "}
-        <Tag>Not yet available</Tag> while their archived files are still being
-        uploaded. You can return later, search for older projects, and migrate
-        more projects at any time.
-      </Paragraph>
-
-      {legacyMigrationPageMessage ? (
-        <Alert showIcon type="info" message={legacyMigrationPageMessage} />
-      ) : null}
-
       <Card size="small">
-        <Space direction="vertical" size={4}>
-          <Space>
-            <Switch
-              checked={showLegacyProjectsButton}
-              onChange={setShowLegacyProjectsButton}
-            />
-            <Text strong>Show Legacy Projects button on the Projects page</Text>
-          </Space>
-          <Text type="secondary">
-            When enabled, the Projects page shows a Legacy Projects button that
-            opens this migration page without a browser refresh.
-          </Text>
-        </Space>
-      </Card>
-
-      <Card
-        title={
-          <Space>
-            <Icon name="credit-card" />
-            <span>Financial migration</span>
-          </Space>
-        }
-        extra={
-          <Button
-            loading={financialState.loading}
-            onClick={() => void loadFinancialPreview()}
-          >
-            Refresh
-          </Button>
-        }
-      >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            This explicitly migrates positive cocalc.com credit and optionally
-            creates a CoCalc membership subscription from your matched legacy
-            account records. It does not cancel old Stripe subscriptions.
-          </Paragraph>
-          {financialState.error ? (
-            <Alert showIcon type="error" message={financialState.error} />
-          ) : null}
-          {financialState.loading && !financialState.preview ? (
-            <Loading />
-          ) : financialState.preview ? (
-            <>
-              <Space wrap size="large">
-                <Space direction="vertical" size={0}>
-                  <Text type="secondary">Available legacy credit</Text>
-                  <Text strong>
-                    {formatMoney(financialState.preview.pending_credit_amount)}
-                  </Text>
-                </Space>
-                <Space direction="vertical" size={0}>
-                  <Text type="secondary">Already migrated credit</Text>
-                  <Text>
-                    {formatMoney(financialState.preview.applied_credit_amount)}
-                  </Text>
-                </Space>
-                <Space direction="vertical" size={0}>
-                  <Text type="secondary">Legacy active subscriptions</Text>
-                  <Text>
-                    {financialState.preview.active_subscription_count} totaling{" "}
-                    {formatMoney(
-                      financialState.preview.active_subscription_annualized,
-                    )}
-                    /year
-                  </Text>
-                </Space>
-                <Space direction="vertical" size={0}>
-                  <Text type="secondary">Stripe customer</Text>
-                  <Text copyable={!!financialState.preview.stripe_customer_id}>
-                    {financialState.preview.stripe_customer_id ?? "None found"}
-                  </Text>
-                </Space>
-              </Space>
-              <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                <Text type="secondary">Matched financial records:</Text>
-                <Space wrap size={[4, 4]}>
-                  {financialState.preview.legacy_accounts.map((account) => (
-                    <Tag
-                      color={
-                        account.claimed_by_account_id
-                          ? account.claimed_by_account_id === account_id
-                            ? "green"
-                            : "red"
-                          : account.credit_amount > 0
-                            ? "gold"
-                            : undefined
-                      }
-                      key={account.legacy_account_id}
-                      title={[
-                        account.legacy_account_id,
-                        `credit: ${formatMoney(account.credit_amount)}`,
-                        account.active_subscription_count
-                          ? `subscriptions: ${account.active_subscription_count}, ${formatMoney(account.active_subscription_annualized)}/year`
-                          : "",
-                        account.claimed_by_account_id
-                          ? `claimed by ${account.claimed_by_account_id}`
-                          : "",
-                      ]
-                        .filter(Boolean)
-                        .join("\n")}
-                    >
-                      {account.email_address ??
-                        account.display_name ??
-                        account.legacy_account_id}
-                    </Tag>
-                  ))}
-                </Space>
-              </Space>
-              <Space wrap>
-                <Select
-                  disabled={
-                    financialState.applying ||
-                    financialState.preview.membership_already_applied
-                  }
-                  onChange={setSelectedMembershipClass}
-                  style={{ width: 240 }}
-                  value={
-                    financialState.preview.membership_already_applied
-                      ? "none"
-                      : selectedMembershipClass
-                  }
-                >
-                  <Select.Option value="none">
-                    No membership migration
-                  </Select.Option>
-                  {financialState.preview.plans.map((plan) => (
-                    <Select.Option key={plan.id} value={plan.id}>
-                      {plan.label} ({formatMoney(plan.price_monthly)}/month,{" "}
-                      {formatMoney(plan.price_yearly)}/year)
-                    </Select.Option>
-                  ))}
-                </Select>
-                <Select
-                  disabled={
-                    financialState.applying ||
-                    financialState.preview.membership_already_applied ||
-                    selectedMembershipClass === "none"
-                  }
-                  onChange={setSelectedMembershipInterval}
-                  style={{ width: 120 }}
-                  value={selectedMembershipInterval}
-                >
-                  <Select.Option value="year">Yearly</Select.Option>
-                  <Select.Option value="month">Monthly</Select.Option>
-                </Select>
-                <Button
-                  disabled={
-                    financialState.applying ||
-                    !financialState.preview.can_apply ||
-                    (financialState.preview.pending_credit_amount <= 0 &&
-                      selectedMembershipClass === "none" &&
-                      !financialState.preview.stripe_customer_id)
-                  }
-                  loading={financialState.applying}
-                  onClick={() => void applyFinancialMigration()}
-                  type="primary"
-                >
-                  Apply financial migration
-                </Button>
-              </Space>
-              {financialState.preview.membership_already_applied ? (
-                <Alert
-                  showIcon
-                  type="info"
-                  message="This account already has an active membership or migrated membership."
+          <Space align="start" style={{ width: "100%" }}>
+            <Icon name="exchange" style={{ fontSize: 22, marginTop: 2 }} />
+            <Space direction="vertical" size={2} style={{ flex: 1 }}>
+              <Text strong style={{ fontSize: 18 }}>
+                Legacy Projects
+              </Text>
+              <Text type="secondary">
+                Open a legacy project to restore its files. Large projects may
+                take a few minutes; projects marked <Tag>Not yet available</Tag>{" "}
+                are known to the migration system but their archive has not been
+                uploaded yet.
+              </Text>
+              <Text type="secondary">
+                Billing credit and legacy memberships are handled automatically
+                in <a href="/settings/balance">Billing</a>.
+              </Text>
+            </Space>
+            <Space direction="vertical" size={4}>
+              <Space>
+                <Switch
+                  checked={showLegacyProjectsButton}
+                  onChange={setShowLegacyProjectsButton}
+                  size="small"
                 />
-              ) : selectedMembershipClass !== "none" ? (
-                <Alert
-                  showIcon
-                  type="warning"
-                  message="Membership migration creates a new CoCalc membership subscription."
-                  description="This first migrated period is recorded locally in CoCalc. Old cocalc.com Stripe subscriptions are not canceled by this button."
-                />
-              ) : null}
-            </>
+                <Text type="secondary">Show Projects-page button</Text>
+              </Space>
+            </Space>
+          </Space>
+          {legacyMigrationPageMessage ? (
+            <Alert showIcon type="info" message={legacyMigrationPageMessage} />
           ) : null}
+          <Space wrap size={[8, 8]}>
+            <Tag color="blue">
+              {state.totalCount.toLocaleString()} matching projects
+            </Tag>
+            <Tag color="gold">{projectStats.ready} ready</Tag>
+            <Tag color="green">{projectStats.restored} restored</Tag>
+            <Tag>{projectStats["not-available"]} not yet available</Tag>
+            {projectStats.restoring ? (
+              <Tag color="blue">{projectStats.restoring} restoring</Tag>
+            ) : null}
+            {projectStats.failed ? (
+              <Tag color="red">{projectStats.failed} failed</Tag>
+            ) : null}
+          </Space>
         </Space>
       </Card>
-
-      <Alert
-        showIcon
-        type="warning"
-        message="Legacy migration is still being rolled out"
-        description={
-          <span>
-            This page lists projects from legacy cocalc.com account records that
-            match a verified email on your current account. Gmail addresses also
-            match their Gmail dot/plus aliases. To match projects associated
-            with another email address, change and verify your email in{" "}
-            <a href="/settings/profile">profile settings</a>, then come back to
-            this page.
-          </span>
-        }
-      />
 
       {state.error ? (
         <Alert showIcon type="error" message={state.error} />
@@ -1170,11 +783,25 @@ export function LegacyMigrationPage() {
         title={
           <Space>
             <Icon name="exchange" />
-            <span>cocalc.com projects</span>
+            <span>Projects</span>
           </Space>
         }
         extra={
           <Space wrap>
+            <Select
+              onChange={setStatusFilter}
+              style={{ width: 170 }}
+              value={statusFilter}
+            >
+              <Select.Option value="all">All statuses</Select.Option>
+              <Select.Option value="ready">Ready to restore</Select.Option>
+              <Select.Option value="restoring">Restoring</Select.Option>
+              <Select.Option value="restored">Restored</Select.Option>
+              <Select.Option value="not-available">
+                Not yet available
+              </Select.Option>
+              <Select.Option value="failed">Failed</Select.Option>
+            </Select>
             <Checkbox
               checked={includeHidden}
               onChange={(event) => setIncludeHidden(event.target.checked)}
@@ -1276,9 +903,9 @@ export function LegacyMigrationPage() {
               </Space>
               <Table<LegacyMigrationProjectSummary>
                 columns={columns}
-                dataSource={state.projects}
+                dataSource={filteredProjects}
                 loading={state.loading}
-                scroll={{ x: 1470 }}
+                scroll={{ x: 1340 }}
                 tableLayout="fixed"
                 onRow={(project) => ({
                   onClick: (event) => {
@@ -1297,7 +924,7 @@ export function LegacyMigrationPage() {
                   showSizeChanger: true,
                   showTotal: (total, range) =>
                     `${range[0]}-${range[1]} of ${total.toLocaleString()} loaded`,
-                  total: state.projects.length,
+                  total: filteredProjects.length,
                   onChange: (_page, size) => setPageSize(size),
                   onShowSizeChange: (_page, size) => setPageSize(size),
                 }}

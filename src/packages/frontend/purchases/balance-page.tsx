@@ -6,6 +6,7 @@ import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-p
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import Balance from "./balance";
+import LegacyBillingMigrationStatus from "./legacy-billing-migration-status";
 
 export const BALANCE_SETTINGS_PAGE = {
   component: BalancePage,
@@ -38,6 +39,7 @@ export default function BalancePage() {
   return (
     <Space vertical size="middle" style={{ width: "100%" }}>
       {error ? <Alert type="error" message={error} /> : null}
+      <LegacyBillingMigrationStatus />
       <Balance refresh={refresh} />
     </Space>
   );

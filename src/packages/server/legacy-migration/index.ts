@@ -574,13 +574,97 @@ async function membershipPlans(): Promise<LegacyMigrationMembershipPlan[]> {
     }));
 }
 
-async function activeMembershipExists(account_id: string): Promise<boolean> {
+function canonicalEmailSql(expression: string): string {
+  return `
+    CASE
+      WHEN split_part(${expression}, '@', 2) IN ('gmail.com', 'googlemail.com')
+        THEN regexp_replace(split_part(split_part(${expression}, '@', 1), '+', 1), '\\.', '', 'g') || '@gmail.com'
+      ELSE ${expression}
+    END
+  `;
+}
+
+export async function ensureVerifiedEmailLinksForAllAccounts(): Promise<number> {
+  await ensureLegacyMigrationFinancialSchema();
+  const legacyCanonical = canonicalEmailSql("lower(legacy.email_address)");
+  const currentCanonical = canonicalEmailSql("current_emails.email");
+  const { rowCount } = await getPool().query(
+    `
+    WITH current_emails AS (
+      SELECT account_id, lower(email_address) AS email
+        FROM accounts
+       WHERE COALESCE(deleted, false)=false
+         AND COALESCE(email_address, '') <> ''
+         AND COALESCE(email_address_verified, '{}'::jsonb)
+             ? lower(email_address)
+      UNION
+      SELECT account_id, lower(verified.email) AS email
+        FROM accounts
+        CROSS JOIN LATERAL jsonb_each(COALESCE(email_address_verified, '{}'::jsonb))
+          AS verified(email, verified_value)
+       WHERE COALESCE(deleted, false)=false
+         AND verified.verified_value = 'true'::jsonb
+    ),
+    current_keys AS (
+      SELECT account_id, email AS email_key, email AS matched_email
+        FROM current_emails
+      UNION
+      SELECT account_id, ${currentCanonical} AS email_key, email AS matched_email
+        FROM current_emails
+    ),
+    legacy_keys AS (
+      SELECT legacy_account_id,
+             lower(email_address) AS email_key,
+             lower(email_address) AS email_address,
+             NULL::TEXT AS gmail_canonical_email
+        FROM legacy_migration_accounts legacy
+       WHERE COALESCE(email_address_verified, false)=true
+         AND COALESCE(email_address, '') <> ''
+      UNION
+      SELECT legacy_account_id,
+             ${legacyCanonical} AS email_key,
+             lower(email_address) AS email_address,
+             ${legacyCanonical} AS gmail_canonical_email
+        FROM legacy_migration_accounts legacy
+       WHERE COALESCE(email_address_verified, false)=true
+         AND COALESCE(email_address, '') <> ''
+         AND split_part(lower(email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+    )
+    INSERT INTO legacy_migration_account_links
+      (legacy_account_id, account_id, claim_method, metadata, created, updated)
+    SELECT DISTINCT ON (legacy.legacy_account_id, current_keys.account_id)
+           legacy.legacy_account_id,
+           current_keys.account_id,
+           'verified-email',
+           jsonb_build_object(
+             'email_address', legacy.email_address,
+             'matched_email', current_keys.matched_email,
+             'match_method',
+             CASE
+               WHEN legacy.email_address=current_keys.matched_email THEN 'exact-email'
+               ELSE 'gmail-canonical'
+             END,
+             'gmail_canonical_email', legacy.gmail_canonical_email
+           ),
+           NOW(),
+           NOW()
+      FROM legacy_keys legacy
+      JOIN current_keys USING (email_key)
+     WHERE COALESCE(legacy.email_key, '') <> ''
+    ON CONFLICT (legacy_account_id, account_id)
+    DO UPDATE SET updated=NOW()
+    `,
+  );
+  return rowCount ?? 0;
+}
+
+async function currentMembershipExists(account_id: string): Promise<boolean> {
   const { rows } = await getPool().query(
     `
     SELECT 1
       FROM subscriptions
      WHERE account_id=$1
-       AND status='active'
+       AND status IN ('active', 'canceled')
        AND metadata->>'type'='membership'
        AND current_period_end >= NOW()
      LIMIT 1
@@ -693,7 +777,6 @@ async function financialRowsForAccount(
 }
 
 function suggestedMembershipClass({
-  active_subscription_annualized,
   active_subscription_count,
   membership_already_applied,
 }: {
@@ -704,7 +787,7 @@ function suggestedMembershipClass({
   if (membership_already_applied || active_subscription_count <= 0) {
     return null;
   }
-  return active_subscription_annualized > 150 ? "standard" : "basic";
+  return "basic";
 }
 
 async function financialPreviewForAccount(
@@ -713,7 +796,7 @@ async function financialPreviewForAccount(
   const [legacy_accounts, plans, hasActiveMembership] = await Promise.all([
     financialRowsForAccount(account_id),
     membershipPlans(),
-    activeMembershipExists(account_id),
+    currentMembershipExists(account_id),
   ]);
   const pending = legacy_accounts.filter(
     (account) => !account.claimed_by_account_id,
@@ -755,7 +838,7 @@ async function financialPreviewForAccount(
       active_subscription_count,
       membership_already_applied,
     }),
-    suggested_membership_interval: "year",
+    suggested_membership_interval: "month",
     membership_already_applied,
     stripe_customer_id,
     plans,
@@ -941,7 +1024,7 @@ export async function applyFinancialMigration({
           interval: selectedInterval,
         })
       : undefined;
-  if (selectedClass != null && (await activeMembershipExists(account_id))) {
+  if (selectedClass != null && (await currentMembershipExists(account_id))) {
     throw new Error("this account already has an active membership");
   }
 
@@ -1001,7 +1084,7 @@ export async function applyFinancialMigration({
           interval: selectedInterval,
           current_period_start: new Date(),
           current_period_end: membershipEnd(selectedInterval),
-          status: "active",
+          status: "canceled",
           metadata: {
             type: "membership",
             class: selectedClass,
@@ -1041,6 +1124,71 @@ export async function applyFinancialMigration({
   } finally {
     client.release();
   }
+}
+
+export async function applyAutomaticFinancialMigration({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<LegacyMigrationApplyFinancialResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const preview = await financialPreviewForAccount(account_id);
+  if (!preview.can_apply) {
+    return {
+      claimed_legacy_account_ids: [],
+      credit_amount: 0,
+      credit_purchase_ids: [],
+      subscription_id: null,
+      stripe_customer_id: preview.stripe_customer_id ?? null,
+    };
+  }
+  return await applyFinancialMigration({
+    account_id,
+    membership_class:
+      preview.active_subscription_count > 0 &&
+      !preview.membership_already_applied
+        ? "basic"
+        : null,
+    membership_interval: "month",
+  });
+}
+
+export async function financialMigrationCandidateAccountIds({
+  limit,
+}: {
+  limit?: number;
+} = {}): Promise<string[]> {
+  await ensureLegacyMigrationFinancialSchema();
+  await ensureVerifiedEmailLinksForAllAccounts();
+  const n = limitValue(limit);
+  const { rows } = await getPool().query<{ account_id: string }>(
+    `
+    SELECT DISTINCT linked.account_id
+      FROM legacy_migration_account_links linked
+      JOIN legacy_migration_accounts legacy
+        ON legacy.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN legacy_migration_financial_claims claims
+        ON claims.legacy_account_id=linked.legacy_account_id
+       AND claims.status='applied'
+     WHERE claims.legacy_account_id IS NULL
+       AND (
+         COALESCE(legacy.stripe_customer_id, '') <> ''
+         OR EXISTS (
+           SELECT 1
+             FROM legacy_migration_raw_records raw
+            WHERE raw.source IN ('purchases', 'subscriptions')
+              AND raw.payload->>'legacy_account_id'=linked.legacy_account_id
+         )
+       )
+     ORDER BY linked.account_id
+     LIMIT $1
+    `,
+    [n],
+  );
+  return rows.map((row) => row.account_id);
 }
 
 export async function listProjects({
