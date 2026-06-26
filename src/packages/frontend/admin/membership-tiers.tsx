@@ -949,10 +949,12 @@ function useMembershipTiers() {
       if (data[id]?.has_usage_history !== false) {
         throw Error("cannot delete a tier with usage history");
       }
-      await webapp_client.conat_client.hub.purchases.deleteMembershipTier({
-        id,
+      await runFreshTierMutation(async () => {
+        await webapp_client.conat_client.hub.purchases.deleteMembershipTier({
+          browser_id: webapp_client.browser_id,
+          id,
+        });
       });
-      await load();
     } catch (err) {
       set_error(err.message ?? String(err));
     }
