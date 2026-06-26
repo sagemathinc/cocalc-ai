@@ -4,6 +4,7 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { ensureClusterAccountDirectorySchema } from "@cocalc/server/accounts/cluster-directory";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 import {
   MAX_NOTIFICATION_ID_BATCH,
@@ -35,6 +36,7 @@ const NON_COLLABORATOR_ACCOUNT_ID = "88888888-8888-4888-8888-888888888888";
 describe("conat notifications api", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
+    await ensureClusterAccountDirectorySchema();
   }, 15000);
 
   afterEach(async () => {
@@ -44,6 +46,7 @@ describe("conat notifications api", () => {
                 notification_targets,
                 notification_events,
                 projects,
+                cluster_account_directory,
                 accounts
          CASCADE`,
     );
@@ -138,6 +141,68 @@ describe("conat notifications api", () => {
           priority: "high",
           stable_source_id: "chat-message-1",
         },
+      },
+    ]);
+  });
+
+  it("creates mention notifications for remote collaborators without local account rows", async () => {
+    await seedMentionContext();
+    const remoteOnlyAccountId = NON_COLLABORATOR_ACCOUNT_ID;
+    await getPool().query("DELETE FROM accounts WHERE account_id=$1", [
+      remoteOnlyAccountId,
+    ]);
+    await getPool().query(
+      `INSERT INTO cluster_account_directory
+         (account_id, email_address, display_name, first_name, last_name,
+          home_bay_id, provisioned)
+       VALUES
+         ($1, 'remote@example.com', 'Remote Collaborator', 'Remote',
+          'Collaborator', 'bay-1', TRUE)`,
+      [remoteOnlyAccountId],
+    );
+    await getPool().query(
+      `UPDATE projects
+          SET users = users || $2::JSONB
+        WHERE project_id = $1`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          [remoteOnlyAccountId]: { group: "collaborator" },
+        }),
+      ],
+    );
+
+    await expect(
+      createMention({
+        account_id: ACTOR_ACCOUNT_ID,
+        source_project_id: PROJECT_ID,
+        source_path: "work/chat.chat",
+        source_fragment_id: "thread=remote",
+        target_account_ids: [remoteOnlyAccountId],
+        description: "Remote collaborator mentioned",
+        stable_source_id: "chat-message-remote",
+      }),
+    ).resolves.toMatchObject({
+      kind: "mention",
+      target_count: 1,
+      targets: [
+        expect.objectContaining({
+          target_account_id: remoteOnlyAccountId,
+          target_home_bay_id: "bay-1",
+        }),
+      ],
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT target_account_id, target_home_bay_id
+         FROM notification_targets
+        WHERE target_account_id = $1`,
+      [remoteOnlyAccountId],
+    );
+    expect(rows).toEqual([
+      {
+        target_account_id: remoteOnlyAccountId,
+        target_home_bay_id: "bay-1",
       },
     ]);
   });

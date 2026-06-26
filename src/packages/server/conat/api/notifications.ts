@@ -15,10 +15,10 @@ import {
 } from "@cocalc/database/postgres/account-notification-index";
 import {
   createNotificationEventGraph,
-  resolveNotificationTargetHomeBays,
   type NotificationKind,
 } from "@cocalc/database/postgres/notifications-core";
 import getPool from "@cocalc/database/pool";
+import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import type {
   CreateAccountNoticeOptions,
   CreateCodexTurnNoticeOptions,
@@ -113,6 +113,34 @@ function requireUuid(value: string | undefined, label: string): string {
   return normalized;
 }
 
+async function resolveNotificationTargetHomeBaysAllowRemote(opts: {
+  account_ids: string[];
+  default_bay_id: string;
+}): Promise<Record<string, string>> {
+  const account_ids = Array.from(
+    new Set(opts.account_ids.map((id) => requireUuid(id, "account id"))),
+  );
+  if (account_ids.length === 0) {
+    return {};
+  }
+  const accounts = await getClusterAccountsByIds(account_ids);
+  const byAccountId: Record<string, string> = {};
+  for (const account of accounts) {
+    const account_id = `${account.account_id ?? ""}`.trim();
+    if (!account_id) {
+      continue;
+    }
+    byAccountId[account_id] =
+      `${account.home_bay_id ?? ""}`.trim() || opts.default_bay_id;
+  }
+  for (const account_id of account_ids) {
+    if (!byAccountId[account_id]) {
+      throw Error(`account '${account_id}' not found`);
+    }
+  }
+  return byAccountId;
+}
+
 function requireNonEmptyString(
   value: string | undefined,
   label: string,
@@ -175,7 +203,7 @@ async function createNotificationResult(opts: {
     Omit<Parameters<typeof createNotificationEventGraph>[0], "targets">
   >;
 }): Promise<CreateNotificationResult> {
-  const target_home_bays = await resolveNotificationTargetHomeBays({
+  const target_home_bays = await resolveNotificationTargetHomeBaysAllowRemote({
     account_ids: opts.targets,
     default_bay_id: opts.source_bay_id,
   });
