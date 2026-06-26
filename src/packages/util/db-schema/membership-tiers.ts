@@ -91,6 +91,7 @@ Table({
           admin_assigned_count: null,
           site_license_count: null,
           total_account_count: null,
+          has_usage_history: null,
           created: null,
           updated: null,
         } as { [key in MembershipTierGetFields]: null },
@@ -234,6 +235,10 @@ Table({
     total_account_count: {
       type: "number",
       desc: "Number of distinct accounts using this tier through subscriptions, packages, or admin assignment.",
+    },
+    has_usage_history: {
+      type: "boolean",
+      desc: "Whether any durable membership, package, grant, trial, or site-license record has referenced this tier id.",
     },
     created: {
       type: "timestamp",

@@ -216,6 +216,7 @@ interface Tier {
   admin_assigned_count?: number;
   site_license_count?: number;
   total_account_count?: number;
+  has_usage_history?: boolean;
   created?: dayjs.Dayjs;
   updated?: dayjs.Dayjs;
 }
@@ -738,11 +739,9 @@ function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
   const [saving, set_saving] = React.useState<boolean>(false);
-  const [deleting, set_deleting] = React.useState<boolean>(false);
   const [loading, set_loading] = React.useState<boolean>(false);
   const [last_saved, set_last_saved] = React.useState<Tier | null>(null);
   const [error, set_error] = React.useState<string>("");
-  const [sel_rows, set_sel_rows] = React.useState<any>([]);
 
   const [form] = Form.useForm();
 
@@ -785,6 +784,7 @@ function useMembershipTiers() {
             admin_assigned_count: null,
             site_license_count: null,
             total_account_count: null,
+            has_usage_history: null,
             created: null,
             updated: null,
           },
@@ -809,7 +809,6 @@ function useMembershipTiers() {
   }
 
   React.useEffect(() => {
-    set_sel_rows([]);
     load();
   }, []);
 
@@ -919,15 +918,11 @@ function useMembershipTiers() {
     }
   }
 
-  async function delete_tier(id: string | undefined, single = false) {
+  async function delete_tier(id: string | undefined) {
     if (!id) return;
-    if (single) set_deleting(true);
     try {
-      if ((data[id]?.subscription_count ?? 0) > 0) {
-        throw Error("cannot delete a tier with active subscriptions");
-      }
-      if ((data[id]?.site_license_count ?? 0) > 0) {
-        throw Error("cannot delete a tier used by active site licenses");
+      if (data[id]?.has_usage_history !== false) {
+        throw Error("cannot delete a tier with usage history");
       }
       await query({
         query: {
@@ -935,46 +930,9 @@ function useMembershipTiers() {
         },
         options: [{ delete: true }],
       });
-      if (single) load();
-    } catch (err) {
-      if (single) {
-        set_error(err.message ?? String(err));
-      } else {
-        throw err;
-      }
-    } finally {
-      if (single) set_deleting(false);
-    }
-  }
-
-  async function delete_tiers(): Promise<void> {
-    set_deleting(true);
-    try {
-      const blocked = sel_rows.filter(
-        (id) => (data[id]?.subscription_count ?? 0) > 0,
-      );
-      if (blocked.length > 0) {
-        throw Error(
-          `Cannot delete tiers with active subscriptions: ${blocked.join(", ")}`,
-        );
-      }
-      const siteLicenseBlocked = sel_rows.filter(
-        (id) => (data[id]?.site_license_count ?? 0) > 0,
-      );
-      if (siteLicenseBlocked.length > 0) {
-        throw Error(
-          `Cannot delete tiers used by active site licenses: ${siteLicenseBlocked.join(
-            ", ",
-          )}`,
-        );
-      }
-      await Promise.all(sel_rows.map(async (id) => await delete_tier(id)));
-      set_sel_rows([]);
-      load();
+      await load();
     } catch (err) {
       set_error(err.message ?? String(err));
-    } finally {
-      set_deleting(false);
     }
   }
 
@@ -983,15 +941,11 @@ function useMembershipTiers() {
     form,
     editing,
     saving,
-    deleting,
     delete_tier,
-    delete_tiers,
     loading,
     last_saved,
     error,
     set_error,
-    sel_rows,
-    set_sel_rows,
     set_editing,
     create_tier_from_template,
     import_tiers,
@@ -1015,15 +969,11 @@ export function MembershipTiers() {
     form,
     editing,
     saving,
-    deleting,
     delete_tier,
-    delete_tiers,
     loading,
     last_saved,
     error,
     set_error,
-    sel_rows,
-    set_sel_rows,
     set_editing,
     create_tier_from_template,
     import_tiers,
@@ -3581,47 +3531,39 @@ export function MembershipTiers() {
   }
 
   function render_buttons() {
-    const any_selected = sel_rows.length > 0;
-    const selected_has_usage = sel_rows.some(
-      (id) =>
-        (data[id]?.subscription_count ?? 0) > 0 ||
-        (data[id]?.site_license_count ?? 0) > 0,
-    );
     return (
-      <Space.Compact style={{ margin: "10px 0" }}>
-        <Button
-          type={!any_selected ? "primary" : "default"}
-          disabled={any_selected}
-          onClick={() => openCreateTierModal()}
-        >
-          <Icon name="plus" /> Add
-        </Button>
-        <Button
-          type={any_selected ? "primary" : "default"}
-          onClick={delete_tiers}
-          disabled={!any_selected || selected_has_usage}
-          loading={deleting}
-        >
-          <Icon name="trash" />
-          {any_selected ? `Delete ${sel_rows.length} tier(s)` : "Delete"}
-        </Button>
+      <div
+        style={{
+          alignItems: "center",
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "8px",
+          justifyContent: "space-between",
+          margin: "10px 0",
+        }}
+      >
+        <Space>
+          <Button type="primary" onClick={() => openCreateTierModal()}>
+            <Icon name="plus" /> Add
+          </Button>
+          <Button onClick={exportMembershipTiers}>
+            <Icon name="download" /> Export JSON
+          </Button>
+          <Button onClick={() => importFileInputRef.current?.click()}>
+            <Icon name="upload" /> Import JSON
+          </Button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: "none" }}
+            onChange={handleImportFileSelected}
+          />
+        </Space>
         <Button onClick={() => load()}>
           <Icon name="refresh" /> Refresh
         </Button>
-        <Button onClick={exportMembershipTiers}>
-          <Icon name="download" /> Export JSON
-        </Button>
-        <Button onClick={() => importFileInputRef.current?.click()}>
-          <Icon name="upload" /> Import JSON
-        </Button>
-        <input
-          ref={importFileInputRef}
-          type="file"
-          accept="application/json,.json"
-          style={{ display: "none" }}
-          onChange={handleImportFileSelected}
-        />
-      </Space.Compact>
+      </div>
     );
   }
 
@@ -3633,10 +3575,6 @@ export function MembershipTiers() {
       }),
       [(tier) => -prioritySortValue(tier), "id"],
     );
-    const rowSelection = {
-      selectedRowKeys: sel_rows,
-      onChange: set_sel_rows,
-    };
     return (
       <>
         {render_buttons()}
@@ -3644,7 +3582,6 @@ export function MembershipTiers() {
           size={"small"}
           dataSource={table_data}
           loading={loading}
-          rowSelection={rowSelection}
           pagination={{
             position: ["bottomRight"],
             defaultPageSize: 10,
@@ -3884,32 +3821,21 @@ export function MembershipTiers() {
             dataIndex="actions"
             align="center"
             render={(_text, tier) => {
-              const inUse =
-                (tier.subscription_count ?? 0) > 0 ||
-                (tier.team_seat_count ?? 0) > 0 ||
-                (tier.team_account_count ?? 0) > 0 ||
-                (tier.course_account_count ?? 0) > 0 ||
-                (tier.site_license_count ?? 0) > 0 ||
-                (tier.site_account_count ?? 0) > 0 ||
-                (tier.admin_assigned_count ?? 0) > 0 ||
-                (tier.total_account_count ?? 0) > 0;
               return (
                 <Space size="small">
                   <Icon name="pencil" onClick={() => set_editing(tier)} />
-                  {inUse ? (
-                    <Tooltip title="Tier in use">
-                      <Text type="secondary">
-                        <Icon name="trash" />
-                      </Text>
-                    </Tooltip>
-                  ) : (
+                  {tier.has_usage_history === false ? (
                     <Popconfirm
                       title="Sure to delete?"
-                      onConfirm={() => delete_tier(tier.key, true)}
+                      onConfirm={() => delete_tier(tier.key)}
                     >
-                      <Icon name="trash" />
+                      <Tooltip title="Delete never-used tier">
+                        <span>
+                          <Icon name="trash" />
+                        </span>
+                      </Tooltip>
                     </Popconfirm>
-                  )}
+                  ) : null}
                 </Space>
               );
             }}

@@ -12,6 +12,17 @@ type QueryCall = {
 };
 
 function createDb({
+  existingTables = [
+    "subscriptions",
+    "membership_packages",
+    "membership_grants",
+    "admin_assigned_memberships",
+    "team_license_seat_lines",
+    "membership_trial_claims",
+    "site_license_pool_requests",
+    "site_license_external_claim_pools",
+    "site_license_external_claim_consumptions",
+  ],
   siteLicenseTablesExist = true,
   membershipPackageTablesExist = true,
   subscriptionRows = [
@@ -26,7 +37,9 @@ function createDb({
   packageAccountRows = [],
   adminAssignedRows = [],
   totalAccountRows = [],
+  usageHistoryRows = [],
 }: {
+  existingTables?: string[];
   siteLicenseTablesExist?: boolean;
   membershipPackageTablesExist?: boolean;
   subscriptionRows?: {
@@ -44,13 +57,21 @@ function createDb({
   }[];
   adminAssignedRows?: { tier_id: string; admin_assigned_count: number }[];
   totalAccountRows?: { tier_id: string; total_account_count: number }[];
+  usageHistoryRows?: { tier_id: string; usage_history_count: number }[];
 } = {}) {
   const calls: QueryCall[] = [];
   const db = {
     _query: (opts: QueryCall) => {
       calls.push(opts);
       const sql = opts.query;
-      if (sql.includes("to_regclass('public.site_licenses')")) {
+      if (sql.includes("FROM unnest($1::text[])")) {
+        const requested = (opts.params?.[0] ?? []) as string[];
+        opts.cb(null, {
+          rows: requested
+            .filter((tableName) => existingTables.includes(tableName))
+            .map((table_name) => ({ table_name })),
+        });
+      } else if (sql.includes("to_regclass('public.site_licenses')")) {
         opts.cb(null, { rows: [{ exists: siteLicenseTablesExist }] });
       } else if (
         sql.includes("to_regclass('public.membership_packages')") &&
@@ -80,6 +101,8 @@ function createDb({
             { id: "instructor", label: "Instructor" },
           ],
         });
+      } else if (sql.includes("usage_history_count")) {
+        opts.cb(null, { rows: usageHistoryRows });
       } else if (sql.includes("total_account_count")) {
         opts.cb(null, { rows: totalAccountRows });
       } else if (sql.includes("subscription_count")) {
@@ -113,6 +136,7 @@ describe("membershipTiersQuery", () => {
         { tier_id: "student", admin_assigned_count: 1 },
         { tier_id: "instructor", admin_assigned_count: 4 },
       ],
+      usageHistoryRows: [{ tier_id: "student", usage_history_count: 1 }],
       totalAccountRows: [
         { tier_id: "student", total_account_count: 10 },
         { tier_id: "instructor", total_account_count: 4 },
@@ -134,6 +158,7 @@ describe("membershipTiersQuery", () => {
         admin_assigned_count: 1,
         site_license_count: 0,
         total_account_count: 10,
+        has_usage_history: true,
       },
       {
         id: "instructor",
@@ -147,6 +172,7 @@ describe("membershipTiersQuery", () => {
         admin_assigned_count: 4,
         site_license_count: 2,
         total_account_count: 4,
+        has_usage_history: false,
       },
     ]);
   });
@@ -232,6 +258,25 @@ describe("membershipTiersQuery", () => {
     await expect(
       membershipTiersQuery(db, [{ delete: true }], { id: "student" }),
     ).rejects.toThrow("1 active course account");
+
+    expect(
+      calls.some(
+        (call) => call.query === "DELETE FROM membership_tiers WHERE id = $1",
+      ),
+    ).toBe(false);
+  });
+
+  it("blocks deleting a tier with usage history", async () => {
+    const { db, calls } = createDb({
+      subscriptionRows: [],
+      usageHistoryRows: [{ tier_id: "legacy", usage_history_count: 1 }],
+    });
+
+    await expect(
+      membershipTiersQuery(db, [{ delete: true }], { id: "legacy" }),
+    ).rejects.toThrow(
+      'cannot delete membership tier "legacy" because it has usage history',
+    );
 
     expect(
       calls.some(
