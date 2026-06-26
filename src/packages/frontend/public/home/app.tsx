@@ -264,7 +264,10 @@ function ProjectStorySection() {
             </Paragraph>
             <PublicGrid columns={2}>
               <GlassPanel>
-                <Title level={3} style={{ marginTop: 0, fontSize: 20 }}>
+                <Title
+                  level={3}
+                  style={{ marginTop: 0, fontSize: 20, lineHeight: "28px" }}
+                >
                   Work survives the browser
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
@@ -274,7 +277,10 @@ function ProjectStorySection() {
                 </Paragraph>
               </GlassPanel>
               <GlassPanel>
-                <Title level={3} style={{ marginTop: 0, fontSize: 20 }}>
+                <Title
+                  level={3}
+                  style={{ marginTop: 0, fontSize: 20, lineHeight: "28px" }}
+                >
                   Collaboration is everywhere
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
@@ -459,7 +465,11 @@ function WorkflowsSection() {
                   <div>
                     <Title
                       level={3}
-                      style={{ margin: "0 0 8px", fontSize: 20 }}
+                      style={{
+                        margin: "0 0 8px",
+                        fontSize: 20,
+                        lineHeight: "28px",
+                      }}
                     >
                       {page.title}
                     </Title>
@@ -616,7 +626,11 @@ function ProductOptionsSection() {
                     </Tag>
                     <Title
                       level={3}
-                      style={{ margin: "0 0 10px", fontSize: 20 }}
+                      style={{
+                        margin: "0 0 10px",
+                        fontSize: 20,
+                        lineHeight: "28px",
+                      }}
                     >
                       {option.title}
                     </Title>
