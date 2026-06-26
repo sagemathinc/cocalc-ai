@@ -82,6 +82,22 @@ export interface ProjectCopySource {
   base_path?: string;
 }
 
+export interface ProjectDirectorySummaryEntry {
+  path: string;
+  type: "file" | "directory" | "symlink" | "other";
+  size?: number | null;
+  mtime?: string | null;
+}
+
+export interface ProjectDirectorySummary {
+  project_id: string;
+  root: string;
+  max_depth: number;
+  limit: number;
+  truncated: boolean;
+  entries: ProjectDirectorySummaryEntry[];
+}
+
 export interface CourseCollectAssignmentItem {
   student_id: string;
   student_project_id: string;
@@ -788,6 +804,7 @@ export const projects = {
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
+  getAdminProjectDirectorySummary: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
   setProjectManageUsersOwnerOnly: authFirstRequireAccount,
   listProjectSecrets: authFirstRequireAccount,
@@ -1029,6 +1046,14 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectRootfsConfig | null>;
+
+  getAdminProjectDirectorySummary: (opts: {
+    account_id?: string;
+    project_id: string;
+    path?: string;
+    max_depth?: number;
+    limit?: number;
+  }) => Promise<ProjectDirectorySummary>;
 
   getProjectRootfsPublishConfig: (opts: {
     account_id?: string;
