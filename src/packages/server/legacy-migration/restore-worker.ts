@@ -12,7 +12,6 @@ import {
   ensureProjectFileServerClientReady,
   getProjectFileServerClient,
 } from "@cocalc/server/conat/file-server-client";
-import { getAccountStorageRemainingBytes } from "@cocalc/server/membership/project-limits";
 import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
 import { createLro, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -25,7 +24,6 @@ import {
 } from "@cocalc/util/legacy-migration";
 
 import { isLegacyMigrationEnabled } from "./enabled";
-import { legacyProjectArchiveUncompressedBytes } from "./index";
 
 const logger = getLogger("server:legacy-migration:restore-worker");
 
@@ -471,36 +469,6 @@ async function markFailed({
   });
 }
 
-async function accountStorageRestoreLimitBytes(
-  row: LegacyRestoreRow,
-): Promise<number | undefined> {
-  const remaining = await getAccountStorageRemainingBytes({
-    account_id: row.owner_account_id,
-    fresh: true,
-  });
-  if (remaining == null) return undefined;
-  return Math.max(0, Math.floor(remaining));
-}
-
-async function assertKnownArchiveFitsLimit({
-  row,
-  max_uncompressed_bytes,
-}: {
-  row: LegacyRestoreRow;
-  max_uncompressed_bytes?: number;
-}): Promise<void> {
-  if (max_uncompressed_bytes == null) return;
-  const archiveBytes = legacyProjectArchiveUncompressedBytes(
-    row.artifact_manifest,
-  );
-  if (archiveBytes == null) return;
-  if (archiveBytes > max_uncompressed_bytes) {
-    throw new Error(
-      `legacy project archive is too large for current storage quota (${archiveBytes} > ${max_uncompressed_bytes} bytes)`,
-    );
-  }
-}
-
 async function restoreOne(row: LegacyRestoreRow): Promise<void> {
   const heartbeatTimer = setInterval(() => {
     void heartbeat(row).catch((err) => {
@@ -533,8 +501,6 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
     if (!key) {
       throw new Error("legacy project archive key is missing");
     }
-    const max_uncompressed_bytes = await accountStorageRestoreLimitBytes(row);
-    await assertKnownArchiveFitsLimit({ row, max_uncompressed_bytes });
     await publishRestoreProgress({
       row,
       phase: "authorize",
@@ -573,7 +539,7 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
       progress: 20,
       detail: {
         artifact_bytes: manifestCompressedBytes(row.artifact_manifest),
-        max_uncompressed_bytes,
+        temporary_quota_grace: true,
       },
     });
     const result = await client.restoreProjectArchive({
@@ -585,7 +551,7 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
         bytes: manifestCompressedBytes(row.artifact_manifest),
         sha256: manifestSha256(row.artifact_manifest),
       },
-      max_uncompressed_bytes,
+      temporary_quota_grace: true,
       lro: { op_id, scope_type: "project", scope_id: row.project_id },
     });
     await markRestored({

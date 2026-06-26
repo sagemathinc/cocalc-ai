@@ -26,7 +26,6 @@ import {
   getProjectFileServerClient,
 } from "@cocalc/server/conat/file-server-client";
 import {
-  assertCanAddAccountStorage,
   assertCanIncreaseAccountStorage,
   getAccountStorageRemainingBytes,
 } from "@cocalc/server/membership/project-limits";
@@ -387,25 +386,6 @@ function manifestSha256(
     if (value) return value.toLowerCase();
   }
   return undefined;
-}
-
-async function assertLegacyProjectArchiveFitsAccount({
-  account_id,
-  legacy,
-}: {
-  account_id: string;
-  legacy: LegacyProjectRow;
-}): Promise<void> {
-  if (restoreStatusForProject(legacy) !== "pending") return;
-  await assertCanIncreaseAccountStorage({ account_id });
-  const bytes = legacyProjectArchiveUncompressedBytes(legacy.artifact_manifest);
-  if (bytes == null) return;
-  await assertCanAddAccountStorage({
-    account_id,
-    additional_bytes: bytes,
-    fresh: true,
-    reason: `legacy project '${projectTitle(legacy)}' import`,
-  });
 }
 
 function importStatus(row: LegacyProjectRow): LegacyMigrationProjectSummary {
@@ -1653,18 +1633,16 @@ async function importOneProject({
         "The archived files for this legacy project are not available yet. Try again after the cocalc.com archive has been uploaded.",
     };
   }
-  try {
-    if (restore_mode === "full") {
-      await assertLegacyProjectArchiveFitsAccount({ account_id, legacy });
-    } else {
+  if (restore_mode !== "full") {
+    try {
       await assertCanIncreaseAccountStorage({ account_id });
+    } catch (err) {
+      return {
+        legacy_project_id,
+        status: "failed",
+        error: `${err}`,
+      };
     }
-  } catch (err) {
-    return {
-      legacy_project_id,
-      status: "failed",
-      error: `${err}`,
-    };
   }
 
   const created = await pool.query<{ legacy_project_id: string }>(
