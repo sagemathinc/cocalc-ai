@@ -220,6 +220,44 @@ describe("PublicAuthApp", () => {
     expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 
+  it("shows custom account creation instructions on the public sign-up page", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+
+    render(
+      <PublicAuthApp
+        config={config({
+          account_creation_email_instructions:
+            "Create your account with your university email.",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Create your account with your university email.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("shows custom sign-in instructions on the public sign-in page", () => {
+    render(
+      <PublicAuthApp
+        config={config({
+          sign_in_email_instructions:
+            "Sign in with the email address your instructor invited.",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Sign in with the email address your instructor invited.",
+      ),
+    ).not.toBeNull();
+  });
+
   it("forces cookie consent only on the sign-up auth page", async () => {
     mockedApi.mockResolvedValue(false);
 
