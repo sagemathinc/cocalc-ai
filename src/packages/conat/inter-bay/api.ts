@@ -48,6 +48,22 @@ import type {
   TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
 import type {
+  LegacyMigrationApplyFinancialOptions,
+  LegacyMigrationApplyFinancialResponse,
+  LegacyMigrationFinancialPreviewOptions,
+  LegacyMigrationFinancialPreviewResponse,
+  LegacyMigrationImportProjectsOptions,
+  LegacyMigrationImportProjectsResponse,
+  LegacyMigrationListProjectsOptions,
+  LegacyMigrationListProjectsResponse,
+  LegacyMigrationPrepareArchiveSelectionOptions,
+  LegacyMigrationPrepareArchiveSelectionResponse,
+  LegacyMigrationRestoreArchiveSelectionOptions,
+  LegacyMigrationRestoreArchiveSelectionResponse,
+  LegacyMigrationRetryProjectRestoreOptions,
+  LegacyMigrationRetryProjectRestoreResponse,
+} from "@cocalc/conat/hub/api/legacy-migration";
+import type {
   AcpAdmissionDenialReport,
   BayBackupsInfo,
   BayDrainPreflightResult,
@@ -479,6 +495,11 @@ export interface AccountDirectoryUpdateEmailAddressRequest {
   email_address: string;
 }
 
+export interface AccountDirectoryUpdateEmailAddressVerifiedRequest {
+  account_id: string;
+  email_address_verified: boolean;
+}
+
 export interface AccountDirectoryUpdateBannedRequest {
   account_id: string;
   banned: boolean;
@@ -696,6 +717,14 @@ export interface AccountLocalGetMembershipDetailsRequest {
 
 export interface AccountLocalGetUsageOverviewRequest {
   account_id: string;
+}
+
+export interface AccountLocalGetVerifiedEmailAddressesRequest {
+  account_id: string;
+}
+
+export interface AccountLocalGetVerifiedEmailAddressesResult {
+  email_addresses: string[];
 }
 
 export interface AccountLocalAdminAssignedMembershipRow {
@@ -1954,6 +1983,7 @@ export type AccountDirectoryMethod =
   | "delete"
   | "update-home-bay"
   | "update-email-address"
+  | "update-email-address-verified"
   | "update-banned"
   | "touch"
   | "get-api-key"
@@ -2001,6 +2031,7 @@ export type AccountLocalMethod =
   | "get-membership"
   | "get-membership-details"
   | "get-account-usage-overview"
+  | "get-verified-email-addresses"
   | "get-admin-assigned-membership"
   | "set-admin-assigned-membership"
   | "clear-admin-assigned-membership"
@@ -2051,7 +2082,14 @@ export type AccountLocalMethod =
   | "refresh-site-license-affiliation-verification-for-account"
   | "get-site-license-affiliation-reverification-status-for-account"
   | "get-membership-portable-state"
-  | "replace-membership-portable-state";
+  | "replace-membership-portable-state"
+  | "legacy-migration-list-projects"
+  | "legacy-migration-import-projects"
+  | "legacy-migration-prepare-archive-selection"
+  | "legacy-migration-restore-archive-selection"
+  | "legacy-migration-retry-project-restore"
+  | "legacy-migration-preview-financial-migration"
+  | "legacy-migration-apply-financial-migration";
 export type AuthTokenMethod =
   | "requires-token"
   | "validate"
@@ -2902,6 +2940,9 @@ export interface InterBayAccountDirectoryApi {
   updateEmailAddress: (
     opts: AccountDirectoryUpdateEmailAddressRequest,
   ) => Promise<AccountDirectoryEntry>;
+  updateEmailAddressVerified: (
+    opts: AccountDirectoryUpdateEmailAddressVerifiedRequest,
+  ) => Promise<AccountDirectoryEntry>;
   updateBanned: (
     opts: AccountDirectoryUpdateBannedRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -3039,6 +3080,9 @@ export interface InterBayAccountLocalApi {
   getAccountUsageOverview: (
     opts: AccountLocalGetUsageOverviewRequest,
   ) => Promise<AccountUsageOverview>;
+  getVerifiedEmailAddresses: (
+    opts: AccountLocalGetVerifiedEmailAddressesRequest,
+  ) => Promise<AccountLocalGetVerifiedEmailAddressesResult>;
   getAdminAssignedMembership: (
     opts: AccountLocalGetAdminAssignedMembershipRequest,
   ) => Promise<AccountLocalAdminAssignedMembershipRow | undefined>;
@@ -3192,6 +3236,27 @@ export interface InterBayAccountLocalApi {
   replaceMembershipPortableState: (
     opts: AccountLocalReplaceMembershipPortableStateRequest,
   ) => Promise<void>;
+  legacyMigrationListProjects: (
+    opts?: LegacyMigrationListProjectsOptions,
+  ) => Promise<LegacyMigrationListProjectsResponse>;
+  legacyMigrationImportProjects: (
+    opts: LegacyMigrationImportProjectsOptions,
+  ) => Promise<LegacyMigrationImportProjectsResponse>;
+  legacyMigrationPrepareArchiveSelection: (
+    opts: LegacyMigrationPrepareArchiveSelectionOptions,
+  ) => Promise<LegacyMigrationPrepareArchiveSelectionResponse>;
+  legacyMigrationRestoreArchiveSelection: (
+    opts: LegacyMigrationRestoreArchiveSelectionOptions,
+  ) => Promise<LegacyMigrationRestoreArchiveSelectionResponse>;
+  legacyMigrationRetryProjectRestore: (
+    opts: LegacyMigrationRetryProjectRestoreOptions,
+  ) => Promise<LegacyMigrationRetryProjectRestoreResponse>;
+  legacyMigrationPreviewFinancialMigration: (
+    opts?: LegacyMigrationFinancialPreviewOptions,
+  ) => Promise<LegacyMigrationFinancialPreviewResponse>;
+  legacyMigrationApplyFinancialMigration: (
+    opts?: LegacyMigrationApplyFinancialOptions,
+  ) => Promise<LegacyMigrationApplyFinancialResponse>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -4395,6 +4460,14 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "update-email-address" }),
   });
+  const updateEmailAddressVerifiedClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "updateEmailAddressVerified">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "update-email-address-verified",
+    }),
+  });
   const updateBannedClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "updateBanned">
   >({
@@ -4516,6 +4589,8 @@ export function createInterBayAccountDirectoryClient({
       await updateHomeBayClient.updateHomeBay(opts),
     updateEmailAddress: async (opts) =>
       await updateEmailAddressClient.updateEmailAddress(opts),
+    updateEmailAddressVerified: async (opts) =>
+      await updateEmailAddressVerifiedClient.updateEmailAddressVerified(opts),
     updateBanned: async (opts) => await updateBannedClient.updateBanned(opts),
     touch: async (opts) => await touchClient.touch(opts),
     create: async (opts) => await createClient.create(opts),
@@ -4627,6 +4702,19 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "update-email-address" }),
       impl: {
         updateEmailAddress: async (opts) => await impl.updateEmailAddress(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "updateEmailAddressVerified">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "update-email-address-verified",
+      }),
+      impl: {
+        updateEmailAddressVerified: async (opts) =>
+          await impl.updateEmailAddressVerified(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "updateBanned">>({
@@ -5068,6 +5156,15 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "get-account-usage-overview",
+    }),
+  });
+  const getVerifiedEmailAddressesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getVerifiedEmailAddresses">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-verified-email-addresses",
     }),
   });
   const getAdminAssignedMembershipClient = createServiceClient<
@@ -5538,6 +5635,69 @@ export function createInterBayAccountLocalClient({
       method: "replace-membership-portable-state",
     }),
   });
+  const legacyMigrationListProjectsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationListProjects">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-list-projects",
+    }),
+  });
+  const legacyMigrationImportProjectsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationImportProjects">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-import-projects",
+    }),
+  });
+  const legacyMigrationPrepareArchiveSelectionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationPrepareArchiveSelection">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-prepare-archive-selection",
+    }),
+  });
+  const legacyMigrationRestoreArchiveSelectionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationRestoreArchiveSelection">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-restore-archive-selection",
+    }),
+  });
+  const legacyMigrationRetryProjectRestoreClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationRetryProjectRestore">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-retry-project-restore",
+    }),
+  });
+  const legacyMigrationPreviewFinancialMigrationClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationPreviewFinancialMigration">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-preview-financial-migration",
+    }),
+  });
+  const legacyMigrationApplyFinancialMigrationClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationApplyFinancialMigration">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-apply-financial-migration",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -5604,6 +5764,8 @@ export function createInterBayAccountLocalClient({
       await getMembershipDetailsClient.getMembershipDetails(opts),
     getAccountUsageOverview: async (opts) =>
       await getAccountUsageOverviewClient.getAccountUsageOverview(opts),
+    getVerifiedEmailAddresses: async (opts) =>
+      await getVerifiedEmailAddressesClient.getVerifiedEmailAddresses(opts),
     getAdminAssignedMembership: async (opts) =>
       await getAdminAssignedMembershipClient.getAdminAssignedMembership(opts),
     setAdminAssignedMembership: async (opts) =>
@@ -5751,6 +5913,34 @@ export function createInterBayAccountLocalClient({
     replaceMembershipPortableState: async (opts) =>
       await replaceMembershipPortableStateClient.replaceMembershipPortableState(
         opts,
+      ),
+    legacyMigrationListProjects: async (opts) =>
+      await legacyMigrationListProjectsClient.legacyMigrationListProjects(
+        opts ?? {},
+      ),
+    legacyMigrationImportProjects: async (opts) =>
+      await legacyMigrationImportProjectsClient.legacyMigrationImportProjects(
+        opts,
+      ),
+    legacyMigrationPrepareArchiveSelection: async (opts) =>
+      await legacyMigrationPrepareArchiveSelectionClient.legacyMigrationPrepareArchiveSelection(
+        opts,
+      ),
+    legacyMigrationRestoreArchiveSelection: async (opts) =>
+      await legacyMigrationRestoreArchiveSelectionClient.legacyMigrationRestoreArchiveSelection(
+        opts,
+      ),
+    legacyMigrationRetryProjectRestore: async (opts) =>
+      await legacyMigrationRetryProjectRestoreClient.legacyMigrationRetryProjectRestore(
+        opts,
+      ),
+    legacyMigrationPreviewFinancialMigration: async (opts) =>
+      await legacyMigrationPreviewFinancialMigrationClient.legacyMigrationPreviewFinancialMigration(
+        opts ?? {},
+      ),
+    legacyMigrationApplyFinancialMigration: async (opts) =>
+      await legacyMigrationApplyFinancialMigrationClient.legacyMigrationApplyFinancialMigration(
+        opts ?? {},
       ),
   };
 }
@@ -6169,6 +6359,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getAccountUsageOverview: async (opts) =>
           await impl.getAccountUsageOverview(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getVerifiedEmailAddresses">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-verified-email-addresses",
+      }),
+      impl: {
+        getVerifiedEmailAddresses: async (opts) =>
+          await impl.getVerifiedEmailAddresses(opts),
       },
     }),
     createServiceHandler<
@@ -6881,6 +7085,104 @@ export function createInterBayAccountLocalHandler({
       impl: {
         replaceMembershipPortableState: async (opts) =>
           await impl.replaceMembershipPortableState(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationListProjects">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-list-projects",
+      }),
+      impl: {
+        legacyMigrationListProjects: async (opts) =>
+          await impl.legacyMigrationListProjects(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationImportProjects">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-import-projects",
+      }),
+      impl: {
+        legacyMigrationImportProjects: async (opts) =>
+          await impl.legacyMigrationImportProjects(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationPrepareArchiveSelection">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-prepare-archive-selection",
+      }),
+      impl: {
+        legacyMigrationPrepareArchiveSelection: async (opts) =>
+          await impl.legacyMigrationPrepareArchiveSelection(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationRestoreArchiveSelection">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-restore-archive-selection",
+      }),
+      impl: {
+        legacyMigrationRestoreArchiveSelection: async (opts) =>
+          await impl.legacyMigrationRestoreArchiveSelection(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationRetryProjectRestore">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-retry-project-restore",
+      }),
+      impl: {
+        legacyMigrationRetryProjectRestore: async (opts) =>
+          await impl.legacyMigrationRetryProjectRestore(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationPreviewFinancialMigration">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-preview-financial-migration",
+      }),
+      impl: {
+        legacyMigrationPreviewFinancialMigration: async (opts) =>
+          await impl.legacyMigrationPreviewFinancialMigration(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationApplyFinancialMigration">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-apply-financial-migration",
+      }),
+      impl: {
+        legacyMigrationApplyFinancialMigration: async (opts) =>
+          await impl.legacyMigrationApplyFinancialMigration(opts),
       },
     }),
   ];

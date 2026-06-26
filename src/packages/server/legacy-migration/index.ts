@@ -6,7 +6,9 @@
 import getPool from "@cocalc/database/pool";
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import createProject, {
   createProjectWithInternalProjectId,
 } from "@cocalc/server/projects/create";
@@ -15,6 +17,8 @@ import createSubscription from "@cocalc/server/purchases/create-subscription";
 import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
 import type { MembershipTierRecord } from "@cocalc/server/membership/tiers";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import {
@@ -446,6 +450,25 @@ async function verifiedAccountEmails(account_id: string): Promise<string[]> {
     [account_id],
   );
   const row = rows[0];
+  if (row == null) {
+    const account = await getClusterAccountById(account_id);
+    const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
+    if (homeBayId && homeBayId !== getConfiguredBayId()) {
+      const { email_addresses } = await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: homeBayId,
+      }).getVerifiedEmailAddresses({ account_id });
+      return [
+        ...new Set(
+          email_addresses
+            .map(normalizeEmail)
+            .filter((email): email is string => email != null),
+        ),
+      ].sort();
+    }
+    const primary = normalizeEmail(account?.email_address);
+    return primary && account?.email_address_verified ? [primary] : [];
+  }
   const verified = row?.email_address_verified ?? {};
   const emails = new Set<string>();
   for (const [email, value] of Object.entries(verified)) {

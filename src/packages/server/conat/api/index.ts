@@ -48,6 +48,7 @@ import * as notifications from "./notifications";
 import * as adminData from "./admin-data-explorer";
 import * as aiSessions from "./ai-sessions";
 import * as legacyMigration from "./legacy-migration";
+import * as publicDirectoryShares from "./public-directory-shares";
 
 import getLogger from "@cocalc/backend/logger";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
@@ -85,6 +86,7 @@ export const hubApi: HubApi = {
   adminData,
   aiSessions,
   legacyMigration,
+  publicDirectoryShares,
   ssh,
   reflect,
 };

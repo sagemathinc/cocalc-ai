@@ -717,6 +717,21 @@ export default function DiskUsage({
   );
   const prevExpandRef = useRef<boolean>(false);
   const quota = quotas[0] ?? null;
+  const quotaSizeKnown = quota != null && quota.size > 0;
+  const quotaSummaryText =
+    quota == null
+      ? ""
+      : quotaSizeKnown
+        ? human_readable_size(quota.size)
+        : quota.used > 0
+          ? human_readable_size(quota.used)
+          : "Measuring…";
+  const quotaSummaryTitle =
+    quota == null
+      ? ""
+      : quotaSizeKnown
+        ? `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`
+        : `${human_readable_size(quota.used)} used; quota limit unavailable`;
 
   const selectedBucket =
     visible.find((bucket) => bucket.key === selectedBucketKey) ?? visible[0];
@@ -752,7 +767,7 @@ export default function DiskUsage({
       : undefined;
 
   const percent =
-    quota == null || quota.size <= 0
+    quota == null || !quotaSizeKnown
       ? 0
       : Math.round((100 * quota.used) / quota.size);
   const quotaStatus = percent > 80 ? "exception" : undefined;
@@ -1016,21 +1031,19 @@ export default function DiskUsage({
       <Space size={compact ? 5 : 8} wrap={false} style={{ lineHeight: 1 }}>
         {quota != null ? (
           <>
-            <Progress
-              style={{
-                width: compact ? "40px" : "60px",
-                marginBottom: 0,
-                lineHeight: 1,
-              }}
-              percent={percent}
-              status={quotaStatus}
-              showInfo={false}
-            />
-            <Text
-              title={`${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`}
-            >
-              {human_readable_size(quota.size)}
-            </Text>
+            {quotaSizeKnown ? (
+              <Progress
+                style={{
+                  width: compact ? "40px" : "60px",
+                  marginBottom: 0,
+                  lineHeight: 1,
+                }}
+                percent={percent}
+                status={quotaStatus}
+                showInfo={false}
+              />
+            ) : null}
+            <Text title={quotaSummaryTitle}>{quotaSummaryText}</Text>
           </>
         ) : (
           <Text strong>Disk</Text>
@@ -1246,12 +1259,18 @@ export default function DiskUsage({
                       type="circle"
                       percent={percent}
                       status={quotaStatus}
-                      format={() => `${percent}%`}
+                      format={() =>
+                        quotaSizeKnown ? `${percent}%` : "Unknown"
+                      }
                     />
                   </div>
                   <div style={{ marginTop: "15px" }}>
-                    <b>{quota.label}:</b> {human_readable_size(quota.used)} out
-                    of {human_readable_size(quota.size)}
+                    <b>{quota.label}:</b> {human_readable_size(quota.used)}
+                    {quotaSizeKnown ? (
+                      <> out of {human_readable_size(quota.size)}</>
+                    ) : (
+                      <Text type="secondary">; quota limit unavailable</Text>
+                    )}
                     {quota.warning ? (
                       <Alert
                         style={{ marginTop: "12px" }}

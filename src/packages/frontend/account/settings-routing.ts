@@ -53,6 +53,7 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "profile", path: "settings/profile" },
     { page: "membership", path: "settings/membership" },
     { page: "legacy-migration", path: "settings/legacy-migration" },
+    { page: "public-shares", path: "settings/public-shares" },
     { page: "usage-limits", path: "settings/usage-limits" },
     { page: "appearance", path: "settings/appearance" },
     { page: "editor", path: "settings/editor" },

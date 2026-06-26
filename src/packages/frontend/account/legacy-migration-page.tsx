@@ -440,6 +440,17 @@ export const LEGACY_MIGRATION_SETTINGS_PAGE = {
 
 export function LegacyMigrationPage() {
   const account_id = useTypedRedux("account", "account_id");
+  const emailAddress =
+    `${useTypedRedux("account", "email_address") ?? ""}`.trim();
+  const emailAddressVerified = useTypedRedux(
+    "account",
+    "email_address_verified",
+  );
+  const primaryEmailVerified =
+    !!emailAddress && !!emailAddressVerified?.get(emailAddress);
+  const verifyEmailsEnabled = !!useTypedRedux("customize", "verify_emails");
+  const emailVerificationRequired =
+    verifyEmailsEnabled && !primaryEmailVerified;
   const legacyMigrationEnabled = !!useTypedRedux(
     "customize",
     "legacy_migration_enabled",
@@ -746,8 +757,38 @@ export function LegacyMigrationPage() {
     );
   }
 
+  const emailVerificationPrompt = (
+    <span>
+      {emailAddress ? (
+        <>
+          Your current email address <Text code>{emailAddress}</Text> is not
+          verified.
+        </>
+      ) : (
+        <>Your account does not have an email address set.</>
+      )}{" "}
+      Legacy projects are matched by verified email address. Open{" "}
+      <InternalRouteLink href="/settings/profile" target="settings/profile">
+        profile settings
+      </InternalRouteLink>{" "}
+      to{" "}
+      {emailAddress
+        ? "verify this email address"
+        : "set and verify an email address"}
+      , then return to this page and refresh.
+    </span>
+  );
+
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      {emailVerificationRequired ? (
+        <Alert
+          showIcon
+          type="warning"
+          message="Verify your email address to find legacy projects"
+          description={emailVerificationPrompt}
+        />
+      ) : null}
       <Card size="small">
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Space align="start" style={{ width: "100%" }}>
@@ -787,20 +828,22 @@ export function LegacyMigrationPage() {
           {legacyMigrationPageMessage ? (
             <Alert showIcon type="info" message={legacyMigrationPageMessage} />
           ) : null}
-          <Space wrap size={[8, 8]}>
-            <Tag color="blue">
-              {state.totalCount.toLocaleString()} matching projects
-            </Tag>
-            <Tag color="gold">{projectStats.ready} ready</Tag>
-            <Tag color="green">{projectStats.restored} restored</Tag>
-            <Tag>{projectStats["not-available"]} not yet available</Tag>
-            {projectStats.restoring ? (
-              <Tag color="blue">{projectStats.restoring} restoring</Tag>
-            ) : null}
-            {projectStats.failed ? (
-              <Tag color="red">{projectStats.failed} failed</Tag>
-            ) : null}
-          </Space>
+          {!emailVerificationRequired ? (
+            <Space wrap size={[8, 8]}>
+              <Tag color="blue">
+                {state.totalCount.toLocaleString()} matching projects
+              </Tag>
+              <Tag color="gold">{projectStats.ready} ready</Tag>
+              <Tag color="green">{projectStats.restored} restored</Tag>
+              <Tag>{projectStats["not-available"]} not yet available</Tag>
+              {projectStats.restoring ? (
+                <Tag color="blue">{projectStats.restoring} restoring</Tag>
+              ) : null}
+              {projectStats.failed ? (
+                <Tag color="red">{projectStats.failed} failed</Tag>
+              ) : null}
+            </Space>
+          ) : null}
         </Space>
       </Card>
 
@@ -873,6 +916,13 @@ export function LegacyMigrationPage() {
 
           {state.loading && state.projects.length === 0 ? (
             <Loading />
+          ) : emailVerificationRequired ? (
+            <Alert
+              showIcon
+              type="warning"
+              message="Email verification required"
+              description={emailVerificationPrompt}
+            />
           ) : state.legacyAccountIds.length === 0 ? (
             <Alert
               showIcon

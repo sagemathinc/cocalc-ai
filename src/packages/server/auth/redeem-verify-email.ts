@@ -9,6 +9,7 @@ import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/ac
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isMultiBayCluster } from "@cocalc/server/cluster-config";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
+import { updateClusterAccountEmailAddressVerified } from "@cocalc/server/inter-bay/account-directory-updates";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
@@ -72,6 +73,10 @@ export async function redeemVerifyEmailLocal(
     rows[0];
   if (!email_address_challenge?.email) {
     if (email_address_verified?.[email_address]) {
+      await updateClusterAccountEmailAddressVerified({
+        account_id,
+        email_address_verified: true,
+      });
       // nothing to do.
       return;
     }
@@ -102,6 +107,10 @@ export async function redeemVerifyEmailLocal(
       email_address_challenge: null,
       email_address_verified: email_address_verified_next,
     },
+  });
+  await updateClusterAccountEmailAddressVerified({
+    account_id,
+    email_address_verified: true,
   });
 }
 

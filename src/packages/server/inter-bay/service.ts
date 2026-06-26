@@ -119,6 +119,7 @@ import {
   updateClusterAccountHomeBay,
   upsertClusterAccountApiKeyDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
+import { updateClusterAccountEmailAddressVerified } from "@cocalc/server/inter-bay/account-directory-updates";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import {
   acceptAccountRehome,
@@ -200,6 +201,7 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
+import * as legacyMigration from "@cocalc/server/legacy-migration";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import {
   clearAccountEntitlementOverrideLocal,
@@ -661,6 +663,8 @@ async function startAccountDirectoryService(): Promise<void> {
     updateHomeBay: async (opts) => await updateClusterAccountHomeBay(opts),
     updateEmailAddress: async (opts) =>
       await updateClusterAccountEmailAddress(opts),
+    updateEmailAddressVerified: async (opts) =>
+      await updateClusterAccountEmailAddressVerified(opts),
     updateBanned: async (opts) => await updateClusterAccountBanned(opts),
     touch: async (opts) => await touchClusterAccountDirectoryEntry(opts),
     create: async (opts) => await createClusterAccount(opts),
@@ -826,6 +830,9 @@ async function startAccountLocalService(): Promise<void> {
       }),
     getAccountUsageOverview: async ({ account_id }) =>
       await getAccountUsageOverviewForAccount({ account_id }),
+    getVerifiedEmailAddresses: async ({ account_id }) => ({
+      email_addresses: await getVerifiedEmailAddressesForAccount(account_id),
+    }),
     getAdminAssignedMembership: async ({ account_id }) =>
       await getAdminAssignedMembershipLocal(account_id),
     setAdminAssignedMembership: async ({
@@ -1355,6 +1362,20 @@ async function startAccountLocalService(): Promise<void> {
         membership_package_assignments,
         membership_side_effects_outbox,
       }),
+    legacyMigrationListProjects: async (opts) =>
+      await legacyMigration.listProjects(opts ?? {}),
+    legacyMigrationImportProjects: async (opts) =>
+      await legacyMigration.importProjects(opts),
+    legacyMigrationPrepareArchiveSelection: async (opts) =>
+      await legacyMigration.prepareArchiveSelection(opts),
+    legacyMigrationRestoreArchiveSelection: async (opts) =>
+      await legacyMigration.restoreArchiveSelection(opts),
+    legacyMigrationRetryProjectRestore: async (opts) =>
+      await legacyMigration.retryProjectRestore(opts),
+    legacyMigrationPreviewFinancialMigration: async (opts) =>
+      await legacyMigration.previewFinancialMigration(opts ?? {}),
+    legacyMigrationApplyFinancialMigration: async (opts) =>
+      await legacyMigration.applyFinancialMigration(opts ?? {}),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

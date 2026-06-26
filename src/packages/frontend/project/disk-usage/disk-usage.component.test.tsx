@@ -209,6 +209,38 @@ describe("DiskUsage backup UI", () => {
     });
   });
 
+  it("does not show 0 bytes as the quota when quota size is unavailable", async () => {
+    useTypedRedux.mockReturnValue(ImmutableMap());
+    useDiskUsageMock.mockReturnValue({
+      visible: [],
+      live: null,
+      collectedAt: undefined,
+      retained: null,
+      sharedScratch: null,
+      loading: false,
+      error: null,
+      setError: jest.fn(),
+      applyOverview: applyOverviewMock,
+      quotas: [
+        {
+          key: "project",
+          label: "Project quota",
+          used: 10 * 1024 * 1024 * 1024,
+          size: 0,
+        },
+      ],
+    });
+
+    render(<DiskUsage compact project_id="project-1" />);
+
+    expect(screen.getByText("11 GB")).toBeInTheDocument();
+    expect(screen.queryByText("0 bytes")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText(/quota limit unavailable/)).toBeInTheDocument();
+  });
+
   it("shows shared scratch as host storage outside project quota", async () => {
     useTypedRedux.mockReturnValue(ImmutableMap());
     useDiskUsageMock.mockReturnValue({
