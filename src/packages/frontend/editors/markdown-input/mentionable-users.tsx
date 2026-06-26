@@ -4,9 +4,15 @@
  */
 
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { timestamp_cmp, trunc_middle } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
+import {
+  ALL_PROJECT_COLLABORATORS_MENTION_ID,
+  getMentionAllAccountIds,
+} from "./mention-all";
 import type { Item } from "./complete";
 
 interface Opts {
@@ -73,6 +79,18 @@ export function mentionableUsers({ search, project_id, opts }: Props): Item[] {
 
   const usersStore = redux.getStore("users");
   const mentions: Item[] = [];
+  if (getMentionAllAccountIds(project_id).length > 0) {
+    mentions.push({
+      value: ALL_PROJECT_COLLABORATORS_MENTION_ID,
+      label: (
+        <span>
+          <Icon name="users" style={{ color: COLORS.GRAY_M }} /> All
+          collaborators
+        </span>
+      ),
+      search: "all collaborators everyone everybody",
+    });
+  }
 
   for (const { account_id } of projectUsers) {
     const fullname = usersStore.get_name(account_id)?.trim();
