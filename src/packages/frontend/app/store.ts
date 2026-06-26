@@ -28,6 +28,7 @@ export interface PageState {
   auth_view?: AuthView;
   docs_print?: boolean;
   docs_slug?: string;
+  share_slug?: string;
   show_connection: boolean;
   ping?: number;
   avgping?: number;
@@ -74,6 +75,7 @@ export function init_store() {
     auth_view: parsed.page === "auth" ? parsed.view : undefined,
     docs_print: parsed.page === "docs" ? parsed.print : undefined,
     docs_slug: parsed.page === "docs" ? parsed.slug : undefined,
+    share_slug: parsed.page === "share" ? parsed.slug : undefined,
     show_connection: false,
     connection_status: "connecting",
     connection_quality: "good",

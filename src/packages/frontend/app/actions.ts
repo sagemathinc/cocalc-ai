@@ -219,6 +219,14 @@ export class PageActions extends Actions<PageState> {
         }
         set_window_title(`${projectLabel} Hosts`);
         return;
+      case "share": {
+        const share_slug = this.redux.getStore("page").get("share_slug") ?? "";
+        if (change_history) {
+          set_url(getPageUrlPath({ page: "share", slug: share_slug }));
+        }
+        set_window_title("Shared Directory");
+        return;
+      }
       case "ssh":
         if (change_history) {
           set_url(getPageUrlPath({ page: "ssh" }));

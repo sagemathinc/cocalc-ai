@@ -32,6 +32,8 @@
     "./settings/*": "./dist/settings/*.js",
     "./legacy-migration": "./dist/legacy-migration/index.js",
     "./legacy-migration/*": "./dist/legacy-migration/*.js",
+    "./public-directory-shares": "./dist/public-directory-shares/index.js",
+    "./public-directory-shares/*": "./dist/public-directory-shares/*.js",
     "./test": "./dist/test/index.js",
     "./test/*": "./dist/test/*.js"
   },
