@@ -249,6 +249,74 @@ describe("cloud host start failures", () => {
     expect(rows[0].metadata.runtime_deployments).toBeUndefined();
   });
 
+  it("clears Nebius preserved disk ids when a host is fully deprovisioned", async () => {
+    const hostId = "bc4e18d4-b12c-4034-a3ee-e1256a2b1875";
+    const deleteHost = jest.fn(async () => undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          deleteHost,
+        },
+      },
+      creds: {},
+    });
+    await upsertProjectHost({
+      id: hostId,
+      name: "Nebius delete host",
+      region: "us-central1",
+      status: "deprovisioning",
+      metadata: {
+        owner: "acct-owner",
+        machine: {
+          cloud: "nebius",
+          machine_type: "1gpu-24vcpu-218gb",
+          disk_gb: 186,
+          disk_type: "ssd_io_m3",
+          storage_mode: "persistent",
+          metadata: {
+            cpu: 24,
+            ram_gb: 218,
+            data_disk_id: "computedisk-data",
+            shared_disk_id: "computedisk-scratch",
+            shared_disk_name: "scratch-name",
+          },
+        },
+        runtime: {
+          provider: "nebius",
+          instance_id: "computeinstance-host",
+          metadata: {
+            diskIds: {
+              boot: "computedisk-boot",
+              data: "computedisk-data",
+              scratch: "computedisk-scratch",
+            },
+          },
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.delete({
+      id: "work-delete-nebius-1",
+      vm_id: hostId,
+      action: "delete",
+      payload: { provider: "nebius" },
+    } as any);
+
+    expect(deleteHost).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "computeinstance-host" }),
+      {},
+    );
+    const { rows } = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(rows[0].status).toBe("deprovisioned");
+    expect(rows[0].metadata.machine.metadata.data_disk_id).toBeUndefined();
+    expect(rows[0].metadata.machine.metadata.shared_disk_id).toBeUndefined();
+    expect(rows[0].metadata.machine.metadata.shared_disk_name).toBeUndefined();
+  });
+
   it("does not mark a spot host running when refresh_runtime sees TERMINATED with stale IP metadata", async () => {
     const hostId = "0ca1f2bc-43e4-48d1-82e8-2f96a76f8f94";
     const getInstance = jest.fn(async () => ({
