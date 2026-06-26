@@ -357,6 +357,12 @@ export interface CourseStudentInviteAccountRepairRow extends CourseStudentInvite
   invite_id: string;
 }
 
+export interface CourseManagerAccessResult {
+  project_id: string;
+  added_account_ids: string[];
+  error?: string;
+}
+
 export interface ProjectCollabInviteBlockRow {
   blocker_account_id: string;
   blocker_name?: string | null;
@@ -772,6 +778,7 @@ export const projects = {
   createCollabInvite: authFirstRequireAccount,
   listCollabInvites: authFirstRequireAccount,
   repairAcceptedCourseStudentInviteAccounts: authFirstRequireAccount,
+  ensureCourseManagerAccess: authFirstRequireAccount,
   respondCollabInvite: authFirstRequireAccount,
   getProjectAccessLandingInfo: authFirstRequireAccount,
   requestProjectAccess: authFirstRequireAccount,
@@ -1165,6 +1172,13 @@ export interface Projects {
     course_project_id: string;
     students: CourseStudentInviteAccountRepairInput[];
   }) => Promise<CourseStudentInviteAccountRepairRow[]>;
+
+  ensureCourseManagerAccess: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    course_path?: string;
+    project_ids: string[];
+  }) => Promise<CourseManagerAccessResult[]>;
 
   respondCollabInvite: (opts: {
     account_id?: string;

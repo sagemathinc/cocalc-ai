@@ -469,6 +469,9 @@ export class AssignmentsActions {
 
     try {
       await this.cancel_auto_collect_op(previousOpId);
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: items.map((item) => item.student_project_id),
+      });
       const op = await webapp_client.project_client.collectAssignment({
         course_project_id: store.get("course_project_id"),
         assignment_id,
@@ -683,6 +686,9 @@ export class AssignmentsActions {
       desc: `Copying assignment from ${student_name}`,
     });
     try {
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: [student_project_id],
+      });
       const op = await webapp_client.project_client.copyPathBetweenProjects({
         src: {
           project_id: student_project_id,
@@ -857,6 +863,9 @@ ${details}
     }
 
     try {
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: [student_project_id],
+      });
       await this.write_text_file_to_course_project({
         path: src_path + "/GRADE.md",
         content,
@@ -1101,6 +1110,9 @@ ${details}
         await this.copy_assignment_create_due_date_file(assignment_id);
       }
       if (this.course_actions.is_closed()) return;
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: [student_project_id],
+      });
       this.course_actions.set_activity({
         id,
         desc: `Copying files to ${student_name}'s project`,
@@ -1316,6 +1328,11 @@ ${details}
 
     if (dests.length) {
       try {
+        await this.course_actions.student_projects.ensure_course_manager_access(
+          {
+            project_ids: dests.map((dest) => dest.project_id),
+          },
+        );
         this.course_actions.set_activity({
           id,
           desc: `Copying assignment to ${dests.length} students`,
@@ -1498,6 +1515,9 @@ ${details}
       saveUpdate({
         target_student_count: patchDests.length,
       });
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: patchDests.map((dest) => dest.student_project_id),
+      });
       const src_base_path = this.assignment_src_path(assignment);
       const dest_base_path = this.assignment_path(assignment, "target_path");
       const op = await webapp_client.project_client.sendCourseAssignmentPatch({
@@ -1654,6 +1674,9 @@ ${details}
       return;
     }
     try {
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: items.map((item) => item.student_project_id),
+      });
       const op = await webapp_client.project_client.collectAssignment({
         course_project_id: store.get("course_project_id"),
         assignment_id,
@@ -2059,6 +2082,9 @@ ${details}
     };
 
     try {
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: [student_project_id],
+      });
       // now copy actual stuff to grade
       await map(peers, store.get_copy_parallel(), f);
       finish();
@@ -2110,6 +2136,11 @@ ${details}
     );
 
     const our_student_id = student.get("student_id");
+    const peerProjectIds = peers
+      .map((peer_student_id) =>
+        store.get_student(peer_student_id)?.get("project_id"),
+      )
+      .filter((project_id): project_id is string => !!project_id);
 
     const f = async (student_id: string): Promise<void> => {
       const s = store.get_student(student_id);
@@ -2152,6 +2183,9 @@ ${details}
     };
 
     try {
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: peerProjectIds,
+      });
       await map(peers, store.get_copy_parallel(), f);
       finish();
     } catch (err) {
@@ -2629,6 +2663,11 @@ ${details}
       grade_project_id = student_project_id;
       // grade right where student did their work.
       student_path = this.assignment_path(assignment, "target_path");
+    }
+    if (grade_project_id !== course_project_id) {
+      await this.course_actions.student_projects.ensure_course_manager_access({
+        project_ids: [grade_project_id],
+      });
     }
 
     const where_grade =

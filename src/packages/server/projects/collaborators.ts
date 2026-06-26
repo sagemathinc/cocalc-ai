@@ -3229,24 +3229,50 @@ async function createEmailProjectInvite({
   }
   const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
 
+  const existingInviteParams =
+    scope === COURSE_EMAIL_INVITE_SCOPE
+      ? [
+          project_id,
+          email_hash,
+          EMAIL_INVITE_SOURCE,
+          scope,
+          role,
+          `${context?.student_id ?? ""}`,
+          `${context?.student_project_id ?? project_id}`,
+        ]
+      : [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE, scope, role];
+  const existingInviteQuery =
+    scope === COURSE_EMAIL_INVITE_SCOPE
+      ? `SELECT invite_id, token_hash, token_ciphertext
+           FROM project_collab_invites
+          WHERE project_id=$1
+            AND email_hash=$2
+            AND status='pending'
+            AND invite_source=$3
+            AND scope=$4
+            AND COALESCE(invite_role, 'collaborator')=$5
+            AND (
+              context ->> 'student_id' = $6
+              OR context ->> 'student_project_id' = $7
+            )
+          ORDER BY created DESC
+          LIMIT 1`
+      : `SELECT invite_id, token_hash, token_ciphertext
+           FROM project_collab_invites
+          WHERE project_id=$1
+            AND inviter_account_id=$2
+            AND email_hash=$3
+            AND status='pending'
+            AND invite_source=$4
+            AND scope=$5
+            AND COALESCE(invite_role, 'collaborator')=$6
+          ORDER BY created DESC
+          LIMIT 1`;
   const { rows: existingRows } = await pool.query<{
     invite_id: string;
     token_hash: string | null;
     token_ciphertext: string;
-  }>(
-    `SELECT invite_id, token_hash, token_ciphertext
-       FROM project_collab_invites
-      WHERE project_id=$1
-        AND inviter_account_id=$2
-        AND email_hash=$3
-        AND status='pending'
-        AND invite_source=$4
-        AND scope=$5
-        AND COALESCE(invite_role, 'collaborator')=$6
-      ORDER BY created DESC
-      LIMIT 1`,
-    [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE, scope, role],
-  );
+  }>(existingInviteQuery, existingInviteParams);
   const existing = existingRows[0];
   if (existing) {
     const token = await decryptInviteValue(
@@ -3367,11 +3393,12 @@ export async function copyEmailProjectInviteLink({
     token_hash: string | null;
     token_ciphertext: string | null;
     scope: string | null;
+    context: Record<string, unknown> | null;
     status: string;
     created: Date;
   }>(
     `SELECT project_id, inviter_account_id, token_hash, token_ciphertext,
-            scope, status, created
+            scope, context, status, created
        FROM project_collab_invites
       WHERE invite_id=$1
         AND invite_source IN ('email', 'course_email')
@@ -3383,10 +3410,17 @@ export async function copyEmailProjectInviteLink({
     throw new Error(`invite '${invite_id}' not found`);
   }
   if (row.inviter_account_id !== account_id) {
-    await assertCanCopyEmailInviteLink({
-      account_id,
-      project_id: row.project_id,
-    });
+    if (row.scope === COURSE_EMAIL_INVITE_SCOPE) {
+      await assertCanCopyCourseEmailInviteLink({
+        account_id,
+        context: row.context,
+      });
+    } else {
+      await assertCanCopyEmailInviteLink({
+        account_id,
+        project_id: row.project_id,
+      });
+    }
   }
   if (row.status !== "pending") {
     throw new Error(`invite is not pending (status=${row.status})`);
@@ -3439,6 +3473,28 @@ async function assertCanCopyEmailInviteLink({
   throw new Error(
     "only the invite sender or a project owner can copy this invite link",
   );
+}
+
+async function assertCanCopyCourseEmailInviteLink({
+  account_id,
+  context,
+}: {
+  account_id: string;
+  context?: Record<string, unknown> | null;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+  const course_project_id = `${context?.course_project_id ?? ""}`.trim();
+  if (!is_valid_uuid_string(course_project_id)) {
+    throw new Error(
+      "course invite is missing the course project context required to copy it",
+    );
+  }
+  await assertProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id: course_project_id,
+  });
 }
 
 export async function redeemEmailProjectInvite({

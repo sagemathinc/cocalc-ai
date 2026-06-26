@@ -24,6 +24,7 @@ import {
   previewEmailProjectInvite as previewEmailProjectInviteLocal,
   listProjectAccessRequestBlocks as listProjectAccessRequestBlocksLocal,
   listProjectAccessRequests as listProjectAccessRequestsLocal,
+  listCollaborators as listCollaboratorsLocal,
   listCollabInvites as listCollabInvitesLocal,
   redeemEmailProjectInvite as redeemEmailProjectInviteLocal,
   requestProjectAccess as requestProjectAccessLocal,
@@ -35,6 +36,7 @@ import {
   setProjectUserRole as setProjectUserRoleLocal,
   unblockProjectAccessRequester as unblockProjectAccessRequesterLocal,
 } from "@cocalc/server/projects/collaborators";
+import { ensureCourseManagerAccessLocal } from "@cocalc/server/projects/course/ensure-manager-access";
 import {
   leaveOrDeleteProjectsForAccount,
   type ProjectLeaveOrDeleteResult,
@@ -159,6 +161,7 @@ import type {
   ProjectLabels,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
+  CourseManagerAccessResult,
   CourseStudentInviteAccountRepairInput,
   CourseStudentInviteAccountRepairRow,
   ProjectCollabInviteAction,
@@ -545,9 +548,15 @@ export async function collectAssignment({
   }
   const normalizedItems = normalizeCourseCollectItems(items);
   await assertCollab({ account_id, project_id: course_project_id });
-  for (const project_id of new Set(
-    normalizedItems.map((item) => item.student_project_id),
-  )) {
+  const studentProjectIds = Array.from(
+    new Set(normalizedItems.map((item) => item.student_project_id)),
+  );
+  await ensureCourseManagerAccess({
+    account_id,
+    course_project_id,
+    project_ids: studentProjectIds,
+  });
+  for (const project_id of studentProjectIds) {
     await assertCollab({ account_id, project_id });
   }
   let normalizedRunAt: string | undefined;
@@ -679,9 +688,15 @@ export async function sendCourseAssignmentPatch({
   const normalizedDests = normalizeCourseAssignmentPatchDests(dests);
 
   await assertCollab({ account_id, project_id: course_project_id });
-  for (const project_id of new Set(
-    normalizedDests.map((dest) => dest.student_project_id),
-  )) {
+  const studentProjectIds = Array.from(
+    new Set(normalizedDests.map((dest) => dest.student_project_id)),
+  );
+  await ensureCourseManagerAccess({
+    account_id,
+    course_project_id,
+    project_ids: studentProjectIds,
+  });
+  for (const project_id of studentProjectIds) {
     await assertCollab({ account_id, project_id });
   }
 
@@ -2602,6 +2617,121 @@ export async function repairAcceptedCourseStudentInviteAccounts({
     );
   }
   return results;
+}
+
+function uniqueValidProjectIds(project_ids: string[]): string[] {
+  if (!Array.isArray(project_ids)) {
+    throw new Error("project_ids must be an array");
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const project_id of project_ids) {
+    const value = `${project_id ?? ""}`.trim();
+    if (!value) {
+      continue;
+    }
+    if (!isValidUUID(value)) {
+      throw new Error(`invalid project_id: ${value}`);
+    }
+    if (!seen.has(value)) {
+      seen.add(value);
+      result.push(value);
+    }
+  }
+  return result;
+}
+
+export async function ensureCourseManagerAccess({
+  account_id,
+  course_project_id,
+  course_path,
+  project_ids,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  course_path?: string;
+  project_ids: string[];
+}): Promise<CourseManagerAccessResult[]> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  if (!isValidUUID(course_project_id)) {
+    throw new Error("invalid course_project_id");
+  }
+  await assertCollabAllowRemoteProjectAccess({
+    account_id,
+    project_id: course_project_id,
+  });
+  const manager_account_ids = (
+    await listCollaboratorsLocal({ account_id, project_id: course_project_id })
+  )
+    .filter(
+      (collaborator) =>
+        collaborator.group === "owner" || collaborator.group === "collaborator",
+    )
+    .map((collaborator) => collaborator.account_id);
+  const projectIds = uniqueValidProjectIds(project_ids);
+  if (projectIds.length === 0) {
+    return [];
+  }
+
+  const localProjectIds: string[] = [];
+  const remoteProjectIdsByBay = new Map<string, string[]>();
+  const resultsByProjectId = new Map<string, CourseManagerAccessResult>();
+  for (const project_id of projectIds) {
+    const ownership = await resolveProjectBay(project_id);
+    if (ownership == null) {
+      resultsByProjectId.set(project_id, {
+        project_id,
+        added_account_ids: [],
+        error: "project not found",
+      });
+      continue;
+    }
+    if (ownership.bay_id === getConfiguredBayId()) {
+      localProjectIds.push(project_id);
+      continue;
+    }
+    remoteProjectIdsByBay.set(ownership.bay_id, [
+      ...(remoteProjectIdsByBay.get(ownership.bay_id) ?? []),
+      project_id,
+    ]);
+  }
+
+  const common = {
+    account_id,
+    course_project_id,
+    course_path,
+    manager_account_ids,
+  };
+  if (localProjectIds.length > 0) {
+    for (const result of await ensureCourseManagerAccessLocal({
+      ...common,
+      project_ids: localProjectIds,
+      trustedCourseAccess: true,
+    })) {
+      resultsByProjectId.set(result.project_id, result);
+    }
+  }
+  for (const [bay_id, remoteProjectIds] of remoteProjectIdsByBay.entries()) {
+    for (const result of await getInterBayBridge()
+      .projectCollabInvite(bay_id)
+      .ensureCourseManagerAccess({
+        ...common,
+        project_ids: remoteProjectIds,
+      })) {
+      resultsByProjectId.set(result.project_id, result);
+    }
+  }
+
+  return projectIds.map(
+    (project_id) =>
+      resultsByProjectId.get(project_id) ?? {
+        project_id,
+        added_account_ids: [],
+        error: "project was not checked",
+      },
+  );
 }
 
 export async function removeCollaborator({

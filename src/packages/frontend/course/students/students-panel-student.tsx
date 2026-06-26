@@ -617,9 +617,15 @@ export function Student({
     if (!email) return;
     setSendInviteLoading(true);
     try {
+      const studentProjectId = student.get("project_id");
+      if (studentProjectId) {
+        await actions.student_projects.ensure_course_manager_access({
+          project_ids: [studentProjectId],
+        });
+      }
       const result = await actions.student_projects.invite_student_to_project({
         student: email, // we use email address to trigger sending an actual email!
-        student_project_id: student.get("project_id"),
+        student_project_id: studentProjectId,
         student_id: student.get("student_id"),
       });
       await refreshCourseInviteStatus();

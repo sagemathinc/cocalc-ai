@@ -372,6 +372,7 @@ import {
   setProjectUserRole,
   unblockProjectAccessRequester,
 } from "@cocalc/server/projects/collaborators";
+import { ensureCourseManagerAccessLocal } from "@cocalc/server/projects/course/ensure-manager-access";
 import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/project-limits";
 import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
@@ -1661,6 +1662,11 @@ async function startProjectCollabInviteService(): Promise<void> {
       ),
     repairAcceptedCourseStudentInviteAccounts: async (opts) =>
       await repairAcceptedCourseStudentInviteAccountsLocal({
+        ...opts,
+        trustedCourseAccess: true,
+      }),
+    ensureCourseManagerAccess: async (opts) =>
+      await ensureCourseManagerAccessLocal({
         ...opts,
         trustedCourseAccess: true,
       }),
