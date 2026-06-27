@@ -7,6 +7,11 @@ builder:
 steps:
   - uses: cocalc/webdev
     timeout: 2400
+  - uses: cocalc/code-server
+    with:
+      prefix: /opt/code-server
+      version: latest
+    timeout: 900
 
 verify:
   - command -v node
@@ -26,6 +31,8 @@ verify:
   - command -v uv
   - command -v ruff
   - command -v jupyter-lab
+  - command -v code-server
+  - code-server --version
   - python3 -c 'import ipykernel, jupyterlab, pytest, requests'
   - jupyter kernelspec list | grep -q python3
   - test -r /opt/cocalc-webdev/README.md
@@ -33,7 +40,7 @@ verify:
 publish:
   label: Web Development
   slug: webdev
-  description: Web development image with CoCalc's Node/npm runtime, system-wide pnpm and yarn, GitHub CLI, native build tools, Chromium, PostgreSQL, Redis, Python, uv, and Jupyter.
+  description: Web development image with CoCalc's Node/npm runtime, system-wide pnpm and yarn, GitHub CLI, native build tools, Chromium, PostgreSQL, Redis, Python, uv, Jupyter, and code-server.
   family: web-development
   version: "2026.06"
   channel: stable
@@ -48,3 +55,5 @@ publish:
     - postgresql
     - redis
     - chromium
+    - code-server
+    - vscode
