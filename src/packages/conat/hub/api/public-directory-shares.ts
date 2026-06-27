@@ -79,6 +79,15 @@ export interface ListMyPublicDirectorySharesOptions {
   include_disabled?: boolean;
 }
 
+export interface ListProjectPublicDirectorySharesOptions {
+  account_id?: string;
+  project_id: string;
+  path?: string;
+  limit?: number;
+  offset?: number;
+  include_disabled?: boolean;
+}
+
 export interface UpsertPublicDirectoryShareOptions {
   account_id?: string;
   id?: string;
@@ -196,6 +205,9 @@ export interface PublicDirectoryShares {
   listMine: (
     opts?: ListMyPublicDirectorySharesOptions,
   ) => Promise<ListPublicDirectorySharesResponse>;
+  listProject: (
+    opts: ListProjectPublicDirectorySharesOptions,
+  ) => Promise<ListPublicDirectorySharesResponse>;
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
@@ -217,6 +229,7 @@ export const publicDirectoryShares = {
   resolve: authFirstRequireAccount,
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
+  listProject: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
   create: authFirstRequireAccount,
   update: authFirstRequireAccount,

@@ -32,6 +32,7 @@ import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { posix } from "node:path";
 import type {
   ListMyPublicDirectorySharesOptions,
+  ListProjectPublicDirectorySharesOptions,
   ListPublicDirectoryShareDirectoryOptions,
   ListPublicDirectoryShareDirectoryResponse,
   ListPublicDirectorySharesOptions,
@@ -600,6 +601,51 @@ export async function listMine({
       LIMIT $3 OFFSET $4
     `,
     [account_id, include_disabled, normalizedLimit, normalizedOffset],
+  );
+  return {
+    shares: rows.map(rowToSummary),
+    total_count: Number(rows[0]?.total_count ?? 0),
+  };
+}
+
+export async function listProject({
+  account_id,
+  project_id,
+  path,
+  limit,
+  offset,
+  include_disabled = false,
+}: ListProjectPublicDirectorySharesOptions): Promise<ListPublicDirectorySharesResponse> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  await assertCollab({ account_id, project_id });
+  const normalizedLimit = normalizeLimit(limit);
+  const normalizedOffset = normalizeOffset(offset);
+  const normalizedPath =
+    path == null ? undefined : normalizePublicDirectorySharePath(path);
+  const { rows } = await getPool().query<PublicDirectoryShareRow>(
+    `
+      SELECT *, count(*) OVER() AS total_count
+      FROM public_project_paths
+      WHERE project_id=$1
+        AND ($2::boolean OR disabled IS FALSE)
+        AND ($3::text IS NULL OR path=$3)
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT $4 OFFSET $5
+    `,
+    [
+      project_id,
+      include_disabled,
+      normalizedPath ?? null,
+      normalizedLimit,
+      normalizedOffset,
+    ],
   );
   return {
     shares: rows.map(rowToSummary),

@@ -282,16 +282,18 @@ export function ActionBox({
     let canceled = false;
     setPublishShareLoading(true);
     setExistingPublishShare(null);
+    const sharePath = normalizeSharePath(path);
     webapp_client.conat_client.hub.publicDirectoryShares
-      .listMine({ include_disabled: false, limit: 1000 })
+      .listProject({
+        project_id,
+        path: sharePath,
+        include_disabled: false,
+        limit: 10,
+      })
       .then((result) => {
         if (canceled) return;
-        const sharePath = normalizeSharePath(path);
         const share = result.shares.find(
-          (share) =>
-            share.project_id === project_id &&
-            normalizeSharePath(share.path) === sharePath &&
-            share.disabled !== true,
+          (share) => normalizeSharePath(share.path) === sharePath,
         );
         setExistingPublishShare(share ?? null);
         if (share) {

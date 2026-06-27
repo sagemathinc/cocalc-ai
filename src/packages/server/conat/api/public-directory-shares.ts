@@ -9,6 +9,7 @@ export {
   list,
   listDirectory,
   listMine,
+  listProject,
   resolve,
   update,
   upsert,
