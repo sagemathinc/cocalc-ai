@@ -40,6 +40,7 @@ import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { listSiteLicenseOverviews } from "@cocalc/frontend/purchases/api";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { PublicDirectoryShareSummary } from "@cocalc/conat/hub/api/public-directory-shares";
 import type { SiteLicenseOverview } from "@cocalc/conat/hub/api/purchases";
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -96,6 +97,19 @@ function publicShareUrl(slug: string): string {
     .split("/")
     .map(encodeURIComponent)
     .join("/")}`;
+}
+
+function normalizeSharePath(path: string): string {
+  const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
+  for (const home of ["/home/user", "/root"]) {
+    if (raw === home) return ".";
+    if (raw.startsWith(`${home}/`)) {
+      const relative = raw.slice(home.length + 1).replace(/^\/+|\/+$/g, "");
+      return relative || ".";
+    }
+  }
+  const relative = raw.replace(/^\/+|\/+$/g, "");
+  return relative || ".";
 }
 
 interface SiteLicensePoolOption {
@@ -205,10 +219,15 @@ export function ActionBox({
     useState<boolean>(false);
   const [publishTitle, setPublishTitle] = useState<string>("");
   const [publishDescription, setPublishDescription] = useState<string>("");
+  const [publishLicense, setPublishLicense] = useState<string>("");
   const [publishSlug, setPublishSlug] = useState<string>("");
   const [publishUrl, setPublishUrl] = useState<string>("");
   const [publishError, setPublishError] = useState<string>("");
   const [publishing, setPublishing] = useState<boolean>(false);
+  const [publishShareLoading, setPublishShareLoading] =
+    useState<boolean>(false);
+  const [existingPublishShare, setExistingPublishShare] =
+    useState<PublicDirectoryShareSummary | null>(null);
   const [publishGrantOnCopy, setPublishGrantOnCopy] = useState<boolean>(false);
   const [publishCopyRequiresGrant, setPublishCopyRequiresGrant] =
     useState<boolean>(true);
@@ -260,6 +279,48 @@ export function ActionBox({
     setPublishSlug(
       (cur) => cur || defaultPublicShareSlug({ project_id, path }),
     );
+    let canceled = false;
+    setPublishShareLoading(true);
+    setExistingPublishShare(null);
+    webapp_client.conat_client.hub.publicDirectoryShares
+      .listMine({ include_disabled: false, limit: 1000 })
+      .then((result) => {
+        if (canceled) return;
+        const sharePath = normalizeSharePath(path);
+        const share = result.shares.find(
+          (share) =>
+            share.project_id === project_id &&
+            normalizeSharePath(share.path) === sharePath &&
+            share.disabled !== true,
+        );
+        setExistingPublishShare(share ?? null);
+        if (share) {
+          setPublishTitle(share.title || misc.path_split(path).tail || "Files");
+          setPublishDescription(share.description ?? "");
+          setPublishLicense(share.license ?? "");
+          setPublishSlug(share.slug);
+          setPublishUrl(publicShareUrl(share.slug));
+          setPublishGrantOnCopy(share.site_license_grant_on_copy === true);
+          setPublishCopyRequiresGrant(
+            share.site_license_copy_requires_grant === true,
+          );
+          setPublishSiteLicensePoolId(share.site_license_pool_id ?? "");
+          setPublishSiteLicenseDurationDays(
+            share.site_license_duration_days ?? 30,
+          );
+        }
+      })
+      .catch((err) => {
+        if (!canceled) {
+          setPublishError(normalizeUserFacingError(err).message);
+        }
+      })
+      .finally(() => {
+        if (!canceled) setPublishShareLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
   }, [checked_files, file_action, project_id]);
 
   useEffect(() => {
@@ -309,10 +370,12 @@ export function ActionBox({
     setDeleteFromSnapshots(false);
     setPublishTitle("");
     setPublishDescription("");
+    setPublishLicense("");
     setPublishSlug("");
     setPublishUrl("");
     setPublishError("");
     setPublishing(false);
+    setExistingPublishShare(null);
     if (dnd_copy_dest) {
       actions.setState({ copy_destination_project_id: undefined });
     }
@@ -898,7 +961,7 @@ export function ActionBox({
     );
   }
 
-  async function publishDirectory(): Promise<void> {
+  async function savePublication(): Promise<void> {
     const path = checked_files.first();
     if (typeof path !== "string") {
       return;
@@ -910,17 +973,13 @@ export function ActionBox({
     setPublishError("");
     setPublishUrl("");
     try {
-      const share = await webapp_client.conat_client.callHubApi({
-        name: "publicDirectoryShares.create",
-        project_id,
-        timeout: 30000,
-        args: [
-          {
-            project_id,
-            path,
+      const payload = existingPublishShare
+        ? {
+            id: existingPublishShare.id,
             slug: publishSlug,
             title: publishTitle,
             description: publishDescription,
+            license: publishLicense,
             site_license_grant_on_copy: publishGrantOnCopy,
             site_license_copy_requires_grant: publishCopyRequiresGrant,
             site_license_id: publishGrantOnCopy
@@ -932,16 +991,70 @@ export function ActionBox({
             site_license_duration_days: publishGrantOnCopy
               ? publishSiteLicenseDurationDays
               : undefined,
-          },
-        ],
+          }
+        : {
+            project_id,
+            path,
+            slug: publishSlug,
+            title: publishTitle,
+            description: publishDescription,
+            license: publishLicense,
+            site_license_grant_on_copy: publishGrantOnCopy,
+            site_license_copy_requires_grant: publishCopyRequiresGrant,
+            site_license_id: publishGrantOnCopy
+              ? selectedPool?.site_license_id
+              : undefined,
+            site_license_pool_id: publishGrantOnCopy
+              ? selectedPool?.value
+              : undefined,
+            site_license_duration_days: publishGrantOnCopy
+              ? publishSiteLicenseDurationDays
+              : undefined,
+          };
+      const share = await webapp_client.conat_client.callHubApi({
+        name: existingPublishShare
+          ? "publicDirectoryShares.update"
+          : "publicDirectoryShares.create",
+        project_id,
+        timeout: 30000,
+        args: [payload],
       });
       const url = publicShareUrl(share.slug);
+      setExistingPublishShare(share);
       setPublishUrl(url);
       await navigator.clipboard.writeText(url).catch(() => {});
       alert_message({
         type: "success",
         message:
-          "Directory published. The unlisted share link was copied to your clipboard.",
+          existingPublishShare == null
+            ? "Directory published. The unlisted share link was copied to your clipboard."
+            : "Publication updated. The unlisted share link was copied to your clipboard.",
+      });
+    } catch (err) {
+      setPublishError(normalizeUserFacingError(err).message);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function unpublishDirectory(): Promise<void> {
+    if (!existingPublishShare) {
+      return;
+    }
+    setPublishing(true);
+    setPublishError("");
+    try {
+      await webapp_client.conat_client.callHubApi({
+        name: "publicDirectoryShares.update",
+        project_id,
+        timeout: 30000,
+        args: [{ id: existingPublishShare.id, disabled: true }],
+      });
+      setExistingPublishShare(null);
+      setPublishUrl("");
+      alert_message({
+        type: "success",
+        message: "Directory unpublished.",
       });
     } catch (err) {
       setPublishError(normalizeUserFacingError(err).message);
@@ -976,14 +1089,34 @@ export function ActionBox({
     const canPublish =
       publishSlug.trim().length > 0 &&
       !publishing &&
+      !publishShareLoading &&
       (!publishGrantOnCopy || publishSiteLicensePoolId.trim().length > 0);
     return (
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        <Alert bsStyle="info">
-          Publish <code>{path}</code> as an unlisted shared directory. Viewers
-          must sign in to CoCalc, and file reads count against their egress
-          quota.
-        </Alert>
+        {existingPublishShare ? (
+          <Alert bsStyle="success">
+            <code>{path}</code> is already published at{" "}
+            <a
+              href={publicShareUrl(existingPublishShare.slug)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {publicShareUrl(existingPublishShare.slug)}
+            </a>
+            . Edit the metadata below or unpublish it.
+          </Alert>
+        ) : (
+          <Alert bsStyle="info">
+            Publish <code>{path}</code> as an unlisted shared directory. Viewers
+            must sign in to CoCalc, and file reads count against their egress
+            quota.
+          </Alert>
+        )}
+        {publishShareLoading ? (
+          <Alert bsStyle="info">
+            Checking whether this directory is already published...
+          </Alert>
+        ) : null}
         <div>
           <Typography.Text strong>Title</Typography.Text>
           <AntdInput
@@ -1008,6 +1141,14 @@ export function ActionBox({
             onChange={(e) => setPublishDescription(e.target.value)}
             placeholder="Optional description for viewers"
             rows={3}
+          />
+        </div>
+        <div>
+          <Typography.Text strong>License</Typography.Text>
+          <AntdInput
+            value={publishLicense}
+            onChange={(e) => setPublishLicense(e.target.value)}
+            placeholder="Optional license, e.g. CC-BY 4.0"
           />
         </div>
         <div>
@@ -1085,10 +1226,20 @@ export function ActionBox({
             type="primary"
             disabled={!canPublish}
             loading={publishing}
-            onClick={() => void publishDirectory()}
+            onClick={() => void savePublication()}
           >
-            <Icon name="share-square" /> Publish directory
+            <Icon name="share-square" />{" "}
+            {existingPublishShare ? "Update publication" : "Publish directory"}
           </AntdButton>
+          {existingPublishShare ? (
+            <AntdButton
+              danger
+              loading={publishing}
+              onClick={() => void unpublishDirectory()}
+            >
+              Unpublish
+            </AntdButton>
+          ) : null}
         </Space>
       </Space>
     );

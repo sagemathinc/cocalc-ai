@@ -45,6 +45,7 @@ import type {
   CreatePublicDirectoryShareOptions,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
+  UpdatePublicDirectoryShareOptions,
   UpsertPublicDirectoryShareOptions,
 } from "@cocalc/conat/hub/api/public-directory-shares";
 
@@ -703,6 +704,13 @@ async function savePublicDirectoryShare(
   const row = rows[0];
   await getPool().query(
     `
+      DELETE FROM public_project_path_slugs
+      WHERE public_project_path_id=$1 AND slug_lower <> lower($2)
+    `,
+    [row.id, slug],
+  );
+  await getPool().query(
+    `
       INSERT INTO public_project_path_slugs (
         slug_lower, slug, owning_bay_id, public_project_path_id, project_id,
         disabled, updated_at
@@ -719,6 +727,77 @@ async function savePublicDirectoryShare(
     [slug, bayId, row.id, row.project_id, row.disabled],
   );
   return rowToSummary(row);
+}
+
+export async function update(
+  opts: UpdatePublicDirectoryShareOptions,
+): Promise<PublicDirectoryShareSummary> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!opts.account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(opts.id)) {
+    throw Error("invalid public directory share id");
+  }
+  const { rows } = await getPool().query<PublicDirectoryShareRow>(
+    "SELECT * FROM public_project_paths WHERE id=$1 LIMIT 1",
+    [opts.id],
+  );
+  const current = rows[0];
+  if (!current) {
+    throw Error("public directory share not found");
+  }
+  await assertCollab({
+    account_id: opts.account_id,
+    project_id: current.project_id,
+  });
+
+  let siteLicenseGrant: SiteLicenseGrantConfig | undefined;
+  if (opts.site_license_grant_on_copy === true) {
+    siteLicenseGrant = await validateSiteLicenseGrantConfig({
+      account_id: opts.account_id,
+      project_id: current.project_id,
+      path: current.path,
+      slug: opts.slug ?? current.slug,
+      site_license_grant_on_copy: true,
+      site_license_copy_requires_grant: opts.site_license_copy_requires_grant,
+      site_license_id: opts.site_license_id ?? undefined,
+      site_license_pool_id: opts.site_license_pool_id ?? undefined,
+      site_license_duration_days: opts.site_license_duration_days ?? undefined,
+    });
+  }
+
+  const disabled = opts.disabled === true;
+  return await savePublicDirectoryShare({
+    account_id: opts.account_id,
+    id: current.id,
+    project_id: current.project_id,
+    path: current.path,
+    slug: opts.slug ?? current.slug,
+    visibility: disabled ? "disabled" : current.visibility,
+    requires_auth: current.requires_auth,
+    availability_status: current.availability_status,
+    availability_message: current.availability_message ?? null,
+    title: opts.title ?? current.title ?? null,
+    description: opts.description ?? current.description ?? null,
+    license: opts.license ?? current.license ?? null,
+    image: current.image ?? null,
+    redirect: current.redirect ?? null,
+    legacy_public_path_id: current.legacy_public_path_id ?? null,
+    legacy_url: current.legacy_url ?? null,
+    site_license_id: siteLicenseGrant?.site_license_id ?? null,
+    site_license_pool_id: siteLicenseGrant?.site_license_pool_id ?? null,
+    site_license_membership_tier_id:
+      siteLicenseGrant?.site_license_membership_tier_id ?? null,
+    site_license_duration_days: siteLicenseGrant?.duration_days ?? null,
+    site_license_grant_on_copy: siteLicenseGrant != null,
+    site_license_copy_requires_grant:
+      siteLicenseGrant?.copy_requires_grant ?? false,
+    metadata: current.metadata ?? {},
+    last_edited: current.last_edited ?? null,
+    disabled,
+  });
 }
 
 export async function create(
