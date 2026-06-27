@@ -17,6 +17,7 @@ import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import { init as initProjectRunnerFilesystem } from "@cocalc/project-runner/run/filesystem";
+import { initConatClient as initProjectRunnerConatClient } from "@cocalc/project-runner/run/conat-client";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import { initCodexGeneratedImageBlobWriter } from "./codex/generated-image-blobs";
@@ -242,6 +243,7 @@ export async function main(): Promise<void> {
       timeout: PROJECT_RUNNER_RPC_TIMEOUT_MS,
     }),
   );
+  initProjectRunnerConatClient(client);
   initProjectRunnerFilesystem({ client });
   const masterClient = connectMasterClient();
   const republishedSessions = publishActiveAcpSessions();
