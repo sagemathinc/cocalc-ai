@@ -1,0 +1,45 @@
+version: 1
+name: webdev
+
+builder:
+  disk_quota: 40000
+
+steps:
+  - uses: cocalc/webdev
+    timeout: 2400
+
+verify:
+  - command -v node
+  - command -v npm
+  - command -v pnpm
+  - command -v yarn
+  - command -v git
+  - command -v gh
+  - command -v rg
+  - command -v jq
+  - command -v chromium
+  - command -v python3
+  - command -v uv
+  - command -v ruff
+  - command -v jupyter-lab
+  - python3 -c 'import ipykernel, jupyterlab, pytest, requests'
+  - jupyter kernelspec list | grep -q python3
+  - test -r /opt/cocalc-webdev/README.md
+
+publish:
+  label: Web Development
+  slug: webdev
+  description: Web development image with CoCalc's Node/npm runtime, system-wide pnpm and yarn, GitHub CLI, native build tools, PostgreSQL, Chromium, Python, uv, and Jupyter.
+  family: web-development
+  version: "2026.06"
+  channel: stable
+  visibility: collaborators
+  tags:
+    - webdev
+    - node
+    - pnpm
+    - yarn
+    - typescript
+    - python
+    - postgresql
+    - chromium
