@@ -18,10 +18,32 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { shareRouteCandidates } from "./public-directory-share-route";
 
 function authHref(view: "sign-in" | "sign-up"): string {
   const target = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   return `${appUrl(`auth/${view}`)}?target=${encodeURIComponent(target)}`;
+}
+
+type ResolvedShareRoute = {
+  share: ResolvedPublicDirectoryShare;
+  relativePath: string;
+};
+
+async function resolveShareRoute(rawPath: string): Promise<ResolvedShareRoute> {
+  let lastError: unknown;
+  for (const candidate of shareRouteCandidates(rawPath)) {
+    try {
+      const share =
+        await webapp_client.conat_client.hub.publicDirectoryShares.resolve({
+          slug: candidate.slug,
+        });
+      return { share, relativePath: candidate.relativePath };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError ?? new Error("Published folder not found");
 }
 
 export function PublicDirectorySharePage({ slug }: { slug?: string }) {
@@ -31,10 +53,11 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     | undefined;
   const projectsActions = useActions("projects");
   const [loading, setLoading] = useState(false);
-  const [share, setShare] = useState<ResolvedPublicDirectoryShare | null>(null);
+  const [shareRoute, setShareRoute] = useState<ResolvedShareRoute | null>(null);
   const [error, setError] = useState<string>("");
   const [projectionReady, setProjectionReady] = useState(false);
   const normalizedSlug = `${slug ?? ""}`.trim();
+  const share = shareRoute?.share ?? null;
 
   useEffect(() => {
     if (!isLoggedIn || !normalizedSlug) {
@@ -43,12 +66,11 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     let canceled = false;
     setLoading(true);
     setError("");
-    setShare(null);
+    setShareRoute(null);
     setProjectionReady(false);
-    webapp_client.conat_client.hub.publicDirectoryShares
-      .resolve({ slug: normalizedSlug })
+    resolveShareRoute(normalizedSlug)
       .then((result) => {
-        if (!canceled) setShare(result);
+        if (!canceled) setShareRoute(result);
       })
       .catch((err) => {
         if (!canceled) setError(normalizeUserFacingError(err).message);
@@ -179,6 +201,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
       project_id={share.project_id}
       is_active
       publicDirectoryShare={share}
+      publicDirectorySharePath={shareRoute?.relativePath}
     />
   );
 }

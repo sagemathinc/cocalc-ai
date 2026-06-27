@@ -130,7 +130,7 @@ export function PublicDirectoryShareBanner({
         type="info"
         showIcon
         style={{ borderRadius: 0 }}
-        message={
+        title={
           <Space wrap>
             <Text strong>{shareTitle(share)}</Text>
             <Text>This is a published, read-only folder.</Text>
@@ -199,7 +199,7 @@ export function PublicDirectoryShareBanner({
             <Alert
               type="success"
               showIcon
-              message="Temporary membership offered"
+              title="Temporary membership offered"
               description={formatMembershipGrantDescription(share)}
             />
           ) : null}
@@ -224,11 +224,9 @@ export function PublicDirectoryShareBanner({
             </>
           ) : null}
           {copyMessage ? (
-            <Alert type="success" showIcon message={copyMessage} />
+            <Alert type="success" showIcon title={copyMessage} />
           ) : null}
-          {copyError ? (
-            <Alert type="error" showIcon message={copyError} />
-          ) : null}
+          {copyError ? <Alert type="error" showIcon title={copyError} /> : null}
         </Space>
       </Modal>
     </>

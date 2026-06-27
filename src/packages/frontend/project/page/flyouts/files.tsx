@@ -156,6 +156,7 @@ export function FilesFlyout({
     manageStarredFiles,
     registerUserFilesystemChangeHandler,
     workspaces,
+    publicDirectoryShare,
   } = useProjectContext();
   const rootRef = useRef<HTMLDivElement>(null as any);
   const refInput = useRef<InputRef>(null as any);
@@ -173,7 +174,7 @@ export function FilesFlyout({
     "state",
   ]);
   const lastBackup = useProjectMapField(project_id, "last_backup");
-  const hostInfo = useHostInfo(host_id);
+  const hostInfo = useHostInfo(host_id, { enabled: !publicDirectoryShare });
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
     [hostInfo],
