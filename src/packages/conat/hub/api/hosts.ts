@@ -1819,6 +1819,7 @@ export interface Hosts {
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
     align_runtime_stack?: boolean;
+    record_runtime_deployments?: boolean;
   }) => Promise<HostLroResponse>;
   reconcileHostSoftware: (opts: {
     account_id?: string;

@@ -6980,12 +6980,14 @@ export async function upgradeHostSoftware({
   targets,
   base_url,
   align_runtime_stack,
+  record_runtime_deployments,
 }: {
   account_id?: string;
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  record_runtime_deployments?: boolean;
 }): Promise<HostLroResponse> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
@@ -6997,6 +6999,7 @@ export async function upgradeHostSoftware({
         targets,
         base_url,
         align_runtime_stack,
+        record_runtime_deployments,
       });
   }
   const row = await loadHostForRootfsManagement(id, account_id);
@@ -7005,7 +7008,14 @@ export async function upgradeHostSoftware({
     kind: HOST_UPGRADE_LRO_KIND,
     row,
     account_id,
-    input: { id: row.id, account_id, targets, base_url, align_runtime_stack },
+    input: {
+      id: row.id,
+      account_id,
+      targets,
+      base_url,
+      align_runtime_stack,
+      record_runtime_deployments,
+    },
     dedupe_key: hostUpgradeDedupeKey({
       hostId: row.id,
       targets,

@@ -1972,6 +1972,7 @@ async function startHostConnectionService(): Promise<void> {
       targets,
       base_url,
       align_runtime_stack,
+      record_runtime_deployments,
     }) =>
       await upgradeHostSoftware({
         account_id,
@@ -1979,6 +1980,7 @@ async function startHostConnectionService(): Promise<void> {
         targets,
         base_url,
         align_runtime_stack,
+        record_runtime_deployments,
       }),
     reconcileHostSoftware: async ({ account_id, id }) =>
       await reconcileHostSoftware({
