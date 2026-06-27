@@ -55,8 +55,6 @@ import { ProjectDirectorySummaryButton } from "./project-directory-summary-butto
 
 const { Paragraph, Text } = Typography;
 
-const REFRESH_MS = 60 * 1000;
-
 const RANGE_SPECS = [
   { key: "5h", label: "5h", durationMs: 5 * 60 * 60 * 1000 },
   { key: "7d", label: "7d", durationMs: 7 * 24 * 60 * 60 * 1000 },
@@ -585,10 +583,6 @@ export function ManagedCpuAdminOverview() {
 
   useEffect(() => {
     void load();
-    const interval = window.setInterval(() => {
-      void load();
-    }, REFRESH_MS);
-    return () => window.clearInterval(interval);
   }, [load]);
 
   const hasNoCpu = (cpuOverview?.total_cpu_seconds ?? 0) <= 0;

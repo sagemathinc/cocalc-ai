@@ -4,6 +4,8 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
+import LRU from "lru-cache";
 import type {
   AbuseReviewAnnotation,
   ManagedCpuAccountSummary,
@@ -31,6 +33,9 @@ const TABLE = "account_cpu_usage_events";
 const DEFAULT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_HISTORY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
 const MAX_HISTORY_BUCKETS = 2000;
+const ADMIN_OVERVIEW_CACHE_TTL_MS = 60_000;
+
+const logger = getLogger("server:membership:managed-cpu");
 
 export type ManagedCpuUsage = {
   managed_cpu_5h_seconds: number;
@@ -47,7 +52,74 @@ export type ManagedCpuUsage = {
   over_managed_cpu_7d?: boolean;
 };
 
+type ManagedCpuAdminOverviewBase = {
+  total_cpu_seconds: number;
+  top_accounts: ManagedCpuAccountSummary[];
+  top_projects: ManagedCpuAdminProjectSummary[];
+  recent_events: ManagedCpuEventSummary[];
+};
+
 let ensuredSchema: Promise<void> | undefined;
+let adminTimeIndexReady: Promise<void> | undefined;
+
+const adminOverviewCache = new LRU<
+  string,
+  Promise<ManagedCpuAdminOverviewBase>
+>({
+  max: 100,
+  ttl: ADMIN_OVERVIEW_CACHE_TTL_MS,
+});
+
+async function createIndexConcurrentlyBestEffort({
+  name,
+  sql,
+}: {
+  name: string;
+  sql: string;
+}): Promise<void> {
+  const pool = getPool();
+  if (typeof (pool as any).connect !== "function") {
+    await pool.query(sql.replace("CREATE INDEX CONCURRENTLY", "CREATE INDEX"));
+    return;
+  }
+  const client = await (pool as any).connect();
+  let locked = false;
+  try {
+    const { rows } = await client.query(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [name],
+    );
+    locked = rows[0]?.locked === true;
+    if (!locked) {
+      return;
+    }
+    await client.query(sql);
+  } catch (err) {
+    logger.warn("failed to create admin overview index", {
+      index: name,
+      err: `${err}`,
+    });
+  } finally {
+    if (locked) {
+      await client
+        .query("SELECT pg_advisory_unlock(hashtext($1))", [name])
+        .catch(() => undefined);
+    }
+    client.release();
+  }
+}
+
+function ensureAdminTimeIndexBestEffort(): void {
+  adminTimeIndexReady ??= createIndexConcurrentlyBestEffort({
+    name: `${TABLE}_time_admin_idx`,
+    sql: `
+      CREATE INDEX CONCURRENTLY IF NOT EXISTS ${TABLE}_time_admin_idx
+      ON ${TABLE}(sample_ended_at DESC, id DESC)
+      INCLUDE (account_id, project_id, host_id, cpu_seconds)
+    `,
+  });
+  adminTimeIndexReady.catch(() => undefined);
+}
 
 async function ensureSchema(): Promise<void> {
   if (!ensuredSchema) {
@@ -96,6 +168,7 @@ async function ensureSchema(): Promise<void> {
       await getPool().query(
         `CREATE INDEX IF NOT EXISTS ${TABLE}_scope_time_idx ON ${TABLE}(cpu_accounting_scope, sample_ended_at DESC)`,
       );
+      ensureAdminTimeIndexBestEffort();
       await getPool().query(`
         UPDATE ${TABLE} AS events
         SET
@@ -403,17 +476,37 @@ export async function getRecentManagedCpuEventsForAccount(opts: {
   return mapManagedCpuEventRows(rows);
 }
 
-export async function getManagedCpuAdminOverview(
-  opts: {
-    start?: string | Date;
-    end?: string | Date;
-    recent_event_limit?: number;
-    top_account_limit?: number;
-    top_project_limit?: number;
-  } = {},
-): Promise<ManagedCpuAdminOverview> {
-  await ensureSchema();
-  const query = normalizeOverviewQuery(opts);
+function adminOverviewCacheKey(
+  query: ReturnType<typeof normalizeOverviewQuery>,
+): string {
+  return [
+    Math.floor(query.startDate.getTime() / ADMIN_OVERVIEW_CACHE_TTL_MS),
+    Math.floor(query.endDate.getTime() / ADMIN_OVERVIEW_CACHE_TTL_MS),
+    query.recent_event_limit,
+    query.top_account_limit,
+    query.top_project_limit,
+  ].join(":");
+}
+
+async function getManagedCpuAdminOverviewBase(
+  query: ReturnType<typeof normalizeOverviewQuery>,
+): Promise<ManagedCpuAdminOverviewBase> {
+  const key = adminOverviewCacheKey(query);
+  const cached = adminOverviewCache.get(key);
+  if (cached != null) {
+    return await cached;
+  }
+  const promise = getManagedCpuAdminOverviewBaseUncached(query).catch((err) => {
+    adminOverviewCache.delete(key);
+    throw err;
+  });
+  adminOverviewCache.set(key, promise);
+  return await promise;
+}
+
+async function getManagedCpuAdminOverviewBaseUncached(
+  query: ReturnType<typeof normalizeOverviewQuery>,
+): Promise<ManagedCpuAdminOverviewBase> {
   const whereSql =
     "events.sample_ended_at >= $1 AND events.sample_ended_at < $2";
   const params: Array<Date> = [query.startDate, query.endDate];
@@ -562,6 +655,28 @@ export async function getManagedCpuAdminOverview(
       host_id: row.host_id ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
     }));
+  return {
+    total_cpu_seconds: normalizeCpuSeconds(totalResult.rows[0]?.cpu_seconds),
+    top_accounts,
+    top_projects,
+    recent_events: mapManagedCpuEventRows(recentEventsResult.rows),
+  };
+}
+
+export async function getManagedCpuAdminOverview(
+  opts: {
+    start?: string | Date;
+    end?: string | Date;
+    recent_event_limit?: number;
+    top_account_limit?: number;
+    top_project_limit?: number;
+  } = {},
+): Promise<ManagedCpuAdminOverview> {
+  await ensureSchema();
+  const query = normalizeOverviewQuery(opts);
+  const base = await getManagedCpuAdminOverviewBase(query);
+  const top_accounts = base.top_accounts.map((account) => ({ ...account }));
+  const top_projects = base.top_projects.map((project) => ({ ...project }));
   const accountIds = [
     ...top_accounts.map((account) => account.account_id),
     ...top_projects.map((project) => project.account_id),
@@ -580,7 +695,7 @@ export async function getManagedCpuAdminOverview(
   return {
     start: query.startDate.toISOString(),
     end: query.endDate.toISOString(),
-    total_cpu_seconds: normalizeCpuSeconds(totalResult.rows[0]?.cpu_seconds),
+    total_cpu_seconds: base.total_cpu_seconds,
     top_accounts: attachActiveAnnotationsToAccounts(
       top_accounts,
       activeAnnotations,
@@ -589,7 +704,7 @@ export async function getManagedCpuAdminOverview(
       top_projects,
       activeAnnotations,
     ),
-    recent_events: mapManagedCpuEventRows(recentEventsResult.rows),
+    recent_events: base.recent_events.map((event) => ({ ...event })),
   };
 }
 

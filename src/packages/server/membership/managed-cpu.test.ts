@@ -375,6 +375,24 @@ describe("managed CPU usage accounting", () => {
         metadata: { runtime_key: "runtime-1" },
       },
     ]);
+
+    queryMock.mockClear();
+    listActiveAbuseReviewAnnotationsMock.mockClear();
+    getAdminAccountMembershipStatusMapMock.mockClear();
+
+    const cachedOverview = await getManagedCpuAdminOverview({
+      start: "2026-05-30T09:00:00.000Z",
+      end: "2026-05-30T11:00:00.000Z",
+    });
+
+    expect(cachedOverview.total_cpu_seconds).toBe(3600);
+    expect(
+      queryMock.mock.calls.filter(([sql]) =>
+        `${sql}`.includes("SELECT COALESCE(SUM(events.cpu_seconds), 0)"),
+      ),
+    ).toHaveLength(0);
+    expect(listActiveAbuseReviewAnnotationsMock).toHaveBeenCalledTimes(1);
+    expect(getAdminAccountMembershipStatusMapMock).toHaveBeenCalledTimes(1);
   });
 
   it("aggregates CPU admin history into bounded time buckets", async () => {
