@@ -72,6 +72,32 @@ async function hostControlClient(host_id: string, timeout?: number) {
   });
 }
 
+async function hasPublicShareProjectHostTokenAccess({
+  host_id,
+  project_id,
+}: {
+  host_id: string;
+  project_id: string;
+}): Promise<boolean> {
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM public_project_paths p
+      JOIN projects ON projects.project_id=p.project_id
+      WHERE p.project_id=$1
+        AND projects.host_id=$2
+        AND projects.deleted IS NOT true
+        AND p.disabled IS FALSE
+        AND p.requires_auth IS TRUE
+        AND p.visibility IN ('listed', 'unlisted')
+        AND p.availability_status = 'available'
+      LIMIT 1
+    `,
+    [project_id, host_id],
+  );
+  return !!rowCount;
+}
+
 async function assertAccountCanIssueProjectHostToken({
   account_id,
   host_id,
@@ -82,23 +108,30 @@ async function assertAccountCanIssueProjectHostToken({
   host_id: string;
   project_id?: string;
   loadHostForListing: (id: string, account_id?: string) => Promise<any>;
-}): Promise<void> {
+}): Promise<"project" | "host" | "public-share"> {
   if (await isAdmin(account_id)) {
-    return;
+    return project_id ? "project" : "host";
   }
 
   if (project_id) {
-    await assertAccountProjectHostTokenProjectAccess({
-      account_id,
-      host_id,
-      project_id,
-    });
-    return;
+    try {
+      await assertAccountProjectHostTokenProjectAccess({
+        account_id,
+        host_id,
+        project_id,
+      });
+      return "project";
+    } catch (err) {
+      if (await hasPublicShareProjectHostTokenAccess({ host_id, project_id })) {
+        return "public-share";
+      }
+      throw err;
+    }
   }
 
   try {
     await loadHostForListing(host_id, account_id);
-    return;
+    return "host";
   } catch {
     // continue to project-based fallback check
   }
@@ -111,6 +144,7 @@ async function assertAccountCanIssueProjectHostToken({
   ) {
     throw new Error("not authorized for project-host access token");
   }
+  return "host";
 }
 
 async function syncProjectUsersOnHostForBrowserAccess({
@@ -180,13 +214,13 @@ export async function issueProjectHostAuthTokenLocalHelper({
     throw new Error("account is banned");
   }
 
-  await assertAccountCanIssueProjectHostToken({
+  const accessMode = await assertAccountCanIssueProjectHostToken({
     account_id,
     host_id,
     project_id,
     loadHostForListing,
   });
-  if (project_id) {
+  if (project_id && accessMode === "project") {
     await syncProjectUsersOnHostForBrowserAccess({
       account_id,
       project_id,

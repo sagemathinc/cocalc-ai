@@ -5737,6 +5737,39 @@ describe("hosts.issueProjectHostAuthToken", () => {
     );
   });
 
+  it("issues a browser token for a project with an available public share without syncing collaborator ACLs", async () => {
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(async () => {
+      throw new Error("not authorized for project-host access token");
+    });
+    queryMock = jest.fn(async () => ({
+      rowCount: 1,
+      rows: [{ "?column?": 1 }],
+    }));
+    const { issueProjectHostAuthToken } = await import("./hosts");
+    await expect(
+      issueProjectHostAuthToken({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_UUID,
+      token: "issued-token",
+      expires_at: 424242,
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("FROM public_project_paths"),
+      [PROJECT_UUID, HOST_UUID],
+    );
+    expect(syncProjectUsersOnHostMock).not.toHaveBeenCalled();
+    expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+      }),
+    );
+  });
+
   it("routes project-host token issuance to the host bay for remote hosts", async () => {
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",
