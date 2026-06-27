@@ -2273,6 +2273,7 @@ describe("purchases.getAdminRetentionOverview", () => {
     const result = await getAdminRetentionOverview({
       account_id: "admin-1",
       unit: "day",
+      activity_signal: "browser-project-activity",
       period_count: 14,
       exclude_banned: true,
       opened_project_only: false,
@@ -2282,6 +2283,7 @@ describe("purchases.getAdminRetentionOverview", () => {
       start: undefined,
       end: undefined,
       unit: "day",
+      activity_signal: "browser-project-activity",
       period_count: 14,
       exclude_banned: true,
       opened_project_only: false,

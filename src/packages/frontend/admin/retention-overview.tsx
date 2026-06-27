@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 
 import type {
+  AdminRetentionActivitySignal,
   AdminRetentionCohortUnit,
   AdminRetentionOverview,
   AdminRetentionPeriodCell,
@@ -215,6 +216,8 @@ function RetentionTable({ overview }: { overview: AdminRetentionOverview }) {
 
 export function RetentionAdminOverview() {
   const [unit, setUnit] = useState<AdminRetentionCohortUnit>("day");
+  const [activitySignal, setActivitySignal] =
+    useState<AdminRetentionActivitySignal>("browser-project-activity");
   const [excludeBanned, setExcludeBanned] = useState(true);
   const [openedProjectOnly, setOpenedProjectOnly] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -233,6 +236,7 @@ export function RetentionAdminOverview() {
             start: window.start,
             end: window.end,
             unit,
+            activity_signal: activitySignal,
             period_count: window.period_count,
             exclude_banned: excludeBanned,
             opened_project_only: openedProjectOnly,
@@ -245,7 +249,7 @@ export function RetentionAdminOverview() {
     } finally {
       setLoading(false);
     }
-  }, [excludeBanned, openedProjectOnly, unit]);
+  }, [activitySignal, excludeBanned, openedProjectOnly, unit]);
 
   useEffect(() => {
     void load();
@@ -254,10 +258,10 @@ export function RetentionAdminOverview() {
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-        Signup cohort retention using managed CPU usage as the activity signal.
-        This first version measures whether users came back and ran project
-        compute; it does not yet include passive browsing or course-specific
-        cohorts.
+        Signup cohort retention using browser-observed project activity as the
+        default activity signal. This first version measures whether users came
+        back and opened or used projects; it does not yet include passive
+        browsing or course-specific cohorts.
       </Paragraph>
       <Space wrap>
         <Segmented
@@ -267,6 +271,19 @@ export function RetentionAdminOverview() {
             { label: "Weekly cohorts", value: "week" },
           ]}
           onChange={(value) => setUnit(value as AdminRetentionCohortUnit)}
+        />
+        <Segmented
+          value={activitySignal}
+          options={[
+            {
+              label: "Browser project activity",
+              value: "browser-project-activity",
+            },
+            { label: "Managed CPU", value: "managed-cpu" },
+          ]}
+          onChange={(value) =>
+            setActivitySignal(value as AdminRetentionActivitySignal)
+          }
         />
         <Checkbox
           checked={excludeBanned}
@@ -278,7 +295,7 @@ export function RetentionAdminOverview() {
           checked={openedProjectOnly}
           onChange={(e) => setOpenedProjectOnly(e.target.checked)}
         >
-          Only users who opened a project
+          Cohort: only users who ever opened a project
         </Checkbox>
         <Button onClick={load} loading={loading}>
           Refresh
@@ -291,7 +308,7 @@ export function RetentionAdminOverview() {
         type="info"
         showIcon
         message="How to read this"
-        description="Each cell shows exact activity for that period. The small 'later' number is the percent active in that period or any later displayed period, so it forms a non-increasing retention curve across the row. Current and future periods are marked incomplete."
+        description="Each cell shows exact activity for that period. The small 'later' number is the percent active in that period or any later displayed period, so it forms a non-increasing retention curve across the row. Current and future periods are marked incomplete. Managed CPU is useful as a compute-retention proxy, but can be inflated by long-running idle projects."
       />
       {error ? <ShowError error={error} /> : null}
       {loading && overview == null ? <Spin /> : null}

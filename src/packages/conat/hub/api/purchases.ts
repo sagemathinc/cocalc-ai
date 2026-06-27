@@ -995,7 +995,9 @@ export interface ManagedCpuAdminHistoryQuery {
 }
 
 export type AdminRetentionCohortUnit = "day" | "week";
-export type AdminRetentionActivitySignal = "managed-cpu";
+export type AdminRetentionActivitySignal =
+  | "browser-project-activity"
+  | "managed-cpu";
 
 export interface AdminRetentionPeriodCell {
   period_index: number;
@@ -1031,6 +1033,7 @@ export interface AdminRetentionOverviewQuery {
   start?: string | Date;
   end?: string | Date;
   unit?: AdminRetentionCohortUnit;
+  activity_signal?: AdminRetentionActivitySignal;
   period_count?: number;
   exclude_banned?: boolean;
   opened_project_only?: boolean;

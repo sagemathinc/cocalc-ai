@@ -4,10 +4,15 @@
  */
 
 const queryMock = jest.fn();
+const ensureUxLatencySchemaMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({ query: queryMock }),
+}));
+
+jest.mock("@cocalc/server/monitoring/ux-latency", () => ({
+  ensureUxLatencySchema: (...args: any[]) => ensureUxLatencySchemaMock(...args),
 }));
 
 import {
@@ -18,10 +23,12 @@ import {
 describe("admin retention overview", () => {
   beforeEach(() => {
     queryMock.mockReset();
+    ensureUxLatencySchemaMock.mockReset();
+    ensureUxLatencySchemaMock.mockResolvedValue(undefined);
     clearAdminRetentionOverviewCacheForTests();
   });
 
-  it("maps managed CPU activity rows into cohort retention cells", async () => {
+  it("maps browser project activity rows into cohort retention cells by default", async () => {
     queryMock.mockResolvedValueOnce({
       rows: [
         {
@@ -61,7 +68,7 @@ describe("admin retention overview", () => {
     expect(result).toMatchObject({
       unit: "day",
       period_count: 2,
-      activity_signal: "managed-cpu",
+      activity_signal: "browser-project-activity",
       exclude_banned: true,
       opened_project_only: true,
       cohorts: [
@@ -90,9 +97,11 @@ describe("admin retention overview", () => {
         },
       ],
     });
+    expect(ensureUxLatencySchemaMock).toHaveBeenCalledTimes(1);
     expect(queryMock).toHaveBeenCalledTimes(1);
     const [sql, params] = queryMock.mock.calls[0];
-    expect(sql).toContain("account_cpu_usage_events");
+    expect(sql).toContain("ux_latency_events");
+    expect(sql).toContain("project_start_running");
     expect(sql).toContain("account_project_index");
     expect(params).toEqual([
       new Date("2026-06-20T00:00:00Z"),
@@ -101,6 +110,22 @@ describe("admin retention overview", () => {
       true,
       2,
     ]);
+  });
+
+  it("can use managed CPU as an explicit alternate activity signal", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const result = await getAdminRetentionOverview({
+      start: new Date("2026-06-20T00:00:00Z"),
+      end: new Date("2026-06-22T00:00:00Z"),
+      unit: "day",
+      activity_signal: "managed-cpu",
+      period_count: 2,
+    });
+
+    expect(result.activity_signal).toBe("managed-cpu");
+    expect(ensureUxLatencySchemaMock).not.toHaveBeenCalled();
+    expect(queryMock.mock.calls[0][0]).toContain("account_cpu_usage_events");
   });
 
   it("clamps weekly period counts", async () => {

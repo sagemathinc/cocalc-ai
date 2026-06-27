@@ -146,6 +146,10 @@ export async function ensureUxLatencySchema(): Promise<void> {
       `CREATE INDEX IF NOT EXISTS ${TABLE}_project_received_idx
          ON ${TABLE} (project_id, received_at DESC)`,
     );
+    await getPool().query(
+      `CREATE INDEX IF NOT EXISTS ${TABLE}_account_received_idx
+         ON ${TABLE} (account_id, received_at DESC)`,
+    );
   })();
   return schemaReady;
 }

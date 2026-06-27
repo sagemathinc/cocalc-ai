@@ -32,6 +32,7 @@ import type {
   AbuseReviewDisposition,
   AdminMembershipTierPayload,
   AccountUsageWindowEpoch,
+  AdminRetentionActivitySignal,
   AdminRetentionCohortUnit,
   AdminResetMembershipUsageWindowsResult,
   AbuseReviewPriorityAdjustment,
@@ -2393,6 +2394,7 @@ export async function getAdminRetentionOverview({
   start,
   end,
   unit,
+  activity_signal,
   period_count,
   exclude_banned,
   opened_project_only,
@@ -2401,6 +2403,7 @@ export async function getAdminRetentionOverview({
   start?: string | Date;
   end?: string | Date;
   unit?: AdminRetentionCohortUnit;
+  activity_signal?: AdminRetentionActivitySignal;
   period_count?: number;
   exclude_banned?: boolean;
   opened_project_only?: boolean;
@@ -2415,6 +2418,7 @@ export async function getAdminRetentionOverview({
     start,
     end,
     unit,
+    activity_signal,
     period_count,
     exclude_banned,
     opened_project_only,

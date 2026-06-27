@@ -5,7 +5,9 @@
 
 import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
+import { ensureUxLatencySchema } from "@cocalc/server/monitoring/ux-latency";
 import type {
+  AdminRetentionActivitySignal,
   AdminRetentionCohortRow,
   AdminRetentionCohortUnit,
   AdminRetentionOverview,
@@ -23,6 +25,7 @@ type NormalizedRetentionQuery = {
   unit: AdminRetentionCohortUnit;
   startDate: Date;
   endDate: Date;
+  activity_signal: AdminRetentionActivitySignal;
   period_count: number;
   exclude_banned: boolean;
   opened_project_only: boolean;
@@ -74,6 +77,10 @@ function normalizeUnit(value: unknown): AdminRetentionCohortUnit {
   return value === "week" ? "week" : "day";
 }
 
+function normalizeActivitySignal(value: unknown): AdminRetentionActivitySignal {
+  return value === "managed-cpu" ? "managed-cpu" : "browser-project-activity";
+}
+
 function normalizePeriodCount(
   value: unknown,
   unit: AdminRetentionCohortUnit,
@@ -105,6 +112,7 @@ function normalizeRetentionQuery(
     unit,
     startDate: start,
     endDate: end,
+    activity_signal: normalizeActivitySignal(opts.activity_signal),
     period_count,
     exclude_banned: opts.exclude_banned !== false,
     opened_project_only: opts.opened_project_only === true,
@@ -116,6 +124,7 @@ function cacheKey(query: NormalizedRetentionQuery): string {
     Math.floor(query.startDate.getTime() / CACHE_TTL_MS),
     Math.floor(query.endDate.getTime() / CACHE_TTL_MS),
     query.unit,
+    query.activity_signal,
     query.period_count,
     query.exclude_banned ? "exclude-banned" : "include-banned",
     query.opened_project_only ? "opened" : "all-signups",
@@ -177,7 +186,7 @@ function buildOverview(
     end: query.endDate.toISOString(),
     unit: query.unit,
     period_count: query.period_count,
-    activity_signal: "managed-cpu",
+    activity_signal: query.activity_signal,
     exclude_banned: query.exclude_banned,
     opened_project_only: query.opened_project_only,
     cohorts,
@@ -187,9 +196,75 @@ function buildOverview(
 async function getAdminRetentionOverviewUncached(
   query: NormalizedRetentionQuery,
 ): Promise<AdminRetentionOverview> {
+  if (query.activity_signal === "browser-project-activity") {
+    await ensureUxLatencySchema();
+  }
   const periodSeconds = query.unit === "week" ? 7 * 24 * 60 * 60 : 24 * 60 * 60;
   const periodInterval = query.unit === "week" ? "1 week" : "1 day";
   const dateTruncUnit = query.unit;
+  const activityOffsetsSql =
+    query.activity_signal === "managed-cpu"
+      ? `
+        SELECT DISTINCT
+          cohort_accounts.account_id,
+          cohort_accounts.cohort_start,
+          FLOOR(
+            EXTRACT(
+              EPOCH FROM (
+                date_trunc(
+                  '${dateTruncUnit}',
+                  timezone('UTC', events.sample_ended_at)
+                ) - cohort_accounts.cohort_start
+              )
+            ) / ${periodSeconds}
+          )::int AS period_index
+        FROM cohort_accounts
+        JOIN account_cpu_usage_events AS events
+          ON events.account_id = cohort_accounts.account_id
+        WHERE events.sample_ended_at >= (cohort_accounts.cohort_start AT TIME ZONE 'UTC')
+          AND events.sample_ended_at < (
+            cohort_accounts.cohort_start + $5::int * INTERVAL '${periodInterval}'
+          ) AT TIME ZONE 'UTC'
+          AND events.sample_ended_at >= $1::timestamptz
+          AND events.sample_ended_at < $2::timestamptz + $5::int * INTERVAL '${periodInterval}'
+      `
+      : `
+        SELECT DISTINCT
+          cohort_accounts.account_id,
+          cohort_accounts.cohort_start,
+          FLOOR(
+            EXTRACT(
+              EPOCH FROM (
+                date_trunc(
+                  '${dateTruncUnit}',
+                  timezone('UTC', events.received_at)
+                ) - cohort_accounts.cohort_start
+              )
+            ) / ${periodSeconds}
+          )::int AS period_index
+        FROM cohort_accounts
+        JOIN ux_latency_events AS events
+          ON events.account_id = cohort_accounts.account_id
+        WHERE events.received_at >= (cohort_accounts.cohort_start AT TIME ZONE 'UTC')
+          AND events.received_at < (
+            cohort_accounts.cohort_start + $5::int * INTERVAL '${periodInterval}'
+          ) AT TIME ZONE 'UTC'
+          AND events.received_at >= $1::timestamptz
+          AND events.received_at < $2::timestamptz + $5::int * INTERVAL '${periodInterval}'
+          AND (
+            events.event_type = 'project_ready'
+            OR events.event_type = 'file_open'
+            OR (
+              events.event_type = 'project_start'
+              AND events.metric IN (
+                'project_start_running',
+                'project_start_running_blocked',
+                'project_start_running_timeout',
+                'project_start_request_failed'
+              )
+            )
+          )
+      `;
   const { rows } = await getPool("medium").query<RetentionSqlRow>(
     `
       WITH cohort_accounts AS (
@@ -225,28 +300,7 @@ async function getAdminRetentionOverviewUncached(
         SELECT generate_series(0, $5::int - 1)::int AS period_index
       ),
       raw_active_offsets AS (
-        SELECT DISTINCT
-          cohort_accounts.account_id,
-          cohort_accounts.cohort_start,
-          FLOOR(
-            EXTRACT(
-              EPOCH FROM (
-                date_trunc(
-                  '${dateTruncUnit}',
-                  timezone('UTC', events.sample_ended_at)
-                ) - cohort_accounts.cohort_start
-              )
-            ) / ${periodSeconds}
-          )::int AS period_index
-        FROM cohort_accounts
-        JOIN account_cpu_usage_events AS events
-          ON events.account_id = cohort_accounts.account_id
-        WHERE events.sample_ended_at >= (cohort_accounts.cohort_start AT TIME ZONE 'UTC')
-          AND events.sample_ended_at < (
-            cohort_accounts.cohort_start + $5::int * INTERVAL '${periodInterval}'
-          ) AT TIME ZONE 'UTC'
-          AND events.sample_ended_at >= $1::timestamptz
-          AND events.sample_ended_at < $2::timestamptz + $5::int * INTERVAL '${periodInterval}'
+        ${activityOffsetsSql}
       ),
       active_offsets AS (
         SELECT *
