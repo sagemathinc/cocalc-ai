@@ -50,6 +50,12 @@ import type {
 import type {
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
+  CopyPublicDirectoryShareToNewProjectOptions,
+  CopyPublicDirectoryShareToNewProjectResponse,
+  CopyPublicDirectoryShareToProjectOptions,
+  CopyPublicDirectoryShareToProjectResponse,
+  ListPublicDirectoryShareDirectoryOptions,
+  ListPublicDirectoryShareDirectoryResponse,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
 } from "@cocalc/conat/hub/api/public-directory-shares";
@@ -2143,7 +2149,10 @@ export type AccountLocalMethod =
   | "legacy-migration-get-financial-membership-grant-home-bay"
   | "legacy-migration-configure-financial-renewal-home-bay"
   | "public-directory-share-resolve"
-  | "public-directory-share-authorize-read";
+  | "public-directory-share-authorize-read"
+  | "public-directory-share-list-directory"
+  | "public-directory-share-copy-to-project"
+  | "public-directory-share-copy-to-new-project";
 export type AuthTokenMethod =
   | "requires-token"
   | "validate"
@@ -3334,6 +3343,15 @@ export interface InterBayAccountLocalApi {
   publicDirectoryShareAuthorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
+  publicDirectoryShareListDirectory: (
+    opts: ListPublicDirectoryShareDirectoryOptions,
+  ) => Promise<ListPublicDirectoryShareDirectoryResponse>;
+  publicDirectoryShareCopyToProject: (
+    opts: CopyPublicDirectoryShareToProjectOptions,
+  ) => Promise<CopyPublicDirectoryShareToProjectResponse>;
+  publicDirectoryShareCopyToNewProject: (
+    opts: CopyPublicDirectoryShareToNewProjectOptions,
+  ) => Promise<CopyPublicDirectoryShareToNewProjectResponse>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -5873,6 +5891,33 @@ export function createInterBayAccountLocalClient({
       method: "public-directory-share-authorize-read",
     }),
   });
+  const publicDirectoryShareListDirectoryClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareListDirectory">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-list-directory",
+    }),
+  });
+  const publicDirectoryShareCopyToProjectClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareCopyToProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-copy-to-project",
+    }),
+  });
+  const publicDirectoryShareCopyToNewProjectClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareCopyToNewProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-copy-to-new-project",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -6139,6 +6184,18 @@ export function createInterBayAccountLocalClient({
       await publicDirectoryShareResolveClient.publicDirectoryShareResolve(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShareAuthorizeReadClient.publicDirectoryShareAuthorizeRead(
+        opts,
+      ),
+    publicDirectoryShareListDirectory: async (opts) =>
+      await publicDirectoryShareListDirectoryClient.publicDirectoryShareListDirectory(
+        opts,
+      ),
+    publicDirectoryShareCopyToProject: async (opts) =>
+      await publicDirectoryShareCopyToProjectClient.publicDirectoryShareCopyToProject(
+        opts,
+      ),
+    publicDirectoryShareCopyToNewProject: async (opts) =>
+      await publicDirectoryShareCopyToNewProjectClient.publicDirectoryShareCopyToNewProject(
         opts,
       ),
   };
@@ -7486,6 +7543,48 @@ export function createInterBayAccountLocalHandler({
       impl: {
         publicDirectoryShareAuthorizeRead: async (opts) =>
           await impl.publicDirectoryShareAuthorizeRead(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareListDirectory">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-list-directory",
+      }),
+      impl: {
+        publicDirectoryShareListDirectory: async (opts) =>
+          await impl.publicDirectoryShareListDirectory(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareCopyToProject">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-copy-to-project",
+      }),
+      impl: {
+        publicDirectoryShareCopyToProject: async (opts) =>
+          await impl.publicDirectoryShareCopyToProject(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareCopyToNewProject">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-copy-to-new-project",
+      }),
+      impl: {
+        publicDirectoryShareCopyToNewProject: async (opts) =>
+          await impl.publicDirectoryShareCopyToNewProject(opts),
       },
     }),
   ];
