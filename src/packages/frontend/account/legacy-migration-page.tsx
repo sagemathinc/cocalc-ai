@@ -135,7 +135,24 @@ function restoreProgressText(
   if (!progress || typeof progress !== "object") return "";
   const phase = `${progress.phase ?? ""}`.trim();
   const detail = `${progress.message ?? ""}`.trim();
-  return [phase, detail].filter(Boolean).join(": ");
+  const parts = [[phase, detail].filter(Boolean).join(": ")].filter(Boolean);
+  const progressDetail = progress.detail;
+  if (progressDetail && typeof progressDetail === "object") {
+    const skippedCount = (progressDetail as any).skipped_file_count;
+    const skippedBytes = formatBytes((progressDetail as any).skipped_bytes);
+    if (
+      typeof skippedCount === "number" &&
+      Number.isFinite(skippedCount) &&
+      skippedCount > 0
+    ) {
+      parts.push(
+        skippedBytes
+          ? `${skippedCount.toLocaleString()} oversized file(s) skipped (${skippedBytes})`
+          : `${skippedCount.toLocaleString()} oversized file(s) skipped`,
+      );
+    }
+  }
+  return parts.join(" • ");
 }
 
 function projectStatusFilter(

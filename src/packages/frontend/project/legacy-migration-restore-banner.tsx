@@ -163,6 +163,15 @@ function progressDetailText({
   if (currentPath) {
     parts.push(currentPath);
   }
+  const skipped = formatCount((detail as any).skipped_file_count);
+  const skippedBytes = formatBytes((detail as any).skipped_bytes);
+  if (skipped) {
+    parts.push(
+      skippedBytes
+        ? `${skipped} oversized file(s) skipped (${skippedBytes})`
+        : `${skipped} oversized file(s) skipped`,
+    );
+  }
   return parts.join(" • ");
 }
 
@@ -170,6 +179,43 @@ type OptimisticRestoreState = {
   opId: string;
   status: string;
 };
+
+function skippedRestoreText({
+  summary,
+  progress,
+}: {
+  summary?: LroSummary;
+  progress?: Extract<LroEvent, { type: "progress" }>;
+}): string {
+  const detail =
+    progress?.detail ??
+    (summary?.progress_summary?.detail as Record<string, unknown> | undefined);
+  if (!detail || typeof detail !== "object") return "";
+  const count = (detail as any).skipped_file_count;
+  if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) {
+    return "";
+  }
+  const bytes = formatBytes((detail as any).skipped_bytes);
+  const files = Array.isArray((detail as any).skipped_files)
+    ? (detail as any).skipped_files
+    : [];
+  const shown = files
+    .map((file) => labelValue(file?.path))
+    .filter(Boolean)
+    .slice(0, 5);
+  const hidden = Math.max(0, count - shown.length);
+  const parts = [
+    `${formatCount(count)} oversized file(s) were not restored${
+      bytes ? ` (${bytes})` : ""
+    }.`,
+  ];
+  if (shown.length > 0) {
+    parts.push(
+      `Skipped: ${shown.join(", ")}${hidden ? `, and ${hidden} more` : ""}.`,
+    );
+  }
+  return parts.join(" ");
+}
 
 export function LegacyMigrationRestoreBanner({
   project_id,
@@ -260,6 +306,7 @@ export function LegacyMigrationRestoreBanner({
     summary?.status === "expired";
   const restored =
     effectiveStatus === "restored" || summary?.status === "succeeded";
+  const skippedText = skippedRestoreText({ summary, progress });
 
   useEffect(() => {
     if (!legacyProjectId || restored || failed) return;
@@ -326,6 +373,11 @@ export function LegacyMigrationRestoreBanner({
               The imported files are now available. Reopen the project to reset
               the file browser state and show the restored directory listing.
             </Text>
+            {skippedText ? (
+              <Text type="warning" style={{ fontSize: 12 }}>
+                {skippedText}
+              </Text>
+            ) : null}
             <Button
               type="primary"
               size="large"
@@ -397,6 +449,11 @@ export function LegacyMigrationRestoreBanner({
           {detailExtra ? (
             <Text type="secondary" style={{ fontSize: 12 }}>
               {detailExtra}
+            </Text>
+          ) : null}
+          {skippedText ? (
+            <Text type="warning" style={{ fontSize: 12 }}>
+              {skippedText}
             </Text>
           ) : null}
           {percent != null ? (
