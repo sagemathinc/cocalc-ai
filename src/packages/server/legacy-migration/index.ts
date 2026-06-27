@@ -113,6 +113,11 @@ type LegacyAccountRow = {
   stripe_customer_id: string | null;
 };
 
+type AccountPrimaryEmailStatus = {
+  email: string | null;
+  verified: boolean;
+};
+
 type LegacyProjectRow = {
   legacy_project_id: string;
   title: string | null;
@@ -480,6 +485,88 @@ async function verifiedAccountEmails(account_id: string): Promise<string[]> {
   const primary = normalizeEmail(row?.email_address);
   if (primary && verified[primary]) emails.add(primary);
   return [...emails].sort();
+}
+
+async function accountPrimaryEmailStatus(
+  account_id: string,
+): Promise<AccountPrimaryEmailStatus> {
+  const { rows } = await getPool().query<AccountEmailRow>(
+    `SELECT email_address, email_address_verified
+       FROM accounts
+      WHERE account_id=$1`,
+    [account_id],
+  );
+  const row = rows[0];
+  if (row != null) {
+    const email = normalizeEmail(row.email_address) || null;
+    if (!email) return { email: null, verified: false };
+    return {
+      email,
+      verified: !!(row.email_address_verified ?? {})[email],
+    };
+  }
+  const account = await getClusterAccountById(account_id);
+  const email = normalizeEmail(account?.email_address) || null;
+  if (!email) return { email: null, verified: false };
+  const verifiedEmails = new Set(await verifiedAccountEmails(account_id));
+  return {
+    email,
+    verified: verifiedEmails.has(email),
+  };
+}
+
+async function unverifiedLegacyEmailMatches(account_id: string): Promise<{
+  email: string | null;
+  matches: LegacyMigrationMatchedAccount[];
+}> {
+  const { email, verified } = await accountPrimaryEmailStatus(account_id);
+  if (!email || verified) return { email, matches: [] };
+  const gmailCanonical = gmailCanonicalEmail(email);
+  const { rows } = await getPool().query<LegacyMigrationMatchedAccount>(
+    `
+    WITH candidates AS (
+      SELECT legacy_account_id,
+             email_address,
+             display_name,
+             lower(email_address) AS exact_email,
+             CASE
+               WHEN split_part(lower(email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+                 THEN replace(split_part(split_part(lower(email_address), '@', 1), '+', 1), '.', '') || '@gmail.com'
+               ELSE NULL
+             END AS gmail_canonical_email,
+             last_active
+        FROM legacy_migration_accounts
+       WHERE COALESCE(email_address_verified, false)=true
+    )
+    SELECT legacy_account_id,
+           email_address,
+           display_name,
+           CASE
+             WHEN exact_email=$1 THEN 'exact-email'
+             ELSE 'gmail-canonical'
+           END AS match_method,
+           gmail_canonical_email
+      FROM candidates
+     WHERE exact_email=$1
+        OR (
+          $2::TEXT IS NOT NULL
+          AND gmail_canonical_email=$2::TEXT
+        )
+     ORDER BY last_active DESC NULLS LAST,
+              legacy_account_id
+    `,
+    [email, gmailCanonical],
+  );
+  return {
+    email,
+    matches: rows.map((row) => ({
+      legacy_account_id: row.legacy_account_id,
+      email_address: normalizeEmail(row.email_address) || null,
+      display_name: row.display_name ?? null,
+      match_method: row.match_method ?? null,
+      gmail_canonical_email: normalizeEmail(row.gmail_canonical_email) || null,
+    })),
+  };
 }
 
 async function ensureVerifiedEmailLinks(account_id: string): Promise<void> {
@@ -1260,8 +1347,15 @@ async function financialPreviewForAccount(
     (await currentStripeCustomerId(account_id)) ??
     pending.map((account) => account.stripe_customer_id).find(Boolean) ??
     null;
+  const unverifiedEmail =
+    legacy_accounts.length === 0
+      ? await unverifiedLegacyEmailMatches(account_id)
+      : { email: null, matches: [] };
   return {
     legacy_accounts,
+    email_verification_required: unverifiedEmail.matches.length > 0,
+    email_verification_email: unverifiedEmail.email,
+    unverified_email_matches: unverifiedEmail.matches,
     pending_credit_amount,
     applied_credit_amount,
     active_subscription_annualized,
@@ -1775,9 +1869,13 @@ export async function listProjects({
     (account) => account.legacy_account_id,
   );
   if (legacy_account_ids.length === 0) {
+    const unverifiedEmail = await unverifiedLegacyEmailMatches(account_id);
     return {
       legacy_account_ids,
       legacy_accounts,
+      email_verification_required: unverifiedEmail.matches.length > 0,
+      email_verification_email: unverifiedEmail.email,
+      unverified_email_matches: unverifiedEmail.matches,
       projects: [],
       total_count: 0,
     };

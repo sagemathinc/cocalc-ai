@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import { load_target } from "@cocalc/frontend/history";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { LegacyMigrationFinancialPreviewResponse } from "@cocalc/conat/hub/api/legacy-migration";
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
@@ -34,12 +35,13 @@ function hasVisibleLegacyBilling(
   preview: LegacyMigrationFinancialPreviewResponse,
 ): boolean {
   return (
-    preview.legacy_accounts.length > 0 &&
-    (preview.pending_credit_amount > 0 ||
-      preview.applied_credit_amount > 0 ||
-      preview.active_subscription_count > 0 ||
-      preview.membership_already_applied ||
-      !!preview.stripe_customer_id)
+    !!preview.email_verification_required ||
+    (preview.legacy_accounts.length > 0 &&
+      (preview.pending_credit_amount > 0 ||
+        preview.applied_credit_amount > 0 ||
+        preview.active_subscription_count > 0 ||
+        preview.membership_already_applied ||
+        !!preview.stripe_customer_id))
   );
 }
 
@@ -122,6 +124,59 @@ export default function LegacyBillingMigrationStatus({
     );
   }
   if (!preview || !hasVisibleLegacyBilling(preview)) return null;
+
+  const verificationEmail = `${preview.email_verification_email ?? ""}`.trim();
+  if (preview.email_verification_required) {
+    return (
+      <Card
+        size="small"
+        title={
+          <Space>
+            <Icon name="exchange" />
+            <span>Legacy billing migration</span>
+          </Space>
+        }
+        extra={
+          <Button loading={loading} onClick={() => void load()} size="small">
+            Refresh
+          </Button>
+        }
+      >
+        <Alert
+          showIcon
+          type="warning"
+          message="Verify your email address to migrate legacy billing"
+          description={
+            <span>
+              {verificationEmail ? (
+                <>
+                  Your current email address{" "}
+                  <Text code>{verificationEmail}</Text> matches legacy
+                  cocalc.com billing data, but it is not verified yet.
+                </>
+              ) : (
+                <>
+                  Your account needs a verified email address before CoCalc can
+                  match legacy billing data.
+                </>
+              )}{" "}
+              Open{" "}
+              <a
+                href="/settings/profile"
+                onClick={(event) => {
+                  event.preventDefault();
+                  load_target("settings/profile");
+                }}
+              >
+                profile settings
+              </a>{" "}
+              to verify it, then return here and refresh.
+            </span>
+          }
+        />
+      </Card>
+    );
+  }
 
   const pending =
     preview.pending_credit_amount > 0 || preview.active_subscription_count > 0;
