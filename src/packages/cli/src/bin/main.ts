@@ -2463,6 +2463,7 @@ const projectCommandDeps = {
   saveProjectContext: saveProjectContext,
   projectContextPath: projectContextPath,
   clearProjectContext: clearWorkspaceContext,
+  hubCallByName,
   isValidUUID,
   confirmHardProjectDelete,
   waitForLro,

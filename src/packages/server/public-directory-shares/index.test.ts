@@ -38,6 +38,9 @@ describe("public directory share normalization", () => {
     expect(normalizePublicDirectorySharePath("/docs/examples/")).toBe(
       "docs/examples",
     );
+    expect(normalizePublicDirectorySharePath("/home/user/x")).toBe("x");
+    expect(normalizePublicDirectorySharePath("/home/user")).toBe(".");
+    expect(normalizePublicDirectorySharePath("/root/legacy")).toBe("legacy");
   });
 
   it("rejects unsafe project paths", () => {

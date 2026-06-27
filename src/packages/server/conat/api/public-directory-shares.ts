@@ -10,5 +10,6 @@ export {
   listDirectory,
   listMine,
   resolve,
+  update,
   upsert,
 } from "@cocalc/server/public-directory-shares";

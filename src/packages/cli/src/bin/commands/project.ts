@@ -18,6 +18,7 @@ import { registerProjectJupyterCommands } from "./project/jupyter";
 import { registerProjectStorageCommands } from "./project/storage";
 import { registerProjectTerminalCommands } from "./project/terminal";
 import { registerProjectEnvSecretCommands } from "./project/env-secrets";
+import { registerProjectPublishCommands } from "./project/publish";
 
 export type ProjectCommandDeps = {
   withContext: any;
@@ -30,6 +31,7 @@ export type ProjectCommandDeps = {
   saveProjectContext: any;
   projectContextPath: any;
   clearProjectContext: any;
+  hubCallByName: any;
   isValidUUID: any;
   confirmHardProjectDelete: any;
   waitForLro: any;
@@ -146,6 +148,7 @@ export function registerProjectCommand(
   registerProjectCollabCommands(project, deps);
   registerProjectFileCommands(project, deps);
   registerProjectStorageCommands(project, deps);
+  registerProjectPublishCommands(project, deps);
   registerProjectEnvSecretCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);
   registerProjectAppCommands(project, deps);
