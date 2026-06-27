@@ -26,6 +26,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { load_target } from "@cocalc/frontend/history";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
+import { markLegacyProjectRestoreKnownRestored } from "@cocalc/frontend/project/legacy-migration-restore-banner";
 import { isNewProjectRootfsSelectable } from "@cocalc/frontend/projects/create-project-rootfs";
 import { useProjectCreateDraft } from "@cocalc/frontend/projects/create/use-project-create-draft";
 import {
@@ -753,6 +754,12 @@ export function LegacyMigrationPage() {
     project: LegacyMigrationProjectSummary,
     project_id: string,
   ): Promise<void> {
+    if (project.restore_status === "restored") {
+      markLegacyProjectRestoreKnownRestored({
+        project_id,
+        opId: project.restore_lro_op_id,
+      });
+    }
     if (project.restore_status !== "restored") {
       void message.info(
         "Opening project now. CoCalc will restore the legacy files in the background.",
