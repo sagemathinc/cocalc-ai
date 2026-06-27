@@ -8,6 +8,7 @@ const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
 const getManagedCpuAdminHistoryMock = jest.fn();
 const getManagedCpuAdminOverviewMock = jest.fn();
+const getAdminRetentionOverviewMock = jest.fn();
 const createAbuseReviewAnnotationMock = jest.fn();
 const listAbuseReviewAnnotationsMock = jest.fn();
 const revokeAbuseReviewAnnotationMock = jest.fn();
@@ -107,6 +108,11 @@ jest.mock("@cocalc/server/membership/managed-cpu", () => ({
     getManagedCpuAdminHistoryMock(...args),
   getManagedCpuAdminOverview: (...args: any[]) =>
     getManagedCpuAdminOverviewMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/retention-overview", () => ({
+  getAdminRetentionOverview: (...args: any[]) =>
+    getAdminRetentionOverviewMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/abuse-review-annotations", () => ({
@@ -2231,6 +2237,56 @@ describe("purchases.getManagedCpuAdminOverview", () => {
       recent_event_limit: 9,
     });
     expect(result.total_cpu_seconds).toBe(3600);
+  });
+});
+
+describe("purchases.getAdminRetentionOverview", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getAdminRetentionOverview } = await import("./purchases");
+    await expect(
+      getAdminRetentionOverview({
+        account_id: "viewer-1",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("loads retention overview for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getAdminRetentionOverviewMock.mockResolvedValue({
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-15T00:00:00.000Z",
+      unit: "day",
+      period_count: 14,
+      activity_signal: "managed-cpu",
+      exclude_banned: true,
+      opened_project_only: false,
+      cohorts: [],
+    });
+
+    const { getAdminRetentionOverview } = await import("./purchases");
+    const result = await getAdminRetentionOverview({
+      account_id: "admin-1",
+      unit: "day",
+      period_count: 14,
+      exclude_banned: true,
+      opened_project_only: false,
+    });
+
+    expect(getAdminRetentionOverviewMock).toHaveBeenCalledWith({
+      start: undefined,
+      end: undefined,
+      unit: "day",
+      period_count: 14,
+      exclude_banned: true,
+      opened_project_only: false,
+    });
+    expect(result.activity_signal).toBe("managed-cpu");
   });
 });
 
