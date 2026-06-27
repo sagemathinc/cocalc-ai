@@ -7,6 +7,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -23,6 +24,8 @@ import {
   client as createFileClient,
   type Fileserver,
   type CopyOptions,
+  type DirectorySummary,
+  type DirectorySummaryEntry,
   type LroRef,
   type ManagedBackupEgressOverride,
   type RestoreMode,
@@ -185,6 +188,9 @@ const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
 const SNAPSHOT_RESTORE_STAGING_ROOT = ".snapshot-restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
+const DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT = DEFAULT_PROJECT_RUNTIME_HOME;
+const DEFAULT_ADMIN_DIRECTORY_SUMMARY_DEPTH = 2;
+const DEFAULT_ADMIN_DIRECTORY_SUMMARY_LIMIT = 80;
 const ROOTFS_PUBLISH_TIMEOUT_S = 60 * 60;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const PROJECT_RUSTIC_TIMEOUT_MS = 30 * 60 * 1000;
@@ -1538,6 +1544,131 @@ function projectHostPath(
     throw Error(`path escapes project root: ${containerPath}`);
   }
   return { hostPath: joined, base };
+}
+
+function normalizeAdminDirectorySummaryRoot(rawPath?: string): string {
+  const raw = `${rawPath ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT}`.trim();
+  const absolute = raw.startsWith("/")
+    ? path.posix.normalize(raw)
+    : path.posix.normalize(
+        path.posix.join(DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT, raw),
+      );
+  if (
+    absolute !== DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT &&
+    !absolute.startsWith(`${DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT}/`)
+  ) {
+    throw new Error("directory summary path must be under /home/user");
+  }
+  return absolute;
+}
+
+function normalizeAdminDirectorySummaryLimit(limit?: number): number {
+  const n = Number(limit ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_LIMIT);
+  if (!Number.isFinite(n)) return DEFAULT_ADMIN_DIRECTORY_SUMMARY_LIMIT;
+  return Math.max(1, Math.min(200, Math.floor(n)));
+}
+
+function normalizeAdminDirectorySummaryDepth(max_depth?: number): number {
+  const n = Number(max_depth ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_DEPTH);
+  if (!Number.isFinite(n)) return DEFAULT_ADMIN_DIRECTORY_SUMMARY_DEPTH;
+  return Math.max(0, Math.min(3, Math.floor(n)));
+}
+
+function directorySummaryEntryType(entry: any): DirectorySummaryEntry["type"] {
+  if (entry?.isDirectory?.()) return "directory";
+  if (entry?.isFile?.()) return "file";
+  if (entry?.isSymbolicLink?.()) return "symlink";
+  return "other";
+}
+
+function shouldDescendAdminDirectory(containerPath: string): boolean {
+  const name = path.posix.basename(containerPath);
+  if (!name.startsWith(".")) return true;
+  return name === ".ssh";
+}
+
+async function getDirectorySummary({
+  project_id,
+  path: rawPath,
+  max_depth,
+  limit,
+}: {
+  project_id: string;
+  path?: string;
+  max_depth?: number;
+  limit?: number;
+}): Promise<DirectorySummary> {
+  const root = normalizeAdminDirectorySummaryRoot(rawPath);
+  const normalizedDepth = normalizeAdminDirectorySummaryDepth(max_depth);
+  const normalizedLimit = normalizeAdminDirectorySummaryLimit(limit);
+  const rootHostPath = projectHostPath(project_id, root).hostPath;
+  const entries: DirectorySummaryEntry[] = [];
+  let truncated = false;
+
+  const visit = async (
+    containerDir: string,
+    hostDir: string,
+    depth: number,
+  ): Promise<void> => {
+    if (entries.length >= normalizedLimit) {
+      truncated = true;
+      return;
+    }
+    let dirents: any[];
+    try {
+      dirents = await readdir(hostDir, { withFileTypes: true });
+    } catch (err) {
+      entries.push({
+        path: containerDir,
+        type: "other",
+        size: null,
+        mtime: `unreadable: ${err}`,
+      });
+      return;
+    }
+    dirents.sort((a, b) => `${a.name}`.localeCompare(`${b.name}`));
+    for (const entry of dirents) {
+      if (entries.length >= normalizedLimit) {
+        truncated = true;
+        return;
+      }
+      const entryContainerPath = path.posix.join(containerDir, `${entry.name}`);
+      const entryHostPath = path.join(hostDir, `${entry.name}`);
+      const type = directorySummaryEntryType(entry);
+      let size: number | null = null;
+      let mtime: string | null = null;
+      try {
+        const st = await lstat(entryHostPath);
+        size = Number.isFinite(st.size) ? st.size : null;
+        mtime = st.mtime instanceof Date ? st.mtime.toISOString() : null;
+      } catch {
+        // Keep the summary useful if one entry disappears mid-scan.
+      }
+      entries.push({
+        path: entryContainerPath,
+        type,
+        size,
+        mtime,
+      });
+      if (
+        type === "directory" &&
+        depth < normalizedDepth &&
+        shouldDescendAdminDirectory(entryContainerPath)
+      ) {
+        await visit(entryContainerPath, entryHostPath, depth + 1);
+      }
+    }
+  };
+
+  await visit(root, rootHostPath, 0);
+  return {
+    project_id,
+    root,
+    max_depth: normalizedDepth,
+    limit: normalizedLimit,
+    truncated,
+    entries,
+  };
 }
 
 export function configureProjectHostAcpContainerFileIO(): void {
@@ -4464,6 +4595,7 @@ export async function initFileServer({
     getBackupFiles: reuseInFlight(getBackupFiles),
     findBackupFiles: reuseInFlight(findBackupFiles),
     getBackupFileText: reuseInFlight(getBackupFileText),
+    getDirectorySummary: reuseInFlight(getDirectorySummary),
     // snapshots
     createSnapshot,
     deleteSnapshot,

@@ -49,10 +49,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
-import {
-  getProjectFileServerClient,
-  getProjectFsClient,
-} from "@cocalc/server/conat/file-server-client";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -143,7 +140,6 @@ import type {
   ProjectRegion,
   ProjectCreated,
   ProjectDirectorySummary,
-  ProjectDirectorySummaryEntry,
   ProjectEnv,
   ProjectSecretMetadata,
   CopyProjectSecretsResult,
@@ -1205,50 +1201,6 @@ export async function getProjectEnv({
 }
 
 const DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT = "/home/user";
-const DEFAULT_ADMIN_DIRECTORY_SUMMARY_DEPTH = 2;
-const DEFAULT_ADMIN_DIRECTORY_SUMMARY_LIMIT = 80;
-
-function normalizeAdminDirectorySummaryRoot(path?: string): string {
-  const raw = `${path ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT}`.trim();
-  const absolute = raw.startsWith("/")
-    ? posix.normalize(raw)
-    : posix.normalize(posix.join(DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT, raw));
-  if (
-    absolute !== DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT &&
-    !absolute.startsWith(`${DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT}/`)
-  ) {
-    throw new Error("directory summary path must be under /home/user");
-  }
-  return absolute;
-}
-
-function normalizeAdminDirectorySummaryLimit(limit?: number): number {
-  const n = Number(limit ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_LIMIT);
-  if (!Number.isFinite(n)) return DEFAULT_ADMIN_DIRECTORY_SUMMARY_LIMIT;
-  return Math.max(1, Math.min(200, Math.floor(n)));
-}
-
-function normalizeAdminDirectorySummaryDepth(max_depth?: number): number {
-  const n = Number(max_depth ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_DEPTH);
-  if (!Number.isFinite(n)) return DEFAULT_ADMIN_DIRECTORY_SUMMARY_DEPTH;
-  return Math.max(0, Math.min(3, Math.floor(n)));
-}
-
-function direntType(entry: any): ProjectDirectorySummaryEntry["type"] {
-  if (entry?.isDirectory?.()) return "directory";
-  if (entry?.isFile?.()) return "file";
-  if (entry?.isSymbolicLink?.()) return "symlink";
-  if (entry?.type === 2) return "directory";
-  if (entry?.type === 1) return "file";
-  if (entry?.type === 3) return "symlink";
-  return "other";
-}
-
-function shouldDescendAdminDirectory(path: string): boolean {
-  const name = posix.basename(path);
-  if (!name.startsWith(".")) return true;
-  return name === ".ssh";
-}
 
 export async function getAdminProjectDirectorySummary({
   account_id,
@@ -1266,80 +1218,17 @@ export async function getAdminProjectDirectorySummary({
   if (!(await isAdmin(account_id))) {
     throw new Error("must be an admin");
   }
-  const root = normalizeAdminDirectorySummaryRoot(path);
-  const normalizedDepth = normalizeAdminDirectorySummaryDepth(max_depth);
-  const normalizedLimit = normalizeAdminDirectorySummaryLimit(limit);
-  const fs = await getProjectFsClient({
-    account_id,
+  const fs = await getProjectFileServerClient({
     project_id,
     timeout: 10_000,
   });
-  const entries: ProjectDirectorySummaryEntry[] = [];
-  let truncated = false;
 
-  const visit = async (dir: string, depth: number): Promise<void> => {
-    if (entries.length >= normalizedLimit) {
-      truncated = true;
-      return;
-    }
-    let dirents: any[];
-    try {
-      dirents = (await fs.readdir(dir, { withFileTypes: true })) as any[];
-    } catch (err) {
-      entries.push({
-        path: dir,
-        type: "other",
-        size: null,
-        mtime: `unreadable: ${err}`,
-      });
-      return;
-    }
-    dirents.sort((a, b) => `${a.name}`.localeCompare(`${b.name}`));
-    for (const entry of dirents) {
-      if (entries.length >= normalizedLimit) {
-        truncated = true;
-        return;
-      }
-      const entryPath = posix.join(dir, `${entry.name}`);
-      const type = direntType(entry);
-      let size: number | null = null;
-      let mtime: string | null = null;
-      try {
-        const stat = await fs.lstat(entryPath);
-        size =
-          typeof stat.size === "number" && Number.isFinite(stat.size)
-            ? stat.size
-            : null;
-        const rawMtime = stat.mtime;
-        mtime =
-          rawMtime instanceof Date
-            ? rawMtime.toISOString()
-            : rawMtime
-              ? new Date(rawMtime).toISOString()
-              : null;
-      } catch {
-        // Keep listing useful even when one entry disappears or cannot be stat'd.
-      }
-      entries.push({ path: entryPath, type, size, mtime });
-      if (
-        type === "directory" &&
-        depth < normalizedDepth &&
-        shouldDescendAdminDirectory(entryPath)
-      ) {
-        await visit(entryPath, depth + 1);
-      }
-    }
-  };
-
-  await visit(root, 0);
-  return {
+  return await fs.getDirectorySummary({
     project_id,
-    root,
-    max_depth: normalizedDepth,
-    limit: normalizedLimit,
-    truncated,
-    entries,
-  };
+    path: path ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT,
+    max_depth,
+    limit,
+  });
 }
 
 export async function getProjectRootfs({
