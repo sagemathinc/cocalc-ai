@@ -425,7 +425,8 @@ export async function open_file(
   }
 
   if (isViewerProjectOpen(actions)) {
-    const changeHistory = isPublicDirectoryShareOpen(actions)
+    const publicDirectoryShareOpen = isPublicDirectoryShareOpen(actions);
+    const changeHistory = publicDirectoryShareOpen
       ? false
       : opts.change_history;
     const ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
@@ -455,7 +456,9 @@ export async function open_file(
     redux.getActions("page").save_session();
     if (opts.foreground) {
       actions.set_current_path(workingDirectory());
-      actions.foreground_project(changeHistory);
+      if (!publicDirectoryShareOpen) {
+        actions.foreground_project(changeHistory);
+      }
       actions.set_active_tab(path_to_tab(displayPath), {
         change_history: changeHistory,
       });

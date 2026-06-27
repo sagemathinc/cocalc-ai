@@ -69,6 +69,11 @@ type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
   total_count?: number | string | null;
 };
 
+type PostgresErrorLike = Error & {
+  code?: string;
+  constraint?: string;
+};
+
 interface ResolvedPublicDirectoryShareRow {
   row: PublicDirectoryShareRow;
   share: ResolvedPublicDirectoryShare;
@@ -80,6 +85,22 @@ interface SiteLicenseGrantConfig {
   site_license_membership_tier_id: string;
   duration_days: number;
   copy_requires_grant: boolean;
+}
+
+function isSlugUniqueViolation(err: unknown): boolean {
+  const error = err as PostgresErrorLike | undefined;
+  return (
+    error?.code === "23505" &&
+    `${error.constraint ?? error.message ?? ""}`.includes(
+      "public_project_paths_slug_unique",
+    )
+  );
+}
+
+function slugTakenError(slug: string): Error {
+  return Error(
+    `The published folder URL slug "${slug}" is already taken. Choose a different slug.`,
+  );
 }
 
 let schemaReady: Promise<void> | undefined;
@@ -816,8 +837,10 @@ async function savePublicDirectoryShare(
     opts.last_edited ?? null,
     disabled,
   ];
-  const { rows } = await getPool().query<PublicDirectoryShareRow>(
-    `
+  let rows: PublicDirectoryShareRow[];
+  try {
+    ({ rows } = await getPool().query<PublicDirectoryShareRow>(
+      `
       INSERT INTO public_project_paths (
         id, project_id, path, slug, visibility, requires_auth,
         availability_status, availability_message, title, description, license,
@@ -860,8 +883,14 @@ async function savePublicDirectoryShare(
         disabled=EXCLUDED.disabled
       RETURNING *
     `,
-    params,
-  );
+      params,
+    ));
+  } catch (err) {
+    if (isSlugUniqueViolation(err)) {
+      throw slugTakenError(slug);
+    }
+    throw err;
+  }
   const row = rows[0];
   await getPool().query(
     `

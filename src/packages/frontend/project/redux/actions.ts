@@ -1620,8 +1620,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         const syncPath = this.get_sync_path(path);
         const ext = this.open_files?.get(path, "ext");
         const isViewer = this.isViewerProjectUser();
+        const isPublicDirectoryShare = this.hasPublicDirectoryShare();
         const { name, Editor } =
-          isViewer && !canUseFrameEditorReadOnlyPreview(syncPath, ext)
+          isPublicDirectoryShare ||
+          (isViewer && !canUseFrameEditorReadOnlyPreview(syncPath, ext))
             ? { name: undefined, Editor: ViewerFilePreview }
             : await this.init_file_react_redux(
                 syncPath,
