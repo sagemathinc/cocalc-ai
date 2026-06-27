@@ -788,6 +788,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   ensureProjectIsOpen = async (switch_to: boolean = true) => {
+    if (this.hasPublicDirectoryShare()) {
+      return;
+    }
     const s = this.redux.getStore("projects");
     if (!s.is_project_open(this.project_id)) {
       this.redux.getActions("projects").open_project({
