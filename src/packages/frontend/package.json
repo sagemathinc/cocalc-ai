@@ -88,7 +88,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
-    "@xterm/xterm": "https://registry.npmjs.org/@cocalc/xterm/-/xterm-5.5.0-cocalc.3.tgz",
+    "@xterm/xterm": "https://registry.npmjs.org/@cocalc/xterm/-/xterm-5.5.0-cocalc.4.tgz",
     "anser": "^2.1.1",
     "antd": "^6.3.5",
     "antd-img-crop": "^4.27.0",
