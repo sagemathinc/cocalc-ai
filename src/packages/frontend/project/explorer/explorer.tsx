@@ -175,6 +175,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     actions,
     projectAccess,
     project_id,
+    publicDirectoryShare,
     registerUserFilesystemChangeHandler,
     workspaces,
   } = useProjectContext();
@@ -232,7 +233,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     .trim()
     .toLowerCase();
   const lastBackup = useProjectMapField(project_id, "last_backup");
-  const hostInfo = useHostInfo(host_id);
+  const hostInfo = useHostInfo(host_id, { enabled: !publicDirectoryShare });
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
     [hostInfo],
