@@ -154,6 +154,7 @@ export interface UpdatePublicDirectoryShareOptions {
 export interface CopyPublicDirectoryShareToProjectOptions {
   account_id?: string;
   slug: string;
+  path?: string;
   destination_project_id: string;
   destination_path?: string;
   options?: CopyOptions;
@@ -162,6 +163,7 @@ export interface CopyPublicDirectoryShareToProjectOptions {
 export interface CopyPublicDirectoryShareToNewProjectOptions {
   account_id?: string;
   slug: string;
+  path?: string;
   title?: string;
   options?: CopyOptions;
 }

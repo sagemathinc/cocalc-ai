@@ -152,6 +152,7 @@ import {
   registerProjectCommand,
   type ProjectCommandDeps,
 } from "./commands/project";
+import { registerShareCommand, type ShareCommandDeps } from "./commands/share";
 import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
 import {
   registerDaemonCommand,
@@ -1661,6 +1662,7 @@ async function getOrCreateRoutedProjectHostClient(
   ctx: CommandContext,
   project: ProjectRow,
   allowTokenRetry = true,
+  knownConnection?: HostConnectionInfo | null,
 ): Promise<RoutedProjectHostClientState> {
   const host_id = project.host_id;
   if (!host_id) {
@@ -1671,6 +1673,13 @@ async function getOrCreateRoutedProjectHostClient(
   const cachedConnection = ctx.hostConnectionCache.get(host_id);
   if (cachedConnection && Date.now() < cachedConnection.expiresAt) {
     connection = cachedConnection.connection;
+  }
+  if (!connection && knownConnection) {
+    connection = knownConnection;
+    ctx.hostConnectionCache.set(host_id, {
+      connection,
+      expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
+    });
   }
   if (!connection) {
     connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
@@ -1768,7 +1777,12 @@ async function getOrCreateRoutedProjectHostClient(
     closeRoutedProjectHostClient(ctx, host_id);
     if (shouldRetryWithFreshToken) {
       invalidateProjectHostAuthToken(state);
-      return await getOrCreateRoutedProjectHostClient(ctx, project, false);
+      return await getOrCreateRoutedProjectHostClient(
+        ctx,
+        project,
+        false,
+        knownConnection,
+      );
     }
     throw err;
   }
@@ -1808,6 +1822,42 @@ async function resolveProjectFilesystem(
     timeout,
   });
   return { project, fs };
+}
+
+async function resolveShareFilesystem(
+  ctx: CommandContext,
+  share: {
+    project_id: string;
+    id: string;
+    host_id?: string | null;
+    host_connection?: HostConnectionInfo | null;
+  },
+): Promise<FilesystemClient> {
+  const host_id = `${share.host_id ?? ""}`.trim();
+  if (!host_id) {
+    throw new Error("published share project has no assigned host");
+  }
+  const routed = await getOrCreateRoutedProjectHostClient(
+    ctx,
+    {
+      project_id: share.project_id,
+      title: share.project_id,
+      host_id,
+    },
+    true,
+    share.host_connection ?? null,
+  );
+  if (!routed.client) {
+    throw new Error(
+      `internal error: routed client missing for host ${routed.host_id}`,
+    );
+  }
+  return routed.client.shareFs({
+    project_id: share.project_id,
+    share_id: share.id,
+    account_id: ctx.accountId,
+    timeout: Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000)),
+  });
 }
 
 async function resolveProjectApi(
@@ -2566,6 +2616,17 @@ const projectCommandDeps = {
 } satisfies ProjectCommandDeps;
 
 registerProjectCommand(program, projectCommandDeps);
+const shareCommandDeps = {
+  withContext,
+  hubCallByName,
+  resolveShareFilesystem,
+  emitProjectFileCatHumanContent,
+  writeFileLocal,
+  mkdirLocal,
+  waitForLro,
+} satisfies ShareCommandDeps;
+
+registerShareCommand(program, shareCommandDeps);
 const rootfsCommandDeps = {
   withContext,
   resolveProjectFromArgOrContext,

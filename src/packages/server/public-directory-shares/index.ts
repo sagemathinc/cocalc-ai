@@ -1124,6 +1124,7 @@ export async function create(
 export async function copyToProject({
   account_id,
   slug,
+  path,
   destination_project_id,
   destination_path,
   options,
@@ -1173,6 +1174,10 @@ export async function copyToProject({
       };
     }
   }
+  const relativePath = normalizePublicDirectorySharePath(path ?? ".");
+  if (!entryAllowed({ share, relativePath })) {
+    throw Error("path is not part of this shared directory");
+  }
   const destPath = normalizePublicDirectorySharePath(destination_path ?? ".");
   const op = await createLro({
     kind: "copy-path-between-projects",
@@ -1183,7 +1188,7 @@ export async function copyToProject({
     input: {
       src: {
         project_id: share.project_id,
-        path: share.path,
+        path: joinProjectSharePath(share.path, relativePath),
       },
       src_read_policy: share.read_policy,
       dests: [
@@ -1199,6 +1204,7 @@ export async function copyToProject({
       public_directory_share: {
         id: share.id,
         slug: share.slug,
+        path: relativePath,
         legacy_public_path_id: share.legacy_public_path_id,
       },
     },
@@ -1240,6 +1246,7 @@ export async function copyToProject({
 export async function copyToNewProject({
   account_id,
   slug,
+  path,
   title,
   options,
 }: CopyPublicDirectoryShareToNewProjectOptions): Promise<CopyPublicDirectoryShareToNewProjectResponse> {
@@ -1310,6 +1317,7 @@ export async function copyToNewProject({
   const copy = await copyToProject({
     account_id,
     slug,
+    path,
     destination_project_id: destinationProjectId,
     destination_path: ".",
     options: { recursive: true, ...options },
