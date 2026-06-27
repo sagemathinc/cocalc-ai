@@ -547,11 +547,13 @@ export async function selectActiveHost({
   bay_id,
   project_region,
   account_id,
+  allow_region_fallback = false,
 }: {
   exclude_host_id?: string;
   bay_id?: string;
   project_region?: string;
   account_id?: string;
+  allow_region_fallback?: boolean;
 } = {}) {
   const targetBayId = effectiveBayId(bay_id);
   const loadCandidateRows = async ({
@@ -657,8 +659,13 @@ export async function selectActiveHost({
   const remoteSharedPoolRow = await choosePlaceableRow(
     await loadRemoteSharedPoolCandidateRows(),
   );
-  if (!remoteSharedPoolRow) return undefined;
-  return mapHostRegistryRow(remoteSharedPoolRow);
+  if (remoteSharedPoolRow) return mapHostRegistryRow(remoteSharedPoolRow);
+  if (!allow_region_fallback || !project_region) return undefined;
+  return await selectActiveHost({
+    exclude_host_id,
+    bay_id,
+    account_id,
+  });
 }
 
 export async function savePlacement(

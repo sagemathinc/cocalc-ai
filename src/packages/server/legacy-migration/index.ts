@@ -18,8 +18,12 @@ import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
 import type { MembershipTierRecord } from "@cocalc/server/membership/tiers";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import {
+  selectActiveHost,
+  syncProjectUsersOnHost,
+} from "@cocalc/server/project-host/control";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import {
   ensureProjectFileServerClientReady,
@@ -75,6 +79,7 @@ import type {
 import { assertLegacyMigrationEnabled } from "./enabled";
 import { moneyRound2Up, moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
+import { mapCloudRegionToR2Region, parseR2Region } from "@cocalc/util/consts";
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
@@ -2062,12 +2067,18 @@ async function createImportedLegacyProject({
   host_id?: string;
   region?: string;
 }): Promise<string> {
+  const placement = await selectLegacyMigrationHostPlacement({
+    account_id,
+    host_id,
+    region,
+  });
   const account = await getClusterAccountById(account_id);
   const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
-  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+  const projectBayId = placement.bay_id ?? homeBayId;
+  if (projectBayId && projectBayId !== getConfiguredBayId()) {
     const { project_id } = await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
-      dest_bay: homeBayId,
+      dest_bay: projectBayId,
       timeout: PROJECT_ARCHIVE_TIMEOUT_MS,
     }).createLegacyMigrationProject({
       account_id,
@@ -2076,8 +2087,8 @@ async function createImportedLegacyProject({
       description: projectDescription(legacy),
       rootfs_image,
       rootfs_image_id,
-      host_id,
-      region,
+      host_id: placement.host_id,
+      region: placement.region,
     });
     return project_id;
   }
@@ -2087,8 +2098,8 @@ async function createImportedLegacyProject({
     description: projectDescription(legacy),
     rootfs_image,
     rootfs_image_id,
-    host_id,
-    region,
+    host_id: placement.host_id,
+    region: placement.region,
     skip_project_count_limit: true,
     start: false,
   };
@@ -2113,6 +2124,38 @@ async function createImportedLegacyProject({
     );
     return await createProject(opts);
   }
+}
+
+async function selectLegacyMigrationHostPlacement({
+  account_id,
+  host_id,
+  region,
+}: {
+  account_id: string;
+  host_id?: string;
+  region?: string;
+}): Promise<{ host_id?: string; region?: string; bay_id?: string }> {
+  if (host_id) {
+    const hostBay = await resolveHostBayAcrossCluster(host_id);
+    return { host_id, region, bay_id: hostBay?.bay_id };
+  }
+  const requestedRegion = parseR2Region(region);
+  if (region && !requestedRegion) {
+    return { region };
+  }
+  let selected = await selectActiveHost({
+    account_id,
+    project_region: requestedRegion,
+    allow_region_fallback: true,
+  });
+  if (!selected) {
+    return { region };
+  }
+  return {
+    host_id: selected.id,
+    region: mapCloudRegionToR2Region(selected.region),
+    bay_id: selected.bay_id,
+  };
 }
 
 async function importOneProject({

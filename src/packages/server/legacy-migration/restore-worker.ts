@@ -304,7 +304,7 @@ async function claimRestoreRows({
                restore_error=NULL,
                restore_attempts=COALESCE(i.restore_attempts, 0) + 1,
                restore_worker_id=$1,
-               restore_host_id=$4,
+               restore_host_id=$4::UUID,
                restore_claimed_until=NOW() + ($2::INT * INTERVAL '1 millisecond'),
                restore_started=NOW(),
                restore_finished=NULL,
