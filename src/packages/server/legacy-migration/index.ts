@@ -7,6 +7,7 @@ import getPool from "@cocalc/database/pool";
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { MAX_INTEREST_TIMEOUT } from "@cocalc/conat/core/client";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import createProject, {
@@ -86,6 +87,7 @@ const MAX_LIMIT = 1000;
 const DEFAULT_LEGACY_PROJECTS_BUCKET = "cocalc-projects";
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const PROJECT_ARCHIVE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const LEGACY_FINANCIAL_HOME_BAY_TIMEOUT_MS = MAX_INTEREST_TIMEOUT + 30_000;
 const DEFAULT_ARCHIVE_INDEX_MAX_ENTRIES = 5_000;
 const MAX_ARCHIVE_INDEX_MAX_ENTRIES = 50_000;
 const LEGACY_STRIPE_UPGRADE_PLAN_IDS = new Set([
@@ -1056,6 +1058,7 @@ async function financialRowsForAccount(
       credit_amount: string | number | null;
       active_subscription_annualized: string | number | null;
       active_subscription_count: string | number | null;
+      claimed_credit_amount: string | number | null;
       subscription_payloads: Record<string, any>[] | null;
       stripe_subscription_payloads: Record<string, any>[] | null;
       site_license_payloads: Record<string, any>[] | null;
@@ -1169,6 +1172,7 @@ async function financialRowsForAccount(
              AS site_license_payloads,
            claims.account_id AS claimed_by_account_id,
            claims.applied_at AS claimed_at,
+           claims.credit_amount AS claimed_credit_amount,
            claims.selected_membership_class,
            claims.selected_membership_interval
       FROM linked
@@ -1228,6 +1232,9 @@ async function financialRowsForAccount(
     );
     const rawActiveCount = numberValue(row.active_subscription_count);
     const rawAnnualized = toMoneyNumber(row.active_subscription_annualized);
+    const credit_amount = row.claimed_by_account_id
+      ? toMoneyNumber(row.claimed_credit_amount)
+      : toMoneyNumber(balance_credit_amount + entitlement_credit_amount);
     const rawActiveSubscriptionPayloads = asArray(
       row.subscription_payloads,
     ).filter((payload) => {
@@ -1254,9 +1261,7 @@ async function financialRowsForAccount(
       entitlement_credit_amount,
       entitlement_credits,
       unvalued_active_site_license_count: unvaluedActiveSiteLicenseCount,
-      credit_amount: toMoneyNumber(
-        balance_credit_amount + entitlement_credit_amount,
-      ),
+      credit_amount,
       active_subscription_annualized: toMoneyNumber(
         rawAnnualized + stripeInfo.active_subscription_annualized,
       ),
@@ -1363,7 +1368,9 @@ async function financialPreviewForAccount(
     hasActiveMembership || membershipClaimExists;
   const stripe_customer_id =
     (await currentStripeCustomerId(account_id)) ??
-    pending.map((account) => account.stripe_customer_id).find(Boolean) ??
+    legacy_accounts
+      .map((account) => account.stripe_customer_id)
+      .find(Boolean) ??
     null;
   const unverifiedEmail =
     legacy_accounts.length === 0
@@ -1709,6 +1716,7 @@ async function applyFinancialMigrationHomeBayForAccount(
     return await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
       dest_bay: homeBayId,
+      timeout: LEGACY_FINANCIAL_HOME_BAY_TIMEOUT_MS,
     }).legacyMigrationApplyFinancialHomeBay(opts);
   }
   return await applyFinancialMigrationHomeBay(opts);
