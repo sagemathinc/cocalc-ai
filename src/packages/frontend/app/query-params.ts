@@ -16,6 +16,17 @@ import { parsePageTarget } from "@cocalc/frontend/page-routing";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 
+export function isPublicSharePathname(pathname: string): boolean {
+  const base =
+    appBasePath && appBasePath !== "/" ? appBasePath.replace(/\/+$/g, "") : "";
+  const normalized = `${pathname ?? ""}`;
+  const path =
+    base && normalized.startsWith(base)
+      ? normalized.slice(base.length) || "/"
+      : normalized;
+  return path === "/share" || path.startsWith("/share/");
+}
+
 export function init_query_params(): void {
   const actions = redux.getActions("page");
   // enable fullscreen mode upon loading a URL like /app?fullscreen and
@@ -56,7 +67,11 @@ export function init_query_params(): void {
   // If click on link with ?session=, then you get no session, e.g,. this
   // is used for doing a pop-out of a single file.  Should have no impact
   // on sessions at all.
-  if (COCALC_FULLSCREEN === "kiosk") {
+  if (
+    COCALC_FULLSCREEN === "kiosk" ||
+    (typeof window !== "undefined" &&
+      isPublicSharePathname(window.location.pathname))
+  ) {
     actions.set_session(""); // no session
   } else {
     const key = `session${appBasePath}`;

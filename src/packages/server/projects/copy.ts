@@ -62,14 +62,16 @@ async function createBackupAndWait({
   account_id,
   project_id,
   tags,
+  skip_collab_check,
 }: {
   account_id: string;
   project_id: string;
   tags?: string[];
+  skip_collab_check?: boolean;
 }): Promise<{ id: string; time?: string }> {
   const op = await createBackupLro(
     { account_id, project_id, tags },
-    { skip_rootfs_portability_check: true },
+    { skip_collab_check, skip_rootfs_portability_check: true },
   );
   const summary = await waitForDurableLroCompletion({
     op_id: op.op_id,
@@ -754,6 +756,7 @@ export async function copyProjectFiles({
           account_id,
           project_id: src.project_id,
           tags,
+          skip_collab_check: src_read_policy != null,
         });
         snapshot_id = backup.id;
         createdBackup = true;
@@ -794,6 +797,7 @@ export async function copyProjectFiles({
           account_id,
           project_id: src.project_id,
           tags,
+          skip_collab_check: src_read_policy != null,
         });
         snapshot_id = backup.id;
         reusedBackup = false;

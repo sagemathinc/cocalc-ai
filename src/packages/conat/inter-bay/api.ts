@@ -58,6 +58,10 @@ import type {
   LegacyMigrationApplyFinancialHomeBayOptions,
   LegacyMigrationApplyFinancialHomeBayResponse,
   LegacyMigrationApplyFinancialResponse,
+  LegacyMigrationConfigureFinancialRenewalHomeBayOptions,
+  LegacyMigrationConfigureFinancialRenewalResponse,
+  LegacyMigrationFinancialMembershipGrantHomeBayOptions,
+  LegacyMigrationFinancialMembershipGrantHomeBayResponse,
   LegacyMigrationFinancialPreviewOptions,
   LegacyMigrationFinancialPreviewResponse,
   LegacyMigrationImportProjectsOptions,
@@ -959,6 +963,19 @@ export interface AccountLocalVerifySignInPasswordRequest {
 export interface AccountLocalVerifySignInPasswordResult {
   account_id: string;
   home_bay_id: string;
+}
+
+export interface AccountLocalCreateCliLoginSessionRequest {
+  account_id: string;
+  approved_challenge_id: string;
+  ip_address?: string | null;
+  user_agent?: string | null;
+}
+
+export interface AccountLocalCreateCliLoginSessionResult {
+  remember_me: string;
+  session_hash: string;
+  expire: Date | string | number;
 }
 
 export interface AccountLocalRedeemVerifyEmailRequest {
@@ -2039,6 +2056,7 @@ export type AccountLocalMethod =
   | "create-impersonation-grant"
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
+  | "create-cli-login-session"
   | "redeem-verify-email"
   | "send-email-verification"
   | "admin-verify-email-address"
@@ -2122,6 +2140,8 @@ export type AccountLocalMethod =
   | "legacy-migration-preview-financial-migration"
   | "legacy-migration-apply-financial-migration"
   | "legacy-migration-apply-financial-home-bay"
+  | "legacy-migration-get-financial-membership-grant-home-bay"
+  | "legacy-migration-configure-financial-renewal-home-bay"
   | "public-directory-share-resolve"
   | "public-directory-share-authorize-read";
 export type AuthTokenMethod =
@@ -3050,6 +3070,9 @@ export interface InterBayAccountLocalApi {
   verifySignInPassword: (
     opts: AccountLocalVerifySignInPasswordRequest,
   ) => Promise<AccountLocalVerifySignInPasswordResult>;
+  createCliLoginSession: (
+    opts: AccountLocalCreateCliLoginSessionRequest,
+  ) => Promise<AccountLocalCreateCliLoginSessionResult>;
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
@@ -3299,6 +3322,12 @@ export interface InterBayAccountLocalApi {
   legacyMigrationApplyFinancialHomeBay: (
     opts: LegacyMigrationApplyFinancialHomeBayOptions,
   ) => Promise<LegacyMigrationApplyFinancialHomeBayResponse>;
+  legacyMigrationGetFinancialMembershipGrantHomeBay: (
+    opts: LegacyMigrationFinancialMembershipGrantHomeBayOptions,
+  ) => Promise<LegacyMigrationFinancialMembershipGrantHomeBayResponse>;
+  legacyMigrationConfigureFinancialRenewalHomeBay: (
+    opts: LegacyMigrationConfigureFinancialRenewalHomeBayOptions,
+  ) => Promise<LegacyMigrationConfigureFinancialRenewalResponse>;
   publicDirectoryShareResolve: (
     opts: ResolvePublicDirectoryShareOptions,
   ) => Promise<ResolvedPublicDirectoryShare>;
@@ -5035,6 +5064,15 @@ export function createInterBayAccountLocalClient({
       method: "verify-sign-in-password",
     }),
   });
+  const createCliLoginSessionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "createCliLoginSession">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "create-cli-login-session",
+    }),
+  });
   const redeemVerifyEmailClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "redeemVerifyEmail">
   >({
@@ -5791,6 +5829,32 @@ export function createInterBayAccountLocalClient({
       method: "legacy-migration-apply-financial-home-bay",
     }),
   });
+  const legacyMigrationGetFinancialMembershipGrantHomeBayClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "legacyMigrationGetFinancialMembershipGrantHomeBay"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "legacy-migration-get-financial-membership-grant-home-bay",
+      }),
+    });
+  const legacyMigrationConfigureFinancialRenewalHomeBayClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "legacyMigrationConfigureFinancialRenewalHomeBay"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "legacy-migration-configure-financial-renewal-home-bay",
+      }),
+    });
   const publicDirectoryShareResolveClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "publicDirectoryShareResolve">
   >({
@@ -5826,6 +5890,8 @@ export function createInterBayAccountLocalClient({
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
     verifySignInPassword: async (opts) =>
       await verifySignInPasswordClient.verifySignInPassword(opts),
+    createCliLoginSession: async (opts) =>
+      await createCliLoginSessionClient.createCliLoginSession(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     sendEmailVerification: async (opts) =>
@@ -6061,6 +6127,14 @@ export function createInterBayAccountLocalClient({
       await legacyMigrationApplyFinancialHomeBayClient.legacyMigrationApplyFinancialHomeBay(
         opts,
       ),
+    legacyMigrationGetFinancialMembershipGrantHomeBay: async (opts) =>
+      await legacyMigrationGetFinancialMembershipGrantHomeBayClient.legacyMigrationGetFinancialMembershipGrantHomeBay(
+        opts,
+      ),
+    legacyMigrationConfigureFinancialRenewalHomeBay: async (opts) =>
+      await legacyMigrationConfigureFinancialRenewalHomeBayClient.legacyMigrationConfigureFinancialRenewalHomeBay(
+        opts,
+      ),
     publicDirectoryShareResolve: async (opts) =>
       await publicDirectoryShareResolveClient.publicDirectoryShareResolve(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
@@ -6189,6 +6263,20 @@ export function createInterBayAccountLocalHandler({
         },
       },
     ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "createCliLoginSession">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "create-cli-login-session",
+      }),
+      impl: {
+        createCliLoginSession: async (opts) =>
+          await impl.createCliLoginSession(opts),
+      },
+    }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "redeemVerifyEmail">>({
       ...options,
       service: "inter-bay-account-local",
@@ -7336,6 +7424,40 @@ export function createInterBayAccountLocalHandler({
       impl: {
         legacyMigrationApplyFinancialHomeBay: async (opts) =>
           await impl.legacyMigrationApplyFinancialHomeBay(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "legacyMigrationGetFinancialMembershipGrantHomeBay"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-get-financial-membership-grant-home-bay",
+      }),
+      impl: {
+        legacyMigrationGetFinancialMembershipGrantHomeBay: async (opts) =>
+          await impl.legacyMigrationGetFinancialMembershipGrantHomeBay(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "legacyMigrationConfigureFinancialRenewalHomeBay"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-configure-financial-renewal-home-bay",
+      }),
+      impl: {
+        legacyMigrationConfigureFinancialRenewalHomeBay: async (opts) =>
+          await impl.legacyMigrationConfigureFinancialRenewalHomeBay(opts),
       },
     }),
     createServiceHandler<

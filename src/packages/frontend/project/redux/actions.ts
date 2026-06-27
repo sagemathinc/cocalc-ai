@@ -788,6 +788,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   ensureProjectIsOpen = async (switch_to: boolean = true) => {
+    if (this.hasPublicDirectoryShare()) {
+      return;
+    }
     const s = this.redux.getStore("projects");
     if (!s.is_project_open(this.project_id)) {
       this.redux.getActions("projects").open_project({
@@ -1620,8 +1623,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         const syncPath = this.get_sync_path(path);
         const ext = this.open_files?.get(path, "ext");
         const isViewer = this.isViewerProjectUser();
+        const isPublicDirectoryShare = this.hasPublicDirectoryShare();
         const { name, Editor } =
-          isViewer && !canUseFrameEditorReadOnlyPreview(syncPath, ext)
+          isPublicDirectoryShare ||
+          (isViewer && !canUseFrameEditorReadOnlyPreview(syncPath, ext))
             ? { name: undefined, Editor: ViewerFilePreview }
             : await this.init_file_react_redux(
                 syncPath,

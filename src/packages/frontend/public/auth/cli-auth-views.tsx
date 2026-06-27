@@ -15,6 +15,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import { approveCliElevationWithPasskey } from "@cocalc/frontend/auth/passkeys";
 import {
   getSecondFactorPlaceholder,
@@ -246,7 +247,10 @@ export function PublicCliLoginApprovalView({
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
   const [signingOut, setSigningOut] = useState(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const authOrigin = getControlPlaneOrigin();
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    origin: authOrigin,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -276,9 +280,21 @@ export function PublicCliLoginApprovalView({
     setError("");
     try {
       await runFreshAuthAction(async () => {
+        const proof = await postAuthApi<{
+          token: string;
+          home_bay_id: string;
+        }>({
+          endpoint: "auth/cli/login/approval-token",
+          origin: authOrigin,
+          body: { challenge_id: challengeId },
+        });
         await postAuthApi({
           endpoint: "auth/cli/login/approve",
-          body: { challenge_id: challengeId },
+          body: {
+            challenge_id: challengeId,
+            approval_token: proof.token,
+            approval_home_bay_id: proof.home_bay_id,
+          },
         });
         setApproved(true);
       });

@@ -109,6 +109,9 @@ export class Listing extends EventEmitter {
       if (this.files == null) {
         return;
       }
+      if (isUnsupportedWatchError(err)) {
+        return;
+      }
       console.warn("WARNING:", err);
     }
   };
@@ -182,4 +185,13 @@ export class Listing extends EventEmitter {
     }
     this.emit("change", filename, this.files[filename]);
   };
+}
+
+function isUnsupportedWatchError(err: unknown): boolean {
+  const message = `${(err as Error | undefined)?.message ?? err ?? ""}`
+    .trim()
+    .toLowerCase();
+  return (
+    message === "watch not defined" || message.includes("watch not defined")
+  );
 }

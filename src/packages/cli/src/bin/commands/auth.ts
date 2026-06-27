@@ -546,6 +546,8 @@ export function registerAuthCommand(
       account_id: string;
       remember_me: string;
       expire: string | Date;
+      home_bay_id?: string | null;
+      home_bay_url?: string | null;
       email_address?: string | null;
       display_name?: string | null;
       first_name?: string | null;
@@ -558,13 +560,16 @@ export function registerAuthCommand(
         redeem_token: status.redeem_token,
       },
     });
+    const profileApiBaseUrl = `${redeemed.home_bay_url ?? ""}`.trim()
+      ? normalizeUrl(`${redeemed.home_bay_url}`)
+      : apiBaseUrl;
 
     const configPath = authConfigPath();
     const config = loadAuthConfig(configPath);
     const profileName = sanitizeProfileName(globals.profile);
     const next = {
       ...(config.profiles[profileName] ?? {}),
-      api: apiBaseUrl,
+      api: profileApiBaseUrl,
       account_id: redeemed.account_id,
       email_address: `${redeemed.email_address ?? ""}`.trim() || null,
       display_name:
@@ -573,7 +578,10 @@ export function registerAuthCommand(
           first_name: redeemed.first_name,
           last_name: redeemed.last_name,
         }) || null,
-      cookie: buildRememberMeCookieHeader(apiBaseUrl, redeemed.remember_me),
+      cookie: buildRememberMeCookieHeader(
+        profileApiBaseUrl,
+        redeemed.remember_me,
+      ),
     };
     delete (next as any).first_name;
     delete (next as any).last_name;
@@ -588,8 +596,10 @@ export function registerAuthCommand(
     return {
       profile: profileName,
       current_profile: config.current_profile ?? null,
-      api: apiBaseUrl,
+      api: profileApiBaseUrl,
+      login_api: apiBaseUrl,
       account_id: redeemed.account_id,
+      home_bay_id: redeemed.home_bay_id ?? null,
       email_address: next.email_address,
       display_name: next.display_name,
       expires_at: new Date(redeemed.expire).toISOString(),

@@ -11,7 +11,10 @@ import getPool from "@cocalc/database/pool";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
+import {
+  getBayPublicOrigin,
+  getBayPublicOriginForRequest,
+} from "@cocalc/server/bay-public-origin";
 import {
   getCurrentAuthSessionForSessionHash,
   resolveFreshAuthDurationMs,
@@ -19,9 +22,6 @@ import {
   type AuthSessionFactorLevel,
   type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
-import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
-import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
-import { DEFAULT_MAX_AGE_MS } from "@cocalc/server/auth/set-sign-in-cookies";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
 import {
   finishFreshAuthPasskeyAuthentication,
@@ -29,7 +29,10 @@ import {
   type PasskeyFreshAuthStart,
 } from "@cocalc/server/auth/passkeys";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
-import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import {
+  createClusterCliLoginSession,
+  getClusterAccountById,
+} from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const CHALLENGE_TTL_MS = 8 * 60 * 60_000;
@@ -582,47 +585,27 @@ export async function redeemCliLoginChallenge({
   if (!expectedHash || !tokenMatches(`${redeem_token ?? ""}`, expectedHash)) {
     throw new Error("invalid cli auth redeem token");
   }
-  const { value, hash, expire } = await createRememberMeCookie(
-    row.account_id,
-    DEFAULT_MAX_AGE_MS / 1000,
-  );
-  await withAccountRehomeWriteFence({
+  const session = await createClusterCliLoginSession({
     account_id: row.account_id,
-    action: "redeem cli auth login challenge",
-    fn: async (db) => {
-      await redeemApprovedCliLoginChallengeWithDb({
-        db,
-        row,
-        redeem_token_hash: expectedHash,
-        redeemed_session_hash: hash,
-      });
-    },
+    approved_challenge_id: row.id,
+    ip_address: ip_address ?? null,
+    user_agent: user_agent ?? null,
   });
-  await recordNewAuthSession({
-    account_id: row.account_id,
-    session_hash: hash,
-    expire,
-    authenticated_at: new Date(),
-    password_verified_at: null,
-    factor_verified_at: null,
-    factor_level: "none",
-    fresh_auth_until: null,
-    metadata: {
-      auth_client: "cli",
-      approved_challenge_id: row.id,
-      ip_address: ip_address ?? undefined,
-      user_agent: user_agent ?? undefined,
-    },
+  await redeemApprovedCliLoginChallengeWithDb({
+    db: getPool(),
+    row,
+    redeem_token_hash: expectedHash,
+    redeemed_session_hash: session.session_hash,
   });
   const account = await getClusterAccountById(row.account_id);
   const home_bay_id =
     `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   return {
     account_id: row.account_id,
-    remember_me: value,
-    expire,
+    remember_me: session.remember_me,
+    expire: new Date(session.expire),
     home_bay_id,
-    home_bay_url: undefined,
+    home_bay_url: await getBayPublicOrigin(home_bay_id),
     email_address: account?.email_address ?? null,
     display_name:
       displayNameFromAccount({
@@ -722,27 +705,21 @@ export async function approveCliLoginChallenge({
   if (!isPendingLogin && row.account_id !== account_id) {
     throw new Error("cli auth challenge account mismatch");
   }
-  await withAccountRehomeWriteFence({
-    account_id,
-    action: "approve cli auth login challenge",
-    fn: async (db) => {
-      const existingRedeemToken =
-        typeof row.metadata?.redeem_token === "string"
-          ? `${row.metadata.redeem_token}`
-          : undefined;
-      const redeem_token = existingRedeemToken ?? createOpaqueToken();
-      const metadata = {
-        ...(row.metadata ?? {}),
-        redeem_token,
-      };
-      await updateChallengeApprovalWithDb({
-        db,
-        row,
-        metadataPatch: metadata,
-        redeem_token,
-        account_id: isPendingLogin ? account_id : undefined,
-      });
-    },
+  const existingRedeemToken =
+    typeof row.metadata?.redeem_token === "string"
+      ? `${row.metadata.redeem_token}`
+      : undefined;
+  const redeem_token = existingRedeemToken ?? createOpaqueToken();
+  const metadata = {
+    ...(row.metadata ?? {}),
+    redeem_token,
+  };
+  await updateChallengeApprovalWithDb({
+    db: getPool(),
+    row,
+    metadataPatch: metadata,
+    redeem_token,
+    account_id: isPendingLogin ? account_id : undefined,
   });
   return { approved: true };
 }

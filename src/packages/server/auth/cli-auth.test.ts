@@ -7,8 +7,7 @@ import { createHash } from "node:crypto";
 
 let queryMock: jest.Mock;
 let withAccountRehomeWriteFenceMock: jest.Mock;
-let createRememberMeCookieMock: jest.Mock;
-let recordNewAuthSessionMock: jest.Mock;
+let createClusterCliLoginSessionMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -21,15 +20,8 @@ jest.mock("@cocalc/server/accounts/rehome-fence", () => ({
     withAccountRehomeWriteFenceMock(...args),
 }));
 
-jest.mock("@cocalc/server/auth/remember-me", () => ({
-  createRememberMeCookie: (...args: any[]) =>
-    createRememberMeCookieMock(...args),
-}));
-
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
-  DEFAULT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000,
   getCurrentAuthSessionForSessionHash: jest.fn(),
-  recordNewAuthSession: (...args: any[]) => recordNewAuthSessionMock(...args),
   resolveFreshAuthDurationMs: jest.fn(() => 60_000),
   setSessionFreshAuth: jest.fn(),
 }));
@@ -48,6 +40,8 @@ jest.mock("@cocalc/server/auth/passkeys", () => ({
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  createClusterCliLoginSession: (...args: any[]) =>
+    createClusterCliLoginSessionMock(...args),
   getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
 }));
 
@@ -56,6 +50,9 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 
 jest.mock("@cocalc/server/bay-public-origin", () => ({
+  getBayPublicOrigin: jest.fn(async (bay_id: string) =>
+    bay_id === "bay-1" ? "https://bay-1-cocalc.test" : "https://cocalc.test",
+  ),
   getBayPublicOriginForRequest: jest.fn(async () => "https://cocalc.test"),
 }));
 
@@ -82,12 +79,11 @@ describe("CLI auth login redemption", () => {
       async ({ fn }) =>
         await fn({ query: (...args: any[]) => queryMock(...args) }),
     );
-    createRememberMeCookieMock = jest.fn(async () => ({
-      value: "remember-me-cookie",
-      hash: "session-hash",
+    createClusterCliLoginSessionMock = jest.fn(async () => ({
+      remember_me: "remember-me-cookie",
+      session_hash: "session-hash",
       expire: new Date("2099-06-21T00:00:00.000Z"),
     }));
-    recordNewAuthSessionMock = jest.fn(async () => undefined);
     getClusterAccountByIdMock = jest.fn(async () => ({
       account_id,
       home_bay_id: "bay-1",
@@ -126,7 +122,7 @@ describe("CLI auth login redemption", () => {
     });
   }
 
-  it("atomically transitions an approved login challenge before recording a session", async () => {
+  it("creates a cluster CLI session and records the redeemed session hash", async () => {
     mockApprovedChallenge();
     const { redeemCliLoginChallenge } = await import("./cli-auth");
 
@@ -141,6 +137,7 @@ describe("CLI auth login redemption", () => {
       account_id,
       remember_me: "remember-me-cookie",
       home_bay_id: "bay-1",
+      home_bay_url: "https://bay-1-cocalc.test",
     });
 
     const update = queryMock.mock.calls.find(([sql]) =>
@@ -153,15 +150,15 @@ describe("CLI auth login redemption", () => {
     expect(JSON.parse(update?.[1][1])).toEqual({
       redeemed_session_hash: "session-hash",
     });
-    expect(recordNewAuthSessionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        account_id,
-        session_hash: "session-hash",
-      }),
-    );
+    expect(createClusterCliLoginSessionMock).toHaveBeenCalledWith({
+      account_id,
+      approved_challenge_id: challenge_id,
+      ip_address: "192.0.2.10",
+      user_agent: "test-agent",
+    });
   });
 
-  it("does not record a session if the challenge was already redeemed", async () => {
+  it("surfaces an already redeemed challenge update failure", async () => {
     mockApprovedChallenge();
     queryMock.mockImplementation(async (sql) => {
       const text = `${sql}`;
@@ -193,6 +190,6 @@ describe("CLI auth login redemption", () => {
       redeemCliLoginChallenge({ challenge_id, redeem_token }),
     ).rejects.toThrow("cli auth challenge has already been redeemed");
 
-    expect(recordNewAuthSessionMock).not.toHaveBeenCalled();
+    expect(createClusterCliLoginSessionMock).toHaveBeenCalledTimes(1);
   });
 });

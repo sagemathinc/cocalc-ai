@@ -33,7 +33,13 @@ import {
   FrameContext,
   defaultFrameContext,
 } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
+import {
+  EDITOR_PREFIX,
+  path_split,
+  path_to_file,
+  path_to_tab,
+  tab_to_path,
+} from "@cocalc/util/misc";
 import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -129,6 +135,7 @@ interface Props {
   project_id: string;
   is_active: boolean;
   publicDirectoryShare?: ResolvedPublicDirectoryShare;
+  publicDirectorySharePath?: string;
 }
 
 export const ProjectPage: React.FC<Props> = (props: Props) => {
@@ -198,7 +205,9 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   });
   const isViewer = projectCtx.projectAccess.role === "viewer";
   const host_id = useProjectMapField<string>(project_id, "host_id");
-  const hostInfo = useHostInfo(host_id);
+  const hostInfo = useHostInfo(host_id, {
+    enabled: !props.publicDirectoryShare,
+  });
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
     [hostInfo],
@@ -251,8 +260,31 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     }
     actions.setState({ public_directory_share_id: share.id });
     actions.clearFilesystemClient();
-    const sharePath = share.path === "." ? "files" : share.path;
-    void actions.open_directory(sharePath, false, true, false);
+    const sharePath = share.path === "." ? "." : share.path;
+    const shareRelativePath = `${props.publicDirectorySharePath ?? ""}`
+      .trim()
+      .replace(/^\/+|\/+$/g, "");
+    const targetPath = shareRelativePath
+      ? path_to_file(sharePath, shareRelativePath)
+      : "";
+
+    actions.set_current_path(
+      targetPath ? path_split(targetPath).head || sharePath : sharePath,
+    );
+    actions.set_active_tab("files", {
+      update_file_listing: false,
+      change_history: false,
+    });
+    actions.set_all_files_unchecked?.();
+    if (targetPath) {
+      actions.open_file({
+        path: targetPath,
+        foreground: true,
+        foreground_project: false,
+        change_history: false,
+        explicit: false,
+      });
+    }
     return () => {
       actions.setState({ public_directory_share_id: undefined });
       actions.clearFilesystemClient();
@@ -261,6 +293,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     actions,
     props.publicDirectoryShare?.id,
     props.publicDirectoryShare?.path,
+    props.publicDirectorySharePath,
   ]);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(

@@ -3351,6 +3351,20 @@ export class ProjectsActions extends Actions<ProjectsState> {
   // admins (who should usually be impersonating users instead!),
   // so not a serious concern.
   public async fetch_public_project_title(project_id: string): Promise<string> {
+    const projectedProject = store.getIn(["project_map", project_id]);
+    const projectedTitle = projectedProject?.get?.("title");
+    if (
+      projectedProject?.get?.("public_directory_share_projection") === true &&
+      typeof projectedTitle === "string" &&
+      projectedTitle.trim()
+    ) {
+      this.setState({
+        public_project_titles: store
+          .get("public_project_titles")
+          .set(project_id, projectedTitle),
+      });
+      return projectedTitle;
+    }
     let group;
     try {
       await store.async_wait({

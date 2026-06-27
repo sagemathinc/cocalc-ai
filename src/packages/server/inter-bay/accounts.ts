@@ -20,6 +20,8 @@ import {
   type AccountLocalQuarantineBillingResourcesRequest,
   type AccountLocalQuarantineBillingResourcesResult,
   type AccountLocalAdminVerifyEmailAddressResult,
+  type AccountLocalCreateCliLoginSessionRequest,
+  type AccountLocalCreateCliLoginSessionResult,
   type AccountLocalSetBanRequest,
   type AccountLocalSetBanResult,
   type AccountLocalSetPasswordFromResetRequest,
@@ -46,6 +48,9 @@ import { assertSignupEmailDomainAllowed } from "@cocalc/server/accounts/signup-e
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
+import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
+import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
+import { DEFAULT_MAX_AGE_MS } from "@cocalc/server/auth/set-sign-in-cookies";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import {
   deleteClusterAccountApiKeyDirectoryEntryDirect,
@@ -361,6 +366,53 @@ export async function verifyClusterAccountSignInPassword({
     client: getInterBayFabricClient(),
     dest_bay: targetBay,
   }).verifySignInPassword({ email_address, password });
+}
+
+export async function createLocalCliLoginSession({
+  account_id,
+  approved_challenge_id,
+  ip_address,
+  user_agent,
+}: AccountLocalCreateCliLoginSessionRequest): Promise<AccountLocalCreateCliLoginSessionResult> {
+  const { value, hash, expire } = await createRememberMeCookie(
+    account_id,
+    DEFAULT_MAX_AGE_MS / 1000,
+  );
+  await recordNewAuthSession({
+    account_id,
+    session_hash: hash,
+    expire,
+    authenticated_at: new Date(),
+    password_verified_at: null,
+    factor_verified_at: null,
+    factor_level: "none",
+    fresh_auth_until: null,
+    metadata: {
+      auth_client: "cli",
+      approved_challenge_id,
+      ip_address: ip_address ?? undefined,
+      user_agent: user_agent ?? undefined,
+    },
+  });
+  return {
+    remember_me: value,
+    session_hash: hash,
+    expire,
+  };
+}
+
+export async function createClusterCliLoginSession(
+  opts: AccountLocalCreateCliLoginSessionRequest,
+): Promise<AccountLocalCreateCliLoginSessionResult> {
+  const account = await getClusterAccountById(opts.account_id);
+  const home_bay_id = `${account?.home_bay_id ?? ""}`.trim() || currentBayId();
+  if (home_bay_id === currentBayId()) {
+    return await createLocalCliLoginSession(opts);
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  }).createCliLoginSession(opts);
 }
 
 export async function assertClusterAccountTrustedForProductAccess({
