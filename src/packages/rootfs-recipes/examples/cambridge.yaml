@@ -14,6 +14,7 @@ steps:
         - biber
         - build-essential
         - ca-certificates
+        - cmake
         - cm-super
         - curl
         - fonts-dejavu
@@ -80,6 +81,59 @@ steps:
   - uses: cocalc/r
     timeout: 2400
 
+  - name: Install packaged Cambridge R libraries
+    timeout: 1800
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      if [ -n "$SUDO" ]; then
+        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update
+        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          r-cran-car \
+          r-cran-corpcor \
+          r-cran-dplyr \
+          r-cran-ggplot2 \
+          r-cran-httr \
+          r-cran-lme4 \
+          r-cran-lubridate \
+          r-cran-matrixstats \
+          r-cran-mvtnorm \
+          r-cran-nloptr \
+          r-cran-pbkrtest \
+          r-cran-plot3d \
+          r-cran-quadprog \
+          r-cran-quantmod \
+          r-cran-readr \
+          r-cran-stringr \
+          r-cran-timedate \
+          r-cran-tseries
+      else
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          r-cran-car \
+          r-cran-corpcor \
+          r-cran-dplyr \
+          r-cran-ggplot2 \
+          r-cran-httr \
+          r-cran-lme4 \
+          r-cran-lubridate \
+          r-cran-matrixstats \
+          r-cran-mvtnorm \
+          r-cran-nloptr \
+          r-cran-pbkrtest \
+          r-cran-plot3d \
+          r-cran-quadprog \
+          r-cran-quantmod \
+          r-cran-readr \
+          r-cran-stringr \
+          r-cran-timedate \
+          r-cran-tseries
+      fi
+
   - name: Install Cambridge R packages
     timeout: 2400
     run: |
@@ -115,6 +169,10 @@ steps:
       if (length(missing)) {
         install.packages(missing, Ncpus = max(1, parallel::detectCores(logical = FALSE)))
       }
+      missing <- packages[!vapply(packages, requireNamespace, logical(1), quietly = TRUE)]
+      if (length(missing)) {
+        stop("failed to install required R packages: ", paste(missing, collapse = ", "))
+      }
       RS
 
   - uses: cocalc/jupyter-python
@@ -130,6 +188,7 @@ steps:
         - h5py
         - interegular
         - ipykernel
+        - ipython-genutils
         - ipympl
         - ipyvolume
         - ipywidgets
