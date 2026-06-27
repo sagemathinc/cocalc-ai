@@ -638,6 +638,9 @@ export async function open_file(
 }
 
 function isViewerProjectOpen(actions: ProjectActions): boolean {
+  if (`${actions.get_store()?.get("public_directory_share_id") ?? ""}`.trim()) {
+    return true;
+  }
   const account_id = redux.getStore("account")?.get("account_id");
   if (!account_id) return false;
   return isViewerProjectRole(

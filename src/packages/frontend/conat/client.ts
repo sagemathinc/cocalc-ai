@@ -3191,10 +3191,12 @@ export class ConatClient extends EventEmitter {
   projectFs = async ({
     project_id,
     caller = "projectFs",
+    share_id,
     viewer,
   }: {
     project_id: string;
     caller?: string;
+    share_id?: string;
     viewer?: boolean;
   }): Promise<FilesystemClient> => {
     const client = await this.projectConat({
@@ -3203,6 +3205,13 @@ export class ConatClient extends EventEmitter {
       requireRouting: true,
     });
     const useViewerFs = viewer ?? this.hasViewerProjectAccess(project_id);
+    if (share_id) {
+      const account_id = this.client.account_id;
+      if (!account_id) {
+        throw Error("account_id is required for shared directory filesystem");
+      }
+      return client.shareFs({ project_id, share_id, account_id });
+    }
     if (useViewerFs) {
       const account_id = this.client.account_id;
       if (!account_id) {

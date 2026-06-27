@@ -96,8 +96,10 @@ import {
   fsServer,
   fsReadOnlyServer,
   DEFAULT_FILE_SERVICE,
+  SHARE_FILE_SERVICE,
   VIEWER_FILE_SERVICE,
   fsSubject,
+  parseShareFsSubject,
   parseViewerFsSubject,
 } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
@@ -123,6 +125,7 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { getMasterConatClient, queueProjectProvisioned } from "./master-status";
 import callHub from "@cocalc/conat/hub/call-hub";
+import type { AuthorizePublicDirectoryShareReadResponse } from "@cocalc/conat/hub/api/public-directory-shares";
 import { startProjectWithAdmission } from "./project-start-admission";
 import {
   createRusticProgressHandler,
@@ -394,6 +397,18 @@ function viewerSubjectFromSubject(subject: string): {
   return parsed;
 }
 
+function shareSubjectFromSubject(subject: string): {
+  project_id: string;
+  share_id: string;
+  account_id: string;
+} {
+  const parsed = parseShareFsSubject(subject);
+  if (!parsed) {
+    throw Error("invalid share fs subject");
+  }
+  return parsed;
+}
+
 function getViewerReadPolicy({
   project_id,
   account_id,
@@ -413,6 +428,35 @@ function getViewerReadPolicy({
     throw new Error("viewer read policy is not configured");
   }
   return readPolicy;
+}
+
+async function getShareReadPolicy({
+  project_id,
+  share_id,
+  account_id,
+}: {
+  project_id: string;
+  share_id: string;
+  account_id: string;
+}): Promise<ProjectViewerReadPolicy> {
+  const client = getMasterConatClient();
+  if (!client) {
+    throw Error("master Conat client is not initialized");
+  }
+  const response = (await callHub({
+    client,
+    host_id: requireHostId(),
+    name: "publicDirectoryShares.authorizeRead",
+    args: [{ account_id, project_id, share_id }],
+    timeout: 15_000,
+  })) as AuthorizePublicDirectoryShareReadResponse;
+  if (response.project_id !== project_id || response.share_id !== share_id) {
+    throw Error("public directory share authorization mismatch");
+  }
+  if (!response.read_policy || !Array.isArray(response.read_policy.rules)) {
+    throw Error("public directory share read policy is not configured");
+  }
+  return response.read_policy;
 }
 
 function snapshotRestoreRoot(): string {
@@ -4282,12 +4326,53 @@ export async function initViewerFsServer({
   });
 }
 
+export async function initShareFsServer({
+  client,
+  service = SHARE_FILE_SERVICE,
+}: {
+  client: ConatClient;
+  service?: string;
+}) {
+  logger.debug("initShareFsServer");
+  return await fsReadOnlyServer({
+    service,
+    client,
+    fs: async (subject?: string) => {
+      if (!subject) {
+        throw Error("fsReadOnlyServer requires subject");
+      }
+      const { project_id, share_id, account_id } =
+        shareSubjectFromSubject(subject);
+      const { path } = await getOrEnsureVolume(project_id);
+      const projectFs = createProjectSandboxFilesystem({
+        project_id,
+        home: path,
+        rootfs: getRootfsMountpoint(project_id),
+        scratch: getScratchMountpoint(project_id),
+        sharedScratch: getSharedScratchMountpoint(),
+        deleteSnapshot: async (name: string) =>
+          await deleteSnapshot({ project_id, name }),
+      });
+      return createViewerReadOnlyFilesystem({
+        fs: projectFs,
+        readPolicy: await getShareReadPolicy({
+          project_id,
+          share_id,
+          account_id,
+        }),
+      });
+    },
+  });
+}
+
 function invalidateProjectFsServer(project_id: string): void {
   servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
   servers?.viewerFile?.invalidateAll?.();
+  servers?.shareFile?.invalidateAll?.();
 }
 
-let servers: null | { ssh: any; file: any; viewerFile: any } = null;
+let servers: null | { ssh: any; file: any; viewerFile: any; shareFile: any } =
+  null;
 
 export async function initFileServer({
   client,
@@ -4391,6 +4476,7 @@ export async function initFileServer({
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });
   const viewerFile = await initViewerFsServer({ client });
+  const shareFile = await initShareFsServer({ client });
   logger.debug("initFileServer: fs successfully initialized");
   startProjectQuotaRepairMonitor();
 
@@ -4615,7 +4701,7 @@ export async function initFileServer({
 
   logger.debug("initFileServer: success");
 
-  servers = { file, ssh, viewerFile };
+  servers = { file, ssh, viewerFile, shareFile };
   return servers;
 }
 
@@ -4662,10 +4748,11 @@ export function closeFileServer() {
   if (servers == null) {
     return;
   }
-  const { file, ssh, viewerFile } = servers;
+  const { file, ssh, viewerFile, shareFile } = servers;
   servers = null;
   file.close();
   viewerFile.close();
+  shareFile.close();
   void ssh.close?.();
 }
 

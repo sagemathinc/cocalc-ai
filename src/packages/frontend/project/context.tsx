@@ -61,6 +61,7 @@ import {
   projectAccessFromRole,
   type ProjectAccess,
 } from "@cocalc/util/project-access";
+import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
 
 type HiddenActiveTabResolution =
   | { kind: "noop" }
@@ -166,6 +167,7 @@ export interface ProjectContextState {
   };
   onCoCalcCom: boolean;
   onCoCalcDocker: boolean;
+  publicDirectoryShare?: ResolvedPublicDirectoryShare;
   project_id: string;
   project?: Project;
   projectAccess: ProjectAccess;
@@ -206,6 +208,7 @@ export const emptyProjectContext = {
   onCoCalcDocker: false,
   project: undefined,
   projectAccess: projectAccessFromRole({ role: "none" }),
+  publicDirectoryShare: undefined,
   project_id: "",
   notifyUserFilesystemChange: () => {},
   registerUserFilesystemChangeHandler: () => () => {},
@@ -243,10 +246,12 @@ export function useProjectContextProvider({
   project_id,
   is_active,
   mainWidthPx,
+  publicDirectoryShare,
 }: {
   project_id: string;
   is_active: boolean;
   mainWidthPx: number;
+  publicDirectoryShare?: ResolvedPublicDirectoryShare;
 }): ProjectContextState {
   const actions = useActions({ project_id });
   const { project, group } = useProject(project_id);
@@ -298,6 +303,12 @@ export function useProjectContextProvider({
   const accountCustomize = useTypedRedux("account", "customize");
   const accountOtherSettings = useTypedRedux("account", "other_settings");
   const projectAccess = useMemo(() => {
+    if (publicDirectoryShare) {
+      return projectAccessFromRole({
+        role: "viewer",
+        read_policy: publicDirectoryShare.read_policy,
+      });
+    }
     if (group === "admin") {
       return projectAccessFromRole({ role: "admin" });
     }
@@ -312,7 +323,7 @@ export function useProjectContextProvider({
         ? project?.getIn?.(["users", account_id, "read_policy"])
         : undefined;
     return projectAccessFromRole({ role: role as any, read_policy });
-  }, [account_id, group, project]);
+  }, [account_id, group, project, publicDirectoryShare]);
   const isViewer = projectAccess.role === "viewer";
   const { course } = useProjectCourseInfo(project_id, undefined, {
     enabled: !isViewer,
@@ -594,6 +605,7 @@ export function useProjectContextProvider({
     manageStarredFiles,
     onCoCalcCom,
     onCoCalcDocker,
+    publicDirectoryShare,
     project_id,
     project,
     projectAccess,

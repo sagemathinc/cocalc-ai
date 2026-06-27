@@ -43,6 +43,8 @@ import type {
   PublicDirectoryShareVisibility,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
+  AuthorizePublicDirectoryShareReadOptions,
+  AuthorizePublicDirectoryShareReadResponse,
   CreatePublicDirectoryShareOptions,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
@@ -57,6 +59,9 @@ type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
   metadata?: Record<string, unknown> | null;
   created_by?: string | null;
   updated_by?: string | null;
+  project_title?: string | null;
+  host_id?: string | null;
+  owning_bay_id?: string | null;
   total_count?: number | string | null;
 };
 
@@ -479,9 +484,14 @@ async function resolveRow({
   const normalizedSlug = normalizePublicDirectoryShareSlug(slug);
   const { rows } = await getPool().query<PublicDirectoryShareRow>(
     `
-      SELECT p.*
+      SELECT
+        p.*,
+        projects.title AS project_title,
+        projects.host_id,
+        projects.owning_bay_id
       FROM public_project_path_slugs s
       JOIN public_project_paths p ON p.id=s.public_project_path_id
+      LEFT JOIN projects ON projects.project_id=p.project_id
       WHERE s.slug_lower=lower($1)
         AND s.disabled IS FALSE
         AND p.disabled IS FALSE
@@ -523,6 +533,9 @@ async function resolveRow({
       ...summary,
       available: summary.availability_status === "available",
       read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
+      project_title: row.project_title ?? null,
+      host_id: row.host_id ?? null,
+      owning_bay_id: row.owning_bay_id ?? null,
     },
   };
 }
@@ -531,6 +544,69 @@ export async function resolve(
   opts: ResolvePublicDirectoryShareOptions,
 ): Promise<ResolvedPublicDirectoryShare> {
   return (await resolveRow(opts)).share;
+}
+
+export async function authorizeRead({
+  account_id,
+  project_id,
+  share_id,
+}: AuthorizePublicDirectoryShareReadOptions): Promise<AuthorizePublicDirectoryShareReadResponse> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  if (!isValidUUID(share_id)) {
+    throw Error("invalid public directory share id");
+  }
+  const { rows } = await getPool().query<PublicDirectoryShareRow>(
+    `
+      SELECT *
+      FROM public_project_paths
+      WHERE id=$1
+        AND project_id=$2
+        AND disabled IS FALSE
+        AND visibility <> 'disabled'
+      LIMIT 1
+    `,
+    [share_id, project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw Error("public directory share not found");
+  }
+  if (row.requires_auth !== true) {
+    throw Error("anonymous public directory shares are not supported");
+  }
+  if (row.visibility === "private") {
+    const privateAccess = await getPool().query<{ allowed: boolean }>(
+      `
+        SELECT (COALESCE(users -> $2::text ->> 'group', '') IN ('owner', 'collaborator')) AS allowed
+        FROM projects
+        WHERE project_id=$1
+        LIMIT 1
+      `,
+      [row.project_id, account_id],
+    );
+    if (!privateAccess.rows[0]?.allowed && !(await isAdmin(account_id))) {
+      throw Error("public directory share not found");
+    }
+  }
+  const summary = rowToSummary(row);
+  if (summary.availability_status !== "available") {
+    throw Error(
+      summary.availability_message ||
+        "This shared directory is not available yet.",
+    );
+  }
+  return {
+    project_id: summary.project_id,
+    share_id: summary.id,
+    read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
+  };
 }
 
 export async function list({

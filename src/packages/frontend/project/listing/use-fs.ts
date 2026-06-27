@@ -6,6 +6,7 @@ import { type FilesystemClient } from "@cocalc/conat/files/fs";
 import { getLogger } from "@cocalc/conat/logger";
 import { sleep, withTimeout } from "@cocalc/util/async-utils";
 import { useCallback, useEffect, useState } from "react";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 
 const logger = getLogger("frontend:project:listing:use-fs");
 const PROJECT_FS_TIMEOUT_MS = 10000;
@@ -49,14 +50,21 @@ export default function useFs({
   project_id: string;
   viewer?: boolean;
 }): FilesystemClient | null {
-  return useFsWithRefresh({ project_id, viewer }).fs;
+  const { publicDirectoryShare } = useProjectContext();
+  return useFsWithRefresh({
+    project_id,
+    viewer,
+    share_id: publicDirectoryShare?.id,
+  }).fs;
 }
 
 export function useFsWithRefresh({
   project_id,
+  share_id,
   viewer,
 }: {
   project_id: string;
+  share_id?: string;
   viewer?: boolean;
 }): { fs: FilesystemClient | null; refreshFs: () => void } {
   const [fs, setFs] = useState<FilesystemClient | null>(null);
@@ -76,7 +84,12 @@ export function useFsWithRefresh({
           const nextFs = await withTimeout(
             webapp_client.conat_client.projectFs({
               project_id,
-              caller: viewer ? "useFs.viewer" : "useFs",
+              caller: share_id
+                ? "useFs.share"
+                : viewer
+                  ? "useFs.viewer"
+                  : "useFs",
+              share_id,
               viewer,
             }),
             PROJECT_FS_TIMEOUT_MS,
@@ -107,7 +120,7 @@ export function useFsWithRefresh({
     return () => {
       canceled = true;
     };
-  }, [generation, project_id, viewer]);
+  }, [generation, project_id, share_id, viewer]);
 
   return { fs, refreshFs };
 }

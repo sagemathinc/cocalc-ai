@@ -1,4 +1,25 @@
 describe("filesystem explicit routing", () => {
+  it("builds and parses shared directory filesystem subjects", async () => {
+    const { parseShareFsSubject, shareFsSubject } = await import("./fs");
+    const project_id = "00000000-0000-4000-8000-000000000000";
+    const share_id = "22222222-2222-4222-8222-222222222222";
+    const account_id = "11111111-1111-4111-8111-111111111111";
+
+    const subject = shareFsSubject({ project_id, share_id, account_id });
+
+    expect(subject).toBe(
+      `fs-share.project-${project_id}.share-${share_id}.account-${account_id}`,
+    );
+    expect(parseShareFsSubject(subject)).toEqual({
+      project_id,
+      share_id,
+      account_id,
+    });
+    expect(parseShareFsSubject(`fs-share.project-${project_id}`)).toBe(
+      undefined,
+    );
+  });
+
   it("requires an explicit Conat client for fsClient", async () => {
     const { fsClient } = await import("./fs");
 

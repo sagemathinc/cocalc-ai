@@ -4,6 +4,7 @@
  */
 
 export {
+  authorizeRead,
   create,
   copyToProject,
   list,

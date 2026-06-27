@@ -10,6 +10,7 @@ import {
 import {
   checkCommonPermissions,
   extractProjectSubject,
+  extractShareFileSubject,
   extractViewerFileSubject,
   getCoCalcUserId,
   getCoCalcUserType,
@@ -353,6 +354,12 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
             account_id: userId,
             project_id: viewerFileSubject.project_id,
           });
+        authDecisionCache.set(cacheKey, allowed);
+        return allowed;
+      }
+      const shareFileSubject = extractShareFileSubject(subject);
+      if (shareFileSubject) {
+        allowed = type === "pub" && shareFileSubject.account_id === userId;
         authDecisionCache.set(cacheKey, allowed);
         return allowed;
       }

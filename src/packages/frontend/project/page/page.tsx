@@ -78,6 +78,8 @@ import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import ProjectControlStatus from "@cocalc/frontend/project/settings/project-control-status";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
+import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
+import { PublicDirectoryShareBanner } from "@cocalc/frontend/share/public-directory-share-banner";
 import MoveInProgress from "./move-in-progress";
 import StartInProgress from "./start-in-progress";
 import {
@@ -126,6 +128,7 @@ function fullPageProjectTab(tab?: string): string | undefined {
 interface Props {
   project_id: string;
   is_active: boolean;
+  publicDirectoryShare?: ResolvedPublicDirectoryShare;
 }
 
 export const ProjectPage: React.FC<Props> = (props: Props) => {
@@ -154,6 +157,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     return <Loading />;
   }
   if (
+    !props.publicDirectoryShare &&
     !hasProjectRoleForAccessLandingBypass({
       accountId,
       project,
@@ -190,6 +194,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     project_id,
     is_active,
     mainWidthPx,
+    publicDirectoryShare: props.publicDirectoryShare,
   });
   const isViewer = projectCtx.projectAccess.role === "viewer";
   const host_id = useProjectMapField<string>(project_id, "host_id");
@@ -235,6 +240,28 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const [homePageButtonWidth, setHomePageButtonWidth] =
     React.useState<number>(80);
   const [checkingHost, setCheckingHost] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!actions) return;
+    const share = props.publicDirectoryShare;
+    if (!share) {
+      actions.setState({ public_directory_share_id: undefined });
+      actions.clearFilesystemClient();
+      return;
+    }
+    actions.setState({ public_directory_share_id: share.id });
+    actions.clearFilesystemClient();
+    const sharePath = share.path === "." ? "files" : share.path;
+    void actions.open_directory(sharePath, false, true, false);
+    return () => {
+      actions.setState({ public_directory_share_id: undefined });
+      actions.clearFilesystemClient();
+    };
+  }, [
+    actions,
+    props.publicDirectoryShare?.id,
+    props.publicDirectoryShare?.path,
+  ]);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(
     getFlyoutWidth(project_id),
@@ -938,6 +965,9 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           <OOMWarning project_id={project_id} />
         )}
         {!hardDeleteBlocked && !isViewer && <ProjectWarningBanner />}
+        {props.publicDirectoryShare ? (
+          <PublicDirectoryShareBanner share={props.publicDirectoryShare} />
+        ) : null}
         {renderHostUnavailableBanner()}
         {renderTopRow()}
         <div
