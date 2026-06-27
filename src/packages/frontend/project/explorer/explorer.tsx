@@ -1088,9 +1088,7 @@ You can either wait for this host to become available again, or move this ${proj
                       current_path={effective_current_path}
                       actions={actions}
                       refreshBackups={refreshBackups}
-                      hasPendingUpdate={
-                        readOnlyViewer || hasPendingListingUpdate
-                      }
+                      hasPendingUpdate={hasPendingListingUpdate}
                       onRefreshListing={
                         readOnlyViewer ? refresh : flushListingUpdates
                       }

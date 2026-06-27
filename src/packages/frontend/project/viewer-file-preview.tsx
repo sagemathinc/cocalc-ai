@@ -16,6 +16,7 @@ import {
   isPDF,
   isVideo,
 } from "@cocalc/frontend/file-extensions";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 
 interface Props {
   project_id: string;
@@ -31,6 +32,8 @@ interface PreviewState {
 
 export default function ViewerFilePreview({ project_id, path }: Props) {
   const [state, setState] = useState<PreviewState>({ loading: true });
+  const { publicDirectoryShare } = useProjectContext();
+  const share_id = publicDirectoryShare?.id;
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +45,7 @@ export default function ViewerFilePreview({ project_id, path }: Props) {
         const fs = await webapp_client.conat_client.projectFs({
           project_id,
           caller: "ViewerFilePreview",
+          share_id,
           viewer: true,
         });
         const ext = filename_extension(path).toLowerCase();
@@ -80,7 +84,7 @@ export default function ViewerFilePreview({ project_id, path }: Props) {
         URL.revokeObjectURL(rawUrl);
       }
     };
-  }, [project_id, path]);
+  }, [project_id, path, share_id]);
 
   const fileContext = useMemo(
     () => ({

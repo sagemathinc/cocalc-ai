@@ -48,7 +48,15 @@ import type {
   TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
 import type {
+  AuthorizePublicDirectoryShareReadOptions,
+  AuthorizePublicDirectoryShareReadResponse,
+  ResolvePublicDirectoryShareOptions,
+  ResolvedPublicDirectoryShare,
+} from "@cocalc/conat/hub/api/public-directory-shares";
+import type {
   LegacyMigrationApplyFinancialOptions,
+  LegacyMigrationApplyFinancialHomeBayOptions,
+  LegacyMigrationApplyFinancialHomeBayResponse,
   LegacyMigrationApplyFinancialResponse,
   LegacyMigrationFinancialPreviewOptions,
   LegacyMigrationFinancialPreviewResponse,
@@ -2112,7 +2120,10 @@ export type AccountLocalMethod =
   | "legacy-migration-restore-archive-selection"
   | "legacy-migration-retry-project-restore"
   | "legacy-migration-preview-financial-migration"
-  | "legacy-migration-apply-financial-migration";
+  | "legacy-migration-apply-financial-migration"
+  | "legacy-migration-apply-financial-home-bay"
+  | "public-directory-share-resolve"
+  | "public-directory-share-authorize-read";
 export type AuthTokenMethod =
   | "requires-token"
   | "validate"
@@ -3285,6 +3296,15 @@ export interface InterBayAccountLocalApi {
   legacyMigrationApplyFinancialMigration: (
     opts?: LegacyMigrationApplyFinancialOptions,
   ) => Promise<LegacyMigrationApplyFinancialResponse>;
+  legacyMigrationApplyFinancialHomeBay: (
+    opts: LegacyMigrationApplyFinancialHomeBayOptions,
+  ) => Promise<LegacyMigrationApplyFinancialHomeBayResponse>;
+  publicDirectoryShareResolve: (
+    opts: ResolvePublicDirectoryShareOptions,
+  ) => Promise<ResolvedPublicDirectoryShare>;
+  publicDirectoryShareAuthorizeRead: (
+    opts: AuthorizePublicDirectoryShareReadOptions,
+  ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -5762,6 +5782,33 @@ export function createInterBayAccountLocalClient({
       method: "legacy-migration-apply-financial-migration",
     }),
   });
+  const legacyMigrationApplyFinancialHomeBayClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationApplyFinancialHomeBay">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-apply-financial-home-bay",
+    }),
+  });
+  const publicDirectoryShareResolveClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareResolve">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-resolve",
+    }),
+  });
+  const publicDirectoryShareAuthorizeReadClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareAuthorizeRead">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-authorize-read",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -6009,6 +6056,16 @@ export function createInterBayAccountLocalClient({
     legacyMigrationApplyFinancialMigration: async (opts) =>
       await legacyMigrationApplyFinancialMigrationClient.legacyMigrationApplyFinancialMigration(
         opts ?? {},
+      ),
+    legacyMigrationApplyFinancialHomeBay: async (opts) =>
+      await legacyMigrationApplyFinancialHomeBayClient.legacyMigrationApplyFinancialHomeBay(
+        opts,
+      ),
+    publicDirectoryShareResolve: async (opts) =>
+      await publicDirectoryShareResolveClient.publicDirectoryShareResolve(opts),
+    publicDirectoryShareAuthorizeRead: async (opts) =>
+      await publicDirectoryShareAuthorizeReadClient.publicDirectoryShareAuthorizeRead(
+        opts,
       ),
   };
 }
@@ -7265,6 +7322,48 @@ export function createInterBayAccountLocalHandler({
       impl: {
         legacyMigrationApplyFinancialMigration: async (opts) =>
           await impl.legacyMigrationApplyFinancialMigration(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationApplyFinancialHomeBay">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-apply-financial-home-bay",
+      }),
+      impl: {
+        legacyMigrationApplyFinancialHomeBay: async (opts) =>
+          await impl.legacyMigrationApplyFinancialHomeBay(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareResolve">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-resolve",
+      }),
+      impl: {
+        publicDirectoryShareResolve: async (opts) =>
+          await impl.publicDirectoryShareResolve(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareAuthorizeRead">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-authorize-read",
+      }),
+      impl: {
+        publicDirectoryShareAuthorizeRead: async (opts) =>
+          await impl.publicDirectoryShareAuthorizeRead(opts),
       },
     }),
   ];

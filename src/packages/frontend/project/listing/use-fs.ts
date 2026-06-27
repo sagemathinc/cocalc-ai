@@ -46,24 +46,29 @@ function isRetryableProjectFsError(err: unknown): boolean {
 export default function useFs({
   project_id,
   viewer,
+  enabled = true,
 }: {
   project_id: string;
   viewer?: boolean;
+  enabled?: boolean;
 }): FilesystemClient | null {
   const { publicDirectoryShare } = useProjectContext();
   return useFsWithRefresh({
     project_id,
     viewer,
     share_id: publicDirectoryShare?.id,
+    enabled,
   }).fs;
 }
 
 export function useFsWithRefresh({
   project_id,
+  enabled = true,
   share_id,
   viewer,
 }: {
   project_id: string;
+  enabled?: boolean;
   share_id?: string;
   viewer?: boolean;
 }): { fs: FilesystemClient | null; refreshFs: () => void } {
@@ -77,6 +82,9 @@ export function useFsWithRefresh({
   useEffect(() => {
     let canceled = false;
     setFs(null);
+    if (!enabled) {
+      return;
+    }
     const connect = async () => {
       let attempt = 0;
       while (!canceled) {
@@ -120,7 +128,7 @@ export function useFsWithRefresh({
     return () => {
       canceled = true;
     };
-  }, [generation, project_id, share_id, viewer]);
+  }, [enabled, generation, project_id, share_id, viewer]);
 
   return { fs, refreshFs };
 }

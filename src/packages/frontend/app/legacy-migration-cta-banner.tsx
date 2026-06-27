@@ -10,6 +10,7 @@ import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
+import { markLegacyBillingMigrationReviewRequested } from "@cocalc/frontend/purchases/legacy-billing-migration-review";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   LegacyMigrationFinancialPreviewResponse,
@@ -209,7 +210,10 @@ export function LegacyMigrationCtaBanner() {
               <Button
                 size="small"
                 type={showProjects ? "default" : "primary"}
-                onClick={() => openAccountSettings({ page: "balance" })}
+                onClick={() => {
+                  markLegacyBillingMigrationReviewRequested(account_id);
+                  openAccountSettings({ page: "balance" });
+                }}
               >
                 {state.financialContinue
                   ? "Continue membership"

@@ -425,6 +425,9 @@ export async function open_file(
   }
 
   if (isViewerProjectOpen(actions)) {
+    const changeHistory = isPublicDirectoryShareOpen(actions)
+      ? false
+      : opts.change_history;
     const ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
     let syncPath = displayPath;
     try {
@@ -452,9 +455,9 @@ export async function open_file(
     redux.getActions("page").save_session();
     if (opts.foreground) {
       actions.set_current_path(workingDirectory());
-      actions.foreground_project(opts.change_history);
+      actions.foreground_project(changeHistory);
       actions.set_active_tab(path_to_tab(displayPath), {
-        change_history: opts.change_history,
+        change_history: changeHistory,
       });
     }
     return;
@@ -638,7 +641,7 @@ export async function open_file(
 }
 
 function isViewerProjectOpen(actions: ProjectActions): boolean {
-  if (`${actions.get_store()?.get("public_directory_share_id") ?? ""}`.trim()) {
+  if (isPublicDirectoryShareOpen(actions)) {
     return true;
   }
   const account_id = redux.getStore("account")?.get("account_id");
@@ -650,6 +653,10 @@ function isViewerProjectOpen(actions: ProjectActions): boolean {
       projectsStore: redux.getStore("projects") as any,
     }),
   );
+}
+
+function isPublicDirectoryShareOpen(actions: ProjectActions): boolean {
+  return !!`${actions.get_store()?.get("public_directory_share_id") ?? ""}`.trim();
 }
 
 function toAbsoluteOpenPath(path: string, projectHome: string): string {

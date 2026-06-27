@@ -33,6 +33,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   const [loading, setLoading] = useState(false);
   const [share, setShare] = useState<ResolvedPublicDirectoryShare | null>(null);
   const [error, setError] = useState<string>("");
+  const [projectionReady, setProjectionReady] = useState(false);
   const normalizedSlug = `${slug ?? ""}`.trim();
 
   useEffect(() => {
@@ -43,6 +44,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     setLoading(true);
     setError("");
     setShare(null);
+    setProjectionReady(false);
     webapp_client.conat_client.hub.publicDirectoryShares
       .resolve({ slug: normalizedSlug })
       .then((result) => {
@@ -60,6 +62,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   }, [isLoggedIn, normalizedSlug]);
 
   useEffect(() => {
+    setProjectionReady(false);
     if (!share || !accountId) return;
     const currentProjectMap =
       redux.getStore("projects")?.get("project_map") ?? Map<string, any>();
@@ -92,6 +95,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     if (share.host_id) {
       void projectsActions.ensure_host_info?.(share.host_id, true);
     }
+    setProjectionReady(true);
   }, [accountId, projectsActions, share]);
 
   if (!normalizedSlug) {
@@ -126,7 +130,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     );
   }
 
-  if (loading) {
+  if (loading || (share?.available && !projectionReady)) {
     return (
       <div style={{ maxWidth: 960, margin: "32px auto", padding: "0 24px" }}>
         <Card>

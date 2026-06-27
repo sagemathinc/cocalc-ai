@@ -12,6 +12,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { LegacyMigrationFinancialPreviewResponse } from "@cocalc/conat/hub/api/legacy-migration";
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import type { BillingInterval } from "@cocalc/frontend/account/membership-pricing-chooser";
+import { legacyBillingMigrationReviewRequested } from "./legacy-billing-migration-review";
 
 const { Text } = Typography;
 
@@ -58,6 +59,7 @@ export default function LegacyBillingMigrationStatus({
   const [continueOpen, setContinueOpen] = useState(false);
   const [preview, setPreview] =
     useState<LegacyMigrationFinancialPreviewResponse>();
+  const reviewRequested = legacyBillingMigrationReviewRequested(account_id);
 
   async function load() {
     if (!account_id || !legacyMigrationEnabled) return;
@@ -99,7 +101,16 @@ export default function LegacyBillingMigrationStatus({
   }
 
   if (!legacyMigrationEnabled) return null;
-  if (loading && !preview) return <Loading />;
+  if ((loading || reviewRequested) && !preview) {
+    return (
+      <Card size="small">
+        <Space>
+          <Loading theme="medium" />
+          <Text>Loading billing migration...</Text>
+        </Space>
+      </Card>
+    );
+  }
   if (error) {
     return (
       <Alert

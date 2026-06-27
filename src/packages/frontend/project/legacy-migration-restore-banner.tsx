@@ -47,6 +47,31 @@ function activeRestoreSeenKey({
   return `legacy-project-restore-active-seen:${project_id}:${opId || "no-op"}`;
 }
 
+function knownRestoredKey({
+  project_id,
+  opId,
+}: {
+  project_id: string;
+  opId: string;
+}): string {
+  return `legacy-project-restore-known-restored:${project_id}:${opId || "no-op"}`;
+}
+
+export function markLegacyProjectRestoreKnownRestored({
+  project_id,
+  opId,
+}: {
+  project_id: string;
+  opId?: string | null;
+}): void {
+  try {
+    globalThis.sessionStorage?.setItem(
+      knownRestoredKey({ project_id, opId: labelValue(opId) }),
+      "1",
+    );
+  } catch {}
+}
+
 function wasReopenDismissed(key: string): boolean {
   try {
     return globalThis.sessionStorage?.getItem(key) === "1";
@@ -73,6 +98,14 @@ function markActiveRestoreSeen(key: string): void {
   try {
     globalThis.sessionStorage?.setItem(key, "1");
   } catch {}
+}
+
+function wasKnownRestored(key: string): boolean {
+  try {
+    return globalThis.sessionStorage?.getItem(key) === "1";
+  } catch {
+    return false;
+  }
 }
 
 function isActiveRestoreStatus(status: string): boolean {
@@ -252,6 +285,9 @@ export function LegacyMigrationRestoreBanner({
   const [activeRestoreSeen, setActiveRestoreSeen] = useState(() =>
     wasActiveRestoreSeen(activeSeenKey),
   );
+  const [knownRestored, setKnownRestored] = useState(() =>
+    wasKnownRestored(knownRestoredKey({ project_id, opId: effectiveOpId })),
+  );
 
   useEffect(() => {
     if (optimisticRestore && opId === optimisticRestore.opId) {
@@ -266,6 +302,12 @@ export function LegacyMigrationRestoreBanner({
   useEffect(() => {
     setActiveRestoreSeen(wasActiveRestoreSeen(activeSeenKey));
   }, [activeSeenKey]);
+
+  useEffect(() => {
+    setKnownRestored(
+      wasKnownRestored(knownRestoredKey({ project_id, opId: effectiveOpId })),
+    );
+  }, [effectiveOpId, project_id]);
 
   useEffect(() => {
     setSummary(undefined);
@@ -305,7 +347,9 @@ export function LegacyMigrationRestoreBanner({
     summary?.status === "canceled" ||
     summary?.status === "expired";
   const restored =
-    effectiveStatus === "restored" || summary?.status === "succeeded";
+    knownRestored ||
+    effectiveStatus === "restored" ||
+    summary?.status === "succeeded";
   const skippedText = skippedRestoreText({ summary, progress });
 
   useEffect(() => {

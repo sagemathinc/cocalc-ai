@@ -1052,6 +1052,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       change_history: true,
     },
   ): void => {
+    if (this.hasPublicDirectoryShare()) {
+      opts = { ...opts, change_history: false };
+    }
     if (key === "users") {
       key = "settings";
     }
@@ -1689,6 +1692,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   private isViewerProjectUser(): boolean {
+    if (this.hasPublicDirectoryShare()) {
+      return true;
+    }
     const account_id = redux.getStore("account")?.get("account_id");
     if (!account_id) return false;
     return isViewerProjectRole(
@@ -1698,6 +1704,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         projectsStore: redux.getStore("projects") as any,
       }),
     );
+  }
+
+  private hasPublicDirectoryShare(): boolean {
+    return !!`${this.get_store()?.get("public_directory_share_id") ?? ""}`.trim();
   }
 
   public ensure_open_file_component = (
@@ -2070,6 +2080,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   // Makes this project the active project tab
   foreground_project = async (change_history = true) => {
+    if (this.hasPublicDirectoryShare()) {
+      change_history = false;
+    }
     try {
       await this.ensureProjectIsOpen();
     } catch (err) {
@@ -2092,6 +2105,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     foreground_project = true,
   ) => {
     path = normalize(path);
+    if (this.hasPublicDirectoryShare()) {
+      change_history = false;
+    }
     // Be forgiving if a route-like path is passed here.
     if (path === "files") {
       path = this.getHomeDirectoryForPaths();

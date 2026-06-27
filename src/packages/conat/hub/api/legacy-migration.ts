@@ -231,6 +231,21 @@ export interface LegacyMigrationApplyFinancialResponse {
   stripe_customer_id?: string | null;
 }
 
+export interface LegacyMigrationApplyFinancialHomeBayOptions {
+  account_id: string;
+  claimed: LegacyMigrationFinancialAccount[];
+  stripe_customer_id?: string | null;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year" | null;
+}
+
+export interface LegacyMigrationApplyFinancialHomeBayResponse {
+  credit_purchase_ids: number[];
+  credit_purchase_id_by_legacy_account: Record<string, number>;
+  subscription_id?: number | null;
+  membership_grant_ends_at?: string | null;
+}
+
 export interface LegacyMigration {
   listProjects: (
     opts?: LegacyMigrationListProjectsOptions,

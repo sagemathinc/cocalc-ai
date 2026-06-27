@@ -7,6 +7,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import type { FilesystemClient } from "@cocalc/conat/files/fs";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+import { useFsWithRefresh } from "./use-fs";
 
 type ProjectActionsWithFilesystem =
   | {
@@ -22,6 +24,12 @@ export default function useProjectActionsFilesystem({
   actions: ProjectActionsWithFilesystem;
   project_id: string;
 }): FilesystemClient | null {
+  const { publicDirectoryShare } = useProjectContext();
+  const shareFs = useFsWithRefresh({
+    project_id,
+    share_id: publicDirectoryShare?.id,
+    enabled: publicDirectoryShare != null,
+  }).fs;
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
   const [retry, setRetry] = useState(0);
@@ -31,6 +39,9 @@ export default function useProjectActionsFilesystem({
   } | null>(null);
 
   const fs = useMemo(() => {
+    if (publicDirectoryShare) {
+      return shareFs;
+    }
     if (ref.current?.project_id === project_id && ref.current.fs != null) {
       return ref.current.fs;
     }
@@ -41,7 +52,7 @@ export default function useProjectActionsFilesystem({
     const fs = source?.fs?.() ?? null;
     ref.current = { project_id, fs };
     return fs;
-  }, [project_id, retry]);
+  }, [project_id, publicDirectoryShare, retry, shareFs]);
 
   useEffect(() => {
     if (fs != null) {
