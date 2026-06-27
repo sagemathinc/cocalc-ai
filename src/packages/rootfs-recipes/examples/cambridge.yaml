@@ -1,0 +1,265 @@
+version: 1
+name: cocalc-cambridge
+
+builder:
+  run_quota:
+    disk_quota: 50000
+
+steps:
+  - uses: cocalc/apt
+    with:
+      upgrade: true
+      packages:
+        - bash
+        - biber
+        - build-essential
+        - ca-certificates
+        - cm-super
+        - curl
+        - fonts-dejavu
+        - fonts-liberation
+        - gfortran
+        - ghostscript
+        - git
+        - latexmk
+        - less
+        - libatomic1
+        - libcurl4-openssl-dev
+        - libgeos-dev
+        - libglib2.0-0t64
+        - libgl1
+        - libgomp1
+        - libhdf5-dev
+        - libnetcdf-dev
+        - libproj-dev
+        - libssl-dev
+        - libxml2-dev
+        - lmodern
+        - make
+        - openssh-client
+        - openssh-sftp-server
+        - pandoc
+        - pkg-config
+        - poppler-utils
+        - procps
+        - proj-bin
+        - proj-data
+        - python3
+        - python3-dev
+        - python3-pip
+        - python3-venv
+        - qpdf
+        - rsync
+        - sudo
+        - texlive-bibtex-extra
+        - texlive-fonts-recommended
+        - texlive-latex-base
+        - texlive-latex-extra
+        - texlive-latex-recommended
+        - texlive-luatex
+        - texlive-pictures
+        - texlive-plain-generic
+        - texlive-science
+        - texlive-xetex
+        - tmux
+        - vim
+        - wget
+        - zstd
+
+  - name: Configure OpenSSH SFTP server compatibility path
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      $SUDO mkdir -p /usr/libexec
+      $SUDO ln -sf /usr/lib/openssh/sftp-server /usr/libexec/sftp-server
+
+  - uses: cocalc/r
+    timeout: 2400
+
+  - name: Install Cambridge R packages
+    timeout: 2400
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      $SUDO Rscript --vanilla - <<'RS'
+      options(repos = c(CRAN = "https://cloud.r-project.org"))
+      packages <- c(
+        "car",
+        "corpcor",
+        "dplyr",
+        "fredr",
+        "ggplot2",
+        "httr",
+        "lubridate",
+        "matrixStats",
+        "moments",
+        "mvtnorm",
+        "PerformanceAnalytics",
+        "plot3D",
+        "quadprog",
+        "quantmod",
+        "readr",
+        "stringr",
+        "timeDate",
+        "tseries"
+      )
+      missing <- packages[!vapply(packages, requireNamespace, logical(1), quietly = TRUE)]
+      if (length(missing)) {
+        install.packages(missing, Ncpus = max(1, parallel::detectCores(logical = FALSE)))
+      }
+      RS
+
+  - uses: cocalc/jupyter-python
+    timeout: 3600
+    with:
+      prefix: /opt/cocalc-jupyter
+      install_bash_kernel: true
+      packages:
+        - beautifulsoup4
+        - cartopy
+        - cmocean
+        - colorcet
+        - h5py
+        - interegular
+        - ipykernel
+        - ipympl
+        - ipyvolume
+        - ipywidgets
+        - jupyter-console
+        - jupyterlab
+        - k3d
+        - lark
+        - matplotlib
+        - netCDF4
+        - notebook
+        - numpy
+        - openpyxl
+        - opencv-python-headless
+        - pandas
+        - pillow
+        - plotly
+        - pyproj
+        - requests
+        - scikit-learn
+        - scipy
+        - seaborn
+        - shapely
+        - statsmodels
+        - StrEnum
+        - sympy
+        - tabulate
+        - undate
+        - uv
+        - xarray
+
+  - name: Register Cambridge compatibility kernel aliases
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      kernel_dir="/usr/local/share/jupyter/kernels"
+      python="/opt/cocalc-jupyter/bin/python"
+      for kernel in anaconda2021 python3-sage python2 colab textbook; do
+        dir="$kernel_dir/$kernel"
+        $SUDO mkdir -p "$dir"
+        $SUDO tee "$dir/kernel.json" >/dev/null <<EOF
+      {
+        "argv": ["$python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+        "display_name": "Python 3 (Cambridge compatibility: $kernel)",
+        "language": "python",
+        "metadata": {
+          "cocalc_compatibility_kernel": "$kernel"
+        }
+      }
+      EOF
+        $SUDO chown -R 2001:2001 "$dir" || true
+      done
+
+  - name: Remove build-time caches and documentation
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      rm -rf "$HOME/.cache/pip" "$HOME/.cache/uv"
+      $SUDO rm -rf \
+        /root/.cache \
+        /root/.config \
+        /root/.ipython \
+        /root/.jupyter \
+        /root/.local \
+        /usr/share/doc \
+        /usr/share/info \
+        /usr/share/man \
+        /usr/share/texlive/texmf-dist/doc \
+        /usr/share/texlive/texmf-dist/source \
+        /tmp/* \
+        /var/tmp/*
+      $SUDO apt-get clean
+      $SUDO rm -rf /var/lib/apt/lists/*
+
+verify:
+  - command -v bash
+  - command -v jupyter-lab
+  - command -v latexmk
+  - command -v pdflatex
+  - command -v python3
+  - command -v R
+  - command -v uv
+  - test -e /usr/libexec/sftp-server
+  - python3 -c 'import cartopy, cmocean, colorcet, cv2, h5py, ipyvolume, k3d, matplotlib, netCDF4, numpy, pandas, plotly, scipy, seaborn, sklearn, statsmodels, sympy, xarray'
+  - Rscript --vanilla -e 'stopifnot(requireNamespace("IRkernel", quietly=TRUE), requireNamespace("ggplot2", quietly=TRUE), requireNamespace("quantmod", quietly=TRUE))'
+  - kpsewhich article.cls
+  - kpsewhich amsmath.sty
+  - kpsewhich siunitx.sty
+  - jupyter kernelspec list | grep -q python3
+  - jupyter kernelspec list | grep -q bash
+  - jupyter kernelspec list | grep -qi ir
+  - jupyter kernelspec list | grep -q anaconda2021
+  - jupyter kernelspec list | grep -q python3-sage
+  - jupyter kernelspec list | grep -q python2
+
+publish:
+  label: CoCalc Cambridge
+  slug: cocalc-cambridge
+  description: "Compact compatibility image for migrated Cambridge University Press notebooks and code, with Python/Jupyter scientific packages, R kernel support, historical Python kernel-name aliases, basic LaTeX, shell tools, and SFTP support. It intentionally excludes SageMath, Anaconda, TensorFlow, and PyTorch to keep the image practical."
+  family: cocalc-cambridge
+  version: "2026.06"
+  channel: stable
+  default_jupyter_kernel: python3
+  visibility: collaborators
+  theme:
+    icon: book-open
+    color: "#ffffff"
+    accent_color: "#8b1e3f"
+  content:
+    version: 1
+    title: CoCalc Cambridge
+    subtitle: Focused Python/R/LaTeX environment for Cambridge legacy publications.
+    highlights:
+      - Python 3 scientific stack
+      - JupyterLab and compatibility kernel aliases
+      - R with IRkernel
+      - Basic LaTeX publishing tools
+      - User pip installs via uv
+  tags:
+    - cocalc
+    - cambridge
+    - migration
+    - python
+    - jupyter
+    - r
+    - latex

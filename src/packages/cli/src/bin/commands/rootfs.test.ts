@@ -742,6 +742,14 @@ test("rootfs recipe ls lists bundled examples and modules", () => {
   assert.ok(result.modules.some((module) => module.id === "cocalc/apt"));
 });
 
+test("rootfs recipe ls parses embedded bundled examples", () => {
+  const result = listRootfsRecipes();
+  assert.ok(result.examples.some((recipe) => recipe.name === "cocalc-base"));
+  assert.ok(
+    result.examples.some((recipe) => recipe.name === "cocalc-cambridge"),
+  );
+});
+
 test("rootfs recipe list is an alias for ls", async () => {
   const seen: string[] = [];
   const originalLog = console.log;
@@ -799,6 +807,24 @@ test("rootfs recipe explain resolves bundled recipe examples by name", async () 
   assert.equal(harness.captured.recipe, "cocalc-base");
   assert.equal(harness.captured.steps[2].uses, "cocalc/jupyter-python");
   assert.equal(harness.captured.publish.slug, "cocalc-minimal-base");
+});
+
+test("rootfs recipe explain resolves bundled example recipe.name aliases", async () => {
+  const harness = rootfsDeps();
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "explain",
+    "cocalc-cambridge",
+  ]);
+
+  assert.equal(harness.captured.recipe, "cocalc-cambridge");
+  assert.equal(harness.captured.publish.slug, "cocalc-cambridge");
 });
 
 test("rootfs recipe explain parses bundled code-server recipe", async () => {
