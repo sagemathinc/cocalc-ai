@@ -574,6 +574,51 @@ function deploymentUpsertFromRecord(record: any) {
   };
 }
 
+async function resumeHostRuntimeDeploymentDefault({
+  ctx,
+  host,
+  parsedTarget,
+}: {
+  ctx: any;
+  host: { id: string; name?: string | null };
+  parsedTarget: { target_type: "artifact" | "component"; target: string };
+}) {
+  const current = await ctx.hub.hosts.listHostRuntimeDeployments({
+    scope_type: "host",
+    id: host.id,
+  });
+  const remaining = current
+    .filter(
+      (deployment: any) =>
+        !(
+          (deployment.target_type === parsedTarget.target_type &&
+            deployment.target === parsedTarget.target) ||
+          (parsedTarget.target_type === "artifact" &&
+            parsedTarget.target === "project-host" &&
+            deployment.target_type === "component" &&
+            PROJECT_HOST_RUNTIME_STACK_COMPONENTS.has(`${deployment.target}`))
+        ),
+    )
+    .map(deploymentUpsertFromRecord);
+  const removed = current.length !== remaining.length;
+  const deployments = removed
+    ? await ctx.hub.hosts.setHostRuntimeDeployments({
+        scope_type: "host",
+        id: host.id,
+        deployments: remaining,
+        replace: true,
+      })
+    : current;
+  return {
+    host_id: host.id,
+    host_name: host.name,
+    target_type: parsedTarget.target_type,
+    target: parsedTarget.target,
+    removed,
+    deployments,
+  };
+}
+
 function formatList(values: unknown): string {
   if (!Array.isArray(values) || values.length === 0) return "";
   return values.map((value) => `${value ?? ""}`.trim()).join(", ");
@@ -3388,9 +3433,13 @@ version when available, or \`--to-version\` to force a specific published versio
     );
 
   deploy
-    .command("resume-default <host>")
+    .command("resume-default [host]")
     .description(
-      "remove one host-scoped deployment override so the host follows the global default again",
+      "remove host-scoped deployment override(s) so hosts follow the global default again",
+    )
+    .option(
+      "--all-hosts",
+      "apply to every non-deleted host visible in the admin host list",
     )
     .option(
       "--component <component>",
@@ -3407,21 +3456,23 @@ This removes the selected host-scoped desired-state record and replaces the
 host scope with the remaining records unchanged. After that, the effective
 desired state for the selected target falls back to the global default.
 
+With \`--all-hosts\`, this applies to every non-deleted host visible in the
+admin host list, including user-created dedicated hosts.
+
 If the host is running, the backend may immediately queue the corresponding
 automatic reconcile or artifact upgrade work.
 `,
     )
     .action(
       async (
-        hostIdentifier: string,
-        opts: { component?: string; artifact?: string },
+        hostIdentifier: string | undefined,
+        opts: { allHosts?: boolean; component?: string; artifact?: string },
         command: Command,
       ) => {
         await withContext(
           command,
           "host deploy resume-default",
           async (ctx) => {
-            const host = await resolveHost(ctx, hostIdentifier);
             const parsedTarget = parseRuntimeDeploymentTarget(opts);
             if (
               !ctx.hub.hosts.listHostRuntimeDeployments ||
@@ -3431,42 +3482,42 @@ automatic reconcile or artifact upgrade work.
                 "hub does not support listing or setting runtime deployments",
               );
             }
-            const current = await ctx.hub.hosts.listHostRuntimeDeployments({
-              scope_type: "host",
-              id: host.id,
+            if (opts.allHosts) {
+              if (`${hostIdentifier ?? ""}`.trim()) {
+                throw new Error("do not specify a host when using --all-hosts");
+              }
+              const hosts = await listHosts(ctx, {
+                include_deleted: false,
+                admin_view: true,
+              });
+              const results: any[] = [];
+              for (const host of hosts) {
+                results.push(
+                  await resumeHostRuntimeDeploymentDefault({
+                    ctx,
+                    host,
+                    parsedTarget,
+                  }),
+                );
+              }
+              return {
+                target_type: parsedTarget.target_type,
+                target: parsedTarget.target,
+                host_count: results.length,
+                removed_count: results.filter((result) => result.removed)
+                  .length,
+                results,
+              };
+            }
+            if (!`${hostIdentifier ?? ""}`.trim()) {
+              throw new Error("specify a host or pass --all-hosts");
+            }
+            const host = await resolveHost(ctx, hostIdentifier);
+            return await resumeHostRuntimeDeploymentDefault({
+              ctx,
+              host,
+              parsedTarget,
             });
-            const remaining = current
-              .filter(
-                (deployment: any) =>
-                  !(
-                    (deployment.target_type === parsedTarget.target_type &&
-                      deployment.target === parsedTarget.target) ||
-                    (parsedTarget.target_type === "artifact" &&
-                      parsedTarget.target === "project-host" &&
-                      deployment.target_type === "component" &&
-                      PROJECT_HOST_RUNTIME_STACK_COMPONENTS.has(
-                        `${deployment.target}`,
-                      ))
-                  ),
-              )
-              .map(deploymentUpsertFromRecord);
-            const removed = current.length !== remaining.length;
-            const deployments = removed
-              ? await ctx.hub.hosts.setHostRuntimeDeployments({
-                  scope_type: "host",
-                  id: host.id,
-                  deployments: remaining,
-                  replace: true,
-                })
-              : current;
-            return {
-              host_id: host.id,
-              host_name: host.name,
-              target_type: parsedTarget.target_type,
-              target: parsedTarget.target,
-              removed,
-              deployments,
-            };
           },
         );
       },

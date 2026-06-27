@@ -2857,6 +2857,92 @@ test("host deploy resume-default removes project-host stack component pins when 
   assert.equal(capture.data.target, "project-host");
 });
 
+test("host deploy resume-default --all-hosts removes overrides on every listed host", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    listHosts: async (_ctx, opts) => {
+      assert.deepEqual(opts, {
+        include_deleted: false,
+        admin_view: true,
+      });
+      return [
+        { id: "cluster-host", name: "cluster-host", scope: "system" },
+        { id: "dedicated-host", name: "dedicated-host", scope: "dedicated" },
+      ];
+    },
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "resume-default",
+    "--all-hosts",
+    "--artifact",
+    "project-host",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentSetRequests, [
+    {
+      scope_type: "host",
+      id: "cluster-host",
+      replace: true,
+      deployments: [],
+    },
+    {
+      scope_type: "host",
+      id: "dedicated-host",
+      replace: true,
+      deployments: [],
+    },
+  ]);
+  assert.equal(capture.data.host_count, 2);
+  assert.equal(capture.data.removed_count, 2);
+  assert.deepEqual(
+    capture.data.results.map((result) => result.host_id),
+    ["cluster-host", "dedicated-host"],
+  );
+});
+
+test("host deploy resume-default --all-hosts rejects a positional host", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await assert.rejects(
+    () =>
+      program.parseAsync([
+        "node",
+        "test",
+        "host",
+        "deploy",
+        "resume-default",
+        "host-1",
+        "--all-hosts",
+        "--artifact",
+        "project-host",
+      ]),
+    /do not specify a host when using --all-hosts/,
+  );
+});
+
 test("host logs accepts acp-worker as a runtime log source", async () => {
   const capture: Capture = {
     upgrades: [],
