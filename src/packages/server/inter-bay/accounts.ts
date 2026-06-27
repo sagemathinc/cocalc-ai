@@ -753,12 +753,75 @@ export async function provisionLocalClusterAccount(
   );
 }
 
+function gmailCanonicalEmail(email: string): string | null {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return null;
+  if (domain !== "gmail.com" && domain !== "googlemail.com") return null;
+  const base = local.split("+")[0]?.replace(/\./g, "");
+  return base ? `${base}@gmail.com` : null;
+}
+
+async function preferredLegacyAccountIdForEmail(
+  email_address: string,
+): Promise<string | null> {
+  const email = `${email_address ?? ""}`.trim().toLowerCase();
+  if (!email) return null;
+  const legacyTable = await getPool().query<{ exists: boolean }>(
+    "SELECT to_regclass('public.legacy_migration_accounts') IS NOT NULL AS exists",
+  );
+  if (legacyTable.rows[0]?.exists !== true) return null;
+  const gmailCanonical = gmailCanonicalEmail(email);
+  const { rows } = await getPool().query<{ account_id: string | null }>(
+    `
+    WITH candidates AS (
+      SELECT legacy.legacy_account_id,
+             legacy.last_active,
+             lower(legacy.email_address) AS exact_email,
+             CASE
+               WHEN split_part(lower(legacy.email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+                 THEN replace(split_part(split_part(lower(legacy.email_address), '@', 1), '+', 1), '.', '') || '@gmail.com'
+               ELSE NULL
+             END AS gmail_canonical_email
+        FROM legacy_migration_accounts legacy
+       WHERE COALESCE(legacy.email_address_verified, false)=true
+    )
+    SELECT candidates.legacy_account_id AS account_id
+      FROM candidates
+     WHERE (
+             candidates.exact_email=$1
+             OR (
+               $2::TEXT IS NOT NULL
+               AND candidates.gmail_canonical_email=$2::TEXT
+             )
+           )
+       AND NOT EXISTS (
+             SELECT 1
+               FROM cluster_account_directory directory
+              WHERE directory.account_id=candidates.legacy_account_id
+           )
+       AND NOT EXISTS (
+             SELECT 1
+               FROM accounts account
+              WHERE account.account_id=candidates.legacy_account_id
+           )
+     ORDER BY candidates.last_active DESC NULLS LAST,
+              candidates.legacy_account_id
+     LIMIT 1
+    `,
+    [email, gmailCanonical],
+  );
+  return rows[0]?.account_id ?? null;
+}
+
 async function createClusterAccountDirect(
   opts: AccountDirectoryCreateRequest,
 ): Promise<AccountDirectoryEntry> {
   const email_address = `${opts.email_address ?? ""}`.trim().toLowerCase();
   const home_bay_id = `${opts.home_bay_id ?? ""}`.trim() || currentBayId();
-  const account_id = `${opts.account_id ?? ""}`.trim() || uuid();
+  const account_id =
+    `${opts.account_id ?? ""}`.trim() ||
+    (await preferredLegacyAccountIdForEmail(email_address)) ||
+    uuid();
   await deleteStaleLocalClusterAccountDirectoryEntryByEmail(email_address);
   const existing = await getClusterAccountByEmailDirect(email_address);
   if (existing?.account_id) {
