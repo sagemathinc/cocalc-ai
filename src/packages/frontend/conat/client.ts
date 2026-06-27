@@ -141,6 +141,7 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.chatStoreSearch",
   "projects.chatStoreDelete",
   "projects.chatStoreVacuum",
+  "publicDirectoryShares.create",
 ]);
 const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK = new Set<string>([]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;

@@ -5,7 +5,12 @@
 
 // cSpell: ignore isdir
 
-import { Button as AntdButton, Space } from "antd";
+import {
+  Button as AntdButton,
+  Input as AntdInput,
+  Space,
+  Typography,
+} from "antd";
 import * as immutable from "immutable";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
@@ -30,6 +35,8 @@ import {
 } from "@cocalc/frontend/project_store";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import DirectorySelector from "../directory-selector";
@@ -58,6 +65,34 @@ export const PRE_STYLE = {
 } as const;
 
 const MAX_RENDERED_SELECTED_FILES = 500;
+
+function slugPart(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "files"
+  );
+}
+
+function defaultPublicShareSlug({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}): string {
+  const tail = misc.path_split(path.replace(/\/+$/, "")).tail;
+  return `${project_id}/${slugPart(tail || "files")}`;
+}
+
+function publicShareUrl(slug: string): string {
+  return `${window.location.origin}/share/${slug
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+}
 
 export function crossProjectSingleItemDestPath({
   paths,
@@ -111,6 +146,10 @@ export function ActionBox({
   const user_type = useTypedRedux("account", "user_type");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const publicDirectorySharesEnabled = !!useTypedRedux(
+    "customize",
+    "public_directory_shares_enabled",
+  );
   const project_map = useTypedRedux("projects", "project_map");
   const project = project_map?.get?.(project_id);
   const projectGroup = account_id
@@ -140,6 +179,12 @@ export function ActionBox({
   const [deleteWithSudo, setDeleteWithSudo] = useState<boolean>(false);
   const [deleteFromSnapshots, setDeleteFromSnapshots] =
     useState<boolean>(false);
+  const [publishTitle, setPublishTitle] = useState<string>("");
+  const [publishDescription, setPublishDescription] = useState<string>("");
+  const [publishSlug, setPublishSlug] = useState<string>("");
+  const [publishUrl, setPublishUrl] = useState<string>("");
+  const [publishError, setPublishError] = useState<string>("");
+  const [publishing, setPublishing] = useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const bodyStyle =
     display === "modal"
@@ -168,10 +213,30 @@ export function ActionBox({
     };
   }, [actions, dnd_copy_dest]);
 
+  useEffect(() => {
+    if (file_action !== "publish") {
+      return;
+    }
+    const path = checked_files.first();
+    if (typeof path !== "string") {
+      return;
+    }
+    setPublishTitle((cur) => cur || misc.path_split(path).tail || "Files");
+    setPublishSlug(
+      (cur) => cur || defaultPublicShareSlug({ project_id, path }),
+    );
+  }, [checked_files, file_action, project_id]);
+
   function clear() {
     actions.set_all_files_unchecked();
     setDeleteWithSudo(false);
     setDeleteFromSnapshots(false);
+    setPublishTitle("");
+    setPublishDescription("");
+    setPublishSlug("");
+    setPublishUrl("");
+    setPublishError("");
+    setPublishing(false);
     if (dnd_copy_dest) {
       actions.setState({ copy_destination_project_id: undefined });
     }
@@ -738,6 +803,125 @@ export function ActionBox({
     }
   }
 
+  async function publishDirectory(): Promise<void> {
+    const path = checked_files.first();
+    if (typeof path !== "string") {
+      return;
+    }
+    setPublishing(true);
+    setPublishError("");
+    setPublishUrl("");
+    try {
+      const share = await webapp_client.conat_client.callHubApi({
+        name: "publicDirectoryShares.create",
+        project_id,
+        timeout: 30000,
+        args: [
+          {
+            project_id,
+            path,
+            slug: publishSlug,
+            title: publishTitle,
+            description: publishDescription,
+          },
+        ],
+      });
+      const url = publicShareUrl(share.slug);
+      setPublishUrl(url);
+      await navigator.clipboard.writeText(url).catch(() => {});
+      alert_message({
+        type: "success",
+        message:
+          "Directory published. The unlisted share link was copied to your clipboard.",
+      });
+    } catch (err) {
+      setPublishError(normalizeUserFacingError(err).message);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function render_publish() {
+    const path = checked_files.first();
+    if (typeof path !== "string") {
+      return <Alert bsStyle="warning">Select one directory to publish.</Alert>;
+    }
+    if (!publicDirectorySharesEnabled) {
+      return (
+        <Alert bsStyle="warning">
+          Public directory shares are not enabled on this site.
+        </Alert>
+      );
+    }
+    if (readOnlySource) {
+      return (
+        <Alert bsStyle="warning">
+          View-only project access cannot publish directories.
+        </Alert>
+      );
+    }
+    if (user_type !== "signed_in") {
+      return <LoginLink />;
+    }
+    const canPublish = publishSlug.trim().length > 0 && !publishing;
+    return (
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert bsStyle="info">
+          Publish <code>{path}</code> as an unlisted shared directory. Viewers
+          must sign in to CoCalc, and file reads count against their egress
+          quota.
+        </Alert>
+        <div>
+          <Typography.Text strong>Title</Typography.Text>
+          <AntdInput
+            value={publishTitle}
+            onChange={(e) => setPublishTitle(e.target.value)}
+            placeholder="Shared directory title"
+          />
+        </div>
+        <div>
+          <Typography.Text strong>Share path</Typography.Text>
+          <AntdInput
+            value={publishSlug}
+            onChange={(e) => setPublishSlug(e.target.value)}
+            addonBefore="/share/"
+            placeholder={`${project_id}/files`}
+          />
+        </div>
+        <div>
+          <Typography.Text strong>Description</Typography.Text>
+          <AntdInput.TextArea
+            value={publishDescription}
+            onChange={(e) => setPublishDescription(e.target.value)}
+            placeholder="Optional description for viewers"
+            rows={3}
+          />
+        </div>
+        {publishError ? (
+          <Alert bsStyle="danger">{publishError}</Alert>
+        ) : publishUrl ? (
+          <Alert bsStyle="success">
+            Published at{" "}
+            <a href={publishUrl} target="_blank" rel="noreferrer">
+              {publishUrl}
+            </a>
+          </Alert>
+        ) : null}
+        <Space>
+          <AntdButton onClick={cancel_action}>Close</AntdButton>
+          <AntdButton
+            type="primary"
+            disabled={!canPublish}
+            loading={publishing}
+            onClick={() => void publishDirectory()}
+          >
+            <Icon name="share-square" /> Publish directory
+          </AntdButton>
+        </Space>
+      </Space>
+    );
+  }
+
   function render_action_box(action: FileAction) {
     switch (action) {
       case "compress":
@@ -773,6 +957,8 @@ export function ActionBox({
         );
       case "move":
         return render_move();
+      case "publish":
+        return render_publish();
       default:
         return undefined;
     }

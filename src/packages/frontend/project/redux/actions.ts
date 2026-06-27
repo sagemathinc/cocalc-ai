@@ -319,6 +319,16 @@ export const FILE_ACTIONS = {
     allows_multiple_files: true,
     hideFlyout: false,
   },
+  publish: {
+    name: defineMessage({
+      id: "file_actions.publish.name",
+      defaultMessage: "Publish",
+      description: "Publish a directory as an unlisted public share",
+    }),
+    icon: "share-square" as IconName,
+    allows_multiple_files: false,
+    hideFlyout: false,
+  },
   download: {
     name: defineMessage({
       id: "file_actions.download.name",

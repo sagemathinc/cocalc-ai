@@ -107,6 +107,16 @@ export interface UpsertPublicDirectoryShareOptions {
   disabled?: boolean;
 }
 
+export interface CreatePublicDirectoryShareOptions {
+  account_id?: string;
+  project_id: string;
+  path: string;
+  slug: string;
+  title?: string | null;
+  description?: string | null;
+  license?: string | null;
+}
+
 export interface CopyPublicDirectoryShareToProjectOptions {
   account_id?: string;
   slug: string;
@@ -166,6 +176,9 @@ export interface PublicDirectoryShares {
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
+  create: (
+    opts: CreatePublicDirectoryShareOptions,
+  ) => Promise<PublicDirectoryShareSummary>;
   listDirectory: (
     opts: ListPublicDirectoryShareDirectoryOptions,
   ) => Promise<ListPublicDirectoryShareDirectoryResponse>;
@@ -179,6 +192,7 @@ export const publicDirectoryShares = {
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
+  create: authFirstRequireAccount,
   listDirectory: authFirstRequireAccount,
   copyToProject: authFirstRequireAccount,
 } as const;

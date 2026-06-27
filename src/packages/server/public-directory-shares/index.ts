@@ -36,6 +36,7 @@ import type {
   PublicDirectoryShareVisibility,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
+  CreatePublicDirectoryShareOptions,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
   UpsertPublicDirectoryShareOptions,
@@ -129,6 +130,11 @@ function normalizeAvailability(
     return availability;
   }
   return "unknown";
+}
+
+function defaultTitleForPath(path: string): string {
+  if (path === ".") return "Project files";
+  return posix.basename(path) || path;
 }
 
 export function publicDirectoryShareReadPolicyForPath(
@@ -457,6 +463,12 @@ export async function upsert(
 ): Promise<PublicDirectoryShareSummary> {
   await assertAdmin(opts.account_id);
   await ensurePublicDirectorySharesSchema();
+  return await savePublicDirectoryShare(opts);
+}
+
+async function savePublicDirectoryShare(
+  opts: UpsertPublicDirectoryShareOptions,
+): Promise<PublicDirectoryShareSummary> {
   if (!isValidUUID(opts.project_id)) {
     throw Error("invalid project_id");
   }
@@ -559,6 +571,55 @@ export async function upsert(
     [slug, bayId, row.id, row.project_id, row.disabled],
   );
   return rowToSummary(row);
+}
+
+export async function create(
+  opts: CreatePublicDirectoryShareOptions,
+): Promise<PublicDirectoryShareSummary> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!opts.account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(opts.project_id)) {
+    throw Error("invalid project_id");
+  }
+  await assertCollab({
+    account_id: opts.account_id,
+    project_id: opts.project_id,
+  });
+  const slug = normalizePublicDirectoryShareSlug(opts.slug);
+  const path = normalizePublicDirectorySharePath(opts.path);
+  const fs = (
+    await getExplicitProjectRoutedClient({
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+    })
+  ).fs({
+    project_id: opts.project_id,
+  });
+  try {
+    await fs.getListing(path);
+  } catch (err) {
+    throw Error(
+      `shared path must be an existing directory (${(err as Error).message})`,
+    );
+  }
+  return await savePublicDirectoryShare({
+    account_id: opts.account_id,
+    project_id: opts.project_id,
+    path,
+    slug,
+    visibility: "unlisted",
+    requires_auth: true,
+    availability_status: "available",
+    title: opts.title?.trim() || defaultTitleForPath(path),
+    description: opts.description?.trim() || null,
+    license: opts.license?.trim() || null,
+    metadata: {
+      source: "project-file-browser",
+    },
+  });
 }
 
 export async function copyToProject({
