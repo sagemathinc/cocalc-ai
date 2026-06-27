@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { authFirstRequireAccount } from "./util";
+import { authFirst, authFirstRequireAccount } from "./util";
 import type { CopyOptions } from "@cocalc/conat/files/fs";
 import type { FileTypeLabel } from "@cocalc/conat/files/listing";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
@@ -51,6 +51,9 @@ export interface PublicDirectoryShareSummary {
 export interface ResolvedPublicDirectoryShare extends PublicDirectoryShareSummary {
   read_policy: ProjectViewerReadPolicy;
   available: boolean;
+  project_title?: string | null;
+  host_id?: string | null;
+  owning_bay_id?: string | null;
 }
 
 export interface ResolvePublicDirectoryShareOptions {
@@ -74,6 +77,15 @@ export interface ListPublicDirectorySharesResponse {
 
 export interface ListMyPublicDirectorySharesOptions {
   account_id?: string;
+  limit?: number;
+  offset?: number;
+  include_disabled?: boolean;
+}
+
+export interface ListProjectPublicDirectorySharesOptions {
+  account_id?: string;
+  project_id: string;
+  path?: string;
   limit?: number;
   offset?: number;
   include_disabled?: boolean;
@@ -145,6 +157,19 @@ export interface CopyPublicDirectoryShareToProjectOptions {
   options?: CopyOptions;
 }
 
+export interface AuthorizePublicDirectoryShareReadOptions {
+  account_id?: string;
+  host_id?: string;
+  project_id: string;
+  share_id: string;
+}
+
+export interface AuthorizePublicDirectoryShareReadResponse {
+  project_id: string;
+  share_id: string;
+  read_policy: ProjectViewerReadPolicy;
+}
+
 export interface PublicDirectoryShareDirectoryEntry {
   name: string;
   path: string;
@@ -196,6 +221,9 @@ export interface PublicDirectoryShares {
   listMine: (
     opts?: ListMyPublicDirectorySharesOptions,
   ) => Promise<ListPublicDirectorySharesResponse>;
+  listProject: (
+    opts: ListProjectPublicDirectorySharesOptions,
+  ) => Promise<ListPublicDirectorySharesResponse>;
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
@@ -211,15 +239,20 @@ export interface PublicDirectoryShares {
   copyToProject: (
     opts: CopyPublicDirectoryShareToProjectOptions,
   ) => Promise<CopyPublicDirectoryShareToProjectResponse>;
+  authorizeRead: (
+    opts: AuthorizePublicDirectoryShareReadOptions,
+  ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
 }
 
 export const publicDirectoryShares = {
   resolve: authFirstRequireAccount,
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
+  listProject: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
   create: authFirstRequireAccount,
   update: authFirstRequireAccount,
   listDirectory: authFirstRequireAccount,
   copyToProject: authFirstRequireAccount,
+  authorizeRead: authFirst,
 } as const;

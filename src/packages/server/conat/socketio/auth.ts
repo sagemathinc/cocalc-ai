@@ -51,6 +51,7 @@ import {
   getCoCalcUserId,
   getCoCalcUserType,
   checkCommonPermissions,
+  extractShareFileSubject,
   extractHostSubject,
   extractProjectSubject,
   isAccountAllowed as isAccountSubjectAllowed,
@@ -727,6 +728,7 @@ function isHostServiceAllowed({
 async function isAccountAllowed({
   account_id,
   subject,
+  type,
 }: {
   account_id: string;
   subject: string;
@@ -740,6 +742,11 @@ async function isAccountAllowed({
   const v = subject.split(".");
   if (v[0] == "sys") {
     return (await getAdmins()).has(account_id);
+  }
+
+  const shareFileSubject = extractShareFileSubject(subject);
+  if (shareFileSubject) {
+    return type === "pub" && shareFileSubject.account_id === account_id;
   }
 
   // account accessing a project

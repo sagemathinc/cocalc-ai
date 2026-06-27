@@ -28,6 +28,7 @@ const logger = getLogger("files:fs");
 
 export const DEFAULT_FILE_SERVICE = "fs";
 export const VIEWER_FILE_SERVICE = "fs-viewer";
+export const SHARE_FILE_SERVICE = "fs-share";
 
 export interface ExecOutput {
   stdout: Buffer;
@@ -992,6 +993,58 @@ export function parseViewerFsSubject(
     return;
   }
   return { project_id, account_id };
+}
+
+export function shareFsSubject({
+  project_id,
+  share_id,
+  account_id,
+  service = SHARE_FILE_SERVICE,
+}: {
+  project_id: string;
+  share_id: string;
+  account_id: string;
+  service?: string;
+}) {
+  if (!isValidUUID(project_id)) {
+    throw Error(`project_id must be a valid uuid -- ${project_id}`);
+  }
+  if (!isValidUUID(share_id)) {
+    throw Error(`share_id must be a valid uuid -- ${share_id}`);
+  }
+  if (!isValidUUID(account_id)) {
+    throw Error(`account_id must be a valid uuid -- ${account_id}`);
+  }
+  if (typeof service != "string") {
+    throw Error("service must be a string");
+  }
+  return `${getService({ service })}.project-${project_id}.share-${share_id}.account-${account_id}`;
+}
+
+export function parseShareFsSubject(
+  subject: string,
+): { project_id: string; share_id: string; account_id: string } | undefined {
+  const parts = subject.split(".");
+  if (parts.length !== 4 || parts[0] !== SHARE_FILE_SERVICE) {
+    return;
+  }
+  const project_id = parts[1]?.startsWith("project-")
+    ? parts[1].slice("project-".length)
+    : "";
+  const share_id = parts[2]?.startsWith("share-")
+    ? parts[2].slice("share-".length)
+    : "";
+  const account_id = parts[3]?.startsWith("account-")
+    ? parts[3].slice("account-".length)
+    : "";
+  if (
+    !isValidUUID(project_id) ||
+    !isValidUUID(share_id) ||
+    !isValidUUID(account_id)
+  ) {
+    return;
+  }
+  return { project_id, share_id, account_id };
 }
 
 const DEFAULT_FS_CALL_TIMEOUT = 5 * 60_000;

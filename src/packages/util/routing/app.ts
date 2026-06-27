@@ -12,6 +12,7 @@ export const APP_ROUTES = new Set([
   "ssh",
   "projects",
   "settings",
+  "share",
   "notifications",
   "hosts",
 ]);

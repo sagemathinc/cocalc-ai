@@ -214,6 +214,32 @@ export function extractViewerFileSubject(
   return { project_id, account_id };
 }
 
+export function extractShareFileSubject(
+  subject: string,
+): { project_id: string; share_id: string; account_id: string } | undefined {
+  const parts = subject.split(".");
+  if (parts.length !== 4 || parts[0] !== "fs-share") {
+    return;
+  }
+  const project_id = parts[1]?.startsWith("project-")
+    ? parts[1].slice("project-".length)
+    : "";
+  const share_id = parts[2]?.startsWith("share-")
+    ? parts[2].slice("share-".length)
+    : "";
+  const account_id = parts[3]?.startsWith("account-")
+    ? parts[3].slice("account-".length)
+    : "";
+  if (
+    !isValidUUID(project_id) ||
+    !isValidUUID(share_id) ||
+    !isValidUUID(account_id)
+  ) {
+    return;
+  }
+  return { project_id, share_id, account_id };
+}
+
 export function extractHostSubject(subject: string): string {
   const parts = subject.split(".");
   if (parts[1] === "host") {

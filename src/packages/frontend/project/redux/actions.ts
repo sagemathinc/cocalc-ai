@@ -2802,9 +2802,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (forceRefresh) {
       this.clearFilesystemClient();
     }
+    const share_id =
+      `${this.get_store()?.get("public_directory_share_id") ?? ""}`.trim();
     this.filesystemPromise ??= webapp_client.conat_client.projectFs({
       project_id: this.project_id,
       caller: "ProjectActions.fs",
+      share_id: share_id || undefined,
     });
     return await this.filesystemPromise;
   };

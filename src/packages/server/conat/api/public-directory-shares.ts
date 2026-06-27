@@ -4,11 +4,13 @@
  */
 
 export {
+  authorizeRead,
   create,
   copyToProject,
   list,
   listDirectory,
   listMine,
+  listProject,
   resolve,
   update,
   upsert,

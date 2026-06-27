@@ -246,9 +246,6 @@ export default function initPublicContent(router: Router): void {
     "/products/cocalc-plus/",
     "/products/cocalc-rocket",
     "/products/cocalc-rocket/",
-    "/share",
-    "/share/",
-    /^\/share\/.+$/,
   ];
 
   router.get(contentPaths, redirectToStatic);

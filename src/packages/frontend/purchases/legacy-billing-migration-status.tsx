@@ -42,7 +42,11 @@ function hasVisibleLegacyBilling(
   );
 }
 
-export default function LegacyBillingMigrationStatus() {
+export default function LegacyBillingMigrationStatus({
+  onApplied,
+}: {
+  onApplied?: () => Promise<void> | void;
+}) {
   const account_id = useTypedRedux("account", "account_id");
   const legacyMigrationEnabled = !!useTypedRedux(
     "customize",
@@ -86,6 +90,7 @@ export default function LegacyBillingMigrationStatus() {
         },
       );
       await load();
+      await onApplied?.();
     } catch (err) {
       setError(`${err}`);
     } finally {
