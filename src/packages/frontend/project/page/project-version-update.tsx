@@ -59,6 +59,10 @@ export default function ProjectVersionUpdate({
   const actions = useActions("projects");
   const projectState = useProjectState(project_id);
   const host_id = useProjectMapField<string>(project_id, "host_id");
+  const publicDirectoryShareProjection = !!useProjectMapField<boolean>(
+    project_id,
+    "public_directory_share_projection",
+  );
   const hostInfo = useHostInfo(host_id);
   const [liveStatus, setLiveStatus] = useState<LiveProjectStatus>();
   const [closedTarget, setClosedTarget] = useState<string>();
@@ -72,6 +76,7 @@ export default function ProjectVersionUpdate({
     versionString(projectState?.get?.("project_bundle_version"));
 
   useEffect(() => {
+    if (publicDirectoryShareProjection) return;
     if (state !== "running") return;
     let closed = false;
     const refresh = async () => {
@@ -95,9 +100,10 @@ export default function ProjectVersionUpdate({
       closed = true;
       clearInterval(interval);
     };
-  }, [actions, host_id, project_id, state]);
+  }, [actions, host_id, project_id, publicDirectoryShareProjection, state]);
 
   if (
+    publicDirectoryShareProjection ||
     state !== "running" ||
     runningVersion == null ||
     targetVersion == null ||

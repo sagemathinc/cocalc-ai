@@ -2,6 +2,20 @@ import { useEffect } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Map as ImmutableMap } from "immutable";
 
+export function isPublicDirectoryShareHost(
+  host_id?: string,
+  projectMap: ImmutableMap<string, any> | undefined = redux
+    .getStore("projects")
+    ?.get("project_map"),
+): boolean {
+  if (!host_id || projectMap == null) return false;
+  return projectMap.some?.(
+    (project) =>
+      project?.get?.("host_id") === host_id &&
+      project?.get?.("public_directory_share_projection") === true,
+  );
+}
+
 export function getHostInfo(
   host_id?: string,
 ): ImmutableMap<string, any> | undefined {
@@ -14,11 +28,16 @@ export function useHostInfo(
   opts?: { enabled?: boolean },
 ): ImmutableMap<string, any> | undefined {
   const hostInfo = useTypedRedux("projects", "host_info")?.get(host_id ?? "");
+  const projectMap = useTypedRedux("projects", "project_map");
+  const publicDirectoryShareHost = isPublicDirectoryShareHost(
+    host_id,
+    projectMap,
+  );
   const enabled = opts?.enabled !== false;
   useEffect(() => {
-    if (!enabled || !host_id) return;
+    if (!enabled || !host_id || publicDirectoryShareHost) return;
     redux.getActions("projects")?.ensure_host_info(host_id);
-  }, [enabled, host_id]);
+  }, [enabled, host_id, publicDirectoryShareHost]);
   return hostInfo;
 }
 

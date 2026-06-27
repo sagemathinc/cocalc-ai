@@ -102,6 +102,7 @@ import {
   getProjectUserRole,
   isViewerProjectRole,
 } from "@cocalc/frontend/project/realtime-access";
+import { isPublicDirectoryShareHost } from "@cocalc/frontend/projects/host-info";
 
 export interface ConatConnectionStatus {
   state: "connected" | "connecting" | "disconnected";
@@ -1070,6 +1071,9 @@ export class ConatClient extends EventEmitter {
 
   private getHostInfo(host_id: string): ImmutableMap<string, any> | undefined {
     const hostInfo = redux.getStore("projects")?.get("host_info")?.get(host_id);
+    if (isPublicDirectoryShareHost(host_id)) {
+      return hostInfo;
+    }
     if (!hostInfo) {
       redux.getActions("projects")?.ensure_host_info(host_id);
       return;
@@ -1170,7 +1174,12 @@ export class ConatClient extends EventEmitter {
     const projectBayId =
       `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
     const hostBayId = `${hostInfo.get("bay_id") ?? ""}`.trim();
-    if (projectBayId && hostBayId && projectBayId !== hostBayId) {
+    if (
+      projectBayId &&
+      hostBayId &&
+      projectBayId !== hostBayId &&
+      !isPublicDirectoryShareHost(host_id)
+    ) {
       // Cross-bay placement is valid. Refresh any stale cached host info, but
       // do not suppress direct browser->project-host routing just because the
       // control-plane bay and host bay differ.
@@ -1227,9 +1236,11 @@ export class ConatClient extends EventEmitter {
     const hostBayId = `${hostInfo?.get?.("bay_id") ?? ""}`.trim();
     const bayMismatch =
       !!host_id && !!projectBayId && !!hostBayId && projectBayId !== hostBayId;
+    const publicDirectoryShareHost = isPublicDirectoryShareHost(host_id);
     const initial = this.getProjectRoutingInfo(project_id);
-    if (initial && !bayMismatch) return initial;
+    if (initial && (!bayMismatch || publicDirectoryShareHost)) return initial;
     if (!host_id) return initial;
+    if (publicDirectoryShareHost) return initial;
     await redux.getActions("projects")?.ensure_host_info(host_id, bayMismatch);
     return this.getProjectRoutingInfo(project_id) ?? initial;
   };
@@ -1249,6 +1260,14 @@ export class ConatClient extends EventEmitter {
       host_id,
       ...this.reconnectDebugContext(),
     });
+    if (isPublicDirectoryShareHost(host_id)) {
+      const routing = this.getHostRoutingInfo(host_id);
+      reconnectDebugLog(
+        `using cached public-share host info for ${host_id}`,
+        routing,
+      );
+      return routing;
+    }
     try {
       await withTimeout(
         Promise.resolve(

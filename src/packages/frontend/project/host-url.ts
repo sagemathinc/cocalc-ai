@@ -1,6 +1,9 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { getHostInfo } from "@cocalc/frontend/projects/host-info";
+import {
+  getHostInfo,
+  isPublicDirectoryShareHost,
+} from "@cocalc/frontend/projects/host-info";
 
 export function getProjectHostBase(project_id: string): string {
   const project_map = redux.getStore("projects")?.get("project_map");
@@ -10,7 +13,9 @@ export function getProjectHostBase(project_id: string): string {
   if (!host_id) return "";
   const info = getHostInfo(host_id);
   if (!info) {
-    redux.getActions("projects")?.ensure_host_info(host_id);
+    if (!isPublicDirectoryShareHost(host_id)) {
+      redux.getActions("projects")?.ensure_host_info(host_id);
+    }
     return "";
   }
   if (info.get("local_proxy") && typeof window !== "undefined") {
