@@ -1103,6 +1103,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [loading, setLoading] = useState<boolean>(false);
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [launchBusyKey, setLaunchBusyKey] = useState<string | undefined>(
+    undefined,
+  );
   const [submittingToAgent, setSubmittingToAgent] = useState<boolean>(false);
   const [rowAction, setRowAction] = useState<{
     appId: string;
@@ -2185,6 +2188,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       return;
     }
     try {
+      setLaunchBusyKey(`row:${row.id}`);
       setSubmitting(true);
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [row.id]: undefined }));
@@ -2215,6 +2219,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       await refreshAfterMutation();
     } finally {
       setSubmitting(false);
+      setLaunchBusyKey(undefined);
     }
   }
 
@@ -2226,6 +2231,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
     let createdId: string | undefined;
     try {
+      setLaunchBusyKey(`preset:${preset.key}`);
       setSubmitting(true);
       setError(undefined);
       const spec = buildSpecFromPreset(preset);
@@ -2265,6 +2271,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       }
     } finally {
       setSubmitting(false);
+      setLaunchBusyKey(undefined);
     }
   }
 
@@ -3007,9 +3014,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       <Button
                         type="primary"
                         size="small"
-                        loading={submitting}
+                        loading={launchBusyKey === `row:${row.id}`}
                         disabled={
-                          submitting ||
+                          (submitting && launchBusyKey !== `row:${row.id}`) ||
                           ((isRunning || isStatic || isUnmanaged) && !canOpen)
                         }
                         onClick={() => void onLaunchRow(row)}
@@ -3020,6 +3027,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       </Button>
                       <Button
                         size="small"
+                        disabled={submitting}
                         onClick={() => toggleRowExpanded(row.id)}
                       >
                         {expandedRows[row.id] ? "Hide details" : "Details"}
@@ -3070,8 +3078,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       <Button
                         type="primary"
                         size="small"
-                        loading={submitting}
-                        disabled={submitting}
+                        loading={launchBusyKey === `preset:${preset.key}`}
+                        disabled={
+                          submitting && launchBusyKey !== `preset:${preset.key}`
+                        }
                         onClick={() => void onLaunchPreset(preset)}
                       >
                         Run
