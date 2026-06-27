@@ -138,4 +138,34 @@ describe("listing initialization", () => {
       }
     }
   });
+
+  it("keeps the initial listing when read-only filesystem watch is unavailable", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const fs: any = {
+      getListing: jest.fn(async () => ({
+        files: { "a.ipynb": { type: "f", size: 10, mtime: 123 } },
+        truncated: false,
+      })),
+      watch: jest.fn(async () => {
+        throw new Error("watch not defined");
+      }),
+    };
+
+    try {
+      const dir = await listing({ path: "share", fs });
+
+      expect(fs.getListing).toHaveBeenCalledWith("share");
+      expect(fs.watch).toHaveBeenCalledWith("share", {
+        closeOnUnlink: true,
+        stats: true,
+      });
+      expect(dir.files).toEqual({
+        "a.ipynb": { type: "f", size: 10, mtime: 123 },
+      });
+      expect(warn).not.toHaveBeenCalled();
+      dir.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
