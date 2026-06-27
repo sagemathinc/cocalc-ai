@@ -16,6 +16,7 @@ import {
 import * as immutable from "immutable";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
+import { CopyToClipboard } from "react-copy-to-clipboard";
 import {
   Alert,
   Button,
@@ -1216,10 +1217,30 @@ export function ActionBox({
           <Alert bsStyle="danger">{publishError}</Alert>
         ) : publishUrl ? (
           <Alert bsStyle="success">
-            Published at{" "}
-            <a href={publishUrl} target="_blank" rel="noreferrer">
-              {publishUrl}
-            </a>
+            <Space size={6} wrap>
+              <span>Published at</span>
+              <a href={publishUrl} target="_blank" rel="noreferrer">
+                {publishUrl}
+              </a>
+              <CopyToClipboard
+                text={publishUrl}
+                onCopy={() =>
+                  alert_message({
+                    type: "success",
+                    message: "Copied published URL",
+                    timeout: 2,
+                  })
+                }
+              >
+                <AntdButton
+                  aria-label="Copy published URL"
+                  icon={<Icon name="copy" />}
+                  size="small"
+                  title="Copy published URL"
+                  type="text"
+                />
+              </CopyToClipboard>
+            </Space>
           </Alert>
         ) : null}
         <Space>

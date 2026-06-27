@@ -295,14 +295,21 @@ function ActionBarEnabled({
       hasPendingUpdate && !suppressPendingRefresh ? (
         <RefreshButton onClick={onRefreshListing} />
       ) : null;
+    const readOnlyRefreshButton =
+      readOnly && onRefreshListing != null && !refreshButton ? (
+        <Button bsSize="small" onClick={onRefreshListing}>
+          <Icon name="refresh" /> {intl.formatMessage(labels.refresh)}
+        </Button>
+      ) : null;
     if (listing.length === 0) {
-      return readOnly && refreshButton ? (
+      return readOnly && (refreshButton || readOnlyRefreshButton) ? (
         <div style={ROW_INFO_STYLE}>
           <FormattedMessage
             id="project.explorer.action-bar.read_only.empty"
             defaultMessage="Read-only listing."
           />{" "}
           {refreshButton}
+          {readOnlyRefreshButton}
         </div>
       ) : undefined;
     }
@@ -330,6 +337,7 @@ function ActionBarEnabled({
             />
           ) : null}
           {refreshButton}
+          {readOnlyRefreshButton}
           {autoUpdateButton && refreshButton ? <> &middot; </> : null}
           {autoUpdateButton}
         </div>
