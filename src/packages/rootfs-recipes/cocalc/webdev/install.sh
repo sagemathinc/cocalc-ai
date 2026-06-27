@@ -30,12 +30,48 @@ npm_global_packages="${NPM_GLOBAL_PACKAGES:-typescript tsx npm-check-updates ser
 owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
 
+install_chromium_real_deb_repo() {
+  local key_id="5301FA4FD93244FBC6F6149982BB6851C64F6880"
+  local gnupg_home
+
+  gnupg_home="$(mktemp -d)"
+  chmod 700 "$gnupg_home"
+  gpg --homedir "$gnupg_home" --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "$key_id"
+  gpg --homedir "$gnupg_home" --export "$key_id" | $SUDO tee /usr/share/keyrings/xtradeb-apps.gpg >/dev/null
+  rm -rf "$gnupg_home"
+
+  . /etc/os-release
+  $SUDO tee /etc/apt/sources.list.d/xtradeb-apps.sources >/dev/null <<EOF
+Types: deb
+URIs: https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu/
+Suites: ${VERSION_CODENAME}
+Components: main
+Signed-By: /usr/share/keyrings/xtradeb-apps.gpg
+EOF
+
+  $SUDO tee /etc/apt/preferences.d/chromium-real-deb >/dev/null <<'EOF'
+Package: chromium-browser
+Pin: version 2:1snap*
+Pin-Priority: -1
+
+Package: chromium chromium-common chromium-driver chromium-headless-shell chromium-l10n chromium-sandbox chromium-shell
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: 700
+EOF
+}
+
+$SUDO apt-get update
+run_noninteractive apt-get install -y --no-install-recommends ca-certificates gnupg
+install_chromium_real_deb_repo
 $SUDO apt-get update
 run_noninteractive apt-get install -y --no-install-recommends \
   bash \
   bat \
   build-essential \
   ca-certificates \
+  chromium \
+  chromium-driver \
+  chromium-sandbox \
   cloc \
   cmake \
   curl \
@@ -105,6 +141,12 @@ fi
 if command -v batcat >/dev/null 2>&1; then
   $SUDO ln -sf "$(command -v batcat)" /usr/local/bin/bat
 fi
+$SUDO tee /usr/local/bin/chromium-browser >/dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/bin/chromium "$@"
+EOF
+$SUDO chmod 0755 /usr/local/bin/chromium-browser
 
 npm_bin="$(command -v npm || true)"
 if [ -z "$npm_bin" ] && [ -x /opt/cocalc/bin/npm ]; then
@@ -146,8 +188,8 @@ $SUDO tee /opt/cocalc-webdev/README.md >/dev/null <<'EOF'
 
 This image is intended for CoCalc development and standard TypeScript/web
 projects. It uses the CoCalc-provided Node/npm runtime and adds system-wide
-pnpm, yarn, GitHub CLI, native build tools, PostgreSQL, Redis, and a compact
-Python/Jupyter environment.
+pnpm, yarn, GitHub CLI, native build tools, Chromium, PostgreSQL, Redis, and a
+compact Python/Jupyter environment.
 
 ## CoCalc development quick start
 
