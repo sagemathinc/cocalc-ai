@@ -732,6 +732,7 @@ test("rootfs recipe ls lists bundled examples and modules", () => {
   assert.ok(result.examples.some((recipe) => recipe.name === "cocalc-base"));
   assert.ok(result.examples.some((recipe) => recipe.name === "code-server"));
   assert.ok(result.examples.some((recipe) => recipe.name === "ml-pytorch-gpu"));
+  assert.ok(result.examples.some((recipe) => recipe.name === "webdev"));
   assert.ok(
     result.modules.some((module) => module.id === "cocalc/code-server"),
   );
@@ -739,12 +740,14 @@ test("rootfs recipe ls lists bundled examples and modules", () => {
     result.modules.some((module) => module.id === "cocalc/jupyter-python"),
   );
   assert.ok(result.modules.some((module) => module.id === "cocalc/latex"));
+  assert.ok(result.modules.some((module) => module.id === "cocalc/webdev"));
   assert.ok(result.modules.some((module) => module.id === "cocalc/apt"));
 });
 
 test("rootfs recipe ls parses embedded bundled examples", () => {
   const result = listRootfsRecipes();
   assert.ok(result.examples.some((recipe) => recipe.name === "cocalc-base"));
+  assert.ok(result.examples.some((recipe) => recipe.name === "webdev"));
   assert.ok(
     result.examples.some((recipe) => recipe.name === "cocalc-cambridge"),
   );
@@ -849,6 +852,30 @@ test("rootfs recipe explain parses bundled code-server recipe", async () => {
   assert.equal(
     harness.captured.steps[1].contributes.content.actions[1].app_spec.id,
     "code-server",
+  );
+});
+
+test("rootfs recipe explain parses bundled webdev recipe", async () => {
+  const harness = rootfsDeps();
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "recipe",
+    "explain",
+    "webdev",
+  ]);
+
+  assert.equal(harness.captured.recipe, "webdev");
+  assert.equal(harness.captured.steps[0].uses, "cocalc/webdev");
+  assert.equal(harness.captured.publish.slug, "webdev");
+  assert.ok(
+    harness.captured.steps[0].contributes.content.highlights.includes(
+      "System-wide pnpm and yarn",
+    ),
   );
 });
 

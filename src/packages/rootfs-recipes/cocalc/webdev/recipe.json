@@ -1,0 +1,113 @@
+{
+  "id": "cocalc/webdev",
+  "version": 1,
+  "description": "Install a broad web development environment for CoCalc and other large TypeScript/web projects.",
+  "inputs": {
+    "python_prefix": {
+      "type": "string",
+      "default": "/opt/cocalc-webdev-python"
+    },
+    "python_packages": {
+      "type": "array",
+      "default": [
+        "ipykernel",
+        "ipywidgets",
+        "jupyter-console",
+        "jupyterlab",
+        "notebook",
+        "pip",
+        "pre-commit",
+        "pytest",
+        "requests",
+        "ruff",
+        "setuptools",
+        "uv",
+        "wheel"
+      ]
+    },
+    "pnpm_version": {
+      "type": "string",
+      "default": "latest"
+    },
+    "yarn_version": {
+      "type": "string",
+      "default": "latest"
+    },
+    "npm_global_packages": {
+      "type": "array",
+      "default": [
+        "typescript",
+        "tsx",
+        "npm-check-updates",
+        "serve",
+        "http-server"
+      ]
+    },
+    "owner_uid": {
+      "type": "string",
+      "default": "2001"
+    },
+    "owner_gid": {
+      "type": "string",
+      "default": "2001"
+    }
+  },
+  "run": {
+    "shell": "bash",
+    "script": "install.sh"
+  },
+  "verify": {
+    "shell": "bash",
+    "script": "verify.sh"
+  },
+  "contributes": {
+    "metadata": {
+      "family": "web-development",
+      "tags": [
+        "webdev",
+        "typescript",
+        "node",
+        "pnpm",
+        "python",
+        "postgresql",
+        "redis",
+        "chromium",
+        "cocalc"
+      ]
+    },
+    "theme": {
+      "icon": "code-2",
+      "color": "#ffffff",
+      "accent_color": "#1f7a5c"
+    },
+    "content": {
+      "version": 1,
+      "title": "Web Development",
+      "subtitle": "Node, pnpm, yarn, GitHub CLI, native build tools, Chromium, PostgreSQL, Redis, and a Python/Jupyter venv.",
+      "highlights": [
+        "System-wide pnpm and yarn",
+        "Native build toolchain",
+        "Chromium for browser tests",
+        "PostgreSQL and Redis for app development",
+        "Python, uv, and Jupyter"
+      ],
+      "actions": [
+        {
+          "kind": "open-file",
+          "label": "Open webdev README",
+          "path": "/opt/cocalc-webdev/README.md"
+        },
+        {
+          "kind": "external-link",
+          "label": "pnpm documentation",
+          "url": "https://pnpm.io/"
+        },
+        {
+          "kind": "external-link",
+          "label": "GitHub CLI documentation",
+          "url": "https://cli.github.com/manual/"
+        }
+      ]
+    }
+  }
+}
