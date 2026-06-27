@@ -6,6 +6,14 @@ else
   SUDO="sudo -n"
 fi
 
+run_noninteractive() {
+  if [ -n "$SUDO" ]; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    DEBIAN_FRONTEND=noninteractive "$@"
+  fi
+}
+
 prefix="${PREFIX:-/opt/cocalc-jupyter}"
 python="${PYTHON:-/usr/bin/python3}"
 kernel_name="${KERNEL_NAME:-python3}"
@@ -13,6 +21,11 @@ owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
 
 packages="${PACKAGES:-ipykernel ipywidgets jupyterlab matplotlib notebook numpy pandas scipy scikit-learn sympy uv jupyter-console}"
+
+if command -v apt-get >/dev/null 2>&1; then
+  $SUDO apt-get update
+  run_noninteractive apt-get install -y --no-install-recommends python3-venv
+fi
 
 $SUDO mkdir -p "$prefix"
 $SUDO chown -R "$(id -u):$(id -g)" "$prefix"
