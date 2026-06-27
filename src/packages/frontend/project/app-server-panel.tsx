@@ -221,6 +221,24 @@ const PRESET_KIND_TAG_STYLE: CSSProperties = {
   borderColor: COLORS.GRAY_L0,
   color: COLORS.GRAY_M,
 };
+const HIDDEN_APP_TEMPLATE_KEYS = new Set([
+  "cocalc-public-viewer",
+  "public-notes",
+]);
+const HIDDEN_APP_ROW_IDS = new Set(["host-metrics-state", "metrics-state"]);
+
+function isUserVisiblePreset(preset: AppServerPreset): boolean {
+  return (
+    !HIDDEN_APP_TEMPLATE_KEYS.has(preset.key) &&
+    !HIDDEN_APP_TEMPLATE_KEYS.has(preset.id)
+  );
+}
+
+function isUserVisibleAppRow(row: ManagedAppStatus): boolean {
+  return (
+    !HIDDEN_APP_ROW_IDS.has(row.id) && !HIDDEN_APP_TEMPLATE_KEYS.has(row.id)
+  );
+}
 
 function presetCategoryLabel(category?: string): string | undefined {
   if (!category) return;
@@ -1283,9 +1301,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     staticViewerFileTypes,
   ]);
 
+  const userVisibleRows = useMemo(
+    () => rows.filter(isUserVisibleAppRow),
+    [rows],
+  );
+
   const filteredRows = useMemo(() => {
     const needle = rowSearch.trim().toLowerCase();
-    return rows.filter((row) => {
+    return userVisibleRows.filter((row) => {
       const spec = specById[row.id];
       const rowHasError =
         !!row.error ||
@@ -1313,37 +1336,48 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         `${value ?? ""}`.toLowerCase().includes(needle),
       );
     });
-  }, [rowFilter, rowSearch, rows, specById, startupFailures]);
+  }, [rowFilter, rowSearch, specById, startupFailures, userVisibleRows]);
 
   const summaryCounts = useMemo(() => {
-    const running = rows.filter((row) => row.state === "running").length;
-    const exposed = rows.filter((row) => isPublicExposure(row)).length;
-    const attention = rows.filter(
+    const running = userVisibleRows.filter(
+      (row) => row.state === "running",
+    ).length;
+    const exposed = userVisibleRows.filter((row) =>
+      isPublicExposure(row),
+    ).length;
+    const attention = userVisibleRows.filter(
       (row) =>
         !!row.error ||
         !!startupFailures[row.id] ||
         (row.warnings?.length ?? 0) > 0,
     ).length;
     return {
-      total: rows.length,
+      total: userVisibleRows.length,
       running,
-      stopped: Math.max(0, rows.length - running),
+      stopped: Math.max(0, userVisibleRows.length - running),
       exposed,
       attention,
     };
-  }, [rows, startupFailures]);
+  }, [startupFailures, userVisibleRows]);
   const siteOrigin = useMemo(() => {
     if (typeof window === "undefined" || !window.location?.origin) return "";
     return window.location.origin.replace(/\/+$/, "");
   }, []);
+  const visibleInstalledTemplates = useMemo(
+    () =>
+      installedTemplates.filter(
+        (item) =>
+          !HIDDEN_APP_TEMPLATE_KEYS.has(item.key) &&
+          !HIDDEN_APP_ROW_IDS.has(item.key),
+      ),
+    [installedTemplates],
+  );
 
   const quickPresetKeys = useMemo(
     () => [
       "jupyterlab",
       "code-server",
       "streamlit",
-      "cocalc-public-viewer",
-      "public-notes",
       "gradio",
       "fastapi",
       "marimo",
@@ -1374,10 +1408,16 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       .map((key) => presetByKey.get(key))
       .filter((preset): preset is AppServerPreset => {
         if (preset == null || seen.has(preset.key)) return false;
+        if (!isUserVisiblePreset(preset)) return false;
         seen.add(preset.key);
         return true;
       });
-    return [...ranked, ...presets.filter((preset) => !seen.has(preset.key))];
+    return [
+      ...ranked,
+      ...presets.filter(
+        (preset) => !seen.has(preset.key) && isUserVisiblePreset(preset),
+      ),
+    ];
   }, [expandedPresetKeys, presets]);
   const quickPresets = useMemo(() => {
     const presetByKey = new Map(
@@ -1397,7 +1437,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   }, [orderedPresets, presetBrowserOpen, presetBrowserSearch, quickPresets]);
   const presetRows = useMemo(() => {
     const next: Record<string, ManagedAppStatus | undefined> = {};
-    for (const row of rows) {
+    for (const row of userVisibleRows) {
       const spec = specById[row.id];
       const preset =
         matchPresetForSpec(spec, presets) ??
@@ -1409,7 +1449,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       }
     }
     return next;
-  }, [presets, rows, specById]);
+  }, [presets, specById, userVisibleRows]);
   const installedLaunchPresets = useMemo(
     () =>
       quickPresets.filter((preset) => {
@@ -1421,11 +1461,11 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   );
   const visibleLaunchRows = useMemo(
     () =>
-      [...rows].sort((a, b) => {
+      [...userVisibleRows].sort((a, b) => {
         if (a.state !== b.state) return a.state === "running" ? -1 : 1;
         return (a.title || a.id).localeCompare(b.title || b.id);
       }),
-    [rows],
+    [userVisibleRows],
   );
   const showLaunchCard =
     visibleLaunchRows.length > 0 ||
@@ -1480,23 +1520,23 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   const startableRows = useMemo(
     () =>
-      rows.filter(
+      userVisibleRows.filter(
         (row) =>
           row.kind === "service" &&
           row.lifecycle_mode !== "unmanaged" &&
           row.state !== "running",
       ),
-    [rows],
+    [userVisibleRows],
   );
   const stoppableRows = useMemo(
     () =>
-      rows.filter(
+      userVisibleRows.filter(
         (row) =>
           row.kind === "service" &&
           row.lifecycle_mode !== "unmanaged" &&
           row.state === "running",
       ),
-    [rows],
+    [userVisibleRows],
   );
 
   const refresh = useCallback(async () => {
@@ -2848,7 +2888,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       </Modal>
       <Modal
         open={installedTemplatesOpen}
-        title={`Installed templates (${installedTemplates.length})`}
+        title={`Installed templates (${visibleInstalledTemplates.length})`}
         footer={null}
         onCancel={() => setInstalledTemplatesOpen(false)}
         width={720}
@@ -2859,7 +2899,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           they start.
         </Paragraph>
         <Space wrap style={{ width: "100%" }}>
-          {installedTemplates.map((item) => (
+          {visibleInstalledTemplates.map((item) => (
             <Tag
               key={item.key}
               color={
@@ -2915,7 +2955,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             </Button>
             <Button
               onClick={() => {
-                if (installedTemplates.length > 0) {
+                if (visibleInstalledTemplates.length > 0) {
                   setInstalledTemplatesOpen(true);
                   return;
                 }
@@ -2923,8 +2963,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               }}
               loading={detectingInstalledTemplates}
             >
-              {installedTemplates.length > 0
-                ? `Installed templates (${installedTemplates.length})`
+              {visibleInstalledTemplates.length > 0
+                ? `Installed templates (${visibleInstalledTemplates.length})`
                 : "Detect installed templates"}
             </Button>
           </Space>
@@ -2935,7 +2975,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           size="small"
           title="Run apps"
           extra={
-            installedTemplates.length > 0 ? (
+            visibleInstalledTemplates.length > 0 ? (
               <Button
                 type="link"
                 onClick={() => setInstalledTemplatesOpen(true)}
@@ -3891,13 +3931,13 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       ) : null}
       <Card size="small" title={`Managed apps (${summaryCounts.total})`}>
         {loading ? <Spin /> : null}
-        {!loading && rows.length === 0 ? (
+        {!loading && userVisibleRows.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description="No apps yet."
           />
         ) : null}
-        {!loading && rows.length > 0 ? (
+        {!loading && userVisibleRows.length > 0 ? (
           <Space
             wrap
             style={{
