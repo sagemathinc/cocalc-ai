@@ -127,6 +127,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     rootfsError,
     isAdmin,
     selectedHost,
+    setTitle,
     setHost,
     setRootfs,
     applyPreset,
@@ -177,6 +178,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   }, [draft.title, form, open]);
 
   const is_mounted_ref = useIsMountedRef();
+  const titleIsMissing = !draft.title.trim();
 
   async function select_text(): Promise<void> {
     // wait for next render loop so the title actually is in the DOM...
@@ -256,7 +258,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   }
 
   function isDisabled() {
-    return saving || !summary.rootfs_image.trim();
+    return saving || titleIsMissing || !summary.rootfs_image.trim();
   }
 
   function handle_keypress(e): void {
@@ -519,7 +521,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   function renderSummarySection(): React.JSX.Element {
     const title =
       `${(new_project_title_ref.current as any)?.input?.value ?? titlePreview}`.trim() ||
-      "Untitled project";
+      "Project name required";
     const summaryItems = [
       {
         icon: "project-outlined",
@@ -635,6 +637,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               block
               onClick={() => create_project({ openAfterCreate: true })}
               disabled={isDisabled()}
+              title={
+                titleIsMissing
+                  ? "Enter a project name before creating."
+                  : undefined
+              }
               loading={createAction === "open"}
               icon={<Icon name="arrow-right" />}
             >
@@ -644,6 +651,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               block
               onClick={() => create_project({ openAfterCreate: false })}
               disabled={isDisabled()}
+              title={
+                titleIsMissing
+                  ? "Enter a project name before creating."
+                  : undefined
+              }
               loading={createAction === "create"}
               icon={<Icon name="plus-circle" />}
             >
@@ -683,6 +695,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             rules={[
               {
                 required: true,
+                whitespace: true,
                 min: 1,
                 message: helpTxt,
               },
@@ -693,7 +706,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               placeholder={`Name your new ${projectLabelLower}...`}
               disabled={saving}
               onKeyDown={handle_keypress}
-              onChange={(e) => setTitlePreview(e.target.value)}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setTitlePreview(e.target.value);
+              }}
               autoFocus
             />
           </Form.Item>
