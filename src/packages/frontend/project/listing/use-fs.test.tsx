@@ -72,6 +72,13 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
+const mockProjectContext = {
+  publicDirectoryShare: undefined as undefined | { id: string },
+};
+jest.mock("@cocalc/frontend/project/context", () => ({
+  useProjectContext: () => mockProjectContext,
+}));
+
 import { sleep, withTimeout } from "@cocalc/util/async-utils";
 import useFs from "./use-fs";
 
