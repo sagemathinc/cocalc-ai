@@ -6,6 +6,7 @@
 export {
   authorizeRead,
   create,
+  copyToNewProject,
   copyToProject,
   list,
   listDirectory,

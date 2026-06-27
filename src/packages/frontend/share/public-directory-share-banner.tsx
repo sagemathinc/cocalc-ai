@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Modal, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Divider,
+  Input,
+  Modal,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { useState } from "react";
 
 import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
@@ -26,6 +35,24 @@ function shareTitle(share: ResolvedPublicDirectoryShare): string {
   return share.title?.trim() || share.slug;
 }
 
+function siteLicenseGrantMessage(
+  grant:
+    | {
+        granted: boolean;
+        message?: string;
+        membership_class?: string | null;
+      }
+    | null
+    | undefined,
+): string {
+  return (
+    grant?.message ??
+    (grant?.granted
+      ? `Temporary ${grant.membership_class ?? "site-license"} membership granted.`
+      : "")
+  );
+}
+
 export function PublicDirectoryShareBanner({
   share,
 }: {
@@ -33,11 +60,50 @@ export function PublicDirectoryShareBanner({
 }) {
   const projectActions = useActions("projects");
   const [open, setOpen] = useState(false);
+  const [copyMode, setCopyMode] = useState<"new" | "existing">("new");
   const [destinationProjectId, setDestinationProjectId] = useState("");
   const [destinationPath, setDestinationPath] = useState(".");
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+
+  function openCopyModal() {
+    setCopyMode("new");
+    setCopyError("");
+    setCopyMessage("");
+    setOpen(true);
+  }
+
+  async function copyToNewProject() {
+    setCopying(true);
+    setCopyError("");
+    setCopyMessage("");
+    try {
+      const result =
+        await webapp_client.conat_client.hub.publicDirectoryShares.copyToNewProject(
+          {
+            slug: share.slug,
+            options: { recursive: true },
+          },
+        );
+      const grantMessage = siteLicenseGrantMessage(result.site_license_grant);
+      const placementMessage = result.placed_on_requested_host
+        ? " The new project was placed on the same host as the published project."
+        : " The preferred host was not available, so CoCalc used another host.";
+      setCopyMessage(
+        `New project created and copy queued as operation ${result.op_id}.${placementMessage}${grantMessage ? ` ${grantMessage}` : ""}`,
+      );
+      projectActions.open_project({
+        project_id: result.destination_project_id,
+        switch_to: true,
+        target: "files",
+      });
+    } catch (err) {
+      setCopyError(normalizeUserFacingError(err).message);
+    } finally {
+      setCopying(false);
+    }
+  }
 
   async function copyToProject() {
     if (!destinationProjectId.trim()) return;
@@ -54,12 +120,7 @@ export function PublicDirectoryShareBanner({
             options: { recursive: true },
           },
         );
-      const grant = result.site_license_grant;
-      const grantMessage =
-        grant?.message ??
-        (grant?.granted
-          ? `Temporary ${grant.membership_class ?? "site-license"} membership granted.`
-          : "");
+      const grantMessage = siteLicenseGrantMessage(result.site_license_grant);
       setCopyMessage(
         `Copy queued as operation ${result.op_id}.${grantMessage ? ` ${grantMessage}` : ""}`,
       );
@@ -89,8 +150,8 @@ export function PublicDirectoryShareBanner({
             {share.site_license_grant_on_copy ? (
               <Tag color="blue">temporary membership on copy</Tag>
             ) : null}
-            <Button size="small" type="primary" onClick={() => setOpen(true)}>
-              Copy to my project
+            <Button size="small" type="primary" onClick={openCopyModal}>
+              Copy
             </Button>
           </Space>
         }
@@ -98,14 +159,28 @@ export function PublicDirectoryShareBanner({
       <Modal
         title="Copy published folder"
         open={open}
-        okText="Copy published folder"
+        okText={
+          copyMode === "new" ? "Create project and copy" : "Copy to project"
+        }
         confirmLoading={copying}
-        okButtonProps={{ disabled: !destinationProjectId.trim() }}
-        onOk={() => void copyToProject()}
+        okButtonProps={{
+          disabled: copyMode === "existing" && !destinationProjectId.trim(),
+        }}
+        onOk={() =>
+          void (copyMode === "new" ? copyToNewProject() : copyToProject())
+        }
         onCancel={() => setOpen(false)}
       >
         <Space direction="vertical" style={{ width: "100%" }}>
           {share.description ? <Text>{share.description}</Text> : null}
+          {copyMode === "new" ? (
+            <Alert
+              type="info"
+              showIcon
+              message="Create a new project and copy this published folder"
+              description="CoCalc will try to create the new project on the same host and with the same RootFS as the published project, then copy the files. If that host is not available for your account, CoCalc will create the project on another suitable host."
+            />
+          ) : null}
           {share.site_license_grant_on_copy ? (
             <Alert
               type="success"
@@ -114,20 +189,34 @@ export function PublicDirectoryShareBanner({
               description={formatMembershipGrantDescription(share)}
             />
           ) : null}
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>
-              Destination project
-            </div>
-            <SelectProject
-              value={destinationProjectId}
-              onChange={(projectId) => setDestinationProjectId(projectId ?? "")}
-            />
-          </div>
-          <Input
-            placeholder="Destination path"
-            value={destinationPath}
-            onChange={(e) => setDestinationPath(e.target.value)}
-          />
+          {copyMode === "new" ? (
+            <Button onClick={() => setCopyMode("existing")}>
+              Copy to existing project
+            </Button>
+          ) : (
+            <>
+              <Divider style={{ margin: "8px 0" }} />
+              <Button onClick={() => setCopyMode("new")}>
+                Create a new project instead
+              </Button>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                  Destination project
+                </div>
+                <SelectProject
+                  value={destinationProjectId}
+                  onChange={(projectId) =>
+                    setDestinationProjectId(projectId ?? "")
+                  }
+                />
+              </div>
+              <Input
+                placeholder="Destination path"
+                value={destinationPath}
+                onChange={(e) => setDestinationPath(e.target.value)}
+              />
+            </>
+          )}
           {copyMessage ? (
             <Alert type="success" showIcon message={copyMessage} />
           ) : null}

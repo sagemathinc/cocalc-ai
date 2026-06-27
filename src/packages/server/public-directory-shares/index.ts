@@ -13,6 +13,7 @@ import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { assertCollab } from "@cocalc/server/conat/api/util";
 import { getSiteLicenseOverview } from "@cocalc/server/conat/api/purchases";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import createProject from "@cocalc/server/projects/create";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createLro } from "@cocalc/server/lro/lro-db";
@@ -41,6 +42,8 @@ import type {
   PublicDirectoryShareDirectoryEntry,
   PublicDirectoryShareSummary,
   PublicDirectoryShareVisibility,
+  CopyPublicDirectoryShareToNewProjectOptions,
+  CopyPublicDirectoryShareToNewProjectResponse,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
   AuthorizePublicDirectoryShareReadOptions,
@@ -167,6 +170,21 @@ function normalizeAvailability(
 function defaultTitleForPath(path: string): string {
   if (path === ".") return "Project files";
   return posix.basename(path) || path;
+}
+
+function defaultCopiedProjectTitle(
+  share: ResolvedPublicDirectoryShare,
+): string {
+  return `Copy of ${share.title?.trim() || share.slug}`;
+}
+
+function isHostPlacementFailure(err: unknown): boolean {
+  const message = `${(err as Error).message ?? err ?? ""}`;
+  return (
+    /\bhost\b.*\bunavailable\b/i.test(message) ||
+    /\bnot allowed to place a project on that host\b/i.test(message) ||
+    /\bhost\b.*\bnot found\b/i.test(message)
+  );
 }
 
 export function publicDirectoryShareReadPolicyForPath(
@@ -1096,6 +1114,91 @@ export async function copyToProject({
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
     site_license_grant: siteLicenseGrant,
+  };
+}
+
+export async function copyToNewProject({
+  account_id,
+  slug,
+  title,
+  options,
+}: CopyPublicDirectoryShareToNewProjectOptions): Promise<CopyPublicDirectoryShareToNewProjectResponse> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  const { share } = await resolveRow({ account_id, slug });
+  if (!share.available) {
+    throw Error(
+      share.availability_message ||
+        "This shared directory is not available for copying yet.",
+    );
+  }
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    region: string | null;
+    rootfs_image: string | null;
+    rootfs_image_id: string | null;
+  }>(
+    `
+      SELECT host_id, region, rootfs_image, rootfs_image_id
+      FROM projects
+      WHERE project_id=$1
+      LIMIT 1
+    `,
+    [share.project_id],
+  );
+  const sourceProject = rows[0];
+  const currentRootfsRows = await getPool().query<{
+    image: string | null;
+    image_id: string | null;
+  }>(
+    `
+      SELECT runtime_image AS image, image_id
+      FROM project_rootfs_states
+      WHERE project_id=$1 AND state_role='current'
+      LIMIT 1
+    `,
+    [share.project_id],
+  );
+  const sourceRootfs = currentRootfsRows.rows[0];
+  const createOpts = {
+    account_id,
+    title: title?.trim() || defaultCopiedProjectTitle(share),
+    description: `Copied from published folder ${share.slug}.`,
+    rootfs_image:
+      sourceRootfs?.image ?? sourceProject?.rootfs_image ?? undefined,
+    rootfs_image_id:
+      sourceRootfs?.image_id ?? sourceProject?.rootfs_image_id ?? undefined,
+    host_id: sourceProject?.host_id ?? undefined,
+    region: sourceProject?.region ?? undefined,
+    start: false,
+  };
+  let destinationProjectId: string;
+  let placedOnRequestedHost = !!createOpts.host_id;
+  try {
+    destinationProjectId = await createProject(createOpts);
+  } catch (err) {
+    if (!createOpts.host_id || !isHostPlacementFailure(err)) {
+      throw err;
+    }
+    placedOnRequestedHost = false;
+    destinationProjectId = await createProject({
+      ...createOpts,
+      host_id: undefined,
+    });
+  }
+  const copy = await copyToProject({
+    account_id,
+    slug,
+    destination_project_id: destinationProjectId,
+    destination_path: ".",
+    options: { recursive: true, ...options },
+  });
+  return {
+    ...copy,
+    created_project: true,
+    requested_host_id: createOpts.host_id ?? null,
+    placed_on_requested_host: placedOnRequestedHost,
   };
 }
 

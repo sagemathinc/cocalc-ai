@@ -157,6 +157,13 @@ export interface CopyPublicDirectoryShareToProjectOptions {
   options?: CopyOptions;
 }
 
+export interface CopyPublicDirectoryShareToNewProjectOptions {
+  account_id?: string;
+  slug: string;
+  title?: string;
+  options?: CopyOptions;
+}
+
 export interface AuthorizePublicDirectoryShareReadOptions {
   account_id?: string;
   host_id?: string;
@@ -211,6 +218,12 @@ export interface CopyPublicDirectoryShareToProjectResponse {
   };
 }
 
+export interface CopyPublicDirectoryShareToNewProjectResponse extends CopyPublicDirectoryShareToProjectResponse {
+  created_project: true;
+  requested_host_id?: string | null;
+  placed_on_requested_host: boolean;
+}
+
 export interface PublicDirectoryShares {
   resolve: (
     opts: ResolvePublicDirectoryShareOptions,
@@ -239,6 +252,9 @@ export interface PublicDirectoryShares {
   copyToProject: (
     opts: CopyPublicDirectoryShareToProjectOptions,
   ) => Promise<CopyPublicDirectoryShareToProjectResponse>;
+  copyToNewProject: (
+    opts: CopyPublicDirectoryShareToNewProjectOptions,
+  ) => Promise<CopyPublicDirectoryShareToNewProjectResponse>;
   authorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
@@ -254,5 +270,6 @@ export const publicDirectoryShares = {
   update: authFirstRequireAccount,
   listDirectory: authFirstRequireAccount,
   copyToProject: authFirstRequireAccount,
+  copyToNewProject: authFirstRequireAccount,
   authorizeRead: authFirst,
 } as const;
