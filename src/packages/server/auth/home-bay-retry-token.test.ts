@@ -84,4 +84,30 @@ describe("auth/home-bay-retry-token", () => {
       purpose: "password-reset",
     });
   });
+
+  it("round-trips CLI login tokens by account id and challenge id", async () => {
+    const { issueHomeBayRetryToken, verifyHomeBayRetryToken } =
+      await import("./home-bay-retry-token");
+    const issued = issueHomeBayRetryToken({
+      account_id: "33333333-3333-4333-8333-333333333333",
+      challenge_id: "44444444-4444-4444-8444-444444444444",
+      home_bay_id: "bay-2",
+      purpose: "cli-login",
+    });
+
+    expect(
+      verifyHomeBayRetryToken({
+        token: issued.token,
+        account_id: "33333333-3333-4333-8333-333333333333",
+        challenge_id: "44444444-4444-4444-8444-444444444444",
+        home_bay_id: "bay-2",
+        purpose: "cli-login",
+      }),
+    ).toMatchObject({
+      account_id: "33333333-3333-4333-8333-333333333333",
+      challenge_id: "44444444-4444-4444-8444-444444444444",
+      home_bay_id: "bay-2",
+      purpose: "cli-login",
+    });
+  });
 });

@@ -586,17 +586,11 @@ export async function redeemCliLoginChallenge({
     row.account_id,
     DEFAULT_MAX_AGE_MS / 1000,
   );
-  await withAccountRehomeWriteFence({
-    account_id: row.account_id,
-    action: "redeem cli auth login challenge",
-    fn: async (db) => {
-      await redeemApprovedCliLoginChallengeWithDb({
-        db,
-        row,
-        redeem_token_hash: expectedHash,
-        redeemed_session_hash: hash,
-      });
-    },
+  await redeemApprovedCliLoginChallengeWithDb({
+    db: getPool(),
+    row,
+    redeem_token_hash: expectedHash,
+    redeemed_session_hash: hash,
   });
   await recordNewAuthSession({
     account_id: row.account_id,
@@ -722,27 +716,21 @@ export async function approveCliLoginChallenge({
   if (!isPendingLogin && row.account_id !== account_id) {
     throw new Error("cli auth challenge account mismatch");
   }
-  await withAccountRehomeWriteFence({
-    account_id,
-    action: "approve cli auth login challenge",
-    fn: async (db) => {
-      const existingRedeemToken =
-        typeof row.metadata?.redeem_token === "string"
-          ? `${row.metadata.redeem_token}`
-          : undefined;
-      const redeem_token = existingRedeemToken ?? createOpaqueToken();
-      const metadata = {
-        ...(row.metadata ?? {}),
-        redeem_token,
-      };
-      await updateChallengeApprovalWithDb({
-        db,
-        row,
-        metadataPatch: metadata,
-        redeem_token,
-        account_id: isPendingLogin ? account_id : undefined,
-      });
-    },
+  const existingRedeemToken =
+    typeof row.metadata?.redeem_token === "string"
+      ? `${row.metadata.redeem_token}`
+      : undefined;
+  const redeem_token = existingRedeemToken ?? createOpaqueToken();
+  const metadata = {
+    ...(row.metadata ?? {}),
+    redeem_token,
+  };
+  await updateChallengeApprovalWithDb({
+    db: getPool(),
+    row,
+    metadataPatch: metadata,
+    redeem_token,
+    account_id: isPendingLogin ? account_id : undefined,
   });
   return { approved: true };
 }

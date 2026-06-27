@@ -410,7 +410,7 @@ export function FreshAuthModal({
   );
 }
 
-export function useFreshAuthAction() {
+export function useFreshAuthAction({ origin }: { origin?: string } = {}) {
   // Frontend counterpart to backend requireFreshAuth checks. Any browser UI
   // action that can hit a fresh-auth-protected HTTP route or Conat RPC should
   // run the mutation through runFreshAuthAction and render FreshAuthModal with
@@ -469,6 +469,7 @@ export function useFreshAuthAction() {
     runFreshAuthAction,
     freshAuthModalProps: {
       open,
+      origin,
       onCancel: cancelFreshAuth,
       onSuccess: handleFreshAuthSuccess,
     },

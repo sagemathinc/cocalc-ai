@@ -27,6 +27,7 @@ export interface HomeBayRetryClaims {
   v: string;
   email?: string;
   account_id?: string;
+  challenge_id?: string;
   home_bay_id: string;
   purpose:
     | "sign-in"
@@ -99,6 +100,7 @@ function parseClaims(token: string): {
 export function issueHomeBayRetryToken({
   email,
   account_id,
+  challenge_id,
   home_bay_id,
   purpose,
   ttl_seconds,
@@ -106,6 +108,7 @@ export function issueHomeBayRetryToken({
 }: {
   email?: string;
   account_id?: string;
+  challenge_id?: string;
   home_bay_id: string;
   purpose:
     | "sign-in"
@@ -122,13 +125,21 @@ export function issueHomeBayRetryToken({
 } {
   const normalizedEmail = `${email ?? ""}`.trim().toLowerCase();
   const normalizedAccountId = `${account_id ?? ""}`.trim();
+  const normalizedChallengeId = `${challenge_id ?? ""}`.trim();
   const normalizedBay = `${home_bay_id ?? ""}`.trim();
   if (!normalizedBay) {
     throw new Error("home_bay_id is required");
   }
-  if (purpose === "impersonate" || purpose === "password-reset") {
+  if (
+    purpose === "impersonate" ||
+    purpose === "password-reset" ||
+    purpose === "cli-login"
+  ) {
     if (!normalizedAccountId) {
       throw new Error("account_id is required");
+    }
+    if (purpose === "cli-login" && !normalizedChallengeId) {
+      throw new Error("challenge_id is required");
     }
   } else if (!normalizedEmail) {
     throw new Error("email is required");
@@ -145,6 +156,7 @@ export function issueHomeBayRetryToken({
     v: TOKEN_VERSION,
     ...(normalizedEmail ? { email: normalizedEmail } : {}),
     ...(normalizedAccountId ? { account_id: normalizedAccountId } : {}),
+    ...(normalizedChallengeId ? { challenge_id: normalizedChallengeId } : {}),
     home_bay_id: normalizedBay,
     purpose,
   };
@@ -165,6 +177,7 @@ export function verifyHomeBayRetryToken({
   home_bay_id,
   email,
   account_id,
+  challenge_id,
   purpose,
   now_ms = Date.now(),
 }: {
@@ -172,6 +185,7 @@ export function verifyHomeBayRetryToken({
   home_bay_id: string;
   email?: string;
   account_id?: string;
+  challenge_id?: string;
   purpose?:
     | "sign-in"
     | "sign-up"
@@ -222,6 +236,12 @@ export function verifyHomeBayRetryToken({
     `${claims.account_id ?? ""}`.trim() !== `${account_id ?? ""}`.trim()
   ) {
     throw new Error("retry token account_id mismatch");
+  }
+  if (
+    challenge_id &&
+    `${claims.challenge_id ?? ""}`.trim() !== `${challenge_id ?? ""}`.trim()
+  ) {
+    throw new Error("retry token challenge_id mismatch");
   }
   return claims;
 }
