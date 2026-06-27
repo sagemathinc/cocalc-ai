@@ -89,6 +89,8 @@ const LEGACY_STRIPE_UPGRADE_PLAN_IDS = new Set([
   "premium2",
   "professional2",
 ]);
+const LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF = 150;
+const LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS = 30;
 
 const logger = getLogger("server:legacy-migration");
 
@@ -1121,6 +1123,7 @@ async function financialRowsForAccount(
 
 function suggestedMembershipClass({
   active_subscription_count,
+  active_subscription_annualized,
   membership_already_applied,
 }: {
   active_subscription_annualized: number;
@@ -1130,7 +1133,10 @@ function suggestedMembershipClass({
   if (membership_already_applied || active_subscription_count <= 0) {
     return null;
   }
-  return "basic";
+  return active_subscription_annualized >
+    LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF
+    ? "standard"
+    : "basic";
 }
 
 function suggestedFinancialMembershipInterval(
@@ -1197,6 +1203,7 @@ async function financialPreviewForAccount(
     }),
     suggested_membership_interval:
       suggestedFinancialMembershipInterval(pending),
+    suggested_membership_grant_days: LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS,
     membership_already_applied,
     stripe_customer_id,
     plans,
@@ -1226,13 +1233,9 @@ async function legacyMembershipClaimExists(
   return rows.length > 0;
 }
 
-function membershipEnd(interval: "month" | "year"): Date {
+function legacyMigrationMembershipGrantEnd(): Date {
   const end = new Date();
-  if (interval === "year") {
-    end.setFullYear(end.getFullYear() + 1);
-  } else {
-    end.setMonth(end.getMonth() + 1);
-  }
+  end.setDate(end.getDate() + LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS);
   return end;
 }
 
@@ -1449,20 +1452,25 @@ export async function applyFinancialMigration({
     }
 
     let subscription_id: number | undefined;
+    let membershipGrantEnd: Date | undefined;
     if (selectedClass != null && selectedCost != null) {
+      membershipGrantEnd = legacyMigrationMembershipGrantEnd();
       subscription_id = await createSubscription(
         {
           account_id,
           cost: selectedCost,
           interval: selectedInterval,
           current_period_start: new Date(),
-          current_period_end: membershipEnd(selectedInterval),
+          current_period_end: membershipGrantEnd,
           status: "canceled",
           metadata: {
             type: "membership",
             class: selectedClass,
             source: "promo",
             source_id: "legacy-migration",
+            grant: true,
+            grant_days: LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS,
+            grant_ends_at: membershipGrantEnd.toISOString(),
           },
         },
         client,
@@ -1489,6 +1497,12 @@ export async function applyFinancialMigration({
       ),
       credit_purchase_ids: creditPurchaseIds,
       subscription_id,
+      membership_class: selectedClass ?? null,
+      membership_interval: selectedClass ? selectedInterval : null,
+      membership_grant_days: selectedClass
+        ? LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS
+        : null,
+      membership_grant_ends_at: membershipGrantEnd?.toISOString() ?? null,
       stripe_customer_id,
     };
   } catch (err) {
@@ -1515,16 +1529,16 @@ export async function applyAutomaticFinancialMigration({
       credit_amount: 0,
       credit_purchase_ids: [],
       subscription_id: null,
+      membership_class: null,
+      membership_interval: null,
+      membership_grant_days: null,
+      membership_grant_ends_at: null,
       stripe_customer_id: preview.stripe_customer_id ?? null,
     };
   }
   return await applyFinancialMigration({
     account_id,
-    membership_class:
-      preview.active_subscription_count > 0 &&
-      !preview.membership_already_applied
-        ? "basic"
-        : null,
+    membership_class: preview.suggested_membership_class ?? null,
     membership_interval: preview.suggested_membership_interval,
   });
 }

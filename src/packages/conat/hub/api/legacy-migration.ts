@@ -201,6 +201,7 @@ export interface LegacyMigrationFinancialPreviewResponse {
   active_subscription_count: number;
   suggested_membership_class?: string | null;
   suggested_membership_interval: "month" | "year";
+  suggested_membership_grant_days: number;
   membership_already_applied: boolean;
   stripe_customer_id?: string | null;
   plans: LegacyMigrationMembershipPlan[];
@@ -218,6 +219,10 @@ export interface LegacyMigrationApplyFinancialResponse {
   credit_amount: number;
   credit_purchase_ids: number[];
   subscription_id?: number | null;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year" | null;
+  membership_grant_days?: number | null;
+  membership_grant_ends_at?: string | null;
   stripe_customer_id?: string | null;
 }
 

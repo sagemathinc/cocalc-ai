@@ -22,6 +22,11 @@ function formatMoney(value: number | null | undefined): string {
   })}`;
 }
 
+function membershipLabel(value: string | null | undefined): string {
+  if (!value) return "membership";
+  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)} membership`;
+}
+
 function hasVisibleLegacyBilling(
   preview: LegacyMigrationFinancialPreviewResponse,
 ): boolean {
@@ -73,11 +78,7 @@ export default function LegacyBillingMigrationStatus() {
     try {
       await webapp_client.conat_client.hub.legacyMigration.applyFinancialMigration(
         {
-          membership_class:
-            preview.active_subscription_count > 0 &&
-            !preview.membership_already_applied
-              ? "basic"
-              : null,
+          membership_class: preview.suggested_membership_class ?? null,
           membership_interval: preview.suggested_membership_interval,
         },
       );
@@ -105,6 +106,9 @@ export default function LegacyBillingMigrationStatus() {
 
   const pending =
     preview.pending_credit_amount > 0 || preview.active_subscription_count > 0;
+  const suggestedMembership = preview.suggested_membership_class;
+  const suggestedMembershipLabel = membershipLabel(suggestedMembership);
+  const grantDays = preview.suggested_membership_grant_days ?? 30;
   const pendingEntitlementCredit = preview.legacy_accounts.reduce(
     (total, account) =>
       account.claimed_by_account_id
@@ -158,7 +162,11 @@ export default function LegacyBillingMigrationStatus() {
           }
           description={
             pending
-              ? `Click Apply now to add positive credit, remaining paid legacy value, Stripe customer metadata, and a ${preview.suggested_membership_interval === "year" ? "one-year" : "one-month"} Basic membership for active legacy subscriptions. No project restore action is required.`
+              ? `Click Apply now to add positive credit, remaining paid legacy value, Stripe customer metadata, and ${
+                  suggestedMembership
+                    ? `a free ${grantDays}-day ${suggestedMembershipLabel} grant for active legacy subscriptions. It does not auto-charge; choose a paid plan later to continue.`
+                    : "legacy billing metadata."
+                } No project restore action is required.`
               : "Migrated legacy billing items are recorded in your CoCalc billing history and membership status."
           }
         />
@@ -182,6 +190,16 @@ export default function LegacyBillingMigrationStatus() {
               {preview.active_subscription_count > 0
                 ? ` (${formatMoney(preview.active_subscription_annualized)}/year legacy total)`
                 : ""}
+            </Text>
+          </Space>
+          <Space direction="vertical" size={0}>
+            <Text type="secondary">Membership grant</Text>
+            <Text>
+              {suggestedMembership
+                ? `${grantDays} days of ${suggestedMembershipLabel}`
+                : preview.membership_already_applied
+                  ? "Already applied"
+                  : "None"}
             </Text>
           </Space>
           <Space direction="vertical" size={0}>
