@@ -147,6 +147,7 @@ async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS restore_mode VARCHAR(32),
         ADD COLUMN IF NOT EXISTS restore_attempts INTEGER,
         ADD COLUMN IF NOT EXISTS restore_worker_id VARCHAR(64),
+        ADD COLUMN IF NOT EXISTS restore_host_id UUID,
         ADD COLUMN IF NOT EXISTS restore_claimed_until TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_started TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_finished TIMESTAMP,
@@ -2214,6 +2215,7 @@ async function importOneProject({
           restore_error=NULL,
           restore_attempts=NULL,
           restore_worker_id=NULL,
+          restore_host_id=NULL,
           restore_claimed_until=NULL,
           restore_started=NULL,
           restore_finished=NULL,
@@ -2474,6 +2476,7 @@ export async function retryProjectRestore({
            restore_lro_op_id=$2,
            restore_progress=$3::JSONB,
            restore_worker_id=NULL,
+           restore_host_id=NULL,
            restore_claimed_until=NULL,
            restore_started=NULL,
            restore_finished=NULL,
@@ -2687,6 +2690,7 @@ async function setArchiveSelectionState({
            restore_result=COALESCE($4::JSONB, restore_result),
            restore_claimed_until=NULL,
            restore_worker_id=NULL,
+           restore_host_id=NULL,
            updated=NOW()
      WHERE legacy_project_id=$1
     `,

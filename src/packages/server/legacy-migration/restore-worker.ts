@@ -13,6 +13,7 @@ import {
   ensureProjectFileServerClientReady,
   getProjectFileServerClient,
 } from "@cocalc/server/conat/file-server-client";
+import { materializeRemoteProjectHostTarget } from "@cocalc/server/conat/route-project";
 import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
 import { createLro, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -68,7 +69,8 @@ type LegacyRestoreRow = {
 
 type RestoreCandidateRow = {
   legacy_project_id: string;
-  host_id: string;
+  project_id: string;
+  owner_account_id: string;
 };
 
 function clean(value: unknown): string | undefined {
@@ -110,6 +112,7 @@ async function ensureLegacyMigrationRestoreSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS restore_attempts INTEGER,
         ADD COLUMN IF NOT EXISTS restore_mode VARCHAR(32),
         ADD COLUMN IF NOT EXISTS restore_worker_id VARCHAR(64),
+        ADD COLUMN IF NOT EXISTS restore_host_id UUID,
         ADD COLUMN IF NOT EXISTS restore_claimed_until TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_started TIMESTAMP,
         ADD COLUMN IF NOT EXISTS restore_finished TIMESTAMP,
@@ -225,16 +228,14 @@ async function claimRestoreRows({
       host_id: string;
       active: string;
     }>(`
-      SELECT projects.host_id::TEXT AS host_id,
+      SELECT i.restore_host_id::TEXT AS host_id,
              COUNT(*)::TEXT AS active
         FROM legacy_migration_project_imports i
-        JOIN projects
-          ON projects.project_id=i.project_id
        WHERE i.restore_status='restoring'
          AND i.restore_claimed_until IS NOT NULL
          AND i.restore_claimed_until >= NOW()
-         AND projects.host_id IS NOT NULL
-       GROUP BY projects.host_id
+         AND i.restore_host_id IS NOT NULL
+       GROUP BY i.restore_host_id
     `);
     let activeTotal = 0;
     for (const row of active.rows) {
@@ -252,15 +253,13 @@ async function claimRestoreRows({
     const candidates = await client.query<RestoreCandidateRow>(
       `
       SELECT i.legacy_project_id,
-             projects.host_id::TEXT AS host_id
+             i.project_id::TEXT AS project_id,
+             i.owner_account_id::TEXT AS owner_account_id
         FROM legacy_migration_project_imports i
         JOIN legacy_migration_projects p
           ON p.legacy_project_id=i.legacy_project_id
-        JOIN projects
-          ON projects.project_id=i.project_id
        WHERE i.project_id IS NOT NULL
          AND i.owner_account_id IS NOT NULL
-         AND projects.host_id IS NOT NULL
          AND COALESCE(i.restore_mode, 'full') = 'full'
          AND COALESCE(p.artifact_key, '') <> ''
          AND COALESCE(p.artifact_status, '') = 'available'
@@ -283,7 +282,19 @@ async function claimRestoreRows({
     const claimed: LegacyRestoreRow[] = [];
     for (const candidate of candidates.rows) {
       if (claimed.length >= remainingTotal) break;
-      const activeForHost = activeByHost.get(candidate.host_id) ?? 0;
+      const target = await materializeRemoteProjectHostTarget({
+        account_id: candidate.owner_account_id,
+        project_id: candidate.project_id,
+      });
+      const hostId = `${target?.host_id ?? ""}`.trim();
+      if (!hostId) {
+        logger.debug("legacy migration restore candidate has no routed host", {
+          legacy_project_id: candidate.legacy_project_id,
+          project_id: candidate.project_id,
+        });
+        continue;
+      }
+      const activeForHost = activeByHost.get(hostId) ?? 0;
       if (activeForHost >= maxParallelPerHost) continue;
 
       const updated = await client.query<LegacyRestoreRow>(
@@ -293,16 +304,14 @@ async function claimRestoreRows({
                restore_error=NULL,
                restore_attempts=COALESCE(i.restore_attempts, 0) + 1,
                restore_worker_id=$1,
+               restore_host_id=$4,
                restore_claimed_until=NOW() + ($2::INT * INTERVAL '1 millisecond'),
                restore_started=NOW(),
                restore_finished=NULL,
                updated=NOW()
-          FROM legacy_migration_projects p,
-               projects
+          FROM legacy_migration_projects p
          WHERE i.legacy_project_id=$3
            AND p.legacy_project_id=i.legacy_project_id
-           AND projects.project_id=i.project_id
-           AND projects.host_id::TEXT=$4
            AND i.project_id IS NOT NULL
            AND i.owner_account_id IS NOT NULL
            AND COALESCE(i.restore_mode, 'full') = 'full'
@@ -321,18 +330,18 @@ async function claimRestoreRows({
         RETURNING i.legacy_project_id,
                   i.project_id,
                   i.owner_account_id,
-                  projects.host_id::TEXT AS host_id,
+                  $4::TEXT AS host_id,
                   p.artifact_bucket,
                   p.artifact_key,
                   p.artifact_manifest,
                   i.restore_lro_op_id
         `,
-        [WORKER_ID, LEASE_MS, candidate.legacy_project_id, candidate.host_id],
+        [WORKER_ID, LEASE_MS, candidate.legacy_project_id, hostId],
       );
       const row = updated.rows[0];
       if (!row) continue;
       claimed.push(row);
-      activeByHost.set(candidate.host_id, activeForHost + 1);
+      activeByHost.set(hostId, activeForHost + 1);
     }
 
     await client.query("COMMIT");
