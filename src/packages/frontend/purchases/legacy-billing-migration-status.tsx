@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Space, Tag, Typography } from "antd";
+import { Alert, Button, Card, Segmented, Space, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -11,9 +11,8 @@ import { Icon, Loading } from "@cocalc/frontend/components";
 import { load_target } from "@cocalc/frontend/history";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { LegacyMigrationFinancialPreviewResponse } from "@cocalc/conat/hub/api/legacy-migration";
-import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
-import type { BillingInterval } from "@cocalc/frontend/account/membership-pricing-chooser";
 import { legacyBillingMigrationReviewRequested } from "./legacy-billing-migration-review";
+import { getPaymentMethods } from "./api";
 
 const { Text } = Typography;
 
@@ -47,6 +46,15 @@ function planPriceLabel(
   return null;
 }
 
+function planIntervalPriceLabel(
+  plan: LegacyMigrationFinancialPreviewResponse["plans"][number] | undefined,
+  interval: "month" | "year",
+): string | null {
+  const price = interval === "year" ? plan?.price_yearly : plan?.price_monthly;
+  if (price == null) return null;
+  return `${formatMoney(price)}/${interval}`;
+}
+
 function hasVisibleLegacyBilling(
   preview: LegacyMigrationFinancialPreviewResponse,
 ): boolean {
@@ -71,11 +79,17 @@ export default function LegacyBillingMigrationStatus({
     "customize",
     "legacy_migration_enabled",
   );
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
   const [error, setError] = useState("");
   const [applying, setApplying] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [continueOpen, setContinueOpen] = useState(false);
-  const [renewalTargetClass, setRenewalTargetClass] = useState<string | null>(
+  const [renewalInterval, setRenewalInterval] = useState<"month" | "year">(
+    "month",
+  );
+  const [renewalSaving, setRenewalSaving] = useState<
+    "cancel" | "basic" | "member" | null
+  >(null);
+  const [hasPaymentMethods, setHasPaymentMethods] = useState<boolean | null>(
     null,
   );
   const [preview, setPreview] =
@@ -101,6 +115,34 @@ export default function LegacyBillingMigrationStatus({
     void load();
   }, [account_id, legacyMigrationEnabled]);
 
+  useEffect(() => {
+    if (!preview) return;
+    setRenewalInterval(
+      preview.membership_renewal_interval ??
+        preview.applied_membership_interval ??
+        preview.suggested_membership_interval,
+    );
+  }, [
+    preview?.membership_renewal_interval,
+    preview?.applied_membership_interval,
+    preview?.suggested_membership_interval,
+  ]);
+
+  useEffect(() => {
+    if (!legacyMigrationEnabled || !stripeEnabled) {
+      setHasPaymentMethods(false);
+      return;
+    }
+    (async () => {
+      try {
+        const paymentMethods = await getPaymentMethods({ limit: 1 });
+        setHasPaymentMethods(paymentMethods.data.length > 0);
+      } catch (_err) {
+        setHasPaymentMethods(false);
+      }
+    })();
+  }, [legacyMigrationEnabled, stripeEnabled]);
+
   async function apply() {
     if (!preview?.can_apply) return;
     setApplying(true);
@@ -118,6 +160,26 @@ export default function LegacyBillingMigrationStatus({
       setError(`${err}`);
     } finally {
       setApplying(false);
+    }
+  }
+
+  async function configureRenewal(membership_class: "basic" | "member" | null) {
+    if (!preview?.applied_membership_class) return;
+    setRenewalSaving(membership_class ?? "cancel");
+    setError("");
+    try {
+      await webapp_client.conat_client.hub.legacyMigration.configureFinancialMembershipRenewal(
+        {
+          membership_class,
+          membership_interval:
+            membership_class == null ? null : renewalInterval,
+        },
+      );
+      await load();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setRenewalSaving(null);
     }
   }
 
@@ -199,12 +261,7 @@ export default function LegacyBillingMigrationStatus({
 
   const pending =
     preview.pending_credit_amount > 0 || preview.active_subscription_count > 0;
-  const continueMembership = preview.membership_renewal_configured
-    ? null
-    : preview.applied_membership_class;
-  const continueInterval =
-    preview.applied_membership_interval ??
-    preview.suggested_membership_interval;
+  const continueMembership = preview.applied_membership_class;
   const suggestedMembership = preview.suggested_membership_class;
   const suggestedMembershipLabel = membershipLabel(suggestedMembership);
   const continueMembershipLabel = membershipLabel(continueMembership);
@@ -218,7 +275,14 @@ export default function LegacyBillingMigrationStatus({
   const basicPlan = preview.plans.find((plan) => plan.id === "basic");
   const memberPlan = preview.plans.find((plan) => plan.id === "member");
   const basicPrice = planPriceLabel(basicPlan);
-  const memberPrice = planPriceLabel(memberPlan);
+  const basicIntervalPrice = planIntervalPriceLabel(basicPlan, renewalInterval);
+  const memberIntervalPrice = planIntervalPriceLabel(
+    memberPlan,
+    renewalInterval,
+  );
+  const activeRenewalClass = preview.membership_renewal_configured
+    ? preview.membership_renewal_class
+    : null;
   const pendingEntitlementCredit = preview.legacy_accounts.reduce(
     (total, account) =>
       account.claimed_by_account_id
@@ -288,38 +352,96 @@ export default function LegacyBillingMigrationStatus({
             description={
               <Space direction="vertical" size="small">
                 <span>
-                  Your default is explicit: cancel at period end. You can use
-                  the free membership until the grant ends, or set up renewal
-                  now. Renewal starts after the free month.
+                  You can use the free membership until the grant ends. Choose
+                  what should happen after that; you can change this any time
+                  before the free month ends. There is no immediate charge.
                 </span>
+                {preview.membership_grant_ends_at ? (
+                  <Text type="secondary">
+                    Free membership ends{" "}
+                    {new Date(
+                      preview.membership_grant_ends_at,
+                    ).toLocaleDateString()}
+                    .
+                  </Text>
+                ) : null}
+                <Segmented<"month" | "year">
+                  options={[
+                    { label: "Monthly", value: "month" },
+                    { label: "Yearly", value: "year" },
+                  ]}
+                  value={renewalInterval}
+                  onChange={setRenewalInterval}
+                />
                 <Space wrap>
-                  <Button disabled size="small">
+                  <Button
+                    loading={renewalSaving === "cancel"}
+                    onClick={() => void configureRenewal(null)}
+                    size="small"
+                    type={activeRenewalClass == null ? "primary" : "default"}
+                  >
                     Cancel at period end
                   </Button>
                   <Button
                     disabled={!memberPlan}
-                    onClick={() => {
-                      setRenewalTargetClass("member");
-                      setContinueOpen(true);
-                    }}
+                    loading={renewalSaving === "member"}
+                    onClick={() => void configureRenewal("member")}
                     size="small"
-                    type="primary"
+                    type={
+                      activeRenewalClass === "member" ? "primary" : "default"
+                    }
                   >
                     {standardRenewalLabel}
-                    {memberPrice ? ` (${memberPrice})` : ""}
+                    {memberIntervalPrice ? ` (${memberIntervalPrice})` : ""}
                   </Button>
                   <Button
                     disabled={!basicPlan}
-                    onClick={() => {
-                      setRenewalTargetClass("basic");
-                      setContinueOpen(true);
-                    }}
+                    loading={renewalSaving === "basic"}
+                    onClick={() => void configureRenewal("basic")}
                     size="small"
+                    type={
+                      activeRenewalClass === "basic" ? "primary" : "default"
+                    }
                   >
                     {basicRenewalLabel}
-                    {basicPrice ? ` (${basicPrice})` : ""}
+                    {basicIntervalPrice ? ` (${basicIntervalPrice})` : ""}
                   </Button>
                 </Space>
+                {preview.membership_renewal_configured ? (
+                  <Text type="secondary">
+                    Current selection:{" "}
+                    {membershipLabel(preview.membership_renewal_class)}{" "}
+                    {preview.membership_renewal_interval}.
+                  </Text>
+                ) : (
+                  <Text type="secondary">
+                    Current selection: cancel at period end.
+                  </Text>
+                )}
+                {preview.membership_renewal_configured &&
+                hasPaymentMethods === false ? (
+                  <Alert
+                    showIcon
+                    type="warning"
+                    message="Add a payment method before renewal"
+                    description={
+                      <span>
+                        Renewal is scheduled after the free month, but CoCalc
+                        does not currently see a payment method on file.{" "}
+                        <a
+                          href="/settings/payment-methods"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            load_target("settings/payment-methods");
+                          }}
+                        >
+                          Add or review payment methods
+                        </a>
+                        .
+                      </span>
+                    }
+                  />
+                ) : null}
               </Space>
             }
           />
@@ -416,19 +538,6 @@ export default function LegacyBillingMigrationStatus({
           ))}
         </Space>
       </Space>
-      <MembershipPurchaseModal
-        initialTargetClass={renewalTargetClass ?? undefined}
-        initialTargetInterval={
-          (continueInterval ?? undefined) as BillingInterval | undefined
-        }
-        open={continueOpen}
-        onChanged={() => void load()}
-        onClose={() => {
-          setContinueOpen(false);
-          setRenewalTargetClass(null);
-        }}
-        replaceCurrentCanceledSubscription
-      />
     </Card>
   );
 }

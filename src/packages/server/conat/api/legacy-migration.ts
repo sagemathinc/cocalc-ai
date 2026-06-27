@@ -10,6 +10,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import * as localLegacyMigration from "@cocalc/server/legacy-migration";
 import type {
   LegacyMigrationApplyFinancialOptions,
+  LegacyMigrationConfigureFinancialRenewalOptions,
   LegacyMigrationFinancialPreviewOptions,
   LegacyMigrationImportProjectsOptions,
   LegacyMigrationListProjectsOptions,
@@ -97,4 +98,12 @@ export async function applyFinancialMigration(
     : await getSeedLegacyMigrationClient().legacyMigrationApplyFinancialMigration(
         opts ?? {},
       );
+}
+
+export async function configureFinancialMembershipRenewal(
+  opts?: LegacyMigrationConfigureFinancialRenewalOptions,
+) {
+  return await localLegacyMigration.configureFinancialMembershipRenewal(
+    opts ?? {},
+  );
 }

@@ -213,6 +213,9 @@ export interface LegacyMigrationFinancialPreviewResponse {
   suggested_membership_grant_days: number;
   applied_membership_class?: string | null;
   applied_membership_interval?: "month" | "year" | null;
+  membership_grant_ends_at?: string | null;
+  membership_renewal_class?: string | null;
+  membership_renewal_interval?: "month" | "year" | null;
   membership_already_applied: boolean;
   membership_renewal_configured: boolean;
   stripe_customer_id?: string | null;
@@ -253,6 +256,38 @@ export interface LegacyMigrationApplyFinancialHomeBayResponse {
   membership_grant_ends_at?: string | null;
 }
 
+export interface LegacyMigrationFinancialMembershipGrantHomeBayOptions {
+  account_id: string;
+}
+
+export interface LegacyMigrationFinancialMembershipGrantHomeBayResponse {
+  subscription_id: number | null;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year" | null;
+  membership_grant_ends_at?: string | null;
+  membership_renewal_configured: boolean;
+}
+
+export interface LegacyMigrationConfigureFinancialRenewalOptions {
+  account_id?: string;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year" | null;
+}
+
+export interface LegacyMigrationConfigureFinancialRenewalHomeBayOptions {
+  account_id: string;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year" | null;
+}
+
+export interface LegacyMigrationConfigureFinancialRenewalResponse {
+  subscription_id: number;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year" | null;
+  membership_grant_ends_at?: string | null;
+  membership_renewal_configured: boolean;
+}
+
 export interface LegacyMigration {
   listProjects: (
     opts?: LegacyMigrationListProjectsOptions,
@@ -275,6 +310,9 @@ export interface LegacyMigration {
   applyFinancialMigration: (
     opts?: LegacyMigrationApplyFinancialOptions,
   ) => Promise<LegacyMigrationApplyFinancialResponse>;
+  configureFinancialMembershipRenewal: (
+    opts?: LegacyMigrationConfigureFinancialRenewalOptions,
+  ) => Promise<LegacyMigrationConfigureFinancialRenewalResponse>;
 }
 
 export const legacyMigration = {
@@ -285,4 +323,5 @@ export const legacyMigration = {
   retryProjectRestore: authFirstRequireAccount,
   previewFinancialMigration: authFirstRequireAccount,
   applyFinancialMigration: authFirstRequireAccount,
+  configureFinancialMembershipRenewal: authFirstRequireAccount,
 } as const;

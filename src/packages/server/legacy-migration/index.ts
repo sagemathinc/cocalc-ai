@@ -55,8 +55,13 @@ import type {
   LegacyMigrationApplyFinancialHomeBayResponse,
   LegacyMigrationApplyFinancialOptions,
   LegacyMigrationApplyFinancialResponse,
+  LegacyMigrationConfigureFinancialRenewalHomeBayOptions,
+  LegacyMigrationConfigureFinancialRenewalOptions,
+  LegacyMigrationConfigureFinancialRenewalResponse,
   LegacyMigrationEntitlementCredit,
   LegacyMigrationFinancialAccount,
+  LegacyMigrationFinancialMembershipGrantHomeBayOptions,
+  LegacyMigrationFinancialMembershipGrantHomeBayResponse,
   LegacyMigrationFinancialPreviewOptions,
   LegacyMigrationFinancialPreviewResponse,
   LegacyMigrationMembershipPlan,
@@ -104,6 +109,14 @@ const logger = getLogger("server:legacy-migration");
 
 const ACCOUNT_VERIFIED_EMAILS_JSON =
   "CASE WHEN jsonb_typeof(email_address_verified)='object' THEN email_address_verified ELSE '{}'::jsonb END";
+
+type LegacyMigrationMembershipSubscription = {
+  id: number;
+  status: string | null;
+  interval: "month" | "year" | null;
+  current_period_end: Date | string | null;
+  metadata: Record<string, any> | null;
+};
 
 type AccountEmailRow = {
   email_address: string | null;
@@ -992,35 +1005,15 @@ async function currentMembershipExists(account_id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-async function currentPaidMembershipSubscriptionExists(
-  account_id: string,
-): Promise<boolean> {
-  const { rows } = await getPool().query(
-    `
-    SELECT 1
-      FROM subscriptions
-     WHERE account_id=$1
-       AND status IN ('active', 'canceled')
-       AND metadata->>'type'='membership'
-       AND latest_purchase_id IS NOT NULL
-       AND current_period_end >= NOW()
-     LIMIT 1
-    `,
-    [account_id],
-  );
-  return rows.length > 0;
-}
-
 async function currentLegacyMigrationMembershipSubscription(
   account_id: string,
   client?: PoolClient,
-): Promise<{ id: number; current_period_end: Date | string | null } | null> {
-  const { rows } = await (client ?? getPool()).query<{
-    id: number;
-    current_period_end: Date | string | null;
-  }>(
+): Promise<LegacyMigrationMembershipSubscription | null> {
+  const { rows } = await (
+    client ?? getPool()
+  ).query<LegacyMigrationMembershipSubscription>(
     `
-    SELECT id, current_period_end
+    SELECT id, status, interval, current_period_end, metadata
       FROM subscriptions
      WHERE account_id=$1
        AND metadata->>'type'='membership'
@@ -1032,6 +1025,28 @@ async function currentLegacyMigrationMembershipSubscription(
     [account_id],
   );
   return rows[0] ?? null;
+}
+
+function legacyMigrationMembershipGrantResponse(
+  subscription: LegacyMigrationMembershipSubscription | null,
+): LegacyMigrationFinancialMembershipGrantHomeBayResponse {
+  const membership_class = clean(subscription?.metadata?.class) ?? null;
+  const membership_interval =
+    subscription?.interval === "month"
+      ? "month"
+      : subscription?.interval === "year"
+        ? "year"
+        : null;
+  return {
+    subscription_id: subscription?.id ?? null,
+    membership_class,
+    membership_interval,
+    membership_grant_ends_at:
+      subscription?.current_period_end != null
+        ? new Date(subscription.current_period_end).toISOString()
+        : null,
+    membership_renewal_configured: subscription?.status === "active",
+  };
 }
 
 async function currentStripeCustomerId(
@@ -1323,17 +1338,13 @@ function suggestedFinancialMembershipInterval(
 async function financialPreviewForAccount(
   account_id: string,
 ): Promise<LegacyMigrationFinancialPreviewResponse> {
-  const [
-    legacy_accounts,
-    plans,
-    hasActiveMembership,
-    membership_renewal_configured,
-  ] = await Promise.all([
-    financialRowsForAccount(account_id),
-    membershipPlans(),
-    currentMembershipExists(account_id),
-    currentPaidMembershipSubscriptionExists(account_id),
-  ]);
+  const [legacy_accounts, plans, hasActiveMembership, membershipGrant] =
+    await Promise.all([
+      financialRowsForAccount(account_id),
+      membershipPlans(),
+      currentMembershipExists(account_id),
+      financialMembershipGrantForAccount({ account_id }),
+    ]);
   const pending = legacy_accounts.filter(
     (account) => !account.claimed_by_account_id,
   );
@@ -1392,8 +1403,12 @@ async function financialPreviewForAccount(
       appliedMembership?.selected_membership_class ?? null,
     applied_membership_interval:
       appliedMembership?.selected_membership_interval ?? null,
+    membership_grant_ends_at: membershipGrant.membership_grant_ends_at,
+    membership_renewal_class: membershipGrant.membership_class ?? null,
+    membership_renewal_interval: membershipGrant.membership_interval ?? null,
     membership_already_applied,
-    membership_renewal_configured,
+    membership_renewal_configured:
+      membershipGrant.membership_renewal_configured,
     stripe_customer_id,
     plans,
     can_apply:
@@ -1402,6 +1417,45 @@ async function financialPreviewForAccount(
         active_subscription_count > 0 ||
         pending.some((account) => account.stripe_customer_id)),
   };
+}
+
+export async function getFinancialMembershipGrantHomeBay({
+  account_id,
+}: LegacyMigrationFinancialMembershipGrantHomeBayOptions): Promise<LegacyMigrationFinancialMembershipGrantHomeBayResponse> {
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const accountCheck = await getPool().query(
+    `
+    SELECT 1
+      FROM accounts
+     WHERE account_id=$1
+       AND (deleted IS NULL OR deleted = FALSE)
+     LIMIT 1
+    `,
+    [account_id],
+  );
+  if (accountCheck.rows.length === 0) {
+    throw Error(`${account_id} is not a valid account on this bay`);
+  }
+  return legacyMigrationMembershipGrantResponse(
+    await currentLegacyMigrationMembershipSubscription(account_id),
+  );
+}
+
+async function financialMembershipGrantForAccount({
+  account_id,
+}: LegacyMigrationFinancialMembershipGrantHomeBayOptions): Promise<LegacyMigrationFinancialMembershipGrantHomeBayResponse> {
+  const account = await getClusterAccountById(account_id);
+  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
+  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: homeBayId,
+      timeout: LEGACY_FINANCIAL_HOME_BAY_TIMEOUT_MS,
+    }).legacyMigrationGetFinancialMembershipGrantHomeBay({ account_id });
+  }
+  return await getFinancialMembershipGrantHomeBay({ account_id });
 }
 
 async function legacyMembershipClaimExists(
@@ -1715,6 +1769,137 @@ async function applyFinancialMigrationHomeBayForAccount(
     }).legacyMigrationApplyFinancialHomeBay(opts);
   }
   return await applyFinancialMigrationHomeBay(opts);
+}
+
+function validateLegacyRenewalMembershipClass(
+  membership_class?: string | null,
+): "basic" | "member" | null {
+  const value = clean(membership_class);
+  if (value == null || value === "none") return null;
+  if (value === "basic" || value === "member") return value;
+  throw new Error("legacy migration renewal can only be basic or standard");
+}
+
+export async function configureFinancialMembershipRenewalHomeBay({
+  account_id,
+  membership_class,
+  membership_interval,
+}: LegacyMigrationConfigureFinancialRenewalHomeBayOptions): Promise<LegacyMigrationConfigureFinancialRenewalResponse> {
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const selectedClass = validateLegacyRenewalMembershipClass(membership_class);
+  const selectedInterval =
+    membership_interval === "month"
+      ? "month"
+      : membership_interval === "year"
+        ? "year"
+        : selectedClass == null
+          ? null
+          : undefined;
+  if (selectedClass != null && selectedInterval == null) {
+    throw new Error("membership_interval must be month or year");
+  }
+  const selectedCost =
+    selectedClass != null && selectedInterval != null
+      ? await membershipCost({
+          membership_class: selectedClass,
+          interval: selectedInterval,
+        })
+      : null;
+
+  const client = await getTransactionClient();
+  try {
+    const accountCheck = await client.query(
+      `
+      SELECT 1
+        FROM accounts
+       WHERE account_id=$1
+         AND (deleted IS NULL OR deleted = FALSE)
+       LIMIT 1
+      `,
+      [account_id],
+    );
+    if (accountCheck.rows.length === 0) {
+      throw Error(`${account_id} is not a valid account on this bay`);
+    }
+
+    const grant = await currentLegacyMigrationMembershipSubscription(
+      account_id,
+      client,
+    );
+    if (grant == null) {
+      throw new Error("no legacy migration membership grant was found");
+    }
+
+    const metadata = {
+      ...(grant.metadata ?? {}),
+      ...(selectedClass != null ? { class: selectedClass } : {}),
+      renewal_configured: selectedClass != null,
+      renewal_configured_at: new Date().toISOString(),
+    };
+    await client.query(
+      `
+      UPDATE subscriptions
+         SET status=$2,
+             cost=COALESCE($3::numeric, cost),
+             interval=COALESCE($4, interval),
+             metadata=$5
+       WHERE id=$1
+      `,
+      [
+        grant.id,
+        selectedClass == null ? "canceled" : "active",
+        selectedCost == null ? null : moneyToDbString(selectedCost),
+        selectedInterval,
+        metadata,
+      ],
+    );
+    await client.query("COMMIT");
+    return {
+      subscription_id: grant.id,
+      membership_class: selectedClass,
+      membership_interval: selectedInterval,
+      membership_grant_ends_at:
+        grant.current_period_end != null
+          ? new Date(grant.current_period_end).toISOString()
+          : null,
+      membership_renewal_configured: selectedClass != null,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function configureFinancialMembershipRenewal({
+  account_id,
+  membership_class,
+  membership_interval,
+}: LegacyMigrationConfigureFinancialRenewalOptions = {}): Promise<LegacyMigrationConfigureFinancialRenewalResponse> {
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const account = await getClusterAccountById(account_id);
+  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
+  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: homeBayId,
+      timeout: LEGACY_FINANCIAL_HOME_BAY_TIMEOUT_MS,
+    }).legacyMigrationConfigureFinancialRenewalHomeBay({
+      account_id,
+      membership_class,
+      membership_interval,
+    });
+  }
+  return await configureFinancialMembershipRenewalHomeBay({
+    account_id,
+    membership_class,
+    membership_interval,
+  });
 }
 
 export async function applyFinancialMigration({

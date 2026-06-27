@@ -1441,6 +1441,10 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.applyFinancialMigration(opts ?? {}),
     legacyMigrationApplyFinancialHomeBay: async (opts) =>
       await legacyMigration.applyFinancialMigrationHomeBay(opts),
+    legacyMigrationGetFinancialMembershipGrantHomeBay: async (opts) =>
+      await legacyMigration.getFinancialMembershipGrantHomeBay(opts),
+    legacyMigrationConfigureFinancialRenewalHomeBay: async (opts) =>
+      await legacyMigration.configureFinancialMembershipRenewalHomeBay(opts),
     publicDirectoryShareResolve: async (opts) =>
       await publicDirectoryShares.resolve(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
