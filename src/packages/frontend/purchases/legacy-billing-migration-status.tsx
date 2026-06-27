@@ -28,6 +28,7 @@ function formatMoney(value: number | null | undefined): string {
 
 function membershipLabel(value: string | null | undefined): string {
   if (!value) return "membership";
+  if (value === "member") return "Standard membership";
   return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)} membership`;
 }
 
@@ -74,6 +75,9 @@ export default function LegacyBillingMigrationStatus({
   const [applying, setApplying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [continueOpen, setContinueOpen] = useState(false);
+  const [renewalTargetClass, setRenewalTargetClass] = useState<string | null>(
+    null,
+  );
   const [preview, setPreview] =
     useState<LegacyMigrationFinancialPreviewResponse>();
   const reviewRequested = legacyBillingMigrationReviewRequested(account_id);
@@ -204,10 +208,17 @@ export default function LegacyBillingMigrationStatus({
   const suggestedMembership = preview.suggested_membership_class;
   const suggestedMembershipLabel = membershipLabel(suggestedMembership);
   const continueMembershipLabel = membershipLabel(continueMembership);
+  const standardRenewalLabel =
+    continueMembership === "member"
+      ? "Continue Standard"
+      : "Upgrade to Standard";
+  const basicRenewalLabel =
+    continueMembership === "basic" ? "Continue Basic" : "Switch to Basic";
   const grantDays = preview.suggested_membership_grant_days ?? 30;
-  const basicPrice = planPriceLabel(
-    preview.plans.find((plan) => plan.id === "basic"),
-  );
+  const basicPlan = preview.plans.find((plan) => plan.id === "basic");
+  const memberPlan = preview.plans.find((plan) => plan.id === "member");
+  const basicPrice = planPriceLabel(basicPlan);
+  const memberPrice = planPriceLabel(memberPlan);
   const pendingEntitlementCredit = preview.legacy_accounts.reduce(
     (total, account) =>
       account.claimed_by_account_id
@@ -277,17 +288,38 @@ export default function LegacyBillingMigrationStatus({
             description={
               <Space direction="vertical" size="small">
                 <span>
-                  Keep this membership after the free migration grant by setting
-                  up renewal now. Your paid membership continues after the grant
-                  period; this does not remove the free month.
+                  Your default is explicit: cancel at period end. You can use
+                  the free membership until the grant ends, or set up renewal
+                  now. Renewal starts after the free month.
                 </span>
-                <Button
-                  onClick={() => setContinueOpen(true)}
-                  size="small"
-                  type="primary"
-                >
-                  Continue {continueMembershipLabel}
-                </Button>
+                <Space wrap>
+                  <Button disabled size="small">
+                    Cancel at period end
+                  </Button>
+                  <Button
+                    disabled={!memberPlan}
+                    onClick={() => {
+                      setRenewalTargetClass("member");
+                      setContinueOpen(true);
+                    }}
+                    size="small"
+                    type="primary"
+                  >
+                    {standardRenewalLabel}
+                    {memberPrice ? ` (${memberPrice})` : ""}
+                  </Button>
+                  <Button
+                    disabled={!basicPlan}
+                    onClick={() => {
+                      setRenewalTargetClass("basic");
+                      setContinueOpen(true);
+                    }}
+                    size="small"
+                  >
+                    {basicRenewalLabel}
+                    {basicPrice ? ` (${basicPrice})` : ""}
+                  </Button>
+                </Space>
               </Space>
             }
           />
@@ -385,13 +417,16 @@ export default function LegacyBillingMigrationStatus({
         </Space>
       </Space>
       <MembershipPurchaseModal
-        initialTargetClass={continueMembership ?? undefined}
+        initialTargetClass={renewalTargetClass ?? undefined}
         initialTargetInterval={
           (continueInterval ?? undefined) as BillingInterval | undefined
         }
         open={continueOpen}
         onChanged={() => void load()}
-        onClose={() => setContinueOpen(false)}
+        onClose={() => {
+          setContinueOpen(false);
+          setRenewalTargetClass(null);
+        }}
         replaceCurrentCanceledSubscription
       />
     </Card>

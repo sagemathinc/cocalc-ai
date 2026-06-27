@@ -98,10 +98,12 @@ const LEGACY_STRIPE_UPGRADE_PLAN_IDS = new Set([
   "premium2",
   "professional2",
 ]);
-const LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF = 150;
 const LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS = 30;
 
 const logger = getLogger("server:legacy-migration");
+
+const ACCOUNT_VERIFIED_EMAILS_JSON =
+  "CASE WHEN jsonb_typeof(email_address_verified)='object' THEN email_address_verified ELSE '{}'::jsonb END";
 
 type AccountEmailRow = {
   email_address: string | null;
@@ -912,12 +914,11 @@ export async function ensureVerifiedEmailLinksForAllAccounts(): Promise<number> 
         FROM accounts
        WHERE COALESCE(deleted, false)=false
          AND COALESCE(email_address, '') <> ''
-         AND COALESCE(email_address_verified, '{}'::jsonb)
-             ? lower(email_address)
+         AND ${ACCOUNT_VERIFIED_EMAILS_JSON} ? lower(email_address)
       UNION
       SELECT account_id, lower(verified.email) AS email
         FROM accounts
-        CROSS JOIN LATERAL jsonb_each(COALESCE(email_address_verified, '{}'::jsonb))
+        CROSS JOIN LATERAL jsonb_each(${ACCOUNT_VERIFIED_EMAILS_JSON})
           AS verified(email, verified_value)
        WHERE COALESCE(deleted, false)=false
          AND verified.verified_value = 'true'::jsonb
@@ -1294,20 +1295,15 @@ async function financialRowsForAccount(
 
 function suggestedMembershipClass({
   active_subscription_count,
-  active_subscription_annualized,
   membership_already_applied,
 }: {
-  active_subscription_annualized: number;
   active_subscription_count: number;
   membership_already_applied: boolean;
 }): string | null {
   if (membership_already_applied || active_subscription_count <= 0) {
     return null;
   }
-  return active_subscription_annualized >
-    LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF
-    ? "member"
-    : "basic";
+  return "member";
 }
 
 function suggestedFinancialMembershipInterval(
@@ -1386,7 +1382,6 @@ async function financialPreviewForAccount(
     active_subscription_annualized,
     active_subscription_count,
     suggested_membership_class: suggestedMembershipClass({
-      active_subscription_annualized,
       active_subscription_count,
       membership_already_applied,
     }),
