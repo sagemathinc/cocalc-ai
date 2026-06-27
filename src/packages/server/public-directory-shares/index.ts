@@ -28,6 +28,7 @@ import {
   viewerReadPolicyAllowsPath,
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { posix } from "node:path";
 import type {
   ListMyPublicDirectorySharesOptions,
@@ -92,7 +93,11 @@ export function normalizePublicDirectoryShareSlug(slug: string): string {
 }
 
 export function normalizePublicDirectorySharePath(path: string): string {
-  const trimmed = `${path ?? ""}`.trim().replace(/^\/+|\/+$/g, "");
+  const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
+  const runtimeHomeRelative = projectRuntimeHomeRelativePath(raw);
+  const normalizedPath =
+    runtimeHomeRelative == null ? raw : runtimeHomeRelative;
+  const trimmed = normalizedPath.trim().replace(/^\/+|\/+$/g, "");
   if (!trimmed || trimmed === ".") {
     return ".";
   }
