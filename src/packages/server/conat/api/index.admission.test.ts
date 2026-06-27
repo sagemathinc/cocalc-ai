@@ -18,6 +18,15 @@ describe("hub api admission", () => {
     expect(isLowPriorityHubApiMethod("purchases.getAccountUsageOverview")).toBe(
       true,
     );
+    expect(isLowPriorityHubApiMethod("purchases.getManagedEgressHistory")).toBe(
+      true,
+    );
+    expect(
+      isLowPriorityHubApiMethod("purchases.getManagedEgressAdminOverview"),
+    ).toBe(true);
+    expect(
+      isLowPriorityHubApiMethod("purchases.getManagedEgressAdminHistory"),
+    ).toBe(true);
     expect(isLowPriorityHubApiMethod("purchases.getAIUsage")).toBe(true);
     expect(isLowPriorityHubApiMethod("db.userQuery")).toBe(false);
   });

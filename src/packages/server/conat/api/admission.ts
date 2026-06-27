@@ -13,6 +13,9 @@ export type HubApiAdmissionDecision = {
 const LOW_PRIORITY_METHODS = new Set([
   "purchases.getAIUsage",
   "purchases.getAccountUsageOverview",
+  "purchases.getManagedEgressAdminHistory",
+  "purchases.getManagedEgressAdminOverview",
+  "purchases.getManagedEgressHistory",
   "purchases.getMembershipDetails",
 ]);
 

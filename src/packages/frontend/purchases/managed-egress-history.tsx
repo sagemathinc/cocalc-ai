@@ -40,7 +40,7 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const MAX_HISTORY_BUCKETS = 2000;
 const RECENT_SUMMARY_WINDOW_MS = 6 * HOUR_MS;
-const RECENT_SUMMARY_REFRESH_MS = 60 * 1000;
+const RECENT_SUMMARY_REFRESH_MS = 5 * 60 * 1000;
 const TOP_PROJECTS_SUMMARY_WINDOW_MS = 24 * HOUR_MS;
 const TOP_PROJECTS_SUMMARY_REFRESH_MS = 5 * 60 * 1000;
 
@@ -646,12 +646,15 @@ function useManagedEgressHistorySnapshot({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<any>(null);
   const requestKeyRef = useRef("");
+  const inFlightRef = useRef(false);
   const loadedOnceRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
       const end = new Date();
       const start = new Date(end.getTime() - durationMs);
       const requestKey = `${project_id ?? "account"}:${user_account_id ?? "self"}:${bucket}:${end.getTime()}`;
@@ -680,6 +683,7 @@ function useManagedEgressHistorySnapshot({
         if (cancelled || requestKeyRef.current !== requestKey) return;
         setError(err);
       } finally {
+        inFlightRef.current = false;
         if (!cancelled && requestKeyRef.current === requestKey) {
           setLoading(false);
         }
