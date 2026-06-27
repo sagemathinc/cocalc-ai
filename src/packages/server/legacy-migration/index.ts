@@ -1453,7 +1453,10 @@ export async function applyFinancialMigrationHomeBay({
   membership_class,
   membership_interval,
 }: LegacyMigrationApplyFinancialHomeBayOptions): Promise<LegacyMigrationApplyFinancialHomeBayResponse> {
-  await assertLegacyMigrationEnabled();
+  // The seed bay owns legacy dump access and validates that migration is enabled
+  // before it computes and claims these rows. The account home bay may not have
+  // migration enabled locally, but it is authoritative for balance/subscription
+  // mutations.
   if (!account_id) {
     throw Error("account_id is required");
   }
