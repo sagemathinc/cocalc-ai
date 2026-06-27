@@ -39,7 +39,7 @@ export default function BalancePage() {
   return (
     <Space vertical size="middle" style={{ width: "100%" }}>
       {error ? <Alert type="error" message={error} /> : null}
-      <LegacyBillingMigrationStatus />
+      <LegacyBillingMigrationStatus onApplied={refresh} />
       <Balance refresh={refresh} />
     </Space>
   );
