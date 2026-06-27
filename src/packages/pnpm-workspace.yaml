@@ -97,6 +97,7 @@ allowBuilds:
 patchedDependencies:
   "@rc-component/portal@2.2.0": patches/@rc-component__portal@2.2.0.patch
   fs-ext@2.1.1: patches/fs-ext@2.1.1.patch
+  slate-react@0.124.0: patches/slate-react@0.124.0.patch
 
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:

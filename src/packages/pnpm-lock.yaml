@@ -78,6 +78,9 @@ patchedDependencies:
   fs-ext@2.1.1:
     hash: 8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b
     path: patches/fs-ext@2.1.1.patch
+  slate-react@0.124.0:
+    hash: 480c324a03628679a405b79a110bbd6bd6802f7d1379a491163e19156c5d7c85
+    path: patches/slate-react@0.124.0.patch
 
 importers:
 
@@ -965,7 +968,7 @@ importers:
         version: 0.115.0(slate@0.124.1)
       slate-react:
         specifier: ^0.124.0
-        version: 0.124.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.124.1))(slate@0.124.1)
+        version: 0.124.0(patch_hash=480c324a03628679a405b79a110bbd6bd6802f7d1379a491163e19156c5d7c85)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.124.1))(slate@0.124.1)
       superb:
         specifier: ^3.0.0
         version: 3.0.0
@@ -20227,7 +20230,7 @@ snapshots:
     dependencies:
       slate: 0.124.1
 
-  slate-react@0.124.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.124.1))(slate@0.124.1):
+  slate-react@0.124.0(patch_hash=480c324a03628679a405b79a110bbd6bd6802f7d1379a491163e19156c5d7c85)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.124.1))(slate@0.124.1):
     dependencies:
       '@juggle/resize-observer': 3.4.0
       direction: 1.0.4
