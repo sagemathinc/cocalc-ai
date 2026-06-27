@@ -1114,8 +1114,20 @@ async function financialRowsForAccount(
           ON accounts.legacy_account_id=linked.legacy_account_id
         JOIN legacy_migration_raw_records raw
           ON raw.source='stripe_subscriptions'
-         AND raw.payload->>'stripe_customer_id'=accounts.stripe_customer_id
-       WHERE COALESCE(accounts.stripe_customer_id, '') <> ''
+         AND (
+           (
+             COALESCE(accounts.stripe_customer_id, '') <> ''
+             AND raw.payload->>'stripe_customer_id'=accounts.stripe_customer_id
+           )
+           OR lower(raw.payload->>'customer_email')=lower(accounts.email_address)
+           OR (
+             split_part(lower(accounts.email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+             AND split_part(lower(raw.payload->>'customer_email'), '@', 2) IN ('gmail.com', 'googlemail.com')
+             AND replace(split_part(split_part(lower(raw.payload->>'customer_email'), '@', 1), '+', 1), '.', '')
+                 = replace(split_part(split_part(lower(accounts.email_address), '@', 1), '+', 1), '.', '')
+           )
+         )
+       WHERE COALESCE(accounts.email_address_verified, false)=true
          AND raw.payload->>'status' IN ('active', 'trialing', 'canceled')
        GROUP BY accounts.legacy_account_id
     ),
@@ -1855,6 +1867,7 @@ export async function financialMigrationCandidateAccountIds({
 export async function listProjects({
   account_id,
   include_hidden,
+  include_not_available,
   limit,
   max_disk_mb,
   query,
@@ -1907,6 +1920,10 @@ export async function listProjects({
            OR p.disk_mb <= $5::DOUBLE PRECISION
          )
        GROUP BY p.legacy_project_id
+      HAVING (
+        $2::BOOLEAN
+        OR NOT BOOL_OR(COALESCE(p.legacy_users->linked.legacy_account_id->>'hide', '')='true')
+      )
     )
     SELECT p.legacy_project_id,
            p.title,
@@ -1944,8 +1961,31 @@ export async function listProjects({
         ON matched.legacy_project_id=p.legacy_project_id
       LEFT JOIN legacy_migration_project_imports i
         ON i.legacy_project_id=p.legacy_project_id
+     WHERE (
+       $6::BOOLEAN
+       OR i.project_id IS NOT NULL
+       OR (
+         p.artifact_status='available'
+         AND COALESCE(p.artifact_key, '') <> ''
+         AND p.artifact_manifest IS NOT NULL
+         AND (
+           p.artifact_manifest ?| ARRAY[
+             'compressed_bytes',
+             'compressed_size_bytes',
+             'artifact_bytes',
+             'object_bytes',
+             'r2_bytes'
+           ]
+           OR COALESCE((p.artifact_manifest->'archive') ?| ARRAY[
+             'compressed_bytes',
+             'object_bytes'
+           ], false)
+           OR COALESCE((p.artifact_manifest->'artifact') ? 'bytes', false)
+         )
+       )
+     )
      ORDER BY p.last_edited DESC NULLS LAST, p.legacy_project_id
-     LIMIT $6
+     LIMIT $7
     `,
     [
       account_id,
@@ -1953,6 +1993,7 @@ export async function listProjects({
       useSearch,
       search,
       maxDiskMb,
+      !!include_not_available,
       limitValue(limit),
     ],
   );

@@ -71,6 +71,7 @@ export interface LegacyMigrationProjectSummary {
 export interface LegacyMigrationListProjectsOptions {
   account_id?: string;
   include_hidden?: boolean;
+  include_not_available?: boolean;
   limit?: number;
   max_disk_mb?: number;
   query?: string;

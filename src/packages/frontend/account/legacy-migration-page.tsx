@@ -648,7 +648,7 @@ export const LEGACY_MIGRATION_SETTINGS_PAGE = {
   key: "legacy-migration",
   label: defineMessage({
     id: "account.settings.legacy-migration.label",
-    defaultMessage: "Legacy migration",
+    defaultMessage: "Legacy Projects",
   }),
   title: defineMessage({
     id: "account.settings.legacy-migration.title",
@@ -692,6 +692,7 @@ export function LegacyMigrationPage() {
     unverifiedEmailMatches: [],
   });
   const [includeHidden, setIncludeHidden] = useState(false);
+  const [includeNotAvailable, setIncludeNotAvailable] = useState(false);
   const [maxDiskGb, setMaxDiskGb] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
@@ -715,6 +716,7 @@ export function LegacyMigrationPage() {
       const response =
         await webapp_client.conat_client.hub.legacyMigration.listProjects({
           include_hidden: includeHidden,
+          include_not_available: includeNotAvailable,
           limit: PROJECT_LOAD_LIMIT,
           max_disk_mb: maxDiskGb == null ? undefined : maxDiskGb * 1024,
           query: nextQuery,
@@ -743,7 +745,7 @@ export function LegacyMigrationPage() {
     if (legacyMigrationEnabled) {
       void loadProjects();
     }
-  }, [account_id, includeHidden, legacyMigrationEnabled]);
+  }, [account_id, includeHidden, includeNotAvailable, legacyMigrationEnabled]);
 
   function setShowLegacyProjectsButton(show: boolean): void {
     redux
@@ -1173,6 +1175,12 @@ export function LegacyMigrationPage() {
               onChange={(event) => setIncludeHidden(event.target.checked)}
             >
               Include hidden
+            </Checkbox>
+            <Checkbox
+              checked={includeNotAvailable}
+              onChange={(event) => setIncludeNotAvailable(event.target.checked)}
+            >
+              Include not yet available
             </Checkbox>
             <InputNumber
               min={0}
