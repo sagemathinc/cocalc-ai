@@ -282,10 +282,22 @@ async function claimRestoreRows({
     const claimed: LegacyRestoreRow[] = [];
     for (const candidate of candidates.rows) {
       if (claimed.length >= remainingTotal) break;
-      const target = await materializeRemoteProjectHostTarget({
-        account_id: candidate.owner_account_id,
-        project_id: candidate.project_id,
-      });
+      let target:
+        | Awaited<ReturnType<typeof materializeRemoteProjectHostTarget>>
+        | undefined;
+      try {
+        target = await materializeRemoteProjectHostTarget({
+          account_id: candidate.owner_account_id,
+          project_id: candidate.project_id,
+        });
+      } catch (err) {
+        logger.warn("legacy migration restore candidate route failed", {
+          legacy_project_id: candidate.legacy_project_id,
+          project_id: candidate.project_id,
+          err: `${err}`,
+        });
+        continue;
+      }
       const hostId = `${target?.host_id ?? ""}`.trim();
       if (!hostId) {
         logger.debug("legacy migration restore candidate has no routed host", {
