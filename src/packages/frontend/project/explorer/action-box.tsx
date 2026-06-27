@@ -1085,6 +1085,7 @@ export function ActionBox({
     if (user_type !== "signed_in") {
       return <LoginLink />;
     }
+    const displayPath = normalizeSharePath(path);
     const poolOptions = siteLicensePoolOptions();
     const canPublish =
       publishSlug.trim().length > 0 &&
@@ -1095,7 +1096,7 @@ export function ActionBox({
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {existingPublishShare ? (
           <Alert bsStyle="success">
-            <code>{path}</code> is already published at{" "}
+            <code>{displayPath}</code> is already published at{" "}
             <a
               href={publicShareUrl(existingPublishShare.slug)}
               target="_blank"
@@ -1107,9 +1108,8 @@ export function ActionBox({
           </Alert>
         ) : (
           <Alert bsStyle="info">
-            Publish <code>{path}</code> as an unlisted shared directory. Viewers
-            must sign in to CoCalc, and file reads count against their egress
-            quota.
+            Publish <code>{displayPath}</code> as an unlisted shared directory.
+            Viewers must know the URL and be signed in to CoCalc.
           </Alert>
         )}
         {publishShareLoading ? (
