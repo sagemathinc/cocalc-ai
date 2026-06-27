@@ -292,7 +292,7 @@ function ActionBarEnabled({
 
   function render_currently_selected(): React.JSX.Element | undefined {
     const refreshButton =
-      hasPendingUpdate && !suppressPendingRefresh ? (
+      hasPendingUpdate && !suppressPendingRefresh && !readOnly ? (
         <RefreshButton onClick={onRefreshListing} />
       ) : null;
     const readOnlyRefreshButton =
