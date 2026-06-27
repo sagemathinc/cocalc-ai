@@ -80,7 +80,7 @@ export default async function createCredit({
   );
 
   // call getbalance to trigger update of the balance field in the accounts table.
-  await getBalance({ account_id });
+  await getBalance({ account_id, client });
 
   return rows[0].id;
 }
