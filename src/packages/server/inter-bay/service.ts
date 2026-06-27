@@ -208,6 +208,7 @@ import {
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
 import * as legacyMigration from "@cocalc/server/legacy-migration";
+import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import {
   clearAccountEntitlementOverrideLocal,
@@ -1440,6 +1441,10 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.applyFinancialMigration(opts ?? {}),
     legacyMigrationApplyFinancialHomeBay: async (opts) =>
       await legacyMigration.applyFinancialMigrationHomeBay(opts),
+    publicDirectoryShareResolve: async (opts) =>
+      await publicDirectoryShares.resolve(opts),
+    publicDirectoryShareAuthorizeRead: async (opts) =>
+      await publicDirectoryShares.authorizeRead(opts),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

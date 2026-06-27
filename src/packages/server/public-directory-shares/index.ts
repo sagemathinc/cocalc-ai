@@ -15,6 +15,7 @@ import { getSiteLicenseOverview } from "@cocalc/server/conat/api/purchases";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import createProject from "@cocalc/server/projects/create";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -545,15 +546,28 @@ async function resolveRow({
     }
   }
   const summary = rowToSummary(row);
+  let availabilityStatus = summary.availability_status;
+  let availabilityMessage = summary.availability_message ?? null;
+  let owningBayId = row.owning_bay_id ?? null;
+  if (availabilityStatus !== "available") {
+    const ownership = await resolveProjectBayAcrossCluster(row.project_id);
+    if (ownership?.bay_id) {
+      availabilityStatus = "available";
+      availabilityMessage = null;
+      owningBayId = ownership.bay_id;
+    }
+  }
   return {
     row,
     share: {
       ...summary,
-      available: summary.availability_status === "available",
+      availability_status: availabilityStatus,
+      availability_message: availabilityMessage,
+      available: availabilityStatus === "available",
       read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
       project_title: row.project_title ?? null,
       host_id: row.host_id ?? null,
-      owning_bay_id: row.owning_bay_id ?? null,
+      owning_bay_id: owningBayId,
     },
   };
 }
@@ -614,7 +628,14 @@ export async function authorizeRead({
     }
   }
   const summary = rowToSummary(row);
-  if (summary.availability_status !== "available") {
+  let availabilityStatus = summary.availability_status;
+  if (availabilityStatus !== "available") {
+    const ownership = await resolveProjectBayAcrossCluster(row.project_id);
+    if (ownership?.bay_id) {
+      availabilityStatus = "available";
+    }
+  }
+  if (availabilityStatus !== "available") {
     throw Error(
       summary.availability_message ||
         "This shared directory is not available yet.",
