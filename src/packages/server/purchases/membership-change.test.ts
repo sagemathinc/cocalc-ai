@@ -257,6 +257,71 @@ describe("membership change payment enforcement", () => {
     expect(activeRows).toEqual([]);
   });
 
+  it("continues a legacy migration grant as a paid membership after the grant", async () => {
+    const grantAccount = uuid();
+    const standardTier = `grant-standard-${uuid().slice(0, 8)}` as any;
+    const basicTier = `grant-basic-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(grantAccount);
+    await createTestMembershipTier({
+      id: basicTier,
+      price_monthly: 8,
+      price_yearly: 72,
+      priority: 10,
+    });
+    await createTestMembershipTier({
+      id: standardTier,
+      price_monthly: 24,
+      price_yearly: 216,
+      priority: 20,
+    });
+    const grantEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const { subscription_id: grantSubscriptionId } =
+      await createTestMembershipSubscription(grantAccount, {
+        class: standardTier,
+        cost: 216,
+        interval: "year",
+        end: grantEnd,
+        status: "canceled",
+      });
+    await getPool().query(
+      "UPDATE subscriptions SET latest_purchase_id=NULL, metadata=metadata || $2::jsonb WHERE id=$1",
+      [
+        grantSubscriptionId,
+        JSON.stringify({
+          grant: true,
+          source_id: "legacy-migration",
+        }),
+      ],
+    );
+
+    const result = await applyTestMembershipChange({
+      account_id: grantAccount,
+      targetClass: basicTier,
+      interval: "month",
+      allowDowngrade: true,
+      paymentAmount: 8,
+    });
+
+    expect(result.charge).toBe(8);
+    expect(result.purchase_id).toBeGreaterThan(0);
+    expect(result.subscription_id).toBeGreaterThan(0);
+    const { rows } = await getPool().query(
+      `SELECT metadata->>'class' AS class,
+              status,
+              current_period_end,
+              latest_purchase_id
+         FROM subscriptions
+        WHERE id=$1`,
+      [result.subscription_id],
+    );
+    expect(rows[0]?.class).toBe(basicTier);
+    expect(rows[0]?.status).toBe("active");
+    expect(rows[0]?.latest_purchase_id).toBe(result.purchase_id);
+    expect(new Date(rows[0]?.current_period_end).getTime()).toBeGreaterThan(
+      grantEnd.getTime() + 25 * 24 * 60 * 60 * 1000,
+    );
+  });
+
   it("rejects free trials when billing is not ready", async () => {
     const trialAccount = uuid();
     const trialTier = `trial-${uuid().slice(0, 8)}` as any;

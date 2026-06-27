@@ -924,6 +924,8 @@ async function financialRowsForAccount(
       site_license_payloads: Record<string, any>[] | null;
       claimed_by_account_id: string | null;
       claimed_at: Date | string | null;
+      selected_membership_class: string | null;
+      selected_membership_interval: "month" | "year" | null;
     }
   >(
     `
@@ -1017,7 +1019,9 @@ async function financialRowsForAccount(
            COALESCE(site_license_payloads.payloads, '[]'::jsonb)
              AS site_license_payloads,
            claims.account_id AS claimed_by_account_id,
-           claims.applied_at AS claimed_at
+           claims.applied_at AS claimed_at,
+           claims.selected_membership_class,
+           claims.selected_membership_interval
       FROM linked
       JOIN legacy_migration_accounts accounts
         ON accounts.legacy_account_id=linked.legacy_account_id
@@ -1115,6 +1119,13 @@ async function financialRowsForAccount(
             : rawActiveCount === 0 && stripeInfo.active_subscription_count > 0
               ? stripeInfo.suggested_membership_interval
               : "month",
+      selected_membership_class: clean(row.selected_membership_class) ?? null,
+      selected_membership_interval:
+        row.selected_membership_interval === "month"
+          ? "month"
+          : row.selected_membership_interval === "year"
+            ? "year"
+            : null,
       claimed_by_account_id: row.claimed_by_account_id,
       claimed_at: row.claimed_at,
     };
@@ -1183,6 +1194,9 @@ async function financialPreviewForAccount(
     (total, account) => total + account.active_subscription_count,
     0,
   );
+  const appliedMembership = claimedHere.find(
+    (account) => account.selected_membership_class,
+  );
   const membershipClaimExists = await legacyMembershipClaimExists(account_id);
   const membership_already_applied =
     hasActiveMembership || membershipClaimExists;
@@ -1204,6 +1218,10 @@ async function financialPreviewForAccount(
     suggested_membership_interval:
       suggestedFinancialMembershipInterval(pending),
     suggested_membership_grant_days: LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS,
+    applied_membership_class:
+      appliedMembership?.selected_membership_class ?? null,
+    applied_membership_interval:
+      appliedMembership?.selected_membership_interval ?? null,
     membership_already_applied,
     stripe_customer_id,
     plans,

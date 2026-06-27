@@ -46,6 +46,7 @@ export interface MembershipPricingResult {
   refund: number;
   existing_subscription_id?: number;
   existing_class?: MembershipClass;
+  existing_promo_grant?: boolean;
   current_period_start?: Date;
   current_period_end?: Date;
   trial_days?: number;
@@ -62,7 +63,12 @@ export interface MembershipChangeResult extends MembershipPricingResult {
 
 type ActiveMembershipSubscription = {
   id: number;
-  metadata: { class?: MembershipClass; trial?: boolean };
+  metadata: {
+    class?: MembershipClass;
+    trial?: boolean;
+    grant?: boolean;
+    source_id?: string;
+  };
   cost: number;
   current_period_start: Date;
   current_period_end: Date;
@@ -318,10 +324,7 @@ function subscriptionStatusRank(status: string): number {
 }
 
 function subscriptionRefundBasis(subscription: ActiveMembershipSubscription) {
-  if (
-    subscription.metadata?.trial === true &&
-    subscription.latest_purchase_id == null
-  ) {
+  if (isFreePromoSubscription(subscription)) {
     return toDecimal(0);
   }
   const basis =
@@ -330,6 +333,24 @@ function subscriptionRefundBasis(subscription: ActiveMembershipSubscription) {
       : (subscription.cost ?? 0);
   const amount = toDecimal(basis);
   return amount.lt(0) ? toDecimal(0) : amount;
+}
+
+function isFreePromoSubscription(subscription?: ActiveMembershipSubscription) {
+  return (
+    subscription != null &&
+    subscription.latest_purchase_id == null &&
+    (subscription.metadata?.trial === true ||
+      subscription.metadata?.grant === true)
+  );
+}
+
+function isLegacyMigrationMembershipGrant(
+  subscription?: ActiveMembershipSubscription,
+) {
+  return (
+    isFreePromoSubscription(subscription) &&
+    subscription?.metadata?.source_id === "legacy-migration"
+  );
 }
 
 function proratedSubscriptionRefund(
@@ -462,7 +483,13 @@ export async function computeMembershipChange({
     tierMap: tiers,
   });
   const existingClass = existing?.metadata?.class;
-  if (existingClass && existingClass == targetClass) {
+  const replacingLegacyMigrationGrant =
+    isLegacyMigrationMembershipGrant(existing);
+  if (
+    existingClass &&
+    existingClass == targetClass &&
+    !replacingLegacyMigrationGrant
+  ) {
     throw Error(`already subscribed to ${targetClass}`);
   }
 
@@ -471,7 +498,9 @@ export async function computeMembershipChange({
   const targetPriority = targetTier?.priority ?? 0;
 
   let change: MembershipChangeResult["change"] = "new";
-  if (existingClass) {
+  if (replacingLegacyMigrationGrant && existingClass === targetClass) {
+    change = "upgrade";
+  } else if (existingClass) {
     if (targetPriority > existingPriority) {
       change = "upgrade";
     } else {
@@ -483,11 +512,12 @@ export async function computeMembershipChange({
   }
 
   let refund = toDecimal(0);
-  if (change == "upgrade" && existing) {
+  if (change == "upgrade" && existing && !replacingLegacyMigrationGrant) {
     refund = proratedSubscriptionRefund(existing);
   }
-  const charge =
-    change == "downgrade"
+  const charge = replacingLegacyMigrationGrant
+    ? moneyRound2Up(priceValue)
+    : change == "downgrade"
       ? toDecimal(0)
       : moneyRound2Up(
           priceValue.sub(refund).lt(0) ? 0 : priceValue.sub(refund),
@@ -510,6 +540,7 @@ export async function computeMembershipChange({
     refund: refund.toNumber(),
     existing_subscription_id: existing?.id,
     existing_class: existingClass,
+    existing_promo_grant: replacingLegacyMigrationGrant,
     current_period_start: existing?.current_period_start,
     current_period_end: existing?.current_period_end,
     ...trial,

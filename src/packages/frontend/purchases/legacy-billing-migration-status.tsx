@@ -10,6 +10,8 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { LegacyMigrationFinancialPreviewResponse } from "@cocalc/conat/hub/api/legacy-migration";
+import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
+import type { BillingInterval } from "@cocalc/frontend/account/membership-pricing-chooser";
 
 const { Text } = Typography;
 
@@ -49,6 +51,7 @@ export default function LegacyBillingMigrationStatus() {
   const [error, setError] = useState("");
   const [applying, setApplying] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [continueOpen, setContinueOpen] = useState(false);
   const [preview, setPreview] =
     useState<LegacyMigrationFinancialPreviewResponse>();
 
@@ -106,8 +109,13 @@ export default function LegacyBillingMigrationStatus() {
 
   const pending =
     preview.pending_credit_amount > 0 || preview.active_subscription_count > 0;
+  const continueMembership = preview.applied_membership_class;
+  const continueInterval =
+    preview.applied_membership_interval ??
+    preview.suggested_membership_interval;
   const suggestedMembership = preview.suggested_membership_class;
   const suggestedMembershipLabel = membershipLabel(suggestedMembership);
+  const continueMembershipLabel = membershipLabel(continueMembership);
   const grantDays = preview.suggested_membership_grant_days ?? 30;
   const pendingEntitlementCredit = preview.legacy_accounts.reduce(
     (total, account) =>
@@ -170,6 +178,29 @@ export default function LegacyBillingMigrationStatus() {
               : "Migrated legacy billing items are recorded in your CoCalc billing history and membership status."
           }
         />
+        {continueMembership ? (
+          <Alert
+            showIcon
+            type="success"
+            message={`Free ${grantDays}-day ${continueMembershipLabel} grant`}
+            description={
+              <Space direction="vertical" size="small">
+                <span>
+                  Keep this membership after the free migration grant by setting
+                  up renewal now. Your paid membership continues after the grant
+                  period; this does not remove the free month.
+                </span>
+                <Button
+                  onClick={() => setContinueOpen(true)}
+                  size="small"
+                  type="primary"
+                >
+                  Continue {continueMembershipLabel}
+                </Button>
+              </Space>
+            }
+          />
+        ) : null}
         <Space wrap size="large">
           <Space direction="vertical" size={0}>
             <Text type="secondary">Pending credit</Text>
@@ -248,6 +279,16 @@ export default function LegacyBillingMigrationStatus() {
           ))}
         </Space>
       </Space>
+      <MembershipPurchaseModal
+        initialTargetClass={continueMembership ?? undefined}
+        initialTargetInterval={
+          (continueInterval ?? undefined) as BillingInterval | undefined
+        }
+        open={continueOpen}
+        onChanged={() => void load()}
+        onClose={() => setContinueOpen(false)}
+        replaceCurrentCanceledSubscription
+      />
     </Card>
   );
 }
