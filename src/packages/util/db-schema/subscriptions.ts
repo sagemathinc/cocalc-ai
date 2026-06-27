@@ -16,6 +16,9 @@ export interface MembershipMetadata {
   trial_days?: number;
   trial_email?: string;
   trial_ends_at?: string;
+  grant?: boolean;
+  grant_days?: number;
+  grant_ends_at?: string;
 }
 export type Metadata = MembershipMetadata;
 

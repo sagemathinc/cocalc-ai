@@ -5,7 +5,7 @@
 
 import { createReadStream, existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, posix } from "node:path";
 import { createInterface } from "node:readline";
 import { createGunzip } from "node:zlib";
 
@@ -16,6 +16,7 @@ import {
   normalizePublicDirectoryShareSlug,
 } from "@cocalc/server/public-directory-shares";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 
 type ImportTarget =
@@ -41,6 +42,15 @@ type ImportStats = {
   repairedRows: number;
   rows: number;
   batches: number;
+  publicPathDetails?: PublicPathImportCounters;
+};
+
+type PublicPathImportCounters = {
+  duplicateSlugs: number;
+  filePathsAsDirectories: number;
+  invalidSiteLicenseIds: number;
+  skippedInvalid: number;
+  skippedMissingRequired: number;
 };
 
 const DEFAULT_BATCH_SIZE = 2000;
@@ -53,6 +63,33 @@ let rawRecordsSchemaReady: Promise<void> | undefined;
 let projectsSchemaReady: Promise<void> | undefined;
 let accountsSchemaReady: Promise<void> | undefined;
 let repairedRows = 0;
+const publicPathCounters: PublicPathImportCounters = {
+  duplicateSlugs: 0,
+  filePathsAsDirectories: 0,
+  invalidSiteLicenseIds: 0,
+  skippedInvalid: 0,
+  skippedMissingRequired: 0,
+};
+const seenPublicPathSlugs = new Map<string, string>();
+
+function publicPathCounterSnapshot(): PublicPathImportCounters {
+  return { ...publicPathCounters };
+}
+
+function publicPathCounterDelta(
+  before: PublicPathImportCounters,
+): PublicPathImportCounters {
+  return {
+    duplicateSlugs: publicPathCounters.duplicateSlugs - before.duplicateSlugs,
+    filePathsAsDirectories:
+      publicPathCounters.filePathsAsDirectories - before.filePathsAsDirectories,
+    invalidSiteLicenseIds:
+      publicPathCounters.invalidSiteLicenseIds - before.invalidSiteLicenseIds,
+    skippedInvalid: publicPathCounters.skippedInvalid - before.skippedInvalid,
+    skippedMissingRequired:
+      publicPathCounters.skippedMissingRequired - before.skippedMissingRequired,
+  };
+}
 
 function pool() {
   poolUsed = true;
@@ -599,13 +636,73 @@ function legacyPublicPathSlug(row: Record<string, any>): string {
   return normalizePublicDirectoryShareSlug(slug);
 }
 
+function uniqueLegacyPublicPathSlug({
+  slug,
+  legacyId,
+}: {
+  slug: string;
+  legacyId: string;
+}): string {
+  const key = slug.toLowerCase();
+  const existing = seenPublicPathSlugs.get(key);
+  if (existing == null || existing === legacyId) {
+    seenPublicPathSlugs.set(key, legacyId);
+    return slug;
+  }
+  publicPathCounters.duplicateSlugs += 1;
+  const prefix = legacyId.slice(0, 10);
+  return normalizePublicDirectoryShareSlug(`${slug}~${prefix}`);
+}
+
+function looksLikeLegacyFilePath(path: string): boolean {
+  if (path === ".") return false;
+  const tail = posix.basename(path);
+  return /\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}$/.test(tail);
+}
+
+function normalizeLegacyPublicPathSharePath(rawPath: unknown): {
+  path: string;
+  original_path: string;
+  original_path_type: "directory" | "file";
+} {
+  const originalPath = normalizePublicDirectorySharePath(clean(rawPath) ?? ".");
+  if (!looksLikeLegacyFilePath(originalPath)) {
+    return {
+      path: originalPath,
+      original_path: originalPath,
+      original_path_type: "directory",
+    };
+  }
+  publicPathCounters.filePathsAsDirectories += 1;
+  return {
+    path: normalizePublicDirectorySharePath(posix.dirname(originalPath)),
+    original_path: originalPath,
+    original_path_type: "file",
+  };
+}
+
+function validUuidOrNull(value: unknown): string | null {
+  const normalized = clean(value);
+  if (normalized == null) {
+    return null;
+  }
+  if (isValidUUID(normalized)) {
+    return normalized;
+  }
+  publicPathCounters.invalidSiteLicenseIds += 1;
+  return null;
+}
+
 async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
   await ensurePublicDirectorySharesSchema();
   const payload = rows
     .map((row) => ({
+      skip_public_path: row.__skip_public_path === true,
       legacy_public_path_id: clean(row.id),
       project_id: clean(row.project_id),
       path: clean(row.path) ?? ".",
+      original_path: clean(row.original_path) ?? clean(row.path) ?? ".",
+      original_path_type: clean(row.original_path_type) ?? "directory",
       slug: clean(row.slug),
       visibility: row.disabled
         ? "disabled"
@@ -620,11 +717,15 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
       redirect: clean(row.redirect),
       site_license_id: clean(row.site_license_id),
       legacy_url: clean(row.url),
+      created_at: row.created ?? null,
       metadata: {
         authenticated: row.authenticated ?? null,
         auth: row.auth ?? null,
         compute_image: row.compute_image ?? null,
         counter: row.counter ?? null,
+        legacy_path: clean(row.original_path) ?? clean(row.path) ?? null,
+        legacy_path_type: clean(row.original_path_type) ?? "directory",
+        legacy_site_license_id: clean(row.legacy_site_license_id),
         jupyter_api: row.jupyter_api ?? null,
         token: row.token ?? null,
         vhost: row.vhost ?? null,
@@ -632,7 +733,16 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
       last_edited: row.last_edited ?? row.last_saved ?? null,
       disabled: row.disabled === true,
     }))
-    .filter((row) => row.legacy_public_path_id && row.project_id && row.slug);
+    .filter((row) => {
+      if (row.skip_public_path === true) {
+        return false;
+      }
+      if (row.legacy_public_path_id && row.project_id && row.slug) {
+        return true;
+      }
+      publicPathCounters.skippedMissingRequired += 1;
+      return false;
+    });
   if (payload.length === 0) return;
   await pool().query(
     `
@@ -652,6 +762,7 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
           redirect TEXT,
           site_license_id UUID,
           legacy_url TEXT,
+          created_at TIMESTAMPTZ,
           metadata JSONB,
           last_edited TIMESTAMPTZ,
           disabled BOOLEAN
@@ -677,12 +788,13 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
     ),
     upserted AS (
       INSERT INTO public_project_paths (
-        project_id, path, slug, visibility, requires_auth,
+        id, project_id, path, slug, visibility, requires_auth,
         availability_status, availability_message, title, description, license,
         image, redirect, site_license_id, metadata, legacy_public_path_id,
         legacy_url, last_edited, disabled, created_at, updated_at
       )
-      SELECT project_id,
+      SELECT gen_random_uuid(),
+             project_id,
              path,
              slug,
              visibility,
@@ -700,7 +812,7 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
              legacy_url,
              last_edited,
              COALESCE(disabled, false) OR visibility='disabled',
-             NOW(),
+             COALESCE(created_at, NOW()),
              NOW()
         FROM prepared
        WHERE legacy_public_path_id IS NOT NULL
@@ -724,6 +836,7 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
         site_license_id=EXCLUDED.site_license_id,
         metadata=EXCLUDED.metadata,
         legacy_url=EXCLUDED.legacy_url,
+        created_at=EXCLUDED.created_at,
         last_edited=EXCLUDED.last_edited,
         disabled=EXCLUDED.disabled,
         updated_at=NOW()
@@ -852,6 +965,8 @@ async function importFile({
 }): Promise<ImportStats> {
   const batch: Record<string, any>[] = [];
   const repairedRowsStart = repairedRows;
+  const publicPathCountersStart =
+    target === "public_paths" ? publicPathCounterSnapshot() : undefined;
   let rows = 0;
   let batches = 0;
   for await (const row of readRows(file, options.limit)) {
@@ -873,6 +988,9 @@ async function importFile({
     rows,
     batches,
     repairedRows: repairedRows - repairedRowsStart,
+    publicPathDetails: publicPathCountersStart
+      ? publicPathCounterDelta(publicPathCountersStart)
+      : undefined,
   };
 }
 
@@ -906,12 +1024,31 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
   } else if (target === "public_paths") {
     row.id = clean(row.id);
     row.project_id = clean(row.project_id);
-    row.path = normalizePublicDirectorySharePath(clean(row.path) ?? ".");
-    row.slug = legacyPublicPathSlug(row);
+    if (!row.id || !row.project_id || !isValidUUID(row.project_id)) {
+      row.__skip_public_path = true;
+      publicPathCounters.skippedMissingRequired += 1;
+      return;
+    }
+    try {
+      const slug = legacyPublicPathSlug(row);
+      const sharePath = normalizeLegacyPublicPathSharePath(row.path);
+      row.path = sharePath.path;
+      row.original_path = sharePath.original_path;
+      row.original_path_type = sharePath.original_path_type;
+      row.slug = uniqueLegacyPublicPathSlug({
+        slug,
+        legacyId: row.id,
+      });
+    } catch {
+      row.__skip_public_path = true;
+      publicPathCounters.skippedInvalid += 1;
+      return;
+    }
     row.name = clean(row.name);
     row.description = clean(row.description);
     row.url = clean(row.url);
-    row.site_license_id = clean(row.site_license_id);
+    row.legacy_site_license_id = clean(row.site_license_id);
+    row.site_license_id = validUuidOrNull(row.site_license_id);
   } else {
     row.id = clean(row.id);
     row.legacy_account_id = clean(row.legacy_account_id);
@@ -981,6 +1118,12 @@ async function main(): Promise<void> {
     if (stats.repairedRows > 0) {
       console.log(
         `repaired ${stats.repairedRows} legacy over-escaped JSON row(s) in ${basename(stats.file)}`,
+      );
+    }
+    if (stats.publicPathDetails) {
+      const details = stats.publicPathDetails;
+      console.log(
+        `public_paths details: ${details.filePathsAsDirectories} file path(s) imported as containing directories; ${details.duplicateSlugs} duplicate slug(s) suffixed; ${details.invalidSiteLicenseIds} invalid site_license_id value(s) preserved in metadata; ${details.skippedInvalid} invalid row(s) skipped; ${details.skippedMissingRequired} row(s) skipped due to missing required fields`,
       );
     }
   }

@@ -159,6 +159,18 @@ export interface LegacyMigrationMembershipPlan {
   price_yearly?: number | null;
 }
 
+export interface LegacyMigrationEntitlementCredit {
+  source: "subscription" | "site_license" | "stripe_legacy_subscription";
+  id: string;
+  credit_amount: number;
+  period_cost?: number | null;
+  period_start?: Date | string | null;
+  period_end?: Date | string | null;
+  interval?: string | null;
+  status?: string | null;
+  description?: string | null;
+}
+
 export interface LegacyMigrationFinancialAccount {
   legacy_account_id: string;
   email_address?: string | null;
@@ -166,8 +178,15 @@ export interface LegacyMigrationFinancialAccount {
   stripe_customer_id?: string | null;
   credit_amount: number;
   balance: number;
+  balance_credit_amount: number;
+  entitlement_credit_amount: number;
+  entitlement_credits: LegacyMigrationEntitlementCredit[];
+  unvalued_active_site_license_count: number;
   active_subscription_annualized: number;
   active_subscription_count: number;
+  suggested_membership_interval: "month" | "year";
+  selected_membership_class?: string | null;
+  selected_membership_interval?: "month" | "year" | null;
   claimed_by_account_id?: string | null;
   claimed_at?: Date | string | null;
 }
@@ -184,7 +203,11 @@ export interface LegacyMigrationFinancialPreviewResponse {
   active_subscription_count: number;
   suggested_membership_class?: string | null;
   suggested_membership_interval: "month" | "year";
+  suggested_membership_grant_days: number;
+  applied_membership_class?: string | null;
+  applied_membership_interval?: "month" | "year" | null;
   membership_already_applied: boolean;
+  membership_renewal_configured: boolean;
   stripe_customer_id?: string | null;
   plans: LegacyMigrationMembershipPlan[];
   can_apply: boolean;
@@ -201,6 +224,10 @@ export interface LegacyMigrationApplyFinancialResponse {
   credit_amount: number;
   credit_purchase_ids: number[];
   subscription_id?: number | null;
+  membership_class?: string | null;
+  membership_interval?: "month" | "year" | null;
+  membership_grant_days?: number | null;
+  membership_grant_ends_at?: string | null;
   stripe_customer_id?: string | null;
 }
 

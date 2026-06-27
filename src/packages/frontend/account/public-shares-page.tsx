@@ -187,7 +187,15 @@ function PublicSharesPage() {
                       {availabilityTag(share)}
                       {visibilityTag(share.visibility)}
                       {share.site_license_grant_on_copy ? (
-                        <Tag color="blue">License on copy</Tag>
+                        <Tag color="blue">
+                          License on copy
+                          {share.site_license_membership_tier_id
+                            ? `: ${share.site_license_membership_tier_id}`
+                            : ""}
+                          {share.site_license_duration_days
+                            ? ` / ${share.site_license_duration_days}d`
+                            : ""}
+                        </Tag>
                       ) : null}
                     </Space>
                   ),

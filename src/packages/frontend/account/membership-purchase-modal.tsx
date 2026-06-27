@@ -112,6 +112,17 @@ function projectedPeriodEnd({
   if (quote.trial_available && quote.trial_days) {
     return dayjs().add(quote.trial_days, "day").toDate();
   }
+  const currentPeriodEnd = quote.current_period_end
+    ? dayjs(quote.current_period_end)
+    : null;
+  if (
+    quote.existing_promo_grant === true &&
+    currentPeriodEnd?.isAfter(dayjs())
+  ) {
+    return currentPeriodEnd
+      .add(1, interval === "year" ? "year" : "month")
+      .toDate();
+  }
   return dayjs()
     .add(1, interval === "year" ? "year" : "month")
     .toDate();
@@ -136,6 +147,9 @@ function monthlyRate({
 interface Props {
   currentClassOverride?: string;
   currentIntervalOverride?: BillingInterval;
+  initialTargetClass?: string;
+  initialTargetInterval?: BillingInterval;
+  replaceCurrentCanceledSubscription?: boolean;
   open: boolean;
   onClose: () => void;
   onChanged?: () => void;
@@ -167,6 +181,9 @@ export default function MembershipPurchaseModal(props: Props) {
 function MembershipPurchaseModalInner({
   currentClassOverride,
   currentIntervalOverride,
+  initialTargetClass,
+  initialTargetInterval,
+  replaceCurrentCanceledSubscription,
   open,
   onClose,
   onChanged,
@@ -229,16 +246,16 @@ function MembershipPurchaseModalInner({
 
   useEffect(() => {
     if (!open) return;
-    setSelectedTierId(null);
+    setSelectedTierId(initialTargetClass ?? null);
     setQuote(null);
     setQuoteError("");
-    setInterval("year");
+    setInterval(initialTargetInterval ?? "year");
     setBillingSetupOpen(false);
     setQuoteRefreshKey(0);
     setPaymentSubmitting(false);
-    setPlace("choose");
+    setPlace(initialTargetClass ? "checkout" : "choose");
     load();
-  }, [open]);
+  }, [open, initialTargetClass, initialTargetInterval]);
 
   const availableTiers = useMemo(() => {
     return sortMembershipTiersByDisplayOrder(
@@ -285,7 +302,11 @@ function MembershipPurchaseModalInner({
   const currentPersonalClass =
     currentClassOverride ??
     (membership?.source === "subscription" || membership?.source === "free"
-      ? membership.class
+      ? membership.source === "subscription" &&
+        membership.subscription_status === "canceled" &&
+        replaceCurrentCanceledSubscription
+        ? undefined
+        : membership.class
       : undefined);
   const currentPersonalInterval =
     currentIntervalOverride ??
@@ -356,11 +377,13 @@ function MembershipPurchaseModalInner({
         : `${selectedLabel}: ${targetMonthlyRate}, ${billingDescription(
             interval,
           )}${
-            quote?.change === "downgrade"
-              ? ""
-              : quote?.trial_available && quote?.trial_days
-                ? `, ${Math.floor(quote.trial_days)}-day free trial`
-                : ", starts today"
+            quote?.existing_promo_grant === true
+              ? ", continues after your current free grant"
+              : quote?.change === "downgrade"
+                ? ""
+                : quote?.trial_available && quote?.trial_days
+                  ? `, ${Math.floor(quote.trial_days)}-day free trial`
+                  : ", starts today"
           }`;
   const targetSummaryText = targetSummary ? `${targetSummary}.` : "";
   const currentPeriodEndText = formatLongDate(quote?.current_period_end);

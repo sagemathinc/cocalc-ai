@@ -98,13 +98,19 @@ export async function applyMembershipChange({
     }
     const end = isTrial
       ? dayjs(start).add(trialDays, "day").toDate()
-      : change.change == "downgrade" &&
+      : change.existing_promo_grant === true &&
           existingEnd != null &&
           existingEnd > start
-        ? existingEnd
-        : interval == "month"
-          ? dayjs(start).add(1, "month").toDate()
-          : dayjs(start).add(1, "year").toDate();
+        ? dayjs(existingEnd)
+            .add(1, interval == "year" ? "year" : "month")
+            .toDate()
+        : change.change == "downgrade" &&
+            existingEnd != null &&
+            existingEnd > start
+          ? existingEnd
+          : interval == "month"
+            ? dayjs(start).add(1, "month").toDate()
+            : dayjs(start).add(1, "year").toDate();
 
     await cancelRenewableMembershipSubscriptions({
       account_id,

@@ -66,7 +66,6 @@ export default async function getCustomize(
       logoRectangularURL: settings.logo_rectangular,
       splashImage: settings.splash_image,
 
-      shareServer: !!settings.share_server,
       legacy_migration_enabled: !!settings.legacy_migration_enabled,
       legacy_migration_page_message: settings.legacy_migration_page_message,
 

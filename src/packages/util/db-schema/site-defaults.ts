@@ -113,7 +113,6 @@ export type SiteSettingsKeys =
   | "signup_email_domain_public_message"
   | "signup_email_domain_show_allowed_domains"
   | "public_signup_without_registration_token"
-  | "share_server"
   | "legacy_migration_enabled"
   | "legacy_migration_page_message"
   | "public_directory_shares_enabled"
@@ -890,15 +889,6 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     group: "Access & Identity",
     subgroup: "Signup",
-  },
-  share_server: {
-    name: "Allow public file sharing",
-    desc: "Users are allowed to publicly share files on the public share server (`https://yourserver/share`).  If this is disabled, then the share server will not run and users will not be allowed to share files from their projects.",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-    group: "Access & Identity",
-    subgroup: "Sharing",
   },
   legacy_migration_enabled: {
     name: "Enable legacy cocalc.com migration",

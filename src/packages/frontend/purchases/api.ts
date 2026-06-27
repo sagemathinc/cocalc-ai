@@ -329,6 +329,7 @@ export interface MembershipChangeQuote {
   refund: MoneyValue;
   existing_subscription_id?: number;
   existing_class?: string;
+  existing_promo_grant?: boolean;
   current_period_start?: Date | string;
   current_period_end?: Date | string;
   trial_days?: number;

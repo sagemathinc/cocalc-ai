@@ -48,6 +48,7 @@ import type {
   LegacyMigrationArchiveIndex,
   LegacyMigrationApplyFinancialOptions,
   LegacyMigrationApplyFinancialResponse,
+  LegacyMigrationEntitlementCredit,
   LegacyMigrationFinancialAccount,
   LegacyMigrationFinancialPreviewOptions,
   LegacyMigrationFinancialPreviewResponse,
@@ -70,7 +71,7 @@ import type {
 } from "@cocalc/conat/hub/api/legacy-migration";
 
 import { assertLegacyMigrationEnabled } from "./enabled";
-import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import { moneyRound2Up, moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const DEFAULT_LIMIT = 200;
@@ -80,6 +81,16 @@ const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const PROJECT_ARCHIVE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_ARCHIVE_INDEX_MAX_ENTRIES = 5_000;
 const MAX_ARCHIVE_INDEX_MAX_ENTRIES = 50_000;
+const LEGACY_STRIPE_UPGRADE_PLAN_IDS = new Set([
+  "standard",
+  "premium",
+  "professional",
+  "standard2",
+  "premium2",
+  "professional2",
+]);
+const LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF = 150;
+const LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS = 30;
 
 const logger = getLogger("server:legacy-migration");
 
@@ -563,6 +574,211 @@ function toMoneyNumber(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function asRecord(value: unknown): Record<string, any> {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : {};
+}
+
+function asArray(value: unknown): any[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function dateMs(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const ms =
+    typeof value === "number" ? value * 1000 : new Date(`${value}`).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function dateIso(value: unknown): string | null {
+  const ms = dateMs(value);
+  return ms == null ? null : new Date(ms).toISOString();
+}
+
+function generousRemainingCredit({
+  periodCost,
+  periodStart,
+  periodEnd,
+}: {
+  periodCost: unknown;
+  periodStart: unknown;
+  periodEnd: unknown;
+}): number {
+  const cost = positiveMoneyNumber(periodCost);
+  if (cost <= 0) return 0;
+  const now = Date.now();
+  const end = dateMs(periodEnd);
+  if (end == null || end <= now) return 0;
+  const start = dateMs(periodStart);
+  const fraction =
+    start != null && start < end ? Math.min(1, (end - now) / (end - start)) : 1;
+  if (fraction <= 0) return 0;
+  return toMoneyNumber(moneyRound2Up(toDecimal(cost).mul(fraction)).toString());
+}
+
+function subscriptionPeriodCost(row: Record<string, any>): number {
+  return positiveMoneyNumber(row.cost);
+}
+
+function subscriptionInterval(row: Record<string, any>): "month" | "year" {
+  return row.interval === "year" ? "year" : "month";
+}
+
+function subscriptionCredit(
+  row: Record<string, any>,
+): LegacyMigrationEntitlementCredit | null {
+  const credit_amount = generousRemainingCredit({
+    periodCost: subscriptionPeriodCost(row),
+    periodStart: row.current_period_start,
+    periodEnd: row.current_period_end,
+  });
+  if (credit_amount <= 0) return null;
+  return {
+    source: "subscription",
+    id: `${row.id ?? ""}`,
+    credit_amount,
+    period_cost: subscriptionPeriodCost(row),
+    period_start: dateIso(row.current_period_start),
+    period_end: dateIso(row.current_period_end),
+    interval: subscriptionInterval(row),
+    status: clean(row.status) ?? null,
+    description: clean(asRecord(row.metadata).type) ?? "legacy subscription",
+  };
+}
+
+function siteLicenseOwner(row: Record<string, any>): string | null {
+  return (
+    clean(asRecord(asRecord(row.info).purchased).account_id) ??
+    clean(asArray(row.managers)[0]) ??
+    null
+  );
+}
+
+function siteLicensePeriodCost(row: Record<string, any>): number {
+  return positiveMoneyNumber(
+    asRecord(asRecord(asRecord(row.info).purchased).cost).cost,
+  );
+}
+
+function siteLicenseCredit(
+  row: Record<string, any>,
+): LegacyMigrationEntitlementCredit | null {
+  const purchased = asRecord(asRecord(row.info).purchased);
+  const credit_amount = generousRemainingCredit({
+    periodCost: siteLicensePeriodCost(row),
+    periodStart: purchased.start ?? row.activates ?? row.created,
+    periodEnd: purchased.end ?? row.expires,
+  });
+  if (credit_amount <= 0) return null;
+  return {
+    source: "site_license",
+    id: `${row.id ?? ""}`,
+    credit_amount,
+    period_cost: siteLicensePeriodCost(row),
+    period_start: dateIso(purchased.start ?? row.activates ?? row.created),
+    period_end: dateIso(purchased.end ?? row.expires),
+    interval: clean(purchased.subscription) ?? null,
+    status: "active",
+    description: clean(row.title) ?? clean(row.description) ?? "site license",
+  };
+}
+
+function csvStripeSubscriptionPlanBase(
+  row: Record<string, any>,
+): string | null {
+  return clean(row.plan)?.split("-")[0] ?? null;
+}
+
+function isLegacyStripeSubscriptionRecord(row: Record<string, any>): boolean {
+  const planBase = csvStripeSubscriptionPlanBase(row);
+  return (
+    clean(row.service_metadata) == null &&
+    clean(row.service) == null &&
+    planBase != null &&
+    LEGACY_STRIPE_UPGRADE_PLAN_IDS.has(planBase)
+  );
+}
+
+function csvStripeSubscriptionInterval(
+  row: Record<string, any>,
+): "month" | "year" {
+  return row.interval === "year" ? "year" : "month";
+}
+
+function csvStripeSubscriptionPeriodCost(row: Record<string, any>): number {
+  const quantity = positiveMoneyNumber(row.quantity) || 1;
+  return toMoneyNumber(positiveMoneyNumber(row.amount) * quantity);
+}
+
+function legacyStripeSubscriptionRecordInfo(
+  payloads: Record<string, any>[],
+): Pick<
+  LegacyMigrationFinancialAccount,
+  | "active_subscription_annualized"
+  | "active_subscription_count"
+  | "entitlement_credit_amount"
+  | "entitlement_credits"
+  | "suggested_membership_interval"
+> {
+  let active_subscription_annualized = 0;
+  let active_subscription_count = 0;
+  let yearlyActive = 0;
+  let monthlyActive = 0;
+  const entitlement_credits: LegacyMigrationEntitlementCredit[] = [];
+  for (const value of payloads) {
+    const sub = asRecord(value);
+    if (!isLegacyStripeSubscriptionRecord(sub)) continue;
+    const status = clean(sub.status) ?? "";
+    const interval = csvStripeSubscriptionInterval(sub);
+    const cost = csvStripeSubscriptionPeriodCost(sub);
+    if (status === "active" || status === "trialing") {
+      active_subscription_count += 1;
+      active_subscription_annualized += cost * (interval === "year" ? 1 : 12);
+      if (interval === "year") {
+        yearlyActive += 1;
+      } else {
+        monthlyActive += 1;
+      }
+    }
+    if (status === "active" || status === "trialing" || status === "canceled") {
+      const credit_amount = generousRemainingCredit({
+        periodCost: cost,
+        periodStart: sub.current_period_start,
+        periodEnd: sub.current_period_end,
+      });
+      if (credit_amount > 0) {
+        entitlement_credits.push({
+          source: "stripe_legacy_subscription",
+          id: `${sub.subscription_id ?? sub.id ?? ""}`,
+          credit_amount,
+          period_cost: cost,
+          period_start: dateIso(sub.current_period_start),
+          period_end: dateIso(sub.current_period_end),
+          interval,
+          status,
+          description: clean(sub.plan) ?? "legacy Stripe upgrade",
+        });
+      }
+    }
+  }
+  return {
+    active_subscription_annualized: toMoneyNumber(
+      active_subscription_annualized,
+    ),
+    active_subscription_count,
+    entitlement_credit_amount: toMoneyNumber(
+      entitlement_credits.reduce(
+        (total, credit) => total + credit.credit_amount,
+        0,
+      ),
+    ),
+    entitlement_credits,
+    suggested_membership_interval:
+      yearlyActive > 0 && monthlyActive === 0 ? "year" : "month",
+  };
+}
+
 async function membershipPlans(): Promise<LegacyMigrationMembershipPlan[]> {
   const tiers = await getSeedMembershipTierMap({ includeDisabled: false });
   return ["basic", "standard"]
@@ -678,6 +894,25 @@ async function currentMembershipExists(account_id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+async function currentPaidMembershipSubscriptionExists(
+  account_id: string,
+): Promise<boolean> {
+  const { rows } = await getPool().query(
+    `
+    SELECT 1
+      FROM subscriptions
+     WHERE account_id=$1
+       AND status IN ('active', 'canceled')
+       AND metadata->>'type'='membership'
+       AND latest_purchase_id IS NOT NULL
+       AND current_period_end >= NOW()
+     LIMIT 1
+    `,
+    [account_id],
+  );
+  return rows.length > 0;
+}
+
 async function currentStripeCustomerId(
   account_id: string,
   client?: PoolClient,
@@ -698,12 +933,18 @@ async function financialRowsForAccount(
   await ensureLegacyMigrationFinancialSchema();
   const { rows } = await (client ?? getPool()).query<
     LegacyAccountRow & {
+      metadata: Record<string, any> | null;
       balance: string | number | null;
       credit_amount: string | number | null;
       active_subscription_annualized: string | number | null;
       active_subscription_count: string | number | null;
+      subscription_payloads: Record<string, any>[] | null;
+      stripe_subscription_payloads: Record<string, any>[] | null;
+      site_license_payloads: Record<string, any>[] | null;
       claimed_by_account_id: string | null;
       claimed_at: Date | string | null;
+      selected_membership_class: string | null;
+      selected_membership_interval: "month" | "year" | null;
     }
   >(
     `
@@ -731,22 +972,75 @@ async function financialRowsForAccount(
         FROM legacy_migration_raw_records
        WHERE source='subscriptions'
          AND payload->>'legacy_account_id' IN (SELECT legacy_account_id FROM linked)
-         AND payload->>'status'='active'
+         AND payload->>'status' IN ('active', 'trialing')
          AND COALESCE(payload->>'cost', '') ~ '^[0-9]+([.][0-9]+)?$'
        GROUP BY payload->>'legacy_account_id'
+    ),
+    subscription_payloads AS (
+      SELECT payload->>'legacy_account_id' AS legacy_account_id,
+             jsonb_agg(payload ORDER BY payload->>'id') AS payloads
+        FROM legacy_migration_raw_records
+       WHERE source='subscriptions'
+         AND payload->>'legacy_account_id' IN (SELECT legacy_account_id FROM linked)
+         AND payload->>'status' IN ('active', 'trialing', 'canceled')
+         AND NULLIF(payload->>'current_period_end', '')::timestamptz > NOW()
+         AND COALESCE(payload->>'cost', '') ~ '^[0-9]+([.][0-9]+)?$'
+       GROUP BY payload->>'legacy_account_id'
+    ),
+    stripe_subscription_payloads AS (
+      SELECT accounts.legacy_account_id,
+             jsonb_agg(raw.payload ORDER BY raw.payload->>'subscription_id')
+               AS payloads
+        FROM linked
+        JOIN legacy_migration_accounts accounts
+          ON accounts.legacy_account_id=linked.legacy_account_id
+        JOIN legacy_migration_raw_records raw
+          ON raw.source='stripe_subscriptions'
+         AND raw.payload->>'stripe_customer_id'=accounts.stripe_customer_id
+       WHERE COALESCE(accounts.stripe_customer_id, '') <> ''
+         AND raw.payload->>'status' IN ('active', 'trialing', 'canceled')
+       GROUP BY accounts.legacy_account_id
+    ),
+    site_license_payloads AS (
+      SELECT COALESCE(
+               payload#>>'{info,purchased,account_id}',
+               payload->'managers'->>0
+             ) AS legacy_account_id,
+             jsonb_agg(payload ORDER BY payload->>'id') AS payloads
+        FROM legacy_migration_raw_records
+       WHERE source='site_licenses'
+         AND COALESCE(
+               payload#>>'{info,purchased,account_id}',
+               payload->'managers'->>0
+             ) IN (SELECT legacy_account_id FROM linked)
+         AND NULLIF(payload->>'expires', '')::timestamptz > NOW()
+         AND payload->>'subscription_id' IS NULL
+       GROUP BY COALESCE(
+               payload#>>'{info,purchased,account_id}',
+               payload->'managers'->>0
+             )
     )
     SELECT accounts.legacy_account_id,
            accounts.email_address,
            accounts.display_name,
            accounts.stripe_customer_id,
+           accounts.metadata,
            COALESCE(-purchase_costs.cost_sum, 0) AS balance,
            GREATEST(COALESCE(-purchase_costs.cost_sum, 0), 0) AS credit_amount,
            COALESCE(active_subscriptions.active_subscription_annualized, 0)
              AS active_subscription_annualized,
            COALESCE(active_subscriptions.active_subscription_count, 0)
              AS active_subscription_count,
+           COALESCE(subscription_payloads.payloads, '[]'::jsonb)
+             AS subscription_payloads,
+           COALESCE(stripe_subscription_payloads.payloads, '[]'::jsonb)
+             AS stripe_subscription_payloads,
+           COALESCE(site_license_payloads.payloads, '[]'::jsonb)
+             AS site_license_payloads,
            claims.account_id AS claimed_by_account_id,
-           claims.applied_at AS claimed_at
+           claims.applied_at AS claimed_at,
+           claims.selected_membership_class,
+           claims.selected_membership_interval
       FROM linked
       JOIN legacy_migration_accounts accounts
         ON accounts.legacy_account_id=linked.legacy_account_id
@@ -754,6 +1048,12 @@ async function financialRowsForAccount(
         ON purchase_costs.legacy_account_id=linked.legacy_account_id
       LEFT JOIN active_subscriptions
         ON active_subscriptions.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN subscription_payloads
+        ON subscription_payloads.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN stripe_subscription_payloads
+        ON stripe_subscription_payloads.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN site_license_payloads
+        ON site_license_payloads.legacy_account_id=linked.legacy_account_id
       LEFT JOIN legacy_migration_financial_claims claims
         ON claims.legacy_account_id=linked.legacy_account_id
        AND claims.status='applied'
@@ -764,24 +1064,96 @@ async function financialRowsForAccount(
     `,
     [account_id],
   );
-  return rows.map((row) => ({
-    legacy_account_id: row.legacy_account_id,
-    email_address: normalizeEmail(row.email_address) || null,
-    display_name: row.display_name ?? null,
-    stripe_customer_id: clean(row.stripe_customer_id) ?? null,
-    balance: toMoneyNumber(row.balance),
-    credit_amount: toMoneyNumber(row.credit_amount),
-    active_subscription_annualized: toMoneyNumber(
-      row.active_subscription_annualized,
-    ),
-    active_subscription_count: numberValue(row.active_subscription_count),
-    claimed_by_account_id: row.claimed_by_account_id,
-    claimed_at: row.claimed_at,
-  }));
+  return rows.map((row) => {
+    const subscriptionCredits = asArray(row.subscription_payloads)
+      .map((payload) => subscriptionCredit(asRecord(payload)))
+      .filter((credit): credit is LegacyMigrationEntitlementCredit => !!credit);
+    const siteLicensePayloads = asArray(row.site_license_payloads).filter(
+      (payload) =>
+        siteLicenseOwner(asRecord(payload)) === row.legacy_account_id,
+    );
+    const siteLicenseCredits = siteLicensePayloads
+      .map((payload) => siteLicenseCredit(asRecord(payload)))
+      .filter((credit): credit is LegacyMigrationEntitlementCredit => !!credit);
+    const unvaluedActiveSiteLicenseCount = siteLicensePayloads.filter(
+      (payload) => siteLicensePeriodCost(asRecord(payload)) <= 0,
+    ).length;
+    const stripeInfo = legacyStripeSubscriptionRecordInfo(
+      asArray(row.stripe_subscription_payloads).map((payload) =>
+        asRecord(payload),
+      ),
+    );
+    const balance_credit_amount = toMoneyNumber(row.credit_amount);
+    const entitlement_credits = [
+      ...subscriptionCredits,
+      ...siteLicenseCredits,
+      ...stripeInfo.entitlement_credits,
+    ];
+    const entitlement_credit_amount = toMoneyNumber(
+      entitlement_credits.reduce(
+        (total, credit) => total + credit.credit_amount,
+        0,
+      ),
+    );
+    const rawActiveCount = numberValue(row.active_subscription_count);
+    const rawAnnualized = toMoneyNumber(row.active_subscription_annualized);
+    const rawActiveSubscriptionPayloads = asArray(
+      row.subscription_payloads,
+    ).filter((payload) => {
+      const record = asRecord(payload);
+      return record.status === "active" || record.status === "trialing";
+    });
+    const rawActiveYearCount = rawActiveSubscriptionPayloads.filter(
+      (payload) => subscriptionInterval(asRecord(payload)) === "year",
+    ).length;
+    const rawActiveMonthCount =
+      rawActiveSubscriptionPayloads.length - rawActiveYearCount;
+    return {
+      legacy_account_id: row.legacy_account_id,
+      email_address: normalizeEmail(row.email_address) || null,
+      display_name: row.display_name ?? null,
+      stripe_customer_id: clean(row.stripe_customer_id) ?? null,
+      balance: toMoneyNumber(row.balance),
+      balance_credit_amount,
+      entitlement_credit_amount,
+      entitlement_credits,
+      unvalued_active_site_license_count: unvaluedActiveSiteLicenseCount,
+      credit_amount: toMoneyNumber(
+        balance_credit_amount + entitlement_credit_amount,
+      ),
+      active_subscription_annualized: toMoneyNumber(
+        rawAnnualized + stripeInfo.active_subscription_annualized,
+      ),
+      active_subscription_count:
+        rawActiveCount + stripeInfo.active_subscription_count,
+      suggested_membership_interval:
+        rawActiveYearCount > 0 &&
+        rawActiveMonthCount === 0 &&
+        stripeInfo.suggested_membership_interval === "year"
+          ? "year"
+          : rawActiveYearCount > 0 &&
+              rawActiveMonthCount === 0 &&
+              stripeInfo.active_subscription_count === 0
+            ? "year"
+            : rawActiveCount === 0 && stripeInfo.active_subscription_count > 0
+              ? stripeInfo.suggested_membership_interval
+              : "month",
+      selected_membership_class: clean(row.selected_membership_class) ?? null,
+      selected_membership_interval:
+        row.selected_membership_interval === "month"
+          ? "month"
+          : row.selected_membership_interval === "year"
+            ? "year"
+            : null,
+      claimed_by_account_id: row.claimed_by_account_id,
+      claimed_at: row.claimed_at,
+    };
+  });
 }
 
 function suggestedMembershipClass({
   active_subscription_count,
+  active_subscription_annualized,
   membership_already_applied,
 }: {
   active_subscription_annualized: number;
@@ -791,16 +1163,39 @@ function suggestedMembershipClass({
   if (membership_already_applied || active_subscription_count <= 0) {
     return null;
   }
-  return "basic";
+  return active_subscription_annualized >
+    LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF
+    ? "standard"
+    : "basic";
+}
+
+function suggestedFinancialMembershipInterval(
+  pending: LegacyMigrationFinancialAccount[],
+): "month" | "year" {
+  const active = pending.filter(
+    (account) => account.active_subscription_count > 0,
+  );
+  if (active.length === 0) return "month";
+  return active.every(
+    (account) => account.suggested_membership_interval === "year",
+  )
+    ? "year"
+    : "month";
 }
 
 async function financialPreviewForAccount(
   account_id: string,
 ): Promise<LegacyMigrationFinancialPreviewResponse> {
-  const [legacy_accounts, plans, hasActiveMembership] = await Promise.all([
+  const [
+    legacy_accounts,
+    plans,
+    hasActiveMembership,
+    membership_renewal_configured,
+  ] = await Promise.all([
     financialRowsForAccount(account_id),
     membershipPlans(),
     currentMembershipExists(account_id),
+    currentPaidMembershipSubscriptionExists(account_id),
   ]);
   const pending = legacy_accounts.filter(
     (account) => !account.claimed_by_account_id,
@@ -824,6 +1219,9 @@ async function financialPreviewForAccount(
     (total, account) => total + account.active_subscription_count,
     0,
   );
+  const appliedMembership = claimedHere.find(
+    (account) => account.selected_membership_class,
+  );
   const membershipClaimExists = await legacyMembershipClaimExists(account_id);
   const membership_already_applied =
     hasActiveMembership || membershipClaimExists;
@@ -842,8 +1240,15 @@ async function financialPreviewForAccount(
       active_subscription_count,
       membership_already_applied,
     }),
-    suggested_membership_interval: "month",
+    suggested_membership_interval:
+      suggestedFinancialMembershipInterval(pending),
+    suggested_membership_grant_days: LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS,
+    applied_membership_class:
+      appliedMembership?.selected_membership_class ?? null,
+    applied_membership_interval:
+      appliedMembership?.selected_membership_interval ?? null,
     membership_already_applied,
+    membership_renewal_configured,
     stripe_customer_id,
     plans,
     can_apply:
@@ -872,13 +1277,9 @@ async function legacyMembershipClaimExists(
   return rows.length > 0;
 }
 
-function membershipEnd(interval: "month" | "year"): Date {
+function legacyMigrationMembershipGrantEnd(): Date {
   const end = new Date();
-  if (interval === "year") {
-    end.setFullYear(end.getFullYear() + 1);
-  } else {
-    end.setMonth(end.getMonth() + 1);
-  }
+  end.setDate(end.getDate() + LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS);
   return end;
 }
 
@@ -923,8 +1324,14 @@ async function claimPendingFinancialAccounts({
       email_address: row.email_address,
       display_name: row.display_name,
       balance: row.balance,
+      balance_credit_amount: row.balance_credit_amount,
+      entitlement_credit_amount: row.entitlement_credit_amount,
+      entitlement_credits: row.entitlement_credits,
+      unvalued_active_site_license_count:
+        row.unvalued_active_site_license_count,
       active_subscription_annualized: row.active_subscription_annualized,
       active_subscription_count: row.active_subscription_count,
+      suggested_membership_interval: row.suggested_membership_interval,
     },
   }));
   const { rows: claimed } = await client.query<{ legacy_account_id: string }>(
@@ -1068,10 +1475,19 @@ export async function applyFinancialMigration({
         amount: row.credit_amount,
         invoice_id: `legacy-migration-credit:${row.legacy_account_id}`,
         tag: "legacy-migration-credit",
-        notes: `Migrated positive cocalc.com account balance from legacy account ${row.legacy_account_id}.`,
+        notes: `Migrated cocalc.com credit from legacy account ${row.legacy_account_id}, including positive cash balance and remaining paid legacy subscription/license value.`,
         description: {
           purpose: "legacy-migration",
-          description: "Migrated cocalc.com credit balance",
+          description:
+            "Migrated cocalc.com cash balance and remaining paid legacy value",
+          metadata: {
+            legacy_account_id: row.legacy_account_id,
+            balance_credit_amount: row.balance_credit_amount,
+            entitlement_credit_amount: row.entitlement_credit_amount,
+            entitlement_credits: row.entitlement_credits,
+            unvalued_active_site_license_count:
+              row.unvalued_active_site_license_count,
+          },
         },
         client,
       });
@@ -1080,20 +1496,25 @@ export async function applyFinancialMigration({
     }
 
     let subscription_id: number | undefined;
+    let membershipGrantEnd: Date | undefined;
     if (selectedClass != null && selectedCost != null) {
+      membershipGrantEnd = legacyMigrationMembershipGrantEnd();
       subscription_id = await createSubscription(
         {
           account_id,
           cost: selectedCost,
           interval: selectedInterval,
           current_period_start: new Date(),
-          current_period_end: membershipEnd(selectedInterval),
+          current_period_end: membershipGrantEnd,
           status: "canceled",
           metadata: {
             type: "membership",
             class: selectedClass,
             source: "promo",
             source_id: "legacy-migration",
+            grant: true,
+            grant_days: LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS,
+            grant_ends_at: membershipGrantEnd.toISOString(),
           },
         },
         client,
@@ -1120,6 +1541,12 @@ export async function applyFinancialMigration({
       ),
       credit_purchase_ids: creditPurchaseIds,
       subscription_id,
+      membership_class: selectedClass ?? null,
+      membership_interval: selectedClass ? selectedInterval : null,
+      membership_grant_days: selectedClass
+        ? LEGACY_MIGRATION_MEMBERSHIP_GRANT_DAYS
+        : null,
+      membership_grant_ends_at: membershipGrantEnd?.toISOString() ?? null,
       stripe_customer_id,
     };
   } catch (err) {
@@ -1146,17 +1573,17 @@ export async function applyAutomaticFinancialMigration({
       credit_amount: 0,
       credit_purchase_ids: [],
       subscription_id: null,
+      membership_class: null,
+      membership_interval: null,
+      membership_grant_days: null,
+      membership_grant_ends_at: null,
       stripe_customer_id: preview.stripe_customer_id ?? null,
     };
   }
   return await applyFinancialMigration({
     account_id,
-    membership_class:
-      preview.active_subscription_count > 0 &&
-      !preview.membership_already_applied
-        ? "basic"
-        : null,
-    membership_interval: "month",
+    membership_class: preview.suggested_membership_class ?? null,
+    membership_interval: preview.suggested_membership_interval,
   });
 }
 
@@ -1183,8 +1610,21 @@ export async function financialMigrationCandidateAccountIds({
          OR EXISTS (
            SELECT 1
              FROM legacy_migration_raw_records raw
-            WHERE raw.source IN ('purchases', 'subscriptions')
-              AND raw.payload->>'legacy_account_id'=linked.legacy_account_id
+            WHERE (
+                    raw.source IN ('purchases', 'subscriptions')
+                    AND raw.payload->>'legacy_account_id'=linked.legacy_account_id
+                  )
+               OR (
+                    raw.source='site_licenses'
+                    AND COALESCE(
+                          raw.payload#>>'{info,purchased,account_id}',
+                          raw.payload->'managers'->>0
+                        )=linked.legacy_account_id
+                  )
+               OR (
+                    raw.source='stripe_subscriptions'
+                    AND raw.payload->>'stripe_customer_id'=legacy.stripe_customer_id
+                  )
          )
        )
      ORDER BY linked.account_id

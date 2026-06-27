@@ -5,7 +5,14 @@
 
 // cSpell: ignore isdir
 
-import { Button as AntdButton, Space } from "antd";
+import {
+  Button as AntdButton,
+  Input as AntdInput,
+  InputNumber,
+  Select as AntdSelect,
+  Space,
+  Typography,
+} from "antd";
 import * as immutable from "immutable";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
@@ -30,6 +37,10 @@ import {
 } from "@cocalc/frontend/project_store";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { listSiteLicenseOverviews } from "@cocalc/frontend/purchases/api";
+import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { SiteLicenseOverview } from "@cocalc/conat/hub/api/purchases";
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import DirectorySelector from "../directory-selector";
@@ -58,6 +69,54 @@ export const PRE_STYLE = {
 } as const;
 
 const MAX_RENDERED_SELECTED_FILES = 500;
+
+function slugPart(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "files"
+  );
+}
+
+function defaultPublicShareSlug({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}): string {
+  const tail = misc.path_split(path.replace(/\/+$/, "")).tail;
+  return `${project_id}/${slugPart(tail || "files")}`;
+}
+
+function publicShareUrl(slug: string): string {
+  return `${window.location.origin}/share/${slug
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+}
+
+interface SiteLicensePoolOption {
+  value: string;
+  label: string;
+  site_license_id: string;
+  membership_class: string;
+  available_seat_count?: number | null;
+}
+
+function canManageSiteLicense(overview: SiteLicenseOverview): boolean {
+  return overview.viewer_role === "admin" || overview.viewer_role === "manager";
+}
+
+function siteLicenseName(overview: SiteLicenseOverview): string {
+  return (
+    overview.site_license.organization_name ||
+    overview.site_license.name ||
+    overview.site_license.id
+  );
+}
 
 export function crossProjectSingleItemDestPath({
   paths,
@@ -111,6 +170,10 @@ export function ActionBox({
   const user_type = useTypedRedux("account", "user_type");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const publicDirectorySharesEnabled = !!useTypedRedux(
+    "customize",
+    "public_directory_shares_enabled",
+  );
   const project_map = useTypedRedux("projects", "project_map");
   const project = project_map?.get?.(project_id);
   const projectGroup = account_id
@@ -140,6 +203,23 @@ export function ActionBox({
   const [deleteWithSudo, setDeleteWithSudo] = useState<boolean>(false);
   const [deleteFromSnapshots, setDeleteFromSnapshots] =
     useState<boolean>(false);
+  const [publishTitle, setPublishTitle] = useState<string>("");
+  const [publishDescription, setPublishDescription] = useState<string>("");
+  const [publishSlug, setPublishSlug] = useState<string>("");
+  const [publishUrl, setPublishUrl] = useState<string>("");
+  const [publishError, setPublishError] = useState<string>("");
+  const [publishing, setPublishing] = useState<boolean>(false);
+  const [publishGrantOnCopy, setPublishGrantOnCopy] = useState<boolean>(false);
+  const [publishCopyRequiresGrant, setPublishCopyRequiresGrant] =
+    useState<boolean>(true);
+  const [publishSiteLicenseOverviews, setPublishSiteLicenseOverviews] =
+    useState<SiteLicenseOverview[]>([]);
+  const [publishSiteLicensesLoading, setPublishSiteLicensesLoading] =
+    useState<boolean>(false);
+  const [publishSiteLicensePoolId, setPublishSiteLicensePoolId] =
+    useState<string>("");
+  const [publishSiteLicenseDurationDays, setPublishSiteLicenseDurationDays] =
+    useState<number>(30);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const bodyStyle =
     display === "modal"
@@ -168,10 +248,71 @@ export function ActionBox({
     };
   }, [actions, dnd_copy_dest]);
 
+  useEffect(() => {
+    if (file_action !== "publish") {
+      return;
+    }
+    const path = checked_files.first();
+    if (typeof path !== "string") {
+      return;
+    }
+    setPublishTitle((cur) => cur || misc.path_split(path).tail || "Files");
+    setPublishSlug(
+      (cur) => cur || defaultPublicShareSlug({ project_id, path }),
+    );
+  }, [checked_files, file_action, project_id]);
+
+  useEffect(() => {
+    if (
+      file_action !== "publish" ||
+      !publicDirectorySharesEnabled ||
+      user_type !== "signed_in"
+    ) {
+      setPublishSiteLicenseOverviews([]);
+      setPublishSiteLicensePoolId("");
+      return;
+    }
+    let canceled = false;
+    setPublishSiteLicensesLoading(true);
+    listSiteLicenseOverviews()
+      .then((overviews) => {
+        if (canceled) return;
+        const manageable = overviews.filter(canManageSiteLicense);
+        setPublishSiteLicenseOverviews(manageable);
+        const poolIds = new Set(
+          manageable.flatMap((overview) =>
+            overview.pools.map((pool) => pool.id),
+          ),
+        );
+        setPublishSiteLicensePoolId((current) =>
+          current && poolIds.has(current) ? current : "",
+        );
+      })
+      .catch(() => {
+        if (canceled) return;
+        setPublishSiteLicenseOverviews([]);
+        setPublishSiteLicensePoolId("");
+      })
+      .finally(() => {
+        if (!canceled) {
+          setPublishSiteLicensesLoading(false);
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [account_id, file_action, publicDirectorySharesEnabled, user_type]);
+
   function clear() {
     actions.set_all_files_unchecked();
     setDeleteWithSudo(false);
     setDeleteFromSnapshots(false);
+    setPublishTitle("");
+    setPublishDescription("");
+    setPublishSlug("");
+    setPublishUrl("");
+    setPublishError("");
+    setPublishing(false);
     if (dnd_copy_dest) {
       actions.setState({ copy_destination_project_id: undefined });
     }
@@ -738,6 +879,221 @@ export function ActionBox({
     }
   }
 
+  function siteLicensePoolOptions(): SiteLicensePoolOption[] {
+    return publishSiteLicenseOverviews.flatMap((overview) =>
+      overview.pools.map((pool) => {
+        const poolName = pool.pool_name || pool.membership_class;
+        const seatCount =
+          pool.available_seat_count == null
+            ? "unknown seats"
+            : `${pool.available_seat_count} available`;
+        return {
+          value: pool.id,
+          label: `${siteLicenseName(overview)}: ${poolName} (${pool.membership_class}, ${seatCount})`,
+          site_license_id: overview.site_license.id,
+          membership_class: pool.membership_class,
+          available_seat_count: pool.available_seat_count,
+        };
+      }),
+    );
+  }
+
+  async function publishDirectory(): Promise<void> {
+    const path = checked_files.first();
+    if (typeof path !== "string") {
+      return;
+    }
+    const selectedPool = siteLicensePoolOptions().find(
+      (option) => option.value === publishSiteLicensePoolId,
+    );
+    setPublishing(true);
+    setPublishError("");
+    setPublishUrl("");
+    try {
+      const share = await webapp_client.conat_client.callHubApi({
+        name: "publicDirectoryShares.create",
+        project_id,
+        timeout: 30000,
+        args: [
+          {
+            project_id,
+            path,
+            slug: publishSlug,
+            title: publishTitle,
+            description: publishDescription,
+            site_license_grant_on_copy: publishGrantOnCopy,
+            site_license_copy_requires_grant: publishCopyRequiresGrant,
+            site_license_id: publishGrantOnCopy
+              ? selectedPool?.site_license_id
+              : undefined,
+            site_license_pool_id: publishGrantOnCopy
+              ? selectedPool?.value
+              : undefined,
+            site_license_duration_days: publishGrantOnCopy
+              ? publishSiteLicenseDurationDays
+              : undefined,
+          },
+        ],
+      });
+      const url = publicShareUrl(share.slug);
+      setPublishUrl(url);
+      await navigator.clipboard.writeText(url).catch(() => {});
+      alert_message({
+        type: "success",
+        message:
+          "Directory published. The unlisted share link was copied to your clipboard.",
+      });
+    } catch (err) {
+      setPublishError(normalizeUserFacingError(err).message);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function render_publish() {
+    const path = checked_files.first();
+    if (typeof path !== "string") {
+      return <Alert bsStyle="warning">Select one directory to publish.</Alert>;
+    }
+    if (!publicDirectorySharesEnabled) {
+      return (
+        <Alert bsStyle="warning">
+          Public directory shares are not enabled on this site.
+        </Alert>
+      );
+    }
+    if (readOnlySource) {
+      return (
+        <Alert bsStyle="warning">
+          View-only project access cannot publish directories.
+        </Alert>
+      );
+    }
+    if (user_type !== "signed_in") {
+      return <LoginLink />;
+    }
+    const poolOptions = siteLicensePoolOptions();
+    const canPublish =
+      publishSlug.trim().length > 0 &&
+      !publishing &&
+      (!publishGrantOnCopy || publishSiteLicensePoolId.trim().length > 0);
+    return (
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert bsStyle="info">
+          Publish <code>{path}</code> as an unlisted shared directory. Viewers
+          must sign in to CoCalc, and file reads count against their egress
+          quota.
+        </Alert>
+        <div>
+          <Typography.Text strong>Title</Typography.Text>
+          <AntdInput
+            value={publishTitle}
+            onChange={(e) => setPublishTitle(e.target.value)}
+            placeholder="Shared directory title"
+          />
+        </div>
+        <div>
+          <Typography.Text strong>Share path</Typography.Text>
+          <AntdInput
+            value={publishSlug}
+            onChange={(e) => setPublishSlug(e.target.value)}
+            addonBefore="/share/"
+            placeholder={`${project_id}/files`}
+          />
+        </div>
+        <div>
+          <Typography.Text strong>Description</Typography.Text>
+          <AntdInput.TextArea
+            value={publishDescription}
+            onChange={(e) => setPublishDescription(e.target.value)}
+            placeholder="Optional description for viewers"
+            rows={3}
+          />
+        </div>
+        <div>
+          <Checkbox
+            checked={publishGrantOnCopy}
+            onChange={(e) => setPublishGrantOnCopy(e.target.checked)}
+          >
+            Offer temporary membership when viewers copy this directory
+          </Checkbox>
+          {publishGrantOnCopy ? (
+            <Space
+              direction="vertical"
+              size="small"
+              style={{ width: "100%", marginTop: 8 }}
+            >
+              <Alert bsStyle="info">
+                Viewers who copy this share will be offered a temporary
+                membership seat from the selected site-license pool. If the pool
+                is full, the file copy still proceeds on the free tier.
+              </Alert>
+              <div>
+                <Typography.Text strong>Site-license tier</Typography.Text>
+                <AntdSelect
+                  style={{ width: "100%" }}
+                  loading={publishSiteLicensesLoading}
+                  value={publishSiteLicensePoolId || undefined}
+                  onChange={(value) => setPublishSiteLicensePoolId(value)}
+                  placeholder="Select a managed site-license pool"
+                  options={poolOptions.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  }))}
+                />
+              </div>
+              {poolOptions.length === 0 && !publishSiteLicensesLoading ? (
+                <Alert bsStyle="warning">
+                  No managed site-license pools are available for your account.
+                </Alert>
+              ) : null}
+              <Space>
+                <Typography.Text strong>Duration</Typography.Text>
+                <InputNumber
+                  min={1}
+                  max={365}
+                  value={publishSiteLicenseDurationDays}
+                  onChange={(value) =>
+                    setPublishSiteLicenseDurationDays(Number(value ?? 30))
+                  }
+                />
+                <Typography.Text>days</Typography.Text>
+              </Space>
+              <Checkbox
+                checked={publishCopyRequiresGrant}
+                onChange={(e) => setPublishCopyRequiresGrant(e.target.checked)}
+              >
+                Block copying if the grant fails for a reason other than the
+                pool being full
+              </Checkbox>
+            </Space>
+          ) : null}
+        </div>
+        {publishError ? (
+          <Alert bsStyle="danger">{publishError}</Alert>
+        ) : publishUrl ? (
+          <Alert bsStyle="success">
+            Published at{" "}
+            <a href={publishUrl} target="_blank" rel="noreferrer">
+              {publishUrl}
+            </a>
+          </Alert>
+        ) : null}
+        <Space>
+          <AntdButton onClick={cancel_action}>Close</AntdButton>
+          <AntdButton
+            type="primary"
+            disabled={!canPublish}
+            loading={publishing}
+            onClick={() => void publishDirectory()}
+          >
+            <Icon name="share-square" /> Publish directory
+          </AntdButton>
+        </Space>
+      </Space>
+    );
+  }
+
   function render_action_box(action: FileAction) {
     switch (action) {
       case "compress":
@@ -773,6 +1129,8 @@ export function ActionBox({
         );
       case "move":
         return render_move();
+      case "publish":
+        return render_publish();
       default:
         return undefined;
     }

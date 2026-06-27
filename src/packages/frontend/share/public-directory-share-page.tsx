@@ -78,6 +78,14 @@ function isDirectory(entry: PublicDirectoryShareDirectoryEntry): boolean {
   return entry.type === "d" || entry.isDir === true;
 }
 
+function formatMembershipGrantDescription(
+  share: ResolvedPublicDirectoryShare,
+): string {
+  const tier = share.site_license_membership_tier_id || "site-license";
+  const days = share.site_license_duration_days ?? 30;
+  return `Copying this share attempts to grant a temporary ${tier} membership for ${days} ${days === 1 ? "day" : "days"}. If no seats are available, the copy still works on the free tier.`;
+}
+
 export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
   const projectActions = useActions("projects");
@@ -231,7 +239,15 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
             options: { recursive: true },
           },
         );
-      setCopyMessage(`Copy queued as operation ${result.op_id}.`);
+      const grant = result.site_license_grant;
+      const grantMessage =
+        grant?.message ??
+        (grant?.granted
+          ? `Temporary ${grant.membership_class ?? "site-license"} membership granted.`
+          : "");
+      setCopyMessage(
+        `Copy queued as operation ${result.op_id}.${grantMessage ? ` ${grantMessage}` : ""}`,
+      );
       projectActions.open_project({
         project_id: result.destination_project_id,
         switch_to: true,
@@ -359,6 +375,14 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
                     message="Copy this directory when you want to work with it."
                     description="The shared directory itself is read-only. Copying creates your own editable copy in a project you can access."
                   />
+                  {share.site_license_grant_on_copy ? (
+                    <Alert
+                      type="success"
+                      showIcon
+                      message="Temporary membership offered"
+                      description={formatMembershipGrantDescription(share)}
+                    />
+                  ) : null}
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 8 }}>
                       Destination project

@@ -135,6 +135,7 @@ export interface Credit {
   line_items?: LineItem[];
   description?: string;
   purpose?: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface AutoCredit {

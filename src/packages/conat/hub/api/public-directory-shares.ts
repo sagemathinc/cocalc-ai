@@ -107,6 +107,21 @@ export interface UpsertPublicDirectoryShareOptions {
   disabled?: boolean;
 }
 
+export interface CreatePublicDirectoryShareOptions {
+  account_id?: string;
+  project_id: string;
+  path: string;
+  slug: string;
+  title?: string | null;
+  description?: string | null;
+  license?: string | null;
+  site_license_id?: string | null;
+  site_license_pool_id?: string | null;
+  site_license_duration_days?: number | null;
+  site_license_grant_on_copy?: boolean;
+  site_license_copy_requires_grant?: boolean;
+}
+
 export interface CopyPublicDirectoryShareToProjectOptions {
   account_id?: string;
   slug: string;
@@ -150,6 +165,9 @@ export interface CopyPublicDirectoryShareToProjectResponse {
     granted: boolean;
     message?: string;
     expires_at?: Date | string | null;
+    membership_class?: string | null;
+    site_license_id?: string | null;
+    package_id?: string | null;
   };
 }
 
@@ -166,6 +184,9 @@ export interface PublicDirectoryShares {
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
+  create: (
+    opts: CreatePublicDirectoryShareOptions,
+  ) => Promise<PublicDirectoryShareSummary>;
   listDirectory: (
     opts: ListPublicDirectoryShareDirectoryOptions,
   ) => Promise<ListPublicDirectoryShareDirectoryResponse>;
@@ -179,6 +200,7 @@ export const publicDirectoryShares = {
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
+  create: authFirstRequireAccount,
   listDirectory: authFirstRequireAccount,
   copyToProject: authFirstRequireAccount,
 } as const;

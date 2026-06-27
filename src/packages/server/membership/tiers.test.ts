@@ -360,6 +360,69 @@ describe("membership change pricing", () => {
     expect(quote.charge).toBe(1440);
   });
 
+  it("quotes continuation of a legacy migration grant as a paid membership", async () => {
+    const account_id = uuid();
+    const standardTier = `legacy-standard-${uuid().slice(0, 8)}` as any;
+    const basicTier = `legacy-basic-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(account_id);
+    await createTestMembershipTier({
+      id: basicTier,
+      price_monthly: 8,
+      price_yearly: 72,
+      priority: 10,
+    });
+    await createTestMembershipTier({
+      id: standardTier,
+      price_monthly: 24,
+      price_yearly: 216,
+      priority: 20,
+    });
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        class: standardTier,
+        cost: 216,
+        interval: "year",
+        end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        status: "canceled",
+      },
+    );
+    await getPool().query(
+      "UPDATE subscriptions SET latest_purchase_id=NULL, metadata=metadata || $2::jsonb WHERE id=$1",
+      [
+        subscription_id,
+        JSON.stringify({
+          grant: true,
+          source_id: "legacy-migration",
+        }),
+      ],
+    );
+
+    const sameTierQuote = await computeMembershipChange({
+      account_id,
+      targetClass: standardTier,
+      interval: "year",
+      allowDowngrade: true,
+      client: getPool() as any,
+    });
+    expect(sameTierQuote.change).toBe("upgrade");
+    expect(sameTierQuote.existing_promo_grant).toBe(true);
+    expect(sameTierQuote.refund).toBe(0);
+    expect(sameTierQuote.charge).toBe(216);
+
+    const downgradeQuote = await computeMembershipChange({
+      account_id,
+      targetClass: basicTier,
+      interval: "month",
+      allowDowngrade: true,
+      client: getPool() as any,
+    });
+    expect(downgradeQuote.change).toBe("downgrade");
+    expect(downgradeQuote.existing_promo_grant).toBe(true);
+    expect(downgradeQuote.refund).toBe(0);
+    expect(downgradeQuote.charge).toBe(8);
+  });
+
   it("bases prorated upgrade credit on the actual paid amount", async () => {
     const account_id = uuid();
     const standardTier = `custom-standard-${uuid().slice(0, 8)}` as any;
