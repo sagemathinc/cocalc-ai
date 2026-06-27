@@ -965,6 +965,19 @@ export interface AccountLocalVerifySignInPasswordResult {
   home_bay_id: string;
 }
 
+export interface AccountLocalCreateCliLoginSessionRequest {
+  account_id: string;
+  approved_challenge_id: string;
+  ip_address?: string | null;
+  user_agent?: string | null;
+}
+
+export interface AccountLocalCreateCliLoginSessionResult {
+  remember_me: string;
+  session_hash: string;
+  expire: Date | string | number;
+}
+
 export interface AccountLocalRedeemVerifyEmailRequest {
   email_address: string;
   token: string;
@@ -2043,6 +2056,7 @@ export type AccountLocalMethod =
   | "create-impersonation-grant"
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
+  | "create-cli-login-session"
   | "redeem-verify-email"
   | "send-email-verification"
   | "admin-verify-email-address"
@@ -3056,6 +3070,9 @@ export interface InterBayAccountLocalApi {
   verifySignInPassword: (
     opts: AccountLocalVerifySignInPasswordRequest,
   ) => Promise<AccountLocalVerifySignInPasswordResult>;
+  createCliLoginSession: (
+    opts: AccountLocalCreateCliLoginSessionRequest,
+  ) => Promise<AccountLocalCreateCliLoginSessionResult>;
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
@@ -5047,6 +5064,15 @@ export function createInterBayAccountLocalClient({
       method: "verify-sign-in-password",
     }),
   });
+  const createCliLoginSessionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "createCliLoginSession">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "create-cli-login-session",
+    }),
+  });
   const redeemVerifyEmailClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "redeemVerifyEmail">
   >({
@@ -5864,6 +5890,8 @@ export function createInterBayAccountLocalClient({
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
     verifySignInPassword: async (opts) =>
       await verifySignInPasswordClient.verifySignInPassword(opts),
+    createCliLoginSession: async (opts) =>
+      await createCliLoginSessionClient.createCliLoginSession(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     sendEmailVerification: async (opts) =>
@@ -6235,6 +6263,20 @@ export function createInterBayAccountLocalHandler({
         },
       },
     ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "createCliLoginSession">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "create-cli-login-session",
+      }),
+      impl: {
+        createCliLoginSession: async (opts) =>
+          await impl.createCliLoginSession(opts),
+      },
+    }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "redeemVerifyEmail">>({
       ...options,
       service: "inter-bay-account-local",

@@ -100,6 +100,7 @@ import {
 } from "@cocalc/server/account/project-feed";
 import {
   createClusterAccount,
+  createLocalCliLoginSession,
   deleteClusterAccountApiKeyDirectoryEntry,
   deleteClusterAccount,
   deleteLocalClusterAccount,
@@ -793,6 +794,8 @@ async function startAccountLocalService(): Promise<void> {
     }),
     verifySignInPassword: async ({ email_address, password }) =>
       await verifyLocalSignInPassword({ email_address, password }),
+    createCliLoginSession: async (opts) =>
+      await createLocalCliLoginSession(opts),
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },
