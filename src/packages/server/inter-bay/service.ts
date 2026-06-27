@@ -1438,6 +1438,8 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.previewFinancialMigration(opts ?? {}),
     legacyMigrationApplyFinancialMigration: async (opts) =>
       await legacyMigration.applyFinancialMigration(opts ?? {}),
+    legacyMigrationApplyFinancialHomeBay: async (opts) =>
+      await legacyMigration.applyFinancialMigrationHomeBay(opts),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

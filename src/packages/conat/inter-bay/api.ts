@@ -49,6 +49,8 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import type {
   LegacyMigrationApplyFinancialOptions,
+  LegacyMigrationApplyFinancialHomeBayOptions,
+  LegacyMigrationApplyFinancialHomeBayResponse,
   LegacyMigrationApplyFinancialResponse,
   LegacyMigrationFinancialPreviewOptions,
   LegacyMigrationFinancialPreviewResponse,
@@ -2112,7 +2114,8 @@ export type AccountLocalMethod =
   | "legacy-migration-restore-archive-selection"
   | "legacy-migration-retry-project-restore"
   | "legacy-migration-preview-financial-migration"
-  | "legacy-migration-apply-financial-migration";
+  | "legacy-migration-apply-financial-migration"
+  | "legacy-migration-apply-financial-home-bay";
 export type AuthTokenMethod =
   | "requires-token"
   | "validate"
@@ -3285,6 +3288,9 @@ export interface InterBayAccountLocalApi {
   legacyMigrationApplyFinancialMigration: (
     opts?: LegacyMigrationApplyFinancialOptions,
   ) => Promise<LegacyMigrationApplyFinancialResponse>;
+  legacyMigrationApplyFinancialHomeBay: (
+    opts: LegacyMigrationApplyFinancialHomeBayOptions,
+  ) => Promise<LegacyMigrationApplyFinancialHomeBayResponse>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -5762,6 +5768,15 @@ export function createInterBayAccountLocalClient({
       method: "legacy-migration-apply-financial-migration",
     }),
   });
+  const legacyMigrationApplyFinancialHomeBayClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "legacyMigrationApplyFinancialHomeBay">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "legacy-migration-apply-financial-home-bay",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -6009,6 +6024,10 @@ export function createInterBayAccountLocalClient({
     legacyMigrationApplyFinancialMigration: async (opts) =>
       await legacyMigrationApplyFinancialMigrationClient.legacyMigrationApplyFinancialMigration(
         opts ?? {},
+      ),
+    legacyMigrationApplyFinancialHomeBay: async (opts) =>
+      await legacyMigrationApplyFinancialHomeBayClient.legacyMigrationApplyFinancialHomeBay(
+        opts,
       ),
   };
 }
@@ -7265,6 +7284,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         legacyMigrationApplyFinancialMigration: async (opts) =>
           await impl.legacyMigrationApplyFinancialMigration(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "legacyMigrationApplyFinancialHomeBay">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "legacy-migration-apply-financial-home-bay",
+      }),
+      impl: {
+        legacyMigrationApplyFinancialHomeBay: async (opts) =>
+          await impl.legacyMigrationApplyFinancialHomeBay(opts),
       },
     }),
   ];
