@@ -1070,19 +1070,6 @@ async function financialRowsForAccount(
         0,
       ),
     );
-    const rawActiveCount = numberValue(row.active_subscription_count);
-    const rawAnnualized = toMoneyNumber(row.active_subscription_annualized);
-    const rawActiveSubscriptionPayloads = asArray(
-      row.subscription_payloads,
-    ).filter((payload) => {
-      const record = asRecord(payload);
-      return record.status === "active" || record.status === "trialing";
-    });
-    const rawActiveYearCount = rawActiveSubscriptionPayloads.filter(
-      (payload) => subscriptionInterval(asRecord(payload)) === "year",
-    ).length;
-    const rawActiveMonthCount =
-      rawActiveSubscriptionPayloads.length - rawActiveYearCount;
     return {
       legacy_account_id: row.legacy_account_id,
       email_address: normalizeEmail(row.email_address) || null,
@@ -1096,23 +1083,13 @@ async function financialRowsForAccount(
       credit_amount: toMoneyNumber(
         balance_credit_amount + entitlement_credit_amount,
       ),
-      active_subscription_annualized: toMoneyNumber(
-        rawAnnualized + stripeInfo.active_subscription_annualized,
-      ),
-      active_subscription_count:
-        rawActiveCount + stripeInfo.active_subscription_count,
-      suggested_membership_interval:
-        rawActiveYearCount > 0 &&
-        rawActiveMonthCount === 0 &&
-        stripeInfo.suggested_membership_interval === "year"
-          ? "year"
-          : rawActiveYearCount > 0 &&
-              rawActiveMonthCount === 0 &&
-              stripeInfo.active_subscription_count === 0
-            ? "year"
-            : rawActiveCount === 0 && stripeInfo.active_subscription_count > 0
-              ? stripeInfo.suggested_membership_interval
-              : "month",
+      // The legacy subscriptions table represents usage/license billing. Those
+      // rows are migrated as prorated credit above, but they should not create
+      // a new cocalc.ai membership. Only current legacy-upgrade Stripe
+      // subscriptions trigger the automatic Basic membership.
+      active_subscription_annualized: stripeInfo.active_subscription_annualized,
+      active_subscription_count: stripeInfo.active_subscription_count,
+      suggested_membership_interval: stripeInfo.suggested_membership_interval,
       claimed_by_account_id: row.claimed_by_account_id,
       claimed_at: row.claimed_at,
     };
