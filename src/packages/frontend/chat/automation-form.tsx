@@ -367,6 +367,54 @@ export function normalizeAutomationConfigForSave({
   };
 }
 
+export function automationConfigMissingReason({
+  draft,
+  allowCodexRunKind = true,
+}: {
+  draft?: AcpAutomationConfig;
+  allowCodexRunKind?: boolean;
+}): string | undefined {
+  if (!draft) {
+    return "Configure the automation first.";
+  }
+  const run_kind =
+    !allowCodexRunKind || draft.run_kind === "command" ? "command" : "codex";
+  if (!`${draft.title ?? ""}`.trim()) {
+    return "Enter an automation title.";
+  }
+  if (run_kind === "command" && !`${draft.command ?? ""}`.trim()) {
+    return "Enter the bash command to run.";
+  }
+  if (run_kind === "codex" && !`${draft.prompt ?? ""}`.trim()) {
+    return "Enter the prompt Codex should run.";
+  }
+  const timezone = `${draft.timezone ?? ""}`.trim() || resolvedTimezone();
+  if (!timezone) {
+    return "Select a timezone.";
+  }
+  const schedule_type =
+    draft.schedule_type === "interval" ? "interval" : "daily";
+  if (schedule_type === "interval") {
+    const window_start_local_time =
+      normalizeTimeString(draft.window_start_local_time) ??
+      DEFAULT_WINDOW_START_LOCAL_TIME;
+    const window_end_local_time =
+      normalizeTimeString(draft.window_end_local_time) ??
+      DEFAULT_WINDOW_END_LOCAL_TIME;
+    if (
+      timeToMinutes(window_end_local_time) <=
+      timeToMinutes(window_start_local_time)
+    ) {
+      return "Choose an end time after the start time.";
+    }
+    return undefined;
+  }
+  if (!normalizeTimeString(draft.local_time)) {
+    return "Enter a valid daily run time.";
+  }
+  return undefined;
+}
+
 export function formatAutomationPausedReason(
   pausedReason?: string | null,
 ): string | undefined {

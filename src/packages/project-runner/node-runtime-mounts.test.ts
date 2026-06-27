@@ -40,13 +40,26 @@ describe("getCoCalcMounts", () => {
   it("falls back to the canonical host tools path when env is absent", () => {
     const mounts = getCoCalcMounts(
       {},
-      (path) => path === DEFAULT_PROJECT_TOOLS,
+      (path) => path === DEFAULT_PROJECT_TOOLS || path.endsWith("/src"),
     );
 
     expect(mounts[DEFAULT_PROJECT_TOOLS]).toBe(COCALC_BIN2);
+    expect(Object.values(mounts)).toContain(COCALC_SRC);
   });
 
   it("prefers an explicit COCALC_PROJECT_TOOLS path when provided", () => {
+    const explicitTools = "/srv/cocalc/tools/current";
+    const mounts = getCoCalcMounts(
+      { COCALC_PROJECT_TOOLS: explicitTools },
+      (path) => path === explicitTools || path.endsWith("/src"),
+    );
+
+    expect(mounts[explicitTools]).toBe(COCALC_BIN2);
+    expect(mounts[DEFAULT_PROJECT_TOOLS]).toBeUndefined();
+    expect(Object.values(mounts)).toContain(COCALC_SRC);
+  });
+
+  it("skips missing project source mounts when tools exist", () => {
     const explicitTools = "/srv/cocalc/tools/current";
     const mounts = getCoCalcMounts(
       { COCALC_PROJECT_TOOLS: explicitTools },
@@ -54,7 +67,7 @@ describe("getCoCalcMounts", () => {
     );
 
     expect(mounts[explicitTools]).toBe(COCALC_BIN2);
-    expect(mounts[DEFAULT_PROJECT_TOOLS]).toBeUndefined();
+    expect(Object.values(mounts)).not.toContain(COCALC_SRC);
   });
 
   it("uses the legacy project bundle as the only project source mount", () => {

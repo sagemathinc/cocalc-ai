@@ -50,12 +50,17 @@ export function getCoCalcMounts(
   nodePath = join(COCALC_BIN, "node");
 
   const mounts: Record<string, string> = getNodeRuntimeMounts();
+  const addProjectSourceMount = (source: string) => {
+    if (pathExists(source)) {
+      mounts[source] = COCALC_SRC;
+    }
+  };
 
   const tools = env.COCALC_PROJECT_TOOLS ?? DEFAULT_PROJECT_TOOLS;
   if (tools && pathExists(tools)) {
     // COCALC_SRC is where the project's Javascript code is located, which is what the project
     // container runs at startup.
-    mounts[join(dirname(root), "src")] = COCALC_SRC;
+    addProjectSourceMount(join(dirname(root), "src"));
     mounts[tools] = COCALC_BIN2;
     if (pathExists(join(tools, "node"))) {
       nodePath = join(COCALC_BIN2, "node");
@@ -70,7 +75,7 @@ export function getCoCalcMounts(
     return mounts;
   }
 
-  mounts[join(dirname(root), "src")] = COCALC_SRC;
+  addProjectSourceMount(join(dirname(root), "src"));
 
   // IMPORTANT: take care not to put the binary next to sensitive info due
   // to mapping in process.execPath!

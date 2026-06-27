@@ -18,6 +18,7 @@ export interface ChatRoomThreadMenuProps {
   hasCustomName?: boolean;
   isPinned?: boolean;
   isAI?: boolean;
+  isAutomation?: boolean;
   isCodexThread?: boolean;
   threadColor?: string;
   threadIcon?: string;
@@ -63,6 +64,7 @@ export function ChatRoomThreadMenu({
   hasCustomName = false,
   isPinned = false,
   isAI = false,
+  isAutomation = false,
   isCodexThread = false,
   threadColor,
   threadIcon,
@@ -99,7 +101,7 @@ export function ChatRoomThreadMenu({
         ]
       : [];
   const automationItems: NonNullable<MenuProps["items"]> =
-    isAI && openAutomationModal
+    (isAI || isAutomation) && openAutomationModal
       ? [
           {
             key: "automation",

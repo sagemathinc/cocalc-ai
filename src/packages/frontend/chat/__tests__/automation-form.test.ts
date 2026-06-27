@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import {
+  automationConfigMissingReason,
   describeAutomationSchedule,
   normalizeAutomationConfigForSave,
   shouldShowAutomationNextRun,
@@ -56,6 +57,52 @@ describe("automation form helpers", () => {
         },
       }),
     ).toBeUndefined();
+  });
+
+  it("explains missing required automation fields", () => {
+    expect(
+      automationConfigMissingReason({
+        draft: {
+          enabled: true,
+          run_kind: "command",
+          title: " ",
+          command: "echo hi",
+          schedule_type: "daily",
+          local_time: "06:00",
+          timezone: "UTC",
+        },
+        allowCodexRunKind: false,
+      }),
+    ).toBe("Enter an automation title.");
+
+    expect(
+      automationConfigMissingReason({
+        draft: {
+          enabled: true,
+          run_kind: "command",
+          title: "Repo status",
+          command: " ",
+          schedule_type: "daily",
+          local_time: "06:00",
+          timezone: "UTC",
+        },
+        allowCodexRunKind: false,
+      }),
+    ).toBe("Enter the bash command to run.");
+
+    expect(
+      automationConfigMissingReason({
+        draft: {
+          enabled: true,
+          run_kind: "codex",
+          title: "Daily summary",
+          prompt: " ",
+          schedule_type: "daily",
+          local_time: "06:00",
+          timezone: "UTC",
+        },
+      }),
+    ).toBe("Enter the prompt Codex should run.");
   });
 
   it("allows one-minute interval schedules", () => {
