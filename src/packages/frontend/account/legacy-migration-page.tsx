@@ -69,11 +69,14 @@ function InternalRouteLink({
 
 type LegacyMigrationState = {
   error: string;
+  emailVerificationEmail?: string | null;
+  emailVerificationRequired: boolean;
   legacyAccounts: LegacyMigrationMatchedAccount[];
   legacyAccountIds: string[];
   loading: boolean;
   projects: LegacyMigrationProjectSummary[];
   totalCount: number;
+  unverifiedEmailMatches: LegacyMigrationMatchedAccount[];
 };
 
 const PROJECT_LOAD_LIMIT = 1000;
@@ -645,7 +648,7 @@ export const LEGACY_MIGRATION_SETTINGS_PAGE = {
   key: "legacy-migration",
   label: defineMessage({
     id: "account.settings.legacy-migration.label",
-    defaultMessage: "Legacy migration",
+    defaultMessage: "Legacy Projects",
   }),
   title: defineMessage({
     id: "account.settings.legacy-migration.title",
@@ -679,13 +682,17 @@ export function LegacyMigrationPage() {
   );
   const [state, setState] = useState<LegacyMigrationState>({
     error: "",
+    emailVerificationEmail: null,
+    emailVerificationRequired: false,
     legacyAccounts: [],
     legacyAccountIds: [],
     loading: true,
     projects: [],
     totalCount: 0,
+    unverifiedEmailMatches: [],
   });
   const [includeHidden, setIncludeHidden] = useState(false);
+  const [includeNotAvailable, setIncludeNotAvailable] = useState(false);
   const [maxDiskGb, setMaxDiskGb] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
@@ -709,17 +716,21 @@ export function LegacyMigrationPage() {
       const response =
         await webapp_client.conat_client.hub.legacyMigration.listProjects({
           include_hidden: includeHidden,
+          include_not_available: includeNotAvailable,
           limit: PROJECT_LOAD_LIMIT,
           max_disk_mb: maxDiskGb == null ? undefined : maxDiskGb * 1024,
           query: nextQuery,
         });
       setState({
         error: "",
+        emailVerificationEmail: response.email_verification_email ?? null,
+        emailVerificationRequired: !!response.email_verification_required,
         legacyAccounts: response.legacy_accounts ?? [],
         legacyAccountIds: response.legacy_account_ids,
         loading: false,
         projects: response.projects,
         totalCount: response.total_count ?? response.projects.length,
+        unverifiedEmailMatches: response.unverified_email_matches ?? [],
       });
     } catch (err) {
       setState((prev) => ({
@@ -734,7 +745,7 @@ export function LegacyMigrationPage() {
     if (legacyMigrationEnabled) {
       void loadProjects();
     }
-  }, [account_id, includeHidden, legacyMigrationEnabled]);
+  }, [account_id, includeHidden, includeNotAvailable, legacyMigrationEnabled]);
 
   function setShowLegacyProjectsButton(show: boolean): void {
     redux
@@ -1026,12 +1037,15 @@ export function LegacyMigrationPage() {
     );
   }
 
+  const verificationEmail = state.emailVerificationEmail || emailAddress;
+  const showEmailVerificationRequired =
+    emailVerificationRequired || state.emailVerificationRequired;
   const emailVerificationPrompt = (
     <span>
-      {emailAddress ? (
+      {verificationEmail ? (
         <>
-          Your current email address <Text code>{emailAddress}</Text> is not
-          verified.
+          Your current email address <Text code>{verificationEmail}</Text> is
+          not verified.
         </>
       ) : (
         <>Your account does not have an email address set.</>
@@ -1041,16 +1055,22 @@ export function LegacyMigrationPage() {
         profile settings
       </InternalRouteLink>{" "}
       to{" "}
-      {emailAddress
+      {verificationEmail
         ? "verify this email address"
         : "set and verify an email address"}
       , then return to this page and refresh.
+      {state.unverifiedEmailMatches.length > 0 ? (
+        <>
+          {" "}
+          CoCalc found matching legacy cocalc.com account data for this email.
+        </>
+      ) : null}
     </span>
   );
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      {emailVerificationRequired ? (
+      {showEmailVerificationRequired ? (
         <Alert
           showIcon
           type="warning"
@@ -1156,6 +1176,12 @@ export function LegacyMigrationPage() {
             >
               Include hidden
             </Checkbox>
+            <Checkbox
+              checked={includeNotAvailable}
+              onChange={(event) => setIncludeNotAvailable(event.target.checked)}
+            >
+              Include not yet available
+            </Checkbox>
             <InputNumber
               min={0}
               onChange={(value) =>
@@ -1192,7 +1218,7 @@ export function LegacyMigrationPage() {
 
           {state.loading && state.projects.length === 0 ? (
             <Loading />
-          ) : emailVerificationRequired ? (
+          ) : showEmailVerificationRequired ? (
             <Alert
               showIcon
               type="warning"

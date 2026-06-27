@@ -160,7 +160,7 @@ function parseArgs(argv: string[]): Options {
 }
 
 async function candidates(options: Options): Promise<Candidate[]> {
-  const clauses = ["COALESCE(legacy.stripe_customer_id, '') <> ''"];
+  const clauses = ["COALESCE(customer.stripe_customer_id, '') <> ''"];
   const params: unknown[] = [];
   if (options.onlyApplied) {
     clauses.push("claims.legacy_account_id IS NOT NULL");
@@ -171,11 +171,13 @@ async function candidates(options: Options): Promise<Candidate[]> {
   }
   if (options.legacyAccountIds.length > 0) {
     params.push(options.legacyAccountIds);
-    clauses.push(`legacy.legacy_account_id = ANY($${params.length}::text[])`);
+    clauses.push(`customer.legacy_account_id = ANY($${params.length}::text[])`);
   }
   if (options.stripeCustomerIds.length > 0) {
     params.push(options.stripeCustomerIds);
-    clauses.push(`legacy.stripe_customer_id = ANY($${params.length}::text[])`);
+    clauses.push(
+      `customer.stripe_customer_id = ANY($${params.length}::text[])`,
+    );
   }
   const limit =
     options.limit != null
@@ -183,24 +185,46 @@ async function candidates(options: Options): Promise<Candidate[]> {
       : "";
   const { rows } = await pool().query<Candidate>(
     `
-    SELECT DISTINCT ON (legacy.stripe_customer_id)
-           legacy.legacy_account_id,
+    WITH customer AS (
+      SELECT legacy.legacy_account_id,
+             legacy.email_address,
+             COALESCE(
+               NULLIF(legacy.stripe_customer_id, ''),
+               NULLIF(raw.payload->>'stripe_customer_id', '')
+             ) AS stripe_customer_id,
+             legacy.metadata->'stripe_customer' AS legacy_stripe_customer
+        FROM legacy_migration_accounts legacy
+        LEFT JOIN legacy_migration_raw_records raw
+          ON raw.source='stripe_subscriptions'
+         AND COALESCE(legacy.email_address_verified, false)=true
+         AND (
+           lower(raw.payload->>'customer_email')=lower(legacy.email_address)
+           OR (
+             split_part(lower(legacy.email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+             AND split_part(lower(raw.payload->>'customer_email'), '@', 2) IN ('gmail.com', 'googlemail.com')
+             AND replace(split_part(split_part(lower(raw.payload->>'customer_email'), '@', 1), '+', 1), '.', '')
+                 = replace(split_part(split_part(lower(legacy.email_address), '@', 1), '+', 1), '.', '')
+           )
+         )
+    )
+    SELECT DISTINCT ON (customer.stripe_customer_id)
+           customer.legacy_account_id,
            links.account_id,
-           legacy.email_address,
-           legacy.stripe_customer_id,
-           legacy.metadata->'stripe_customer' AS legacy_stripe_customer,
+           customer.email_address,
+           customer.stripe_customer_id,
+           customer.legacy_stripe_customer,
            (claims.legacy_account_id IS NOT NULL) AS financial_applied
-      FROM legacy_migration_accounts legacy
+      FROM customer
       LEFT JOIN legacy_migration_account_links links
-        ON links.legacy_account_id=legacy.legacy_account_id
+        ON links.legacy_account_id=customer.legacy_account_id
       LEFT JOIN legacy_migration_financial_claims claims
-        ON claims.legacy_account_id=legacy.legacy_account_id
+        ON claims.legacy_account_id=customer.legacy_account_id
        AND claims.status='applied'
      WHERE ${clauses.join(" AND ")}
-     ORDER BY legacy.stripe_customer_id,
+     ORDER BY customer.stripe_customer_id,
               (claims.legacy_account_id IS NOT NULL) DESC,
               links.account_id NULLS LAST,
-              legacy.legacy_account_id
+              customer.legacy_account_id
      ${limit}
     `,
     params,

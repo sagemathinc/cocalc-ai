@@ -33,6 +33,21 @@ const WORKER_ID = randomUUID();
 const TICK_MS = 10_000;
 const LEASE_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 30_000;
+const PRE_START_STALE_MS = Math.max(
+  60_000,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_PRE_START_STALE_MS", 2 * 60 * 1000),
+);
+const ABANDONED_HEARTBEAT_MS = Math.max(
+  HEARTBEAT_MS * 2,
+  envToInt(
+    "COCALC_LEGACY_PROJECT_RESTORE_ABANDONED_HEARTBEAT_MS",
+    2 * 60 * 1000,
+  ),
+);
+const ABANDONED_CLAIM_THRESHOLD_MS = Math.max(
+  1,
+  LEASE_MS - ABANDONED_HEARTBEAT_MS,
+);
 const DEFAULT_MAX_PARALLEL_TOTAL = Math.max(
   1,
   envToInt(
@@ -227,7 +242,8 @@ async function claimRestoreRows({
     const active = await client.query<{
       host_id: string;
       active: string;
-    }>(`
+    }>(
+      `
       SELECT i.restore_host_id::TEXT AS host_id,
              COUNT(*)::TEXT AS active
         FROM legacy_migration_project_imports i
@@ -235,8 +251,18 @@ async function claimRestoreRows({
          AND i.restore_claimed_until IS NOT NULL
          AND i.restore_claimed_until >= NOW()
          AND i.restore_host_id IS NOT NULL
+         AND NOT (
+           COALESCE(i.restore_progress->>'phase', '') = 'queued'
+           AND i.restore_started IS NOT NULL
+           AND i.restore_started < NOW() - ($1::INT * INTERVAL '1 millisecond')
+         )
+         AND NOT (
+           i.restore_claimed_until < NOW() + ($2::INT * INTERVAL '1 millisecond')
+         )
        GROUP BY i.restore_host_id
-    `);
+    `,
+      [PRE_START_STALE_MS, ABANDONED_CLAIM_THRESHOLD_MS],
+    );
     let activeTotal = 0;
     for (const row of active.rows) {
       const count = Math.max(0, Number(row.active) || 0);
@@ -270,22 +296,43 @@ async function claimRestoreRows({
              AND (
                i.restore_claimed_until IS NULL
                OR i.restore_claimed_until < NOW()
+               OR (
+                 COALESCE(i.restore_progress->>'phase', '') = 'queued'
+                 AND i.restore_started IS NOT NULL
+                 AND i.restore_started < NOW() - ($2::INT * INTERVAL '1 millisecond')
+               )
+               OR (
+                 i.restore_claimed_until IS NOT NULL
+                 AND i.restore_claimed_until < NOW() + ($3::INT * INTERVAL '1 millisecond')
+               )
              )
            )
          )
        ORDER BY i.updated ASC NULLS FIRST, i.legacy_project_id
        LIMIT $1
       `,
-      [candidateWindow],
+      [candidateWindow, PRE_START_STALE_MS, ABANDONED_CLAIM_THRESHOLD_MS],
     );
 
     const claimed: LegacyRestoreRow[] = [];
     for (const candidate of candidates.rows) {
       if (claimed.length >= remainingTotal) break;
-      const target = await materializeRemoteProjectHostTarget({
-        account_id: candidate.owner_account_id,
-        project_id: candidate.project_id,
-      });
+      let target:
+        | Awaited<ReturnType<typeof materializeRemoteProjectHostTarget>>
+        | undefined;
+      try {
+        target = await materializeRemoteProjectHostTarget({
+          account_id: candidate.owner_account_id,
+          project_id: candidate.project_id,
+        });
+      } catch (err) {
+        logger.warn("legacy migration restore candidate route failed", {
+          legacy_project_id: candidate.legacy_project_id,
+          project_id: candidate.project_id,
+          err: `${err}`,
+        });
+        continue;
+      }
       const hostId = `${target?.host_id ?? ""}`.trim();
       if (!hostId) {
         logger.debug("legacy migration restore candidate has no routed host", {
@@ -304,7 +351,7 @@ async function claimRestoreRows({
                restore_error=NULL,
                restore_attempts=COALESCE(i.restore_attempts, 0) + 1,
                restore_worker_id=$1,
-               restore_host_id=$4,
+               restore_host_id=$4::UUID,
                restore_claimed_until=NOW() + ($2::INT * INTERVAL '1 millisecond'),
                restore_started=NOW(),
                restore_finished=NULL,
@@ -324,6 +371,15 @@ async function claimRestoreRows({
                AND (
                  i.restore_claimed_until IS NULL
                  OR i.restore_claimed_until < NOW()
+                 OR (
+                   COALESCE(i.restore_progress->>'phase', '') = 'queued'
+                   AND i.restore_started IS NOT NULL
+                   AND i.restore_started < NOW() - ($5::INT * INTERVAL '1 millisecond')
+                 )
+                 OR (
+                   i.restore_claimed_until IS NOT NULL
+                   AND i.restore_claimed_until < NOW() + ($6::INT * INTERVAL '1 millisecond')
+                 )
                )
              )
            )
@@ -336,7 +392,14 @@ async function claimRestoreRows({
                   p.artifact_manifest,
                   i.restore_lro_op_id
         `,
-        [WORKER_ID, LEASE_MS, candidate.legacy_project_id, hostId],
+        [
+          WORKER_ID,
+          LEASE_MS,
+          candidate.legacy_project_id,
+          hostId,
+          PRE_START_STALE_MS,
+          ABANDONED_CLAIM_THRESHOLD_MS,
+        ],
       );
       const row = updated.rows[0];
       if (!row) continue;

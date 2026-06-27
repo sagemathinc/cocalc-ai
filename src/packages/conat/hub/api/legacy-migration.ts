@@ -71,6 +71,7 @@ export interface LegacyMigrationProjectSummary {
 export interface LegacyMigrationListProjectsOptions {
   account_id?: string;
   include_hidden?: boolean;
+  include_not_available?: boolean;
   limit?: number;
   max_disk_mb?: number;
   query?: string;
@@ -87,6 +88,9 @@ export interface LegacyMigrationMatchedAccount {
 export interface LegacyMigrationListProjectsResponse {
   legacy_account_ids: string[];
   legacy_accounts?: LegacyMigrationMatchedAccount[];
+  email_verification_required?: boolean;
+  email_verification_email?: string | null;
+  unverified_email_matches?: LegacyMigrationMatchedAccount[];
   projects: LegacyMigrationProjectSummary[];
   total_count: number;
 }
@@ -197,6 +201,9 @@ export interface LegacyMigrationFinancialPreviewOptions {
 
 export interface LegacyMigrationFinancialPreviewResponse {
   legacy_accounts: LegacyMigrationFinancialAccount[];
+  email_verification_required?: boolean;
+  email_verification_email?: string | null;
+  unverified_email_matches?: LegacyMigrationMatchedAccount[];
   pending_credit_amount: number;
   applied_credit_amount: number;
   active_subscription_annualized: number;

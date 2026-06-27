@@ -18,8 +18,12 @@ import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
 import type { MembershipTierRecord } from "@cocalc/server/membership/tiers";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import {
+  selectActiveHost,
+  syncProjectUsersOnHost,
+} from "@cocalc/server/project-host/control";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import {
   ensureProjectFileServerClientReady,
@@ -75,6 +79,7 @@ import type {
 import { assertLegacyMigrationEnabled } from "./enabled";
 import { moneyRound2Up, moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
+import { mapCloudRegionToR2Region, parseR2Region } from "@cocalc/util/consts";
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
@@ -106,6 +111,11 @@ type LegacyAccountRow = {
   email_address: string | null;
   display_name: string | null;
   stripe_customer_id: string | null;
+};
+
+type AccountPrimaryEmailStatus = {
+  email: string | null;
+  verified: boolean;
 };
 
 type LegacyProjectRow = {
@@ -477,6 +487,88 @@ async function verifiedAccountEmails(account_id: string): Promise<string[]> {
   return [...emails].sort();
 }
 
+async function accountPrimaryEmailStatus(
+  account_id: string,
+): Promise<AccountPrimaryEmailStatus> {
+  const { rows } = await getPool().query<AccountEmailRow>(
+    `SELECT email_address, email_address_verified
+       FROM accounts
+      WHERE account_id=$1`,
+    [account_id],
+  );
+  const row = rows[0];
+  if (row != null) {
+    const email = normalizeEmail(row.email_address) || null;
+    if (!email) return { email: null, verified: false };
+    return {
+      email,
+      verified: !!(row.email_address_verified ?? {})[email],
+    };
+  }
+  const account = await getClusterAccountById(account_id);
+  const email = normalizeEmail(account?.email_address) || null;
+  if (!email) return { email: null, verified: false };
+  const verifiedEmails = new Set(await verifiedAccountEmails(account_id));
+  return {
+    email,
+    verified: verifiedEmails.has(email),
+  };
+}
+
+async function unverifiedLegacyEmailMatches(account_id: string): Promise<{
+  email: string | null;
+  matches: LegacyMigrationMatchedAccount[];
+}> {
+  const { email, verified } = await accountPrimaryEmailStatus(account_id);
+  if (!email || verified) return { email, matches: [] };
+  const gmailCanonical = gmailCanonicalEmail(email);
+  const { rows } = await getPool().query<LegacyMigrationMatchedAccount>(
+    `
+    WITH candidates AS (
+      SELECT legacy_account_id,
+             email_address,
+             display_name,
+             lower(email_address) AS exact_email,
+             CASE
+               WHEN split_part(lower(email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+                 THEN replace(split_part(split_part(lower(email_address), '@', 1), '+', 1), '.', '') || '@gmail.com'
+               ELSE NULL
+             END AS gmail_canonical_email,
+             last_active
+        FROM legacy_migration_accounts
+       WHERE COALESCE(email_address_verified, false)=true
+    )
+    SELECT legacy_account_id,
+           email_address,
+           display_name,
+           CASE
+             WHEN exact_email=$1 THEN 'exact-email'
+             ELSE 'gmail-canonical'
+           END AS match_method,
+           gmail_canonical_email
+      FROM candidates
+     WHERE exact_email=$1
+        OR (
+          $2::TEXT IS NOT NULL
+          AND gmail_canonical_email=$2::TEXT
+        )
+     ORDER BY last_active DESC NULLS LAST,
+              legacy_account_id
+    `,
+    [email, gmailCanonical],
+  );
+  return {
+    email,
+    matches: rows.map((row) => ({
+      legacy_account_id: row.legacy_account_id,
+      email_address: normalizeEmail(row.email_address) || null,
+      display_name: row.display_name ?? null,
+      match_method: row.match_method ?? null,
+      gmail_canonical_email: normalizeEmail(row.gmail_canonical_email) || null,
+    })),
+  };
+}
+
 async function ensureVerifiedEmailLinks(account_id: string): Promise<void> {
   const emails = await verifiedAccountEmails(account_id);
   if (emails.length === 0) return;
@@ -784,7 +876,7 @@ function legacyStripeSubscriptionRecordInfo(
 
 async function membershipPlans(): Promise<LegacyMigrationMembershipPlan[]> {
   const tiers = await getSeedMembershipTierMap({ includeDisabled: false });
-  return ["basic", "standard"]
+  return ["basic", "member"]
     .map((id) => tiers[id])
     .filter((tier): tier is MembershipTierRecord => tier != null)
     .map((tier) => ({
@@ -1022,8 +1114,20 @@ async function financialRowsForAccount(
           ON accounts.legacy_account_id=linked.legacy_account_id
         JOIN legacy_migration_raw_records raw
           ON raw.source='stripe_subscriptions'
-         AND raw.payload->>'stripe_customer_id'=accounts.stripe_customer_id
-       WHERE COALESCE(accounts.stripe_customer_id, '') <> ''
+         AND (
+           (
+             COALESCE(accounts.stripe_customer_id, '') <> ''
+             AND raw.payload->>'stripe_customer_id'=accounts.stripe_customer_id
+           )
+           OR lower(raw.payload->>'customer_email')=lower(accounts.email_address)
+           OR (
+             split_part(lower(accounts.email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+             AND split_part(lower(raw.payload->>'customer_email'), '@', 2) IN ('gmail.com', 'googlemail.com')
+             AND replace(split_part(split_part(lower(raw.payload->>'customer_email'), '@', 1), '+', 1), '.', '')
+                 = replace(split_part(split_part(lower(accounts.email_address), '@', 1), '+', 1), '.', '')
+           )
+         )
+       WHERE COALESCE(accounts.email_address_verified, false)=true
          AND raw.payload->>'status' IN ('active', 'trialing', 'canceled')
        GROUP BY accounts.legacy_account_id
     ),
@@ -1104,10 +1208,11 @@ async function financialRowsForAccount(
     const unvaluedActiveSiteLicenseCount = siteLicensePayloads.filter(
       (payload) => siteLicensePeriodCost(asRecord(payload)) <= 0,
     ).length;
+    const stripeSubscriptionPayloads = asArray(
+      row.stripe_subscription_payloads,
+    ).map((payload) => asRecord(payload));
     const stripeInfo = legacyStripeSubscriptionRecordInfo(
-      asArray(row.stripe_subscription_payloads).map((payload) =>
-        asRecord(payload),
-      ),
+      stripeSubscriptionPayloads,
     );
     const balance_credit_amount = toMoneyNumber(row.credit_amount);
     const entitlement_credits = [
@@ -1138,7 +1243,12 @@ async function financialRowsForAccount(
       legacy_account_id: row.legacy_account_id,
       email_address: normalizeEmail(row.email_address) || null,
       display_name: row.display_name ?? null,
-      stripe_customer_id: clean(row.stripe_customer_id) ?? null,
+      stripe_customer_id:
+        clean(row.stripe_customer_id) ??
+        stripeSubscriptionPayloads
+          .map((payload) => clean(payload.stripe_customer_id))
+          .find((value): value is string => !!value) ??
+        null,
       balance: toMoneyNumber(row.balance),
       balance_credit_amount,
       entitlement_credit_amount,
@@ -1191,7 +1301,7 @@ function suggestedMembershipClass({
   }
   return active_subscription_annualized >
     LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF
-    ? "standard"
+    ? "member"
     : "basic";
 }
 
@@ -1255,8 +1365,15 @@ async function financialPreviewForAccount(
     (await currentStripeCustomerId(account_id)) ??
     pending.map((account) => account.stripe_customer_id).find(Boolean) ??
     null;
+  const unverifiedEmail =
+    legacy_accounts.length === 0
+      ? await unverifiedLegacyEmailMatches(account_id)
+      : { email: null, matches: [] };
   return {
     legacy_accounts,
+    email_verification_required: unverifiedEmail.matches.length > 0,
+    email_verification_email: unverifiedEmail.email,
+    unverified_email_matches: unverifiedEmail.matches,
     pending_credit_amount,
     applied_credit_amount,
     active_subscription_annualized,
@@ -1448,7 +1565,10 @@ export async function applyFinancialMigrationHomeBay({
   membership_class,
   membership_interval,
 }: LegacyMigrationApplyFinancialHomeBayOptions): Promise<LegacyMigrationApplyFinancialHomeBayResponse> {
-  await assertLegacyMigrationEnabled();
+  // The seed bay owns legacy dump access and validates that migration is enabled
+  // before it computes and claims these rows. The account home bay may not have
+  // migration enabled locally, but it is authoritative for balance/subscription
+  // mutations.
   if (!account_id) {
     throw Error("account_id is required");
   }
@@ -1738,7 +1858,24 @@ export async function financialMigrationCandidateAccountIds({
                   )
                OR (
                     raw.source='stripe_subscriptions'
-                    AND raw.payload->>'stripe_customer_id'=legacy.stripe_customer_id
+                    AND (
+                      (
+                        COALESCE(legacy.stripe_customer_id, '') <> ''
+                        AND raw.payload->>'stripe_customer_id'=legacy.stripe_customer_id
+                      )
+                      OR (
+                        COALESCE(legacy.email_address_verified, false)=true
+                        AND (
+                          lower(raw.payload->>'customer_email')=lower(legacy.email_address)
+                          OR (
+                            split_part(lower(legacy.email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+                            AND split_part(lower(raw.payload->>'customer_email'), '@', 2) IN ('gmail.com', 'googlemail.com')
+                            AND replace(split_part(split_part(lower(raw.payload->>'customer_email'), '@', 1), '+', 1), '.', '')
+                                = replace(split_part(split_part(lower(legacy.email_address), '@', 1), '+', 1), '.', '')
+                          )
+                        )
+                      )
+                    )
                   )
          )
        )
@@ -1753,6 +1890,7 @@ export async function financialMigrationCandidateAccountIds({
 export async function listProjects({
   account_id,
   include_hidden,
+  include_not_available,
   limit,
   max_disk_mb,
   query,
@@ -1767,9 +1905,13 @@ export async function listProjects({
     (account) => account.legacy_account_id,
   );
   if (legacy_account_ids.length === 0) {
+    const unverifiedEmail = await unverifiedLegacyEmailMatches(account_id);
     return {
       legacy_account_ids,
       legacy_accounts,
+      email_verification_required: unverifiedEmail.matches.length > 0,
+      email_verification_email: unverifiedEmail.email,
+      unverified_email_matches: unverifiedEmail.matches,
       projects: [],
       total_count: 0,
     };
@@ -1801,6 +1943,10 @@ export async function listProjects({
            OR p.disk_mb <= $5::DOUBLE PRECISION
          )
        GROUP BY p.legacy_project_id
+      HAVING (
+        $2::BOOLEAN
+        OR NOT BOOL_OR(COALESCE(p.legacy_users->linked.legacy_account_id->>'hide', '')='true')
+      )
     )
     SELECT p.legacy_project_id,
            p.title,
@@ -1838,8 +1984,31 @@ export async function listProjects({
         ON matched.legacy_project_id=p.legacy_project_id
       LEFT JOIN legacy_migration_project_imports i
         ON i.legacy_project_id=p.legacy_project_id
+     WHERE (
+       $6::BOOLEAN
+       OR i.project_id IS NOT NULL
+       OR (
+         p.artifact_status='available'
+         AND COALESCE(p.artifact_key, '') <> ''
+         AND p.artifact_manifest IS NOT NULL
+         AND (
+           p.artifact_manifest ?| ARRAY[
+             'compressed_bytes',
+             'compressed_size_bytes',
+             'artifact_bytes',
+             'object_bytes',
+             'r2_bytes'
+           ]
+           OR COALESCE((p.artifact_manifest->'archive') ?| ARRAY[
+             'compressed_bytes',
+             'object_bytes'
+           ], false)
+           OR COALESCE((p.artifact_manifest->'artifact') ? 'bytes', false)
+         )
+       )
+     )
      ORDER BY p.last_edited DESC NULLS LAST, p.legacy_project_id
-     LIMIT $6
+     LIMIT $7
     `,
     [
       account_id,
@@ -1847,6 +2016,7 @@ export async function listProjects({
       useSearch,
       search,
       maxDiskMb,
+      !!include_not_available,
       limitValue(limit),
     ],
   );
@@ -2062,12 +2232,18 @@ async function createImportedLegacyProject({
   host_id?: string;
   region?: string;
 }): Promise<string> {
+  const placement = await selectLegacyMigrationHostPlacement({
+    account_id,
+    host_id,
+    region,
+  });
   const account = await getClusterAccountById(account_id);
   const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
-  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+  const projectBayId = placement.bay_id ?? homeBayId;
+  if (projectBayId && projectBayId !== getConfiguredBayId()) {
     const { project_id } = await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
-      dest_bay: homeBayId,
+      dest_bay: projectBayId,
       timeout: PROJECT_ARCHIVE_TIMEOUT_MS,
     }).createLegacyMigrationProject({
       account_id,
@@ -2076,8 +2252,8 @@ async function createImportedLegacyProject({
       description: projectDescription(legacy),
       rootfs_image,
       rootfs_image_id,
-      host_id,
-      region,
+      host_id: placement.host_id,
+      region: placement.region,
     });
     return project_id;
   }
@@ -2087,8 +2263,8 @@ async function createImportedLegacyProject({
     description: projectDescription(legacy),
     rootfs_image,
     rootfs_image_id,
-    host_id,
-    region,
+    host_id: placement.host_id,
+    region: placement.region,
     skip_project_count_limit: true,
     start: false,
   };
@@ -2113,6 +2289,38 @@ async function createImportedLegacyProject({
     );
     return await createProject(opts);
   }
+}
+
+async function selectLegacyMigrationHostPlacement({
+  account_id,
+  host_id,
+  region,
+}: {
+  account_id: string;
+  host_id?: string;
+  region?: string;
+}): Promise<{ host_id?: string; region?: string; bay_id?: string }> {
+  if (host_id) {
+    const hostBay = await resolveHostBayAcrossCluster(host_id);
+    return { host_id, region, bay_id: hostBay?.bay_id };
+  }
+  const requestedRegion = parseR2Region(region);
+  if (region && !requestedRegion) {
+    return { region };
+  }
+  let selected = await selectActiveHost({
+    account_id,
+    project_region: requestedRegion,
+    allow_region_fallback: true,
+  });
+  if (!selected) {
+    return { region };
+  }
+  return {
+    host_id: selected.id,
+    region: mapCloudRegionToR2Region(selected.region),
+    bay_id: selected.bay_id,
+  };
 }
 
 async function importOneProject({

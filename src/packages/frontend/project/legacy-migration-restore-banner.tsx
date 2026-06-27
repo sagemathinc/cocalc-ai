@@ -162,6 +162,45 @@ function formatBytes(value: unknown): string {
   return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${unit}`;
 }
 
+function timestampMs(value: unknown): number | undefined {
+  const ms =
+    value instanceof Date
+      ? value.getTime()
+      : typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Date.parse(value)
+          : undefined;
+  return typeof ms === "number" && Number.isFinite(ms) ? ms : undefined;
+}
+
+function formatTimestamp(value: unknown): string {
+  const ms = timestampMs(value);
+  return ms == null ? "" : new Date(ms).toLocaleString();
+}
+
+function restoreQueueAndTimingText({
+  effectiveStatus,
+  summary,
+  progress,
+}: {
+  effectiveStatus: string;
+  summary?: LroSummary;
+  progress?: Extract<LroEvent, { type: "progress" }>;
+}): string {
+  const phase = labelValue(
+    progress?.phase ?? summary?.progress_summary?.phase,
+  ).toLowerCase();
+  const isQueued =
+    effectiveStatus === "pending" ||
+    summary?.status === "queued" ||
+    phase === "queued";
+  const started = formatTimestamp(summary?.started_at ?? summary?.created_at);
+  if (!isQueued && !started) return "";
+  const prefix = isQueued ? "Restore is queued." : "Restore is running.";
+  return started ? `${prefix} LRO started ${started}.` : prefix;
+}
+
 function progressDetailText({
   summary,
   progress,
@@ -443,6 +482,11 @@ export function LegacyMigrationRestoreBanner({
   const percent = progressPercent({ summary, progress });
   const detail = progressText({ summary, progress });
   const detailExtra = progressDetailText({ summary, progress });
+  const queueAndTiming = restoreQueueAndTimingText({
+    effectiveStatus,
+    summary,
+    progress,
+  });
   const error = failed ? labelValue(summary?.error) || effectiveError : "";
 
   async function retryRestore() {
@@ -489,6 +533,9 @@ export function LegacyMigrationRestoreBanner({
             incomplete until the restore finishes. You can leave this page and
             come back later.
           </Text>
+          {queueAndTiming ? (
+            <Text type="secondary">{queueAndTiming}</Text>
+          ) : null}
           {detail ? <Text type="secondary">{detail}</Text> : null}
           {detailExtra ? (
             <Text type="secondary" style={{ fontSize: 12 }}>
