@@ -24,8 +24,8 @@ run_sudo_env() {
 
 python_prefix="${PYTHON_PREFIX:-/opt/cocalc-webdev-python}"
 python_packages="${PYTHON_PACKAGES:-ipykernel ipywidgets jupyter-console jupyterlab notebook pip pre-commit pytest requests ruff setuptools uv wheel}"
-pnpm_version="${PNPM_VERSION:-11.5.2}"
-yarn_version="${YARN_VERSION:-1.22.22}"
+pnpm_version="${PNPM_VERSION:-latest}"
+yarn_version="${YARN_VERSION:-latest}"
 npm_global_packages="${NPM_GLOBAL_PACKAGES:-typescript tsx npm-check-updates serve http-server}"
 owner_uid="${OWNER_UID:-2001}"
 owner_gid="${OWNER_GID:-2001}"
@@ -33,21 +33,25 @@ owner_gid="${OWNER_GID:-2001}"
 $SUDO apt-get update
 run_noninteractive apt-get install -y --no-install-recommends \
   bash \
-  bottom \
+  bat \
   build-essential \
   ca-certificates \
-  chromium \
-  chromium-driver \
   cloc \
   cmake \
   curl \
+  bind9-dnsutils \
+  direnv \
+  fd-find \
   g++ \
   gh \
   git \
+  graphviz \
   htop \
+  imagemagick \
   iputils-ping \
   jq \
   less \
+  lsof \
   libcairo2-dev \
   libffi-dev \
   libgif-dev \
@@ -59,7 +63,9 @@ run_noninteractive apt-get install -y --no-install-recommends \
   libsqlite3-dev \
   libssl-dev \
   make \
+  netcat-openbsd \
   openssh-client \
+  parallel \
   pkg-config \
   postgresql \
   postgresql-client \
@@ -68,10 +74,12 @@ run_noninteractive apt-get install -y --no-install-recommends \
   python3-dev \
   python3-pip \
   python3-venv \
+  redis-server \
   ripgrep \
   rsync \
   shellcheck \
   sqlite3 \
+  strace \
   sudo \
   telnet \
   tmux \
@@ -90,6 +98,12 @@ if [ -x /opt/cocalc/bin/npm ]; then
 fi
 if [ -x /opt/cocalc/bin/corepack ]; then
   $SUDO ln -sf /opt/cocalc/bin/corepack /usr/local/bin/corepack
+fi
+if command -v fdfind >/dev/null 2>&1; then
+  $SUDO ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+fi
+if command -v batcat >/dev/null 2>&1; then
+  $SUDO ln -sf "$(command -v batcat)" /usr/local/bin/bat
 fi
 
 npm_bin="$(command -v npm || true)"
@@ -132,7 +146,7 @@ $SUDO tee /opt/cocalc-webdev/README.md >/dev/null <<'EOF'
 
 This image is intended for CoCalc development and standard TypeScript/web
 projects. It uses the CoCalc-provided Node/npm runtime and adds system-wide
-pnpm, yarn, GitHub CLI, native build tools, PostgreSQL, Chromium, and a compact
+pnpm, yarn, GitHub CLI, native build tools, PostgreSQL, Redis, and a compact
 Python/Jupyter environment.
 
 ## CoCalc development quick start

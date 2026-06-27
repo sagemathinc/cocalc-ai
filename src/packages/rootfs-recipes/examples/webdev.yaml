@@ -16,8 +16,10 @@ verify:
   - command -v git
   - command -v gh
   - command -v rg
+  - command -v fd
+  - command -v bat
   - command -v jq
-  - command -v chromium
+  - command -v redis-server
   - command -v python3
   - command -v uv
   - command -v ruff
@@ -29,7 +31,7 @@ verify:
 publish:
   label: Web Development
   slug: webdev
-  description: Web development image with CoCalc's Node/npm runtime, system-wide pnpm and yarn, GitHub CLI, native build tools, PostgreSQL, Chromium, Python, uv, and Jupyter.
+  description: Web development image with CoCalc's Node/npm runtime, system-wide pnpm and yarn, GitHub CLI, native build tools, PostgreSQL, Redis, Python, uv, and Jupyter.
   family: web-development
   version: "2026.06"
   channel: stable
@@ -42,4 +44,4 @@ publish:
     - typescript
     - python
     - postgresql
-    - chromium
+    - redis

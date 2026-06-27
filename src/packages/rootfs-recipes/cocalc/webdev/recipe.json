@@ -27,11 +27,11 @@
     },
     "pnpm_version": {
       "type": "string",
-      "default": "11.5.2"
+      "default": "latest"
     },
     "yarn_version": {
       "type": "string",
-      "default": "1.22.22"
+      "default": "latest"
     },
     "npm_global_packages": {
       "type": "array",
@@ -70,7 +70,7 @@
         "pnpm",
         "python",
         "postgresql",
-        "chromium",
+        "redis",
         "cocalc"
       ]
     },
@@ -82,12 +82,11 @@
     "content": {
       "version": 1,
       "title": "Web Development",
-      "subtitle": "Node, pnpm, yarn, GitHub CLI, native build tools, Chromium, PostgreSQL, and a Python/Jupyter venv.",
+      "subtitle": "Node, pnpm, yarn, GitHub CLI, native build tools, PostgreSQL, Redis, and a Python/Jupyter venv.",
       "highlights": [
         "System-wide pnpm and yarn",
         "Native build toolchain",
-        "Chromium for browser tests",
-        "PostgreSQL for app development",
+        "PostgreSQL and Redis for app development",
         "Python, uv, and Jupyter"
       ],
       "actions": [
