@@ -594,11 +594,6 @@ function dateIso(value: unknown): string | null {
   return ms == null ? null : new Date(ms).toISOString();
 }
 
-function moneyValue(value: unknown): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
 function generousRemainingCredit({
   periodCost,
   periodStart,
@@ -687,67 +682,35 @@ function siteLicenseCredit(
   };
 }
 
-function stripeSubscriptionItems(sub: Record<string, any>): any[] {
-  return asArray(asRecord(sub.items).data);
+function csvStripeSubscriptionPlanBase(
+  row: Record<string, any>,
+): string | null {
+  return clean(row.plan)?.split("-")[0] ?? null;
 }
 
-function stripeSubscriptionPeriodCost(sub: Record<string, any>): number {
-  const items = stripeSubscriptionItems(sub);
-  if (items.length > 0) {
-    return toMoneyNumber(
-      items.reduce((total, item) => {
-        const price = asRecord(item.price);
-        const quantity = positiveMoneyNumber(item.quantity) || 1;
-        const amount =
-          price.unit_amount != null
-            ? moneyValue(price.unit_amount) / 100
-            : moneyValue(price.amount) / 100;
-        return total + amount * quantity;
-      }, 0),
-    );
-  }
-  const plan = asRecord(sub.plan);
-  const quantity = positiveMoneyNumber(sub.quantity) || 1;
-  return toMoneyNumber((moneyValue(plan.amount) / 100) * quantity);
-}
-
-function stripeSubscriptionInterval(
-  sub: Record<string, any>,
-): "month" | "year" {
-  const plan = asRecord(sub.plan);
-  if (plan.interval === "year") return "year";
-  const item = stripeSubscriptionItems(sub)[0];
-  const recurring = asRecord(asRecord(item?.price).recurring);
-  return recurring.interval === "year" ? "year" : "month";
-}
-
-function stripeSubscriptionPlanBase(sub: Record<string, any>): string | null {
-  const firstItem = stripeSubscriptionItems(sub)[0];
-  const planId =
-    clean(asRecord(sub.plan).id) ??
-    clean(asRecord(firstItem?.plan).id) ??
-    clean(asRecord(firstItem?.price).id);
-  return planId?.split("-")[0] ?? null;
-}
-
-function isLegacyStripeUpgrade(sub: Record<string, any>): boolean {
-  const metadata = asRecord(sub.metadata);
-  const planBase = stripeSubscriptionPlanBase(sub);
+function isLegacyStripeSubscriptionRecord(row: Record<string, any>): boolean {
+  const planBase = csvStripeSubscriptionPlanBase(row);
   return (
-    clean(metadata.service) == null &&
+    clean(row.service_metadata) == null &&
+    clean(row.service) == null &&
     planBase != null &&
     LEGACY_STRIPE_UPGRADE_PLAN_IDS.has(planBase)
   );
 }
 
-function legacyStripeSubscriptions(metadata: Record<string, any>): any[] {
-  return asArray(
-    asRecord(asRecord(metadata.stripe_customer).subscriptions).data,
-  );
+function csvStripeSubscriptionInterval(
+  row: Record<string, any>,
+): "month" | "year" {
+  return row.interval === "year" ? "year" : "month";
 }
 
-function legacyStripeEntitlementInfo(
-  metadata: Record<string, any>,
+function csvStripeSubscriptionPeriodCost(row: Record<string, any>): number {
+  const quantity = positiveMoneyNumber(row.quantity) || 1;
+  return toMoneyNumber(positiveMoneyNumber(row.amount) * quantity);
+}
+
+function legacyStripeSubscriptionRecordInfo(
+  payloads: Record<string, any>[],
 ): Pick<
   LegacyMigrationFinancialAccount,
   | "active_subscription_annualized"
@@ -761,12 +724,12 @@ function legacyStripeEntitlementInfo(
   let yearlyActive = 0;
   let monthlyActive = 0;
   const entitlement_credits: LegacyMigrationEntitlementCredit[] = [];
-  for (const value of legacyStripeSubscriptions(metadata)) {
+  for (const value of payloads) {
     const sub = asRecord(value);
-    if (!isLegacyStripeUpgrade(sub)) continue;
+    if (!isLegacyStripeSubscriptionRecord(sub)) continue;
     const status = clean(sub.status) ?? "";
-    const interval = stripeSubscriptionInterval(sub);
-    const cost = stripeSubscriptionPeriodCost(sub);
+    const interval = csvStripeSubscriptionInterval(sub);
+    const cost = csvStripeSubscriptionPeriodCost(sub);
     if (status === "active" || status === "trialing") {
       active_subscription_count += 1;
       active_subscription_annualized += cost * (interval === "year" ? 1 : 12);
@@ -785,14 +748,14 @@ function legacyStripeEntitlementInfo(
       if (credit_amount > 0) {
         entitlement_credits.push({
           source: "stripe_legacy_subscription",
-          id: `${sub.id ?? ""}`,
+          id: `${sub.subscription_id ?? sub.id ?? ""}`,
           credit_amount,
           period_cost: cost,
           period_start: dateIso(sub.current_period_start),
           period_end: dateIso(sub.current_period_end),
           interval,
           status,
-          description: subscriptionSummaryFromStripe(sub),
+          description: clean(sub.plan) ?? "legacy Stripe upgrade",
         });
       }
     }
@@ -812,23 +775,6 @@ function legacyStripeEntitlementInfo(
     suggested_membership_interval:
       yearlyActive > 0 && monthlyActive === 0 ? "year" : "month",
   };
-}
-
-function subscriptionSummaryFromStripe(sub: Record<string, any>): string {
-  const items = stripeSubscriptionItems(sub)
-    .map((item) => {
-      const price = asRecord(item.price);
-      return (
-        clean(price.nickname) ??
-        clean(price.lookup_key) ??
-        clean(price.id) ??
-        clean(asRecord(sub.plan).id)
-      );
-    })
-    .filter(Boolean);
-  return (
-    items.join(", ") || clean(asRecord(sub.plan).id) || "legacy Stripe upgrade"
-  );
 }
 
 async function membershipPlans(): Promise<LegacyMigrationMembershipPlan[]> {
@@ -972,6 +918,7 @@ async function financialRowsForAccount(
       active_subscription_annualized: string | number | null;
       active_subscription_count: string | number | null;
       subscription_payloads: Record<string, any>[] | null;
+      stripe_subscription_payloads: Record<string, any>[] | null;
       site_license_payloads: Record<string, any>[] | null;
       claimed_by_account_id: string | null;
       claimed_at: Date | string | null;
@@ -1017,6 +964,20 @@ async function financialRowsForAccount(
          AND COALESCE(payload->>'cost', '') ~ '^[0-9]+([.][0-9]+)?$'
        GROUP BY payload->>'legacy_account_id'
     ),
+    stripe_subscription_payloads AS (
+      SELECT accounts.legacy_account_id,
+             jsonb_agg(raw.payload ORDER BY raw.payload->>'subscription_id')
+               AS payloads
+        FROM linked
+        JOIN legacy_migration_accounts accounts
+          ON accounts.legacy_account_id=linked.legacy_account_id
+        JOIN legacy_migration_raw_records raw
+          ON raw.source='stripe_subscriptions'
+         AND raw.payload->>'stripe_customer_id'=accounts.stripe_customer_id
+       WHERE COALESCE(accounts.stripe_customer_id, '') <> ''
+         AND raw.payload->>'status' IN ('active', 'trialing', 'canceled')
+       GROUP BY accounts.legacy_account_id
+    ),
     site_license_payloads AS (
       SELECT COALESCE(
                payload#>>'{info,purchased,account_id}',
@@ -1049,6 +1010,8 @@ async function financialRowsForAccount(
              AS active_subscription_count,
            COALESCE(subscription_payloads.payloads, '[]'::jsonb)
              AS subscription_payloads,
+           COALESCE(stripe_subscription_payloads.payloads, '[]'::jsonb)
+             AS stripe_subscription_payloads,
            COALESCE(site_license_payloads.payloads, '[]'::jsonb)
              AS site_license_payloads,
            claims.account_id AS claimed_by_account_id,
@@ -1062,6 +1025,8 @@ async function financialRowsForAccount(
         ON active_subscriptions.legacy_account_id=linked.legacy_account_id
       LEFT JOIN subscription_payloads
         ON subscription_payloads.legacy_account_id=linked.legacy_account_id
+      LEFT JOIN stripe_subscription_payloads
+        ON stripe_subscription_payloads.legacy_account_id=linked.legacy_account_id
       LEFT JOIN site_license_payloads
         ON site_license_payloads.legacy_account_id=linked.legacy_account_id
       LEFT JOIN legacy_migration_financial_claims claims
@@ -1075,7 +1040,6 @@ async function financialRowsForAccount(
     [account_id],
   );
   return rows.map((row) => {
-    const metadata = asRecord(row.metadata);
     const subscriptionCredits = asArray(row.subscription_payloads)
       .map((payload) => subscriptionCredit(asRecord(payload)))
       .filter((credit): credit is LegacyMigrationEntitlementCredit => !!credit);
@@ -1089,7 +1053,11 @@ async function financialRowsForAccount(
     const unvaluedActiveSiteLicenseCount = siteLicensePayloads.filter(
       (payload) => siteLicensePeriodCost(asRecord(payload)) <= 0,
     ).length;
-    const stripeInfo = legacyStripeEntitlementInfo(metadata);
+    const stripeInfo = legacyStripeSubscriptionRecordInfo(
+      asArray(row.stripe_subscription_payloads).map((payload) =>
+        asRecord(payload),
+      ),
+    );
     const balance_credit_amount = toMoneyNumber(row.credit_amount);
     const entitlement_credits = [
       ...subscriptionCredits,
@@ -1594,6 +1562,10 @@ export async function financialMigrationCandidateAccountIds({
                           raw.payload#>>'{info,purchased,account_id}',
                           raw.payload->'managers'->>0
                         )=linked.legacy_account_id
+                  )
+               OR (
+                    raw.source='stripe_subscriptions'
+                    AND raw.payload->>'stripe_customer_id'=legacy.stripe_customer_id
                   )
          )
        )
