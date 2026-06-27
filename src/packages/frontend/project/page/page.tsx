@@ -254,7 +254,12 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     actions.setState({ public_directory_share_id: share.id });
     actions.clearFilesystemClient();
     const sharePath = share.path === "." ? "files" : share.path;
-    void actions.open_directory(sharePath, false, true, false);
+    actions.set_current_path(sharePath);
+    actions.set_active_tab("files", {
+      update_file_listing: false,
+      change_history: false,
+    });
+    actions.set_all_files_unchecked?.();
     return () => {
       actions.setState({ public_directory_share_id: undefined });
       actions.clearFilesystemClient();
