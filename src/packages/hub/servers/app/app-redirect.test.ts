@@ -1,21 +1,12 @@
 import type { AddressInfo } from "node:net";
 import express from "express";
-import initPublicContent from "./public-content";
+import initAppRedirect from "./app-redirect";
 
-jest.mock("@cocalc/database/postgres/news", () => ({
-  getFeedData: jest.fn(async () => []),
-}));
-
-jest.mock("@cocalc/database/settings/customize", () => ({
-  __esModule: true,
-  default: jest.fn(async () => ({ siteName: "CoCalc" })),
-}));
-
-describe("public content routes", () => {
+describe("app redirect routes", () => {
   async function request(path: string) {
     const app = express();
     const router = express.Router();
-    initPublicContent(router);
+    initAppRedirect(router);
     app.use(router);
     const server = await new Promise<ReturnType<typeof app.listen>>(
       (resolve) => {
@@ -34,12 +25,12 @@ describe("public content routes", () => {
     }
   }
 
-  it("redirects the guides bridge page into the public shell", async () => {
-    const response = await request("/guides?topic=jupyter");
+  it("redirects public directory share urls into the app shell", async () => {
+    const response = await request("/share/x?foo=bar");
     expect(response.status).toBe(302);
     const location = response.headers.get("location");
-    expect(location).toContain("/static/public.html?target=");
+    expect(location).toContain("/static/app.html?target=");
     const redirected = new URL(`http://host${location}`);
-    expect(redirected.searchParams.get("target")).toBe("/guides?topic=jupyter");
+    expect(redirected.searchParams.get("target")).toBe("/share/x?foo=bar");
   });
 });
