@@ -15,10 +15,10 @@ import {
 } from "@cocalc/database/postgres/account-notification-index";
 import {
   createNotificationEventGraph,
-  resolveNotificationTargetHomeBays,
   type NotificationKind,
 } from "@cocalc/database/postgres/notifications-core";
 import getPool from "@cocalc/database/pool";
+import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import type {
   CreateAccountNoticeOptions,
   CreateCodexTurnNoticeOptions,
@@ -36,6 +36,7 @@ import type {
 } from "@cocalc/conat/hub/api/notifications";
 import { isValidUUID } from "@cocalc/util/misc";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
+import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
 
 const MAX_MENTION_TARGETS = 25;
 const MENTION_RATE_LIMIT_WINDOW_MINUTES = 60;
@@ -113,6 +114,34 @@ function requireUuid(value: string | undefined, label: string): string {
   return normalized;
 }
 
+async function resolveNotificationTargetHomeBaysAllowRemote(opts: {
+  account_ids: string[];
+  default_bay_id: string;
+}): Promise<Record<string, string>> {
+  const account_ids = Array.from(
+    new Set(opts.account_ids.map((id) => requireUuid(id, "account id"))),
+  );
+  if (account_ids.length === 0) {
+    return {};
+  }
+  const accounts = await getClusterAccountsByIds(account_ids);
+  const byAccountId: Record<string, string> = {};
+  for (const account of accounts) {
+    const account_id = `${account.account_id ?? ""}`.trim();
+    if (!account_id) {
+      continue;
+    }
+    byAccountId[account_id] =
+      `${account.home_bay_id ?? ""}`.trim() || opts.default_bay_id;
+  }
+  for (const account_id of account_ids) {
+    if (!byAccountId[account_id]) {
+      throw Error(`account '${account_id}' not found`);
+    }
+  }
+  return byAccountId;
+}
+
 function requireNonEmptyString(
   value: string | undefined,
   label: string,
@@ -120,6 +149,18 @@ function requireNonEmptyString(
   const normalized = `${value ?? ""}`.trim();
   if (!normalized) {
     throw Error(`${label} is required`);
+  }
+  return normalized;
+}
+
+function displayPathRelativeToHome(path: string | null | undefined): string {
+  const normalized = `${path ?? ""}`.trim();
+  if (normalized === "/home/user") {
+    return ".";
+  }
+  const homePrefix = "/home/user/";
+  if (normalized.startsWith(homePrefix)) {
+    return normalized.slice(homePrefix.length);
   }
   return normalized;
 }
@@ -175,7 +216,7 @@ async function createNotificationResult(opts: {
     Omit<Parameters<typeof createNotificationEventGraph>[0], "targets">
   >;
 }): Promise<CreateNotificationResult> {
-  const target_home_bays = await resolveNotificationTargetHomeBays({
+  const target_home_bays = await resolveNotificationTargetHomeBaysAllowRemote({
     account_ids: opts.targets,
     default_bay_id: opts.source_bay_id,
   });
@@ -183,6 +224,16 @@ async function createNotificationResult(opts: {
     ...(await opts.buildEvent(target_home_bays)),
     targets: await opts.buildTargets(target_home_bays),
   });
+  const remoteOutboxIds = graph.outbox
+    .filter((outbox) => outbox.target_home_bay_id !== opts.source_bay_id)
+    .map((outbox) => outbox.outbox_id);
+  if (remoteOutboxIds.length > 0) {
+    await forwardRemoteNotificationTargetsBestEffort({
+      bay_id: opts.source_bay_id,
+      outbox_ids: remoteOutboxIds,
+      limit: remoteOutboxIds.length,
+    });
+  }
   return {
     event_id: graph.event.event_id,
     kind: graph.event.kind,
@@ -268,6 +319,7 @@ export async function createMention(
         summary_json: {
           description,
           path: source_path,
+          display_path: displayPathRelativeToHome(source_path),
           fragment_id: source_fragment_id,
           actor_account_id,
           priority,
@@ -364,6 +416,7 @@ export async function createAccountNotice(
           action_link,
           action_label,
           path: source_path,
+          display_path: displayPathRelativeToHome(source_path),
           fragment_id: source_fragment_id,
         },
       })),
@@ -460,6 +513,7 @@ export async function createCodexTurnNotice(
           origin_label: "Codex",
           notice_type: "codex_turn_completion",
           path: source_path,
+          display_path: displayPathRelativeToHome(source_path),
           fragment_id: source_fragment_id,
           thread_id,
           thread_label,

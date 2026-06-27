@@ -359,8 +359,14 @@ export type MembershipTierGetFields =
   | "history"
   | "subscription_count"
   | "subscribed_account_count"
+  | "team_seat_count"
+  | "team_account_count"
+  | "course_account_count"
+  | "site_account_count"
   | "admin_assigned_count"
   | "site_license_count"
+  | "total_account_count"
+  | "has_usage_history"
   | "created"
   | "updated";
 

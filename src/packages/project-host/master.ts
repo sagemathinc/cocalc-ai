@@ -984,7 +984,10 @@ export async function startMasterRegistration({
       if (!(hubApi.projects as any)?.status) {
         throw Error("status not available");
       }
-      const status = await (hubApi.projects as any).status({ project_id });
+      const status = await (hubApi.projects as any).status({
+        account_id,
+        project_id,
+      });
       return {
         project_id,
         state: (status as any)?.state,

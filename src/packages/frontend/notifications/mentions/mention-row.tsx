@@ -37,8 +37,17 @@ interface Props {
 
 export function MentionRow(props: Props) {
   const { id, mention, user_map, filter } = props;
-  const { path, project_id, source, time, target, description, fragment_id } =
-    mention.toJS();
+  const {
+    path,
+    display_path,
+    project_id,
+    source,
+    time,
+    target,
+    description,
+    fragment_id,
+  } = mention.toJS();
+  const shownPath = display_path || path;
 
   const [clicked, setClicked] = useState(false);
 
@@ -123,7 +132,7 @@ export function MentionRow(props: Props) {
         <strong>
           <User account_id={source} user_map={user_map} />
         </strong>{" "}
-        mentioned you in the file <code>{path}</code> in the project{" "}
+        mentioned you in the file <code>{shownPath}</code> in the project{" "}
         <ProjectTitle project_id={project_id} />.
         {description ? (
           <StaticMarkdown

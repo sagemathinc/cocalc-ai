@@ -112,6 +112,7 @@ function ThreadMock() {
   return (
     <div
       aria-label="Illustration of a CoCalc Codex chat thread connected to files, notebooks, and terminals"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7f4ff 52%, #fff8e8 100%)",

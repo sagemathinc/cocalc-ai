@@ -25,6 +25,7 @@ function SlideDeckMock() {
   return (
     <div
       aria-label="Illustration of CoCalc slides as slide-sized whiteboard pages"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7fbff 56%, #fff8e8 100%)",

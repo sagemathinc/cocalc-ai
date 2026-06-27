@@ -1,0 +1,30 @@
+diff --git a/dist/index.es.js b/dist/index.es.js
+index 9af0155733e83ffa47faf8d790f11435fc7e2c27..e435445cbbf69f97dd17b8700262a89284d6a447 100644
+--- a/dist/index.es.js
++++ b/dist/index.es.js
+@@ -3151,6 +3151,10 @@ var Editable = /*#__PURE__*/forwardRef((props, forwardedRef) => {
+   // Update EDITOR_TO_MARK_PLACEHOLDER_MARKS in setTimeout useEffect to ensure we don't set it
+   // before we receive the composition end event.
+   useEffect(() => {
++    if (readOnly) {
++      EDITOR_TO_PENDING_INSERTION_MARKS.delete(editor);
++      return;
++    }
+     setTimeout(() => {
+       var {
+         selection
+diff --git a/dist/index.js b/dist/index.js
+index e30271ced8bc2e268f150e4dfb6d75753d838e1b..481330147bd92ad59c60f823188954290d31b5e0 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -3597,6 +3597,10 @@ var Editable = /*#__PURE__*/React.forwardRef(function (props, forwardedRef) {
+   // Update EDITOR_TO_MARK_PLACEHOLDER_MARKS in setTimeout useEffect to ensure we don't set it
+   // before we receive the composition end event.
+   React.useEffect(function () {
++    if (readOnly) {
++      slateDom.EDITOR_TO_PENDING_INSERTION_MARKS["delete"](editor);
++      return;
++    }
+     setTimeout(function () {
+       var selection = editor.selection;
+       if (selection) {

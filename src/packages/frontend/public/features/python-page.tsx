@@ -109,6 +109,7 @@ function PythonProjectMock() {
   return (
     <div
       aria-label="Illustration of one CoCalc Python project connecting notebooks, scripts, terminals, papers, and Codex"
+      role="img"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",

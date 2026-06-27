@@ -100,6 +100,7 @@ import type { ProjectAccessLandingInfo } from "@cocalc/conat/hub/api/projects";
 import { lite } from "@cocalc/frontend/lite";
 import { shouldBypassWorkspaceStartupGuardForTab } from "./workspace-startup";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import ProjectVersionUpdate from "./project-version-update";
 
 const START_BANNER = false;
 
@@ -755,6 +756,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           )}
           <ProjectTabs project_id={project_id} />
         </div>
+        {!isViewer && <ProjectVersionUpdate project_id={project_id} />}
       </div>
     );
   }

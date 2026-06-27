@@ -58,6 +58,7 @@ import { ImportPublicUrlModal } from "./import-public-url-modal";
 import { lite } from "@cocalc/frontend/lite";
 import { ImpersonationBanner } from "./impersonation-banner";
 import { TeamLicenseWarningBanner } from "./team-license-warning-banner";
+import AutomaticUpdateNotice from "./automatic-update-notice";
 
 // ipad and ios have a weird trick where they make the screen
 // actually smaller than 100vh and have it be scrollable, even
@@ -363,6 +364,7 @@ export const Page: React.FC = () => {
     >
       {show_connection && <ConnectionInfo />}
       <VersionWarning />
+      <AutomaticUpdateNotice />
       {cookie_warning && <CookieWarning />}
       {local_storage_warning && <LocalStorageWarning />}
       {show_i18n && <I18NBanner />}
