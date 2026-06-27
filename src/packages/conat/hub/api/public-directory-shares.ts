@@ -115,6 +115,11 @@ export interface CreatePublicDirectoryShareOptions {
   title?: string | null;
   description?: string | null;
   license?: string | null;
+  site_license_id?: string | null;
+  site_license_pool_id?: string | null;
+  site_license_duration_days?: number | null;
+  site_license_grant_on_copy?: boolean;
+  site_license_copy_requires_grant?: boolean;
 }
 
 export interface CopyPublicDirectoryShareToProjectOptions {
@@ -160,6 +165,9 @@ export interface CopyPublicDirectoryShareToProjectResponse {
     granted: boolean;
     message?: string;
     expires_at?: Date | string | null;
+    membership_class?: string | null;
+    site_license_id?: string | null;
+    package_id?: string | null;
   };
 }
 

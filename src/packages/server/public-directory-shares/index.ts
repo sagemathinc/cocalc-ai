@@ -9,10 +9,15 @@ import { lroStreamName } from "@cocalc/conat/lro/names";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { assertCollab } from "@cocalc/server/conat/api/util";
+import { getSiteLicenseOverview } from "@cocalc/server/conat/api/purchases";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
+import { assignSiteLicensePoolSeat as assignSiteLicensePoolSeatDirect } from "@cocalc/server/membership/site-licenses";
 import {
   assertCanIncreaseAccountStorage,
   getProjectOwnerAccountId,
@@ -47,8 +52,23 @@ const MAX_LIMIT = 1000;
 
 type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
   metadata?: Record<string, unknown> | null;
+  created_by?: string | null;
+  updated_by?: string | null;
   total_count?: number | string | null;
 };
+
+interface ResolvedPublicDirectoryShareRow {
+  row: PublicDirectoryShareRow;
+  share: ResolvedPublicDirectoryShare;
+}
+
+interface SiteLicenseGrantConfig {
+  site_license_id: string;
+  site_license_pool_id: string;
+  site_license_membership_tier_id: string;
+  duration_days: number;
+  copy_requires_grant: boolean;
+}
 
 let schemaReady: Promise<void> | undefined;
 
@@ -329,10 +349,124 @@ async function assertAdmin(account_id: string | undefined): Promise<void> {
   }
 }
 
-export async function resolve({
+function normalizeSiteLicenseDurationDays(value: unknown): number {
+  if (!Number.isFinite(Number(value))) {
+    return 30;
+  }
+  return Math.max(1, Math.min(365, Math.trunc(Number(value))));
+}
+
+function siteLicenseGrantExpiresAt(durationDays: number): Date {
+  return new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+}
+
+function seedSiteLicenseClient() {
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: getConfiguredClusterSeedBayId(),
+  });
+}
+
+async function validateSiteLicenseGrantConfig(
+  opts: CreatePublicDirectoryShareOptions,
+): Promise<SiteLicenseGrantConfig | undefined> {
+  const grantRequested =
+    opts.site_license_grant_on_copy === true ||
+    opts.site_license_id != null ||
+    opts.site_license_pool_id != null;
+  if (!grantRequested) {
+    return undefined;
+  }
+  if (!opts.account_id) {
+    throw Error("user must be signed in");
+  }
+  const siteLicenseId = `${opts.site_license_id ?? ""}`.trim();
+  const siteLicensePoolId = `${opts.site_license_pool_id ?? ""}`.trim();
+  if (!isValidUUID(siteLicenseId)) {
+    throw Error("site_license_id is required for temporary membership grants");
+  }
+  if (!isValidUUID(siteLicensePoolId)) {
+    throw Error(
+      "site_license_pool_id is required for temporary membership grants",
+    );
+  }
+  const overview = await getSiteLicenseOverview({
+    account_id: opts.account_id,
+    site_license_id: siteLicenseId,
+  });
+  if (overview.viewer_role !== "admin" && overview.viewer_role !== "manager") {
+    throw Error("you must be a site-license manager to publish this grant");
+  }
+  const pool = overview.pools.find((pool) => pool.id === siteLicensePoolId);
+  if (pool == null) {
+    throw Error("site-license membership pool not found");
+  }
+  return {
+    site_license_id: siteLicenseId,
+    site_license_pool_id: siteLicensePoolId,
+    site_license_membership_tier_id: pool.membership_class,
+    duration_days: normalizeSiteLicenseDurationDays(
+      opts.site_license_duration_days,
+    ),
+    copy_requires_grant: opts.site_license_copy_requires_grant !== false,
+  };
+}
+
+async function assignSiteLicenseGrantForShare({
+  row,
+  account_id,
+}: {
+  row: PublicDirectoryShareRow;
+  account_id: string;
+}): Promise<
+  NonNullable<CopyPublicDirectoryShareToProjectResponse["site_license_grant"]>
+> {
+  const packageId = `${row.site_license_pool_id ?? ""}`.trim();
+  const actorAccountId = `${row.created_by ?? ""}`.trim();
+  if (!isValidUUID(packageId)) {
+    throw Error("shared directory is missing a site-license membership pool");
+  }
+  if (!isValidUUID(actorAccountId)) {
+    throw Error("shared directory is missing its publishing manager");
+  }
+  const durationDays = normalizeSiteLicenseDurationDays(
+    row.site_license_duration_days,
+  );
+  const expiresAt = siteLicenseGrantExpiresAt(durationDays);
+  if (getConfiguredBayId() === getConfiguredClusterSeedBayId()) {
+    await assignSiteLicensePoolSeatDirect({
+      actor_account_id: actorAccountId,
+      package_id: packageId,
+      target_account_id: account_id,
+      grant_expires_at: expiresAt,
+    });
+  } else {
+    await seedSiteLicenseClient().assignSiteLicensePoolSeat({
+      actor_account_id: actorAccountId,
+      package_id: packageId,
+      target_account_id: account_id,
+      grant_expires_at: expiresAt,
+    });
+  }
+  const membershipClass = row.site_license_membership_tier_id ?? null;
+  return {
+    granted: true,
+    expires_at: expiresAt,
+    membership_class: membershipClass,
+    site_license_id: row.site_license_id ?? null,
+    package_id: packageId,
+    message: `Temporary ${membershipClass ?? "site-license"} membership granted until ${expiresAt.toISOString().slice(0, 10)}.`,
+  };
+}
+
+function isSiteLicenseCapacityError(err: unknown): boolean {
+  return /\bno seats available\b/i.test((err as Error).message ?? "");
+}
+
+async function resolveRow({
   account_id,
   slug,
-}: ResolvePublicDirectoryShareOptions): Promise<ResolvedPublicDirectoryShare> {
+}: ResolvePublicDirectoryShareOptions): Promise<ResolvedPublicDirectoryShareRow> {
   await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   const normalizedSlug = normalizePublicDirectoryShareSlug(slug);
@@ -377,10 +511,19 @@ export async function resolve({
   }
   const summary = rowToSummary(row);
   return {
-    ...summary,
-    available: summary.availability_status === "available",
-    read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
+    row,
+    share: {
+      ...summary,
+      available: summary.availability_status === "available",
+      read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
+    },
   };
+}
+
+export async function resolve(
+  opts: ResolvePublicDirectoryShareOptions,
+): Promise<ResolvedPublicDirectoryShare> {
+  return (await resolveRow(opts)).share;
 }
 
 export async function list({
@@ -605,6 +748,7 @@ export async function create(
       `shared path must be an existing directory (${(err as Error).message})`,
     );
   }
+  const siteLicenseGrant = await validateSiteLicenseGrantConfig(opts);
   return await savePublicDirectoryShare({
     account_id: opts.account_id,
     project_id: opts.project_id,
@@ -616,8 +760,19 @@ export async function create(
     title: opts.title?.trim() || defaultTitleForPath(path),
     description: opts.description?.trim() || null,
     license: opts.license?.trim() || null,
+    site_license_id: siteLicenseGrant?.site_license_id ?? null,
+    site_license_pool_id: siteLicenseGrant?.site_license_pool_id ?? null,
+    site_license_membership_tier_id:
+      siteLicenseGrant?.site_license_membership_tier_id ?? null,
+    site_license_duration_days: siteLicenseGrant?.duration_days ?? null,
+    site_license_grant_on_copy: siteLicenseGrant != null,
+    site_license_copy_requires_grant:
+      siteLicenseGrant?.copy_requires_grant ?? false,
     metadata: {
       source: "project-file-browser",
+      site_license_grant_configured_by: siteLicenseGrant
+        ? opts.account_id
+        : undefined,
     },
   });
 }
@@ -635,7 +790,7 @@ export async function copyToProject({
   if (!isValidUUID(destination_project_id)) {
     throw Error("invalid destination_project_id");
   }
-  const share = await resolve({ account_id, slug });
+  const { row, share } = await resolveRow({ account_id, slug });
   if (!share.available) {
     throw Error(
       share.availability_message ||
@@ -649,6 +804,30 @@ export async function copyToProject({
   const ownerAccountId = await getProjectOwnerAccountId(destination_project_id);
   if (ownerAccountId) {
     await assertCanIncreaseAccountStorage({ account_id: ownerAccountId });
+  }
+  let siteLicenseGrant:
+    | CopyPublicDirectoryShareToProjectResponse["site_license_grant"]
+    | undefined;
+  if (share.site_license_grant_on_copy) {
+    try {
+      siteLicenseGrant = await assignSiteLicenseGrantForShare({
+        row,
+        account_id,
+      });
+    } catch (err) {
+      if (
+        share.site_license_copy_requires_grant &&
+        !isSiteLicenseCapacityError(err)
+      ) {
+        throw Error(
+          `Temporary site-license membership could not be granted, so the share was not copied: ${(err as Error).message}`,
+        );
+      }
+      siteLicenseGrant = {
+        granted: false,
+        message: `Temporary site-license membership could not be granted: ${(err as Error).message}`,
+      };
+    }
   }
   const destPath = normalizePublicDirectorySharePath(destination_path ?? ".");
   const op = await createLro({
@@ -710,13 +889,7 @@ export async function copyToProject({
     scope_id: destination_project_id,
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
-    site_license_grant: share.site_license_grant_on_copy
-      ? {
-          granted: false,
-          message:
-            "Temporary site-license grant on copy is not implemented yet; the files are being copied without extra access.",
-        }
-      : undefined,
+    site_license_grant: siteLicenseGrant,
   };
 }
 

@@ -8,6 +8,8 @@
 import {
   Button as AntdButton,
   Input as AntdInput,
+  InputNumber,
+  Select as AntdSelect,
   Space,
   Typography,
 } from "antd";
@@ -35,8 +37,10 @@ import {
 } from "@cocalc/frontend/project_store";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { listSiteLicenseOverviews } from "@cocalc/frontend/purchases/api";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { SiteLicenseOverview } from "@cocalc/conat/hub/api/purchases";
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import DirectorySelector from "../directory-selector";
@@ -92,6 +96,26 @@ function publicShareUrl(slug: string): string {
     .split("/")
     .map(encodeURIComponent)
     .join("/")}`;
+}
+
+interface SiteLicensePoolOption {
+  value: string;
+  label: string;
+  site_license_id: string;
+  membership_class: string;
+  available_seat_count?: number | null;
+}
+
+function canManageSiteLicense(overview: SiteLicenseOverview): boolean {
+  return overview.viewer_role === "admin" || overview.viewer_role === "manager";
+}
+
+function siteLicenseName(overview: SiteLicenseOverview): string {
+  return (
+    overview.site_license.organization_name ||
+    overview.site_license.name ||
+    overview.site_license.id
+  );
 }
 
 export function crossProjectSingleItemDestPath({
@@ -185,6 +209,17 @@ export function ActionBox({
   const [publishUrl, setPublishUrl] = useState<string>("");
   const [publishError, setPublishError] = useState<string>("");
   const [publishing, setPublishing] = useState<boolean>(false);
+  const [publishGrantOnCopy, setPublishGrantOnCopy] = useState<boolean>(false);
+  const [publishCopyRequiresGrant, setPublishCopyRequiresGrant] =
+    useState<boolean>(true);
+  const [publishSiteLicenseOverviews, setPublishSiteLicenseOverviews] =
+    useState<SiteLicenseOverview[]>([]);
+  const [publishSiteLicensesLoading, setPublishSiteLicensesLoading] =
+    useState<boolean>(false);
+  const [publishSiteLicensePoolId, setPublishSiteLicensePoolId] =
+    useState<string>("");
+  const [publishSiteLicenseDurationDays, setPublishSiteLicenseDurationDays] =
+    useState<number>(30);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const bodyStyle =
     display === "modal"
@@ -226,6 +261,47 @@ export function ActionBox({
       (cur) => cur || defaultPublicShareSlug({ project_id, path }),
     );
   }, [checked_files, file_action, project_id]);
+
+  useEffect(() => {
+    if (
+      file_action !== "publish" ||
+      !publicDirectorySharesEnabled ||
+      user_type !== "signed_in"
+    ) {
+      setPublishSiteLicenseOverviews([]);
+      setPublishSiteLicensePoolId("");
+      return;
+    }
+    let canceled = false;
+    setPublishSiteLicensesLoading(true);
+    listSiteLicenseOverviews()
+      .then((overviews) => {
+        if (canceled) return;
+        const manageable = overviews.filter(canManageSiteLicense);
+        setPublishSiteLicenseOverviews(manageable);
+        const poolIds = new Set(
+          manageable.flatMap((overview) =>
+            overview.pools.map((pool) => pool.id),
+          ),
+        );
+        setPublishSiteLicensePoolId((current) =>
+          current && poolIds.has(current) ? current : "",
+        );
+      })
+      .catch(() => {
+        if (canceled) return;
+        setPublishSiteLicenseOverviews([]);
+        setPublishSiteLicensePoolId("");
+      })
+      .finally(() => {
+        if (!canceled) {
+          setPublishSiteLicensesLoading(false);
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [account_id, file_action, publicDirectorySharesEnabled, user_type]);
 
   function clear() {
     actions.set_all_files_unchecked();
@@ -803,11 +879,33 @@ export function ActionBox({
     }
   }
 
+  function siteLicensePoolOptions(): SiteLicensePoolOption[] {
+    return publishSiteLicenseOverviews.flatMap((overview) =>
+      overview.pools.map((pool) => {
+        const poolName = pool.pool_name || pool.membership_class;
+        const seatCount =
+          pool.available_seat_count == null
+            ? "unknown seats"
+            : `${pool.available_seat_count} available`;
+        return {
+          value: pool.id,
+          label: `${siteLicenseName(overview)}: ${poolName} (${pool.membership_class}, ${seatCount})`,
+          site_license_id: overview.site_license.id,
+          membership_class: pool.membership_class,
+          available_seat_count: pool.available_seat_count,
+        };
+      }),
+    );
+  }
+
   async function publishDirectory(): Promise<void> {
     const path = checked_files.first();
     if (typeof path !== "string") {
       return;
     }
+    const selectedPool = siteLicensePoolOptions().find(
+      (option) => option.value === publishSiteLicensePoolId,
+    );
     setPublishing(true);
     setPublishError("");
     setPublishUrl("");
@@ -823,6 +921,17 @@ export function ActionBox({
             slug: publishSlug,
             title: publishTitle,
             description: publishDescription,
+            site_license_grant_on_copy: publishGrantOnCopy,
+            site_license_copy_requires_grant: publishCopyRequiresGrant,
+            site_license_id: publishGrantOnCopy
+              ? selectedPool?.site_license_id
+              : undefined,
+            site_license_pool_id: publishGrantOnCopy
+              ? selectedPool?.value
+              : undefined,
+            site_license_duration_days: publishGrantOnCopy
+              ? publishSiteLicenseDurationDays
+              : undefined,
           },
         ],
       });
@@ -863,7 +972,11 @@ export function ActionBox({
     if (user_type !== "signed_in") {
       return <LoginLink />;
     }
-    const canPublish = publishSlug.trim().length > 0 && !publishing;
+    const poolOptions = siteLicensePoolOptions();
+    const canPublish =
+      publishSlug.trim().length > 0 &&
+      !publishing &&
+      (!publishGrantOnCopy || publishSiteLicensePoolId.trim().length > 0);
     return (
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Alert bsStyle="info">
@@ -896,6 +1009,65 @@ export function ActionBox({
             placeholder="Optional description for viewers"
             rows={3}
           />
+        </div>
+        <div>
+          <Checkbox
+            checked={publishGrantOnCopy}
+            onChange={(e) => setPublishGrantOnCopy(e.target.checked)}
+          >
+            Offer temporary membership when viewers copy this directory
+          </Checkbox>
+          {publishGrantOnCopy ? (
+            <Space
+              direction="vertical"
+              size="small"
+              style={{ width: "100%", marginTop: 8 }}
+            >
+              <Alert bsStyle="info">
+                Viewers who copy this share will be offered a temporary
+                membership seat from the selected site-license pool. If the pool
+                is full, the file copy still proceeds on the free tier.
+              </Alert>
+              <div>
+                <Typography.Text strong>Site-license tier</Typography.Text>
+                <AntdSelect
+                  style={{ width: "100%" }}
+                  loading={publishSiteLicensesLoading}
+                  value={publishSiteLicensePoolId || undefined}
+                  onChange={(value) => setPublishSiteLicensePoolId(value)}
+                  placeholder="Select a managed site-license pool"
+                  options={poolOptions.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  }))}
+                />
+              </div>
+              {poolOptions.length === 0 && !publishSiteLicensesLoading ? (
+                <Alert bsStyle="warning">
+                  No managed site-license pools are available for your account.
+                </Alert>
+              ) : null}
+              <Space>
+                <Typography.Text strong>Duration</Typography.Text>
+                <InputNumber
+                  min={1}
+                  max={365}
+                  value={publishSiteLicenseDurationDays}
+                  onChange={(value) =>
+                    setPublishSiteLicenseDurationDays(Number(value ?? 30))
+                  }
+                />
+                <Typography.Text>days</Typography.Text>
+              </Space>
+              <Checkbox
+                checked={publishCopyRequiresGrant}
+                onChange={(e) => setPublishCopyRequiresGrant(e.target.checked)}
+              >
+                Block copying if the grant fails for a reason other than the
+                pool being full
+              </Checkbox>
+            </Space>
+          ) : null}
         </div>
         {publishError ? (
           <Alert bsStyle="danger">{publishError}</Alert>
