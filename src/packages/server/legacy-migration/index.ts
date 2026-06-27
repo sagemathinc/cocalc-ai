@@ -81,6 +81,14 @@ const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const PROJECT_ARCHIVE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_ARCHIVE_INDEX_MAX_ENTRIES = 5_000;
 const MAX_ARCHIVE_INDEX_MAX_ENTRIES = 50_000;
+const LEGACY_STRIPE_UPGRADE_PLAN_IDS = new Set([
+  "standard",
+  "premium",
+  "professional",
+  "standard2",
+  "premium2",
+  "professional2",
+]);
 
 const logger = getLogger("server:legacy-migration");
 
@@ -713,9 +721,23 @@ function stripeSubscriptionInterval(
   return recurring.interval === "year" ? "year" : "month";
 }
 
+function stripeSubscriptionPlanBase(sub: Record<string, any>): string | null {
+  const firstItem = stripeSubscriptionItems(sub)[0];
+  const planId =
+    clean(asRecord(sub.plan).id) ??
+    clean(asRecord(firstItem?.plan).id) ??
+    clean(asRecord(firstItem?.price).id);
+  return planId?.split("-")[0] ?? null;
+}
+
 function isLegacyStripeUpgrade(sub: Record<string, any>): boolean {
   const metadata = asRecord(sub.metadata);
-  return clean(metadata.service) == null;
+  const planBase = stripeSubscriptionPlanBase(sub);
+  return (
+    clean(metadata.service) == null &&
+    planBase != null &&
+    LEGACY_STRIPE_UPGRADE_PLAN_IDS.has(planBase)
+  );
 }
 
 function legacyStripeSubscriptions(metadata: Record<string, any>): any[] {

@@ -13,6 +13,14 @@ const CANCELLABLE_STATUSES = new Set([
   "unpaid",
 ]);
 const CONFIRM = "cancel-legacy-stripe-subscriptions";
+const LEGACY_STRIPE_UPGRADE_PLAN_IDS = new Set([
+  "standard",
+  "premium",
+  "professional",
+  "standard2",
+  "premium2",
+  "professional2",
+]);
 
 type Options = {
   apply: boolean;
@@ -222,8 +230,19 @@ function subscriptionSummary(sub: any): string {
   return items.join(", ") || "no price items";
 }
 
+function subscriptionPlanBase(sub: any): string | null {
+  const firstItem = sub?.items?.data?.[0];
+  const planId = sub?.plan?.id ?? firstItem?.plan?.id ?? firstItem?.price?.id;
+  return typeof planId === "string" ? planId.split("-")[0] : null;
+}
+
 function isLegacyUpgradeSubscription(sub: any): boolean {
-  return sub?.metadata?.service == null || sub?.metadata?.service === "";
+  const planBase = subscriptionPlanBase(sub);
+  return (
+    (sub?.metadata?.service == null || sub?.metadata?.service === "") &&
+    planBase != null &&
+    LEGACY_STRIPE_UPGRADE_PLAN_IDS.has(planBase)
+  );
 }
 
 async function listCancellableSubscriptions({
