@@ -11,7 +11,10 @@ import getPool from "@cocalc/database/pool";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
+import {
+  getBayPublicOrigin,
+  getBayPublicOriginForRequest,
+} from "@cocalc/server/bay-public-origin";
 import {
   getCurrentAuthSessionForSessionHash,
   resolveFreshAuthDurationMs,
@@ -602,7 +605,7 @@ export async function redeemCliLoginChallenge({
     remember_me: session.remember_me,
     expire: new Date(session.expire),
     home_bay_id,
-    home_bay_url: undefined,
+    home_bay_url: await getBayPublicOrigin(home_bay_id),
     email_address: account?.email_address ?? null,
     display_name:
       displayNameFromAccount({

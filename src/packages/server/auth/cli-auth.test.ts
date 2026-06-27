@@ -50,6 +50,9 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 
 jest.mock("@cocalc/server/bay-public-origin", () => ({
+  getBayPublicOrigin: jest.fn(async (bay_id: string) =>
+    bay_id === "bay-1" ? "https://bay-1-cocalc.test" : "https://cocalc.test",
+  ),
   getBayPublicOriginForRequest: jest.fn(async () => "https://cocalc.test"),
 }));
 
@@ -134,6 +137,7 @@ describe("CLI auth login redemption", () => {
       account_id,
       remember_me: "remember-me-cookie",
       home_bay_id: "bay-1",
+      home_bay_url: "https://bay-1-cocalc.test",
     });
 
     const update = queryMock.mock.calls.find(([sql]) =>

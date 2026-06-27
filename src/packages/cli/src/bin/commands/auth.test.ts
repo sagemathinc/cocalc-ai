@@ -234,6 +234,8 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
           account_id: "acct-123",
           remember_me: "remember-cookie-1",
           expire: "2026-11-08T10:00:00.000Z",
+          home_bay_id: "bay-2",
+          home_bay_url: "https://bay-2-lite4.cocalc.ai",
           email_address: "user@example.com",
           display_name: "User Example",
           first_name: "User",
@@ -257,11 +259,14 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
     await program.parseAsync(["node", "test", "auth", "login"]);
     assert.equal(capture.data.profile, "default");
     assert.equal(capture.data.account_id, "acct-123");
+    assert.equal(capture.data.api, "https://bay-2-lite4.cocalc.ai");
+    assert.equal(capture.data.login_api, "https://lite4.cocalc.ai");
+    assert.equal(capture.data.home_bay_id, "bay-2");
     assert.equal(capture.data.email_address, "user@example.com");
     assert.equal(capture.data.display_name, "User Example");
     assert.equal(capture.data.interactive_session, true);
     assert.equal(config.current_profile, "default");
-    assert.equal(config.profiles.default.api, "https://lite4.cocalc.ai");
+    assert.equal(config.profiles.default.api, "https://bay-2-lite4.cocalc.ai");
     assert.equal(config.profiles.default.account_id, "acct-123");
     assert.equal(config.profiles.default.email_address, "user@example.com");
     assert.equal(config.profiles.default.display_name, "User Example");
