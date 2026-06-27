@@ -876,7 +876,7 @@ function legacyStripeSubscriptionRecordInfo(
 
 async function membershipPlans(): Promise<LegacyMigrationMembershipPlan[]> {
   const tiers = await getSeedMembershipTierMap({ includeDisabled: false });
-  return ["basic", "standard"]
+  return ["basic", "member"]
     .map((id) => tiers[id])
     .filter((tier): tier is MembershipTierRecord => tier != null)
     .map((tier) => ({
@@ -1208,10 +1208,11 @@ async function financialRowsForAccount(
     const unvaluedActiveSiteLicenseCount = siteLicensePayloads.filter(
       (payload) => siteLicensePeriodCost(asRecord(payload)) <= 0,
     ).length;
+    const stripeSubscriptionPayloads = asArray(
+      row.stripe_subscription_payloads,
+    ).map((payload) => asRecord(payload));
     const stripeInfo = legacyStripeSubscriptionRecordInfo(
-      asArray(row.stripe_subscription_payloads).map((payload) =>
-        asRecord(payload),
-      ),
+      stripeSubscriptionPayloads,
     );
     const balance_credit_amount = toMoneyNumber(row.credit_amount);
     const entitlement_credits = [
@@ -1242,7 +1243,12 @@ async function financialRowsForAccount(
       legacy_account_id: row.legacy_account_id,
       email_address: normalizeEmail(row.email_address) || null,
       display_name: row.display_name ?? null,
-      stripe_customer_id: clean(row.stripe_customer_id) ?? null,
+      stripe_customer_id:
+        clean(row.stripe_customer_id) ??
+        stripeSubscriptionPayloads
+          .map((payload) => clean(payload.stripe_customer_id))
+          .find((value): value is string => !!value) ??
+        null,
       balance: toMoneyNumber(row.balance),
       balance_credit_amount,
       entitlement_credit_amount,
@@ -1295,7 +1301,7 @@ function suggestedMembershipClass({
   }
   return active_subscription_annualized >
     LEGACY_MIGRATION_STANDARD_ANNUALIZED_CUTOFF
-    ? "standard"
+    ? "member"
     : "basic";
 }
 
@@ -1852,7 +1858,24 @@ export async function financialMigrationCandidateAccountIds({
                   )
                OR (
                     raw.source='stripe_subscriptions'
-                    AND raw.payload->>'stripe_customer_id'=legacy.stripe_customer_id
+                    AND (
+                      (
+                        COALESCE(legacy.stripe_customer_id, '') <> ''
+                        AND raw.payload->>'stripe_customer_id'=legacy.stripe_customer_id
+                      )
+                      OR (
+                        COALESCE(legacy.email_address_verified, false)=true
+                        AND (
+                          lower(raw.payload->>'customer_email')=lower(legacy.email_address)
+                          OR (
+                            split_part(lower(legacy.email_address), '@', 2) IN ('gmail.com', 'googlemail.com')
+                            AND split_part(lower(raw.payload->>'customer_email'), '@', 2) IN ('gmail.com', 'googlemail.com')
+                            AND replace(split_part(split_part(lower(raw.payload->>'customer_email'), '@', 1), '+', 1), '.', '')
+                                = replace(split_part(split_part(lower(legacy.email_address), '@', 1), '+', 1), '.', '')
+                          )
+                        )
+                      )
+                    )
                   )
          )
        )

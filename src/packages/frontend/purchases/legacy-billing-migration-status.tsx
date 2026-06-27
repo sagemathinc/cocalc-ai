@@ -31,6 +31,21 @@ function membershipLabel(value: string | null | undefined): string {
   return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)} membership`;
 }
 
+function planPriceLabel(
+  plan: LegacyMigrationFinancialPreviewResponse["plans"][number] | undefined,
+): string | null {
+  if (plan?.price_monthly && plan.price_yearly) {
+    return `${formatMoney(plan.price_monthly)}/month or ${formatMoney(plan.price_yearly)}/year`;
+  }
+  if (plan?.price_monthly) {
+    return `${formatMoney(plan.price_monthly)}/month`;
+  }
+  if (plan?.price_yearly) {
+    return `${formatMoney(plan.price_yearly)}/year`;
+  }
+  return null;
+}
+
 function hasVisibleLegacyBilling(
   preview: LegacyMigrationFinancialPreviewResponse,
 ): boolean {
@@ -190,6 +205,9 @@ export default function LegacyBillingMigrationStatus({
   const suggestedMembershipLabel = membershipLabel(suggestedMembership);
   const continueMembershipLabel = membershipLabel(continueMembership);
   const grantDays = preview.suggested_membership_grant_days ?? 30;
+  const basicPrice = planPriceLabel(
+    preview.plans.find((plan) => plan.id === "basic"),
+  );
   const pendingEntitlementCredit = preview.legacy_accounts.reduce(
     (total, account) =>
       account.claimed_by_account_id
@@ -299,11 +317,25 @@ export default function LegacyBillingMigrationStatus({
           <Space direction="vertical" size={0}>
             <Text type="secondary">Membership grant</Text>
             <Text>
-              {suggestedMembership
-                ? `${grantDays} days of ${suggestedMembershipLabel}`
-                : preview.membership_already_applied
-                  ? "Already applied"
-                  : "None"}
+              {suggestedMembership ? (
+                <>
+                  {grantDays} days of{" "}
+                  {suggestedMembership === "basic" ? (
+                    <a href="/pricing" rel="noreferrer" target="_blank">
+                      {suggestedMembershipLabel}
+                    </a>
+                  ) : (
+                    suggestedMembershipLabel
+                  )}
+                  {suggestedMembership === "basic" && basicPrice
+                    ? ` (${basicPrice})`
+                    : ""}
+                </>
+              ) : preview.membership_already_applied ? (
+                "Already applied"
+              ) : (
+                "None"
+              )}
             </Text>
           </Space>
           <Space direction="vertical" size={0}>
