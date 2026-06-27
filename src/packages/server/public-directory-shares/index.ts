@@ -33,6 +33,10 @@ import {
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { posix } from "node:path";
 import type {
+  HostConnectionInfo,
+  HostStatus,
+} from "@cocalc/conat/hub/api/hosts";
+import type {
   ListMyPublicDirectorySharesOptions,
   ListProjectPublicDirectorySharesOptions,
   ListPublicDirectoryShareDirectoryOptions,
@@ -66,6 +70,16 @@ type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
   project_title?: string | null;
   host_id?: string | null;
   owning_bay_id?: string | null;
+  host_bay_id?: string | null;
+  host_name?: string | null;
+  host_public_url?: string | null;
+  host_internal_url?: string | null;
+  host_ssh_server?: string | null;
+  host_region?: string | null;
+  host_tier?: number | null;
+  host_status?: HostStatus | "active" | null;
+  host_last_seen?: Date | string | null;
+  host_metadata?: Record<string, any> | null;
   total_count?: number | string | null;
 };
 
@@ -99,7 +113,7 @@ function isSlugUniqueViolation(err: unknown): boolean {
 
 function slugTakenError(slug: string): Error {
   return Error(
-    `The published folder URL slug "${slug}" is already taken. Choose a different slug.`,
+    `The share path "${slug}" is already taken. Choose a different share path.`,
   );
 }
 
@@ -515,6 +529,46 @@ function isSiteLicenseCapacityError(err: unknown): boolean {
   return /\bno seats available\b/i.test((err as Error).message ?? "");
 }
 
+function publicShareHostConnection(
+  row: PublicDirectoryShareRow,
+): HostConnectionInfo | null {
+  if (!row.host_id) return null;
+  const metadata = row.host_metadata ?? {};
+  const machine = metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const localProxy =
+    metadata?.local === true ||
+    metadata?.provider === "star" ||
+    metadata?.cloud_provider === "star" ||
+    (machine?.cloud === "self-host" && effectiveSelfHostMode === "local");
+  const connectUrl = row.host_public_url ?? row.host_internal_url ?? null;
+  const status =
+    row.host_status === "active" ? "running" : (row.host_status ?? null);
+  return {
+    host_id: row.host_id,
+    bay_id: row.host_bay_id ?? null,
+    name: row.host_name ?? null,
+    can_place: false,
+    region: row.host_region ?? null,
+    size: typeof metadata?.size === "string" ? metadata.size : null,
+    ssh_server: row.host_ssh_server ?? null,
+    connect_url: localProxy ? null : connectUrl,
+    host_session_id: `${metadata?.host_session_id ?? ""}`.trim() || undefined,
+    local_proxy: localProxy,
+    ready: localProxy || !!connectUrl,
+    status,
+    tier: typeof row.host_tier === "number" ? row.host_tier : null,
+    pricing_model: "on_demand",
+    desired_state: status === "off" ? "stopped" : "running",
+    last_seen: row.host_last_seen
+      ? new Date(row.host_last_seen).toISOString()
+      : undefined,
+    online: status === "running",
+  };
+}
+
 async function resolveRow({
   account_id,
   slug,
@@ -528,10 +582,22 @@ async function resolveRow({
         p.*,
         projects.title AS project_title,
         projects.host_id,
-        projects.owning_bay_id
+        projects.owning_bay_id,
+        project_hosts.bay_id AS host_bay_id,
+        project_hosts.name AS host_name,
+        project_hosts.public_url AS host_public_url,
+        project_hosts.internal_url AS host_internal_url,
+        project_hosts.ssh_server AS host_ssh_server,
+        project_hosts.region AS host_region,
+        project_hosts.tier AS host_tier,
+        project_hosts.status AS host_status,
+        project_hosts.last_seen AS host_last_seen,
+        project_hosts.metadata AS host_metadata
       FROM public_project_path_slugs s
       JOIN public_project_paths p ON p.id=s.public_project_path_id
       LEFT JOIN projects ON projects.project_id=p.project_id
+      LEFT JOIN project_hosts ON project_hosts.id=projects.host_id
+        AND project_hosts.deleted IS NULL
       WHERE s.slug_lower=lower($1)
         AND s.disabled IS FALSE
         AND p.disabled IS FALSE
@@ -588,6 +654,10 @@ async function resolveRow({
       read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
       project_title: row.project_title ?? null,
       host_id: row.host_id ?? null,
+      host_connection:
+        availabilityStatus === "available"
+          ? publicShareHostConnection(row)
+          : null,
       owning_bay_id: owningBayId,
     },
   };

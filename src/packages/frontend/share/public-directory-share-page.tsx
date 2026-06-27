@@ -91,10 +91,17 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
           ? existingProject.mergeDeep(syntheticProject)
           : syntheticProject,
       ),
+      ...(share.host_connection
+        ? {
+            host_info: (
+              redux.getStore("projects")?.get("host_info") ?? Map<string, any>()
+            ).set(
+              share.host_connection.host_id,
+              fromJS({ ...share.host_connection, updated_at: Date.now() }),
+            ),
+          }
+        : {}),
     });
-    if (share.host_id) {
-      void projectsActions.ensure_host_info?.(share.host_id, true);
-    }
     setProjectionReady(true);
   }, [accountId, projectsActions, share]);
 

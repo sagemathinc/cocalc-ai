@@ -11,12 +11,14 @@ export function getHostInfo(
 
 export function useHostInfo(
   host_id?: string,
+  opts?: { enabled?: boolean },
 ): ImmutableMap<string, any> | undefined {
   const hostInfo = useTypedRedux("projects", "host_info")?.get(host_id ?? "");
+  const enabled = opts?.enabled !== false;
   useEffect(() => {
-    if (!host_id) return;
+    if (!enabled || !host_id) return;
     redux.getActions("projects")?.ensure_host_info(host_id);
-  }, [host_id]);
+  }, [enabled, host_id]);
   return hostInfo;
 }
 

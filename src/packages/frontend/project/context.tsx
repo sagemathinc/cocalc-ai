@@ -258,7 +258,7 @@ export function useProjectContextProvider({
   const account_id = useTypedRedux("account", "account_id");
   const status: ProjectStatus = useProjectState(project_id);
   const hostId = project?.get("host_id") as string | undefined;
-  const hostInfo = useHostInfo(hostId);
+  const hostInfo = useHostInfo(hostId, { enabled: !publicDirectoryShare });
   const effectiveStatus =
     normalizeProjectStateForDisplay({
       projectState: status.get("state"),

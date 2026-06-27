@@ -6,6 +6,7 @@
 import { authFirst, authFirstRequireAccount } from "./util";
 import type { CopyOptions } from "@cocalc/conat/files/fs";
 import type { FileTypeLabel } from "@cocalc/conat/files/listing";
+import type { HostConnectionInfo } from "./hosts";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 
 export type PublicDirectoryShareVisibility =
@@ -53,6 +54,7 @@ export interface ResolvedPublicDirectoryShare extends PublicDirectoryShareSummar
   available: boolean;
   project_title?: string | null;
   host_id?: string | null;
+  host_connection?: HostConnectionInfo | null;
   owning_bay_id?: string | null;
 }
 

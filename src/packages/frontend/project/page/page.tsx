@@ -198,7 +198,9 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   });
   const isViewer = projectCtx.projectAccess.role === "viewer";
   const host_id = useProjectMapField<string>(project_id, "host_id");
-  const hostInfo = useHostInfo(host_id);
+  const hostInfo = useHostInfo(host_id, {
+    enabled: !props.publicDirectoryShare,
+  });
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
     [hostInfo],
