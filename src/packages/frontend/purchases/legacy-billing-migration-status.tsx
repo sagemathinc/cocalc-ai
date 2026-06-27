@@ -78,7 +78,7 @@ export default function LegacyBillingMigrationStatus() {
             !preview.membership_already_applied
               ? "basic"
               : null,
-          membership_interval: "month",
+          membership_interval: preview.suggested_membership_interval,
         },
       );
       await load();
@@ -105,6 +105,20 @@ export default function LegacyBillingMigrationStatus() {
 
   const pending =
     preview.pending_credit_amount > 0 || preview.active_subscription_count > 0;
+  const pendingEntitlementCredit = preview.legacy_accounts.reduce(
+    (total, account) =>
+      account.claimed_by_account_id
+        ? total
+        : total + (account.entitlement_credit_amount ?? 0),
+    0,
+  );
+  const unvaluedSiteLicenseCount = preview.legacy_accounts.reduce(
+    (total, account) =>
+      account.claimed_by_account_id
+        ? total
+        : total + (account.unvalued_active_site_license_count ?? 0),
+    0,
+  );
 
   return (
     <Card
@@ -144,7 +158,7 @@ export default function LegacyBillingMigrationStatus() {
           }
           description={
             pending
-              ? "Click Apply now to add positive credit, Stripe customer metadata, and a one-month Basic membership for active legacy subscriptions. No project restore action is required."
+              ? `Click Apply now to add positive credit, remaining paid legacy value, Stripe customer metadata, and a ${preview.suggested_membership_interval === "year" ? "one-year" : "one-month"} Basic membership for active legacy subscriptions. No project restore action is required.`
               : "Migrated legacy billing items are recorded in your CoCalc billing history and membership status."
           }
         />
@@ -152,6 +166,10 @@ export default function LegacyBillingMigrationStatus() {
           <Space direction="vertical" size={0}>
             <Text type="secondary">Pending credit</Text>
             <Text strong>{formatMoney(preview.pending_credit_amount)}</Text>
+          </Space>
+          <Space direction="vertical" size={0}>
+            <Text type="secondary">Remaining paid value</Text>
+            <Text>{formatMoney(pendingEntitlementCredit)}</Text>
           </Space>
           <Space direction="vertical" size={0}>
             <Text type="secondary">Migrated credit</Text>
@@ -173,6 +191,14 @@ export default function LegacyBillingMigrationStatus() {
             </Text>
           </Space>
         </Space>
+        {unvaluedSiteLicenseCount > 0 ? (
+          <Alert
+            showIcon
+            type="warning"
+            message="Some active legacy site licenses need review"
+            description={`${unvaluedSiteLicenseCount} active site license${unvaluedSiteLicenseCount === 1 ? "" : "s"} did not include enough price metadata to compute automatic credit. Support can review these manually.`}
+          />
+        ) : null}
         <Space wrap size={[4, 4]}>
           {preview.legacy_accounts.map((account) => (
             <Tag
@@ -187,6 +213,9 @@ export default function LegacyBillingMigrationStatus() {
               title={[
                 account.legacy_account_id,
                 `credit: ${formatMoney(account.credit_amount)}`,
+                account.entitlement_credit_amount
+                  ? `remaining paid value: ${formatMoney(account.entitlement_credit_amount)}`
+                  : "",
                 account.active_subscription_count
                   ? `subscriptions: ${account.active_subscription_count}`
                   : "",

@@ -170,7 +170,7 @@ Table({
     credit_amount: {
       type: "number",
       pg_type: "numeric(20,10)",
-      desc: "Positive legacy credit balance applied for this legacy account.",
+      desc: "Total credit applied for this legacy account, including positive cash balance and computed remaining paid legacy entitlement value.",
     },
     credit_purchase_id: {
       type: "integer",
