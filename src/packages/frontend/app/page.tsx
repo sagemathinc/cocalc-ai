@@ -57,6 +57,7 @@ import { CookieWarning, LocalStorageWarning } from "./warnings";
 import { ImportPublicUrlModal } from "./import-public-url-modal";
 import { lite } from "@cocalc/frontend/lite";
 import { ImpersonationBanner } from "./impersonation-banner";
+import { LegacyMigrationCtaBanner } from "./legacy-migration-cta-banner";
 import { TeamLicenseWarningBanner } from "./team-license-warning-banner";
 import AutomaticUpdateNotice from "./automatic-update-notice";
 
@@ -371,6 +372,7 @@ export const Page: React.FC = () => {
       <ImpersonationBanner />
       <TeamLicenseWarningBanner />
       <VerifyEmail />
+      {!fullscreen && <LegacyMigrationCtaBanner />}
       {!lite && !fullscreen && !isAuthView && (
         <nav className="smc-top-bar" style={topBarStyle}>
           <AppLogo size={pageStyle.height} />

@@ -109,7 +109,9 @@ export default function LegacyBillingMigrationStatus() {
 
   const pending =
     preview.pending_credit_amount > 0 || preview.active_subscription_count > 0;
-  const continueMembership = preview.applied_membership_class;
+  const continueMembership = preview.membership_renewal_configured
+    ? null
+    : preview.applied_membership_class;
   const continueInterval =
     preview.applied_membership_interval ??
     preview.suggested_membership_interval;

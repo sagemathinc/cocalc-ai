@@ -894,6 +894,25 @@ async function currentMembershipExists(account_id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+async function currentPaidMembershipSubscriptionExists(
+  account_id: string,
+): Promise<boolean> {
+  const { rows } = await getPool().query(
+    `
+    SELECT 1
+      FROM subscriptions
+     WHERE account_id=$1
+       AND status IN ('active', 'canceled')
+       AND metadata->>'type'='membership'
+       AND latest_purchase_id IS NOT NULL
+       AND current_period_end >= NOW()
+     LIMIT 1
+    `,
+    [account_id],
+  );
+  return rows.length > 0;
+}
+
 async function currentStripeCustomerId(
   account_id: string,
   client?: PoolClient,
@@ -1167,10 +1186,16 @@ function suggestedFinancialMembershipInterval(
 async function financialPreviewForAccount(
   account_id: string,
 ): Promise<LegacyMigrationFinancialPreviewResponse> {
-  const [legacy_accounts, plans, hasActiveMembership] = await Promise.all([
+  const [
+    legacy_accounts,
+    plans,
+    hasActiveMembership,
+    membership_renewal_configured,
+  ] = await Promise.all([
     financialRowsForAccount(account_id),
     membershipPlans(),
     currentMembershipExists(account_id),
+    currentPaidMembershipSubscriptionExists(account_id),
   ]);
   const pending = legacy_accounts.filter(
     (account) => !account.claimed_by_account_id,
@@ -1223,6 +1248,7 @@ async function financialPreviewForAccount(
     applied_membership_interval:
       appliedMembership?.selected_membership_interval ?? null,
     membership_already_applied,
+    membership_renewal_configured,
     stripe_customer_id,
     plans,
     can_apply:

@@ -207,6 +207,7 @@ export interface LegacyMigrationFinancialPreviewResponse {
   applied_membership_class?: string | null;
   applied_membership_interval?: "month" | "year" | null;
   membership_already_applied: boolean;
+  membership_renewal_configured: boolean;
   stripe_customer_id?: string | null;
   plans: LegacyMigrationMembershipPlan[];
   can_apply: boolean;
