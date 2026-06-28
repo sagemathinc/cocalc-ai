@@ -2415,6 +2415,34 @@ export class ConatClient extends EventEmitter {
     return state.client;
   };
 
+  private ensureRoutedHubClientConnected = async ({
+    routing_key,
+    project_id,
+  }: {
+    routing_key: string;
+    project_id: string;
+  }): Promise<void> => {
+    const state = this.routedHubClients[routing_key];
+    if (!state) {
+      throw new Error(
+        `routed project-host client '${routing_key}' was not created`,
+      );
+    }
+    const connected = await this.connectRoutedHost({
+      routing_key,
+      state,
+      project_id,
+    });
+    if (!connected && !state.client.conn?.connected) {
+      throw new Error(
+        `unable to connect routed project-host client '${routing_key}'`,
+      );
+    }
+    await state.client.waitUntilSignedIn({
+      timeout: PROJECT_HOST_AUTH_TIMEOUT_MS,
+    });
+  };
+
   private permanentlyDisconnected = false;
   permanentlyDisconnect = () => {
     this.permanentlyDisconnected = true;
@@ -2739,7 +2767,17 @@ export class ConatClient extends EventEmitter {
     }
     const routing = await this.ensureProjectRoutingInfo(project_id);
     if (routing) {
-      return this.getOrCreateRoutedHubClient({ ...routing, project_id });
+      const client = this.getOrCreateRoutedHubClient({
+        ...routing,
+        project_id,
+      });
+      if (requireRouting) {
+        await this.ensureRoutedHubClientConnected({
+          routing_key: routing.routing_key,
+          project_id,
+        });
+      }
+      return client;
     }
     if (requireRouting) {
       throw Error(

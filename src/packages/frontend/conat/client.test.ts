@@ -660,6 +660,7 @@ describe("ConatClient routed project-host reconnect", () => {
       connect: jest.fn(),
       close: jest.fn(),
       request: jest.fn(async () => ({ data: 123 })),
+      waitUntilSignedIn: jest.fn(async () => undefined),
       fs: jest.fn(() => routedFsClient),
     };
 
@@ -787,6 +788,9 @@ describe("ConatClient routed project-host reconnect", () => {
     await expect(
       client.projectFs({ project_id, caller: "test.projectFs" }),
     ).resolves.toBe(routedFsClient);
+    expect(routedClient.waitUntilSignedIn).toHaveBeenCalledWith({
+      timeout: 4000,
+    });
     expect(routedClient.fs).toHaveBeenCalledWith({ project_id });
 
     await expect(client.listings({ project_id })).resolves.toBe(
