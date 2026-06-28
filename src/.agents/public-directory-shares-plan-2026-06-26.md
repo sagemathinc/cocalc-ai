@@ -132,6 +132,421 @@ path       = <directory inside that project>
 This separation is important. CUP needs URL stability; project owners need to
 be able to organize files normally.
 
+## Pivot: Viewer-Based Public Shares with Temporary Grants
+
+Date: 2026-06-28
+
+### Summary
+
+The first implementation attempted to make `/share/<slug...>` render a
+share-only project context with custom `fs-share` file access. That approach
+proved brittle in practice:
+
+- it had to emulate enough of the normal project page to open notebooks,
+  markdown, code files, directory listings, selections, copy actions, and
+  navigation;
+- it created a second frontend pathway for functionality that already works in
+  project viewer mode;
+- it made browser/project-host routing hard to reason about;
+- it obscured a security issue where path-restricted project viewers could
+  temporarily retain unrestricted project access through stale authorization
+  caches after being demoted from collaborator.
+
+The new target is simpler:
+
+1. Make **project viewer mode** the polished, secure, path-restricted read-only
+   UX for shared content.
+2. Make `/share/<slug...>` an entry point that grants a **temporary
+   path-restricted viewer access record** and then routes the user into normal
+   project viewer mode.
+
+This should replace the custom public-share explorer/embed code. The public
+share system becomes a URL, policy, audit, and grant-management layer over the
+normal project viewer experience.
+
+### Product Semantics
+
+A public directory share means:
+
+- the owner publishes a project directory at a durable URL;
+- any signed-in user with the URL may receive temporary viewer access scoped to
+  that directory;
+- the user views the content through the normal project page in viewer mode;
+- all file reads go through the existing project-host viewer filesystem;
+- copy actions use existing viewer copy-out behavior, plus public-share
+  metadata for default destination, rootfs selection, and optional membership
+  grant-on-copy;
+- no terminal, runtime, secrets, settings, collaborator management, snapshots,
+  or unrestricted file APIs are exposed.
+
+This is intentionally "project viewer with an automatically managed temporary
+viewer grant", not "old share server v2".
+
+### Security Invariants
+
+These are release-blocking:
+
+- A path-restricted viewer must not list, open, download, preview, copy, or
+  otherwise fetch files outside the granted read policy through either UI or
+  direct file APIs.
+- Changing a user from collaborator to viewer, or changing a viewer read policy,
+  must take effect immediately for file access. Positive project-access cache
+  entries must not keep `fs.project-*` or other unrestricted project subjects
+  open.
+- Viewer reads must use account-scoped `fs-viewer.project-<project_id>.account-<account_id>`
+  subjects, or an equivalent project-host service with the same narrow
+  semantics.
+- Unrestricted `fs.project-<project_id>` remains collaborator-only.
+- A temporary public-share viewer grant must never silently upgrade an existing
+  project access role. Owners/collaborators keep their normal role; existing
+  viewers get the union of explicit non-public viewer policy and active
+  temporary share policy only if that union is intentional and audited.
+- The project host remains the final file-path enforcement point. The hub may
+  authorize and route, but it must not proxy steady-state file reads.
+- Public shares require sign-in in the first release.
+- Emergency disable of a share or slug prefix must prevent new temporary grants
+  immediately. Existing grants should be revoked or marked inactive when the
+  disable is security-motivated.
+
+### Authorization Cache Policy
+
+The P0 viewer bug showed that mutable access decisions cannot be cached without
+a precise invalidation story.
+
+Policy:
+
+- Do not cache positive authorization for project data-plane subjects such as
+  `fs.project-*`, `project.<id>.*`, `hub.project.<id>.*`,
+  `file-server.<id>.*`, `fs-viewer.*`, or `fs-share.*` unless the cache key is
+  backed by a versioned access token or an access-generation number.
+- It is acceptable to cache stable subject parsing, route lookup, and negative
+  non-project decisions.
+- If performance becomes an issue, add an explicit `project_access_generation`
+  or `project_users_updated_at` value to the project/user projection and include
+  it in the authorization cache key.
+- Alternative invalidation is acceptable only if every mutation path that
+  changes `projects.users`, viewer read policies, public-share grants, disabled
+  state, or temporary grant expiry reliably clears hub and project-host auth
+  caches across bays and hosts.
+- Until that exists, no caching is the safer default for project access
+  authorization. The expected performance cost should be small compared with
+  file operations, because the hot path after authorization is direct
+  project-host file service traffic.
+
+### Data Model Changes
+
+Keep `public_project_paths` as the authoritative share metadata table. Add a
+separate temporary grant model rather than overloading ordinary collaborators
+without metadata.
+
+Recommended table:
+
+```sql
+CREATE TABLE public_project_path_viewer_grants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  public_project_path_id UUID NOT NULL,
+  project_id UUID NOT NULL,
+  account_id UUID NOT NULL,
+  read_policy JSONB NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'active',
+  grant_reason TEXT NOT NULL DEFAULT 'share-url',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  revoked_at TIMESTAMP,
+  revoked_by UUID,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE(public_project_path_id, account_id)
+);
+```
+
+Indexes:
+
+```sql
+CREATE INDEX public_project_path_viewer_grants_project_account_idx
+  ON public_project_path_viewer_grants (project_id, account_id)
+  WHERE status = 'active';
+
+CREATE INDEX public_project_path_viewer_grants_expiry_idx
+  ON public_project_path_viewer_grants (expires_at)
+  WHERE status = 'active';
+```
+
+Grant duration should be configurable by site setting, with a short default
+such as 24 hours or 7 days. Re-visiting the share URL can extend `expires_at`
+idempotently.
+
+Do not count these grants against the owner's ordinary collaborator/viewer
+limit. Enforce a separate public-share temporary viewer limit:
+
+- max active temporary viewers per share;
+- max active temporary viewers per source project;
+- max active temporary share grants per account;
+- optional per-share total grant cap;
+- admin override for CUP and support.
+
+### Project Access Resolution
+
+Project access should resolve in this order:
+
+1. Admin/owner/collaborator access from `projects.users`.
+2. Explicit viewer access from `projects.users`.
+3. Active temporary public-share viewer grants for `(project_id, account_id)`.
+4. No access.
+
+If multiple viewer grants apply, combine read policies by allowing any path
+included by any active grant, while still applying global safety exclusions
+such as `.ssh`, `.snapshots`, and `.local/share/cocalc`.
+
+Important implementation detail:
+
+- project-host `getViewerReadPolicy(project_id, account_id)` must be able to
+  resolve both ordinary viewer policy and active temporary public-share viewer
+  policy;
+- hub `resolveProjectAccessAllowRemote` should return `role: "viewer"` with the
+  effective read policy when temporary grants are active;
+- frontend project context should not need to know whether viewer access came
+  from `projects.users` or from a temporary public-share grant.
+
+### Share Entry Flow
+
+`/share/<slug...>` should become a thin entry route:
+
+1. Wait for auth state. While auth is unknown, show loading; do not flash
+   "Sign in to view this published folder" for users who are already signed in.
+2. If not signed in, show sign-in and preserve the exact share URL as the
+   return URL.
+3. Resolve the slug through the share API.
+4. If enabled and available, call
+   `publicDirectoryShares.grantTemporaryViewerAccess({ slug })`.
+5. The grant API creates or refreshes an active temporary viewer grant with the
+   share read policy.
+6. Redirect or route the user to the normal project viewer URL rooted at the
+   shared path, for example:
+
+```text
+/projects/<project_id>/files/<shared-path>?viewer=1&share=<share_id>
+```
+
+7. The normal project page renders in viewer mode and uses the existing file
+   explorer/editor/notebook stack.
+
+The share URL should remain copyable and durable. The project URL can be an
+implementation detail after access is granted.
+
+### Viewer UX Improvements Needed
+
+Before relying on project viewer mode as the public-share UI, improve viewer UX
+so it works well for both explicit viewers and temporary share viewers:
+
+- show a top banner: "You are viewing a published folder" or "You have
+  read-only access to this project";
+- when access came from a share, show share title, description, license, and a
+  "Copy" primary button;
+- make the visible root feel like the shared folder, not the whole project, for
+  path-restricted viewers;
+- prevent "go above shared root" UI navigation for path-restricted viewers;
+- make directory navigation client-side within the project page, not a full
+  page reload;
+- ensure notebook, markdown, text/code, images, PDFs, and arbitrary files open
+  read-only without runtime access;
+- ensure checkboxes/select-all work for path-restricted viewer listings;
+- keep "Copy selected" and "Copy all" actions available;
+- make refresh a neutral/manual refresh button unless there is a real watcher
+  event indicating stale data;
+- hide or disable runtime-only actions, terminals, secrets, snapshots/backups,
+  settings, and collaborator UI;
+- if the root listing is empty because the policy only allows a descendant,
+  show the allowed descendant directory rather than an empty project root.
+
+This work benefits both public shares and normal project viewers.
+
+### Copy UX
+
+The default public-share action should be **Copy**.
+
+Behavior:
+
+- open a confirm modal explaining that CoCalc will create a new project and copy
+  the published files;
+- create the new project near the source project when allowed by host admission
+  and user tier;
+- prefer matching the source rootfs because shared files may depend on that
+  environment;
+- copy all files in the shared root using backend project-to-project copy;
+- fall back to normal placement if the source host or rootfs is unavailable;
+- after creation, open the destination project immediately and show copy LRO
+  progress there.
+
+The modal should also offer "Copy to existing project" as a secondary action.
+That path should use the same backend copy authorization and read policy.
+
+For selected files:
+
+- if files are selected in the viewer listing, "Copy selected" copies only
+  those paths;
+- if nothing is selected, "Copy" copies the shared root.
+
+### Site License / Membership Grant on Copy
+
+Keep the existing grant-on-copy model, but attach it to the copy operation after
+temporary viewer access has been granted.
+
+Rules:
+
+- viewing a share does not grant compute membership;
+- copying may grant a temporary membership to the destination project;
+- if the license pool is exhausted or the grant fails, copying should still be
+  allowed when `site_license_copy_requires_grant=false`;
+- if the grant is required, block before copying and show a clear explanation;
+- allow copying even when the license is used up, because the free tier is still
+  useful and CUP explicitly requested this behavior;
+- record grant metadata with source share id, source project id, destination
+  project id, account id, tier, duration, and legacy public path id.
+
+### Backend API Plan
+
+Add or adjust Conat hub APIs:
+
+```ts
+resolvePublicDirectoryShare({ slug }): Promise<ShareSummary>;
+
+grantTemporaryViewerAccess({
+  slug: string;
+}): Promise<{
+  project_id: string;
+  share_id: string;
+  path: string;
+  read_policy: ProjectViewerReadPolicy;
+  expires_at: string;
+  project_url: string;
+}>;
+
+revokeTemporaryViewerAccess({
+  public_project_path_id: string;
+  account_id: string;
+}): Promise<{ revoked: boolean }>;
+
+listTemporaryViewerGrants({
+  public_project_path_id?: string;
+  project_id?: string;
+  account_id?: string;
+  active?: boolean;
+}): Promise<TemporaryViewerGrantSummary[]>;
+```
+
+Project access APIs:
+
+- update `resolveProjectAccessAllowRemote` and local access helpers so active
+  temporary grants can resolve to viewer access;
+- update project-host viewer read-policy lookup to include active temporary
+  grants;
+- update project projections if needed so the viewer UI can load project title
+  and basic metadata without pretending the user is a normal collaborator.
+
+Copy APIs:
+
+- keep `copyPublicDirectoryShareToNewProject` or equivalent as the high-level
+  default copy path;
+- internally reuse `copyPathBetweenProjects` with `src_read_policy`;
+- ensure source paths are checked against the effective viewer read policy
+  before the LRO starts and inside the worker before copying.
+
+### Temporary Grant Expiry and Cleanup
+
+Implement expiry as defense-in-depth:
+
+- active grants have a durable `expires_at`;
+- access resolution ignores expired grants even before cleanup runs;
+- a periodic job marks expired grants as `expired`;
+- project-host auth should not cache a grant past its expiry;
+- revisiting a share URL refreshes the grant idempotently;
+- disabling a share marks active grants as `revoked` if the disable reason is
+  security or admin takedown.
+
+### Audit and Owner Visibility
+
+Owners/admins should be able to see:
+
+- public share URL;
+- active temporary viewer count;
+- total viewers over time;
+- last viewed time;
+- grant-on-copy counts and failures;
+- emergency disable state.
+
+For privacy, owner UI does not need to expose every viewer identity by default.
+Admin UI should expose account ids/emails for support and abuse response.
+
+### Implementation Phases for the Pivot
+
+#### Phase A: Security Baseline
+
+- Ensure path-restricted project viewers cannot use unrestricted project-host
+  file subjects.
+- Remove or version mutable project-access auth caches.
+- Add backend tests for collaborator-to-viewer demotion taking effect
+  immediately.
+- Add backend tests for viewer filesystem read policy enforcement outside the
+  allowed path.
+- Add browser smoke test with a user who was previously a collaborator and is
+  now a path-restricted viewer.
+
+#### Phase B: Viewer UX Foundation
+
+- Fix normal project viewer mode so a path-restricted viewer can list only
+  allowed directories and open files without page reloads.
+- Fix checkbox selection and copy selected/all for read-only viewers.
+- Add viewer/share banner and hide write/runtime-only UI.
+- Add tests for root listing, subdirectory listing, direct file URL, notebook
+  open, selected copy, and blocked outside-path access.
+
+#### Phase C: Temporary Grant Backend
+
+- Add `public_project_path_viewer_grants` table and migration.
+- Add grant/refresh/revoke/list APIs.
+- Integrate temporary grants into local and remote project access resolution.
+- Integrate temporary grants into project-host viewer read-policy lookup.
+- Add expiry cleanup and immediate disable/revoke behavior.
+- Add limits independent of ordinary collaborator/viewer limits.
+
+#### Phase D: Share Entry Route
+
+- Replace custom share-project embed with thin `/share/<slug...>` entry flow.
+- Resolve slug, grant temporary viewer access, then route to normal project
+  viewer.
+- Remove or quarantine obsolete custom share listing/open-file code after the
+  new route is validated.
+- Keep unavailable/restoring/share-disabled states in the entry route.
+
+#### Phase E: Copy and Membership
+
+- Make "Copy" the primary public-share action.
+- Create a new project with matching rootfs/host when available, then copy via
+  backend LRO.
+- Keep "Copy to existing project" as a secondary path.
+- Apply optional site-license/membership grant-on-copy with idempotent grant
+  metadata and graceful exhaustion behavior.
+
+#### Phase F: Migration and Redirects
+
+- Import CUP and non-CUP `public_paths` into `public_project_paths`.
+- Generate validation reports.
+- Enable exact legacy URL redirects only after sample share URLs pass viewer,
+  copy, and license-on-copy tests.
+
+### Deletion / Simplification Targets
+
+After the pivot works:
+
+- remove custom frontend public-share `ProjectPage` projection hacks;
+- remove duplicate share-only file listing/opening UI that is not needed for
+  normal viewer mode;
+- keep `fs-share` only if it remains useful for CLI/direct share APIs, or
+  replace it with temporary viewer grant plus `fs-viewer`;
+- delete any code that assumes public-share access means synthetic project
+  collaborator state.
+
 ## Schema
 
 Add a server-owned Postgres table, for example `public_project_paths`.
