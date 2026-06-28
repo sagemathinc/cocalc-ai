@@ -852,9 +852,7 @@ describe("ConatClient routed project-host reconnect", () => {
         getStore: jest.fn((name: string) => {
           if (name !== "projects") return undefined;
           return immutable.Map({
-            open_projects: immutable.List([
-              "00000000-0000-4000-8000-000000000001",
-            ]),
+            open_projects: immutable.List([]),
             project_map: immutable.Map({
               "00000000-0000-4000-8000-000000000001": immutable.Map({
                 host_id: "host-1",
@@ -1334,6 +1332,15 @@ describe("ConatClient routed project-host reconnect", () => {
       { address: "http://hub", remote: true },
     ) as any;
 
+    client.registerPublicDirectoryShareRouting({
+      project_id: "00000000-0000-4000-8000-000000000001",
+      share_id: "11111111-1111-4111-8111-111111111111",
+      host_connection: {
+        host_id: "host-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+      },
+    });
     client.getOrCreateRoutedHubClient({
       host_id: "host-1",
       address: "http://project-host",

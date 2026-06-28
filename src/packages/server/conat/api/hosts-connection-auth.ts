@@ -25,6 +25,7 @@ owns the local connection and token mechanics.
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -65,6 +66,8 @@ import {
 function pool() {
   return getPool();
 }
+
+const logger = getLogger("server:conat:api:hosts-connection-auth");
 
 async function hostControlClient(host_id: string, timeout?: number) {
   return await getRoutedHostControlClient({
@@ -108,8 +111,24 @@ async function hasPublicShareProjectHostTokenAccess({
         `,
         [project_id, host_id],
       );
-      return !!rowCount;
-    } catch {
+      const allowed = !!rowCount;
+      if (!allowed) {
+        logger.warn("public-share project-host token denied: host mismatch", {
+          account_id,
+          host_id,
+          project_id,
+          public_directory_share_id,
+        });
+      }
+      return allowed;
+    } catch (err) {
+      logger.warn("public-share project-host token denied", {
+        account_id,
+        host_id,
+        project_id,
+        public_directory_share_id,
+        err: `${(err as any)?.message ?? err}`,
+      });
       return false;
     }
   }

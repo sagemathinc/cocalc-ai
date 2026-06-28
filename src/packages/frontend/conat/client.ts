@@ -1626,6 +1626,18 @@ export class ConatClient extends EventEmitter {
     return result;
   };
 
+  private getPublicShareProjectIdsForHost = (host_id: string): Set<string> => {
+    const result = new Set<string>();
+    for (const [project_id, routing] of Object.entries(
+      this.publicDirectoryShareRoutingByProjectId,
+    )) {
+      if (routing.host_id === host_id) {
+        result.add(project_id);
+      }
+    }
+    return result;
+  };
+
   private syncTrackedProjectsForHost = (
     host_id: string,
     state?: RoutedHubClientState,
@@ -1635,8 +1647,12 @@ export class ConatClient extends EventEmitter {
       return new Set();
     }
     const openProjects = this.getOpenProjectIdsForHost(host_id);
+    const publicShareProjects = this.getPublicShareProjectIdsForHost(host_id);
     for (const project_id of Array.from(current.project_ids)) {
-      if (!openProjects.has(project_id)) {
+      if (
+        !openProjects.has(project_id) &&
+        !publicShareProjects.has(project_id)
+      ) {
         current.project_ids.delete(project_id);
       }
     }

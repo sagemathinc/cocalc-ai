@@ -21,7 +21,8 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { path_split, path_to_file } from "@cocalc/util/misc";
+import { path_split, path_to_file, tab_to_path } from "@cocalc/util/misc";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { PublicDirectoryShareBanner } from "./public-directory-share-banner";
 import { shareRouteCandidates } from "./public-directory-share-route";
 
@@ -155,6 +156,39 @@ interface ShareView {
   relativePath: string;
 }
 
+function encodeShareRoutePath(path: string): string {
+  return path
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map(encodeURIComponent)
+    .join("/");
+}
+
+function relativePathInShare({
+  path,
+  sharePath,
+}: {
+  path?: string | null;
+  sharePath: string;
+}): string | undefined {
+  const homeRelative = projectRuntimeHomeRelativePath(`${path ?? ""}`);
+  const normalizedPath = `${homeRelative ?? path ?? ""}`
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  const normalizedSharePath =
+    sharePath === "." ? "" : sharePath.replace(/^\/+|\/+$/g, "");
+  if (!normalizedSharePath) {
+    return normalizedPath;
+  }
+  if (normalizedPath === normalizedSharePath) {
+    return "";
+  }
+  if (normalizedPath.startsWith(`${normalizedSharePath}/`)) {
+    return normalizedPath.slice(normalizedSharePath.length + 1);
+  }
+  return undefined;
+}
+
 function LoadingShare() {
   return (
     <div style={{ maxWidth: 960, margin: "32px auto", padding: "0 24px" }}>
@@ -167,10 +201,21 @@ function LoadingShare() {
 
 function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
   const actions = useActions({ project_id: view.projectId });
+  const currentPathAbs = useTypedRedux(
+    { project_id: view.projectId },
+    "current_path_abs",
+  ) as string | undefined;
+  const activeProjectTab = useTypedRedux(
+    { project_id: view.projectId },
+    "active_project_tab",
+  ) as string | undefined;
 
   useEffect(() => {
     if (!actions) return;
-    actions.setState({ temporary_public_share_route: true });
+    actions.setState({
+      public_directory_share_id: view.share.id,
+      temporary_public_share_route: true,
+    });
     const sharePath = view.share.path === "." ? "." : view.share.path;
     const shareRelativePath = view.relativePath
       .trim()
@@ -198,9 +243,48 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
       });
     }
     return () => {
-      actions.setState({ temporary_public_share_route: false });
+      actions.setState({
+        public_directory_share_id: undefined,
+        temporary_public_share_route: false,
+      });
     };
-  }, [actions, view.projectId, view.relativePath, view.share.path]);
+  }, [
+    actions,
+    view.projectId,
+    view.relativePath,
+    view.share.id,
+    view.share.path,
+  ]);
+
+  useEffect(() => {
+    const tabPath = activeProjectTab
+      ? tab_to_path(activeProjectTab)
+      : undefined;
+    const shareRelativePath = relativePathInShare({
+      path: tabPath ?? currentPathAbs,
+      sharePath: view.share.path,
+    });
+    if (shareRelativePath == null) {
+      return;
+    }
+    const slugPath = encodeShareRoutePath(view.share.slug);
+    const relativeRoute = encodeShareRoutePath(shareRelativePath);
+    const nextPath = relativeRoute
+      ? `/share/${slugPath}/${relativeRoute}`
+      : `/share/${slugPath}`;
+    if (
+      typeof window !== "undefined" &&
+      window.location.pathname !== nextPath
+    ) {
+      window.history.replaceState(window.history.state, "", nextPath);
+    }
+  }, [
+    activeProjectTab,
+    currentPathAbs,
+    view.projectId,
+    view.share.path,
+    view.share.slug,
+  ]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>

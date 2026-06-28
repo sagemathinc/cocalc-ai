@@ -5855,6 +5855,38 @@ describe("hosts.issueProjectHostAuthToken", () => {
     });
   });
 
+  it("preserves public directory share authorization when routing token issuance to the host bay", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-3",
+      epoch: 5,
+    }));
+
+    const { issueProjectHostAuthToken } = await import("./hosts");
+    await expect(
+      issueProjectHostAuthToken({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+        public_directory_share_id: SHARE_UUID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_UUID,
+      token: "remote-issued-token",
+      expires_at: 777777,
+    });
+    expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      host_id: HOST_UUID,
+      project_id: PROJECT_UUID,
+      public_directory_share_id: SHARE_UUID,
+      ttl_seconds: undefined,
+    });
+  });
+
   it("issues locally when no project is supplied", async () => {
     hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => true);
     const { issueProjectHostAuthToken } = await import("./hosts");

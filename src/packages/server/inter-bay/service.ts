@@ -2491,12 +2491,20 @@ async function startHostControlService(): Promise<void> {
 async function startProjectHostAuthTokenService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayProjectHostAuthTokenApi = {
-    issue: async ({ account_id, actor, host_id, project_id, ttl_seconds }) =>
+    issue: async ({
+      account_id,
+      actor,
+      host_id,
+      project_id,
+      public_directory_share_id,
+      ttl_seconds,
+    }) =>
       await issueProjectHostAuthTokenLocal({
         account_id,
         actor,
         host_id,
         project_id,
+        public_directory_share_id,
         ttl_seconds,
       }),
   };
