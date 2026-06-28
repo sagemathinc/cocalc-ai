@@ -18,7 +18,7 @@ export default function PublicViewerMarkdownRenderer({
   fileContext: IFileContext;
 }): JSX.Element {
   return withViewerFileContext(
-    <Markdown value={content} style={style} />,
+    <Markdown value={content} style={{ padding: "24px", ...style }} />,
     fileContext,
   );
 }
