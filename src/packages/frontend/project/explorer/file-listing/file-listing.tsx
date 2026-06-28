@@ -127,7 +127,6 @@ interface Props {
   root_path?: string;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
-  onOpenFilePath?: (path: string, opts?: { foreground?: boolean }) => boolean;
   openUploadFiles?: () => void;
   useSimpleTable?: boolean;
   foregroundProjectOnOpen?: boolean;
@@ -462,7 +461,6 @@ export function FileListing({
   root_path,
   sort_by,
   onNavigateDirectory,
-  onOpenFilePath,
   openUploadFiles,
   useSimpleTable = false,
   foregroundProjectOnOpen = true,
@@ -724,10 +722,6 @@ export function FileListing({
               }
               actions.set_file_search("");
             } else {
-              if (onOpenFilePath?.(record.fullPath, { foreground: true })) {
-                actions.set_file_search("");
-                return;
-              }
               actions.open_file({
                 path: record.fullPath,
                 foreground: true,
@@ -795,7 +789,6 @@ export function FileListing({
       actions,
       foregroundProjectOnOpen,
       changeHistoryOnOpen,
-      onOpenFilePath,
     ],
   );
 
@@ -853,9 +846,6 @@ export function FileListing({
 
       const foreground = should_open_in_foreground(e as any);
       const nextSelection = applyPathSelection(record.fullPath);
-      if (onOpenFilePath?.(record.fullPath, { foreground })) {
-        return;
-      }
       actions.open_file({
         path: record.fullPath,
         foreground,
@@ -874,7 +864,6 @@ export function FileListing({
       current_path,
       baseDataSource,
       onNavigateDirectory,
-      onOpenFilePath,
       onOpenSpecial,
       foregroundProjectOnOpen,
       changeHistoryOnOpen,
@@ -1179,9 +1168,6 @@ export function FileListing({
               }
               onNavigateDirectory={onNavigateDirectory}
               onOpenFile={(path) => {
-                if (onOpenFilePath?.(path, { foreground: true })) {
-                  return;
-                }
                 const nextSelection = applyPathSelection(path);
                 actions.open_file({
                   path,
@@ -1374,7 +1360,6 @@ export function FileListing({
       expandedDirs,
       numCols,
       onNavigateDirectory,
-      onOpenFilePath,
       project_id,
       toggleExpandDir,
     ],

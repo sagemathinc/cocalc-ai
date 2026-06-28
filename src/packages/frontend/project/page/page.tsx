@@ -259,6 +259,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       actions.setState({
         public_directory_share_id: undefined,
         public_directory_share_path: undefined,
+        public_directory_share_slug: undefined,
         temporary_public_share_route: false,
       });
       actions.clearFilesystemClient();
@@ -267,6 +268,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     actions.setState({
       public_directory_share_id: share.id,
       public_directory_share_path: share.path,
+      public_directory_share_slug: share.slug,
       temporary_public_share_route: true,
     });
     actions.clearFilesystemClient();
@@ -301,6 +303,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       actions.setState({
         public_directory_share_id: undefined,
         public_directory_share_path: undefined,
+        public_directory_share_slug: undefined,
         temporary_public_share_route: false,
       });
       actions.clearFilesystemClient();

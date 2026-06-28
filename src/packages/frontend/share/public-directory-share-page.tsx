@@ -229,6 +229,7 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
     actions.setState({
       public_directory_share_id: view.share.id,
       public_directory_share_path: view.share.path,
+      public_directory_share_slug: view.share.slug,
       temporary_public_share_route: true,
     });
     const sharePath = view.share.path === "." ? "." : view.share.path;
@@ -262,6 +263,7 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
       actions.setState({
         public_directory_share_id: undefined,
         public_directory_share_path: undefined,
+        public_directory_share_slug: undefined,
         temporary_public_share_route: false,
       });
     };

@@ -12,6 +12,7 @@ import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { remove } from "@cocalc/frontend/project-file";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { relative } from "path";
 import {
   defaults,
   filename_extension,
@@ -319,6 +320,18 @@ export async function open_file(
   }
   opts.path = normalize(opts.path);
   const displayPath = opts.path;
+  const publicDirectoryShareOpen = isPublicDirectoryShareOpen(actions);
+  if (publicDirectoryShareOpen) {
+    // Share routes are aliases for path-scoped viewer access. Never let a
+    // share file open switch the browser to the normal project URL.
+    opts.foreground_project = false;
+    opts.change_history = false;
+    if (opts.foreground) {
+      updatePublicDirectoryShareUrl(actions, displayPath, projectHome, {
+        replace: !opts.explicit,
+      });
+    }
+  }
   if (opts.foreground) {
     applyWorkspaceSelectionForForegroundOpen(
       actions.project_id,
@@ -425,7 +438,6 @@ export async function open_file(
   }
 
   if (isViewerProjectOpen(actions)) {
-    const publicDirectoryShareOpen = isPublicDirectoryShareOpen(actions);
     const changeHistory = publicDirectoryShareOpen
       ? false
       : opts.change_history;
@@ -660,6 +672,50 @@ function isViewerProjectOpen(actions: ProjectActions): boolean {
 
 function isPublicDirectoryShareOpen(actions: ProjectActions): boolean {
   return !!`${actions.get_store()?.get("public_directory_share_id") ?? ""}`.trim();
+}
+
+function updatePublicDirectoryShareUrl(
+  actions: ProjectActions,
+  displayPath: string,
+  projectHome: string,
+  { replace }: { replace: boolean },
+): void {
+  if (typeof window === "undefined") return;
+  const store = actions.get_store();
+  const slug = `${store?.get("public_directory_share_slug") ?? ""}`.trim();
+  const sharePath = `${store?.get("public_directory_share_path") ?? ""}`
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  if (!slug || !sharePath) return;
+  const shareRoot =
+    sharePath === "."
+      ? projectHome
+      : normalize(toAbsoluteProjectPath(sharePath, projectHome));
+  const relativePath = relative(shareRoot, displayPath).replace(/\\/g, "/");
+  if (
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("/")
+  ) {
+    return;
+  }
+  const encodePath = (value: string) =>
+    value
+      .split("/")
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+  const slugPath = encodePath(slug);
+  const relativeRoute = encodePath(relativePath);
+  const nextPath = relativeRoute
+    ? `/share/${slugPath}/${relativeRoute}`
+    : `/share/${slugPath}`;
+  if (window.location.pathname === nextPath) return;
+  if (replace) {
+    window.history.replaceState(window.history.state, "", nextPath);
+  } else {
+    window.history.pushState(window.history.state, "", nextPath);
+  }
 }
 
 function toAbsoluteOpenPath(path: string, projectHome: string): string {
