@@ -300,7 +300,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       )
     : undefined;
   const openPublicShareFilePath = useCallback(
-    (path: string): boolean => {
+    (path: string, opts?: { foreground?: boolean }): boolean => {
       if (!actions || !publicDirectoryShare || !publicDirectoryShareRootPath) {
         return false;
       }
@@ -326,12 +326,13 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       const nextPath = `/share/${encodePath(
         publicDirectoryShare.slug,
       )}/${encodePath(relativePath)}`;
-      if (window.location.pathname !== nextPath) {
+      const foreground = opts?.foreground ?? true;
+      if (foreground && window.location.pathname !== nextPath) {
         window.history.pushState(window.history.state, "", nextPath);
       }
       actions.open_file({
         path: normalizedPath,
-        foreground: true,
+        foreground,
         foreground_project: false,
         change_history: false,
         explicit: true,
@@ -1520,7 +1521,7 @@ function FileListingBody({
   project_id: string;
   shiftIsDown: boolean;
   onNavigateDirectory: (path: string) => void;
-  onOpenFilePath?: (path: string) => boolean;
+  onOpenFilePath?: (path: string, opts?: { foreground?: boolean }) => boolean;
   readOnly: boolean;
   allowReadOnlyCopy: boolean;
   root_path?: string;

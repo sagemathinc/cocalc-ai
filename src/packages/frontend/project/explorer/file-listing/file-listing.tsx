@@ -127,7 +127,7 @@ interface Props {
   root_path?: string;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
-  onOpenFilePath?: (path: string) => boolean;
+  onOpenFilePath?: (path: string, opts?: { foreground?: boolean }) => boolean;
   openUploadFiles?: () => void;
   useSimpleTable?: boolean;
   foregroundProjectOnOpen?: boolean;
@@ -724,7 +724,7 @@ export function FileListing({
               }
               actions.set_file_search("");
             } else {
-              if (onOpenFilePath?.(record.fullPath)) {
+              if (onOpenFilePath?.(record.fullPath, { foreground: true })) {
                 actions.set_file_search("");
                 return;
               }
@@ -853,7 +853,7 @@ export function FileListing({
 
       const foreground = should_open_in_foreground(e as any);
       const nextSelection = applyPathSelection(record.fullPath);
-      if (onOpenFilePath?.(record.fullPath)) {
+      if (onOpenFilePath?.(record.fullPath, { foreground })) {
         return;
       }
       actions.open_file({
@@ -1179,7 +1179,7 @@ export function FileListing({
               }
               onNavigateDirectory={onNavigateDirectory}
               onOpenFile={(path) => {
-                if (onOpenFilePath?.(path)) {
+                if (onOpenFilePath?.(path, { foreground: true })) {
                   return;
                 }
                 const nextSelection = applyPathSelection(path);
