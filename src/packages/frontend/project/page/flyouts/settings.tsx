@@ -20,6 +20,7 @@ import {
 } from "@cocalc/frontend/components";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { lite } from "@cocalc/frontend/lite";
 import {
   PROJECT_PEOPLE_DOCS_ACTION_EVENT,
   PROJECT_SECRETS_DOCS_ACTION_EVENT,
@@ -155,7 +156,7 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
 
   function renderStatus(): React.JSX.Element | undefined {
     // this prevents the start/stop popup dialog to stick around, if we switch somewhere else
-    if (!projectIsVisible) return;
+    if (lite || !projectIsVisible) return;
     return (
       <div
         style={{

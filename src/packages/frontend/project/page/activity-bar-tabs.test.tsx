@@ -213,7 +213,7 @@ jest.mock("./file-tab", () => {
     workspaces: { label: "Workspaces", icon: "cube" },
     agents: { label: "Agents", icon: "comment" },
     files: { label: "Files", icon: "folder-open-o" },
-    rootfs: { label: "Software", icon: "docker" },
+    rootfs: { label: "Software", icon: "docker", noLite: true },
     new: { label: "New", icon: "plus-circle" },
     search: { label: "Search", icon: "search" },
     docs: { label: "Docs", icon: "book" },
@@ -328,18 +328,19 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("menu-overflow:agents")).toBeNull();
   });
 
-  it("puts Workspaces in More and Software on the rail by default", () => {
+  it("puts Workspaces in More and hides Software in lite mode", () => {
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
     expect(screen.queryByTestId("rail-workspaces")).toBeNull();
-    expect(screen.getByTestId("rail-rootfs")).toBeTruthy();
+    expect(screen.queryByTestId("rail-rootfs")).toBeNull();
     expect(screen.getByTestId("menu-overflow:workspaces")).toHaveTextContent(
       "Workspaces",
     );
     expect(screen.queryByTestId("menu-overflow:rootfs")).toBeNull();
   });
 
-  it("uses the current Rootfs theme icon on the rail", () => {
+  it("uses the current Rootfs theme icon on the rail outside lite mode", () => {
+    mockLite = false;
     mockRootfsImages = [
       {
         id: "rootfs-image-1",
@@ -514,6 +515,7 @@ describe("HiddenActivityBarLauncher", () => {
   });
 
   it("uses the current Rootfs theme icon in hidden-launcher menus", () => {
+    mockLite = false;
     mockRootfsImages = [
       {
         id: "rootfs-image-1",
@@ -528,6 +530,14 @@ describe("HiddenActivityBarLauncher", () => {
     expect(screen.getByTestId("menu-launcher:rootfs")).toHaveTextContent(
       "python",
     );
+  });
+
+  it("hides Software from hidden-launcher menus in lite mode", () => {
+    mockLite = true;
+
+    render(<HiddenActivityBarLauncher />);
+
+    expect(screen.queryByTestId("menu-launcher:rootfs")).toBeNull();
   });
 
   it("lets viewers remove themselves from the hidden rail launcher menu", () => {

@@ -710,6 +710,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
 
   function renderFlyout() {
     if (fullscreen && fullscreen !== "project") return;
+    if (flyout && lite && FIXED_PROJECT_TABS[flyout]?.noLite) return;
     if (!flyout && retainedFlyouts.length === 0) return;
 
     const flyoutIsVisible = !!flyout;
@@ -759,6 +760,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
 
   function renderFlyoutHeader() {
     if (!flyout) return;
+    if (lite && FIXED_PROJECT_TABS[flyout]?.noLite) return;
     return (
       <FlyoutHeader
         flyoutWidth={flyoutWidth}
@@ -1491,10 +1493,16 @@ function RetainedFlyoutBodies({
   flyoutWidth: number;
 }) {
   const visibleFlyouts = useMemo(() => {
-    if (!activeFlyout || flyouts.includes(activeFlyout)) {
-      return flyouts;
+    const availableFlyouts = lite
+      ? flyouts.filter((flyout) => !FIXED_PROJECT_TABS[flyout]?.noLite)
+      : flyouts;
+    if (!activeFlyout || availableFlyouts.includes(activeFlyout)) {
+      return availableFlyouts;
     }
-    return [...flyouts, activeFlyout];
+    if (lite && FIXED_PROJECT_TABS[activeFlyout]?.noLite) {
+      return availableFlyouts;
+    }
+    return [...availableFlyouts, activeFlyout];
   }, [activeFlyout, flyouts]);
 
   return (

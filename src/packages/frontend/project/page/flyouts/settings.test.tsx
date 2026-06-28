@@ -4,6 +4,8 @@ import immutable from "immutable";
 import { render, screen } from "@testing-library/react";
 import { SettingsFlyout } from "./settings";
 
+var mockLite = false;
+
 jest.mock("antd", () => {
   const Alert = ({ message, description }: any) => (
     <div>
@@ -212,7 +214,9 @@ jest.mock("@cocalc/frontend/project/settings/stop-project", () => ({
   StopProject: () => <button type="button">Stop</button>,
 }));
 jest.mock("@cocalc/frontend/lite", () => ({
-  lite: false,
+  get lite() {
+    return mockLite;
+  },
 }));
 jest.mock("@cocalc/frontend/project/page/flyouts/state", () => ({
   getFlyoutSettings: () => [],
@@ -233,6 +237,10 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 }));
 
 describe("SettingsFlyout", () => {
+  beforeEach(() => {
+    mockLite = false;
+  });
+
   it("includes recovery actions in flyout settings", () => {
     render(
       <SettingsFlyout
@@ -298,5 +306,26 @@ describe("SettingsFlyout", () => {
 
     expect(screen.getByText("People")).toBeTruthy();
     expect(screen.getByText("ProjectCollaboratorsContent")).toBeTruthy();
+  });
+
+  it("hides container runtime controls and unavailable sections in lite mode", () => {
+    mockLite = true;
+
+    render(
+      <SettingsFlyout
+        project_id="project-1"
+        wrap={(content) => <>{content}</>}
+      />,
+    );
+
+    expect(screen.queryByText("Status:")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move" })).toBeNull();
+    expect(screen.queryByText("Runtime")).toBeNull();
+    expect(screen.queryByText("ProjectControl")).toBeNull();
+    expect(screen.queryByText("UpgradeUsage")).toBeNull();
+    expect(screen.queryByText("Recovery")).toBeNull();
+    expect(screen.queryByText("Location")).toBeNull();
   });
 });

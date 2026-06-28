@@ -6,6 +6,7 @@
 import { useIntl } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { isIntlMessage } from "@cocalc/frontend/i18n";
+import { lite } from "@cocalc/frontend/lite";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
 
@@ -30,6 +31,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
   const { actions, project_id } = useProjectContext();
   const flyoutNavigation = useFlyoutNavigation(project_id);
   const compactHeader = flyout === "log";
+  if (lite && FIXED_PROJECT_TABS[flyout]?.noLite) return null;
 
   function renderDefaultTitle() {
     const title =

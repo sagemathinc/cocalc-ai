@@ -29,6 +29,7 @@ import { Loading } from "@cocalc/frontend/components";
 import KaTeX from "@cocalc/frontend/components/math/katex";
 import getMermaid from "@cocalc/frontend/editors/slate/elements/code-block/get-mermaid";
 import { IS_MOBILE, IS_TOUCH } from "@cocalc/frontend/feature";
+import { lite } from "@cocalc/frontend/lite";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import {
   drag_start_iframe_disable,
@@ -179,6 +180,10 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   // show the kiosk mode banner instead of anything besides a file editor
   if (fullscreen === "kiosk" && !tab_name.startsWith("editor-")) {
     return <KioskModeBanner />;
+  }
+
+  if (lite && tab_name === "rootfs") {
+    return null;
   }
 
   if (

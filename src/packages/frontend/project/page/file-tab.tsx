@@ -167,6 +167,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     icon: "docker",
     flyout: RootfsFlyout,
     noAnonymous: false,
+    noLite: true,
   },
   search: {
     label: defineMessage({
