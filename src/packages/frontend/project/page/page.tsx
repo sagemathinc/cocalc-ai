@@ -136,6 +136,7 @@ interface Props {
   is_active: boolean;
   publicDirectoryShare?: ResolvedPublicDirectoryShare;
   publicDirectorySharePath?: string;
+  forceForeground?: boolean;
 }
 
 export const ProjectPage: React.FC<Props> = (props: Props) => {
@@ -310,9 +311,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const workspaceChrome = workspaceStrongThemeChrome(
     projectCtx.workspaces.current,
   );
-  const projectPageIsForeground = props.publicDirectoryShare
-    ? true
-    : active_top_tab == project_id;
+  const projectPageIsForeground =
+    props.forceForeground || props.publicDirectoryShare
+      ? true
+      : active_top_tab == project_id;
 
   const narrowerPX = useMemo(() => {
     return hideActionButtons ? HIDDEN_RAIL_TOP_LEFT_WIDTH_PX : 0;

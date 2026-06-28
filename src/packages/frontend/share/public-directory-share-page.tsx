@@ -14,9 +14,15 @@ import type {
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { path_split, path_to_file } from "@cocalc/util/misc";
+import { PublicDirectoryShareBanner } from "./public-directory-share-banner";
 import { shareRouteCandidates } from "./public-directory-share-route";
 
 function authHref(view: "sign-in" | "sign-up"): string {
@@ -157,6 +163,51 @@ function LoadingShare() {
   );
 }
 
+function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
+  const actions = useActions({ project_id: view.projectId });
+
+  useEffect(() => {
+    if (!actions) return;
+    const sharePath = view.share.path === "." ? "." : view.share.path;
+    const shareRelativePath = view.relativePath
+      .trim()
+      .replace(/^\/+|\/+$/g, "");
+    const targetPath = shareRelativePath
+      ? path_to_file(sharePath, shareRelativePath)
+      : "";
+    const currentPath = targetPath
+      ? path_split(targetPath).head || sharePath
+      : sharePath;
+
+    actions.set_current_path(currentPath);
+    actions.set_active_tab("files", {
+      update_file_listing: false,
+      change_history: false,
+    });
+    actions.set_all_files_unchecked?.();
+    if (targetPath) {
+      actions.open_file({
+        path: targetPath,
+        foreground: true,
+        foreground_project: false,
+        change_history: false,
+        explicit: false,
+      });
+    }
+  }, [actions, view.projectId, view.relativePath, view.share.path]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+      <PublicDirectoryShareBanner share={view.share} />
+      <ProjectPage
+        project_id={view.projectId}
+        is_active={true}
+        forceForeground={true}
+      />
+    </div>
+  );
+}
+
 export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   const reduxLoggedIn = !!useTypedRedux("account", "is_logged_in");
   const accountId = useTypedRedux("account", "account_id") as
@@ -217,14 +268,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   }, [accountId, signedIn, normalizedSlug]);
 
   if (view) {
-    return (
-      <ProjectPage
-        project_id={view.projectId}
-        is_active={true}
-        publicDirectoryShare={view.share}
-        publicDirectorySharePath={view.relativePath}
-      />
-    );
+    return <TemporaryViewerProjectPage view={view} />;
   }
 
   if (!normalizedSlug) {
