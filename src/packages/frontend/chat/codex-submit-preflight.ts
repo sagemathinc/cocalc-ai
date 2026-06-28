@@ -23,7 +23,9 @@ export function isCodexPaymentSourceNeedsUserConfiguration(
   paymentSource?: CodexPaymentSourceInfo,
 ): boolean {
   return (
-    paymentSource?.source === "none" || paymentSource?.source === "site-api-key"
+    paymentSource?.source === "none" ||
+    (paymentSource?.source === "site-api-key" &&
+      paymentSource.siteAiUsageLimitPositive === false)
   );
 }
 
