@@ -242,6 +242,10 @@ These are release-blocking:
   temporary share policy only if that union is intentional and audited.
 - The project host remains the final file-path enforcement point. The hub may
   authorize and route, but it must not proxy steady-state file reads.
+- Frontend checks, hidden buttons, route guards, and UI root restrictions are
+  usability aids only. They are not security boundaries. Every list, read,
+  download, preview, copy, syncdoc, and editor data-plane request must be
+  authorized by backend/project-host policy at the time of the request.
 - Public shares require sign-in in the first release.
 - Disabling a share, whether by owner or admin, must prevent new temporary
   grants immediately.
@@ -251,6 +255,11 @@ These are release-blocking:
   project-access generations or auth caches.
 - Disabling a share cannot recall content that a viewer already downloaded or
   copied. Owner/admin UI must state this clearly.
+- Public-share viewing must be treated as an XSS-sensitive path. Reusing normal
+  CoCalc editors/viewers is preferred because they already contain file-type
+  specific sanitization and iframe isolation decisions. Any remaining fallback
+  renderer must be audited for HTML, markdown, notebook output, SVG, embedded
+  media, and link handling before release.
 
 ### Authorization Cache Policy
 
@@ -383,6 +392,13 @@ implementation detail after access is granted.
 Before relying on project viewer mode as the public-share UI, improve viewer UX
 so it works well for both explicit viewers and temporary share viewers:
 
+- use the real CoCalc frame editors/viewers in read-only mode for opened files,
+  including text/code, markdown, notebooks, images, PDFs, boards, and other
+  supported file types. Do not build a parallel public-share renderer stack for
+  these types;
+- treat the current custom read-only preview path as temporary scaffolding. It
+  can remain only long enough to keep testing moving, but the target
+  implementation deletes it or limits it to a narrow unsupported-file fallback;
 - show a top banner: "You are viewing a published folder" or "You have
   read-only access to this project";
 - when access came from a share, show share title, description, license, and a
@@ -394,6 +410,8 @@ so it works well for both explicit viewers and temporary share viewers:
   page reload;
 - ensure notebook, markdown, text/code, images, PDFs, and arbitrary files open
   read-only without runtime access;
+- ensure real read-only editors cannot save, execute, spawn kernels/terminals,
+  mutate project state, or fetch paths outside the effective viewer read policy;
 - ensure checkboxes/select-all work for path-restricted viewer listings;
 - keep "Copy selected" and "Copy all" actions available;
 - make refresh a neutral/manual refresh button unless there is a real watcher
@@ -648,6 +666,11 @@ After the pivot works:
 - remove custom frontend public-share `ProjectPage` projection hacks;
 - remove duplicate share-only file listing/opening UI that is not needed for
   normal viewer mode;
+- delete `ViewerFilePreview`, `PublicViewerFileContents` usage from project
+  viewer mode, and any custom read-only preview/rendering code introduced only
+  to make public shares display file contents. Replace with normal frame-editor
+  read-only openings, keeping only a deliberately small unsupported-file
+  fallback if the normal editor registry has no safe viewer;
 - keep `fs-share` only if it remains useful for CLI/direct share APIs, or
   replace it with temporary viewer grant plus `fs-viewer`;
 - delete any code that assumes public-share access means synthetic project
