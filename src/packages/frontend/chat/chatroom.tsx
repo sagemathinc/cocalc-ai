@@ -2530,6 +2530,7 @@ export function ChatPanel({
             submitMentionsRef={submitMentionsRef}
             hasInput={hasInput}
             isSelectedThreadAI={isSelectedThreadAI}
+            isNewThreadCodex={newThreadSetup.agentMode === "codex"}
             hasActiveAcpTurn={hasRunningAcpTurn}
             threads={threads}
             selectedThread={selectedThread}
@@ -2537,6 +2538,10 @@ export function ChatPanel({
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}
             codexPaymentSourceLoading={codexPaymentSourceLoading}
+            onOpenCodexPaymentConfig={() => {
+              refreshCodexPaymentSource?.();
+              setCodexPaymentConfigOpen(true);
+            }}
           />
           <CodexPaymentCredentialsModal
             open={codexPaymentConfigOpen}
