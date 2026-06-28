@@ -2,6 +2,8 @@ const mockVerifyProjectHostAuthToken = jest.fn();
 const mockGetProject = jest.fn();
 const mockGetRow = jest.fn(() => ({ users: {} }));
 const mockGetAccountRevokedBeforeMs = jest.fn(() => undefined);
+const mockCallHub = jest.fn();
+const mockGetMasterConatClient = jest.fn();
 
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
   verifyProjectHostAuthToken: (...args: any[]) =>
@@ -10,6 +12,11 @@ jest.mock("@cocalc/conat/auth/project-host-token", () => ({
 
 jest.mock("@cocalc/lite/hub/sqlite/database", () => ({
   getRow: (...args: any[]) => mockGetRow(...args),
+}));
+
+jest.mock("@cocalc/conat/hub/call-hub", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockCallHub(...args),
 }));
 
 jest.mock("./auth-public-key", () => ({
@@ -23,6 +30,10 @@ jest.mock("./sqlite/projects", () => ({
 jest.mock("./sqlite/account-revocations", () => ({
   getAccountRevokedBeforeMs: (...args: any[]) =>
     mockGetAccountRevokedBeforeMs(...args),
+}));
+
+jest.mock("./master-status", () => ({
+  getMasterConatClient: (...args: any[]) => mockGetMasterConatClient(...args),
 }));
 
 const getProjectHostManagedEgressBlockedMessageMock = jest.fn();
@@ -47,6 +58,9 @@ describe("project-host Conat auth", () => {
     mockGetRow.mockReturnValue({ users: {} });
     mockGetAccountRevokedBeforeMs.mockReset();
     mockGetAccountRevokedBeforeMs.mockReturnValue(undefined);
+    mockCallHub.mockReset();
+    mockGetMasterConatClient.mockReset();
+    mockGetMasterConatClient.mockReturnValue(undefined);
     getProjectHostManagedEgressBlockedMessageMock.mockReset();
     getProjectHostManagedEgressBlockedMessageMock.mockReturnValue(undefined);
   });
@@ -268,6 +282,39 @@ describe("project-host Conat auth", () => {
         user: { account_id },
         type: "pub",
         subject: `fs-viewer.project-${project_id}.account-00000000-1000-4000-8000-000000000002`,
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("allows temporary public-share viewers on their viewer fs subject", async () => {
+    mockGetRow.mockReturnValue({ users: {} });
+    mockGetMasterConatClient.mockReturnValue({ id: "master" });
+    mockCallHub.mockResolvedValue({
+      project_id,
+      account_id,
+      read_policy: { rules: [{ action: "include", path: "share/**" }] },
+    });
+    const { isAllowed } = createProjectHostConatAuth({ host_id });
+
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `fs-viewer.project-${project_id}.account-${account_id}`,
+      }),
+    ).resolves.toBe(true);
+    expect(mockCallHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id,
+        name: "publicDirectoryShares.getTemporaryViewerReadPolicy",
+        args: [{ account_id, project_id }],
+      }),
+    );
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `fs.project-${project_id}`,
       }),
     ).resolves.toBe(false);
   });

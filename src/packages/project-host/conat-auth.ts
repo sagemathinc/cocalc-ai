@@ -3,6 +3,8 @@ import {
   type AllowFunction,
   type UserFunction,
 } from "@cocalc/conat/core/server";
+import callHub from "@cocalc/conat/hub/call-hub";
+import type { GetTemporaryViewerReadPolicyResponse } from "@cocalc/conat/hub/api/public-directory-shares";
 // Project-host auth adapter. Central hub has a sibling adapter at
 // src/packages/server/conat/socketio/auth.ts.
 // Both adapters share subject-level policy via
@@ -158,6 +160,39 @@ function isProjectViewerLocal({
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
   return isProjectViewerRole(group);
+}
+
+async function hasTemporaryViewerGrant({
+  host_id,
+  account_id,
+  project_id,
+}: {
+  host_id: string;
+  account_id: string;
+  project_id: string;
+}): Promise<boolean> {
+  const { getMasterConatClient } = await import("./master-status");
+  const client = getMasterConatClient();
+  if (!client) {
+    return false;
+  }
+  try {
+    const response = (await callHub({
+      client,
+      host_id,
+      name: "publicDirectoryShares.getTemporaryViewerReadPolicy",
+      args: [{ account_id, project_id }],
+      timeout: 5_000,
+    })) as GetTemporaryViewerReadPolicyResponse;
+    return (
+      response.account_id === account_id &&
+      response.project_id === project_id &&
+      Array.isArray(response.read_policy?.rules) &&
+      response.read_policy.rules.length > 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 function clearAuthCaches() {
@@ -343,10 +378,15 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         allowed =
           type === "pub" &&
           viewerFileSubject.account_id === userId &&
-          isProjectViewerLocal({
+          (isProjectViewerLocal({
             account_id: userId,
             project_id: viewerFileSubject.project_id,
-          });
+          }) ||
+            (await hasTemporaryViewerGrant({
+              host_id,
+              account_id: userId,
+              project_id: viewerFileSubject.project_id,
+            })));
         if (cacheable) {
           authDecisionCache.set(cacheKey, allowed);
         }
