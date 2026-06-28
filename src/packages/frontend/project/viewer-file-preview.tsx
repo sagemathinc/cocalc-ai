@@ -5,6 +5,7 @@
 
 import { Alert, Button } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { Loading } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
@@ -101,58 +102,61 @@ export default function ViewerFilePreview({ project_id, path }: Props) {
     [project_id, path],
   );
 
+  const containerStyle: CSSProperties = {
+    height: "100%",
+    minHeight: 0,
+    overflow: "hidden",
+    background: COLORS.TOP_BAR.ACTIVE,
+    display: "flex",
+    flexDirection: "column",
+  };
+  const bodyStyle: CSSProperties = {
+    flex: "1 1 auto",
+    minHeight: 0,
+    overflow: "auto",
+  };
+
   if (state.loading) {
     return (
-      <div
-        style={{
-          height: "100%",
-          overflow: "auto",
-          background: COLORS.TOP_BAR.ACTIVE,
-        }}
-      >
+      <div style={containerStyle}>
         <ViewerReloadButton loading onReload={() => setReload((n) => n + 1)} />
-        <Loading theme="medium" />
+        <div style={bodyStyle}>
+          <Loading theme="medium" />
+        </div>
       </div>
     );
   }
   if (state.error) {
     return (
-      <div
-        style={{
-          height: "100%",
-          overflow: "auto",
-          background: COLORS.TOP_BAR.ACTIVE,
-        }}
-      >
+      <div style={containerStyle}>
         <ViewerReloadButton onReload={() => setReload((n) => n + 1)} />
-        <Alert
-          showIcon
-          type="error"
-          style={{ margin: "24px" }}
-          message="Unable to open read-only preview"
-          description={state.error}
-        />
+        <div style={bodyStyle}>
+          <Alert
+            showIcon
+            type="error"
+            style={{ margin: "24px" }}
+            message="Unable to open read-only preview"
+            description={state.error}
+          />
+        </div>
       </div>
     );
   }
 
   return (
     <FileContext.Provider value={fileContext}>
-      <div
-        style={{
-          height: "100%",
-          overflow: "auto",
-          background: COLORS.TOP_BAR.ACTIVE,
-        }}
-      >
+      <div style={containerStyle}>
         <ViewerReloadButton onReload={() => setReload((n) => n + 1)} />
-        <PublicViewerFileContents
-          path={path}
-          rawUrl={state.rawUrl ?? "#"}
-          content={state.content}
-          fileContext={fileContext}
-          style={{ height: "100%" }}
-        />
+        <div style={bodyStyle}>
+          <PublicViewerFileContents
+            path={path}
+            rawUrl={state.rawUrl ?? "#"}
+            content={state.content}
+            fileContext={fileContext}
+            lineNumbers={false}
+            style={{ minHeight: "100%" }}
+          />
+        </div>
       </div>
     </FileContext.Provider>
   );
@@ -168,8 +172,7 @@ function ViewerReloadButton({
   return (
     <div
       style={{
-        position: "sticky",
-        top: 0,
+        flex: "0 0 auto",
         zIndex: 1,
         padding: "8px 12px",
         borderBottom: `1px solid ${COLORS.GRAY_L}`,
