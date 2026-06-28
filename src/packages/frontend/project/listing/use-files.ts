@@ -71,13 +71,15 @@ function logPublicShareFiles(
   }
   const payload = {
     source: "frontend:project:listing:use-files",
+    event: message,
     ...debugContext,
     ...details,
   };
+  const line = `[public-directory-share] ${message} ${JSON.stringify(payload)}`;
   if (level === "warn") {
-    console.warn(`[public-directory-share] ${message}`, payload);
+    console.warn(line);
   } else {
-    console.info(`[public-directory-share] ${message}`, payload);
+    console.info(line);
   }
 }
 

@@ -71,8 +71,9 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     resolveShareRoute(normalizedSlug)
       .then((result) => {
         if (!canceled) {
-          console.info("[public-directory-share] resolved share route", {
+          const payload = {
             source: "frontend:share:public-directory-share-page",
+            event: "resolved share route",
             requested_path: normalizedSlug,
             slug: result.share.slug,
             share_id: result.share.id,
@@ -81,7 +82,12 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
             relative_path: result.relativePath,
             host_id: result.share.host_id,
             has_host_connection: result.share.host_connection != null,
-          });
+          };
+          console.info(
+            `[public-directory-share] resolved share route ${JSON.stringify(
+              payload,
+            )}`,
+          );
           setShareRoute(result);
         }
       })
