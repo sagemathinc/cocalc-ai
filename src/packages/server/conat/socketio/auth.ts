@@ -23,7 +23,10 @@ import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
 import { verifyProjectHostToken } from "@cocalc/server/project-host/bootstrap-token";
-import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import {
+  hasProjectCollaboratorAccessAllowRemote,
+  resolveProjectAccessAllowRemote,
+} from "@cocalc/server/conat/project-remote-access";
 import {
   getHostAccessForAccount,
   hostAccessRoleCan,
@@ -52,6 +55,7 @@ import {
   getCoCalcUserType,
   checkCommonPermissions,
   extractShareFileSubject,
+  extractViewerFileSubject,
   extractHostSubject,
   extractProjectSubject,
   isAccountAllowed as isAccountSubjectAllowed,
@@ -407,6 +411,18 @@ const isAllowedCache = new LRU<string, boolean>({
   ttl: 1000 * 60, // 1 minute
 });
 
+function shouldCacheIsAllowedDecision(subject: string): boolean {
+  // Project/host/share authorization is mutable and security-sensitive.
+  // A demoted collaborator must not keep unrestricted project access through a
+  // stale socket auth cache entry.
+  return (
+    !extractProjectSubject(subject) &&
+    !extractHostSubject(subject) &&
+    !extractShareFileSubject(subject) &&
+    !extractViewerFileSubject(subject)
+  );
+}
+
 export async function isAllowed({
   user,
   subject,
@@ -452,6 +468,19 @@ export async function isAllowed({
       agentUser.auth_scopes?.includes("project_session") &&
       agentUser.auth_project_id
     ) {
+      const viewerFileSubject = extractViewerFileSubject(subject);
+      if (
+        viewerFileSubject &&
+        type === "pub" &&
+        viewerFileSubject.account_id === userId &&
+        viewerFileSubject.project_id === agentUser.auth_project_id
+      ) {
+        const access = await resolveProjectAccessAllowRemote({
+          account_id: userId,
+          project_id: viewerFileSubject.project_id,
+        });
+        return access.role === "viewer" && access.read_policy != null;
+      }
       const project_id = extractProjectSubject(subject);
       if (
         project_id &&
@@ -487,7 +516,8 @@ export async function isAllowed({
   }
   const userId = getCoCalcUserId(user);
   const key = `${userType}-${userId}-${subject}-${type}`;
-  if (isAllowedCache.has(key)) {
+  const cacheable = shouldCacheIsAllowedDecision(subject);
+  if (cacheable && isAllowedCache.has(key)) {
     return isAllowedCache.get(key)!;
   }
 
@@ -501,6 +531,8 @@ export async function isAllowed({
   let allowed;
   if (common != null) {
     allowed = common;
+  } else if (type === "sub" && subject.startsWith("_INBOX.")) {
+    allowed = false;
   } else if (userType == "project") {
     allowed = isProjectSubjectAllowed({ project_id: userId, subject });
   } else if (userType == "account") {
@@ -513,7 +545,9 @@ export async function isAllowed({
   } else {
     allowed = false;
   }
-  isAllowedCache.set(key, allowed);
+  if (cacheable) {
+    isAllowedCache.set(key, allowed);
+  }
   return allowed;
 }
 
@@ -747,6 +781,18 @@ async function isAccountAllowed({
   const shareFileSubject = extractShareFileSubject(subject);
   if (shareFileSubject) {
     return type === "pub" && shareFileSubject.account_id === account_id;
+  }
+
+  const viewerFileSubject = extractViewerFileSubject(subject);
+  if (viewerFileSubject) {
+    if (type !== "pub" || viewerFileSubject.account_id !== account_id) {
+      return false;
+    }
+    const access = await resolveProjectAccessAllowRemote({
+      account_id,
+      project_id: viewerFileSubject.project_id,
+    });
+    return access.role === "viewer" && access.read_policy != null;
   }
 
   // account accessing a project

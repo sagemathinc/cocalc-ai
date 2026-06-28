@@ -2829,6 +2829,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       project_id: this.project_id,
       caller: "ProjectActions.fs",
       share_id: share_id || undefined,
+      viewer: !share_id && this.isViewerProjectUser() ? true : undefined,
     });
     return await this.filesystemPromise;
   };

@@ -252,6 +252,13 @@ describe("project-host Conat auth", () => {
     await expect(
       isAllowed({
         user: { account_id },
+        type: "sub",
+        subject: `fs-viewer.project-${project_id}.account-${account_id}`,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      isAllowed({
+        user: { account_id },
         type: "pub",
         subject: `fs.project-${project_id}`,
       }),
@@ -263,6 +270,48 @@ describe("project-host Conat auth", () => {
         subject: `fs-viewer.project-${project_id}.account-00000000-1000-4000-8000-000000000002`,
       }),
     ).resolves.toBe(false);
+  });
+
+  it("does not reuse stale collaborator authorization after an account becomes a viewer", async () => {
+    mockGetRow
+      .mockReturnValueOnce({
+        users: {
+          [account_id]: "collaborator",
+        },
+      })
+      .mockReturnValue({
+        users: {
+          [account_id]: {
+            group: "viewer",
+            read_policy: {
+              rules: [{ action: "include", path: "public/**" }],
+            },
+          },
+        },
+      });
+    const { isAllowed } = createProjectHostConatAuth({ host_id });
+
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `fs-viewer.project-${project_id}.account-${account_id}`,
+      }),
+    ).resolves.toBe(true);
   });
 
   it("denies viewer access to normal project-host data-plane subjects", async () => {

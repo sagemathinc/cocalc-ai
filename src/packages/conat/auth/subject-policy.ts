@@ -153,6 +153,9 @@ export function checkCommonPermissions({
   if (type === "sub" && subject.startsWith(inboxPrefix(user))) {
     return true;
   }
+  if (type === "sub" && subject.startsWith("_INBOX.")) {
+    return false;
+  }
 
   // Public info broadcasts are readable by signed-in users.
   if (type === "sub" && subject.startsWith("public.")) {

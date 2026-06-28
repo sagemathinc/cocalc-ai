@@ -41,10 +41,16 @@ const authDecisionCache = new TTL<string, boolean>({
   ttl: 60_000,
 });
 
-const collaboratorCache = new TTL<string, boolean>({
-  max: 50_000,
-  ttl: 30_000,
-});
+function shouldCacheAuthDecision(subject: string): boolean {
+  // Project access can change from collaborator to path-restricted viewer. Do
+  // not let a stale positive cache entry keep unrestricted project-host data
+  // subjects open after that role change.
+  return (
+    !extractProjectSubject(subject) &&
+    !extractViewerFileSubject(subject) &&
+    !extractShareFileSubject(subject)
+  );
+}
 
 function parseCookies(header: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -135,18 +141,10 @@ function isProjectCollaboratorLocal({
     // project identity user (legacy case) can always access itself.
     return true;
   }
-  const key = `${account_id}:${project_id}`;
-  if (collaboratorCache.has(key)) {
-    return collaboratorCache.get(key)!;
-  }
   const row = getRow("projects", JSON.stringify({ project_id }));
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
-  const allowed = isProjectCollaboratorGroup(group);
-  if (allowed) {
-    collaboratorCache.set(key, allowed);
-  }
-  return allowed;
+  return isProjectCollaboratorGroup(group);
 }
 
 function isProjectViewerLocal({
@@ -156,23 +154,14 @@ function isProjectViewerLocal({
   account_id: string;
   project_id: string;
 }): boolean {
-  const key = `viewer:${account_id}:${project_id}`;
-  if (collaboratorCache.has(key)) {
-    return collaboratorCache.get(key)!;
-  }
   const row = getRow("projects", JSON.stringify({ project_id }));
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
-  const allowed = isProjectViewerRole(group);
-  if (allowed) {
-    collaboratorCache.set(key, allowed);
-  }
-  return allowed;
+  return isProjectViewerRole(group);
 }
 
 function clearAuthCaches() {
   authDecisionCache.clear();
-  collaboratorCache.clear();
 }
 
 function throwManagedEgressBlocked(account_id: string): never {
@@ -327,7 +316,8 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       return false;
     }
     const cacheKey = `${userType}:${userId}:${type}:${subject}`;
-    if (authDecisionCache.has(cacheKey)) {
+    const cacheable = shouldCacheAuthDecision(subject);
+    if (cacheable && authDecisionCache.has(cacheKey)) {
       return authDecisionCache.get(cacheKey)!;
     }
 
@@ -341,6 +331,8 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     let allowed = false;
     if (common != null) {
       allowed = common;
+    } else if (type === "sub" && subject.startsWith("_INBOX.")) {
+      allowed = false;
     } else if (userType === "project") {
       allowed = isProjectSubjectAllowed({ project_id: userId, subject });
     } else if (isAccountSubjectAllowed({ account_id: userId, subject })) {
@@ -349,18 +341,23 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       const viewerFileSubject = extractViewerFileSubject(subject);
       if (viewerFileSubject) {
         allowed =
+          type === "pub" &&
           viewerFileSubject.account_id === userId &&
           isProjectViewerLocal({
             account_id: userId,
             project_id: viewerFileSubject.project_id,
           });
-        authDecisionCache.set(cacheKey, allowed);
+        if (cacheable) {
+          authDecisionCache.set(cacheKey, allowed);
+        }
         return allowed;
       }
       const shareFileSubject = extractShareFileSubject(subject);
       if (shareFileSubject) {
         allowed = type === "pub" && shareFileSubject.account_id === userId;
-        authDecisionCache.set(cacheKey, allowed);
+        if (cacheable) {
+          authDecisionCache.set(cacheKey, allowed);
+        }
         return allowed;
       }
       const project_id = extractProjectSubject(subject);
@@ -372,7 +369,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       }
     }
 
-    if (allowed) {
+    if (allowed && cacheable) {
       authDecisionCache.set(cacheKey, allowed);
     }
     return allowed;

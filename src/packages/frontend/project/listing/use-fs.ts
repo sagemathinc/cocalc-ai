@@ -70,10 +70,13 @@ export default function useFs({
   viewer?: boolean;
   enabled?: boolean;
 }): FilesystemClient | null {
-  const { publicDirectoryShare } = useProjectContext();
+  const { projectAccess, publicDirectoryShare } = useProjectContext();
+  const readOnlyViewer = projectAccess.role === "viewer";
+  const effectiveViewer =
+    viewer ?? (publicDirectoryShare ? undefined : readOnlyViewer);
   return useFsWithRefresh({
     project_id,
-    viewer,
+    viewer: effectiveViewer === true ? true : undefined,
     share_id: publicDirectoryShare?.id,
     enabled,
   }).fs;

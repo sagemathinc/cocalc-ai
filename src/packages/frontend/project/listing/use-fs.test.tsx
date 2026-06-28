@@ -74,6 +74,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 
 const mockProjectContext = {
   publicDirectoryShare: undefined as undefined | { id: string },
+  projectAccess: { role: "collaborator" },
 };
 jest.mock("@cocalc/frontend/project/context", () => ({
   useProjectContext: () => mockProjectContext,
@@ -97,6 +98,8 @@ describe("useFs", () => {
   beforeEach(() => {
     mockResetHooks();
     jest.clearAllMocks();
+    mockProjectContext.publicDirectoryShare = undefined;
+    mockProjectContext.projectAccess = { role: "collaborator" };
   });
 
   afterEach(() => {
@@ -186,5 +189,20 @@ describe("useFs", () => {
     expect(projectFs).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
     expect(result).toBeNull();
+  });
+
+  it("uses the viewer filesystem when the project context is read-only viewer", async () => {
+    const fs = { readdir: jest.fn() } as any;
+    mockProjectContext.projectAccess = { role: "viewer" };
+    projectFs.mockResolvedValueOnce(fs);
+
+    useFsForTest("project-viewer");
+    await flushEffects();
+
+    expect(projectFs).toHaveBeenCalledWith({
+      project_id: "project-viewer",
+      caller: "useFs.viewer",
+      viewer: true,
+    });
   });
 });
