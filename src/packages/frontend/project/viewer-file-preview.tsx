@@ -3,9 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert } from "antd";
+import { Alert, Button } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { Loading } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import PublicViewerFileContents from "@cocalc/frontend/public-viewer/file-contents";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -17,6 +18,7 @@ import {
   isVideo,
 } from "@cocalc/frontend/file-extensions";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { COLORS } from "@cocalc/util/theme";
 
 interface Props {
   project_id: string;
@@ -32,6 +34,7 @@ interface PreviewState {
 
 export default function ViewerFilePreview({ project_id, path }: Props) {
   const [state, setState] = useState<PreviewState>({ loading: true });
+  const [reload, setReload] = useState(0);
   const { publicDirectoryShare } = useProjectContext();
   const share_id = publicDirectoryShare?.id;
 
@@ -84,7 +87,7 @@ export default function ViewerFilePreview({ project_id, path }: Props) {
         URL.revokeObjectURL(rawUrl);
       }
     };
-  }, [project_id, path, share_id]);
+  }, [project_id, path, reload, share_id]);
 
   const fileContext = useMemo(
     () => ({
@@ -99,23 +102,50 @@ export default function ViewerFilePreview({ project_id, path }: Props) {
   );
 
   if (state.loading) {
-    return <Loading theme="medium" />;
+    return (
+      <div
+        style={{
+          height: "100%",
+          overflow: "auto",
+          background: COLORS.TOP_BAR.ACTIVE,
+        }}
+      >
+        <ViewerReloadButton loading onReload={() => setReload((n) => n + 1)} />
+        <Loading theme="medium" />
+      </div>
+    );
   }
   if (state.error) {
     return (
-      <Alert
-        showIcon
-        type="error"
-        style={{ margin: "24px" }}
-        message="Unable to open read-only preview"
-        description={state.error}
-      />
+      <div
+        style={{
+          height: "100%",
+          overflow: "auto",
+          background: COLORS.TOP_BAR.ACTIVE,
+        }}
+      >
+        <ViewerReloadButton onReload={() => setReload((n) => n + 1)} />
+        <Alert
+          showIcon
+          type="error"
+          style={{ margin: "24px" }}
+          message="Unable to open read-only preview"
+          description={state.error}
+        />
+      </div>
     );
   }
 
   return (
     <FileContext.Provider value={fileContext}>
-      <div style={{ height: "100%", overflow: "auto", background: "white" }}>
+      <div
+        style={{
+          height: "100%",
+          overflow: "auto",
+          background: COLORS.TOP_BAR.ACTIVE,
+        }}
+      >
+        <ViewerReloadButton onReload={() => setReload((n) => n + 1)} />
         <PublicViewerFileContents
           path={path}
           rawUrl={state.rawUrl ?? "#"}
@@ -125,6 +155,31 @@ export default function ViewerFilePreview({ project_id, path }: Props) {
         />
       </div>
     </FileContext.Provider>
+  );
+}
+
+function ViewerReloadButton({
+  loading,
+  onReload,
+}: {
+  loading?: boolean;
+  onReload: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
+        padding: "8px 12px",
+        borderBottom: `1px solid ${COLORS.GRAY_L}`,
+        background: COLORS.TOP_BAR.ACTIVE,
+      }}
+    >
+      <Button size="small" disabled={loading} onClick={onReload}>
+        <Icon name={loading ? "spinner" : "refresh"} spin={loading} /> Reload
+      </Button>
+    </div>
   );
 }
 
