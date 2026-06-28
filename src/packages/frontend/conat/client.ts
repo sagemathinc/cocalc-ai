@@ -185,6 +185,53 @@ function reconnectDebugWarn(...args: any[]): void {
   console.warn(...args);
 }
 
+function compactError(err: unknown): Record<string, any> {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      stack: err.stack?.split("\n").slice(0, 8).join("\n"),
+    };
+  }
+  if (typeof err === "object" && err != null) {
+    const result: Record<string, any> = {};
+    for (const key of ["name", "message", "code", "status", "type"]) {
+      const value = (err as Record<string, any>)[key];
+      if (value != null) {
+        result[key] = value;
+      }
+    }
+    if (Object.keys(result).length) return result;
+  }
+  return { message: `${err}` };
+}
+
+function logProjectHostRoutingDiagnostic(
+  event: string,
+  payload: Record<string, any>,
+  level: "info" | "warn" = "info",
+): void {
+  const host_id =
+    typeof payload.host_id === "string" ? payload.host_id : undefined;
+  if (
+    !isLocalStorageFlagEnabled(RECONNECT_DEBUG_STORAGE_KEY) &&
+    !isPublicDirectoryShareHost(host_id)
+  ) {
+    return;
+  }
+  const safePayload = {
+    source: "frontend:conat:project-host-routing",
+    event,
+    ...payload,
+  };
+  const line = `[project-host-routing] ${JSON.stringify(safePayload)}`;
+  if (level === "warn") {
+    console.warn(line);
+  } else {
+    console.info(line);
+  }
+}
+
 type RoutedHubClientState = {
   host_id: string;
   routing_key: string;
@@ -196,6 +243,7 @@ type RoutedHubClientState = {
   reconnectTimer?: ReturnType<typeof setTimeout>;
   connectInFlight?: Promise<boolean>;
   reconnectAttempts: number;
+  lastConnectError?: unknown;
 };
 
 type ProjectHostTokenState = {
@@ -1855,6 +1903,15 @@ export class ConatClient extends EventEmitter {
         project_id: authProjectId,
       });
       const url = `${address.replace(/\/+$/, "")}${PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH}`;
+      logProjectHostRoutingDiagnostic("browser-session-bootstrap-start", {
+        routing_key,
+        host_id,
+        project_id: authProjectId,
+        address,
+        url,
+        window_location:
+          typeof window === "undefined" ? undefined : window.location.href,
+      });
       reconnectDebugLog(
         `bootstrapping project-host browser session for ${host_id}`,
         {
@@ -1875,6 +1932,19 @@ export class ConatClient extends EventEmitter {
         this.invalidateProjectHostToken(host_id);
         this.invalidateProjectHostBrowserSession(routing_key);
         const message = await response.text().catch(() => "");
+        logProjectHostRoutingDiagnostic(
+          "browser-session-bootstrap-http-error",
+          {
+            routing_key,
+            host_id,
+            project_id: authProjectId,
+            address,
+            url,
+            status: response.status,
+            body: message,
+          },
+          "warn",
+        );
         const err = new Error(
           `project-host browser session bootstrap failed: status=${response.status}${message ? ` body=${message}` : ""}`,
         );
@@ -1883,6 +1953,13 @@ export class ConatClient extends EventEmitter {
       }
       state!.address = address;
       state!.establishedAt = Date.now();
+      logProjectHostRoutingDiagnostic("browser-session-bootstrap-ok", {
+        routing_key,
+        host_id,
+        project_id: authProjectId,
+        address,
+        url,
+      });
       reconnectDebugLog(
         `bootstrapped project-host browser session for ${host_id}`,
         {
@@ -1945,6 +2022,18 @@ export class ConatClient extends EventEmitter {
           project_id: authProjectId,
         });
       } catch (err) {
+        state.lastConnectError = err;
+        logProjectHostRoutingDiagnostic(
+          "browser-session-bootstrap-failed",
+          {
+            routing_key,
+            host_id,
+            project_id: authProjectId,
+            address: state.address,
+            err: compactError(err),
+          },
+          "warn",
+        );
         if (!this.isProjectHostAuthBackoffError(err)) {
           reconnectDebugWarn(
             `failed preparing project-host browser session for host ${host_id}`,
@@ -1971,11 +2060,21 @@ export class ConatClient extends EventEmitter {
           `calling connect() on routed host client ${host_id}`,
           {
             host_id,
+            routing_key,
             reconnectAttempts: state.reconnectAttempts,
             address: state.address,
             host_session_id: state.host_session_id,
           },
         );
+        logProjectHostRoutingDiagnostic("socket-connect-start", {
+          routing_key,
+          host_id,
+          project_id: authProjectId,
+          reconnectAttempts: state.reconnectAttempts,
+          address: state.address,
+          host_session_id: state.host_session_id,
+          connected: !!state.client.conn?.connected,
+        });
         const socket: any = state.client.conn;
         if (typeof socket?.connect === "function") {
           socket.connect();
@@ -1987,6 +2086,18 @@ export class ConatClient extends EventEmitter {
         reconnectDebugWarn(
           `failed reconnecting routed hub client for host ${host_id}`,
           err,
+        );
+        state.lastConnectError = err;
+        logProjectHostRoutingDiagnostic(
+          "socket-connect-threw",
+          {
+            routing_key,
+            host_id,
+            project_id: authProjectId,
+            address: state.address,
+            err: compactError(err),
+          },
+          "warn",
         );
         this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
         return false;
@@ -2347,6 +2458,12 @@ export class ConatClient extends EventEmitter {
       }),
     };
     state.client.on("connected", () => {
+      logProjectHostRoutingDiagnostic("socket-connected", {
+        routing_key,
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+      });
       reconnectDebugLog(`routed host connected ${host_id}`, {
         host_id,
         address: state.address,
@@ -2365,6 +2482,16 @@ export class ConatClient extends EventEmitter {
     });
     state.client.on("info", (info) => {
       const error = `${info?.user?.error ?? ""}`.trim();
+      logProjectHostRoutingDiagnostic("socket-info", {
+        routing_key,
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+        account_id: info?.user?.account_id,
+        project_id: info?.user?.project_id,
+        host_id_from_info: info?.user?.host_id,
+        error: error || undefined,
+      });
       if (!error || !this.isProjectHostAuthError({ message: error })) {
         return;
       }
@@ -2389,6 +2516,18 @@ export class ConatClient extends EventEmitter {
       this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
     });
     state.client.conn.on("connect_error", (err) => {
+      state.lastConnectError = err;
+      logProjectHostRoutingDiagnostic(
+        "socket-connect-error",
+        {
+          routing_key,
+          host_id,
+          address: state.address,
+          host_session_id: state.host_session_id,
+          err: compactError(err),
+        },
+        "warn",
+      );
       console.warn(`routed host connect_error ${host_id}`, {
         host_id,
         address: state.address,
@@ -2428,6 +2567,15 @@ export class ConatClient extends EventEmitter {
         `routed project-host client '${routing_key}' was not created`,
       );
     }
+    logProjectHostRoutingDiagnostic("ensure-connected-start", {
+      routing_key,
+      project_id,
+      host_id: state.host_id,
+      address: state.address,
+      host_session_id: state.host_session_id,
+      connected: !!state.client.conn?.connected,
+      signed_in: !!state.client.info?.user,
+    });
     const connected = await this.connectRoutedHost({
       routing_key,
       state,
@@ -2435,12 +2583,40 @@ export class ConatClient extends EventEmitter {
     });
     if (!connected && !state.client.conn?.connected) {
       throw new Error(
-        `unable to connect routed project-host client '${routing_key}'`,
+        `unable to connect routed project-host client '${routing_key}': ${
+          compactError(state.lastConnectError).message ?? "unknown error"
+        }`,
       );
     }
-    await state.client.waitUntilSignedIn({
-      timeout: PROJECT_HOST_AUTH_TIMEOUT_MS,
-    });
+    try {
+      await state.client.waitUntilSignedIn({
+        timeout: PROJECT_HOST_AUTH_TIMEOUT_MS,
+      });
+      logProjectHostRoutingDiagnostic("ensure-connected-ok", {
+        routing_key,
+        project_id,
+        host_id: state.host_id,
+        address: state.address,
+        connected: !!state.client.conn?.connected,
+        user: state.client.info?.user,
+      });
+    } catch (err) {
+      state.lastConnectError = err;
+      logProjectHostRoutingDiagnostic(
+        "ensure-connected-failed",
+        {
+          routing_key,
+          project_id,
+          host_id: state.host_id,
+          address: state.address,
+          connected: !!state.client.conn?.connected,
+          user: state.client.info?.user,
+          err: compactError(err),
+        },
+        "warn",
+      );
+      throw err;
+    }
   };
 
   private permanentlyDisconnected = false;
