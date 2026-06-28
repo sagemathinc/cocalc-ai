@@ -37,6 +37,7 @@ function createDb({
   packageAccountRows = [],
   adminAssignedRows = [],
   totalAccountRows = [],
+  totalActiveAccountCount = 12,
   usageHistoryRows = [],
 }: {
   existingTables?: string[];
@@ -57,6 +58,7 @@ function createDb({
   }[];
   adminAssignedRows?: { tier_id: string; admin_assigned_count: number }[];
   totalAccountRows?: { tier_id: string; total_account_count: number }[];
+  totalActiveAccountCount?: number;
   usageHistoryRows?: { tier_id: string; usage_history_count: number }[];
 } = {}) {
   const calls: QueryCall[] = [];
@@ -103,6 +105,10 @@ function createDb({
         });
       } else if (sql.includes("usage_history_count")) {
         opts.cb(null, { rows: usageHistoryRows });
+      } else if (sql.includes("total_active_account_count")) {
+        opts.cb(null, {
+          rows: [{ total_active_account_count: totalActiveAccountCount }],
+        });
       } else if (sql.includes("total_account_count")) {
         opts.cb(null, { rows: totalAccountRows });
       } else if (sql.includes("subscription_count")) {
@@ -141,6 +147,7 @@ describe("membershipTiersQuery", () => {
         { tier_id: "student", total_account_count: 10 },
         { tier_id: "instructor", total_account_count: 4 },
       ],
+      totalActiveAccountCount: 99,
     });
 
     const result = await membershipTiersQuery(db, [], { id: "*" });
@@ -158,6 +165,7 @@ describe("membershipTiersQuery", () => {
         admin_assigned_count: 1,
         site_license_count: 0,
         total_account_count: 10,
+        total_active_account_count: 99,
         has_usage_history: true,
       },
       {
@@ -172,6 +180,7 @@ describe("membershipTiersQuery", () => {
         admin_assigned_count: 4,
         site_license_count: 2,
         total_account_count: 4,
+        total_active_account_count: 99,
         has_usage_history: false,
       },
     ]);
@@ -193,6 +202,22 @@ describe("membershipTiersQuery", () => {
       expect(query).toContain("status IN ('active','canceled')");
       expect(query).toContain("current_period_end >= NOW()");
     }
+  });
+
+  it("includes an active account summary with tier rows", async () => {
+    const { db, calls } = createDb({ totalActiveAccountCount: 123 });
+
+    const result = await membershipTiersQuery(db, [], { id: "*" });
+
+    expect(result).toEqual([
+      expect.objectContaining({ total_active_account_count: 123 }),
+      expect.objectContaining({ total_active_account_count: 123 }),
+    ]);
+    const accountSummaryQuery = calls.find((call) =>
+      call.query.includes("total_active_account_count"),
+    )?.query;
+    expect(accountSummaryQuery).toContain("FROM accounts");
+    expect(accountSummaryQuery).toContain("coalesce(deleted,false)=false");
   });
 
   it("blocks deleting a tier used by active site licenses", async () => {
