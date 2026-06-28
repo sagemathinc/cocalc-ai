@@ -153,6 +153,7 @@ interface Props {
   showRefreshListing?: boolean;
   onRefreshListing?: () => void;
   onTerminalCommand?: () => void;
+  readOnlyViewer?: boolean;
 }
 
 export function FilesHeader({
@@ -185,6 +186,7 @@ export function FilesHeader({
   showRefreshListing,
   onRefreshListing,
   onTerminalCommand,
+  readOnlyViewer = false,
 }: Readonly<Props>): React.JSX.Element {
   const {
     isRunning: projectIsRunning,
@@ -452,7 +454,7 @@ export function FilesHeader({
         applyHistorySelection();
         return;
       }
-      if (isTerminalMode(file_search)) {
+      if (!readOnlyViewer && isTerminalMode(file_search)) {
         const command = file_search.slice(1);
         if (command.trim().length > 0) {
           addHistoryEntry(file_search);
@@ -460,7 +462,7 @@ export function FilesHeader({
         runTerminalCommand(command);
         return;
       }
-      if (isAgentMode(file_search)) {
+      if (!readOnlyViewer && isAgentMode(file_search)) {
         if (extractAgentPrompt(file_search).length > 0) {
           addHistoryEntry(file_search);
         }
@@ -608,7 +610,8 @@ export function FilesHeader({
   }
 
   function activeFilterWarning() {
-    if (file_search === "" || isTerminalMode(file_search)) return;
+    if (file_search === "" || (!readOnlyViewer && isTerminalMode(file_search)))
+      return;
     if (!isEmpty) {
       return (
         <FlyoutFilterWarning filter={file_search} setFilter={setSearchState} />
@@ -647,12 +650,12 @@ export function FilesHeader({
     if (
       file_search === "" ||
       !isEmpty ||
-      isTerminalMode(file_search) ||
-      isAgentMode(file_search)
+      (!readOnlyViewer &&
+        (isTerminalMode(file_search) || isAgentMode(file_search)))
     )
       return;
 
-    if (isReadonlyVirtualPath) {
+    if (isReadonlyVirtualPath || readOnlyViewer) {
       const style: CSS = {
         padding: FLYOUT_PADDING,
         margin: 0,
@@ -1008,7 +1011,7 @@ export function FilesHeader({
           borderBottom: FIX_BORDER,
         }}
       >
-        {isTerminalMode(file_search) && (
+        {!readOnlyViewer && isTerminalMode(file_search) && (
           <TerminalModeDisplay style={{ padding: FLYOUT_PADDING, margin: 0 }} />
         )}
         {renderTerminalOutput(termError, {

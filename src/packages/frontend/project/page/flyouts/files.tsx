@@ -1156,8 +1156,9 @@ export function FilesFlyout({
           })
         }
         onTerminalCommand={() => allowListingUpdatesFor()}
+        readOnlyViewer={readOnlyViewer}
       />
-      {!lite && (
+      {!lite && !readOnlyViewer && (
         <div
           style={{
             alignItems: "center",

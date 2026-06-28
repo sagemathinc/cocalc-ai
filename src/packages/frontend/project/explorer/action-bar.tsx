@@ -297,7 +297,11 @@ function ActionBarEnabled({
       ) : null;
     const readOnlyRefreshButton =
       readOnly && onRefreshListing != null && !refreshButton ? (
-        <Button bsSize="small" onClick={onRefreshListing}>
+        <Button
+          bsSize="small"
+          onClick={onRefreshListing}
+          style={{ marginLeft: "15px" }}
+        >
           <Icon name="refresh" /> {intl.formatMessage(labels.refresh)}
         </Button>
       ) : null;

@@ -279,7 +279,7 @@ export function MiscSideButtons({
         {render_hidden_toggle()}
         {!lite && !readOnly && render_recovery()}
         {!lite && !readOnly && <CloneProject project_id={project_id} />}
-        {!lite && <TourButton project_id={project_id} />}
+        {!lite && !readOnly && <TourButton project_id={project_id} />}
       </Space.Compact>
     </Space>
   );

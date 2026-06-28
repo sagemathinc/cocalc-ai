@@ -970,7 +970,12 @@ You can either wait for this host to become available again, or move this ${proj
                 >
                   <PathNavigator
                     project_id={project_id}
-                    showSourceSelector
+                    showSourceSelector={!readOnlyViewer}
+                    navigationRoot={
+                      readOnlyViewer
+                        ? (publicDirectoryShareRootPath ?? homePath)
+                        : undefined
+                    }
                     currentPath={effective_current_path}
                     historyPath={effective_history_path}
                     onNavigate={navigateExplorer}
@@ -1160,7 +1165,7 @@ You can either wait for this host to become available again, or move this ${proj
                     minWidth: "20em",
                   }}
                 >
-                  {!lite && (
+                  {!lite && !readOnlyViewer && (
                     <DiskUsage
                       current_path={effective_current_path}
                       style={{ marginBottom: "10px", marginRight: "5px" }}
@@ -1380,7 +1385,11 @@ You can either wait for this host to become available again, or move this ${proj
                       }
                       readOnly={readOnlyViewer}
                       allowReadOnlyCopy={readOnlyViewer}
-                      root_path={publicDirectoryShareRootPath}
+                      root_path={
+                        readOnlyViewer
+                          ? (publicDirectoryShareRootPath ?? homePath)
+                          : publicDirectoryShareRootPath
+                      }
                       openUploadFiles={openUploadFiles}
                       useSimpleTable={!!publicDirectoryShare}
                       foregroundProjectOnOpen={!publicDirectoryShare}
@@ -1392,14 +1401,16 @@ You can either wait for this host to become available again, or move this ${proj
             )}
           </div>
         </div>
-        <ExplorerTour
-          project_id={project_id}
-          newFileRef={newFileRef}
-          searchAndTerminalBar={searchAndTerminalBar}
-          fileListingRef={fileListingRef}
-          currentDirectoryRef={currentDirectoryRef}
-          miscButtonsRef={miscButtonsRef}
-        />
+        {!readOnlyViewer && (
+          <ExplorerTour
+            project_id={project_id}
+            newFileRef={newFileRef}
+            searchAndTerminalBar={searchAndTerminalBar}
+            fileListingRef={fileListingRef}
+            currentDirectoryRef={currentDirectoryRef}
+            miscButtonsRef={miscButtonsRef}
+          />
+        )}
       </div>
     </FileDndProvider>
   );

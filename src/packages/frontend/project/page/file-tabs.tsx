@@ -89,7 +89,8 @@ function keyToPath(s: string): string {
 export default function FileTabs({ openFiles, project_id, activeTab }) {
   const actions = useActions({ project_id });
   const intl = useIntl();
-  const { workspaces } = useProjectContext();
+  const { projectAccess, workspaces } = useProjectContext();
+  const viewer = projectAccess.role === "viewer";
   const project_log = useTypedRedux({ project_id }, "project_log");
   const project_log_loading = useTypedRedux(
     { project_id },
@@ -217,6 +218,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
   const onEdit = (key: string, action: "add" | "remove") => {
     if (actions == null) return;
     if (action == "add") {
+      if (viewer) return;
       actions.set_active_tab("new");
       return;
     }
@@ -571,6 +573,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                 items={items}
                 activeKey={activeKey}
                 type={"editable-card"}
+                hideAdd={viewer}
                 onChange={(key) => {
                   if (actions == null || !key) return;
                   actions.set_active_tab(path_to_tab(keyToPath(key)));

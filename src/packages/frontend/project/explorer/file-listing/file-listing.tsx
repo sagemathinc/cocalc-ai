@@ -926,7 +926,7 @@ export function FileListing({
         selected_file_index >= 0 &&
         selected_file_index < baseDataSource.length &&
         baseDataSource[selected_file_index]?.fullPath === record.fullPath &&
-        file_search[0] !== TERM_MODE_CHAR;
+        (readOnly || file_search[0] !== TERM_MODE_CHAR);
       const isChecked = checked_files.has(record.fullPath);
 
       return {
@@ -958,6 +958,7 @@ export function FileListing({
       selected_file_index,
       baseDataSource,
       file_search,
+      readOnly,
       checked_files,
       handleRowClick,
       buildContextMenu,
@@ -1417,7 +1418,8 @@ export function FileListing({
   const isSecretsPath = isProjectSecretsPath(current_path);
   const isReadonlyVirtualPath = isSnapshotsVirtualPath || isBackupsVirtualPath;
   const showEmptyNotice =
-    !hasRealListingRows(baseDataSource) && file_search[0] !== TERM_MODE_CHAR;
+    !hasRealListingRows(baseDataSource) &&
+    (readOnly || file_search[0] !== TERM_MODE_CHAR);
 
   if (baseDataSource.length === 0 && showEmptyNotice) {
     return (
