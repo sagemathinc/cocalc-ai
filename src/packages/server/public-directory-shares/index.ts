@@ -946,6 +946,11 @@ export async function grantTemporaryViewerAccess({
     read_policy: share.read_policy,
     expires_at: expiresAt,
     project_url: projectViewerUrl(share),
+    project_title: share.project_title,
+    share_title: share.title,
+    host_id: share.host_id,
+    host_connection: share.host_connection,
+    owning_bay_id: share.owning_bay_id,
   };
 }
 

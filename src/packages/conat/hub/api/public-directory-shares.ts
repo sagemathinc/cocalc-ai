@@ -193,6 +193,11 @@ export interface GrantTemporaryViewerAccessResponse {
   read_policy: ProjectViewerReadPolicy;
   expires_at: Date | string;
   project_url: string;
+  project_title?: string | null;
+  share_title?: string | null;
+  host_id?: string | null;
+  host_connection?: ResolvedPublicDirectoryShare["host_connection"];
+  owning_bay_id?: string | null;
 }
 
 export interface GetTemporaryViewerReadPolicyOptions {

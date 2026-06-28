@@ -4,13 +4,15 @@
  */
 
 import { Button, Card, Result, Skeleton, Space } from "antd";
+import { fromJS, Map } from "immutable";
 import { useEffect, useState } from "react";
 
+import type { GrantTemporaryViewerAccessResponse } from "@cocalc/conat/hub/api/public-directory-shares";
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { load_target } from "@cocalc/frontend/history";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { shareRouteCandidates } from "./public-directory-share-route";
 
@@ -35,6 +37,7 @@ function joinSharePath(sharePath: string, relativePath: string): string {
 }
 
 async function grantShareRoute(rawPath: string): Promise<{
+  grant: GrantTemporaryViewerAccessResponse;
   projectId: string;
   target: string;
 }> {
@@ -50,6 +53,7 @@ async function grantShareRoute(rawPath: string): Promise<{
       const projectPath = joinSharePath(grant.path, candidate.relativePath);
       const encodedPath = encodePath(projectPath);
       return {
+        grant,
         projectId: grant.project_id,
         target:
           candidate.relativePath.length === 0
@@ -61,6 +65,57 @@ async function grantShareRoute(rawPath: string): Promise<{
     }
   }
   throw lastError ?? new Error("Published folder not found");
+}
+
+function materializeTemporaryViewerProject({
+  accountId,
+  grant,
+}: {
+  accountId: string;
+  grant: GrantTemporaryViewerAccessResponse;
+}) {
+  const projectsStore = redux.getStore("projects");
+  const currentProjectMap =
+    projectsStore?.get("project_map") ?? Map<string, any>();
+  const existingProject = currentProjectMap.get(grant.project_id);
+  const syntheticProject = fromJS({
+    project_id: grant.project_id,
+    title: grant.project_title || grant.share_title || grant.path,
+    host_id: grant.host_id ?? undefined,
+    owning_bay_id: grant.owning_bay_id ?? undefined,
+    users: {
+      [accountId]: {
+        group: "viewer",
+        read_policy: grant.read_policy,
+      },
+    },
+    state: existingProject?.get?.("state")?.toJS?.() ?? {
+      state: "running",
+    },
+    temporary_public_share_viewer_grant: true,
+  });
+  redux.getActions("projects").setState({
+    project_map: currentProjectMap.set(
+      grant.project_id,
+      existingProject
+        ? existingProject.mergeDeep(syntheticProject)
+        : syntheticProject,
+    ),
+    ...(grant.host_connection
+      ? {
+          host_info: (
+            redux.getStore("projects")?.get("host_info") ?? Map<string, any>()
+          ).set(
+            grant.host_connection.host_id,
+            fromJS({
+              ...grant.host_connection,
+              temporary_public_share_viewer_grant: true,
+              updated_at: Date.now(),
+            }),
+          ),
+        }
+      : {}),
+  });
 }
 
 function LoadingShare() {
@@ -75,6 +130,9 @@ function LoadingShare() {
 
 export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   const reduxLoggedIn = !!useTypedRedux("account", "is_logged_in");
+  const accountId = useTypedRedux("account", "account_id") as
+    | string
+    | undefined;
   const signedIn = reduxLoggedIn || webapp_client.is_signed_in();
   const [authSettled, setAuthSettled] = useState(signedIn);
   const [loading, setLoading] = useState(false);
@@ -92,15 +150,16 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   }, [signedIn]);
 
   useEffect(() => {
-    if (!signedIn || !normalizedSlug) {
+    if (!signedIn || !accountId || !normalizedSlug) {
       return;
     }
     let canceled = false;
     setLoading(true);
     setError("");
     grantShareRoute(normalizedSlug)
-      .then(({ projectId, target }) => {
+      .then(({ grant, projectId, target }) => {
         if (canceled) return;
+        materializeTemporaryViewerProject({ accountId, grant });
         load_target(`projects/${projectId}/${target}`, false, true);
       })
       .catch((err) => {
@@ -112,7 +171,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     return () => {
       canceled = true;
     };
-  }, [signedIn, normalizedSlug]);
+  }, [accountId, signedIn, normalizedSlug]);
 
   if (!normalizedSlug) {
     return (
@@ -150,7 +209,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     );
   }
 
-  if (loading) {
+  if (loading || (signedIn && !accountId)) {
     return <LoadingShare />;
   }
 
