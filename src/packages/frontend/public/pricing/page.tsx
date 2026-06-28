@@ -361,9 +361,9 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
               <th style={headerCellStyle} />
               {tiers.map((tier) => (
                 <th key={tier.id} scope="col" style={headerCellStyle}>
-                  <Title level={4} style={{ margin: 0 }}>
+                  <Text strong style={{ fontSize: 20, lineHeight: "28px" }}>
                     {tier.label ?? tier.id}
-                  </Title>
+                  </Text>
                 </th>
               ))}
             </tr>
@@ -377,9 +377,9 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
                     scope="colgroup"
                     style={groupCellStyle}
                   >
-                    <Title level={4} style={{ margin: 0 }}>
+                    <Text strong style={{ fontSize: 20, lineHeight: "28px" }}>
                       {group.title}
-                    </Title>
+                    </Text>
                   </th>
                 </tr>
                 {group.rows.map((row) => (
