@@ -147,6 +147,7 @@ function ProblemFields({
       <div>
         <Text strong>What did you do exactly?</Text>
         <Input.TextArea
+          aria-label="What did you do exactly?"
           disabled={disabled}
           rows={3}
           placeholder="Describe exactly what you did before the problem happened."
@@ -157,6 +158,7 @@ function ProblemFields({
       <div>
         <Text strong>What happened?</Text>
         <Input.TextArea
+          aria-label="What happened?"
           disabled={disabled}
           rows={3}
           placeholder="Tell us what happened."
@@ -167,6 +169,7 @@ function ProblemFields({
       <div>
         <Text strong>How did this differ from what you expected?</Text>
         <Input.TextArea
+          aria-label="How did this differ from what you expected?"
           disabled={disabled}
           rows={3}
           placeholder="Explain what you expected instead."
@@ -189,6 +192,7 @@ function QuestionFields({
 }) {
   return (
     <Input.TextArea
+      aria-label="Question details"
       disabled={disabled}
       rows={8}
       defaultValue={defaultValue}
@@ -227,6 +231,7 @@ function PurchaseFields({
         />
       ) : null}
       <Input.TextArea
+        aria-label="Pricing or purchasing details"
         disabled={disabled}
         rows={8}
         defaultValue={defaultValue}
@@ -279,6 +284,7 @@ function TaskFields({
       <div>
         <Text strong>What software do you need?</Text>
         <Input.TextArea
+          aria-label="What software do you need?"
           disabled={disabled}
           rows={4}
           placeholder="Name the software, package, library, or stack you need."
@@ -289,6 +295,7 @@ function TaskFields({
       <div>
         <Text strong>How do you plan to use this software?</Text>
         <Input.TextArea
+          aria-label="How do you plan to use this software?"
           disabled={disabled}
           rows={3}
           placeholder="Explain the workload, project, class, or timeline."
@@ -301,6 +308,7 @@ function TaskFields({
           How can we test that the software is properly installed?
         </Text>
         <Input.TextArea
+          aria-label="How can we test that the software is properly installed?"
           disabled={disabled}
           rows={3}
           placeholder="Include the commands, notebook imports, or checks that should work."
@@ -413,6 +421,7 @@ function renderBodyFields(params: {
       }
       description={
         <Input.TextArea
+          aria-label="Video chat request details"
           disabled={disabled}
           rows={6}
           defaultValue={body}
@@ -603,6 +612,7 @@ export default function SupportNew({
               Your email address
             </SectionLabel>
             <Input
+              aria-label="Your email address"
               disabled={formLocked}
               placeholder="Email address..."
               style={{ marginTop: 10, maxWidth: 520 }}
@@ -617,6 +627,7 @@ export default function SupportNew({
               Subject
             </SectionLabel>
             <Input
+              aria-label="Subject"
               disabled={formLocked}
               placeholder="Summarize what this is about..."
               style={{ marginTop: 10 }}
@@ -626,10 +637,13 @@ export default function SupportNew({
           </div>
 
           <div>
-            <SectionLabel done={body.trim().length >= MIN_BODY_LENGTH}>
-              Support request type
-            </SectionLabel>
+            <div id="support-type-label">
+              <SectionLabel done={body.trim().length >= MIN_BODY_LENGTH}>
+                Support request type
+              </SectionLabel>
+            </div>
             <Radio.Group
+              aria-labelledby="support-type-label"
               disabled={formLocked}
               name="support-type"
               style={{ display: "block", marginTop: 10 }}
