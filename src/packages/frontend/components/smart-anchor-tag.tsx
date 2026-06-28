@@ -730,39 +730,67 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
         }
 
         const dir = containingPath(path);
-        const url = new URL("http://dummy/" + join(dir, href));
-        let fragmentId = Fragment.decode(url.hash);
-        const lineFromHash = parseLineFromHashFragment(url.hash);
-        const hrefPlain = url.pathname.slice(1);
-        let target;
-        if (href.startsWith("#") || !hrefPlain) {
-          // within the same file
-          target = join("files", path);
-        } else {
-          // different file in the same project, with link being relative
-          // to current path.
-          const parsed = parsePathWithOptionalLineSuffix(
-            decodePathForParsing(hrefPlain),
-          );
-          if (parsed.line != null && !fragmentId?.line) {
-            fragmentId = {
-              ...(fragmentId?.anchor ? {} : fragmentId),
-              line: `${parsed.line}`,
-            };
-          } else if (lineFromHash != null && !fragmentId?.line) {
-            fragmentId = {
-              ...(fragmentId?.anchor ? {} : fragmentId),
-              line: `${lineFromHash}`,
-            };
-          }
-          target = join("files", parsed.path);
+        const target = parseInternalRelativeHrefTarget({ path, href, dir });
+        const openInSameTab = !(
+          (e as any).which === 2 ||
+          e.ctrlKey ||
+          e.metaKey
+        );
+
+        const actions = redux.getProjectActions(project_id);
+        const publicDirectoryShareHref =
+          getCurrentPublicDirectoryShareHref(href);
+        if (isPublicDirectoryShareOpen(actions) || publicDirectoryShareHref) {
+          void (async () => {
+            try {
+              let isDir = actions.isDirViaCache?.(target.path);
+              if (
+                typeof isDir !== "boolean" &&
+                typeof actions.isDir === "function"
+              ) {
+                isDir = await actions.isDir(target.path);
+              }
+              if (isDir === true) {
+                if (openInSameTab && publicDirectoryShareHref) {
+                  window.history.pushState(
+                    window.history.state,
+                    "",
+                    publicDirectoryShareHref,
+                  );
+                }
+                actions.open_directory?.(target.path);
+                return;
+              }
+              if (openInSameTab && publicDirectoryShareHref) {
+                window.history.pushState(
+                  window.history.state,
+                  "",
+                  publicDirectoryShareHref,
+                );
+              }
+              await actions.open_file({
+                path: target.path,
+                fragmentId: target.fragmentId,
+                foreground: openInSameTab,
+                foreground_project: false,
+                change_history: false,
+                explicit: true,
+              });
+            } catch (err) {
+              alert_message({
+                type: "error",
+                message: `Cannot open linked file: ${target.path} (${err})`,
+              });
+            }
+          })();
+          return;
         }
         loadTarget(
           "projects",
           project_id,
-          target,
-          !((e as any).which === 2 || e.ctrlKey || e.metaKey),
-          fragmentId,
+          join("files", target.path),
+          openInSameTab,
+          target.fragmentId,
         );
       }}
       title={title}
@@ -770,6 +798,63 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
       {children}
     </a>
   );
+}
+
+function getCurrentPublicDirectoryShareHref(href: string): string | undefined {
+  if (typeof window === "undefined") return;
+  if (!window.location.pathname.startsWith("/share/")) return;
+  try {
+    const url = new URL(href, window.location.href);
+    if (
+      url.origin === window.location.origin &&
+      url.pathname.startsWith("/share/")
+    ) {
+      return `${url.pathname}${url.search}${url.hash}`;
+    }
+  } catch {
+    return;
+  }
+}
+
+function isPublicDirectoryShareOpen(actions: any): boolean {
+  return !!`${actions?.get_store?.()?.get?.("public_directory_share_id") ?? ""}`.trim()
+    .length;
+}
+
+function parseInternalRelativeHrefTarget({
+  path,
+  href,
+  dir,
+}: {
+  path: string;
+  href: string;
+  dir: string;
+}): { path: string; fragmentId?: FragmentId } {
+  const basePath = path.startsWith("/") ? path.slice(1) : path;
+  const url = new URL(href, `http://dummy/${basePath}`);
+  let fragmentId = Fragment.decode(url.hash);
+  const lineFromHash = parseLineFromHashFragment(url.hash);
+  const rawPath =
+    href.startsWith("#") || !url.pathname
+      ? path
+      : path.startsWith("/")
+        ? decodePathForParsing(url.pathname)
+        : decodePathForParsing(url.pathname).replace(/^\/+/, "");
+  const parsed = parsePathWithOptionalLineSuffix(
+    rawPath || decodePathForParsing(join(dir, href)),
+  );
+  if (parsed.line != null && !fragmentId?.line) {
+    fragmentId = {
+      ...(fragmentId?.anchor ? {} : fragmentId),
+      line: `${parsed.line}`,
+    };
+  } else if (lineFromHash != null && !fragmentId?.line) {
+    fragmentId = {
+      ...(fragmentId?.anchor ? {} : fragmentId),
+      line: `${lineFromHash}`,
+    };
+  }
+  return { path: parsed.path, fragmentId };
 }
 
 function loadTarget(

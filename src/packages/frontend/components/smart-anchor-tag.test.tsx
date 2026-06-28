@@ -12,6 +12,7 @@ const isDir = jest.fn(async () => false);
 const isDirViaCache = jest.fn(() => false);
 const fsExists = jest.fn(async (_path?: string) => false);
 const fsReaddir = jest.fn(async (_path?: string, _opts?: any) => [] as any[]);
+let publicDirectoryShareId = "";
 
 jest.mock("@cocalc/frontend/components", () => ({
   A: ({ href, title, onClick, children }) => (
@@ -33,6 +34,12 @@ jest.mock("@cocalc/frontend/app-framework", () => {
         open_directory: openDirectory,
         isDir,
         isDirViaCache,
+        get_store: () => ({
+          get: (key: string) =>
+            key === "public_directory_share_id"
+              ? publicDirectoryShareId
+              : undefined,
+        }),
         fs: () => ({
           exists: fsExists,
           readdir: fsReaddir,
@@ -73,11 +80,13 @@ describe("SmartAnchorTag", () => {
     isDirViaCache.mockReset();
     fsExists.mockReset();
     fsReaddir.mockReset();
+    publicDirectoryShareId = "";
     isDir.mockResolvedValue(false);
     isDirViaCache.mockReturnValue(false);
     fsExists.mockResolvedValue(false);
     fsReaddir.mockResolvedValue([]);
     openMock.mockReset();
+    window.history.replaceState(null, "", "/");
   });
 
   it("opens internal cocalc-file links via project open_file", async () => {
@@ -344,5 +353,86 @@ describe("SmartAnchorTag", () => {
         expect.objectContaining({ line: "77" }),
       );
     });
+  });
+
+  it("opens public share relative links via open_file so the share URL is preserved", async () => {
+    publicDirectoryShareId = "share-id";
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="/home/user/x3/a.md"
+        href="./a.txt"
+      >
+        AA
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "AA" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/home/user/x3/a.txt",
+        fragmentId: undefined,
+        foreground: true,
+        foreground_project: false,
+        change_history: false,
+        explicit: true,
+      });
+    });
+    expect(loadTarget).not.toHaveBeenCalled();
+  });
+
+  it("opens public share ctrl-clicked relative links in the background", async () => {
+    publicDirectoryShareId = "share-id";
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="/home/user/x3/a.md"
+        href="./a.txt"
+      >
+        AA
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "AA" }), {
+      ctrlKey: true,
+    });
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/home/user/x3/a.txt",
+        fragmentId: undefined,
+        foreground: false,
+        foreground_project: false,
+        change_history: false,
+        explicit: true,
+      });
+    });
+    expect(loadTarget).not.toHaveBeenCalled();
+  });
+
+  it("uses the current share route when share store state is not available yet", async () => {
+    window.history.replaceState(null, "", "/share/x3/a.md");
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="/home/user/x/a.md"
+        href="./a.txt"
+      >
+        AA
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "AA" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/home/user/x/a.txt",
+        fragmentId: undefined,
+        foreground: true,
+        foreground_project: false,
+        change_history: false,
+        explicit: true,
+      });
+    });
+    expect(loadTarget).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/share/x3/a.txt");
   });
 });
