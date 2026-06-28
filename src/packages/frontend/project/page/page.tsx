@@ -310,6 +310,9 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const workspaceChrome = workspaceStrongThemeChrome(
     projectCtx.workspaces.current,
   );
+  const projectPageIsForeground = props.publicDirectoryShare
+    ? true
+    : active_top_tab == project_id;
 
   const narrowerPX = useMemo(() => {
     return hideActionButtons ? HIDDEN_RAIL_TOP_LEFT_WIDTH_PX : 0;
@@ -473,7 +476,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     }
     const path = getRecoverableActiveEditorPath({
       isActive: is_active,
-      activeTopTab: active_top_tab,
+      activeTopTab: props.publicDirectoryShare ? project_id : active_top_tab,
       projectId: project_id,
       activeProjectTab: active_project_tab,
       openFiles: open_files,
@@ -494,6 +497,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     is_active,
     open_files,
     project_id,
+    props.publicDirectoryShare,
   ]);
 
   useEffect(() => {
@@ -619,7 +623,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           : path;
       const tab_name = path_to_tab(path);
       const tabIsVisible =
-        active_top_tab == project_id &&
+        projectPageIsForeground &&
         initialWorkspaceRender.displayActiveTab === tab_name;
       return v.push(
         <FrameContext.Provider

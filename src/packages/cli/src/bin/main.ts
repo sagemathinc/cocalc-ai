@@ -3027,6 +3027,10 @@ const browserCommandDeps = {
   selectedProfileName,
   globalsFrom,
   resolveProject,
+  resolvePublicDirectoryShare: async (ctx, slug) =>
+    await hubCallByName(ctx as any, "publicDirectoryShares.resolve", [
+      { slug },
+    ]),
   resolveProjectConatClient,
   createBrowserSessionClient,
 } satisfies BrowserCommandDeps;

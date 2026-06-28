@@ -19,17 +19,16 @@ function logPublicShareFs(
   message: string,
   details: Record<string, unknown>,
 ) {
+  if (level !== "warn") {
+    return;
+  }
   const payload = {
     source: "frontend:project:listing:use-fs",
     event: message,
     ...details,
   };
   const line = `[public-directory-share] ${message} ${JSON.stringify(payload)}`;
-  if (level === "warn") {
-    console.warn(line);
-  } else {
-    console.info(line);
-  }
+  console.warn(line);
 }
 
 function isRetryableProjectFsError(err: unknown): boolean {
@@ -47,6 +46,7 @@ function isRetryableProjectFsError(err: unknown): boolean {
     message.includes("no subscribers matching") ||
     message.includes("timeout") ||
     message.includes("unable to route") ||
+    message.includes("unable to connect routed project-host client") ||
     message.includes("host routing info unavailable") ||
     message.includes("project host id unavailable") ||
     message.includes("project not running") ||

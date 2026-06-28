@@ -72,6 +72,81 @@ function projectIdFromSessionUrl(value: unknown): string | undefined {
   }
 }
 
+function normalizeSharePathFromSessionUrl(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const { pathname } = new URL(raw);
+    const decoded = decodeURIComponent(pathname)
+      .replace(/^\/+|\/+$/g, "")
+      .trim();
+    if (decoded === "share") return undefined;
+    if (!decoded.startsWith("share/")) return undefined;
+    return decoded.slice("share/".length);
+  } catch {
+    return undefined;
+  }
+}
+
+function shareRouteCandidatesFromSessionUrl(
+  value: unknown,
+): Array<{ slug: string }> {
+  const sharePath = normalizeSharePathFromSessionUrl(value);
+  if (!sharePath) return [];
+  const parts = sharePath.split("/").filter(Boolean);
+  const candidates: Array<{ slug: string }> = [];
+  for (let i = parts.length; i >= 1; i -= 1) {
+    candidates.push({ slug: parts.slice(0, i).join("/") });
+  }
+  return candidates;
+}
+
+function isShareNotFoundError(err: unknown): boolean {
+  return `${(err as Error)?.message ?? err ?? ""}`
+    .toLowerCase()
+    .includes("public directory share not found");
+}
+
+async function resolveProjectReference({
+  deps,
+  ctx,
+  value,
+}: {
+  deps: Pick<BrowserCommandDeps, "resolveProject">;
+  ctx: Parameters<BrowserCommandDeps["resolveProject"]>[0];
+  value: string;
+}): Promise<string> {
+  return isValidUUID(value)
+    ? value
+    : (await deps.resolveProject(ctx, value)).project_id;
+}
+
+async function resolveShareProjectIdFromSessionUrl({
+  deps,
+  ctx,
+  url,
+}: {
+  deps: Pick<BrowserCommandDeps, "resolvePublicDirectoryShare">;
+  ctx: BrowserCommandContext;
+  url: unknown;
+}): Promise<string | undefined> {
+  const candidates = shareRouteCandidatesFromSessionUrl(url);
+  if (candidates.length === 0) return undefined;
+  let lastNotFound: unknown;
+  for (const candidate of candidates) {
+    try {
+      const share = await deps.resolvePublicDirectoryShare(ctx, candidate.slug);
+      const project_id = `${share?.project_id ?? ""}`.trim();
+      return isValidUUID(project_id) ? project_id : undefined;
+    } catch (err) {
+      if (!isShareNotFoundError(err)) throw err;
+      lastNotFound = err;
+    }
+  }
+  if (lastNotFound) return undefined;
+  return undefined;
+}
+
 export function browserHintFromOption(value: unknown): string | undefined {
   return (
     normalizeBrowserId(value) ??
@@ -147,7 +222,10 @@ export async function resolveTargetProjectId({
   projectId,
   sessionInfo,
 }: {
-  deps: Pick<BrowserCommandDeps, "resolveProject">;
+  deps: Pick<
+    BrowserCommandDeps,
+    "resolveProject" | "resolvePublicDirectoryShare"
+  >;
   ctx: Parameters<BrowserCommandDeps["resolveProject"]>[0];
   project?: string;
   projectId?: string;
@@ -156,34 +234,48 @@ export async function resolveTargetProjectId({
   const explicitProjectIdHint = `${projectId ?? ""}`.trim();
   const projectHint = `${project ?? ""}`.trim();
   if (explicitProjectIdHint) {
-    return isValidUUID(explicitProjectIdHint)
-      ? explicitProjectIdHint
-      : (await deps.resolveProject(ctx, explicitProjectIdHint)).project_id;
+    return await resolveProjectReference({
+      deps,
+      ctx,
+      value: explicitProjectIdHint,
+    });
   }
   if (projectHint) {
     return (await deps.resolveProject(ctx, projectHint)).project_id;
   }
   const activeProjectId = `${sessionInfo.active_project_id ?? ""}`.trim();
   if (activeProjectId) {
-    return (await deps.resolveProject(ctx, activeProjectId)).project_id;
+    return await resolveProjectReference({ deps, ctx, value: activeProjectId });
   }
   if (
     sessionInfo.open_projects?.length === 1 &&
     sessionInfo.open_projects[0]?.project_id
   ) {
-    return (
-      await deps.resolveProject(ctx, sessionInfo.open_projects[0].project_id)
-    ).project_id;
+    return await resolveProjectReference({
+      deps,
+      ctx,
+      value: sessionInfo.open_projects[0].project_id,
+    });
   }
   const projectIdInUrl = projectIdFromSessionUrl(sessionInfo.url);
   if (projectIdInUrl) {
-    return (await deps.resolveProject(ctx, projectIdInUrl)).project_id;
+    return await resolveProjectReference({ deps, ctx, value: projectIdInUrl });
+  }
+  const shareProjectId = await resolveShareProjectIdFromSessionUrl({
+    deps,
+    ctx,
+    url: sessionInfo.url,
+  });
+  if (shareProjectId) {
+    return shareProjectId;
   }
   const envProjectIdHint = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   if (envProjectIdHint) {
-    return isValidUUID(envProjectIdHint)
-      ? envProjectIdHint
-      : (await deps.resolveProject(ctx, envProjectIdHint)).project_id;
+    return await resolveProjectReference({
+      deps,
+      ctx,
+      value: envProjectIdHint,
+    });
   }
   if (isCliAgentMode()) {
     throw new Error(

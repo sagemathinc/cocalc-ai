@@ -79,6 +79,9 @@ function makeProgram({
     selectedProfileName: () => "default",
     globalsFrom: () => ({}),
     resolveProject: async (_ctx, project) => ({ project_id: project }),
+    resolvePublicDirectoryShare: async (_ctx, slug) => {
+      throw new Error(`share '${slug}' should not be resolved`);
+    },
     resolveProjectConatClient: async () => {
       throw new Error("resolveProjectConatClient should not be called");
     },

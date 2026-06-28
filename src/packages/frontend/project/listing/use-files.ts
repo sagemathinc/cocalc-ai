@@ -69,6 +69,9 @@ function logPublicShareFiles(
   if (debugContext?.kind !== "public-directory-share") {
     return;
   }
+  if (level !== "warn") {
+    return;
+  }
   const payload = {
     source: "frontend:project:listing:use-files",
     event: message,
@@ -76,11 +79,7 @@ function logPublicShareFiles(
     ...details,
   };
   const line = `[public-directory-share] ${message} ${JSON.stringify(payload)}`;
-  if (level === "warn") {
-    console.warn(line);
-  } else {
-    console.info(line);
-  }
+  console.warn(line);
 }
 
 function notifyCacheListeners() {
@@ -413,6 +412,7 @@ export function isRetryableListingError(err: unknown): boolean {
     message.includes('once: "inbox" not emitted before "closed"') ||
     message.includes("no subscribers matching") ||
     message.includes("unable to route") ||
+    message.includes("unable to connect routed project-host client") ||
     message.includes("project actions unavailable")
   );
 }

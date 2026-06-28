@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { chooseBrowserSession, resolveTargetProjectId } from "./targeting";
-import type { BrowserCommandContext } from "./types";
+import type { BrowserCommandContext, BrowserCommandDeps } from "./types";
 
 function makeContext(
   listBrowserSessions: BrowserCommandContext["hub"]["system"]["listBrowserSessions"],
@@ -21,6 +21,18 @@ function makeContext(
       },
     },
   };
+}
+
+function makeProjectDeps(
+  resolveProject: BrowserCommandDeps["resolveProject"],
+  resolvePublicDirectoryShare: BrowserCommandDeps["resolvePublicDirectoryShare"] = async (
+    _ctx,
+    slug,
+  ) => {
+    throw new Error(`share '${slug}' should not be resolved`);
+  },
+): Pick<BrowserCommandDeps, "resolveProject" | "resolvePublicDirectoryShare"> {
+  return { resolveProject, resolvePublicDirectoryShare };
 }
 
 test("chooseBrowserSession falls back to exact browser id when discovery fails", async () => {
@@ -221,12 +233,10 @@ test("resolveTargetProjectId prefers the active browser-session project over amb
     const ctx = makeContext(async () => []);
     const calls: string[] = [];
     const project_id = await resolveTargetProjectId({
-      deps: {
-        resolveProject: async (_ctx, project) => {
-          calls.push(project);
-          return { project_id: project };
-        },
-      },
+      deps: makeProjectDeps(async (_ctx, project) => {
+        calls.push(project);
+        return { project_id: project };
+      }),
       ctx,
       sessionInfo: {
         browser_id: "browser-1",
@@ -239,7 +249,7 @@ test("resolveTargetProjectId prefers the active browser-session project over amb
     });
 
     assert.equal(project_id, "00000000-1000-4000-8000-000000000111");
-    assert.deepEqual(calls, ["00000000-1000-4000-8000-000000000111"]);
+    assert.deepEqual(calls, []);
   } finally {
     if (prevProjectId == null) {
       delete process.env.COCALC_PROJECT_ID;
@@ -253,12 +263,10 @@ test("resolveTargetProjectId still lets explicit project-id override the browser
   const ctx = makeContext(async () => []);
   const calls: string[] = [];
   const project_id = await resolveTargetProjectId({
-    deps: {
-      resolveProject: async (_ctx, project) => {
-        calls.push(project);
-        return { project_id: project };
-      },
-    },
+    deps: makeProjectDeps(async (_ctx, project) => {
+      calls.push(project);
+      return { project_id: project };
+    }),
     ctx,
     projectId: "00000000-1000-4000-8000-000000000222",
     sessionInfo: {
@@ -282,12 +290,10 @@ test("resolveTargetProjectId falls back to the project encoded in the session UR
     const ctx = makeContext(async () => []);
     const calls: string[] = [];
     const project_id = await resolveTargetProjectId({
-      deps: {
-        resolveProject: async (_ctx, project) => {
-          calls.push(project);
-          return { project_id: project };
-        },
-      },
+      deps: makeProjectDeps(async (_ctx, project) => {
+        calls.push(project);
+        return { project_id: project };
+      }),
       ctx,
       sessionInfo: {
         browser_id: "browser-1",
@@ -301,7 +307,93 @@ test("resolveTargetProjectId falls back to the project encoded in the session UR
     });
 
     assert.equal(project_id, "00000000-1000-4000-8000-000000000333");
-    assert.deepEqual(calls, ["00000000-1000-4000-8000-000000000333"]);
+    assert.deepEqual(calls, []);
+  } finally {
+    if (prevProjectId == null) {
+      delete process.env.COCALC_PROJECT_ID;
+    } else {
+      process.env.COCALC_PROJECT_ID = prevProjectId;
+    }
+  }
+});
+
+test("resolveTargetProjectId uses a single open project UUID without normal project lookup", async () => {
+  const prevProjectId = process.env.COCALC_PROJECT_ID;
+  delete process.env.COCALC_PROJECT_ID;
+  try {
+    const ctx = makeContext(async () => []);
+    const calls: string[] = [];
+    const project_id = await resolveTargetProjectId({
+      deps: makeProjectDeps(async (_ctx, project) => {
+        calls.push(project);
+        throw new Error(`project '${project}' should not be resolved`);
+      }),
+      ctx,
+      sessionInfo: {
+        browser_id: "browser-1",
+        active_project_id: "",
+        open_projects: [
+          {
+            project_id: "00000000-1000-4000-8000-000000000444",
+            open_files: [],
+          },
+        ],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        url: "https://lite4b.cocalc.ai/share/test2",
+      },
+    });
+
+    assert.equal(project_id, "00000000-1000-4000-8000-000000000444");
+    assert.deepEqual(calls, []);
+  } finally {
+    if (prevProjectId == null) {
+      delete process.env.COCALC_PROJECT_ID;
+    } else {
+      process.env.COCALC_PROJECT_ID = prevProjectId;
+    }
+  }
+});
+
+test("resolveTargetProjectId resolves a share-only session URL without normal project lookup", async () => {
+  const prevProjectId = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = "00000000-1000-4000-8000-000000000099";
+  try {
+    const ctx = makeContext(async () => []);
+    const projectCalls: string[] = [];
+    const shareCalls: string[] = [];
+    const project_id = await resolveTargetProjectId({
+      deps: makeProjectDeps(
+        async (_ctx, project) => {
+          projectCalls.push(project);
+          throw new Error(`project '${project}' should not be resolved`);
+        },
+        async (_ctx, slug) => {
+          shareCalls.push(slug);
+          if (slug === "test2") {
+            return {
+              project_id: "00000000-1000-4000-8000-000000000555",
+            };
+          }
+          throw new Error("public directory share not found");
+        },
+      ),
+      ctx,
+      sessionInfo: {
+        browser_id: "browser-1",
+        active_project_id: "",
+        open_projects: [],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        url: "https://lite4b.cocalc.ai/share/test2/a.ipynb?_reload=1",
+      },
+    });
+
+    assert.equal(project_id, "00000000-1000-4000-8000-000000000555");
+    assert.deepEqual(projectCalls, []);
+    assert.deepEqual(shareCalls, ["test2/a.ipynb", "test2"]);
   } finally {
     if (prevProjectId == null) {
       delete process.env.COCALC_PROJECT_ID;

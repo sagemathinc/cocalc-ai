@@ -124,9 +124,14 @@ interface Props {
   isRunning?: boolean;
   readOnly?: boolean;
   allowReadOnlyCopy?: boolean;
+  root_path?: string;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
+  onOpenFilePath?: (path: string) => boolean;
   openUploadFiles?: () => void;
+  useSimpleTable?: boolean;
+  foregroundProjectOnOpen?: boolean;
+  changeHistoryOnOpen?: boolean;
 }
 
 interface FileEntry extends DirectoryListingEntry {
@@ -454,9 +459,14 @@ export function FileListing({
   file_search = "",
   readOnly = false,
   allowReadOnlyCopy = false,
+  root_path,
   sort_by,
   onNavigateDirectory,
+  onOpenFilePath,
   openUploadFiles,
+  useSimpleTable = false,
+  foregroundProjectOnOpen = true,
+  changeHistoryOnOpen = true,
 }: Props) {
   const intl = useIntl();
   const selected_file_index = useTypedRedux(
@@ -545,11 +555,17 @@ export function FileListing({
   }, [listing, hide_masked_files, type_filter]);
 
   const baseDataSource = useMemo<FileEntry[]>(() => {
-    return withParentDirectoryRow({
-      listing: filteredListing,
-      currentPath: current_path,
-      fileSearch: file_search,
-    }).map((entry) => {
+    const includeParentDirectory =
+      root_path == null ||
+      normalizePath(current_path) !== normalizePath(root_path);
+    const entries = includeParentDirectory
+      ? withParentDirectoryRow({
+          listing: filteredListing,
+          currentPath: current_path,
+          fileSearch: file_search,
+        })
+      : filteredListing;
+    return entries.map((entry) => {
       const isParentDirectory = entry.name === "..";
       const fullPath = isParentDirectory
         ? parentDirectoryPath(current_path)
@@ -563,7 +579,14 @@ export function FileListing({
           starredSet.has(entry.isDir ? `${fullPath}/` : fullPath),
       };
     });
-  }, [filteredListing, current_path, file_search, openFiles, starredSet]);
+  }, [
+    filteredListing,
+    current_path,
+    file_search,
+    openFiles,
+    root_path,
+    starredSet,
+  ]);
 
   const virtualData = useMemo<VirtualEntry[]>(() => {
     const result: VirtualEntry[] = [];
@@ -701,9 +724,15 @@ export function FileListing({
               }
               actions.set_file_search("");
             } else {
+              if (onOpenFilePath?.(record.fullPath)) {
+                actions.set_file_search("");
+                return;
+              }
               actions.open_file({
                 path: record.fullPath,
                 foreground: true,
+                foreground_project: foregroundProjectOnOpen,
+                change_history: changeHistoryOnOpen,
                 explicit: true,
                 workspaceSelection: nextSelection,
               });
@@ -764,6 +793,9 @@ export function FileListing({
       triggerFileAction,
       onNavigateDirectory,
       actions,
+      foregroundProjectOnOpen,
+      changeHistoryOnOpen,
+      onOpenFilePath,
     ],
   );
 
@@ -821,9 +853,14 @@ export function FileListing({
 
       const foreground = should_open_in_foreground(e as any);
       const nextSelection = applyPathSelection(record.fullPath);
+      if (onOpenFilePath?.(record.fullPath)) {
+        return;
+      }
       actions.open_file({
         path: record.fullPath,
         foreground,
+        foreground_project: foregroundProjectOnOpen,
+        change_history: changeHistoryOnOpen,
         explicit: true,
         workspaceSelection: nextSelection,
       });
@@ -837,7 +874,10 @@ export function FileListing({
       current_path,
       baseDataSource,
       onNavigateDirectory,
+      onOpenFilePath,
       onOpenSpecial,
+      foregroundProjectOnOpen,
+      changeHistoryOnOpen,
     ],
   );
 
@@ -1138,10 +1178,15 @@ export function FileListing({
               }
               onNavigateDirectory={onNavigateDirectory}
               onOpenFile={(path) => {
+                if (onOpenFilePath?.(path)) {
+                  return;
+                }
                 const nextSelection = applyPathSelection(path);
                 actions.open_file({
                   path,
                   foreground: true,
+                  foreground_project: foregroundProjectOnOpen,
+                  change_history: changeHistoryOnOpen,
                   explicit: true,
                   workspaceSelection: nextSelection,
                 });
@@ -1323,13 +1368,45 @@ export function FileListing({
       isNarrow,
       actions,
       buildContextMenu,
+      foregroundProjectOnOpen,
+      changeHistoryOnOpen,
       expandedDirs,
       numCols,
       onNavigateDirectory,
+      onOpenFilePath,
       project_id,
       toggleExpandDir,
     ],
   );
+
+  const simpleTableRows = useMemo(() => {
+    return virtualData.map((entry, index) => {
+      const key = isPeekEntry(entry)
+        ? `__peek__${entry._peekForName}`
+        : entry.fullPath;
+      if (isPeekEntry(entry)) {
+        return (
+          <tr key={key} className="ant-table-row">
+            {itemContent(index, entry)}
+          </tr>
+        );
+      }
+      const rowProps = onRow(entry);
+      return (
+        <tr
+          key={key}
+          className="ant-table-row"
+          data-row-key={entry.fullPath}
+          onClick={rowProps.onClick}
+          onMouseDown={rowProps.onMouseDown}
+          onContextMenu={rowProps.onContextMenu}
+          style={rowProps.style}
+        >
+          {itemContent(index, entry)}
+        </tr>
+      );
+    });
+  }, [itemContent, onRow, virtualData]);
 
   if (baseDataSource == null) {
     return <Spin delay={500} />;
@@ -1513,22 +1590,54 @@ export function FileListing({
         <div
           ref={setContainerEl}
           className={`smc-vfill${shiftIsDown ? " noselect" : ""}`}
-          style={{ minHeight: 0, position: "relative" }}
+          style={{
+            minHeight: 0,
+            position: "relative",
+            ...(useSimpleTable
+              ? { display: "flex", flexDirection: "column" }
+              : {}),
+          }}
         >
-          <TableVirtuoso
-            ref={virtuosoRef}
-            style={{ flex: 1, minHeight: 0, scrollbarGutter: "stable" }}
-            data={virtualData}
-            computeItemKey={(_index, entry) =>
-              isPeekEntry(entry)
-                ? `__peek__${entry._peekForName}`
-                : entry.fullPath
-            }
-            overscan={200}
-            components={TABLE_COMPONENTS}
-            fixedHeaderContent={fixedHeaderContent}
-            itemContent={itemContent}
-          />
+          {useSimpleTable ? (
+            <div
+              data-cocalc-simple-file-listing
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflow: "auto",
+                scrollbarGutter: "stable",
+              }}
+            >
+              <table
+                className="ant-table-content"
+                style={{
+                  borderSpacing: 0,
+                  tableLayout: "fixed",
+                  width: "100%",
+                }}
+              >
+                <thead className="ant-table-thead">
+                  {fixedHeaderContent()}
+                </thead>
+                <tbody>{simpleTableRows}</tbody>
+              </table>
+            </div>
+          ) : (
+            <TableVirtuoso
+              ref={virtuosoRef}
+              style={{ flex: 1, minHeight: 0, scrollbarGutter: "stable" }}
+              data={virtualData}
+              computeItemKey={(_index, entry) =>
+                isPeekEntry(entry)
+                  ? `__peek__${entry._peekForName}`
+                  : entry.fullPath
+              }
+              overscan={200}
+              components={TABLE_COMPONENTS}
+              fixedHeaderContent={fixedHeaderContent}
+              itemContent={itemContent}
+            />
+          )}
         </div>
       </DndRowContext.Provider>
       {contextMenu && (

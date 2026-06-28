@@ -272,6 +272,11 @@ type HostRoutingInfo = {
   public_directory_share_id?: string;
 };
 
+type PublicDirectoryShareRoutingInfo = HostRoutingInfo & {
+  project_id: string;
+  share_id: string;
+};
+
 export class ConatClient extends EventEmitter {
   client: WebappClient;
   public hub: HubApi;
@@ -283,6 +288,9 @@ export class ConatClient extends EventEmitter {
   private projectHostTokens: { [host_id: string]: ProjectHostTokenState } = {};
   private projectHostBrowserSessions: {
     [routing_key: string]: ProjectHostBrowserSessionState;
+  } = {};
+  private publicDirectoryShareRoutingByProjectId: {
+    [project_id: string]: PublicDirectoryShareRoutingInfo;
   } = {};
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
@@ -1198,11 +1206,76 @@ export class ConatClient extends EventEmitter {
     };
   }
 
+  private buildHostRoutingInfoFromConnection({
+    hostConnection,
+    public_directory_share_id,
+    route_id,
+  }: {
+    hostConnection?: HostConnectionInfo | null;
+    public_directory_share_id?: string;
+    route_id: string;
+  }): HostRoutingInfo | undefined {
+    if (!hostConnection?.host_id) return;
+    let address = `${hostConnection.connect_url ?? ""}`.trim();
+    if (hostConnection.local_proxy && typeof window !== "undefined") {
+      const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
+      address = `${window.location.origin}${basePath}/${route_id}`;
+    }
+    if (!address || address === this.address) {
+      return;
+    }
+    const host_session_id = `${hostConnection.host_session_id ?? ""}`.trim();
+    return {
+      host_id: hostConnection.host_id,
+      routing_key: hostConnection.local_proxy
+        ? `${hostConnection.host_id}:${route_id}`
+        : hostConnection.host_id,
+      address,
+      ...(host_session_id ? { host_session_id } : {}),
+      ...(public_directory_share_id ? { public_directory_share_id } : {}),
+    };
+  }
+
+  registerPublicDirectoryShareRouting({
+    project_id,
+    share_id,
+    host_connection,
+  }: {
+    project_id: string;
+    share_id: string;
+    host_connection?: HostConnectionInfo | null;
+  }): void {
+    if (!isValidUUID(project_id) || !isValidUUID(share_id)) return;
+    const routing = this.buildHostRoutingInfoFromConnection({
+      hostConnection: host_connection,
+      public_directory_share_id: share_id,
+      route_id: project_id,
+    });
+    if (!routing) return;
+    this.publicDirectoryShareRoutingByProjectId[project_id] = {
+      ...routing,
+      project_id,
+      share_id,
+    };
+    const current = this.routedHubClients[routing.routing_key];
+    if (current) {
+      current.public_directory_share_id = share_id;
+      current.host_session_id = routing.host_session_id;
+      current.address = routing.address;
+      this.registerTrackedProjectForHost(routing.host_id, current, project_id);
+    }
+  }
+
   private getProjectRoutingInfo(
     project_id: string,
   ): HostRoutingInfo | undefined {
     if (lite) {
       return;
+    }
+    const publicShareRouting =
+      this.publicDirectoryShareRoutingByProjectId[project_id];
+    if (publicShareRouting) {
+      return publicShareRouting;
     }
     // [ ] TODO: need a ttl cache, since otherwise this gets called
     // on literally every packet sent to the project!
@@ -2618,10 +2691,16 @@ export class ConatClient extends EventEmitter {
       project_id,
     });
     if (!connected && !state.client.conn?.connected) {
-      throw new Error(
-        `unable to connect routed project-host client '${routing_key}': ${
-          compactError(state.lastConnectError).message ?? "unknown error"
-        }`,
+      logProjectHostRoutingDiagnostic(
+        "ensure-connected-waiting-for-sign-in",
+        {
+          routing_key,
+          project_id,
+          host_id: state.host_id,
+          address: state.address,
+          last_error: compactError(state.lastConnectError),
+        },
+        "warn",
       );
     }
     try {

@@ -42,7 +42,7 @@ import { NewButton } from "./new-button";
 import { PathNavigator } from "./path-navigator";
 import { SearchBar } from "./search-bar";
 import ExplorerTour from "./tour/tour";
-import { dirname, join } from "path";
+import { dirname, join, relative } from "path";
 import {
   redux,
   useAccountOtherSetting,
@@ -291,6 +291,45 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
         sharePath: publicDirectoryShare.path,
       })
     : listingPath;
+  const publicDirectoryShareRootPath = publicDirectoryShare
+    ? normalizeAbsolutePath(
+        join(
+          homePath,
+          publicDirectoryShare.path === "." ? "" : publicDirectoryShare.path,
+        ),
+      )
+    : undefined;
+  const openPublicShareFilePath = useCallback(
+    (path: string): boolean => {
+      if (!publicDirectoryShare || !publicDirectoryShareRootPath) {
+        return false;
+      }
+      const normalizedPath = normalizeAbsolutePath(path);
+      const relativePath = relative(
+        publicDirectoryShareRootPath,
+        normalizedPath,
+      ).replace(/\\/g, "/");
+      if (
+        !relativePath ||
+        relativePath === "." ||
+        relativePath.startsWith("../") ||
+        relativePath === ".."
+      ) {
+        return false;
+      }
+      const encodePath = (value: string) =>
+        value
+          .split("/")
+          .filter(Boolean)
+          .map((part) => encodeURIComponent(part))
+          .join("/");
+      window.location.href = `/share/${encodePath(
+        publicDirectoryShare.slug,
+      )}/${encodePath(relativePath)}`;
+      return true;
+    },
+    [publicDirectoryShare, publicDirectoryShareRootPath],
+  );
   const publicShareListingDebugContext = useMemo(
     () =>
       publicDirectoryShare
@@ -1334,9 +1373,18 @@ You can either wait for this host to become available again, or move this ${proj
                       project_id={project_id}
                       shiftIsDown={shiftIsDown}
                       onNavigateDirectory={navigateExplorer}
+                      onOpenFilePath={
+                        publicDirectoryShare
+                          ? openPublicShareFilePath
+                          : undefined
+                      }
                       readOnly={readOnlyViewer}
                       allowReadOnlyCopy={readOnlyViewer}
+                      root_path={publicDirectoryShareRootPath}
                       openUploadFiles={openUploadFiles}
+                      useSimpleTable={!!publicDirectoryShare}
+                      foregroundProjectOnOpen={!publicDirectoryShare}
+                      changeHistoryOnOpen={!publicDirectoryShare}
                     />
                   )}
                 </MaybeFileUploadWrapper>
@@ -1424,9 +1472,14 @@ function FileListingBody({
   project_id,
   shiftIsDown,
   onNavigateDirectory,
+  onOpenFilePath,
   readOnly,
   allowReadOnlyCopy,
+  root_path,
   openUploadFiles,
+  useSimpleTable,
+  foregroundProjectOnOpen,
+  changeHistoryOnOpen,
 }: {
   visibleListing: DirectoryListingEntry[] | null | undefined;
   active_file_sort: { column_name: string; is_descending: boolean };
@@ -1438,9 +1491,14 @@ function FileListingBody({
   project_id: string;
   shiftIsDown: boolean;
   onNavigateDirectory: (path: string) => void;
+  onOpenFilePath?: (path: string) => boolean;
   readOnly: boolean;
   allowReadOnlyCopy: boolean;
+  root_path?: string;
   openUploadFiles?: () => void;
+  useSimpleTable?: boolean;
+  foregroundProjectOnOpen?: boolean;
+  changeHistoryOnOpen?: boolean;
 }) {
   if (visibleListing == null) {
     return (
@@ -1461,9 +1519,14 @@ function FileListingBody({
       project_id={project_id}
       shiftIsDown={shiftIsDown}
       onNavigateDirectory={onNavigateDirectory}
+      onOpenFilePath={onOpenFilePath}
       readOnly={readOnly}
       allowReadOnlyCopy={allowReadOnlyCopy}
+      root_path={root_path}
       openUploadFiles={openUploadFiles}
+      useSimpleTable={useSimpleTable}
+      foregroundProjectOnOpen={foregroundProjectOnOpen}
+      changeHistoryOnOpen={changeHistoryOnOpen}
     />
   );
 }
