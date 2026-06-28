@@ -301,7 +301,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     : undefined;
   const openPublicShareFilePath = useCallback(
     (path: string): boolean => {
-      if (!publicDirectoryShare || !publicDirectoryShareRootPath) {
+      if (!actions || !publicDirectoryShare || !publicDirectoryShareRootPath) {
         return false;
       }
       const normalizedPath = normalizeAbsolutePath(path);
@@ -323,12 +323,22 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
           .filter(Boolean)
           .map((part) => encodeURIComponent(part))
           .join("/");
-      window.location.href = `/share/${encodePath(
+      const nextPath = `/share/${encodePath(
         publicDirectoryShare.slug,
       )}/${encodePath(relativePath)}`;
+      if (window.location.pathname !== nextPath) {
+        window.history.pushState(window.history.state, "", nextPath);
+      }
+      actions.open_file({
+        path: normalizedPath,
+        foreground: true,
+        foreground_project: false,
+        change_history: false,
+        explicit: true,
+      });
       return true;
     },
-    [publicDirectoryShare, publicDirectoryShareRootPath],
+    [actions, publicDirectoryShare, publicDirectoryShareRootPath],
   );
   const publicShareListingDebugContext = useMemo(
     () =>
