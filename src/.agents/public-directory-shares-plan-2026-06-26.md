@@ -182,6 +182,45 @@ A public directory share means:
 This is intentionally "project viewer with an automatically managed temporary
 viewer grant", not "old share server v2".
 
+### Whole-Project Sharing
+
+Whole-project sharing is a first-class use case.
+
+In this feature, "share the entire project" means share the project HOME
+directory, normally `/home/user`. It must never mean sharing the filesystem root
+`/`, `/tmp`, mounted secrets, project-host implementation directories, or the
+rootfs image as a filesystem tree.
+
+Implementation rules:
+
+- UI should offer an explicit "Share entire project" action in addition to
+  "Share this folder".
+- Store the share path as the project home path or a normalized sentinel such
+  as `.` that resolves to project HOME. Do not store `/` for this use case.
+- The viewer root for a whole-project share should be displayed as the project
+  root, not as `/home/user`.
+- Navigation in viewer mode must not offer any route above project HOME.
+- "Copy" and "Copy all" for a whole-project share copy the project HOME
+  contents subject to the same safety exclusions as file reads.
+- Legacy imports whose public path maps to project HOME should become
+  whole-project shares, not disabled or special-cased records.
+
+Whole-project shares still use the same temporary viewer grant flow as directory
+shares. The effective read policy is "HOME and descendants, minus global safety
+exclusions".
+
+Required global exclusions for both directory and whole-project shares:
+
+- `.ssh`
+- project secrets mount paths
+- `.local/share/cocalc` and other CoCalc internal state directories
+- snapshots/backups implementation paths unless they are explicitly supported as
+  a separate audited feature
+- any host/runtime path outside HOME
+
+These exclusions must be enforced by the project-host viewer filesystem service,
+not just hidden in the frontend.
+
 ### Security Invariants
 
 These are release-blocking:
@@ -358,6 +397,14 @@ so it works well for both explicit viewers and temporary share viewers:
   settings, and collaborator UI;
 - if the root listing is empty because the policy only allows a descendant,
   show the allowed descendant directory rather than an empty project root.
+- for whole-project shares, label the visible root as the project root and omit
+  `/home/user` implementation details unless needed for diagnostics;
+- the publish dialog should make the choice explicit: "Share this folder" vs
+  "Share entire project";
+- the share management UI should show whether a share targets a folder or the
+  entire project;
+- whole-project shares should still show the same read-only banner and primary
+  "Copy" action as folder shares.
 
 This work benefits both public shares and normal project viewers.
 
@@ -386,6 +433,10 @@ For selected files:
 - if files are selected in the viewer listing, "Copy selected" copies only
   those paths;
 - if nothing is selected, "Copy" copies the shared root.
+- for whole-project shares, the shared root is project HOME; copy operations
+  must apply the global safety exclusions and should not copy `.ssh`, internal
+  CoCalc state, secrets, snapshots/backups implementation paths, or anything
+  outside HOME.
 
 ### Site License / Membership Grant on Copy
 
@@ -500,6 +551,9 @@ Admin UI should expose account ids/emails for support and abuse response.
 - Add viewer/share banner and hide write/runtime-only UI.
 - Add tests for root listing, subdirectory listing, direct file URL, notebook
   open, selected copy, and blocked outside-path access.
+- Add tests for whole-project viewer roots: HOME listing has no parent escape,
+  `/tmp` and `/` navigation are unavailable, and safety exclusions are not
+  listed or fetchable.
 
 #### Phase C: Temporary Grant Backend
 
@@ -518,6 +572,8 @@ Admin UI should expose account ids/emails for support and abuse response.
 - Remove or quarantine obsolete custom share listing/open-file code after the
   new route is validated.
 - Keep unavailable/restoring/share-disabled states in the entry route.
+- Support both folder-share and whole-project-share slugs through the same entry
+  route and temporary grant API.
 
 #### Phase E: Copy and Membership
 
@@ -527,6 +583,8 @@ Admin UI should expose account ids/emails for support and abuse response.
 - Keep "Copy to existing project" as a secondary path.
 - Apply optional site-license/membership grant-on-copy with idempotent grant
   metadata and graceful exhaustion behavior.
+- Ensure whole-project copy uses the same backend authorization checks and
+  safety exclusions as whole-project file reads.
 
 #### Phase F: Migration and Redirects
 
