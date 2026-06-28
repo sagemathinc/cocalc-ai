@@ -217,6 +217,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     icon: "wrench",
     flyout: SettingsFlyout,
     noAnonymous: false,
+    noLite: true,
     flyoutTitle: defineMessage({
       id: "project.page.flyout.settings.title",
       defaultMessage: "Status and Settings",

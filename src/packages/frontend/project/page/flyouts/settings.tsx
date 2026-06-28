@@ -42,7 +42,12 @@ interface Props {
   wrap: (content: React.JSX.Element) => React.JSX.Element;
 }
 
-export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
+export function SettingsFlyout(props: Readonly<Props>): React.JSX.Element {
+  if (lite) return <></>;
+  return <SettingsFlyoutContent {...props} />;
+}
+
+function SettingsFlyoutContent(_: Readonly<Props>): React.JSX.Element {
   const { project_id, wrap } = _;
   const intl = useIntl();
   const { status, project } = useProjectContext();

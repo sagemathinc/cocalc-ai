@@ -182,7 +182,7 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     return <KioskModeBanner />;
   }
 
-  if (lite && tab_name === "rootfs") {
+  if (lite && (tab_name === "rootfs" || tab_name === "settings")) {
     return null;
   }
 

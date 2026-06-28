@@ -16,7 +16,6 @@ describe("activity-bar preferences", () => {
       "new",
       "search",
       "docs",
-      "settings",
       "workspaces",
       "active",
       "log",
@@ -36,7 +35,6 @@ describe("activity-bar preferences", () => {
       "new",
       "search",
       "docs",
-      "settings",
       "workspaces",
       "active",
       "log",
@@ -65,7 +63,6 @@ describe("activity-bar preferences", () => {
           "new",
           "search",
           "docs",
-          "settings",
           "active",
           "log",
           "servers",
@@ -80,7 +77,6 @@ describe("activity-bar preferences", () => {
       "new",
       "search",
       "docs",
-      "settings",
       "active",
       "log",
       "servers",
@@ -99,7 +95,7 @@ describe("activity-bar preferences", () => {
       liteMode: true,
     });
     expect(splitRailTabs(order, hidden)).toEqual({
-      visible: ["files", "agents", "new", "search", "docs", "settings"],
+      visible: ["files", "agents", "new", "search", "docs"],
       overflow: ["workspaces", "active", "log", "servers", "info"],
     });
   });
@@ -144,7 +140,7 @@ describe("activity-bar preferences", () => {
     );
     expect(splitRailTabs(order, hidden)).toEqual({
       visible: ["workspaces", "agents", "files", "new", "docs"],
-      overflow: ["search", "settings", "active", "log", "servers", "info"],
+      overflow: ["search", "active", "log", "servers", "info"],
     });
   });
 

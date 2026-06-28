@@ -218,7 +218,7 @@ jest.mock("./file-tab", () => {
     search: { label: "Search", icon: "search" },
     docs: { label: "Docs", icon: "book" },
     users: { label: "Users", icon: "users" },
-    settings: { label: "Settings", icon: "wrench" },
+    settings: { label: "Settings", icon: "wrench", noLite: true },
     active: {
       label: "Tabs",
       icon: "database",
@@ -333,10 +333,20 @@ describe("VerticalFixedTabs overflow actions", () => {
 
     expect(screen.queryByTestId("rail-workspaces")).toBeNull();
     expect(screen.queryByTestId("rail-rootfs")).toBeNull();
+    expect(screen.queryByTestId("rail-settings")).toBeNull();
     expect(screen.getByTestId("menu-overflow:workspaces")).toHaveTextContent(
       "Workspaces",
     );
     expect(screen.queryByTestId("menu-overflow:rootfs")).toBeNull();
+    expect(screen.queryByTestId("menu-overflow:settings")).toBeNull();
+  });
+
+  it("keeps project Settings available outside lite mode", () => {
+    mockLite = false;
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.getByTestId("rail-settings")).toBeTruthy();
   });
 
   it("uses the current Rootfs theme icon on the rail outside lite mode", () => {
@@ -538,6 +548,7 @@ describe("HiddenActivityBarLauncher", () => {
     render(<HiddenActivityBarLauncher />);
 
     expect(screen.queryByTestId("menu-launcher:rootfs")).toBeNull();
+    expect(screen.queryByTestId("menu-launcher:settings")).toBeNull();
   });
 
   it("lets viewers remove themselves from the hidden rail launcher menu", () => {
