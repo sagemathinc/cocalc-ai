@@ -181,6 +181,31 @@ export interface AuthorizePublicDirectoryShareReadResponse {
   read_policy: ProjectViewerReadPolicy;
 }
 
+export interface GrantTemporaryViewerAccessOptions {
+  account_id?: string;
+  slug: string;
+}
+
+export interface GrantTemporaryViewerAccessResponse {
+  project_id: string;
+  share_id: string;
+  path: string;
+  read_policy: ProjectViewerReadPolicy;
+  expires_at: Date | string;
+  project_url: string;
+}
+
+export interface GetTemporaryViewerReadPolicyOptions {
+  account_id?: string;
+  project_id: string;
+}
+
+export interface GetTemporaryViewerReadPolicyResponse {
+  project_id: string;
+  account_id: string;
+  read_policy?: ProjectViewerReadPolicy;
+}
+
 export interface PublicDirectoryShareDirectoryEntry {
   name: string;
   path: string;
@@ -262,6 +287,12 @@ export interface PublicDirectoryShares {
   authorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
+  grantTemporaryViewerAccess: (
+    opts: GrantTemporaryViewerAccessOptions,
+  ) => Promise<GrantTemporaryViewerAccessResponse>;
+  getTemporaryViewerReadPolicy: (
+    opts: GetTemporaryViewerReadPolicyOptions,
+  ) => Promise<GetTemporaryViewerReadPolicyResponse>;
 }
 
 export const publicDirectoryShares = {
@@ -276,4 +307,6 @@ export const publicDirectoryShares = {
   copyToProject: authFirstRequireAccount,
   copyToNewProject: authFirstRequireAccount,
   authorizeRead: authFirst,
+  grantTemporaryViewerAccess: authFirstRequireAccount,
+  getTemporaryViewerReadPolicy: authFirst,
 } as const;

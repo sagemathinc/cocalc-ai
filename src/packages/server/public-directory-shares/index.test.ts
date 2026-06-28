@@ -4,11 +4,29 @@
  */
 
 import {
+  ensurePublicDirectorySharesSchema,
+  getTemporaryViewerReadPolicy,
+  grantTemporaryViewerAccess,
   normalizePublicDirectorySharePath,
   normalizePublicDirectoryShareSlug,
   publicDirectoryShareReadPolicyForPath,
+  update,
 } from "./index";
+import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { viewerReadPolicyAllowsPath } from "@cocalc/util/project-access";
+
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  getServerSettings: async () => ({ public_directory_shares_enabled: true }),
+}));
+
+jest.mock("@cocalc/server/conat/api/util", () => ({
+  assertCollab: jest.fn(async () => undefined),
+}));
+
+const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const OWNER_ID = "22222222-2222-4222-8222-222222222222";
+const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
+const SHARE_ID = "44444444-4444-4444-8444-444444444444";
 
 describe("public directory share normalization", () => {
   it("normalizes slugs", () => {
@@ -95,5 +113,111 @@ describe("public directory share normalization", () => {
         path: ".local/share/cocalc/project-log.db",
       }),
     ).toBe(false);
+  });
+});
+
+describe("public directory temporary viewer grants", () => {
+  beforeAll(async () => {
+    await initEphemeralDatabase({ reset: true });
+    await ensurePublicDirectorySharesSchema();
+  }, 15000);
+
+  beforeEach(async () => {
+    await getPool().query(`
+      TRUNCATE
+        public_project_path_viewer_grants,
+        public_project_path_slugs,
+        public_project_paths
+      CASCADE
+    `);
+  });
+
+  afterAll(async () => {
+    await getPool().end();
+  });
+
+  async function insertShare() {
+    await getPool().query(
+      `
+        INSERT INTO projects (project_id, title, users, last_edited)
+        VALUES ($1, 'Publish project', '{}'::jsonb, NOW())
+        ON CONFLICT (project_id) DO NOTHING
+      `,
+      [PROJECT_ID],
+    );
+    const { rows } = await getPool().query<{ id: string }>(
+      `
+        INSERT INTO public_project_paths (
+          id, project_id, path, slug, visibility, requires_auth,
+          availability_status, created_by, updated_by, disabled
+        )
+        VALUES ($1, $2, 'share', 'test2', 'unlisted', TRUE, 'available', $3, $3, FALSE)
+        RETURNING id
+      `,
+      [SHARE_ID, PROJECT_ID, OWNER_ID],
+    );
+    const id = rows[0].id;
+    await getPool().query(
+      `
+        INSERT INTO public_project_path_slugs (
+          slug_lower, slug, owning_bay_id, public_project_path_id, project_id,
+          disabled, updated_at
+        )
+        VALUES (lower($1), $1, 'bay-0', $2, $3, FALSE, NOW())
+      `,
+      ["test2", id, PROJECT_ID],
+    );
+    return id;
+  }
+
+  it("grants path-scoped viewer access for a signed-in share visitor", async () => {
+    const shareId = await insertShare();
+
+    const grant = await grantTemporaryViewerAccess({
+      account_id: ACCOUNT_ID,
+      slug: "test2",
+    });
+
+    expect(grant.project_id).toBe(PROJECT_ID);
+    expect(grant.share_id).toBe(shareId);
+    expect(grant.path).toBe("share");
+    expect(
+      viewerReadPolicyAllowsPath({
+        policy: grant.read_policy,
+        path: "share/a.ipynb",
+      }),
+    ).toBe(true);
+    expect(
+      viewerReadPolicyAllowsPath({
+        policy: grant.read_policy,
+        path: "private/a.ipynb",
+      }),
+    ).toBe(false);
+
+    const policy = await getTemporaryViewerReadPolicy({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(policy.read_policy).toEqual(grant.read_policy);
+  });
+
+  it("revokes temporary viewer grants when a share is disabled", async () => {
+    const shareId = await insertShare();
+    await grantTemporaryViewerAccess({
+      account_id: ACCOUNT_ID,
+      slug: "test2",
+    });
+
+    await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      disabled: true,
+    });
+
+    const policy = await getTemporaryViewerReadPolicy({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(policy.read_policy).toBeUndefined();
   });
 });

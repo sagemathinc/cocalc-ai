@@ -8,6 +8,8 @@ import type {
   AuthorizePublicDirectoryShareReadOptions,
   CopyPublicDirectoryShareToNewProjectOptions,
   CopyPublicDirectoryShareToProjectOptions,
+  GetTemporaryViewerReadPolicyOptions,
+  GrantTemporaryViewerAccessOptions,
   ListPublicDirectoryShareDirectoryOptions,
   ResolvePublicDirectoryShareOptions,
 } from "@cocalc/conat/hub/api/public-directory-shares";
@@ -69,6 +71,26 @@ export async function copyToNewProject(
   return isSeedBay()
     ? await publicDirectoryShares.copyToNewProject(opts)
     : await seedPublicDirectorySharesClient().publicDirectoryShareCopyToNewProject(
+        opts,
+      );
+}
+
+export async function grantTemporaryViewerAccess(
+  opts: GrantTemporaryViewerAccessOptions,
+) {
+  return isSeedBay()
+    ? await publicDirectoryShares.grantTemporaryViewerAccess(opts)
+    : await seedPublicDirectorySharesClient().publicDirectoryShareGrantTemporaryViewerAccess(
+        opts,
+      );
+}
+
+export async function getTemporaryViewerReadPolicy(
+  opts: GetTemporaryViewerReadPolicyOptions,
+) {
+  return isSeedBay()
+    ? await publicDirectoryShares.getTemporaryViewerReadPolicy(opts)
+    : await seedPublicDirectorySharesClient().publicDirectoryShareGetTemporaryViewerReadPolicy(
         opts,
       );
 }

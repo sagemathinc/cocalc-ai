@@ -1458,6 +1458,10 @@ async function startAccountLocalService(): Promise<void> {
       await publicDirectoryShares.copyToProject(opts),
     publicDirectoryShareCopyToNewProject: async (opts) =>
       await publicDirectoryShares.copyToNewProject(opts),
+    publicDirectoryShareGrantTemporaryViewerAccess: async (opts) =>
+      await publicDirectoryShares.grantTemporaryViewerAccess(opts),
+    publicDirectoryShareGetTemporaryViewerReadPolicy: async (opts) =>
+      await publicDirectoryShares.getTemporaryViewerReadPolicy(opts),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

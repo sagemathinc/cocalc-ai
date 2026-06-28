@@ -54,6 +54,10 @@ import type {
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
   CreatePublicDirectoryShareOptions,
+  GetTemporaryViewerReadPolicyOptions,
+  GetTemporaryViewerReadPolicyResponse,
+  GrantTemporaryViewerAccessOptions,
+  GrantTemporaryViewerAccessResponse,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
   UpdatePublicDirectoryShareOptions,
@@ -62,6 +66,7 @@ import type {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
+const DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS = 7;
 
 type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
   metadata?: Record<string, unknown> | null;
@@ -100,6 +105,16 @@ interface SiteLicenseGrantConfig {
   duration_days: number;
   copy_requires_grant: boolean;
 }
+
+type TemporaryViewerGrantRow = {
+  id: string;
+  public_project_path_id: string;
+  project_id: string;
+  account_id: string;
+  read_policy: ProjectViewerReadPolicy;
+  status: string;
+  expires_at: Date | string;
+};
 
 function isSlugUniqueViolation(err: unknown): boolean {
   const error = err as PostgresErrorLike | undefined;
@@ -398,6 +413,34 @@ export async function ensurePublicDirectorySharesSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS public_project_path_slugs_owning_bay_id_idx
         ON public_project_path_slugs(owning_bay_id)
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public_project_path_viewer_grants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        public_project_path_id UUID NOT NULL,
+        project_id UUID NOT NULL,
+        account_id UUID NOT NULL,
+        read_policy JSONB NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'active',
+        grant_reason TEXT NOT NULL DEFAULT 'share-url',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_used_at TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP,
+        revoked_by UUID,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        UNIQUE(public_project_path_id, account_id)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_viewer_grants_project_account_idx
+        ON public_project_path_viewer_grants(project_id, account_id)
+        WHERE status = 'active'
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_viewer_grants_expiry_idx
+        ON public_project_path_viewer_grants(expires_at)
+        WHERE status = 'active'
+    `);
   })();
   await schemaReady;
 }
@@ -667,6 +710,129 @@ export async function resolve(
   opts: ResolvePublicDirectoryShareOptions,
 ): Promise<ResolvedPublicDirectoryShare> {
   return (await resolveRow(opts)).share;
+}
+
+function temporaryViewerGrantExpiresAt(): Date {
+  return new Date(
+    Date.now() + DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS * 24 * 60 * 60 * 1000,
+  );
+}
+
+function projectViewerUrl(share: ResolvedPublicDirectoryShare): string {
+  const encodedPath =
+    share.path === "."
+      ? ""
+      : `/${share.path.split("/").map(encodeURIComponent).join("/")}`;
+  return `/projects/${share.project_id}/files${encodedPath}?viewer=1&share=${encodeURIComponent(share.id)}`;
+}
+
+async function revokeTemporaryViewerGrantsForShare({
+  public_project_path_id,
+  revoked_by,
+  status = "revoked",
+}: {
+  public_project_path_id: string;
+  revoked_by?: string | null;
+  status?: "revoked" | "disabled";
+}): Promise<void> {
+  await getPool().query(
+    `
+      UPDATE public_project_path_viewer_grants
+      SET status=$2,
+          revoked_at=NOW(),
+          revoked_by=$3
+      WHERE public_project_path_id=$1
+        AND status='active'
+    `,
+    [public_project_path_id, status, revoked_by ?? null],
+  );
+}
+
+export async function grantTemporaryViewerAccess({
+  account_id,
+  slug,
+}: GrantTemporaryViewerAccessOptions): Promise<GrantTemporaryViewerAccessResponse> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  const { share } = await resolveRow({ account_id, slug });
+  if (!share.available) {
+    throw Error(
+      share.availability_message || "This shared directory is not available.",
+    );
+  }
+  const expiresAt = temporaryViewerGrantExpiresAt();
+  await getPool().query(
+    `
+      INSERT INTO public_project_path_viewer_grants (
+        public_project_path_id, project_id, account_id, read_policy, status,
+        grant_reason, expires_at, last_used_at, metadata
+      )
+      VALUES ($1, $2, $3, $4::jsonb, 'active', 'share-url', $5, NOW(), $6::jsonb)
+      ON CONFLICT (public_project_path_id, account_id) DO UPDATE SET
+        project_id=EXCLUDED.project_id,
+        read_policy=EXCLUDED.read_policy,
+        status='active',
+        expires_at=EXCLUDED.expires_at,
+        last_used_at=NOW(),
+        revoked_at=NULL,
+        revoked_by=NULL,
+        metadata=EXCLUDED.metadata
+    `,
+    [
+      share.id,
+      share.project_id,
+      account_id,
+      JSON.stringify(share.read_policy),
+      expiresAt,
+      JSON.stringify({ slug: share.slug }),
+    ],
+  );
+  return {
+    project_id: share.project_id,
+    share_id: share.id,
+    path: share.path,
+    read_policy: share.read_policy,
+    expires_at: expiresAt,
+    project_url: projectViewerUrl(share),
+  };
+}
+
+export async function getTemporaryViewerReadPolicy({
+  account_id,
+  project_id,
+}: GetTemporaryViewerReadPolicyOptions): Promise<GetTemporaryViewerReadPolicyResponse> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  const { rows } = await getPool().query<TemporaryViewerGrantRow>(
+    `
+      SELECT g.*
+      FROM public_project_path_viewer_grants g
+      JOIN public_project_paths p ON p.id=g.public_project_path_id
+      WHERE g.project_id=$1
+        AND g.account_id=$2
+        AND g.status='active'
+        AND g.expires_at > NOW()
+        AND p.disabled IS FALSE
+        AND p.visibility <> 'disabled'
+        AND p.project_id=g.project_id
+    `,
+    [project_id, account_id],
+  );
+  const rules = rows.flatMap((row) =>
+    Array.isArray(row.read_policy?.rules) ? row.read_policy.rules : [],
+  );
+  return {
+    project_id,
+    account_id,
+    read_policy: rules.length > 0 ? { rules } : undefined,
+  };
 }
 
 export async function authorizeRead({
@@ -986,6 +1152,13 @@ async function savePublicDirectoryShare(
     `,
     [slug, bayId, row.id, row.project_id, row.disabled],
   );
+  if (row.disabled || row.visibility === "disabled") {
+    await revokeTemporaryViewerGrantsForShare({
+      public_project_path_id: row.id,
+      revoked_by: opts.account_id ?? null,
+      status: "disabled",
+    });
+  }
   return rowToSummary(row);
 }
 

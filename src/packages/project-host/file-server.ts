@@ -125,7 +125,10 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { getMasterConatClient, queueProjectProvisioned } from "./master-status";
 import callHub from "@cocalc/conat/hub/call-hub";
-import type { AuthorizePublicDirectoryShareReadResponse } from "@cocalc/conat/hub/api/public-directory-shares";
+import type {
+  AuthorizePublicDirectoryShareReadResponse,
+  GetTemporaryViewerReadPolicyResponse,
+} from "@cocalc/conat/hub/api/public-directory-shares";
 import { startProjectWithAdmission } from "./project-start-admission";
 import {
   createRusticProgressHandler,
@@ -409,21 +412,69 @@ function shareSubjectFromSubject(subject: string): {
   return parsed;
 }
 
-function getViewerReadPolicy({
+async function getTemporaryViewerReadPolicy({
   project_id,
   account_id,
 }: {
   project_id: string;
   account_id: string;
-}): ProjectViewerReadPolicy {
+}): Promise<ProjectViewerReadPolicy | undefined> {
+  const client = getMasterConatClient();
+  if (!client) {
+    return undefined;
+  }
+  let response: GetTemporaryViewerReadPolicyResponse;
+  try {
+    response = (await callHub({
+      client,
+      host_id: requireHostId(),
+      name: "publicDirectoryShares.getTemporaryViewerReadPolicy",
+      args: [{ account_id, project_id }],
+      timeout: 15_000,
+    })) as GetTemporaryViewerReadPolicyResponse;
+  } catch {
+    return undefined;
+  }
+  if (
+    response.project_id !== project_id ||
+    response.account_id !== account_id
+  ) {
+    throw Error("temporary viewer grant authorization mismatch");
+  }
+  return response.read_policy;
+}
+
+async function getViewerReadPolicy({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id: string;
+}): Promise<ProjectViewerReadPolicy> {
   const row = getProject(project_id);
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
+  const readPolicy =
+    typeof userEntry === "string" ? undefined : userEntry?.read_policy;
+  const temporaryPolicy = await getTemporaryViewerReadPolicy({
+    project_id,
+    account_id,
+  });
+  if (
+    isProjectViewerRole(group) &&
+    readPolicy &&
+    Array.isArray(readPolicy.rules)
+  ) {
+    return temporaryPolicy
+      ? { rules: [...readPolicy.rules, ...temporaryPolicy.rules] }
+      : readPolicy;
+  }
+  if (temporaryPolicy && Array.isArray(temporaryPolicy.rules)) {
+    return temporaryPolicy;
+  }
   if (!isProjectViewerRole(group)) {
     throw new Error("account is not a viewer on this project");
   }
-  const readPolicy =
-    typeof userEntry === "string" ? undefined : userEntry?.read_policy;
   if (!readPolicy || !Array.isArray(readPolicy.rules)) {
     throw new Error("viewer read policy is not configured");
   }
@@ -4320,7 +4371,7 @@ export async function initViewerFsServer({
       });
       return createViewerReadOnlyFilesystem({
         fs: projectFs,
-        readPolicy: getViewerReadPolicy({ project_id, account_id }),
+        readPolicy: await getViewerReadPolicy({ project_id, account_id }),
       });
     },
   });

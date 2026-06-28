@@ -54,6 +54,10 @@ import type {
   CopyPublicDirectoryShareToNewProjectResponse,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
+  GetTemporaryViewerReadPolicyOptions,
+  GetTemporaryViewerReadPolicyResponse,
+  GrantTemporaryViewerAccessOptions,
+  GrantTemporaryViewerAccessResponse,
   ListPublicDirectoryShareDirectoryOptions,
   ListPublicDirectoryShareDirectoryResponse,
   ResolvePublicDirectoryShareOptions,
@@ -2153,7 +2157,9 @@ export type AccountLocalMethod =
   | "public-directory-share-authorize-read"
   | "public-directory-share-list-directory"
   | "public-directory-share-copy-to-project"
-  | "public-directory-share-copy-to-new-project";
+  | "public-directory-share-copy-to-new-project"
+  | "public-directory-share-grant-temporary-viewer-access"
+  | "public-directory-share-get-temporary-viewer-read-policy";
 export type AuthTokenMethod =
   | "requires-token"
   | "validate"
@@ -3353,6 +3359,12 @@ export interface InterBayAccountLocalApi {
   publicDirectoryShareCopyToNewProject: (
     opts: CopyPublicDirectoryShareToNewProjectOptions,
   ) => Promise<CopyPublicDirectoryShareToNewProjectResponse>;
+  publicDirectoryShareGrantTemporaryViewerAccess: (
+    opts: GrantTemporaryViewerAccessOptions,
+  ) => Promise<GrantTemporaryViewerAccessResponse>;
+  publicDirectoryShareGetTemporaryViewerReadPolicy: (
+    opts: GetTemporaryViewerReadPolicyOptions,
+  ) => Promise<GetTemporaryViewerReadPolicyResponse>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -5919,6 +5931,32 @@ export function createInterBayAccountLocalClient({
       method: "public-directory-share-copy-to-new-project",
     }),
   });
+  const publicDirectoryShareGrantTemporaryViewerAccessClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGrantTemporaryViewerAccess"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "public-directory-share-grant-temporary-viewer-access",
+      }),
+    });
+  const publicDirectoryShareGetTemporaryViewerReadPolicyClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGetTemporaryViewerReadPolicy"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "public-directory-share-get-temporary-viewer-read-policy",
+      }),
+    });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -6197,6 +6235,14 @@ export function createInterBayAccountLocalClient({
       ),
     publicDirectoryShareCopyToNewProject: async (opts) =>
       await publicDirectoryShareCopyToNewProjectClient.publicDirectoryShareCopyToNewProject(
+        opts,
+      ),
+    publicDirectoryShareGrantTemporaryViewerAccess: async (opts) =>
+      await publicDirectoryShareGrantTemporaryViewerAccessClient.publicDirectoryShareGrantTemporaryViewerAccess(
+        opts,
+      ),
+    publicDirectoryShareGetTemporaryViewerReadPolicy: async (opts) =>
+      await publicDirectoryShareGetTemporaryViewerReadPolicyClient.publicDirectoryShareGetTemporaryViewerReadPolicy(
         opts,
       ),
   };
@@ -7586,6 +7632,40 @@ export function createInterBayAccountLocalHandler({
       impl: {
         publicDirectoryShareCopyToNewProject: async (opts) =>
           await impl.publicDirectoryShareCopyToNewProject(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGrantTemporaryViewerAccess"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-grant-temporary-viewer-access",
+      }),
+      impl: {
+        publicDirectoryShareGrantTemporaryViewerAccess: async (opts) =>
+          await impl.publicDirectoryShareGrantTemporaryViewerAccess(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGetTemporaryViewerReadPolicy"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-temporary-viewer-read-policy",
+      }),
+      impl: {
+        publicDirectoryShareGetTemporaryViewerReadPolicy: async (opts) =>
+          await impl.publicDirectoryShareGetTemporaryViewerReadPolicy(opts),
       },
     }),
   ];
