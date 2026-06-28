@@ -57,6 +57,7 @@ Table({
           admin_assigned_count: null,
           site_license_count: null,
           total_account_count: null,
+          total_active_account_count: null,
           has_usage_history: null,
           created: null,
           updated: null,
@@ -201,6 +202,10 @@ Table({
     total_account_count: {
       type: "number",
       desc: "Number of distinct accounts using this tier through subscriptions, packages, or admin assignment.",
+    },
+    total_active_account_count: {
+      type: "number",
+      desc: "Total active accounts.",
     },
     has_usage_history: {
       type: "boolean",

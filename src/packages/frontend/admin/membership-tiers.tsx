@@ -49,6 +49,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { AdminMembershipTierPayload } from "@cocalc/conat/hub/api/purchases";
+import type { BayOpsOverview } from "@cocalc/conat/hub/api/system";
 import { currency } from "@cocalc/util/misc";
 import {
   applyMembershipTierTemplateFallbacks,
@@ -222,6 +223,7 @@ interface Tier {
   admin_assigned_count?: number;
   site_license_count?: number;
   total_account_count?: number;
+  total_active_account_count?: number;
   has_usage_history?: boolean;
   created?: dayjs.Dayjs;
   updated?: dayjs.Dayjs;
@@ -745,6 +747,8 @@ function prioritySortValue(tier: Tier): number {
 
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
+  const [total_active_account_count, set_total_active_account_count] =
+    React.useState<number | null>(null);
   const [editing, set_editing] = React.useState<Tier | null>(null);
   const [saving, set_saving] = React.useState<boolean>(false);
   const [loading, set_loading] = React.useState<boolean>(false);
@@ -808,6 +812,7 @@ function useMembershipTiers() {
             admin_assigned_count: null,
             site_license_count: null,
             total_account_count: null,
+            total_active_account_count: null,
             has_usage_history: null,
             created: null,
             updated: null,
@@ -815,16 +820,24 @@ function useMembershipTiers() {
         },
       });
       const next = {};
+      let next_total_active_account_count: number | null = null;
       for (const row of result.query.membership_tiers ?? []) {
         const tier = applyMembershipTierTemplateFallbacks({
           ...row,
         });
+        if (
+          next_total_active_account_count == null &&
+          typeof tier.total_active_account_count === "number"
+        ) {
+          next_total_active_account_count = tier.total_active_account_count;
+        }
         if (tier.created) tier.created = dayjs(tier.created);
         if (tier.updated) tier.updated = dayjs(tier.updated);
         next[tier.id] = tier;
       }
       set_error("");
       set_data(next);
+      set_total_active_account_count(next_total_active_account_count);
     } catch (err) {
       set_error(err.message ?? String(err));
     } finally {
@@ -962,6 +975,7 @@ function useMembershipTiers() {
 
   return {
     data,
+    total_active_account_count,
     form,
     editing,
     saving,
@@ -991,6 +1005,7 @@ export function MembershipTiers() {
   );
   const {
     data,
+    total_active_account_count,
     form,
     editing,
     saving,
@@ -1018,6 +1033,27 @@ export function MembershipTiers() {
   >([]);
   const [importError, setImportError] = React.useState("");
   const [importing, setImporting] = React.useState(false);
+  const [bayOpsOverview, setBayOpsOverview] =
+    React.useState<BayOpsOverview | null>(null);
+
+  React.useEffect(() => {
+    let mounted = true;
+    webapp_client.conat_client.hub.system
+      .getBayOpsOverview({})
+      .then((overview) => {
+        if (mounted) {
+          setBayOpsOverview(overview);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setBayOpsOverview(null);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
   const [jsonErrors, setJsonErrors] = React.useState<Record<string, string>>(
     {},
   );
@@ -3604,6 +3640,25 @@ export function MembershipTiers() {
     return (
       <Space direction="vertical" style={{ width: "100%" }}>
         {render_buttons()}
+        {bayOpsOverview != null && bayOpsOverview.bays.length > 1 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Bay-local counts"
+            description={
+              <>
+                Membership tier counts are computed from bay{" "}
+                <Text code>{bayOpsOverview.current_bay_id}</Text>. Totals from
+                other bays are not included yet.
+              </>
+            }
+          />
+        )}
+        {total_active_account_count != null && (
+          <Text type="secondary">
+            Total active accounts: {total_active_account_count.toLocaleString()}
+          </Text>
+        )}
         <Table<Tier>
           size={"small"}
           dataSource={table_data}

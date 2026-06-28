@@ -338,6 +338,15 @@ async function getTotalAccountTierCounts(
   }, {});
 }
 
+async function getTotalActiveAccountCount(db: PostgreSQL): Promise<number> {
+  const { rows } = await callback2(db._query, {
+    query: `SELECT COUNT(*)::int AS total_active_account_count
+              FROM accounts
+             WHERE coalesce(deleted,false)=false`,
+  });
+  return rows?.[0]?.total_active_account_count ?? 0;
+}
+
 async function assertTierNotUsedByActiveMembershipUsage(
   db: PostgreSQL,
   tier_id: string,
@@ -603,6 +612,7 @@ export default async function membershipTiersQuery(
     const teamSeatsByTier = await getActiveTeamSeatTierCounts(db);
     const packageAccountsByTier = await getActivePackageAccountTierCounts(db);
     const totalAccountsByTier = await getTotalAccountTierCounts(db);
+    const totalActiveAccountCount = await getTotalActiveAccountCount(db);
     return rows.map((row) => ({
       ...mapStorageRow(row),
       ...(subscriptionByTier[row.id] ?? {
@@ -619,6 +629,7 @@ export default async function membershipTiersQuery(
       admin_assigned_count: adminAssignedByTier[row.id] ?? 0,
       site_license_count: siteLicenseByTier[row.id] ?? 0,
       total_account_count: totalAccountsByTier[row.id] ?? 0,
+      total_active_account_count: totalActiveAccountCount,
     }));
   } else if (query.id) {
     return await upsertMembershipTier(db, query);
