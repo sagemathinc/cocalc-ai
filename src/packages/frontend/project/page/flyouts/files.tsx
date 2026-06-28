@@ -1158,7 +1158,7 @@ export function FilesFlyout({
         onTerminalCommand={() => allowListingUpdatesFor()}
         readOnlyViewer={readOnlyViewer}
       />
-      {!lite && !readOnlyViewer && (
+      {!lite && (!readOnlyViewer || checked_files.size > 0) && (
         <div
           style={{
             alignItems: "center",
@@ -1167,12 +1167,14 @@ export function FilesFlyout({
             padding: "0 5px 5px",
           }}
         >
-          <DiskUsage
-            compact
-            current_path={effective_current_path}
-            project_id={project_id}
-            style={{ margin: 0 }}
-          />
+          {!readOnlyViewer ? (
+            <DiskUsage
+              compact
+              current_path={effective_current_path}
+              project_id={project_id}
+              style={{ margin: 0 }}
+            />
+          ) : null}
           <FilesSelectedControls
             project_id={project_id}
             checked_files={checked_files}
@@ -1183,6 +1185,7 @@ export function FilesFlyout({
             activeFile={activeFile}
             refreshBackups={refreshBackups}
             showInfo={false}
+            readOnlyViewer={readOnlyViewer}
           />
         </div>
       )}
@@ -1220,6 +1223,7 @@ export function FilesFlyout({
         refreshBackups={refreshBackups}
         currentPath={effective_current_path}
         onNavigate={navigateFlyout}
+        readOnlyViewer={readOnlyViewer}
       />
       {modal}
     </div>

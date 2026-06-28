@@ -77,9 +77,17 @@ export function PublicDirectoryShareBanner({
             options: { recursive: true },
           },
         );
+      const summary = await webapp_client.conat_client.lroWait({
+        op_id: result.op_id,
+        scope_type: result.scope_type,
+        scope_id: result.scope_id,
+      });
+      if (summary.status !== "succeeded") {
+        throw new Error(summary.error ?? `Copy ${summary.status}`);
+      }
       const grantMessage = siteLicenseGrantMessage(result.site_license_grant);
       setCopyMessage(
-        `New project created and copy queued as operation ${result.op_id}.${grantMessage ? ` ${grantMessage}` : ""}`,
+        `New project created and copied.${grantMessage ? ` ${grantMessage}` : ""}`,
       );
       projectActions.open_project({
         project_id: result.destination_project_id,

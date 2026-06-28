@@ -163,6 +163,30 @@ describe("FilesSelectedControls", () => {
     );
   });
 
+  it("shows only copy actions for read-only viewers", () => {
+    render(
+      <FilesSelectedControls
+        checked_files={immutable.Set(["/work/a.ipynb"])}
+        directoryFiles={[]}
+        getFile={() => ({ isDir: false, name: "a.ipynb" }) as any}
+        mode="top"
+        project_id="project-1"
+        open={jest.fn()}
+        activeFile={null}
+        readOnlyViewer
+      />,
+    );
+
+    expect(screen.queryByText("Open")).toBeNull();
+    expect(mockFileActionsDropdown.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        names: ["copy"],
+        extraItems: [],
+        selectedPaths: ["/work/a.ipynb"],
+      }),
+    );
+  });
+
   it("ignores stale backup metadata when the project changes", async () => {
     const first = deferred<any[]>();
     const second = deferred<any[]>();
