@@ -37,7 +37,7 @@ function joinSharePath(sharePath: string, relativePath: string): string {
   return pieces.join("/");
 }
 
-function shareProjectFilesTarget({
+export function shareProjectFilesTarget({
   projectPath,
   isDirectory,
 }: {

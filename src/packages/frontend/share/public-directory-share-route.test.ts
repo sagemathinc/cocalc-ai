@@ -1,3 +1,4 @@
+import { shareProjectFilesTarget } from "./public-directory-share-page";
 import { shareRouteCandidates } from "./public-directory-share-route";
 
 describe("shareRouteCandidates", () => {
@@ -21,5 +22,28 @@ describe("shareRouteCandidates", () => {
       { slug: "test2/dir", relativePath: "a.py" },
       { slug: "test2", relativePath: "dir/a.py" },
     ]);
+  });
+});
+
+describe("shareProjectFilesTarget", () => {
+  it("routes a shared folder through the project runtime home", () => {
+    expect(
+      shareProjectFilesTarget({ projectPath: "share", isDirectory: true }),
+    ).toBe("files/home/user/share/");
+  });
+
+  it("routes a file inside a shared folder through the project runtime home", () => {
+    expect(
+      shareProjectFilesTarget({
+        projectPath: "share/a.ipynb",
+        isDirectory: false,
+      }),
+    ).toBe("files/home/user/share/a.ipynb");
+  });
+
+  it("routes a whole-project share to the project runtime home", () => {
+    expect(
+      shareProjectFilesTarget({ projectPath: "", isDirectory: true }),
+    ).toBe("files/home/user/");
   });
 });
