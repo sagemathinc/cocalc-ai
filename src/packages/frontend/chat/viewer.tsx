@@ -13,9 +13,11 @@ import { historyArray } from "./access";
 export default function Viewer({
   doc,
   font_size,
+  readOnly = false,
 }: {
   doc: () => Document | undefined;
   font_size?: number;
+  readOnly?: boolean;
 }) {
   const messages = useMemo<ChatMessages>(() => {
     const m = new Map<string, any>();
@@ -54,6 +56,7 @@ export default function Viewer({
       mode="standalone"
       sortedDates={sortedDates}
       numChildren={numChildren}
+      readOnly={readOnly}
     />
   );
 }

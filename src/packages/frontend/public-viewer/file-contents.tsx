@@ -106,6 +106,31 @@ export default function PublicViewerFileContents({
     );
   }
 
+  if (ext === "chat" || ext === "sage-chat") {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <ChatRenderer
+          content={content}
+          fileContext={resolvedFileContext}
+          style={style}
+        />
+      </Suspense>
+    );
+  }
+
+  if (ext === "tasks") {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <TasksRenderer
+          content={content}
+          path={path}
+          project_id={fileContext?.project_id}
+          fontSize={fontSize}
+        />
+      </Suspense>
+    );
+  }
+
   if (isCodemirror(ext)) {
     return (
       <Suspense fallback={<LoadingRenderer />}>
@@ -153,31 +178,6 @@ export default function PublicViewerFileContents({
     return (
       <Suspense fallback={<LoadingRenderer />}>
         <SlidesRenderer content={content} fileContext={resolvedFileContext} />
-      </Suspense>
-    );
-  }
-
-  if (ext === "chat" || ext === "sage-chat") {
-    return (
-      <Suspense fallback={<LoadingRenderer />}>
-        <ChatRenderer
-          content={content}
-          fileContext={resolvedFileContext}
-          style={style}
-        />
-      </Suspense>
-    );
-  }
-
-  if (ext === "tasks") {
-    return (
-      <Suspense fallback={<LoadingRenderer />}>
-        <TasksRenderer
-          content={content}
-          path={path}
-          project_id={fileContext?.project_id}
-          fontSize={fontSize}
-        />
       </Suspense>
     );
   }

@@ -16,6 +16,13 @@ jest.mock("./renderers/codemirror", () => ({
   ),
 }));
 
+jest.mock("./renderers/chat", () => ({
+  __esModule: true,
+  default: ({ content }: { content: string }) => (
+    <div data-testid="chat-renderer">{content}</div>
+  ),
+}));
+
 test("dispatches markdown files to the rendered markdown viewer", async () => {
   render(
     <PublicViewerFileContents
@@ -27,5 +34,19 @@ test("dispatches markdown files to the rendered markdown viewer", async () => {
   );
 
   expect(await screen.findByTestId("markdown-renderer")).toBeTruthy();
+  expect(screen.queryByTestId("codemirror-renderer")).toBeNull();
+});
+
+test("dispatches chat files to the chat viewer", async () => {
+  render(
+    <PublicViewerFileContents
+      content={'{"event":"chat","history":[{"content":"hello"}]}'}
+      path="session.chat"
+      rawUrl="https://example.com/session.chat"
+      fileContext={{ noSanitize: false }}
+    />,
+  );
+
+  expect(await screen.findByTestId("chat-renderer")).toBeTruthy();
   expect(screen.queryByTestId("codemirror-renderer")).toBeNull();
 });
