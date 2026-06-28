@@ -269,9 +269,9 @@ export default function SupportTickets({ config }: { config: SupportConfig }) {
               flexWrap: "wrap",
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: "18px" }}>
+            <h2 style={{ fontWeight: 700, fontSize: "18px", margin: 0 }}>
               {ticket.subject ?? `Ticket ${ticket.id ?? i + 1}`}
-            </div>
+            </h2>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <StatusPill status={ticket.status} />
               <TypePill type={ticket.type} />
