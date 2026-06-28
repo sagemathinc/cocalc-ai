@@ -14,10 +14,12 @@ export default function Viewer({
   doc,
   font_size,
   readOnly = false,
+  virtualized = true,
 }: {
   doc: () => Document | undefined;
   font_size?: number;
   readOnly?: boolean;
+  virtualized?: boolean;
 }) {
   const messages = useMemo<ChatMessages>(() => {
     const m = new Map<string, any>();
@@ -57,6 +59,7 @@ export default function Viewer({
       sortedDates={sortedDates}
       numChildren={numChildren}
       readOnly={readOnly}
+      virtualized={virtualized}
     />
   );
 }

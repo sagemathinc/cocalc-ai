@@ -211,12 +211,7 @@ function logProjectHostRoutingDiagnostic(
   payload: Record<string, any>,
   level: "info" | "warn" = "info",
 ): void {
-  const host_id =
-    typeof payload.host_id === "string" ? payload.host_id : undefined;
-  if (
-    !isLocalStorageFlagEnabled(RECONNECT_DEBUG_STORAGE_KEY) &&
-    !isPublicDirectoryShareHost(host_id)
-  ) {
+  if (!isLocalStorageFlagEnabled(RECONNECT_DEBUG_STORAGE_KEY)) {
     return;
   }
   const safePayload = {

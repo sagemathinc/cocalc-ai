@@ -838,6 +838,7 @@ export function MessageList({
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
   readOnly = false,
+  virtualized = true,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -881,7 +882,9 @@ export function MessageList({
   }) => void;
   suppressInlineCodexStatusDate?: string;
   readOnly?: boolean;
+  virtualized?: boolean;
 }) {
+  const useVirtuoso = virtualized && USE_VIRTUOSO;
   const defaultVirtuosoRef = useRef<VirtuosoHandle>(null);
   const listVirtuosoRef = virtuosoRef ?? defaultVirtuosoRef;
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
@@ -948,7 +951,7 @@ export function MessageList({
 
   const scheduleAnchorCapture = useCallback(
     (forceAtBottom?: boolean) => {
-      if (!USE_VIRTUOSO) return;
+      if (!useVirtuoso) return;
       if (!isVisibleRef.current) return;
       if (!forceAtBottom && Date.now() < suppressAnchorCaptureUntilRef.current)
         return;
@@ -974,7 +977,7 @@ export function MessageList({
         anchorCaptureFrameRef.current = window.setTimeout(capture, 0);
       }
     },
-    [cacheId],
+    [cacheId, useVirtuoso],
   );
 
   const clearUserScrollIntentLater = () => {
@@ -1131,7 +1134,7 @@ export function MessageList({
 
   const restoreSavedAnchor = useCallback(
     (anchor = loadChatViewportAnchor(cacheId)) => {
-      if (!USE_VIRTUOSO || !anchor) return;
+      if (!useVirtuoso || !anchor) return;
       if (!isVisibleRef.current) return;
       if (Date.now() < suppressAnchorRestoreUntilRef.current) return;
       if (scrollToDate != null || scrollToIndex != null) return;
@@ -1202,6 +1205,7 @@ export function MessageList({
       searchJumpDate,
       searchJumpToken,
       setManualScroll,
+      useVirtuoso,
     ],
   );
 
@@ -1228,14 +1232,14 @@ export function MessageList({
   ]);
 
   useEffect(() => {
-    if (!USE_VIRTUOSO) return;
+    if (!useVirtuoso) return;
     if (!isVisible) return;
     if (!sortedDates.length) return;
     restoreSavedAnchor();
-  }, [cacheId, isVisible, restoreSavedAnchor, sortedDates.length]);
+  }, [cacheId, isVisible, restoreSavedAnchor, sortedDates.length, useVirtuoso]);
 
   useEffect(() => {
-    if (!USE_VIRTUOSO) return;
+    if (!useVirtuoso) return;
     if (!isVisible) return;
     for (const timer of visibilityRestoreTimersRef.current) {
       clearTimeout(timer);
@@ -1249,10 +1253,10 @@ export function MessageList({
       }, delayMs);
       visibilityRestoreTimersRef.current.push(timer);
     }
-  }, [isVisible, restoreSavedAnchor]);
+  }, [isVisible, restoreSavedAnchor, useVirtuoso]);
 
   useEffect(() => {
-    if (!USE_VIRTUOSO) return;
+    if (!useVirtuoso) return;
     const restoreIfVisible = () => {
       if (document.visibilityState === "hidden") return;
       if (!isVisibleRef.current) return;
@@ -1264,7 +1268,7 @@ export function MessageList({
       document.removeEventListener("visibilitychange", restoreIfVisible);
       window.removeEventListener("focus", restoreIfVisible);
     };
-  }, [restoreSavedAnchor]);
+  }, [restoreSavedAnchor, useVirtuoso]);
 
   const scrollToNewestMessages = useCallback(() => {
     forceScrollToBottom();
@@ -1448,14 +1452,14 @@ export function MessageList({
   };
 
   useEffect(() => {
-    if (!scrollToBottomRef || USE_VIRTUOSO) return;
+    if (!scrollToBottomRef || useVirtuoso) return;
     scrollToBottomRef.current = () => {
       endRef.current?.scrollIntoView({ block: "end" });
     };
-  }, [scrollToBottomRef]);
+  }, [scrollToBottomRef, useVirtuoso]);
 
   useEffect(() => {
-    if (!USE_VIRTUOSO) return;
+    if (!useVirtuoso) return;
     const host = listContainerRef.current;
     if (!host || !scrollToBottomRef || !keepBottomAnchoredRef) return;
     let frameId: number | undefined;
@@ -1527,10 +1531,11 @@ export function MessageList({
     manualScrollRef,
     restoreSavedAnchor,
     scrollToBottomRef,
+    useVirtuoso,
   ]);
 
   useEffect(() => {
-    if (!USE_VIRTUOSO) return;
+    if (!useVirtuoso) return;
     if (!sortedDates.length) return;
     const id = setTimeout(() => {
       const host = listContainerRef.current;
@@ -1552,9 +1557,9 @@ export function MessageList({
       scroller.style.height = "100%";
     }, 0);
     return () => clearTimeout(id);
-  }, [sortedDates.length]);
+  }, [sortedDates.length, useVirtuoso]);
 
-  if (!USE_VIRTUOSO) {
+  if (!useVirtuoso) {
     return (
       <div
         style={MESSAGE_LIST_CONTAINER_STYLE}

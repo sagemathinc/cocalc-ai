@@ -34,8 +34,18 @@ export default function PublicViewerChatRenderer({
   }, [content]);
 
   return withViewerFileContext(
-    <div style={{ padding: "12px 16px", ...style }}>
-      <ChatViewer doc={doc} readOnly />
+    <div
+      style={{
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        padding: "12px 16px",
+        ...style,
+      }}
+    >
+      <ChatViewer doc={doc} readOnly virtualized={false} />
     </div>,
     fileContext,
   );
