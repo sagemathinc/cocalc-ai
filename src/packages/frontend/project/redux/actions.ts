@@ -854,6 +854,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return getProjectHomeDirectory(this.project_id);
   };
 
+  private getPublicDirectoryShareRootForPaths = (): string | undefined => {
+    const store = this.get_store();
+    const sharePath = `${store?.get("public_directory_share_path") ?? ""}`
+      .trim()
+      .replace(/^\/+|\/+$/g, "");
+    if (!sharePath) return;
+    if (sharePath === ".") {
+      return this.getHomeDirectoryForPaths();
+    }
+    return this.toAbsoluteCurrentPath(sharePath);
+  };
+
   private isVirtualListingPath = (path: string): boolean => {
     return isVirtualListingPath(path);
   };
@@ -1096,13 +1108,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         // Treat "/" as a fallback state. Re-entering the files tab should land in
         // HOME unless the user is already on a concrete filesystem path.
         const existingPathAbs = store.get("current_path_abs") ?? "/";
+        const homePathAbs =
+          openProjectHomeFiles && this.hasPublicDirectoryShare()
+            ? (this.getPublicDirectoryShareRootForPaths() ??
+              this.getHomeDirectoryForPaths())
+            : this.getHomeDirectoryForPaths();
         const currentPathAbs = openProjectHomeFiles
-          ? this.getHomeDirectoryForPaths()
+          ? homePathAbs
           : existingPathAbs;
         const filesPathAbs =
-          currentPathAbs === "/"
-            ? this.getHomeDirectoryForPaths()
-            : currentPathAbs;
+          currentPathAbs === "/" ? homePathAbs : currentPathAbs;
         if (filesPathAbs !== existingPathAbs) {
           this.set_current_path(filesPathAbs);
         }
@@ -2115,10 +2130,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     // Be forgiving if a route-like path is passed here.
     if (path === "files") {
-      path = this.getHomeDirectoryForPaths();
+      path =
+        this.getPublicDirectoryShareRootForPaths() ??
+        this.getHomeDirectoryForPaths();
     } else if (path.startsWith("files/")) {
       const rel = path.replace(/^files\/+/, "");
-      path = rel.length === 0 ? this.getHomeDirectoryForPaths() : `/${rel}`;
+      path =
+        rel.length === 0
+          ? (this.getPublicDirectoryShareRootForPaths() ??
+            this.getHomeDirectoryForPaths())
+          : `/${rel}`;
     }
     try {
       await this.ensureProjectIsOpen(foreground_project);

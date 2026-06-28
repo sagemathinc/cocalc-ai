@@ -23,7 +23,6 @@ import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { path_split, path_to_file, tab_to_path } from "@cocalc/util/misc";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
-import { PublicDirectoryShareBanner } from "./public-directory-share-banner";
 import { shareRouteCandidates } from "./public-directory-share-route";
 
 function authHref(view: "sign-in" | "sign-up"): string {
@@ -35,6 +34,7 @@ async function grantShareRoute(rawPath: string): Promise<{
   grant: GrantTemporaryViewerAccessResponse;
   projectId: string;
   relativePath: string;
+  relativePathIsDirectory: boolean;
   slug: string;
 }> {
   let lastError: unknown;
@@ -46,10 +46,23 @@ async function grantShareRoute(rawPath: string): Promise<{
             slug: candidate.slug,
           },
         );
+      let relativePathIsDirectory = candidate.relativePath.trim() === "";
+      if (!relativePathIsDirectory) {
+        try {
+          await webapp_client.conat_client.hub.publicDirectoryShares.listDirectory(
+            {
+              slug: candidate.slug,
+              path: candidate.relativePath,
+            },
+          );
+          relativePathIsDirectory = true;
+        } catch {}
+      }
       return {
         grant,
         projectId: grant.project_id,
         relativePath: candidate.relativePath,
+        relativePathIsDirectory,
         slug: candidate.slug,
       };
     } catch (err) {
@@ -154,6 +167,7 @@ interface ShareView {
   share: ResolvedPublicDirectoryShare;
   projectId: string;
   relativePath: string;
+  relativePathIsDirectory: boolean;
 }
 
 function encodeShareRoutePath(path: string): string {
@@ -214,6 +228,7 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
     if (!actions) return;
     actions.setState({
       public_directory_share_id: view.share.id,
+      public_directory_share_path: view.share.path,
       temporary_public_share_route: true,
     });
     const sharePath = view.share.path === "." ? "." : view.share.path;
@@ -223,9 +238,10 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
     const targetPath = shareRelativePath
       ? path_to_file(sharePath, shareRelativePath)
       : "";
-    const currentPath = targetPath
-      ? path_split(targetPath).head || sharePath
-      : sharePath;
+    const currentPath =
+      targetPath && !view.relativePathIsDirectory
+        ? path_split(targetPath).head || sharePath
+        : targetPath || sharePath;
 
     actions.set_current_path(currentPath);
     actions.set_active_tab("files", {
@@ -233,7 +249,7 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
       change_history: false,
     });
     actions.set_all_files_unchecked?.();
-    if (targetPath) {
+    if (targetPath && !view.relativePathIsDirectory) {
       actions.open_file({
         path: targetPath,
         foreground: true,
@@ -245,6 +261,7 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
     return () => {
       actions.setState({
         public_directory_share_id: undefined,
+        public_directory_share_path: undefined,
         temporary_public_share_route: false,
       });
     };
@@ -252,6 +269,7 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
     actions,
     view.projectId,
     view.relativePath,
+    view.relativePathIsDirectory,
     view.share.id,
     view.share.path,
   ]);
@@ -288,11 +306,13 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-      <PublicDirectoryShareBanner share={view.share} />
       <ProjectPage
         project_id={view.projectId}
         is_active={true}
         forceForeground={true}
+        publicDirectoryShare={view.share}
+        publicDirectorySharePath={view.relativePath}
+        publicDirectorySharePathIsDirectory={view.relativePathIsDirectory}
       />
     </div>
   );
@@ -329,23 +349,26 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     setError("");
     setView(null);
     grantShareRoute(normalizedSlug)
-      .then(({ grant, projectId, relativePath, slug }) => {
-        if (canceled) return;
-        materializeTemporaryViewerProject({ accountId, grant });
-        webapp_client.conat_client.registerPublicDirectoryShareRouting({
-          project_id: projectId,
-          share_id: grant.share_id,
-          host_connection: grant.host_connection,
-        });
-        setView({
-          projectId,
-          relativePath,
-          share: resolvedShareFromGrant({
-            grant,
-            slug,
-          }),
-        });
-      })
+      .then(
+        ({ grant, projectId, relativePath, relativePathIsDirectory, slug }) => {
+          if (canceled) return;
+          materializeTemporaryViewerProject({ accountId, grant });
+          webapp_client.conat_client.registerPublicDirectoryShareRouting({
+            project_id: projectId,
+            share_id: grant.share_id,
+            host_connection: grant.host_connection,
+          });
+          setView({
+            projectId,
+            relativePath,
+            relativePathIsDirectory,
+            share: resolvedShareFromGrant({
+              grant,
+              slug,
+            }),
+          });
+        },
+      )
       .catch((err) => {
         if (!canceled) setError(normalizeUserFacingError(err).message);
       })

@@ -136,6 +136,7 @@ interface Props {
   is_active: boolean;
   publicDirectoryShare?: ResolvedPublicDirectoryShare;
   publicDirectorySharePath?: string;
+  publicDirectorySharePathIsDirectory?: boolean;
   forceForeground?: boolean;
 }
 
@@ -255,11 +256,19 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (!actions) return;
     const share = props.publicDirectoryShare;
     if (!share) {
-      actions.setState({ public_directory_share_id: undefined });
+      actions.setState({
+        public_directory_share_id: undefined,
+        public_directory_share_path: undefined,
+        temporary_public_share_route: false,
+      });
       actions.clearFilesystemClient();
       return;
     }
-    actions.setState({ public_directory_share_id: share.id });
+    actions.setState({
+      public_directory_share_id: share.id,
+      public_directory_share_path: share.path,
+      temporary_public_share_route: true,
+    });
     actions.clearFilesystemClient();
     const sharePath = share.path === "." ? "." : share.path;
     const shareRelativePath = `${props.publicDirectorySharePath ?? ""}`
@@ -270,14 +279,16 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       : "";
 
     actions.set_current_path(
-      targetPath ? path_split(targetPath).head || sharePath : sharePath,
+      targetPath && !props.publicDirectorySharePathIsDirectory
+        ? path_split(targetPath).head || sharePath
+        : targetPath || sharePath,
     );
     actions.set_active_tab("files", {
       update_file_listing: false,
       change_history: false,
     });
     actions.set_all_files_unchecked?.();
-    if (targetPath) {
+    if (targetPath && !props.publicDirectorySharePathIsDirectory) {
       actions.open_file({
         path: targetPath,
         foreground: true,
@@ -287,7 +298,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       });
     }
     return () => {
-      actions.setState({ public_directory_share_id: undefined });
+      actions.setState({
+        public_directory_share_id: undefined,
+        public_directory_share_path: undefined,
+        temporary_public_share_route: false,
+      });
       actions.clearFilesystemClient();
     };
   }, [
@@ -295,6 +310,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     props.publicDirectoryShare?.id,
     props.publicDirectoryShare?.path,
     props.publicDirectorySharePath,
+    props.publicDirectorySharePathIsDirectory,
   ]);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(
