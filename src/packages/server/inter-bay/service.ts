@@ -1452,6 +1452,12 @@ async function startAccountLocalService(): Promise<void> {
       await publicDirectoryShares.resolve(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShares.authorizeRead(opts),
+    publicDirectoryShareListDirectory: async (opts) =>
+      await publicDirectoryShares.listDirectory(opts),
+    publicDirectoryShareCopyToProject: async (opts) =>
+      await publicDirectoryShares.copyToProject(opts),
+    publicDirectoryShareCopyToNewProject: async (opts) =>
+      await publicDirectoryShares.copyToNewProject(opts),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

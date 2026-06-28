@@ -6,6 +6,9 @@
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import type {
   AuthorizePublicDirectoryShareReadOptions,
+  CopyPublicDirectoryShareToNewProjectOptions,
+  CopyPublicDirectoryShareToProjectOptions,
+  ListPublicDirectoryShareDirectoryOptions,
   ResolvePublicDirectoryShareOptions,
 } from "@cocalc/conat/hub/api/public-directory-shares";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -40,12 +43,39 @@ export async function authorizeRead(
       );
 }
 
+export async function listDirectory(
+  opts: ListPublicDirectoryShareDirectoryOptions,
+) {
+  return isSeedBay()
+    ? await publicDirectoryShares.listDirectory(opts)
+    : await seedPublicDirectorySharesClient().publicDirectoryShareListDirectory(
+        opts,
+      );
+}
+
+export async function copyToProject(
+  opts: CopyPublicDirectoryShareToProjectOptions,
+) {
+  return isSeedBay()
+    ? await publicDirectoryShares.copyToProject(opts)
+    : await seedPublicDirectorySharesClient().publicDirectoryShareCopyToProject(
+        opts,
+      );
+}
+
+export async function copyToNewProject(
+  opts: CopyPublicDirectoryShareToNewProjectOptions,
+) {
+  return isSeedBay()
+    ? await publicDirectoryShares.copyToNewProject(opts)
+    : await seedPublicDirectorySharesClient().publicDirectoryShareCopyToNewProject(
+        opts,
+      );
+}
+
 export {
   create,
-  copyToNewProject,
-  copyToProject,
   list,
-  listDirectory,
   listMine,
   listProject,
   update,

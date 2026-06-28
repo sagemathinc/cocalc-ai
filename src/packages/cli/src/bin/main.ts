@@ -454,6 +454,13 @@ function defaultConatAddress(apiBaseUrl: string): string {
       return apiBaseUrl;
     }
     const normalized = normalizeUrl(fromEnv);
+    // A project terminal or hub-dev shell can leave CONAT_SERVER pointed at a
+    // local seed bay. If the user explicitly targets a public/profile API, the
+    // Conat connection must follow that API or account cookies from attached
+    // bays get sent to the wrong hub and appear expired.
+    if (isLoopbackApiBaseUrl(normalized) && !isLoopbackApiBaseUrl(apiBaseUrl)) {
+      return apiBaseUrl;
+    }
     // In local hub dev, stale Lite CONAT_SERVER values are a common source of
     // misleading auth/session failures. Prefer the requested API target.
     if (

@@ -5,6 +5,7 @@
 
 import { EventEmitter } from "events";
 
+import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { lite } from "@cocalc/frontend/lite";
 
@@ -37,6 +38,18 @@ function isPresenceMessage(value: unknown): value is PresenceMessage {
     typeof (value as any).path === "string" &&
     ((value as any).mode === "open" || (value as any).mode === "edit") &&
     typeof (value as any).ts === "number"
+  );
+}
+
+function isPublicDirectoryShareProject(project_id: string): boolean {
+  return (
+    redux
+      .getStore("projects")
+      ?.getIn?.([
+        "project_map",
+        project_id,
+        "public_directory_share_projection",
+      ]) === true
   );
 }
 
@@ -162,6 +175,9 @@ class DocumentPresenceManager {
   }
 
   subscribe(project_id: string, listener: () => void): () => void {
+    if (isPublicDirectoryShareProject(project_id)) {
+      return () => {};
+    }
     return this.getChannel(project_id).subscribe(listener);
   }
 
@@ -172,6 +188,9 @@ class DocumentPresenceManager {
     mode: PresenceMode;
     ts?: number;
   }): void {
+    if (isPublicDirectoryShareProject(opts.project_id)) {
+      return;
+    }
     this.getChannel(opts.project_id).publish({
       account_id: opts.account_id,
       project_id: opts.project_id,
@@ -186,6 +205,9 @@ class DocumentPresenceManager {
     path?: string;
     max_age_s?: number;
   }): PresenceUsers {
+    if (isPublicDirectoryShareProject(opts.project_id)) {
+      return {};
+    }
     return this.getChannel(opts.project_id).getUsers(opts);
   }
 }

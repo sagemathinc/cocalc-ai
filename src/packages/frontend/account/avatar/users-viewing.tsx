@@ -69,6 +69,7 @@ interface Props {
   max_age_s?: number;
   size?: number;
   style?: React.CSSProperties;
+  disabled?: boolean;
 }
 
 function useUsersViewing(
@@ -115,6 +116,7 @@ export function UsersViewing(props: Readonly<Props>) {
     max_age_s = MAX_AGE_S,
     style = DEFAULT_STYLE,
     size = 24,
+    disabled = false,
   } = props;
 
   // so we can exclude ourselves from list of faces
@@ -127,9 +129,18 @@ export function UsersViewing(props: Readonly<Props>) {
     our_account_id ?? "",
     "group",
   ]);
+  const publicDirectoryShareProjection = !!useProjectMapField<boolean>(
+    project_id,
+    "public_directory_share_projection",
+  );
   const isViewer =
     project_id != null && isViewerProjectRole(projectRole ?? undefined);
-  const { users } = useUsersViewing(project_id, path, max_age_s, !isViewer);
+  const { users } = useUsersViewing(
+    project_id,
+    path,
+    max_age_s,
+    !disabled && !isViewer && !publicDirectoryShareProjection,
+  );
 
   function render_active_users(users) {
     const v: {
