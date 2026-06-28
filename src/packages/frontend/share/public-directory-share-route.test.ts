@@ -22,4 +22,13 @@ describe("shareRouteCandidates", () => {
       { slug: "test2", relativePath: "dir/a.py" },
     ]);
   });
+
+  it("keeps trying shorter slugs for direct file URLs with dotted names", () => {
+    expect(shareRouteCandidates("course/unit.1/notes/a.md")).toEqual([
+      { slug: "course/unit.1/notes/a.md", relativePath: "" },
+      { slug: "course/unit.1/notes", relativePath: "a.md" },
+      { slug: "course/unit.1", relativePath: "notes/a.md" },
+      { slug: "course", relativePath: "unit.1/notes/a.md" },
+    ]);
+  });
 });

@@ -9,7 +9,7 @@ declare let window, document;
 import { callback } from "awaiting";
 import { List, Map, fromJS } from "immutable";
 import { throttle } from "lodash";
-import { join, relative } from "path";
+import { join } from "path";
 import { defineMessage } from "react-intl";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { get as getProjectStatus } from "@cocalc/conat/project/project-status";
@@ -77,6 +77,7 @@ import {
   shouldUsePublicViewerFileEditor,
   VIEWER_FILE_EDITOR_EXTENSION,
 } from "@cocalc/frontend/project/viewer-file-editor-consts";
+import { publicDirectoryShareUrlForLocalUrl } from "@cocalc/frontend/project/public-directory-share-url";
 import { API } from "@cocalc/frontend/project/websocket/api";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import {
@@ -361,14 +362,6 @@ export const FILE_ACTIONS = {
 } as const;
 
 export type FileAction = keyof typeof FILE_ACTIONS;
-
-function encodeShareRoutePath(path: string): string {
-  return path
-    .split("/")
-    .filter((part) => part.length > 0)
-    .map(encodeURIComponent)
-    .join("/");
-}
 
 export class ProjectActions extends Actions<ProjectStoreState> {
   public state: "ready" | "closed" = "ready";
@@ -989,26 +982,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (!slug) return;
     const shareRoot = this.getPublicDirectoryShareRootForPaths();
     if (!shareRoot) return;
-    if (localUrl === "files" || localUrl === "files/") {
-      return `/share/${encodeShareRoutePath(slug)}`;
-    }
-    if (!localUrl.startsWith("files/")) return;
-    const rawPath = localUrl.slice("files/".length);
-    const targetPath = normalizeAbsolutePath(
-      rawPath.startsWith("/") ? rawPath : `/${rawPath}`,
-    );
-    const relativePath = relative(shareRoot, targetPath).replace(/\\/g, "/");
-    if (
-      relativePath === ".." ||
-      relativePath.startsWith("../") ||
-      relativePath.startsWith("/")
-    ) {
-      return `/share/${encodeShareRoutePath(slug)}`;
-    }
-    const encodedRelativePath = encodeShareRoutePath(relativePath);
-    return encodedRelativePath
-      ? `/share/${encodeShareRoutePath(slug)}/${encodedRelativePath}`
-      : `/share/${encodeShareRoutePath(slug)}`;
+    return publicDirectoryShareUrlForLocalUrl({ localUrl, shareRoot, slug });
   }
 
   move_file_tab(opts: { old_index: number; new_index: number }): void {

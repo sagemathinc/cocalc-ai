@@ -12,7 +12,6 @@ import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { remove } from "@cocalc/frontend/project-file";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { relative } from "path";
 import {
   defaults,
   filename_extension,
@@ -36,6 +35,7 @@ import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operatio
 import { normalize } from "./utils";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
+import { publicDirectoryShareUrlForDisplayPath } from "./public-directory-share-url";
 import {
   getProjectUserRole,
   isViewerProjectRole,
@@ -688,30 +688,13 @@ function updatePublicDirectoryShareUrl(
   const sharePath = `${store?.get("public_directory_share_path") ?? ""}`
     .trim()
     .replace(/^\/+|\/+$/g, "");
-  if (!slug || !sharePath) return;
-  const shareRoot =
-    sharePath === "."
-      ? projectHome
-      : normalize(toAbsoluteProjectPath(sharePath, projectHome));
-  const relativePath = relative(shareRoot, displayPath).replace(/\\/g, "/");
-  if (
-    relativePath === ".." ||
-    relativePath.startsWith("../") ||
-    relativePath.startsWith("/")
-  ) {
-    return;
-  }
-  const encodePath = (value: string) =>
-    value
-      .split("/")
-      .filter(Boolean)
-      .map((part) => encodeURIComponent(part))
-      .join("/");
-  const slugPath = encodePath(slug);
-  const relativeRoute = encodePath(relativePath);
-  const nextPath = relativeRoute
-    ? `/share/${slugPath}/${relativeRoute}`
-    : `/share/${slugPath}`;
+  const nextPath = publicDirectoryShareUrlForDisplayPath({
+    displayPath,
+    projectHome,
+    sharePath,
+    slug,
+  });
+  if (nextPath == null) return;
   if (window.location.pathname === nextPath) return;
   if (replace) {
     window.history.replaceState(window.history.state, "", nextPath);
