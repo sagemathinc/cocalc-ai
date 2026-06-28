@@ -8,6 +8,7 @@ const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
 const getManagedCpuAdminHistoryMock = jest.fn();
 const getManagedCpuAdminOverviewMock = jest.fn();
+const getAdminActiveUsersOverviewMock = jest.fn();
 const getAdminRetentionOverviewMock = jest.fn();
 const createAbuseReviewAnnotationMock = jest.fn();
 const listAbuseReviewAnnotationsMock = jest.fn();
@@ -111,6 +112,8 @@ jest.mock("@cocalc/server/membership/managed-cpu", () => ({
 }));
 
 jest.mock("@cocalc/server/membership/retention-overview", () => ({
+  getAdminActiveUsersOverview: (...args: any[]) =>
+    getAdminActiveUsersOverviewMock(...args),
   getAdminRetentionOverview: (...args: any[]) =>
     getAdminRetentionOverviewMock(...args),
 }));
@@ -2289,6 +2292,55 @@ describe("purchases.getAdminRetentionOverview", () => {
       opened_project_only: false,
     });
     expect(result.activity_signal).toBe("managed-cpu");
+  });
+});
+
+describe("purchases.getAdminActiveUsersOverview", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getAdminActiveUsersOverview } = await import("./purchases");
+    await expect(
+      getAdminActiveUsersOverview({
+        account_id: "viewer-1",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("loads active-user overview for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getAdminActiveUsersOverviewMock.mockResolvedValue({
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-15T00:00:00.000Z",
+      bucket: "day",
+      activity_signal: "browser-project-activity",
+      exclude_banned: true,
+      opened_project_only: true,
+      points: [],
+    });
+
+    const { getAdminActiveUsersOverview } = await import("./purchases");
+    const result = await getAdminActiveUsersOverview({
+      account_id: "admin-1",
+      bucket: "hour",
+      activity_signal: "managed-cpu",
+      exclude_banned: true,
+      opened_project_only: false,
+    });
+
+    expect(getAdminActiveUsersOverviewMock).toHaveBeenCalledWith({
+      start: undefined,
+      end: undefined,
+      bucket: "hour",
+      activity_signal: "managed-cpu",
+      exclude_banned: true,
+      opened_project_only: false,
+    });
+    expect(result.bucket).toBe("day");
   });
 });
 

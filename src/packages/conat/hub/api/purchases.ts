@@ -998,6 +998,7 @@ export type AdminRetentionCohortUnit = "day" | "week";
 export type AdminRetentionActivitySignal =
   | "browser-project-activity"
   | "managed-cpu";
+export type AdminActiveUsersBucket = "hour" | "day" | "week";
 
 export interface AdminRetentionPeriodCell {
   period_index: number;
@@ -1035,6 +1036,32 @@ export interface AdminRetentionOverviewQuery {
   unit?: AdminRetentionCohortUnit;
   activity_signal?: AdminRetentionActivitySignal;
   period_count?: number;
+  exclude_banned?: boolean;
+  opened_project_only?: boolean;
+}
+
+export interface AdminActiveUsersPoint {
+  start: string;
+  end: string;
+  active_accounts: number;
+}
+
+export interface AdminActiveUsersOverview {
+  start: string;
+  end: string;
+  bucket: AdminActiveUsersBucket;
+  activity_signal: AdminRetentionActivitySignal;
+  exclude_banned: boolean;
+  opened_project_only: boolean;
+  points: AdminActiveUsersPoint[];
+}
+
+export interface AdminActiveUsersOverviewQuery {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: AdminActiveUsersBucket;
+  activity_signal?: AdminRetentionActivitySignal;
   exclude_banned?: boolean;
   opened_project_only?: boolean;
 }
@@ -1540,6 +1567,9 @@ export interface Purchases {
   getAdminRetentionOverview: (
     opts?: AdminRetentionOverviewQuery,
   ) => Promise<AdminRetentionOverview>;
+  getAdminActiveUsersOverview: (
+    opts?: AdminActiveUsersOverviewQuery,
+  ) => Promise<AdminActiveUsersOverview>;
   createAbuseReviewAnnotation: (
     opts?: CreateAbuseReviewAnnotationQuery,
   ) => Promise<AbuseReviewAnnotation>;
@@ -1606,6 +1636,7 @@ export const purchases = {
   getManagedCpuAdminOverview: authFirst,
   getManagedCpuAdminHistory: authFirst,
   getAdminRetentionOverview: authFirst,
+  getAdminActiveUsersOverview: authFirst,
   createAbuseReviewAnnotation: authFirst,
   listAbuseReviewAnnotations: authFirst,
   revokeAbuseReviewAnnotation: authFirst,

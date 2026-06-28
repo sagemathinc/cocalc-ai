@@ -10,7 +10,10 @@ import {
   getManagedCpuAdminHistory as getManagedCpuAdminHistory0,
   getManagedCpuAdminOverview as getManagedCpuAdminOverview0,
 } from "@cocalc/server/membership/managed-cpu";
-import { getAdminRetentionOverview as getAdminRetentionOverview0 } from "@cocalc/server/membership/retention-overview";
+import {
+  getAdminActiveUsersOverview as getAdminActiveUsersOverview0,
+  getAdminRetentionOverview as getAdminRetentionOverview0,
+} from "@cocalc/server/membership/retention-overview";
 import {
   createAbuseReviewAnnotation as createAbuseReviewAnnotation0,
   listAbuseReviewAnnotations as listAbuseReviewAnnotations0,
@@ -32,6 +35,7 @@ import type {
   AbuseReviewDisposition,
   AdminMembershipTierPayload,
   AccountUsageWindowEpoch,
+  AdminActiveUsersBucket,
   AdminRetentionActivitySignal,
   AdminRetentionCohortUnit,
   AdminResetMembershipUsageWindowsResult,
@@ -2420,6 +2424,39 @@ export async function getAdminRetentionOverview({
     unit,
     activity_signal,
     period_count,
+    exclude_banned,
+    opened_project_only,
+  });
+}
+
+export async function getAdminActiveUsersOverview({
+  account_id,
+  start,
+  end,
+  bucket,
+  activity_signal,
+  exclude_banned,
+  opened_project_only,
+}: {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: AdminActiveUsersBucket;
+  activity_signal?: AdminRetentionActivitySignal;
+  exclude_banned?: boolean;
+  opened_project_only?: boolean;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getAdminActiveUsersOverview0({
+    start,
+    end,
+    bucket,
+    activity_signal,
     exclude_banned,
     opened_project_only,
   });

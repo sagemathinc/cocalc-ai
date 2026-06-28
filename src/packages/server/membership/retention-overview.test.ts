@@ -17,6 +17,7 @@ jest.mock("@cocalc/server/monitoring/ux-latency", () => ({
 
 import {
   clearAdminRetentionOverviewCacheForTests,
+  getAdminActiveUsersOverview,
   getAdminRetentionOverview,
 } from "./retention-overview";
 
@@ -140,5 +141,79 @@ describe("admin retention overview", () => {
 
     expect(result.period_count).toBe(26);
     expect(queryMock.mock.calls[0][1][4]).toBe(26);
+  });
+
+  it("maps active-user browser activity rows into buckets", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          start: "2026-06-20",
+          end: "2026-06-21",
+          active_accounts: "12",
+        },
+        {
+          start: "2026-06-21",
+          end: "2026-06-22",
+          active_accounts: "5",
+        },
+      ],
+    });
+
+    const result = await getAdminActiveUsersOverview({
+      start: new Date("2026-06-20T00:00:00Z"),
+      end: new Date("2026-06-22T00:00:00Z"),
+      bucket: "day",
+      exclude_banned: true,
+      opened_project_only: true,
+    });
+
+    expect(result).toMatchObject({
+      bucket: "day",
+      activity_signal: "browser-project-activity",
+      exclude_banned: true,
+      opened_project_only: true,
+      points: [
+        {
+          start: "2026-06-20",
+          end: "2026-06-21",
+          active_accounts: 12,
+        },
+        {
+          start: "2026-06-21",
+          end: "2026-06-22",
+          active_accounts: 5,
+        },
+      ],
+    });
+    expect(ensureUxLatencySchemaMock).toHaveBeenCalledTimes(1);
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).toContain("generate_series");
+    expect(sql).toContain("ux_latency_events");
+    expect(sql).toContain("project_start_running");
+    expect(sql).toContain("account_project_index");
+    expect(params).toEqual([
+      new Date("2026-06-20T00:00:00Z"),
+      new Date("2026-06-22T00:00:00Z"),
+      true,
+      true,
+    ]);
+  });
+
+  it("can use managed CPU for active-user buckets", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const result = await getAdminActiveUsersOverview({
+      start: new Date("2026-06-20T00:00:00Z"),
+      end: new Date("2026-06-22T00:00:00Z"),
+      bucket: "hour",
+      activity_signal: "managed-cpu",
+    });
+
+    expect(result.bucket).toBe("hour");
+    expect(result.activity_signal).toBe("managed-cpu");
+    expect(ensureUxLatencySchemaMock).not.toHaveBeenCalled();
+    expect(queryMock.mock.calls[0][0]).toContain("account_cpu_usage_events");
+    expect(queryMock.mock.calls[0][0]).toContain("1 hour");
   });
 });
