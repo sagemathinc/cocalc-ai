@@ -546,8 +546,10 @@ Owners/admins should be able to see:
 - grant-on-copy counts and failures;
 - emergency disable state.
 
-For privacy, owner UI does not need to expose every viewer identity by default.
-Admin UI should expose account ids/emails for support and abuse response.
+Because unlisted shares are distributed explicitly, it is acceptable for owner
+UI to show recent/active viewer identities by display name and account id. Owner
+UI should not expose viewer email addresses by default. Admin UI should expose
+account ids/emails for support and abuse response.
 
 ### Implementation Phases for the Pivot
 
@@ -565,9 +567,9 @@ Admin UI should expose account ids/emails for support and abuse response.
 
 #### Phase B: Viewer UX Foundation
 
-- Fix normal project viewer mode so a path-restricted viewer can list only
+- (done) Fix normal project viewer mode so a path-restricted viewer can list only
   allowed directories and open files without page reloads.
-- Fix checkbox selection and copy selected/all for read-only viewers.
+- (done) Fix checkbox selection and copy selected/all for read-only viewers.
 - Add viewer/share banner and hide write/runtime-only UI.
 - Add tests for root listing, subdirectory listing, direct file URL, notebook
   open, selected copy, and blocked outside-path access.
@@ -623,6 +625,16 @@ Admin UI should expose account ids/emails for support and abuse response.
 
 After the pivot works:
 
+- systematically audit all commits and diffs made during the public-directory
+  sharing implementation work, identify code that only supported the abandoned
+  custom share-project embed path, and delete it if the temporary-viewer design
+  no longer needs it;
+- include backend, frontend, CLI, project-host, auth, copy, and routing changes
+  in that audit rather than only searching for obvious `share` filenames;
+- preserve only code that remains part of one of these supported paths:
+  public share metadata management, temporary viewer grant resolution, normal
+  project viewer mode, CLI/direct share APIs that still have a product role, and
+  legacy URL migration/redirect support;
 - remove custom frontend public-share `ProjectPage` projection hacks;
 - remove duplicate share-only file listing/opening UI that is not needed for
   normal viewer mode;
