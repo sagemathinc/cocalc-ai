@@ -112,4 +112,17 @@ describe("ChatRoomComposer resize handle", () => {
       ),
     ).toBeNull();
   });
+
+  it("shows the Codex setup banner for site-billed AI sources", () => {
+    renderComposer({
+      codexPaymentSource: { source: "site-api-key" } as any,
+      isSelectedThreadAI: true,
+    });
+
+    expect(
+      screen.getByText(
+        "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key.",
+      ),
+    ).not.toBeNull();
+  });
 });

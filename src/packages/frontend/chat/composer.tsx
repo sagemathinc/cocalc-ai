@@ -31,7 +31,7 @@ import {
   refocusChatComposerInput,
 } from "./composer-focus";
 import { AcpPromptModal } from "./acp-prompt-modal";
-import { isCodexPaymentSourceDefinitelyUnconfigured } from "./codex-submit-preflight";
+import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -381,7 +381,7 @@ export function ChatRoomComposer({
   const showCodexPaymentSourceBanner =
     (isSelectedThreadAI || isNewThreadCodex) &&
     !codexPaymentSourceLoading &&
-    isCodexPaymentSourceDefinitelyUnconfigured(codexPaymentSource);
+    isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
 
   const composerStyle: CSSProperties = {
     display: "flex",
