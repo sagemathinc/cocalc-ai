@@ -65,6 +65,7 @@ import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
@@ -105,6 +106,30 @@ import {
 } from "./listing-error";
 
 type ActiveFileSort = ReturnType<typeof normalizeActiveFileSort>;
+
+function normalizePublicShareListingPath({
+  listingPath,
+  sharePath,
+}: {
+  listingPath: string;
+  sharePath: string;
+}): string {
+  const homeRelative = projectRuntimeHomeRelativePath(listingPath);
+  const projectRelative =
+    homeRelative ?? listingPath.replace(/^\/+/, "").replace(/\/+$/g, "");
+  const normalizedSharePath =
+    sharePath === "." ? "" : sharePath.replace(/^\/+/, "").replace(/\/+$/g, "");
+  if (!normalizedSharePath) {
+    return projectRelative || ".";
+  }
+  if (
+    projectRelative === normalizedSharePath ||
+    projectRelative.startsWith(`${normalizedSharePath}/`)
+  ) {
+    return projectRelative;
+  }
+  return listingPath;
+}
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -260,6 +285,12 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     path: effective_current_path,
     homePath,
   });
+  const filesystemListingPath = publicDirectoryShare
+    ? normalizePublicShareListingPath({
+        listingPath,
+        sharePath: publicDirectoryShare.path,
+      })
+    : listingPath;
   const publicShareListingDebugContext = useMemo(
     () =>
       publicDirectoryShare
@@ -278,7 +309,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     error: listingError,
   } = useListing({
     fs: inBackupsPath ? null : fs,
-    path: listingPath,
+    path: filesystemListingPath,
     watch: !readOnlyViewer,
     debugContext: publicShareListingDebugContext,
   });
