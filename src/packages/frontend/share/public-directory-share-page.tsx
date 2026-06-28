@@ -14,14 +14,10 @@ import type {
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
-import {
-  redux,
-  useActions,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { path_split, path_to_file, tab_to_path } from "@cocalc/util/misc";
+import { tab_to_path } from "@cocalc/util/misc";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { shareRouteCandidates } from "./public-directory-share-route";
 
@@ -213,8 +209,7 @@ function LoadingShare() {
   );
 }
 
-function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
-  const actions = useActions({ project_id: view.projectId });
+export function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
   const currentPathAbs = useTypedRedux(
     { project_id: view.projectId },
     "current_path_abs",
@@ -223,58 +218,6 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
     { project_id: view.projectId },
     "active_project_tab",
   ) as string | undefined;
-
-  useEffect(() => {
-    if (!actions) return;
-    actions.setState({
-      public_directory_share_id: view.share.id,
-      public_directory_share_path: view.share.path,
-      public_directory_share_slug: view.share.slug,
-      temporary_public_share_route: true,
-    });
-    const sharePath = view.share.path === "." ? "." : view.share.path;
-    const shareRelativePath = view.relativePath
-      .trim()
-      .replace(/^\/+|\/+$/g, "");
-    const targetPath = shareRelativePath
-      ? path_to_file(sharePath, shareRelativePath)
-      : "";
-    const currentPath =
-      targetPath && !view.relativePathIsDirectory
-        ? path_split(targetPath).head || sharePath
-        : targetPath || sharePath;
-
-    actions.set_current_path(currentPath);
-    actions.set_active_tab("files", {
-      update_file_listing: false,
-      change_history: false,
-    });
-    actions.set_all_files_unchecked?.();
-    if (targetPath && !view.relativePathIsDirectory) {
-      actions.open_file({
-        path: targetPath,
-        foreground: true,
-        foreground_project: false,
-        change_history: false,
-        explicit: false,
-      });
-    }
-    return () => {
-      actions.setState({
-        public_directory_share_id: undefined,
-        public_directory_share_path: undefined,
-        public_directory_share_slug: undefined,
-        temporary_public_share_route: false,
-      });
-    };
-  }, [
-    actions,
-    view.projectId,
-    view.relativePath,
-    view.relativePathIsDirectory,
-    view.share.id,
-    view.share.path,
-  ]);
 
   useEffect(() => {
     const tabPath = activeProjectTab

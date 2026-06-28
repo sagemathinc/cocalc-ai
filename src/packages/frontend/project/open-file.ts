@@ -466,6 +466,7 @@ export async function open_file(
     actions.open_files?.set(displayPath, "display_path", displayPath);
     actions.open_files?.set(displayPath, "fragmentId", opts.fragmentId ?? "");
     redux.getActions("page").save_session();
+    actions.ensure_open_file_component?.(displayPath, { noFocus: true });
     if (opts.foreground) {
       actions.set_current_path(workingDirectory());
       if (!publicDirectoryShareOpen) {

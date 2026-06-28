@@ -58,6 +58,16 @@ describe("page-routing", () => {
     expect(getPageTopTab(parsePageTarget("app-docs/admin/users"))).toBe("docs");
   });
 
+  it("preserves direct public share file paths", () => {
+    expect(parsePageTarget("share/test2/a.chat")).toEqual({
+      page: "share",
+      slug: "test2/a.chat",
+    });
+    expect(getPageUrlPath({ page: "share", slug: "test2/a.chat" })).toBe(
+      "/share/test2/a.chat",
+    );
+  });
+
   it("parses admin subroutes and ignores query strings", () => {
     expect(parsePageTarget("admin/news")).toEqual({
       page: "admin",

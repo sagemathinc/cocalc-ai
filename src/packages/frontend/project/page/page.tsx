@@ -279,24 +279,33 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     const targetPath = shareRelativePath
       ? path_to_file(sharePath, shareRelativePath)
       : "";
+    const targetIsFile =
+      targetPath != null &&
+      targetPath.length > 0 &&
+      !props.publicDirectorySharePathIsDirectory;
+
+    if (targetIsFile && actions.open_files == null) {
+      return;
+    }
 
     actions.set_current_path(
-      targetPath && !props.publicDirectorySharePathIsDirectory
+      targetIsFile
         ? path_split(targetPath).head || sharePath
         : targetPath || sharePath,
     );
-    actions.set_active_tab("files", {
-      update_file_listing: false,
-      change_history: false,
-    });
     actions.set_all_files_unchecked?.();
-    if (targetPath && !props.publicDirectorySharePathIsDirectory) {
+    if (targetIsFile) {
       actions.open_file({
         path: targetPath,
         foreground: true,
         foreground_project: false,
         change_history: false,
         explicit: false,
+      });
+    } else {
+      actions.set_active_tab("files", {
+        update_file_listing: false,
+        change_history: false,
       });
     }
     return () => {
@@ -312,8 +321,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     actions,
     props.publicDirectoryShare?.id,
     props.publicDirectoryShare?.path,
+    props.publicDirectoryShare?.slug,
     props.publicDirectorySharePath,
     props.publicDirectorySharePathIsDirectory,
+    open_files,
   ]);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(
