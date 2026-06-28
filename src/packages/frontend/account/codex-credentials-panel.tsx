@@ -379,7 +379,12 @@ export interface CodexCredentialsPanelProps {
   onPaymentSourceChanged?: () => void;
 }
 
-type DeviceAuthState = "pending" | "completed" | "failed" | "canceled";
+type DeviceAuthState =
+  | "pending"
+  | "syncing"
+  | "completed"
+  | "failed"
+  | "canceled";
 
 type DeviceAuthStatus = {
   id: string;
@@ -395,6 +400,8 @@ type DeviceAuthStatus = {
   exitCode?: number | null;
   signal?: string | null;
   error?: string;
+  syncedToRegistry?: boolean;
+  syncError?: string;
 };
 
 const DEVICE_AUTH_ALERT_TYPE: Record<
@@ -402,6 +409,7 @@ const DEVICE_AUTH_ALERT_TYPE: Record<
   "info" | "success" | "error" | "warning"
 > = {
   pending: "info",
+  syncing: "info",
   completed: "success",
   failed: "error",
   canceled: "warning",
@@ -800,16 +808,20 @@ function CodexCredentialsPanelBody({
             title={
               deviceAuth.state === "pending"
                 ? "Finish signing in with ChatGPT"
-                : deviceAuth.state === "completed"
-                  ? "Codex is connected"
-                  : `Codex sign-in ${deviceAuth.state}`
+                : deviceAuth.state === "syncing"
+                  ? "Saving ChatGPT sign-in"
+                  : deviceAuth.state === "completed"
+                    ? "Codex is connected"
+                    : `Codex sign-in ${deviceAuth.state}`
             }
             description={
               deviceAuth.state === "pending"
                 ? "Copy the code, open the link, and sign in. CoCalc will detect completion automatically."
-                : deviceAuth.error
-                  ? deviceAuth.error
-                  : undefined
+                : deviceAuth.state === "syncing"
+                  ? "ChatGPT accepted the sign-in. CoCalc is saving it so Codex can use it from this and future projects."
+                  : deviceAuth.error
+                    ? deviceAuth.error
+                    : undefined
             }
           />
         ) : null}
@@ -821,7 +833,7 @@ function CodexCredentialsPanelBody({
             description="The one-time code and link will appear here as soon as Codex returns them."
           />
         ) : null}
-        {userCode && deviceAuth?.state !== "completed" ? (
+        {userCode && deviceAuth?.state === "pending" ? (
           <div
             style={{
               ...deviceAuthCodeStyle,
@@ -876,7 +888,7 @@ function CodexCredentialsPanelBody({
             </div>
           </div>
         ) : null}
-        {verificationUrl && deviceAuth?.state !== "completed" ? (
+        {verificationUrl && deviceAuth?.state === "pending" ? (
           <div style={deviceAuthCodeStyle}>
             <Text type="secondary">
               2.{" "}
@@ -1011,7 +1023,11 @@ function CodexCredentialsPanelBody({
   };
 
   useEffect(() => {
-    if (!authProjectId || deviceAuth?.state !== "pending" || !deviceAuth.id) {
+    if (
+      !authProjectId ||
+      !deviceAuth?.id ||
+      (deviceAuth.state !== "pending" && deviceAuth.state !== "syncing")
+    ) {
       return;
     }
     const timer = setInterval(() => {

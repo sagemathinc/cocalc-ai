@@ -467,6 +467,79 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
+  it("keeps polling and does not notify parent while device auth is syncing", async () => {
+    jest.useFakeTimers();
+    getCodexPaymentSource.mockResolvedValue({ source: "none" });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
+    codexDeviceAuthStatus
+      .mockResolvedValueOnce({
+        id: "auth-1",
+        projectId: "project-1",
+        accountId: "account-1",
+        codexHome: "/tmp/.codex",
+        state: "syncing",
+        output: "",
+        startedAt: 1,
+        updatedAt: 2,
+      })
+      .mockResolvedValueOnce({
+        id: "auth-1",
+        projectId: "project-1",
+        accountId: "account-1",
+        codexHome: "/tmp/.codex",
+        state: "completed",
+        output: "",
+        startedAt: 1,
+        updatedAt: 3,
+        syncedToRegistry: true,
+      });
+    const onPaymentSourceChanged = jest.fn();
+
+    render(
+      <CodexCredentialsPanel
+        embedded
+        defaultProjectId="project-1"
+        onPaymentSourceChanged={onPaymentSourceChanged}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
+    });
+
+    await act(async () => {
+      screen.getByText("Sign in with ChatGPT").click();
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Saving ChatGPT sign-in/)).toBeTruthy();
+    });
+    expect(onPaymentSourceChanged).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(onPaymentSourceChanged).toHaveBeenCalled();
+    });
+  });
+
   it("keeps advanced sign-in options closed when embedded sign-in starts", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "none" });
     codexDeviceAuthStart.mockResolvedValue({
