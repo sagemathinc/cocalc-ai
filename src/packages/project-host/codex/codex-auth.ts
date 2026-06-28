@@ -258,6 +258,21 @@ export async function resolveCodexAuthRuntime({
           codexHome,
         });
       }
+    } else {
+      const pulled = await pullSubscriptionAuthFromRegistry({
+        projectId,
+        accountId,
+        codexHome,
+        onlyIfNewer: true,
+      });
+      if (pulled.pulled) {
+        logger.debug("refreshed local subscription auth from newer registry", {
+          projectId,
+          accountId,
+          codexHome,
+          registryUpdatedAt: pulled.registryUpdatedAt,
+        });
+      }
     }
     if (await pathExists(authFile)) {
       // Best-effort usage signal so account settings can show recent activity.

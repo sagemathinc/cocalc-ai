@@ -46,7 +46,7 @@ type ProjectCodexExecResult = {
 
 type ProjectCodexDeviceAuthStatus = {
   id: string;
-  state: "pending" | "completed" | "failed" | "canceled";
+  state: "pending" | "syncing" | "completed" | "failed" | "canceled";
   verificationUrl?: string;
   userCode?: string;
   output?: string;
@@ -55,6 +55,8 @@ type ProjectCodexDeviceAuthStatus = {
   exitCode?: number | null;
   signal?: string | null;
   error?: string;
+  syncedToRegistry?: boolean;
+  syncError?: string;
 };
 
 export type ProjectCodexOpsDeps<Ctx, Project extends ProjectIdentity> = {
@@ -146,6 +148,8 @@ function summarizeCodexDeviceAuth(
     exit_code: status.exitCode ?? null,
     signal: status.signal ?? null,
     error: status.error ?? null,
+    synced_to_registry: status.syncedToRegistry ?? null,
+    sync_error: status.syncError ?? null,
     output: status.output ?? "",
   };
 }
@@ -457,9 +461,9 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
       [{ project_id: project.project_id }],
     );
 
-    if (wait && status.state === "pending") {
+    if (wait && (status.state === "pending" || status.state === "syncing")) {
       const deadline = Date.now() + Number((ctx as any).timeoutMs ?? 0);
-      while (status.state === "pending") {
+      while (status.state === "pending" || status.state === "syncing") {
         if (Date.now() >= deadline) {
           throw new Error(
             `timeout waiting for codex device auth completion (id=${status.id})`,

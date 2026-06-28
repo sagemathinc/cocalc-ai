@@ -13,7 +13,12 @@ import { spawnCodexInProjectContainer } from "./codex-project";
 
 const logger = getLogger("project-host:codex-device-auth");
 
-type DeviceAuthState = "pending" | "completed" | "failed" | "canceled";
+type DeviceAuthState =
+  | "pending"
+  | "syncing"
+  | "completed"
+  | "failed"
+  | "canceled";
 
 type DeviceAuthSession = {
   id: string;
@@ -212,7 +217,7 @@ export async function startCodexDeviceAuth(
     session.updatedAt = Date.now();
     if (session.state === "canceled") return;
     if (code === 0) {
-      session.state = "completed";
+      session.state = "syncing";
       void touchSubscriptionCacheUsage(session.codexHome).catch((err) => {
         logger.warn("failed to touch local codex subscription cache marker", {
           id,
@@ -227,15 +232,27 @@ export async function startCodexDeviceAuth(
         codexHome: session.codexHome,
       })
         .then((result) => {
+          if (session.state === "canceled") return;
           session.syncedToRegistry = result.ok;
-          session.syncError = result.ok
-            ? undefined
-            : "unable to sync credentials to central registry";
+          if (result.ok) {
+            session.state = "completed";
+            session.syncError = undefined;
+          } else {
+            session.state = "failed";
+            session.syncError =
+              "unable to sync credentials to central registry";
+            session.error =
+              "ChatGPT sign-in succeeded, but CoCalc could not save the credential. Please try signing in again.";
+          }
           session.updatedAt = Date.now();
         })
         .catch((err) => {
+          if (session.state === "canceled") return;
+          session.state = "failed";
           session.syncedToRegistry = false;
           session.syncError = `${err}`;
+          session.error =
+            "ChatGPT sign-in succeeded, but CoCalc could not save the credential. Please try signing in again.";
           session.updatedAt = Date.now();
         });
     } else {

@@ -80,4 +80,68 @@ describe("ChatRoomComposer resize handle", () => {
 
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();
   });
+
+  it("shows a proactive Codex setup banner for unconfigured AI chats", () => {
+    const onOpenCodexPaymentConfig = jest.fn();
+    renderComposer({
+      codexPaymentSource: { source: "none" } as any,
+      isSelectedThreadAI: true,
+      onOpenCodexPaymentConfig,
+    });
+
+    expect(
+      screen.getByText(
+        "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key.",
+      ),
+    ).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect AI" }));
+    expect(onOpenCodexPaymentConfig).toHaveBeenCalled();
+  });
+
+  it("does not show the Codex setup banner while payment source is loading", () => {
+    renderComposer({
+      codexPaymentSource: { source: "none" } as any,
+      codexPaymentSourceLoading: true,
+      isSelectedThreadAI: true,
+    });
+
+    expect(
+      screen.queryByText(
+        "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key.",
+      ),
+    ).toBeNull();
+  });
+
+  it("shows the Codex setup banner for site-billed AI sources", () => {
+    renderComposer({
+      codexPaymentSource: {
+        source: "site-api-key",
+        siteAiUsageLimitPositive: false,
+      } as any,
+      isSelectedThreadAI: true,
+    });
+
+    expect(
+      screen.getByText(
+        "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("does not show the Codex setup banner for positive site-billed AI limits", () => {
+    renderComposer({
+      codexPaymentSource: {
+        source: "site-api-key",
+        siteAiUsageLimitPositive: true,
+      } as any,
+      isSelectedThreadAI: true,
+    });
+
+    expect(
+      screen.queryByText(
+        "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key.",
+      ),
+    ).toBeNull();
+  });
 });

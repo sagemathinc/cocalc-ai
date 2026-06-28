@@ -9,7 +9,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "antd";
+import { Alert, Button } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -31,6 +31,7 @@ import {
   refocusChatComposerInput,
 } from "./composer-focus";
 import { AcpPromptModal } from "./acp-prompt-modal";
+import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -50,6 +51,7 @@ export interface ChatRoomComposerProps {
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
+  isNewThreadCodex?: boolean;
   hasActiveAcpTurn?: boolean;
   threads: ThreadMeta[];
   selectedThread?: ThreadMeta | null;
@@ -60,6 +62,7 @@ export interface ChatRoomComposerProps {
   ) => void;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
+  onOpenCodexPaymentConfig?: () => void;
 }
 
 export { findChatComposerFocusTarget, refocusChatComposerInput };
@@ -82,13 +85,15 @@ export function ChatRoomComposer({
   submitMentionsRef,
   hasInput,
   isSelectedThreadAI,
+  isNewThreadCodex = false,
   hasActiveAcpTurn = false,
   threads: _threads,
   selectedThread,
   onComposerFocusChange,
   onComposerReady,
-  codexPaymentSource: _codexPaymentSource,
-  codexPaymentSourceLoading: _codexPaymentSourceLoading = false,
+  codexPaymentSource,
+  codexPaymentSourceLoading = false,
+  onOpenCodexPaymentConfig,
 }: ChatRoomComposerProps) {
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -373,6 +378,11 @@ export function ChatRoomComposer({
     };
   }, [onDecreaseFontSize, onIncreaseFontSize]);
 
+  const showCodexPaymentSourceBanner =
+    (isSelectedThreadAI || isNewThreadCodex) &&
+    !codexPaymentSourceLoading &&
+    isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
+
   const composerStyle: CSSProperties = {
     display: "flex",
     marginBottom: isZenMode && isFullscreen ? 0 : "5px",
@@ -456,6 +466,25 @@ export function ChatRoomComposer({
             />
             <span>{stripHtml(threadLabel)}</span>
           </div>
+        )}
+        {showCodexPaymentSourceBanner && (
+          <Alert
+            action={
+              onOpenCodexPaymentConfig != null ? (
+                <Button
+                  onClick={onOpenCodexPaymentConfig}
+                  size="small"
+                  type="primary"
+                >
+                  Connect AI
+                </Button>
+              ) : undefined
+            }
+            showIcon
+            style={{ marginBottom: 8 }}
+            title="To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key."
+            type="info"
+          />
         )}
         <div ref={inputContainerRef} data-testid="chat-composer-input">
           <ChatInput

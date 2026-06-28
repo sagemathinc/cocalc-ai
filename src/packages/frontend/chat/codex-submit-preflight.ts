@@ -19,6 +19,16 @@ export function isCodexPaymentSourceDefinitelyUnconfigured(
   return paymentSource?.source === "none";
 }
 
+export function isCodexPaymentSourceNeedsUserConfiguration(
+  paymentSource?: CodexPaymentSourceInfo,
+): boolean {
+  return (
+    paymentSource?.source === "none" ||
+    (paymentSource?.source === "site-api-key" &&
+      paymentSource.siteAiUsageLimitPositive === false)
+  );
+}
+
 export function isCodexSubmitTarget({
   newThreadAgentMode,
   existingThreadAgentKind,
