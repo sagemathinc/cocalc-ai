@@ -94,6 +94,18 @@ export default function PublicViewerFileContents({
     return <OpenRawFile rawUrl={rawUrl} label={"Open or Download..."} />;
   }
 
+  if (isMarkdown(ext)) {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <MarkdownRenderer
+          content={content}
+          style={style}
+          fileContext={resolvedFileContext}
+        />
+      </Suspense>
+    );
+  }
+
   if (isCodemirror(ext)) {
     return (
       <Suspense fallback={<LoadingRenderer />}>
@@ -102,18 +114,6 @@ export default function PublicViewerFileContents({
           fontSize={fontSize}
           lineNumbers={lineNumbers}
           mode={codemirrorMode(ext)?.name}
-        />
-      </Suspense>
-    );
-  }
-
-  if (isMarkdown(ext)) {
-    return (
-      <Suspense fallback={<LoadingRenderer />}>
-        <MarkdownRenderer
-          content={content}
-          style={style}
-          fileContext={resolvedFileContext}
         />
       </Suspense>
     );
