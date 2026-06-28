@@ -61,7 +61,7 @@ jest.mock("react-intl", () => ({
 }));
 
 jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
-  Button: ({ bsSize: _bsSize, children, ...props }: any) => (
+  Button: ({ bsSize: _bsSize, bsStyle: _bsStyle, children, ...props }: any) => (
     <button {...props}>{children}</button>
   ),
   ButtonToolbar: ({ children }: any) => <div>{children}</div>,
@@ -206,6 +206,29 @@ describe("ActionBar", () => {
         showDown: false,
       }),
     );
+  });
+
+  it("shows a direct copy action for read-only selections", () => {
+    const actions = {
+      project_id: "project-1",
+      set_file_action: jest.fn(),
+    } as any;
+
+    render(
+      <ActionBar
+        project_id="project-1"
+        checked_files={immutable.Set(["/work/a.txt"])}
+        listing={[{ isDir: false, name: "a.txt" }] as any}
+        current_path="/work"
+        actions={actions}
+        readOnly
+        allowCopyOut
+      />,
+    );
+
+    expect(mockFileActionsDropdown).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Copy"));
+    expect(actions.set_file_action).toHaveBeenCalledWith("copy");
   });
 
   it("shows pending listing refresh when automatic updates are disabled", () => {

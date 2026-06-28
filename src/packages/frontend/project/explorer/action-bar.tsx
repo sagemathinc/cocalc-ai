@@ -525,7 +525,14 @@ function ActionBarEnabled({
     if (checked_files.size === 0) {
       return;
     } else if (readOnly) {
-      action_buttons = ["copy"];
+      return (
+        <Button
+          bsStyle="primary"
+          onClick={() => actions.set_file_action("copy")}
+        >
+          <Icon name="copy" /> Copy
+        </Button>
+      );
     } else if (checked_files.size === 1) {
       let isDir;
       const item = checked_files.first();

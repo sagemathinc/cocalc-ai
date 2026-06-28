@@ -116,6 +116,7 @@ describe("FilesSelectedControls", () => {
     currentActions = {
       open_directory: jest.fn(),
       open_file: jest.fn(),
+      set_file_action: jest.fn(),
       trackRestoreOp: jest.fn(),
     };
   });
@@ -163,7 +164,7 @@ describe("FilesSelectedControls", () => {
     );
   });
 
-  it("shows only copy actions for read-only viewers", () => {
+  it("shows a direct copy action for read-only viewers", () => {
     render(
       <FilesSelectedControls
         checked_files={immutable.Set(["/work/a.ipynb"])}
@@ -178,13 +179,10 @@ describe("FilesSelectedControls", () => {
     );
 
     expect(screen.queryByText("Open")).toBeNull();
-    expect(mockFileActionsDropdown.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({
-        names: ["copy"],
-        extraItems: [],
-        selectedPaths: ["/work/a.ipynb"],
-      }),
-    );
+    expect(mockFileActionsDropdown).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Copy"));
+    expect(currentActions.set_file_action).toHaveBeenCalledWith("copy");
   });
 
   it("ignores stale backup metadata when the project changes", async () => {

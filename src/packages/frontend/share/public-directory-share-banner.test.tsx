@@ -3,12 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
 import { PublicDirectoryShareBanner } from "./public-directory-share-banner";
 
 const copyToNewProject = jest.fn();
 const copyToProject = jest.fn();
+const getProjectRegion = jest.fn();
 const lroWait = jest.fn();
 const openProject = jest.fn();
 
@@ -76,6 +83,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       hub: {
+        projects: {
+          getProjectRegion: (...args: any[]) => getProjectRegion(...args),
+        },
         publicDirectoryShares: {
           copyToNewProject: (...args: any[]) => copyToNewProject(...args),
           copyToProject: (...args: any[]) => copyToProject(...args),
@@ -129,6 +139,7 @@ describe("PublicDirectoryShareBanner", () => {
       site_license_grant: null,
     });
     lroWait.mockResolvedValue({ status: "succeeded" });
+    getProjectRegion.mockResolvedValue("wnam");
   });
 
   it("waits for create-project copy success before opening the new project", async () => {
@@ -153,9 +164,36 @@ describe("PublicDirectoryShareBanner", () => {
       scope_id: "new-project",
       scope_type: "project",
     });
+    expect(getProjectRegion).toHaveBeenCalledWith({
+      project_id: "new-project",
+    });
     expect(lroWait.mock.invocationCallOrder[0]).toBeLessThan(
       openProject.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not open the new project before it is readable", async () => {
+    jest.useFakeTimers();
+    getProjectRegion.mockRejectedValue(new Error("not ready"));
+    render(<PublicDirectoryShareBanner share={share()} />);
+
+    fireEvent.click(screen.getByText("Copy"));
+    fireEvent.click(screen.getByText("Create project and copy"));
+
+    await waitFor(() => {
+      expect(lroWait).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await jest.runAllTimersAsync();
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/not yet available in your project list/),
+      ).toBeTruthy();
+    });
+    expect(openProject).not.toHaveBeenCalled();
+    jest.useRealTimers();
   });
 
   it("does not open the new project when the queued copy fails", async () => {

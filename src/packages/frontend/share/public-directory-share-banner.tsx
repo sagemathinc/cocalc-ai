@@ -44,6 +44,23 @@ function siteLicenseGrantMessage(
   );
 }
 
+async function waitForProjectReadable(project_id: string): Promise<boolean> {
+  for (let i = 0; i < 20; i++) {
+    try {
+      await webapp_client.conat_client.hub.projects.getProjectRegion({
+        project_id,
+      });
+      return true;
+    } catch (err) {
+      if (i === 19) {
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  return false;
+}
+
 export function PublicDirectoryShareBanner({
   share,
 }: {
@@ -86,14 +103,21 @@ export function PublicDirectoryShareBanner({
         throw new Error(summary.error ?? `Copy ${summary.status}`);
       }
       const grantMessage = siteLicenseGrantMessage(result.site_license_grant);
-      setCopyMessage(
-        `New project created and copied.${grantMessage ? ` ${grantMessage}` : ""}`,
+      const canOpen = await waitForProjectReadable(
+        result.destination_project_id,
       );
-      projectActions.open_project({
-        project_id: result.destination_project_id,
-        switch_to: true,
-        target: "files",
-      });
+      setCopyMessage(
+        canOpen
+          ? `New project created and copied.${grantMessage ? ` ${grantMessage}` : ""}`
+          : `New project created and copied, but it is not yet available in your project list. Try opening it again in a moment.${grantMessage ? ` ${grantMessage}` : ""}`,
+      );
+      if (canOpen) {
+        projectActions.open_project({
+          project_id: result.destination_project_id,
+          switch_to: true,
+          target: "files",
+        });
+      }
     } catch (err) {
       setCopyError(normalizeUserFacingError(err).message);
     } finally {

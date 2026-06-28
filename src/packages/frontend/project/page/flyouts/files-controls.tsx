@@ -510,6 +510,17 @@ export function FilesSelectedControls({
       return renderBackupButtons();
     }
     if (mode === "top" && checked_files.size === 0) return;
+    if (readOnlyViewer) {
+      return (
+        <Button
+          size="small"
+          type="primary"
+          onClick={() => actions?.set_file_action("copy")}
+        >
+          <Icon name="copy" /> Copy
+        </Button>
+      );
+    }
 
     return (
       <Space orientation="horizontal" wrap>
