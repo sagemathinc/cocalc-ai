@@ -11,7 +11,6 @@ import {
   shouldPollUsageWarnings,
   warningPollInterval,
 } from "@cocalc/frontend/account/membership-usage-cache";
-import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import {
   React,
   useActions,
@@ -126,7 +125,6 @@ export const AIUsageWarning: React.FC<{
   const page_actions = useActions("page");
   const [status, setStatus] = useState<AIUsageStatusResponse | null>(null);
   const [open, setOpen] = useState(false);
-  const [purchaseOpen, setPurchaseOpen] = useState(false);
   const [dismissedWarningKey, setDismissedWarningKey] = useState<
     string | undefined
   >();
@@ -257,14 +255,18 @@ export const AIUsageWarning: React.FC<{
               page_actions.set_active_tab("account");
             }}
           >
-            Open membership details
+            Open usage details
           </Button>,
           <Button
-            key="upgrade"
-            type="primary"
-            onClick={() => setPurchaseOpen(true)}
+            key="pricing"
+            href="https://chatgpt.com/pricing"
+            target="_blank"
+            rel="noreferrer"
           >
-            Upgrade membership
+            View ChatGPT plans
+          </Button>,
+          <Button key="settings" type="primary" href="/settings/account/ai">
+            Open AI settings
           </Button>,
         ]}
         width={720}
@@ -273,7 +275,9 @@ export const AIUsageWarning: React.FC<{
           <Text>
             AI API usage is limited by both a 5-hour window and a 7-day window.
             When a limit is hit, AI features stop until usage rolls out of the
-            window.
+            window. CoCalc membership upgrades do not currently include
+            additional AI usage on cocalc.ai; connect a ChatGPT plan in AI
+            settings instead.
           </Text>
           {warnings.map((warning) => (
             <div key={warning.window}>
@@ -313,14 +317,6 @@ export const AIUsageWarning: React.FC<{
           ))}
         </Space>
       </Modal>
-      <MembershipPurchaseModal
-        open={purchaseOpen}
-        onClose={() => setPurchaseOpen(false)}
-        onChanged={() => {
-          setPurchaseOpen(false);
-          window.dispatchEvent(new Event("cocalc:membership-changed"));
-        }}
-      />
     </>
   );
 });
