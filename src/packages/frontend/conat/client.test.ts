@@ -2457,7 +2457,6 @@ describe("ConatClient routed project-host reconnect", () => {
               "00000000-0000-4000-8000-000000000001": immutable.Map({
                 host_id: "host-1",
                 owning_bay_id: "bay-0",
-                public_directory_share_projection: true,
               }),
             }),
             host_info: immutable.Map({
@@ -2465,6 +2464,9 @@ describe("ConatClient routed project-host reconnect", () => {
                 bay_id: "bay-0",
                 connect_url: "http://project-host",
                 host_session_id: "session-1",
+                public_directory_share_connection: true,
+                public_directory_share_id:
+                  "11111111-1111-4111-8111-111111111111",
                 updated_at: Date.now() - 120_000,
               }),
             }),

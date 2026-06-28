@@ -8,7 +8,17 @@ export function isPublicDirectoryShareHost(
     .getStore("projects")
     ?.get("project_map"),
 ): boolean {
-  if (!host_id || projectMap == null) return false;
+  if (!host_id) return false;
+  if (
+    redux
+      .getStore("projects")
+      ?.get("host_info")
+      ?.get(host_id)
+      ?.get("public_directory_share_connection") === true
+  ) {
+    return true;
+  }
+  if (projectMap == null) return false;
   return projectMap.some?.(
     (project) =>
       project?.get?.("host_id") === host_id &&

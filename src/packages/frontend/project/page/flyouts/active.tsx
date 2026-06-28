@@ -120,8 +120,13 @@ interface Props {
 export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
   const { wrap, flyoutWidth } = props;
   const { formatIntl } = useAppContext();
-  const { project_id, flipTabs, manageStarredFiles, workspaces } =
-    useProjectContext();
+  const {
+    project_id,
+    flipTabs,
+    manageStarredFiles,
+    publicDirectoryShare,
+    workspaces,
+  } = useProjectContext();
   const flipTab = flipTabs[0];
   const flipTabPrevious = usePrevious(flipTab);
   const actions = useActions({ project_id });
@@ -314,6 +319,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
               project_id={project_id}
               size={USERS_SIZE_PX}
               style={USERS_STYLE}
+              disabled={!!publicDirectoryShare}
             />
           ) : undefined
         }

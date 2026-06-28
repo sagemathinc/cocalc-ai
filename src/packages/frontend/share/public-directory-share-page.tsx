@@ -119,7 +119,12 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
               redux.getStore("projects")?.get("host_info") ?? Map<string, any>()
             ).set(
               share.host_connection.host_id,
-              fromJS({ ...share.host_connection, updated_at: Date.now() }),
+              fromJS({
+                ...share.host_connection,
+                public_directory_share_connection: true,
+                public_directory_share_id: share.id,
+                updated_at: Date.now(),
+              }),
             ),
           }
         : {}),

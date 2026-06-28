@@ -942,7 +942,10 @@ You can either wait for this host to become available again, or move this ${proj
                 flex: "0 1 auto",
               }}
             >
-              <UsersViewing project_id={project_id} />
+              <UsersViewing
+                project_id={project_id}
+                disabled={!!publicDirectoryShare}
+              />
             </div>
           </div>
         </div>
