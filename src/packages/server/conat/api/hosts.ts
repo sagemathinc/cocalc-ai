@@ -2307,11 +2307,13 @@ export async function issueProjectHostAuthToken({
   account_id,
   host_id,
   project_id,
+  public_directory_share_id,
   ttl_seconds,
 }: {
   account_id?: string;
   host_id: string;
   project_id?: string;
+  public_directory_share_id?: string;
   ttl_seconds?: number;
 }): Promise<{
   host_id: string;
@@ -2321,19 +2323,22 @@ export async function issueProjectHostAuthToken({
   const owner = requireAccount(account_id);
   const hostBay = await resolveHostBay(host_id);
   if (hostBay && hostBay.bay_id !== getConfiguredBayId()) {
+    const request = {
+      account_id: owner,
+      host_id,
+      project_id,
+      ttl_seconds,
+      ...(public_directory_share_id ? { public_directory_share_id } : {}),
+    };
     return await getInterBayBridge()
       .projectHostAuthToken(hostBay.bay_id)
-      .issue({
-        account_id: owner,
-        host_id,
-        project_id,
-        ttl_seconds,
-      });
+      .issue(request);
   }
   return await issueProjectHostAuthTokenLocal({
     account_id: owner,
     host_id,
     project_id,
+    public_directory_share_id,
     ttl_seconds,
   });
 }
@@ -2343,12 +2348,14 @@ export async function issueProjectHostAuthTokenLocal({
   actor,
   host_id,
   project_id,
+  public_directory_share_id,
   ttl_seconds,
 }: {
   account_id?: string;
   actor?: "account" | "hub";
   host_id: string;
   project_id?: string;
+  public_directory_share_id?: string;
   ttl_seconds?: number;
 }): Promise<{
   host_id: string;
@@ -2366,6 +2373,7 @@ export async function issueProjectHostAuthTokenLocal({
     account_id: owner,
     host_id,
     project_id,
+    public_directory_share_id,
     ttl_seconds,
     loadHostForListing,
   });

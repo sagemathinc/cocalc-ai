@@ -1658,6 +1658,7 @@ export interface Hosts {
     account_id?: string;
     host_id: string;
     project_id?: string;
+    public_directory_share_id?: string;
     ttl_seconds?: number;
   }) => Promise<{
     host_id: string;

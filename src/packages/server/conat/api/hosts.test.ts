@@ -17,6 +17,7 @@ let issueProjectHostAuthTokenJwtMock: jest.Mock;
 let assertAccountProjectHostTokenProjectAccessMock: jest.Mock;
 let assertProjectHostAgentTokenAccessMock: jest.Mock;
 let hasAccountProjectHostTokenHostAccessMock: jest.Mock;
+let publicDirectorySharesAuthorizeReadMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
@@ -324,6 +325,12 @@ jest.mock("./project-host-token-auth", () => ({
     assertProjectHostAgentTokenAccessMock(...args),
   hasAccountProjectHostTokenHostAccess: (...args: any[]) =>
     hasAccountProjectHostTokenHostAccessMock(...args),
+}));
+
+jest.mock("./public-directory-shares", () => ({
+  __esModule: true,
+  authorizeRead: (...args: any[]) =>
+    publicDirectorySharesAuthorizeReadMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
@@ -5663,6 +5670,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
   const HOST_UUID = "00000000-0000-4000-8000-000000000201";
   const ACCOUNT_UUID = "00000000-0000-4000-8000-000000000202";
   const PROJECT_UUID = "00000000-0000-4000-8000-000000000203";
+  const SHARE_UUID = "00000000-0000-4000-8000-000000000204";
 
   beforeEach(() => {
     queryMock = jest.fn();
@@ -5685,6 +5693,11 @@ describe("hosts.issueProjectHostAuthToken", () => {
     );
     assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
     hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    publicDirectorySharesAuthorizeReadMock = jest.fn(async () => ({
+      project_id: PROJECT_UUID,
+      share_id: SHARE_UUID,
+      read_policy: { path: "share" },
+    }));
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-0",
       epoch: 1,
@@ -5759,6 +5772,45 @@ describe("hosts.issueProjectHostAuthToken", () => {
     });
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("FROM public_project_paths"),
+      [PROJECT_UUID, HOST_UUID],
+    );
+    expect(syncProjectUsersOnHostMock).not.toHaveBeenCalled();
+    expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+      }),
+    );
+  });
+
+  it("authorizes exact public directory shares before issuing browser tokens", async () => {
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(async () => {
+      throw new Error("not authorized for project-host access token");
+    });
+    queryMock = jest.fn(async () => ({
+      rowCount: 1,
+      rows: [{ "?column?": 1 }],
+    }));
+    const { issueProjectHostAuthToken } = await import("./hosts");
+    await expect(
+      issueProjectHostAuthToken({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+        public_directory_share_id: SHARE_UUID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_UUID,
+      token: "issued-token",
+      expires_at: 424242,
+    });
+    expect(publicDirectorySharesAuthorizeReadMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      project_id: PROJECT_UUID,
+      share_id: SHARE_UUID,
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("FROM projects"),
       [PROJECT_UUID, HOST_UUID],
     );
     expect(syncProjectUsersOnHostMock).not.toHaveBeenCalled();

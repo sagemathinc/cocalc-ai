@@ -2457,6 +2457,9 @@ describe("ConatClient routed project-host reconnect", () => {
         getStore: jest.fn((name: string) => {
           if (name !== "projects") return undefined;
           return immutable.Map({
+            open_projects: immutable.List([
+              "00000000-0000-4000-8000-000000000001",
+            ]),
             project_map: immutable.Map({
               "00000000-0000-4000-8000-000000000001": immutable.Map({
                 host_id: "host-1",
@@ -2572,6 +2575,20 @@ describe("ConatClient routed project-host reconnect", () => {
         args: [{ host_id: "host-1" }],
       },
       expect.any(Object),
+    );
+    expect(hubRequest).toHaveBeenCalledWith(
+      "hub.account.acct-1.api",
+      {
+        name: "hosts.issueProjectHostAuthToken",
+        args: [
+          {
+            host_id: "host-1",
+            project_id: "00000000-0000-4000-8000-000000000001",
+            public_directory_share_id: "11111111-1111-4111-8111-111111111111",
+          },
+        ],
+      },
+      expect.objectContaining({ timeout: 4_000 }),
     );
     expect(connect).toHaveBeenCalledTimes(1);
 

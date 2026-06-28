@@ -4,7 +4,7 @@
  */
 
 import { Button, Card, Result, Skeleton, Space } from "antd";
-import { fromJS, Map } from "immutable";
+import { fromJS, List, Map } from "immutable";
 import { useEffect, useState } from "react";
 
 import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
@@ -105,8 +105,12 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
   useEffect(() => {
     setProjectionReady(false);
     if (!share || !accountId) return;
+    const projectsStore = redux.getStore("projects");
     const currentProjectMap =
-      redux.getStore("projects")?.get("project_map") ?? Map<string, any>();
+      projectsStore?.get("project_map") ?? Map<string, any>();
+    const currentOpenProjects =
+      projectsStore?.get("open_projects") ?? List<string>();
+    const wasOpen = currentOpenProjects.includes(share.project_id);
     const existingProject = currentProjectMap.get(share.project_id);
     const syntheticProject = fromJS({
       project_id: share.project_id,
@@ -132,6 +136,9 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
           ? existingProject.mergeDeep(syntheticProject)
           : syntheticProject,
       ),
+      open_projects: wasOpen
+        ? currentOpenProjects
+        : currentOpenProjects.push(share.project_id),
       ...(share.host_connection
         ? {
             host_info: (
@@ -149,6 +156,17 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
         : {}),
     });
     setProjectionReady(true);
+    return () => {
+      if (wasOpen) return;
+      const latestOpenProjects =
+        redux.getStore("projects")?.get("open_projects") ?? List<string>();
+      const index = latestOpenProjects.indexOf(share.project_id);
+      if (index >= 0) {
+        projectsActions.setState({
+          open_projects: latestOpenProjects.delete(index),
+        });
+      }
+    };
   }, [accountId, projectsActions, share]);
 
   if (!normalizedSlug) {

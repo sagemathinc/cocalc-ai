@@ -463,6 +463,7 @@ export interface IssueProjectHostAuthTokenRequest {
   account_id?: string;
   actor?: "account" | "hub";
   project_id?: string;
+  public_directory_share_id?: string;
   ttl_seconds?: number;
 }
 

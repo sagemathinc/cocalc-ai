@@ -54,6 +54,7 @@ import {
   assertProjectHostAgentTokenAccess,
   hasAccountProjectHostTokenHostAccess,
 } from "./project-host-token-auth";
+import * as publicDirectoryShares from "./public-directory-shares";
 import {
   computeHostOperationalAvailability,
   defaultInterruptionRestorePolicy,
@@ -73,12 +74,46 @@ async function hostControlClient(host_id: string, timeout?: number) {
 }
 
 async function hasPublicShareProjectHostTokenAccess({
+  account_id,
   host_id,
   project_id,
+  public_directory_share_id,
 }: {
+  account_id: string;
   host_id: string;
   project_id: string;
+  public_directory_share_id?: string;
 }): Promise<boolean> {
+  if (public_directory_share_id) {
+    try {
+      const response = await publicDirectoryShares.authorizeRead({
+        account_id,
+        project_id,
+        share_id: public_directory_share_id,
+      });
+      if (
+        response.project_id !== project_id ||
+        response.share_id !== public_directory_share_id
+      ) {
+        return false;
+      }
+      const { rowCount } = await pool().query(
+        `
+          SELECT 1
+          FROM projects
+          WHERE project_id=$1
+            AND host_id=$2
+            AND deleted IS NOT true
+          LIMIT 1
+        `,
+        [project_id, host_id],
+      );
+      return !!rowCount;
+    } catch {
+      return false;
+    }
+  }
+
   const { rowCount } = await pool().query(
     `
       SELECT 1
@@ -102,11 +137,13 @@ async function assertAccountCanIssueProjectHostToken({
   account_id,
   host_id,
   project_id,
+  public_directory_share_id,
   loadHostForListing,
 }: {
   account_id: string;
   host_id: string;
   project_id?: string;
+  public_directory_share_id?: string;
   loadHostForListing: (id: string, account_id?: string) => Promise<any>;
 }): Promise<"project" | "host" | "public-share"> {
   if (await isAdmin(account_id)) {
@@ -122,7 +159,14 @@ async function assertAccountCanIssueProjectHostToken({
       });
       return "project";
     } catch (err) {
-      if (await hasPublicShareProjectHostTokenAccess({ host_id, project_id })) {
+      if (
+        await hasPublicShareProjectHostTokenAccess({
+          account_id,
+          host_id,
+          project_id,
+          public_directory_share_id,
+        })
+      ) {
         return "public-share";
       }
       throw err;
@@ -193,12 +237,14 @@ export async function issueProjectHostAuthTokenLocalHelper({
   account_id,
   host_id,
   project_id,
+  public_directory_share_id,
   ttl_seconds,
   loadHostForListing,
 }: {
   account_id: string;
   host_id: string;
   project_id?: string;
+  public_directory_share_id?: string;
   ttl_seconds?: number;
   loadHostForListing: (id: string, account_id?: string) => Promise<any>;
 }): Promise<{
@@ -218,6 +264,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
     account_id,
     host_id,
     project_id,
+    public_directory_share_id,
     loadHostForListing,
   });
   if (project_id && accessMode === "project") {
