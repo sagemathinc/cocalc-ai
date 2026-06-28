@@ -242,6 +242,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const modal = useTypedRedux({ project_id }, "modal");
   const open_files = useTypedRedux({ project_id }, "open_files");
+  const openFilesReady = open_files != null;
   const open_files_order = useTypedRedux({ project_id }, "open_files_order");
   const active_project_tab = useTypedRedux(
     { project_id },
@@ -284,7 +285,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       targetPath.length > 0 &&
       !props.publicDirectorySharePathIsDirectory;
 
-    if (targetIsFile && actions.open_files == null) {
+    if (targetIsFile && !openFilesReady) {
       return;
     }
 
@@ -324,7 +325,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     props.publicDirectoryShare?.slug,
     props.publicDirectorySharePath,
     props.publicDirectorySharePathIsDirectory,
-    open_files,
+    openFilesReady,
   ]);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(

@@ -27,7 +27,9 @@ jest.mock("@cocalc/frontend/editors/slate/editable-markdown", () => ({
 jest.mock("@cocalc/frontend/chat/viewer", () => (props: any) => (
   <div
     data-testid="chat-viewer"
+    data-readonly={`${props.readOnly === true}`}
     data-show-thread-list={`${props.showThreadList === true}`}
+    data-virtualized={`${props.virtualized !== false}`}
   />
 ));
 
@@ -150,9 +152,9 @@ describe("TimeTravel Viewer", () => {
       />,
     );
 
-    expect(screen.getByTestId("chat-viewer")).toHaveAttribute(
-      "data-show-thread-list",
-      "true",
-    );
+    const viewer = screen.getByTestId("chat-viewer");
+    expect(viewer).toHaveAttribute("data-readonly", "true");
+    expect(viewer).toHaveAttribute("data-virtualized", "false");
+    expect(viewer).toHaveAttribute("data-show-thread-list", "true");
   });
 });
