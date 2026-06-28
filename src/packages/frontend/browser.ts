@@ -27,6 +27,10 @@ export function notifyCount() {
 let last_title: string = "";
 
 export function set_window_title(title?: string): void {
+  if (lite) {
+    document.title = "CoCalc Plus";
+    return;
+  }
   if (title == null) {
     title = last_title;
   }
