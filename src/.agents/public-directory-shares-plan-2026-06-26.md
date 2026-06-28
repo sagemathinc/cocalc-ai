@@ -243,9 +243,14 @@ These are release-blocking:
 - The project host remains the final file-path enforcement point. The hub may
   authorize and route, but it must not proxy steady-state file reads.
 - Public shares require sign-in in the first release.
-- Emergency disable of a share or slug prefix must prevent new temporary grants
-  immediately. Existing grants should be revoked or marked inactive when the
-  disable is security-motivated.
+- Disabling a share, whether by owner or admin, must prevent new temporary
+  grants immediately.
+- Existing temporary viewer grants for a disabled share must stop granting file
+  access in a reasonable amount of time, measured in minutes rather than days.
+  For security/admin takedowns, revoke them immediately and invalidate relevant
+  project-access generations or auth caches.
+- Disabling a share cannot recall content that a viewer already downloaded or
+  copied. Owner/admin UI must state this clearly.
 
 ### Authorization Cache Policy
 
@@ -454,6 +459,16 @@ Rules:
   useful and CUP explicitly requested this behavior;
 - record grant metadata with source share id, source project id, destination
   project id, account id, tier, duration, and legacy public path id.
+- disabling a share must block new grant-on-copy operations immediately;
+- if a copy operation has not started yet, disabling the source share should
+  cancel or fail it before any membership grant is minted;
+- if a membership grant has already been minted because of a copied share, the
+  default behavior should be configurable by share/site policy:
+  `keep_on_disable` for ordinary owner disable, and `revoke_on_security_disable`
+  for admin/security takedown;
+- revocation of an already-minted membership grant does not remove files that
+  were already copied into the viewer's project, and the UI/admin notes must not
+  imply that copied content can be recalled.
 
 ### Backend API Plan
 
@@ -512,8 +527,13 @@ Implement expiry as defense-in-depth:
 - a periodic job marks expired grants as `expired`;
 - project-host auth should not cache a grant past its expiry;
 - revisiting a share URL refreshes the grant idempotently;
-- disabling a share marks active grants as `revoked` if the disable reason is
-  security or admin takedown.
+- disabling a share marks active grants as `revoked` or `disabled` and makes
+  access resolution ignore them;
+- ordinary owner disable should revoke active temporary viewer grants within
+  minutes and prevent refresh;
+- security or admin takedown should revoke active temporary viewer grants
+  immediately and trigger any available cross-bay/project-host cache
+  invalidation.
 
 ### Audit and Owner Visibility
 
@@ -563,6 +583,9 @@ Admin UI should expose account ids/emails for support and abuse response.
 - Integrate temporary grants into project-host viewer read-policy lookup.
 - Add expiry cleanup and immediate disable/revoke behavior.
 - Add limits independent of ordinary collaborator/viewer limits.
+- Add tests that disabling a share blocks new grants immediately and makes
+  existing temporary viewer grants ineffective within the configured revocation
+  window.
 
 #### Phase D: Share Entry Route
 
@@ -574,6 +597,9 @@ Admin UI should expose account ids/emails for support and abuse response.
 - Keep unavailable/restoring/share-disabled states in the entry route.
 - Support both folder-share and whole-project-share slugs through the same entry
   route and temporary grant API.
+- When a share is disabled while a viewer has the project open, viewer file
+  access should fail cleanly on the next authorization/read refresh with a
+  clear "This share is no longer available" message.
 
 #### Phase E: Copy and Membership
 
@@ -918,6 +944,9 @@ First pass:
 - admin/import scripts can create records;
 - project owners can see public shares for a project in project settings;
 - owners can enable/disable, set visibility, title, description, and slug.
+- disabling UI must explain: new viewers are blocked immediately, active viewer
+  access will stop within minutes, and already downloaded/copied content cannot
+  be recalled.
 
 Later:
 
@@ -1266,6 +1295,8 @@ Case handling:
 - Reuse `ProjectViewerReadPolicy` for path-scoped access.
 - Add tests for path traversal, disabled shares, unlisted resolution, listed
   listing, and read-policy construction.
+- Add tests that disabling a share revokes active temporary viewer access and
+  blocks new grant-on-copy attempts.
 
 ### Phase 2: Frontend Viewer
 
