@@ -27,6 +27,8 @@ const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const OWNER_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 const SHARE_ID = "44444444-4444-4444-8444-444444444444";
+const ASSIGNMENT_ID = "55555555-5555-4555-8555-555555555555";
+const PACKAGE_ID = "66666666-6666-4666-8666-666666666666";
 
 describe("public directory share normalization", () => {
   it("normalizes slugs", () => {
@@ -125,6 +127,7 @@ describe("public directory temporary viewer grants", () => {
   beforeEach(async () => {
     await getPool().query(`
       TRUNCATE
+        public_project_path_site_license_grants,
         public_project_path_viewer_grants,
         public_project_path_slugs,
         public_project_paths
@@ -219,5 +222,38 @@ describe("public directory temporary viewer grants", () => {
       project_id: PROJECT_ID,
     });
     expect(policy.read_policy).toBeUndefined();
+  });
+
+  it("clears tracked site-license grants when a share is disabled", async () => {
+    const shareId = await insertShare();
+    await getPool().query(
+      `
+        INSERT INTO public_project_path_site_license_grants (
+          id, public_project_path_id, assignment_id, package_id,
+          target_account_id, actor_account_id, status
+        )
+        VALUES (
+          '77777777-7777-4777-8777-777777777777',
+          $1, $2, $3, $4, $5, 'active'
+        )
+      `,
+      [shareId, ASSIGNMENT_ID, PACKAGE_ID, ACCOUNT_ID, OWNER_ID],
+    );
+
+    await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      disabled: true,
+    });
+
+    const { rows } = await getPool().query<{ status: string }>(
+      `
+        SELECT status
+        FROM public_project_path_site_license_grants
+        WHERE public_project_path_id=$1
+      `,
+      [shareId],
+    );
+    expect(rows).toEqual([{ status: "stale" }]);
   });
 });

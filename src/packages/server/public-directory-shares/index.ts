@@ -19,7 +19,10 @@ import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directo
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
-import { assignSiteLicensePoolSeat as assignSiteLicensePoolSeatDirect } from "@cocalc/server/membership/site-licenses";
+import {
+  assignSiteLicensePoolSeat as assignSiteLicensePoolSeatDirect,
+  revokeSiteLicensePoolSeat as revokeSiteLicensePoolSeatDirect,
+} from "@cocalc/server/membership/site-licenses";
 import {
   assertCanIncreaseAccountStorage,
   getProjectOwnerAccountId,
@@ -114,6 +117,16 @@ type TemporaryViewerGrantRow = {
   read_policy: ProjectViewerReadPolicy;
   status: string;
   expires_at: Date | string;
+};
+
+type PublicShareSiteLicenseGrantRow = {
+  id: string;
+  public_project_path_id: string;
+  assignment_id: string;
+  package_id: string;
+  target_account_id: string;
+  actor_account_id: string;
+  status: string;
 };
 
 function isSlugUniqueViolation(err: unknown): boolean {
@@ -441,6 +454,32 @@ export async function ensurePublicDirectorySharesSchema(): Promise<void> {
         ON public_project_path_viewer_grants(expires_at)
         WHERE status = 'active'
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public_project_path_site_license_grants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        public_project_path_id UUID NOT NULL,
+        assignment_id UUID NOT NULL,
+        package_id UUID NOT NULL,
+        target_account_id UUID NOT NULL,
+        actor_account_id UUID NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        revoked_at TIMESTAMP,
+        revoked_by UUID,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        UNIQUE(public_project_path_id, assignment_id)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_site_license_grants_share_idx
+        ON public_project_path_site_license_grants(public_project_path_id)
+        WHERE status = 'active'
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_site_license_grants_assignment_idx
+        ON public_project_path_site_license_grants(assignment_id)
+        WHERE status = 'active'
+    `);
   })();
   await schemaReady;
 }
@@ -474,6 +513,90 @@ function seedSiteLicenseClient() {
     client: getInterBayFabricClient(),
     dest_bay: getConfiguredClusterSeedBayId(),
   });
+}
+
+async function revokeShareSiteLicenseGrant({
+  grant,
+  revoked_by,
+}: {
+  grant: PublicShareSiteLicenseGrantRow;
+  revoked_by?: string | null;
+}): Promise<void> {
+  const { rows } = await getPool().query<{ id: string }>(
+    `
+      SELECT id
+      FROM membership_package_assignments
+      WHERE id=$1
+        AND package_id=$2
+        AND account_id=$3
+        AND revoked_at IS NULL
+      LIMIT 1
+    `,
+    [grant.assignment_id, grant.package_id, grant.target_account_id],
+  );
+  if (!rows[0]) {
+    await getPool().query(
+      `
+        UPDATE public_project_path_site_license_grants
+        SET status='stale',
+            revoked_at=NOW(),
+            revoked_by=$2
+        WHERE id=$1
+          AND status='active'
+      `,
+      [grant.id, revoked_by ?? null],
+    );
+    return;
+  }
+  const actorAccountId = revoked_by ?? grant.actor_account_id;
+  const revoked =
+    getConfiguredBayId() === getConfiguredClusterSeedBayId()
+      ? await revokeSiteLicensePoolSeatDirect({
+          actor_account_id: actorAccountId,
+          package_id: grant.package_id,
+          target_account_id: grant.target_account_id,
+          trusted_admin: true,
+        })
+      : (
+          await seedSiteLicenseClient().revokeSiteLicensePoolSeat({
+            actor_account_id: actorAccountId,
+            package_id: grant.package_id,
+            target_account_id: grant.target_account_id,
+            trusted_admin: true,
+          })
+        ).revoked;
+  await getPool().query(
+    `
+      UPDATE public_project_path_site_license_grants
+      SET status=$2,
+          revoked_at=NOW(),
+          revoked_by=$3
+      WHERE id=$1
+        AND status='active'
+    `,
+    [grant.id, revoked ? "revoked" : "stale", actorAccountId],
+  );
+}
+
+async function revokeShareSiteLicenseGrants({
+  public_project_path_id,
+  revoked_by,
+}: {
+  public_project_path_id: string;
+  revoked_by?: string | null;
+}): Promise<void> {
+  const { rows } = await getPool().query<PublicShareSiteLicenseGrantRow>(
+    `
+      SELECT *
+      FROM public_project_path_site_license_grants
+      WHERE public_project_path_id=$1
+        AND status='active'
+    `,
+    [public_project_path_id],
+  );
+  for (const grant of rows) {
+    await revokeShareSiteLicenseGrant({ grant, revoked_by });
+  }
 }
 
 async function validateSiteLicenseGrantConfig(
@@ -542,21 +665,49 @@ async function assignSiteLicenseGrantForShare({
     row.site_license_duration_days,
   );
   const expiresAt = siteLicenseGrantExpiresAt(durationDays);
-  if (getConfiguredBayId() === getConfiguredClusterSeedBayId()) {
-    await assignSiteLicensePoolSeatDirect({
-      actor_account_id: actorAccountId,
-      package_id: packageId,
-      target_account_id: account_id,
-      grant_expires_at: expiresAt,
-    });
-  } else {
-    await seedSiteLicenseClient().assignSiteLicensePoolSeat({
-      actor_account_id: actorAccountId,
-      package_id: packageId,
-      target_account_id: account_id,
-      grant_expires_at: expiresAt,
-    });
-  }
+  const assignment =
+    getConfiguredBayId() === getConfiguredClusterSeedBayId()
+      ? await assignSiteLicensePoolSeatDirect({
+          actor_account_id: actorAccountId,
+          package_id: packageId,
+          target_account_id: account_id,
+          grant_expires_at: expiresAt,
+        })
+      : await seedSiteLicenseClient().assignSiteLicensePoolSeat({
+          actor_account_id: actorAccountId,
+          package_id: packageId,
+          target_account_id: account_id,
+          grant_expires_at: expiresAt,
+        });
+  await getPool().query(
+    `
+      INSERT INTO public_project_path_site_license_grants (
+        public_project_path_id, assignment_id, package_id, target_account_id,
+        actor_account_id, status, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, 'active', $6::jsonb)
+      ON CONFLICT (public_project_path_id, assignment_id) DO UPDATE SET
+        package_id=EXCLUDED.package_id,
+        target_account_id=EXCLUDED.target_account_id,
+        actor_account_id=EXCLUDED.actor_account_id,
+        status='active',
+        revoked_at=NULL,
+        revoked_by=NULL,
+        metadata=EXCLUDED.metadata
+    `,
+    [
+      row.id,
+      assignment.id,
+      packageId,
+      account_id,
+      actorAccountId,
+      JSON.stringify({
+        slug: row.slug,
+        grant_id: assignment.grant_id ?? null,
+        expires_at: expiresAt.toISOString(),
+      }),
+    ],
+  );
   const membershipClass = row.site_license_membership_tier_id ?? null;
   return {
     granted: true,
@@ -1157,6 +1308,10 @@ async function savePublicDirectoryShare(
       public_project_path_id: row.id,
       revoked_by: opts.account_id ?? null,
       status: "disabled",
+    });
+    await revokeShareSiteLicenseGrants({
+      public_project_path_id: row.id,
+      revoked_by: opts.account_id ?? null,
     });
   }
   return rowToSummary(row);

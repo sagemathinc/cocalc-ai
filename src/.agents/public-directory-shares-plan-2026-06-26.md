@@ -457,15 +457,19 @@ Rules:
 - if the grant is required, block before copying and show a clear explanation;
 - allow copying even when the license is used up, because the free tier is still
   useful and CUP explicitly requested this behavior;
-- record grant metadata with source share id, source project id, destination
-  project id, account id, tier, duration, and legacy public path id.
+- record grant provenance with source share id, source project id, destination
+  project id, account id, tier, duration, legacy public path id, package id,
+  and the exact membership assignment id that was minted.
 - disabling a share must block new grant-on-copy operations immediately;
 - if a copy operation has not started yet, disabling the source share should
   cancel or fail it before any membership grant is minted;
-- if a membership grant has already been minted because of a copied share, the
-  default behavior should be configurable by share/site policy:
-  `keep_on_disable` for ordinary owner disable, and `revoke_on_security_disable`
-  for admin/security takedown;
+- if a membership grant has already been minted because of a copied share,
+  disabling the share revokes that grant in a reasonable amount of time
+  (minutes, not days);
+- revocation must be assignment-aware: record the assignment id at grant time,
+  and on disable only revoke if that same assignment is still active. Do not
+  blindly revoke by package/account if the user later received an unrelated
+  assignment for the same membership package;
 - revocation of an already-minted membership grant does not remove files that
   were already copied into the viewer's project, and the UI/admin notes must not
   imply that copied content can be recalled.
@@ -611,6 +615,8 @@ account ids/emails for support and abuse response.
 - Keep "Copy to existing project" as a secondary path.
 - Apply optional site-license/membership grant-on-copy with idempotent grant
   metadata and graceful exhaustion behavior.
+- Revoke tracked grant-on-copy memberships when the source share is disabled,
+  with assignment-id checks to avoid revoking unrelated later grants.
 - Ensure whole-project copy uses the same backend authorization checks and
   safety exclusions as whole-project file reads.
 
