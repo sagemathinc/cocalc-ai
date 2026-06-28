@@ -225,7 +225,10 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
         </div>
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title
+          level={2}
+          style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+        >
           Background
         </Title>
         {member.background.map((paragraph) => (
@@ -235,7 +238,10 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
         ))}
       </PublicSection>
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
+        <Title
+          level={2}
+          style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}
+        >
           Previous Experience
         </Title>
         <ExperienceList member={member} />
