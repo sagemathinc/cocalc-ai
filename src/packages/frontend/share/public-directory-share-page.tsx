@@ -14,6 +14,7 @@ import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facin
 import { load_target } from "@cocalc/frontend/history";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { shareRouteCandidates } from "./public-directory-share-route";
 
 function authHref(view: "sign-in" | "sign-up"): string {
@@ -36,6 +37,24 @@ function joinSharePath(sharePath: string, relativePath: string): string {
   return pieces.join("/");
 }
 
+function shareProjectFilesTarget({
+  projectPath,
+  isDirectory,
+}: {
+  projectPath: string;
+  isDirectory: boolean;
+}): string {
+  const path = [
+    DEFAULT_PROJECT_RUNTIME_HOME,
+    projectPath.trim().replace(/^\/+|\/+$/g, ""),
+  ]
+    .map((path) => path.trim().replace(/^\/+|\/+$/g, ""))
+    .filter((path) => path.length > 0 && path !== ".")
+    .join("/");
+  const encodedPath = encodePath(path);
+  return `files/${encodedPath}${isDirectory ? "/" : ""}`;
+}
+
 async function grantShareRoute(rawPath: string): Promise<{
   grant: GrantTemporaryViewerAccessResponse;
   projectId: string;
@@ -51,14 +70,13 @@ async function grantShareRoute(rawPath: string): Promise<{
           },
         );
       const projectPath = joinSharePath(grant.path, candidate.relativePath);
-      const encodedPath = encodePath(projectPath);
       return {
         grant,
         projectId: grant.project_id,
-        target:
-          candidate.relativePath.length === 0
-            ? `files/${encodedPath}${encodedPath.length > 0 ? "/" : ""}`
-            : `files/${encodedPath}`,
+        target: shareProjectFilesTarget({
+          projectPath,
+          isDirectory: candidate.relativePath.length === 0,
+        }),
       };
     } catch (err) {
       lastError = err;
