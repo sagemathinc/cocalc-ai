@@ -124,17 +124,10 @@ import {
   getProjectUserRole,
   isViewerProjectRole,
 } from "@cocalc/frontend/project/realtime-access";
-import {
-  isAudio,
-  isImage,
-  isPDF,
-  isVideo,
-} from "@cocalc/frontend/file-extensions";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
 import { EditorLoadError } from "../../file-editors-error";
-import ViewerFilePreview from "@cocalc/frontend/project/viewer-file-preview";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { workingDirectoryForProjectFile as effectiveWorkingDirectoryForProjectFile } from "@cocalc/frontend/project/workspaces/chat-working-directory";
@@ -153,7 +146,6 @@ import {
 } from "@cocalc/frontend/project/log-state";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import { createSharedLroListClient } from "@cocalc/frontend/lro/shared-list";
-import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
 import {
   buildProjectLogRowsFromStream,
   filterProjectLogRows,
@@ -203,29 +195,36 @@ const { defaults, required } = misc;
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
-const PUBLIC_RENDERER_ONLY_EXTENSIONS = new Set([
-  "board",
+
+const NORMAL_EDITOR_READ_ONLY_EXTENSIONS = new Set([
+  // These real viewers manage their own document/runtime and do not support
+  // BaseEditor's fake syncdoc readOnlyPreview bootstrap.
   "ipynb",
   "pdf",
-  "slides",
-  "tasks",
 ]);
 
-function canUseFrameEditorReadOnlyPreview(path: string, ext?: string): boolean {
+const VIEWER_EDITOR_EXTENSION_OVERRIDES = new globalThis.Map<string, string>([
+  // Terminal files are project runtime sessions, not passive file viewers.
+  // In read-only viewer mode, show the underlying file as text instead.
+  ["term", "txt"],
+]);
+
+function shouldUseFrameEditorReadOnlyPreview(
+  path: string,
+  ext?: string,
+): boolean {
   const resolvedExt = `${ext ?? misc.filename_extension(path) ?? ""}`
     .trim()
     .toLowerCase();
-  if (resolvedExt === "chat" || resolvedExt === "sage-chat") return true;
-  if (PUBLIC_RENDERER_ONLY_EXTENSIONS.has(resolvedExt)) return false;
-  if (
-    isImage(resolvedExt) ||
-    isVideo(resolvedExt) ||
-    isAudio(resolvedExt) ||
-    isPDF(resolvedExt)
-  ) {
+  if (NORMAL_EDITOR_READ_ONLY_EXTENSIONS.has(resolvedExt)) {
     return false;
   }
-  return getSyncDocDescriptor(path).doctype === "syncstring";
+  return true;
+}
+
+function viewerEditorExtension(ext?: string): string | undefined {
+  const resolvedExt = `${ext ?? ""}`.trim().toLowerCase();
+  return VIEWER_EDITOR_EXTENSION_OVERRIDES.get(resolvedExt) ?? ext;
 }
 
 export const QUERIES = {
@@ -1638,16 +1637,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         const syncPath = this.get_sync_path(path);
         const ext = this.open_files?.get(path, "ext");
         const isViewer = this.isViewerProjectUser();
-        const isPublicDirectoryShare = this.hasPublicDirectoryShare();
-        const { name, Editor } =
-          isPublicDirectoryShare ||
-          (isViewer && !canUseFrameEditorReadOnlyPreview(syncPath, ext))
-            ? { name: undefined, Editor: ViewerFilePreview }
-            : await this.init_file_react_redux(
-                syncPath,
-                ext,
-                isViewer ? { readOnlyPreview: true } : undefined,
-              );
+        const editorExt = isViewer ? viewerEditorExtension(ext) : ext;
+        const initOptions =
+          isViewer && shouldUseFrameEditorReadOnlyPreview(syncPath, editorExt)
+            ? { readOnlyPreview: true }
+            : undefined;
+        const { name, Editor } = await this.init_file_react_redux(
+          syncPath,
+          editorExt,
+          initOptions,
+        );
         const current_info = this.get_store()
           ?.get("open_files")
           .getIn([path, "component"]) as any;

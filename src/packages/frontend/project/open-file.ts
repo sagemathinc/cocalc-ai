@@ -671,7 +671,9 @@ function isViewerProjectOpen(actions: ProjectActions): boolean {
 }
 
 function isPublicDirectoryShareOpen(actions: ProjectActions): boolean {
-  return !!`${actions.get_store()?.get("public_directory_share_id") ?? ""}`.trim();
+  return !!`${
+    actions.get_store?.()?.get("public_directory_share_id") ?? ""
+  }`.trim();
 }
 
 function updatePublicDirectoryShareUrl(
@@ -681,7 +683,7 @@ function updatePublicDirectoryShareUrl(
   { replace }: { replace: boolean },
 ): void {
   if (typeof window === "undefined") return;
-  const store = actions.get_store();
+  const store = actions.get_store?.();
   const slug = `${store?.get("public_directory_share_slug") ?? ""}`.trim();
   const sharePath = `${store?.get("public_directory_share_path") ?? ""}`
     .trim()
