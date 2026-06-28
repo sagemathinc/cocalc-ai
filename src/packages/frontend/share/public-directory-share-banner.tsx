@@ -6,6 +6,7 @@
 import { Alert, Button, Input, Modal, Space, Tag, Typography } from "antd";
 import { useState } from "react";
 
+import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -44,6 +45,16 @@ function siteLicenseGrantMessage(
   );
 }
 
+function formatCopyProgress(
+  event: Extract<LroEvent, { type: "progress" }>,
+): string {
+  const phase = event.phase ? `${event.phase}: ` : "";
+  const message = event.message || "copying files";
+  const progress =
+    typeof event.progress === "number" ? ` (${event.progress}%)` : "";
+  return `${phase}${message}${progress}`;
+}
+
 async function waitForProjectReadable(project_id: string): Promise<boolean> {
   for (let i = 0; i < 20; i++) {
     try {
@@ -74,11 +85,15 @@ export function PublicDirectoryShareBanner({
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [copyProgress, setCopyProgress] = useState("");
+  const [placementMessage, setPlacementMessage] = useState("");
 
   function openCopyModal() {
     setCopyMode("new");
     setCopyError("");
     setCopyMessage("");
+    setCopyProgress("");
+    setPlacementMessage("");
     setOpen(true);
   }
 
@@ -86,6 +101,8 @@ export function PublicDirectoryShareBanner({
     setCopying(true);
     setCopyError("");
     setCopyMessage("");
+    setCopyProgress("Creating project...");
+    setPlacementMessage("");
     try {
       const result =
         await webapp_client.conat_client.hub.publicDirectoryShares.copyToNewProject(
@@ -94,15 +111,30 @@ export function PublicDirectoryShareBanner({
             options: { recursive: true },
           },
         );
+      if (
+        result.requested_host_id &&
+        result.placed_on_requested_host === false
+      ) {
+        setPlacementMessage(
+          result.host_placement_message
+            ? `The source host was not available for the new project, so CoCalc placed it on another host. Cross-host copy can take longer. Placement detail: ${result.host_placement_message}`
+            : "The source host was not available for the new project, so CoCalc placed it on another host. Cross-host copy can take longer.",
+        );
+      }
+      setCopyProgress("Copying files...");
       const summary = await webapp_client.conat_client.lroWait({
         op_id: result.op_id,
         scope_type: result.scope_type,
         scope_id: result.scope_id,
+        onProgress: (event) => {
+          setCopyProgress(formatCopyProgress(event));
+        },
       });
       if (summary.status !== "succeeded") {
         throw new Error(summary.error ?? `Copy ${summary.status}`);
       }
       const grantMessage = siteLicenseGrantMessage(result.site_license_grant);
+      setCopyProgress("Waiting for the new project to appear...");
       const canOpen = await waitForProjectReadable(
         result.destination_project_id,
       );
@@ -122,6 +154,7 @@ export function PublicDirectoryShareBanner({
       setCopyError(normalizeUserFacingError(err).message);
     } finally {
       setCopying(false);
+      setCopyProgress("");
     }
   }
 
@@ -130,6 +163,8 @@ export function PublicDirectoryShareBanner({
     setCopying(true);
     setCopyError("");
     setCopyMessage("");
+    setCopyProgress("");
+    setPlacementMessage("");
     try {
       const result =
         await webapp_client.conat_client.hub.publicDirectoryShares.copyToProject(
@@ -234,6 +269,12 @@ export function PublicDirectoryShareBanner({
               title="Temporary membership offered"
               description={formatMembershipGrantDescription(share)}
             />
+          ) : null}
+          {copyProgress ? (
+            <Alert type="info" showIcon title={copyProgress} />
+          ) : null}
+          {placementMessage ? (
+            <Alert type="warning" showIcon title={placementMessage} />
           ) : null}
           {copyMode === "existing" ? (
             <>

@@ -159,11 +159,13 @@ describe("PublicDirectoryShareBanner", () => {
       slug: "test2",
       options: { recursive: true },
     });
-    expect(lroWait).toHaveBeenCalledWith({
-      op_id: "op-1",
-      scope_id: "new-project",
-      scope_type: "project",
-    });
+    expect(lroWait).toHaveBeenCalledWith(
+      expect.objectContaining({
+        op_id: "op-1",
+        scope_id: "new-project",
+        scope_type: "project",
+      }),
+    );
     expect(getProjectRegion).toHaveBeenCalledWith({
       project_id: "new-project",
     });
@@ -210,5 +212,40 @@ describe("PublicDirectoryShareBanner", () => {
       expect(screen.getByText("copy failed")).toBeTruthy();
     });
     expect(openProject).not.toHaveBeenCalled();
+  });
+
+  it("shows progress and explains when same-host placement falls back", async () => {
+    copyToNewProject.mockResolvedValueOnce({
+      destination_project_id: "new-project",
+      op_id: "op-1",
+      scope_id: "new-project",
+      scope_type: "project",
+      site_license_grant: null,
+      requested_host_id: "source-host",
+      placed_on_requested_host: false,
+      host_placement_message: "host source-host is unavailable",
+    });
+    lroWait.mockImplementationOnce(async ({ onProgress }) => {
+      onProgress?.({
+        type: "progress",
+        ts: Date.now(),
+        phase: "copy",
+        message: "copying files",
+        progress: 37,
+      });
+      return { status: "succeeded" };
+    });
+    render(<PublicDirectoryShareBanner share={share()} />);
+
+    fireEvent.click(screen.getByText("Copy"));
+    fireEvent.click(screen.getByText("Create project and copy"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/source host was not available/)).toBeTruthy();
+    });
+    expect(screen.getByText(/host source-host is unavailable/)).toBeTruthy();
+    await waitFor(() => {
+      expect(openProject).toHaveBeenCalled();
+    });
   });
 });

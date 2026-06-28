@@ -256,6 +256,7 @@ export interface CopyPublicDirectoryShareToNewProjectResponse extends CopyPublic
   created_project: true;
   requested_host_id?: string | null;
   placed_on_requested_host: boolean;
+  host_placement_message?: string | null;
 }
 
 export interface PublicDirectoryShares {

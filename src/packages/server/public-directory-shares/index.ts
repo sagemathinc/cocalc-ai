@@ -1635,12 +1635,14 @@ export async function copyToNewProject({
   };
   let destinationProjectId: string;
   let placedOnRequestedHost = !!createOpts.host_id;
+  let hostPlacementMessage: string | null = null;
   try {
     destinationProjectId = await createProject(createOpts);
   } catch (err) {
     if (!createOpts.host_id || !isHostPlacementFailure(err)) {
       throw err;
     }
+    hostPlacementMessage = `${(err as Error).message ?? err}`;
     placedOnRequestedHost = false;
     destinationProjectId = await createProject({
       ...createOpts,
@@ -1660,6 +1662,7 @@ export async function copyToNewProject({
     created_project: true,
     requested_host_id: createOpts.host_id ?? null,
     placed_on_requested_host: placedOnRequestedHost,
+    host_placement_message: hostPlacementMessage,
   };
 }
 
