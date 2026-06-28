@@ -9,12 +9,10 @@ export function isPublicDirectoryShareHost(
     ?.get("project_map"),
 ): boolean {
   if (!host_id) return false;
+  const hostInfo = redux.getStore("projects")?.get("host_info")?.get(host_id);
   if (
-    redux
-      .getStore("projects")
-      ?.get("host_info")
-      ?.get(host_id)
-      ?.get("public_directory_share_connection") === true
+    hostInfo?.get("public_directory_share_connection") === true ||
+    hostInfo?.get("temporary_public_share_viewer_grant") === true
   ) {
     return true;
   }

@@ -100,6 +100,8 @@ function materializeTemporaryViewerProject({
             grant.host_connection.host_id,
             fromJS({
               ...grant.host_connection,
+              public_directory_share_connection: true,
+              public_directory_share_id: grant.share_id,
               temporary_public_share_viewer_grant: true,
               updated_at: Date.now(),
             }),
