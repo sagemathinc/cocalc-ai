@@ -63,8 +63,10 @@ import { buildSwitchToFileItems } from "./style";
 import TitleBarTour from "./title-bar-tour";
 import { ConnectionStatus, EditorDescription, EditorSpec } from "./types";
 import {
+  frameTitleBarAgentButtonVisible,
   frameTitleBarMenuVisible,
   frameTitleBarTerminalButtonVisible,
+  frameTitleBarTimeTravelButtonVisible,
 } from "./read-only-title-bar";
 
 // Certain special frame editors (e.g., for latex) have extra
@@ -618,7 +620,12 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   }
 
   function renderTimeTravel(noLabel): Rendered {
-    if (!manageCommands.isVisible("time_travel")) {
+    if (
+      !frameTitleBarTimeTravelButtonVisible({
+        readOnlyPreview: read_only_preview,
+      }) ||
+      !manageCommands.isVisible("time_travel")
+    ) {
       return;
     }
     return (
@@ -662,6 +669,9 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
 
   function renderAssistant(noLabel, where: "main" | "popover"): Rendered {
     if (
+      !frameTitleBarAgentButtonVisible({
+        readOnlyPreview: read_only_preview,
+      }) ||
       !manageCommands.isVisible("codex") ||
       !redux.getStore("projects").hasLanguageModelEnabled(props.project_id)
     ) {

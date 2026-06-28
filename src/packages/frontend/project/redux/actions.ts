@@ -73,6 +73,10 @@ import {
 } from "@cocalc/frontend/project/page/activity-bar-storage";
 import { transform_get_url } from "@cocalc/frontend/project/transform-get-url";
 import { NewFilenames, normalize } from "@cocalc/frontend/project/utils";
+import {
+  shouldUsePublicViewerFileEditor,
+  VIEWER_FILE_EDITOR_EXTENSION,
+} from "@cocalc/frontend/project/viewer-file-editor-consts";
 import { API } from "@cocalc/frontend/project/websocket/api";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import {
@@ -196,13 +200,6 @@ const { defaults, required } = misc;
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
 
-const NORMAL_EDITOR_READ_ONLY_EXTENSIONS = new Set([
-  // These real viewers manage their own document/runtime and do not support
-  // BaseEditor's fake syncdoc readOnlyPreview bootstrap.
-  "ipynb",
-  "pdf",
-]);
-
 const VIEWER_EDITOR_EXTENSION_OVERRIDES = new globalThis.Map<string, string>([
   // Terminal files are project runtime sessions, not passive file viewers.
   // In read-only viewer mode, show the underlying file as text instead.
@@ -216,7 +213,7 @@ function shouldUseFrameEditorReadOnlyPreview(
   const resolvedExt = `${ext ?? misc.filename_extension(path) ?? ""}`
     .trim()
     .toLowerCase();
-  if (NORMAL_EDITOR_READ_ONLY_EXTENSIONS.has(resolvedExt)) {
+  if (resolvedExt === VIEWER_FILE_EDITOR_EXTENSION) {
     return false;
   }
   return true;
@@ -224,6 +221,9 @@ function shouldUseFrameEditorReadOnlyPreview(
 
 function viewerEditorExtension(ext?: string): string | undefined {
   const resolvedExt = `${ext ?? ""}`.trim().toLowerCase();
+  if (shouldUsePublicViewerFileEditor(resolvedExt)) {
+    return VIEWER_FILE_EDITOR_EXTENSION;
+  }
   return VIEWER_EDITOR_EXTENSION_OVERRIDES.get(resolvedExt) ?? ext;
 }
 
