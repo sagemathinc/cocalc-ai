@@ -70,7 +70,20 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     setProjectionReady(false);
     resolveShareRoute(normalizedSlug)
       .then((result) => {
-        if (!canceled) setShareRoute(result);
+        if (!canceled) {
+          console.info("[public-directory-share] resolved share route", {
+            source: "frontend:share:public-directory-share-page",
+            requested_path: normalizedSlug,
+            slug: result.share.slug,
+            share_id: result.share.id,
+            project_id: result.share.project_id,
+            share_path: result.share.path,
+            relative_path: result.relativePath,
+            host_id: result.share.host_id,
+            has_host_connection: result.share.host_connection != null,
+          });
+          setShareRoute(result);
+        }
       })
       .catch((err) => {
         if (!canceled) setError(normalizeUserFacingError(err).message);

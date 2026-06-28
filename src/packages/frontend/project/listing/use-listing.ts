@@ -11,7 +11,7 @@ import useFiles from "./use-files";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
 import { type ConatError } from "@cocalc/conat/core/client";
 import type { JSONValue } from "@cocalc/util/types";
-import { getFiles, type Files } from "./use-files";
+import { getFiles, type Files, type FilesDebugContext } from "./use-files";
 import { computeFileMasks } from "@cocalc/frontend/project/explorer/compute-file-masks";
 
 export type SortField = "name" | "mtime" | "size" | "type";
@@ -43,6 +43,7 @@ export default function useListing({
   mask,
   watch = true,
   refreshFs,
+  debugContext,
 }: {
   // fs = undefined is supported and just waits until you provide a fs that is defined
   fs?: FilesystemClient | null;
@@ -54,6 +55,7 @@ export default function useListing({
   mask?: boolean;
   watch?: boolean;
   refreshFs?: () => void;
+  debugContext?: FilesDebugContext;
 }): {
   listing: null | DirectoryListingEntry[];
   error: null | ConatError;
@@ -66,6 +68,7 @@ export default function useListing({
     cacheId,
     watch,
     refreshFs,
+    debugContext,
   });
 
   const listing = useMemo<null | DirectoryListingEntry[]>(() => {

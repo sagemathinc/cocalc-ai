@@ -260,6 +260,18 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     path: effective_current_path,
     homePath,
   });
+  const publicShareListingDebugContext = useMemo(
+    () =>
+      publicDirectoryShare
+        ? {
+            kind: "public-directory-share" as const,
+            project_id,
+            share_id: publicDirectoryShare.id,
+            share_path: publicDirectoryShare.path,
+          }
+        : undefined,
+    [project_id, publicDirectoryShare],
+  );
   let {
     refresh,
     listing: rawListing,
@@ -268,6 +280,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     fs: inBackupsPath ? null : fs,
     path: listingPath,
     watch: !readOnlyViewer,
+    debugContext: publicShareListingDebugContext,
   });
   const {
     listing: backupsListing,

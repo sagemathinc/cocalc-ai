@@ -36,6 +36,13 @@ type FilesystemClientLike = {
   listing: (path: string) => Promise<ListingLike>;
 };
 
+export type FilesDebugContext = {
+  kind: "public-directory-share";
+  project_id: string;
+  share_id: string;
+  share_path: string;
+};
+
 type ConatErrorLike = Error & { code?: string | number; data?: unknown };
 
 const DEFAULT_THROTTLE_FILE_UPDATE = 500;
@@ -52,6 +59,27 @@ const CACHE_SIZE = 150;
 
 const cache = new LRU<string, Files>({ max: CACHE_SIZE });
 const cacheListeners = new Set<() => void>();
+
+function logPublicShareFiles(
+  level: "info" | "warn",
+  message: string,
+  debugContext: FilesDebugContext | undefined,
+  details: Record<string, unknown> = {},
+) {
+  if (debugContext?.kind !== "public-directory-share") {
+    return;
+  }
+  const payload = {
+    source: "frontend:project:listing:use-files",
+    ...debugContext,
+    ...details,
+  };
+  if (level === "warn") {
+    console.warn(`[public-directory-share] ${message}`, payload);
+  } else {
+    console.info(`[public-directory-share] ${message}`, payload);
+  }
+}
 
 function notifyCacheListeners() {
   for (const listener of cacheListeners) {
@@ -115,6 +143,7 @@ export default function useFiles({
   cacheId,
   watch = true,
   refreshFs,
+  debugContext,
 }: {
   // fs = undefined is supported and just waits until you provide a fs that is defined
   fs?: FilesystemClientLike | null;
@@ -126,6 +155,7 @@ export default function useFiles({
   cacheId?: JSONValue;
   watch?: boolean;
   refreshFs?: () => void;
+  debugContext?: FilesDebugContext;
 }): {
   files: Files | null;
   error: null | ConatErrorLike;
@@ -162,6 +192,14 @@ export default function useFiles({
     async () => {
       const id = ++requestId.current;
       if (fs == null) {
+        logPublicShareFiles(
+          "info",
+          "waiting for filesystem client",
+          debugContext,
+          {
+            path,
+          },
+        );
         staleFilesystemRefreshRequestedRef.current = false;
         if (requestId.current !== id) return;
         setErrorState((cur) =>
@@ -196,7 +234,7 @@ export default function useFiles({
           cur.path === path && cur.error == null ? cur : { path, error: null },
         );
         try {
-          const snapshot = await getListingSnapshot({ fs, path });
+          const snapshot = await getListingSnapshot({ fs, path, debugContext });
           if (requestId.current !== id) return;
           const snapshotFiles = snapshot.files ?? {};
           if (cacheId != null) {
@@ -218,6 +256,11 @@ export default function useFiles({
           if (refreshStaleFilesystemClient(err)) {
             return;
           }
+          logPublicShareFiles("warn", "initial listing failed", debugContext, {
+            path,
+            code: (err as ConatErrorLike | undefined)?.code,
+            message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+          });
           if (requestId.current !== id) return;
           setErrorState((cur) =>
             cur.path === path && cur.error === err
@@ -234,6 +277,11 @@ export default function useFiles({
         if (refreshStaleFilesystemClient(err)) {
           return;
         }
+        logPublicShareFiles("warn", "listing hook failed", debugContext, {
+          path,
+          code: (err as ConatErrorLike | undefined)?.code,
+          message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+        });
         if (requestId.current !== id) return;
         setErrorState((cur) =>
           cur.path === path && cur.error === err
@@ -283,6 +331,17 @@ export default function useFiles({
         } catch (err) {
           if (requestId.current !== id) return;
           console.warn("listing watcher bootstrap failed", { path, err });
+          logPublicShareFiles(
+            "warn",
+            "listing watcher bootstrap failed",
+            debugContext,
+            {
+              path,
+              attempt: attempt + 1,
+              code: (err as ConatErrorLike | undefined)?.code,
+              message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+            },
+          );
           if (refreshStaleFilesystemClient(err)) {
             return;
           }
@@ -306,7 +365,16 @@ export default function useFiles({
       listingRef.current?.close();
       delete listingRef.current;
     },
-    [cacheId, fs, path, counter, refreshFs, throttleUpdate, watch],
+    [
+      cacheId,
+      debugContext,
+      fs,
+      path,
+      counter,
+      refreshFs,
+      throttleUpdate,
+      watch,
+    ],
   );
 
   const files = filesState.path === path ? filesState.files : null;
@@ -361,16 +429,47 @@ export function isStaleFilesystemClientError(err: unknown): boolean {
 async function getListingSnapshot({
   fs,
   path,
+  debugContext,
 }: {
   fs: FilesystemClientLike;
   path: string;
+  debugContext?: FilesDebugContext;
 }): Promise<{ files: Files; truncated?: boolean }> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= INITIAL_LISTING_MAX_ATTEMPTS; attempt++) {
+    const started = Date.now();
+    logPublicShareFiles("info", "initial listing start", debugContext, {
+      path,
+      attempt,
+    });
     try {
-      return await withTimeout(fs.getListing(path), INITIAL_LISTING_TIMEOUT_MS);
+      const snapshot = await withTimeout(
+        fs.getListing(path),
+        INITIAL_LISTING_TIMEOUT_MS,
+      );
+      logPublicShareFiles("info", "initial listing ready", debugContext, {
+        path,
+        attempt,
+        elapsed_ms: Date.now() - started,
+        entries: Object.keys(snapshot.files ?? {}).length,
+        truncated: snapshot.truncated === true,
+      });
+      return snapshot;
     } catch (err) {
       lastError = err;
+      logPublicShareFiles(
+        "warn",
+        "initial listing attempt failed",
+        debugContext,
+        {
+          path,
+          attempt,
+          elapsed_ms: Date.now() - started,
+          retryable: isRetryableListingError(err),
+          code: (err as ConatErrorLike | undefined)?.code,
+          message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+        },
+      );
       if (
         !isRetryableListingError(err) ||
         attempt >= INITIAL_LISTING_MAX_ATTEMPTS

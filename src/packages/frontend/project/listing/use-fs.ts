@@ -14,6 +14,22 @@ const PROJECT_FS_RETRY_DELAYS_MS = [1000, 2000, 5000] as const;
 
 type ConatErrorLike = Error & { code?: string | number; data?: unknown };
 
+function logPublicShareFs(
+  level: "info" | "warn",
+  message: string,
+  details: Record<string, unknown>,
+) {
+  const payload = {
+    source: "frontend:project:listing:use-fs",
+    ...details,
+  };
+  if (level === "warn") {
+    console.warn(`[public-directory-share] ${message}`, payload);
+  } else {
+    console.info(`[public-directory-share] ${message}`, payload);
+  }
+}
+
 function isRetryableProjectFsError(err: unknown): boolean {
   const code = String((err as ConatErrorLike | undefined)?.code ?? "");
   if (code === "408") {
@@ -88,6 +104,15 @@ export function useFsWithRefresh({
     const connect = async () => {
       let attempt = 0;
       while (!canceled) {
+        const started = Date.now();
+        if (share_id) {
+          logPublicShareFs("info", "filesystem bootstrap start", {
+            project_id,
+            share_id,
+            attempt: attempt + 1,
+            viewer,
+          });
+        }
         try {
           const nextFs = await withTimeout(
             webapp_client.conat_client.projectFs({
@@ -105,14 +130,34 @@ export function useFsWithRefresh({
           if (!canceled) {
             setFs(nextFs);
           }
+          if (share_id) {
+            logPublicShareFs("info", "filesystem bootstrap ready", {
+              project_id,
+              share_id,
+              attempt: attempt + 1,
+              elapsed_ms: Date.now() - started,
+            });
+          }
           return;
         } catch (err) {
           if (canceled) {
             return;
           }
+          const retryable = isRetryableProjectFsError(err);
           logger.warn(`unable to initialize filesystem client: ${err}`);
+          if (share_id) {
+            logPublicShareFs("warn", "filesystem bootstrap failed", {
+              project_id,
+              share_id,
+              attempt: attempt + 1,
+              elapsed_ms: Date.now() - started,
+              retryable,
+              code: (err as ConatErrorLike | undefined)?.code,
+              message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+            });
+          }
           setFs(null);
-          if (!isRetryableProjectFsError(err)) {
+          if (!retryable) {
             return;
           }
           const delayMs =
