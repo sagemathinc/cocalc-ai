@@ -11,10 +11,12 @@ jest.mock("@cocalc/frontend/chat/viewer", () => ({
     doc,
     readOnly,
     virtualized,
+    showThreadList,
   }: {
     doc: () => any;
     readOnly?: boolean;
     virtualized?: boolean;
+    showThreadList?: boolean;
   }) => {
     const rows = doc()?.get?.() ?? [];
     return (
@@ -22,6 +24,7 @@ jest.mock("@cocalc/frontend/chat/viewer", () => ({
         data-testid="chat-viewer"
         data-readonly={`${readOnly === true}`}
         data-virtualized={`${virtualized !== false}`}
+        data-show-thread-list={`${showThreadList === true}`}
       >
         {JSON.stringify(rows)}
       </div>
@@ -62,6 +65,7 @@ test("renders chat content with the real chat viewer adapter", async () => {
   const viewer = await screen.findByTestId("chat-viewer");
   expect(viewer.dataset.readonly).toBe("true");
   expect(viewer.dataset.virtualized).toBe("false");
+  expect(viewer.dataset.showThreadList).toBe("true");
   expect(viewer.parentElement).toHaveStyle({
     display: "flex",
     flexDirection: "column",

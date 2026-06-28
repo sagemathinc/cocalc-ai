@@ -45,7 +45,7 @@ export default function PublicViewerChatRenderer({
         ...style,
       }}
     >
-      <ChatViewer doc={doc} readOnly virtualized={false} />
+      <ChatViewer doc={doc} readOnly virtualized={false} showThreadList />
     </div>,
     fileContext,
   );

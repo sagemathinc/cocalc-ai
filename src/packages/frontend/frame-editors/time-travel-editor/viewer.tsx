@@ -68,7 +68,7 @@ export function Viewer({
   switch (ext) {
     case "chat":
     case "sage-chat":
-      return <ChatViewer {...opts1} />;
+      return <ChatViewer {...opts1} showThreadList />;
   }
 
   const opts = { doc: doc(), project_id, path, font_size, editor_settings };
