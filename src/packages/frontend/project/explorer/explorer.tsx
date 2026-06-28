@@ -402,6 +402,12 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
+  const temporaryPublicShareRoute = !!useTypedRedux(
+    { project_id },
+    "temporary_public_share_route",
+  );
+  const suppressProjectHistory =
+    !!publicDirectoryShare || temporaryPublicShareRoute;
   const displayListingError = listingError;
   const applyNavigationWorkspaceSelection = useCallback(
     (path: string) => {
@@ -417,9 +423,11 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   );
   const navigateExplorerRaw = useCallback(
     (path: string) => {
-      navigateBrowsingPath(project_id, path, { updateUrl: true });
+      navigateBrowsingPath(project_id, path, {
+        updateUrl: !suppressProjectHistory,
+      });
     },
-    [project_id],
+    [project_id, suppressProjectHistory],
   );
   const navHistory = useNavigationHistory(
     project_id,
@@ -1392,8 +1400,8 @@ You can either wait for this host to become available again, or move this ${proj
                       }
                       openUploadFiles={openUploadFiles}
                       useSimpleTable={!!publicDirectoryShare}
-                      foregroundProjectOnOpen={!publicDirectoryShare}
-                      changeHistoryOnOpen={!publicDirectoryShare}
+                      foregroundProjectOnOpen={!suppressProjectHistory}
+                      changeHistoryOnOpen={!suppressProjectHistory}
                     />
                   )}
                 </MaybeFileUploadWrapper>

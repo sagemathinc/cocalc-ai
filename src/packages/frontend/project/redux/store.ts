@@ -82,6 +82,7 @@ export interface ProjectStoreState {
   flyout_log_filter: immutable.List<FlyoutLogFilter>;
   flyout_active_mode: FlyoutActiveMode;
   public_directory_share_id?: string;
+  temporary_public_share_route?: boolean;
 
   // Project Files
   activity: any; // immutable,

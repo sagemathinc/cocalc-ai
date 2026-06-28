@@ -408,6 +408,10 @@ so it works well for both explicit viewers and temporary share viewers:
   "Share entire project";
 - the share management UI should show whether a share targets a folder or the
   entire project;
+- the owner/collaborator file listing should clearly indicate when the current
+  directory or a listed descendant is public, e.g. by loading public-share
+  metadata on first project/explorer load and rendering a compact "Published"
+  badge/action near matching directories;
 - whole-project shares should still show the same read-only banner and primary
   "Copy" action as folder shares.
 

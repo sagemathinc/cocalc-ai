@@ -168,6 +168,7 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
 
   useEffect(() => {
     if (!actions) return;
+    actions.setState({ temporary_public_share_route: true });
     const sharePath = view.share.path === "." ? "." : view.share.path;
     const shareRelativePath = view.relativePath
       .trim()
@@ -194,6 +195,9 @@ function TemporaryViewerProjectPage({ view }: { view: ShareView }) {
         explicit: false,
       });
     }
+    return () => {
+      actions.setState({ temporary_public_share_route: false });
+    };
   }, [actions, view.projectId, view.relativePath, view.share.path]);
 
   return (
