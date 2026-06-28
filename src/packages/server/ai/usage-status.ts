@@ -23,6 +23,11 @@ export interface AIUsageStatus {
   windows: AIUsageWindowStatus[];
 }
 
+export interface AIUsageLimits {
+  units_5h: number;
+  units_7d: number;
+}
+
 export async function getAIUsageStatus({
   account_id,
   analytics_cookie,
@@ -33,7 +38,7 @@ export async function getAIUsageStatus({
   if (account_id && !(await isValidAccount(account_id))) {
     throw Error(`invalid account_id ${account_id}`);
   }
-  const limits = await getMembershipLimits(account_id);
+  const limits = await getAIUsageLimits({ account_id });
   const windows: AIUsageWindowStatus[] = [];
 
   const window5h = await getUsageWindow({
@@ -224,7 +229,11 @@ function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
-async function getMembershipLimits(account_id?: string) {
+export async function getAIUsageLimits({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<AIUsageLimits> {
   if (!account_id) {
     return { units_5h: 0, units_7d: 0 };
   }

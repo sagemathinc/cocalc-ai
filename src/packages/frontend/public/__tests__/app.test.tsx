@@ -426,6 +426,11 @@ describe("PublicApp", () => {
         name: "Choose Your Launchpad Membership",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "AI integration included; AI usage requires your ChatGPT plan or API key.",
+      ),
+    ).not.toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
       screen.getByText("A solid choice for everyday work."),

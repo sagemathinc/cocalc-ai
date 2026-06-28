@@ -121,7 +121,7 @@ import {
 import { CodexPaymentCredentialsModal } from "./codex";
 import {
   ensureProjectRunningForCodex,
-  isCodexPaymentSourceDefinitelyUnconfigured,
+  isCodexPaymentSourceNeedsUserConfiguration,
   isCodexSubmitTarget,
 } from "./codex-submit-preflight";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -1798,7 +1798,7 @@ export function ChatPanel({
     }
     if (
       isCodexSubmit &&
-      isCodexPaymentSourceDefinitelyUnconfigured(codexPaymentSource)
+      isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource)
     ) {
       refreshCodexPaymentSource?.();
       setCodexPaymentConfigOpen(true);
@@ -2530,6 +2530,7 @@ export function ChatPanel({
             submitMentionsRef={submitMentionsRef}
             hasInput={hasInput}
             isSelectedThreadAI={isSelectedThreadAI}
+            isNewThreadCodex={newThreadSetup.agentMode === "codex"}
             hasActiveAcpTurn={hasRunningAcpTurn}
             threads={threads}
             selectedThread={selectedThread}
@@ -2537,6 +2538,10 @@ export function ChatPanel({
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}
             codexPaymentSourceLoading={codexPaymentSourceLoading}
+            onOpenCodexPaymentConfig={() => {
+              refreshCodexPaymentSource?.();
+              setCodexPaymentConfigOpen(true);
+            }}
           />
           <CodexPaymentCredentialsModal
             open={codexPaymentConfigOpen}

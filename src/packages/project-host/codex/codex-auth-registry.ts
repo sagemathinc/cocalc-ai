@@ -18,6 +18,8 @@ type PullResult = {
   pulled: boolean;
   source?: "registry";
   missing?: boolean;
+  skipped?: "local-newer";
+  registryUpdatedAt?: string;
 };
 
 const existenceCache = new Map<string, { has: boolean; expires: number }>();
@@ -145,6 +147,18 @@ async function localAuthSignature(
   try {
     const stat = await fs.stat(authPath);
     return `${stat.size}:${Math.floor(stat.mtimeMs)}`;
+  } catch {
+    return undefined;
+  }
+}
+
+async function localAuthMtimeMs(
+  codexHome: string,
+): Promise<number | undefined> {
+  const authPath = join(codexHome, "auth.json");
+  try {
+    const stat = await fs.stat(authPath);
+    return stat.mtimeMs;
   } catch {
     return undefined;
   }
@@ -329,10 +343,12 @@ export async function pullSubscriptionAuthFromRegistry({
   projectId,
   accountId,
   codexHome,
+  onlyIfNewer = false,
 }: {
   projectId: string;
   accountId: string;
   codexHome: string;
+  onlyIfNewer?: boolean;
 }): Promise<PullResult> {
   const caller = getHubCaller();
   if (!caller) {
@@ -354,6 +370,10 @@ export async function pullSubscriptionAuthFromRegistry({
       timeout: 15000,
     });
     const payload = result?.payload;
+    const registryUpdatedAt =
+      typeof result?.updated === "string" || result?.updated instanceof Date
+        ? new Date(result.updated).toISOString()
+        : undefined;
     if (typeof payload !== "string" || !payload.trim()) {
       const key = `${projectId}:${accountId}`;
       existenceCache.set(key, {
@@ -367,11 +387,30 @@ export async function pullSubscriptionAuthFromRegistry({
       has: true,
       expires: Date.now() + EXISTENCE_CACHE_TTL_MS,
     });
+    if (onlyIfNewer && registryUpdatedAt) {
+      const registryUpdatedMs = new Date(registryUpdatedAt).getTime();
+      const localMtimeMs = await localAuthMtimeMs(codexHome);
+      if (
+        localMtimeMs != null &&
+        Number.isFinite(registryUpdatedMs) &&
+        registryUpdatedMs <= localMtimeMs
+      ) {
+        return {
+          pulled: false,
+          skipped: "local-newer",
+          registryUpdatedAt,
+        };
+      }
+    }
     await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
     const authPath = join(codexHome, "auth.json");
     await fs.writeFile(authPath, payload, { mode: 0o600 });
     await ensureCodexCredentialsStoreFile(codexHome);
-    return { pulled: true, source: "registry" };
+    const signature = await localAuthSignature(codexHome);
+    if (signature) {
+      syncedSubscriptionAuthSignatures.set(codexHome, signature);
+    }
+    return { pulled: true, source: "registry", registryUpdatedAt };
   } catch (err) {
     logger.debug("pullSubscriptionAuthFromRegistry failed", {
       projectId,

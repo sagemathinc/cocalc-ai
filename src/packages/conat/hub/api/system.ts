@@ -606,6 +606,11 @@ export interface CodexPaymentSourceInfo {
   hasProjectApiKey: boolean;
   hasAccountApiKey: boolean;
   hasSiteApiKey: boolean;
+  siteAiUsageLimitPositive?: boolean;
+  siteAiUsageLimits?: {
+    units_5h: number;
+    units_7d: number;
+  };
   sharedHomeMode: "disabled" | "fallback" | "prefer" | "always";
   project_id?: string;
 }
