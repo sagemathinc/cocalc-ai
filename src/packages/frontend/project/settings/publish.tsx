@@ -21,6 +21,7 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { useActions } from "@cocalc/frontend/app-framework";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -93,6 +94,13 @@ export function PublishPanel({
     });
   }
 
+  function openPublishingDocs(): void {
+    openProjectDocs({
+      projectId: project_id,
+      slug: "projects/publish-files",
+    });
+  }
+
   async function disableShare(
     share: PublicDirectoryShareSummary,
   ): Promise<void> {
@@ -119,14 +127,23 @@ export function PublishPanel({
         <Popover
           title="About public project shares"
           content={
-            <Paragraph style={{ maxWidth: 340, marginBottom: 0 }}>
-              Published directories are unlisted and visible to signed-in CoCalc
-              users who know the URL. Publishing the entire project means{" "}
-              <code>/home/user</code>; private internals such as{" "}
-              <code>.ssh</code>, <code>.cache</code>, <code>.local</code>, and{" "}
-              <code>.snapshots</code> are excluded. Your membership tier limits
-              how many active directories you can publish.
-            </Paragraph>
+            <Space direction="vertical" size={10} style={{ maxWidth: 340 }}>
+              <Paragraph style={{ marginBottom: 0 }}>
+                Published directories are unlisted and visible to signed-in
+                CoCalc users who know the URL. Publishing the entire project
+                means <code>/home/user</code>; private internals such as{" "}
+                <code>.ssh</code>, <code>.cache</code>, <code>.local</code>, and{" "}
+                <code>.snapshots</code> are excluded. Your membership tier
+                limits how many active directories you can publish.
+              </Paragraph>
+              <Button
+                size="small"
+                icon={<Icon name="book" />}
+                onClick={openPublishingDocs}
+              >
+                Open publishing docs
+              </Button>
+            </Space>
           }
         >
           <Button
