@@ -4,6 +4,7 @@
  */
 
 import {
+  create,
   disableMineByActor,
   ensurePublicDirectorySharesSchema,
   getTemporaryViewerReadPolicy,
@@ -21,6 +22,12 @@ import {
   publicDirectoryShareProjectLabelKey,
 } from "@cocalc/util/public-directory-share-labels";
 import { viewerReadPolicyAllowsPath } from "@cocalc/util/project-access";
+
+let mockGetProjectFsClient: jest.Mock;
+
+jest.mock("@cocalc/server/conat/file-server-client", () => ({
+  getProjectFsClient: (...args: any[]) => mockGetProjectFsClient(...args),
+}));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({ public_directory_shares_enabled: true }),
@@ -178,6 +185,9 @@ describe("public directory temporary viewer grants", () => {
   }, 15000);
 
   beforeEach(async () => {
+    mockGetProjectFsClient = jest.fn(async () => ({
+      getListing: jest.fn(async () => ({ files: {}, truncated: false })),
+    }));
     await getPool().query(`
       TRUNCATE
         public_project_path_site_license_grants,
@@ -226,6 +236,30 @@ describe("public directory temporary viewer grants", () => {
     );
     return id;
   }
+
+  it("validates created share paths through the account-scoped project fs client", async () => {
+    await getPool().query(
+      `
+        INSERT INTO projects (project_id, title, users, last_edited)
+        VALUES ($1, 'Publish project', '{}'::jsonb, NOW())
+        ON CONFLICT (project_id) DO NOTHING
+      `,
+      [PROJECT_ID],
+    );
+
+    const share = await create({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      path: "share",
+      slug: "created-share",
+    });
+
+    expect(share.path).toBe("share");
+    expect(mockGetProjectFsClient).toHaveBeenCalledWith({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+    });
+  });
 
   it("grants path-scoped viewer access for a signed-in share visitor", async () => {
     const shareId = await insertShare();

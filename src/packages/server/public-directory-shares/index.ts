@@ -13,7 +13,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { assertCollab } from "@cocalc/server/conat/api/util";
 import { getSiteLicenseOverview } from "@cocalc/server/conat/api/purchases";
-import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import { getProjectFsClient } from "@cocalc/server/conat/file-server-client";
 import createProject from "@cocalc/server/projects/create";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
@@ -345,9 +345,11 @@ function entryAllowed({
 }
 
 async function copySourceForPublicDirectoryShare({
+  account_id,
   share,
   relativePath,
 }: {
+  account_id: string;
   share: ResolvedPublicDirectoryShare;
   relativePath: string;
 }): Promise<{
@@ -363,11 +365,8 @@ async function copySourceForPublicDirectoryShare({
     };
   }
 
-  const fs = (
-    await getExplicitProjectRoutedClient({
-      project_id: share.project_id,
-    })
-  ).fs({
+  const fs = await getProjectFsClient({
+    account_id,
     project_id: share.project_id,
   });
   const listing = await fs.getListing(".");
@@ -1591,12 +1590,8 @@ export async function create(
   const slug = normalizePublicDirectoryShareSlug(opts.slug);
   const path = normalizePublicDirectorySharePath(opts.path);
   assertPublicDirectorySharePathAllowed(path);
-  const fs = (
-    await getExplicitProjectRoutedClient({
-      account_id: opts.account_id,
-      project_id: opts.project_id,
-    })
-  ).fs({
+  const fs = await getProjectFsClient({
+    account_id: opts.account_id,
     project_id: opts.project_id,
   });
   try {
@@ -1694,6 +1689,7 @@ export async function copyToProject({
   }
   const destPath = normalizePublicDirectorySharePath(destination_path ?? ".");
   const copySource = await copySourceForPublicDirectoryShare({
+    account_id,
     share,
     relativePath,
   });
@@ -1866,11 +1862,8 @@ export async function listDirectory({
   if (!entryAllowed({ share, relativePath })) {
     throw Error("path is not part of this shared directory");
   }
-  const fs = (
-    await getExplicitProjectRoutedClient({
-      project_id: share.project_id,
-    })
-  ).fs({
+  const fs = await getProjectFsClient({
+    account_id,
     project_id: share.project_id,
   });
   const projectPath = joinProjectSharePath(share.path, relativePath);
