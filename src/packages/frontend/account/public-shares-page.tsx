@@ -7,14 +7,12 @@ import { Alert, Button, Card, Space, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
-import type {
-  PublicDirectoryShareSummary,
-  PublicDirectoryShareVisibility,
-} from "@cocalc/conat/hub/api/public-directory-shares";
+import type { PublicDirectoryShareSummary } from "@cocalc/conat/hub/api/public-directory-shares";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Loading } from "@cocalc/frontend/components";
+import { Loading, Tooltip } from "@cocalc/frontend/components";
+import CopyButton from "@cocalc/frontend/components/copy-button";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
-import { load_target } from "@cocalc/frontend/history";
+import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -31,8 +29,10 @@ function shareHref(slug: string): string {
   return `/share/${slug.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function openShare(slug: string): void {
-  load_target(`share/${slug}`);
+function absoluteShareUrl(slug: string): string {
+  const href = shareHref(slug);
+  if (typeof window == "undefined") return href;
+  return new URL(href, window.location.href).href;
 }
 
 function availabilityTag(share: PublicDirectoryShareSummary) {
@@ -49,17 +49,29 @@ function availabilityTag(share: PublicDirectoryShareSummary) {
   }
 }
 
-function visibilityTag(visibility: PublicDirectoryShareVisibility) {
-  switch (visibility) {
+function exceptionalVisibilityTag(share: PublicDirectoryShareSummary) {
+  if (share.disabled || share.visibility == "unlisted") return null;
+  switch (share.visibility) {
     case "listed":
       return <Tag color="blue">Listed</Tag>;
-    case "unlisted":
-      return <Tag>Unlisted</Tag>;
     case "private":
       return <Tag color="gold">Private</Tag>;
     case "disabled":
-      return <Tag>Disabled</Tag>;
+      return null;
   }
+}
+
+function projectPathHref(share: PublicDirectoryShareSummary): string {
+  const parts =
+    share.path == "."
+      ? []
+      : share.path.split("/").filter((part) => part.length > 0);
+  const encodedPath = parts.map(encodeURIComponent).join("/");
+  return `/projects/${share.project_id}/files/${encodedPath}`;
+}
+
+function projectPathLabel(path: string): string {
+  return path == "." ? "/home/user" : path;
 }
 
 function PublicSharesPage() {
@@ -67,6 +79,7 @@ function PublicSharesPage() {
     "customize",
     "public_directory_shares_enabled",
   );
+  const projectMap = useTypedRedux("projects", "project_map");
   const [state, setState] = useState<PublicSharesState>({
     error: "",
     loading: false,
@@ -117,7 +130,6 @@ function PublicSharesPage() {
       <Card>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <div>
-            <h2 style={{ marginBottom: 8 }}>Public directory shares</h2>
             <Text type="secondary">
               These are public or unlisted directory shares owned by projects
               you can administer. Migrated cocalc.com shares appear here after
@@ -157,27 +169,36 @@ function PublicSharesPage() {
                 {
                   title: "Share",
                   dataIndex: "slug",
-                  render: (_value, share) => (
-                    <Space direction="vertical" size={0}>
-                      <a
-                        href={shareHref(share.slug)}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          openShare(share.slug);
-                        }}
-                      >
-                        {share.title || share.slug}
-                      </a>
-                      {share.title ? (
-                        <Text type="secondary">{share.slug}</Text>
-                      ) : null}
-                      {share.description ? (
-                        <Text type="secondary" ellipsis>
-                          {share.description}
-                        </Text>
-                      ) : null}
-                    </Space>
-                  ),
+                  render: (_value, share) => {
+                    const href = shareHref(share.slug);
+                    return (
+                      <Space direction="vertical" size={0}>
+                        <Space size={6}>
+                          <a href={href} target="_blank" rel="noreferrer">
+                            {share.title || share.slug}
+                          </a>
+                          <CopyButton
+                            value={absoluteShareUrl(share.slug)}
+                            size="small"
+                            noText
+                          />
+                          {share.legacy_url ? (
+                            <Tooltip title={share.legacy_url}>
+                              <Tag>Migrated</Tag>
+                            </Tooltip>
+                          ) : null}
+                        </Space>
+                        {share.title ? (
+                          <Text type="secondary">{share.slug}</Text>
+                        ) : null}
+                        {share.description ? (
+                          <Text type="secondary" ellipsis>
+                            {share.description}
+                          </Text>
+                        ) : null}
+                      </Space>
+                    );
+                  },
                 },
                 {
                   title: "Status",
@@ -185,7 +206,7 @@ function PublicSharesPage() {
                   render: (_value, share) => (
                     <Space direction="vertical" size={4}>
                       {availabilityTag(share)}
-                      {visibilityTag(share.visibility)}
+                      {exceptionalVisibilityTag(share)}
                       {share.site_license_grant_on_copy ? (
                         <Tag color="blue">
                           License on copy
@@ -202,30 +223,31 @@ function PublicSharesPage() {
                 },
                 {
                   title: "Project path",
-                  render: (_value, share) => (
-                    <Space direction="vertical" size={0}>
-                      <Text code>{share.project_id}</Text>
-                      <Text code>{share.path}</Text>
-                    </Space>
-                  ),
-                },
-                {
-                  title: "Legacy",
-                  width: 220,
-                  render: (_value, share) => (
-                    <Space direction="vertical" size={0}>
-                      {share.legacy_url ? (
-                        <Text ellipsis>{share.legacy_url}</Text>
-                      ) : (
-                        <Text type="secondary">No legacy URL</Text>
-                      )}
-                      {share.legacy_public_path_id ? (
-                        <Text type="secondary">
-                          {share.legacy_public_path_id}
-                        </Text>
-                      ) : null}
-                    </Space>
-                  ),
+                  render: (_value, share) => {
+                    const archived =
+                      projectMap?.getIn?.([
+                        share.project_id,
+                        "state",
+                        "state",
+                      ]) == "archived";
+                    return (
+                      <Space direction="vertical" size={2}>
+                        <a href={projectPathHref(share)}>
+                          <ProjectTitle
+                            project_id={share.project_id}
+                            trunc={42}
+                            noClick
+                          />
+                        </a>
+                        <Text code>{projectPathLabel(share.path)}</Text>
+                        {archived ? (
+                          <Tag color="orange">
+                            Archived project: dearchive to access
+                          </Tag>
+                        ) : null}
+                      </Space>
+                    );
+                  },
                 },
               ]}
             />
