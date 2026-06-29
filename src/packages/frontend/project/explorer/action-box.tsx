@@ -9,6 +9,7 @@ import {
   Button as AntdButton,
   Input as AntdInput,
   InputNumber,
+  Popconfirm,
   Select as AntdSelect,
   Space,
   Typography,
@@ -1411,13 +1412,23 @@ export function ActionBox({
             {existingPublishShare ? "Update publication" : "Publish directory"}
           </AntdButton>
           {existingPublishShare ? (
-            <AntdButton
-              danger
-              loading={publishing}
-              onClick={() => void unpublishDirectory()}
+            <Popconfirm
+              title="Unpublish this directory?"
+              description={
+                <span>
+                  The share URL will stop working. Already-open viewers may keep
+                  access for up to about 1 minute while authorization caches
+                  expire.
+                </span>
+              }
+              okText="Unpublish"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => void unpublishDirectory()}
             >
-              Unpublish
-            </AntdButton>
+              <AntdButton danger loading={publishing}>
+                Unpublish
+              </AntdButton>
+            </Popconfirm>
           ) : null}
         </Space>
       </Space>
