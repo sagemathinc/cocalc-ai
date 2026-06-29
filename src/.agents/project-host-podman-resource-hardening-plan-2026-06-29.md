@@ -1,6 +1,7 @@
 # Project Host Podman Resource Hardening Plan
 
-Status: proposed implementation plan
+Status: Phase 0, Phase 1, and Phase 2 metrics-only implementation landed;
+Phase 3+ enforcement remains.
 
 Date: 2026-06-29
 
@@ -462,6 +463,8 @@ Phase 2:
 
 - Add resource-pressure metrics-only mode feeding host metrics.
 - Implement round-robin sharded sampling with freshness/truncation metrics.
+- Use and maintain the dangerous project-side stress harness at
+  `src/.agents/project-host-resource-stress-test.mjs`.
 - Deploy to staging and run the stress harness.
 - Tune thresholds against real sample data.
 

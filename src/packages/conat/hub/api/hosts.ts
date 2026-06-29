@@ -624,6 +624,45 @@ export interface HostKernelSysctlSnapshot {
   error?: string;
 }
 
+export interface HostResourcePressureProjectSummary {
+  project_id: string;
+  sampled_at_ms: number;
+  age_ms: number;
+  pids: number;
+  threads: number;
+  file_descriptors: number;
+  sockets: number;
+  inotify_instances: number;
+  inotify_watches: number;
+  truncated?: boolean;
+  error?: string;
+}
+
+export interface HostResourcePressureMetrics {
+  collected_at?: string;
+  running_project_count: number;
+  sampled_project_count: number;
+  fresh_project_count: number;
+  stale_project_count: number;
+  missing_project_count: number;
+  truncated_project_count: number;
+  error_project_count: number;
+  total_pids: number;
+  total_threads: number;
+  total_file_descriptors: number;
+  total_sockets: number;
+  total_inotify_instances: number;
+  total_inotify_watches: number;
+  last_scan_duration_ms?: number;
+  last_scan_project_count?: number;
+  last_scan_truncated?: boolean;
+  last_scan_error_count?: number;
+  largest_file_descriptors?: HostResourcePressureProjectSummary;
+  largest_sockets?: HostResourcePressureProjectSummary;
+  largest_inotify_instances?: HostResourcePressureProjectSummary;
+  largest_inotify_watches?: HostResourcePressureProjectSummary;
+}
+
 export interface HostCurrentMetrics {
   collected_at?: string;
   cpu_percent?: number;
@@ -658,6 +697,7 @@ export interface HostCurrentMetrics {
   starting_project_count?: number;
   stopping_project_count?: number;
   kernel_sysctls?: HostKernelSysctlSnapshot;
+  resource_pressure?: HostResourcePressureMetrics;
 }
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
