@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -90,6 +91,7 @@ import type {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 const DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS = 7;
+const log = getLogger("server:public-directory-shares");
 
 type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
   metadata?: Record<string, unknown> | null;
@@ -485,35 +487,43 @@ async function syncPublicDirectoryShareProjectLabels({
   project_id: string;
   account_id?: string | null;
 }): Promise<void> {
-  const [currentLabels, { rows }] = await Promise.all([
-    getProjectLabels({ project_id }),
-    getPool().query<PublicDirectoryShareRow>(
-      `
-        SELECT *
-        FROM public_project_paths
-        WHERE project_id=$1
-          AND disabled IS FALSE
-          AND visibility <> 'disabled'
-        ORDER BY path ASC, slug ASC
-      `,
-      [project_id],
-    ),
-  ]);
+  try {
+    const [currentLabels, { rows }] = await Promise.all([
+      getProjectLabels({ project_id }),
+      getPool().query<PublicDirectoryShareRow>(
+        `
+          SELECT *
+          FROM public_project_paths
+          WHERE project_id=$1
+            AND disabled IS FALSE
+            AND visibility <> 'disabled'
+          ORDER BY path ASC, slug ASC
+        `,
+        [project_id],
+      ),
+    ]);
 
-  const labels: ProjectLabelPatch = {};
-  for (const key of Object.keys(currentLabels)) {
-    if (key.startsWith(PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX)) {
-      labels[key] = null;
+    const labels: ProjectLabelPatch = {};
+    for (const key of Object.keys(currentLabels)) {
+      if (key.startsWith(PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX)) {
+        labels[key] = null;
+      }
     }
-  }
-  for (const row of rows) {
-    const value = publicDirectoryShareProjectLabelValue(rowToSummary(row));
-    if (value == null) continue;
-    labels[publicDirectoryShareProjectLabelKey(row.id)] = value;
-  }
-  if (Object.keys(labels).length === 0) return;
+    for (const row of rows) {
+      const value = publicDirectoryShareProjectLabelValue(rowToSummary(row));
+      if (value == null) continue;
+      labels[publicDirectoryShareProjectLabelKey(row.id)] = value;
+    }
+    if (Object.keys(labels).length === 0) return;
 
-  await setProjectLabels({ project_id, account_id, labels });
+    await setProjectLabels({ project_id, account_id, labels });
+  } catch (err) {
+    log.warn("failed to sync public directory share project labels", {
+      project_id,
+      account_id,
+      error: `${err}`,
+    });
+  }
 }
 
 export async function ensurePublicDirectorySharesSchema(): Promise<void> {
@@ -703,7 +713,16 @@ async function assertCanCreatePublicDirectoryShare(
   account_id: string,
 ): Promise<void> {
   const [limit, current] = await Promise.all([
-    getPublicDirectoryShareLimitForAccount({ account_id }),
+    getPublicDirectoryShareLimitForAccount({ account_id }).catch((err) => {
+      log.warn(
+        "failed to resolve public directory share limit; using default",
+        {
+          account_id,
+          error: `${err}`,
+        },
+      );
+      return DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT;
+    }),
     getActivePublicDirectoryShareCountForAccount(account_id),
   ]);
   const effectiveLimit = Number.isFinite(limit)
