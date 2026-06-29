@@ -68,6 +68,7 @@ const DOCS_ENTRY_IDS = [
   "files.slides",
   "files.whiteboard",
   "projects.project-list",
+  "projects.publish-files",
   "projects.tasks",
   "jupyter.create-notebook",
   "jupyter.use-jupyter",

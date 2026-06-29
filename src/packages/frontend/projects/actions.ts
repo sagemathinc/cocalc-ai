@@ -3375,7 +3375,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } catch (err) {
       group = "public";
     }
-    let table;
+    let table: "projects_admin" | "projects" | undefined;
     switch (group) {
       case "admin":
         table = "projects_admin";
@@ -3384,20 +3384,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
       case "collaborator":
         table = "projects";
         break;
-      default:
-        table = "public_projects";
     }
     let resp: any = undefined;
-    try {
-      resp = await webapp_client.async_query({
-        query: {
-          [table]: { project_id, title: null },
-        },
-      });
-    } catch (_) {
-      // ignore err, since we just fall back to "No Title" below.
+    if (table != null) {
+      try {
+        resp = await webapp_client.async_query({
+          query: {
+            [table]: { project_id, title: null },
+          },
+        });
+      } catch (_) {
+        // ignore err, since we just fall back to "No Title" below.
+      }
     }
-    let title = resp?.query?.[table]?.title ?? "No Title";
+    const title = table
+      ? (resp?.query?.[table]?.title ?? "No Title")
+      : "No Title";
     this.setState({
       public_project_titles: store
         .get("public_project_titles")

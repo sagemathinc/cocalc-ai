@@ -24,11 +24,13 @@ export default function useProjectActionsFilesystem({
   actions: ProjectActionsWithFilesystem;
   project_id: string;
 }): FilesystemClient | null {
-  const { publicDirectoryShare } = useProjectContext();
-  const shareFs = useFsWithRefresh({
+  const { projectAccess, publicDirectoryShare } = useProjectContext();
+  const readOnlyViewer = projectAccess.role === "viewer";
+  const restrictedFs = useFsWithRefresh({
     project_id,
     share_id: publicDirectoryShare?.id,
-    enabled: publicDirectoryShare != null,
+    viewer: !publicDirectoryShare && readOnlyViewer ? true : undefined,
+    enabled: publicDirectoryShare != null || readOnlyViewer,
   }).fs;
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
@@ -39,8 +41,8 @@ export default function useProjectActionsFilesystem({
   } | null>(null);
 
   const fs = useMemo(() => {
-    if (publicDirectoryShare) {
-      return shareFs;
+    if (publicDirectoryShare || readOnlyViewer) {
+      return restrictedFs;
     }
     if (ref.current?.project_id === project_id && ref.current.fs != null) {
       return ref.current.fs;
@@ -52,7 +54,7 @@ export default function useProjectActionsFilesystem({
     const fs = source?.fs?.() ?? null;
     ref.current = { project_id, fs };
     return fs;
-  }, [project_id, publicDirectoryShare, retry, shareFs]);
+  }, [project_id, publicDirectoryShare, readOnlyViewer, retry, restrictedFs]);
 
   useEffect(() => {
     if (fs != null) {

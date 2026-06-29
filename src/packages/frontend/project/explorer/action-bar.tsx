@@ -297,7 +297,11 @@ function ActionBarEnabled({
       ) : null;
     const readOnlyRefreshButton =
       readOnly && onRefreshListing != null && !refreshButton ? (
-        <Button bsSize="small" onClick={onRefreshListing}>
+        <Button
+          bsSize="small"
+          onClick={onRefreshListing}
+          style={{ marginLeft: "15px" }}
+        >
           <Icon name="refresh" /> {intl.formatMessage(labels.refresh)}
         </Button>
       ) : null;
@@ -521,7 +525,14 @@ function ActionBarEnabled({
     if (checked_files.size === 0) {
       return;
     } else if (readOnly) {
-      action_buttons = ["copy"];
+      return (
+        <Button
+          bsStyle="primary"
+          onClick={() => actions.set_file_action("copy")}
+        >
+          <Icon name="copy" /> Copy
+        </Button>
+      );
     } else if (checked_files.size === 1) {
       let isDir;
       const item = checked_files.first();

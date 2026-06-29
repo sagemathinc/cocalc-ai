@@ -16,9 +16,12 @@ import {
 } from "@cocalc/server/conat/project-local-access";
 import {
   isProjectCollaboratorRole,
+  projectAccessFromRole,
   projectAccessFromUsers,
   type ProjectAccess,
+  type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
+import * as publicDirectoryShares from "@cocalc/server/conat/api/public-directory-shares";
 
 async function loadLocalProjectReference({
   account_id,
@@ -134,28 +137,72 @@ export async function resolveProjectAccessAllowRemote({
   account_id: string;
   project_id: string;
 }): Promise<ProjectAccess> {
+  const mergeTemporaryViewerAccess = async (
+    access: ProjectAccess,
+  ): Promise<ProjectAccess> => {
+    if (
+      access.role === "owner" ||
+      access.role === "collaborator" ||
+      access.role === "admin"
+    ) {
+      return access;
+    }
+    let temporaryPolicy: ProjectViewerReadPolicy | undefined;
+    try {
+      temporaryPolicy = (
+        await publicDirectoryShares.getTemporaryViewerReadPolicy({
+          account_id,
+          project_id,
+        })
+      ).read_policy;
+    } catch {
+      temporaryPolicy = undefined;
+    }
+    if (!temporaryPolicy) {
+      return access;
+    }
+    if (access.role === "viewer" && access.read_policy) {
+      return projectAccessFromRole({
+        role: "viewer",
+        read_policy: {
+          rules: [...access.read_policy.rules, ...temporaryPolicy.rules],
+        },
+      });
+    }
+    return projectAccessFromRole({
+      role: "viewer",
+      read_policy: temporaryPolicy,
+    });
+  };
+
   const localStatus = await getLocalProjectAccessStatus({
     account_id,
     project_id,
   });
   if (localStatus === "local-project-user") {
     const local = await loadLocalProjectReference({ account_id, project_id });
-    return projectAccessFromUsers({
-      account_id,
-      users: local?.users,
-    });
+    return await mergeTemporaryViewerAccess(
+      projectAccessFromUsers({
+        account_id,
+        users: local?.users,
+      }),
+    );
   }
   const ownership = await resolveProjectBay(project_id);
   if (!ownership || ownership.bay_id === getConfiguredBayId()) {
-    return projectAccessFromUsers({ account_id, users: undefined });
+    return await mergeTemporaryViewerAccess(
+      projectAccessFromUsers({ account_id, users: undefined }),
+    );
   }
   const remote = await getInterBayBridge()
     .projectReference(ownership.bay_id)
     .get({ account_id, project_id });
-  return projectAccessFromUsers({
-    account_id,
-    users: remote?.users,
-  });
+  return await mergeTemporaryViewerAccess(
+    projectAccessFromUsers({
+      account_id,
+      users: remote?.users,
+    }),
+  );
 }
 
 export async function hasProjectCollaboratorAccessAllowRemote({

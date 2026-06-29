@@ -3,22 +3,38 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Space, Table, Tag, Typography } from "antd";
-import { useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Input,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import { useEffect, useMemo, useState } from "react";
 import { defineMessage } from "react-intl";
 
-import type {
-  PublicDirectoryShareSummary,
-  PublicDirectoryShareVisibility,
-} from "@cocalc/conat/hub/api/public-directory-shares";
+import type { PublicDirectoryShareSummary } from "@cocalc/conat/hub/api/public-directory-shares";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Loading } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
+import { Loading, Tooltip } from "@cocalc/frontend/components";
+import CopyButton from "@cocalc/frontend/components/copy-button";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { load_target } from "@cocalc/frontend/history";
+import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
+import { User } from "@cocalc/frontend/users/user";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { SettingsPageDefinition } from "./settings-page";
 
 const { Text } = Typography;
+const BULK_UNPUBLISH_CONFIRMATION = "UNPUBLISH";
 
 type PublicSharesState = {
   error: string;
@@ -31,8 +47,10 @@ function shareHref(slug: string): string {
   return `/share/${slug.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function openShare(slug: string): void {
-  load_target(`share/${slug}`);
+function absoluteShareUrl(slug: string): string {
+  const href = shareHref(slug);
+  if (typeof window == "undefined") return href;
+  return new URL(href, window.location.href).href;
 }
 
 function availabilityTag(share: PublicDirectoryShareSummary) {
@@ -49,17 +67,35 @@ function availabilityTag(share: PublicDirectoryShareSummary) {
   }
 }
 
-function visibilityTag(visibility: PublicDirectoryShareVisibility) {
-  switch (visibility) {
+function exceptionalVisibilityTag(share: PublicDirectoryShareSummary) {
+  if (share.disabled || share.visibility == "unlisted") return null;
+  switch (share.visibility) {
     case "listed":
       return <Tag color="blue">Listed</Tag>;
-    case "unlisted":
-      return <Tag>Unlisted</Tag>;
     case "private":
       return <Tag color="gold">Private</Tag>;
     case "disabled":
-      return <Tag>Disabled</Tag>;
+      return null;
   }
+}
+
+function projectPathHref(share: PublicDirectoryShareSummary): string {
+  const parts =
+    share.path == "."
+      ? []
+      : share.path.split("/").filter((part) => part.length > 0);
+  const encodedPath = parts.map(encodeURIComponent).join("/");
+  return `/projects/${share.project_id}/files/${encodedPath}${
+    encodedPath ? "/" : ""
+  }`;
+}
+
+function projectPathTarget(share: PublicDirectoryShareSummary): string {
+  return projectPathHref(share).replace(/^\/+/, "");
+}
+
+function projectPathLabel(path: string): string {
+  return path == "." ? "/home/user" : path;
 }
 
 function PublicSharesPage() {
@@ -67,12 +103,38 @@ function PublicSharesPage() {
     "customize",
     "public_directory_shares_enabled",
   );
+  const projectMap = useTypedRedux("projects", "project_map");
   const [state, setState] = useState<PublicSharesState>({
     error: "",
     loading: false,
     shares: [],
     totalCount: 0,
   });
+  const [bulkActorAccountId, setBulkActorAccountId] = useState<
+    string | undefined
+  >();
+  const [bulkDisabling, setBulkDisabling] = useState(false);
+  const [bulkConfirmText, setBulkConfirmText] = useState("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    origin: "public directory shares",
+  });
+  const actorAccountIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const share of state.shares) {
+      if (share.created_by) ids.add(share.created_by);
+      if (share.updated_by) ids.add(share.updated_by);
+    }
+    return Array.from(ids).sort();
+  }, [state.shares]);
+  const selectedActorDisableCount = useMemo(() => {
+    if (!bulkActorAccountId) return 0;
+    return state.shares.filter(
+      (share) =>
+        !share.disabled &&
+        (share.created_by === bulkActorAccountId ||
+          share.updated_by === bulkActorAccountId),
+    ).length;
+  }, [bulkActorAccountId, state.shares]);
 
   async function loadShares() {
     setState((prev) => ({ ...prev, error: "", loading: true }));
@@ -97,10 +159,42 @@ function PublicSharesPage() {
     }
   }
 
+  async function disableSharesByActor() {
+    if (!bulkActorAccountId) return;
+    setBulkDisabling(true);
+    setState((prev) => ({ ...prev, error: "" }));
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        await webapp_client.conat_client.hub.publicDirectoryShares.disableMineByActor(
+          {
+            actor_account_id: bulkActorAccountId,
+          },
+        );
+      });
+      if (completed) {
+        await loadShares();
+      }
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: normalizeUserFacingError(err).message,
+      }));
+    } finally {
+      setBulkDisabling(false);
+    }
+  }
+
   useEffect(() => {
     if (!publicDirectorySharesEnabled) return;
     void loadShares();
   }, [publicDirectorySharesEnabled]);
+
+  useEffect(() => {
+    if (!bulkActorAccountId) return;
+    if (!actorAccountIds.includes(bulkActorAccountId)) {
+      setBulkActorAccountId(undefined);
+    }
+  }, [actorAccountIds, bulkActorAccountId]);
 
   if (!publicDirectorySharesEnabled) {
     return (
@@ -117,7 +211,6 @@ function PublicSharesPage() {
       <Card>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <div>
-            <h2 style={{ marginBottom: 8 }}>Public directory shares</h2>
             <Text type="secondary">
               These are public or unlisted directory shares owned by projects
               you can administer. Migrated cocalc.com shares appear here after
@@ -132,10 +225,75 @@ function PublicSharesPage() {
             description="Shares marked not yet available were imported from legacy metadata, but the backing project files have not been restored on this site yet."
           />
 
-          <Space>
+          <Space wrap>
             <Button onClick={() => void loadShares()} loading={state.loading}>
               Refresh
             </Button>
+            <Select
+              allowClear
+              placeholder="User to unpublish"
+              style={{ minWidth: 240 }}
+              value={bulkActorAccountId}
+              onChange={setBulkActorAccountId}
+              options={actorAccountIds.map((actorAccountId) => ({
+                value: actorAccountId,
+                label: (
+                  <User
+                    account_id={actorAccountId}
+                    trunc={28}
+                    show_avatar
+                    avatarSize={18}
+                  />
+                ),
+              }))}
+            />
+            <Popconfirm
+              title="Unpublish all shares for this user?"
+              description={
+                bulkActorAccountId ? (
+                  <Space direction="vertical" size={8}>
+                    <Text>
+                      This disables {selectedActorDisableCount.toLocaleString()}{" "}
+                      active share(s) whose creator or last updater is the
+                      selected user. Existing copied files remain copied.
+                    </Text>
+                    <Text>
+                      Type <Text code>{BULK_UNPUBLISH_CONFIRMATION}</Text> to
+                      confirm.
+                    </Text>
+                    <Input
+                      value={bulkConfirmText}
+                      onChange={(event) =>
+                        setBulkConfirmText(event.target.value)
+                      }
+                      placeholder={BULK_UNPUBLISH_CONFIRMATION}
+                    />
+                  </Space>
+                ) : (
+                  "Select a user first."
+                )
+              }
+              okText="Unpublish all"
+              okButtonProps={{
+                danger: true,
+                disabled: bulkConfirmText !== BULK_UNPUBLISH_CONFIRMATION,
+              }}
+              onConfirm={() => void disableSharesByActor()}
+              onOpenChange={(open) => {
+                if (open) setBulkConfirmText("");
+              }}
+              disabled={!bulkActorAccountId || selectedActorDisableCount === 0}
+            >
+              <Button
+                danger
+                loading={bulkDisabling}
+                disabled={
+                  !bulkActorAccountId || selectedActorDisableCount === 0
+                }
+              >
+                Unpublish All
+              </Button>
+            </Popconfirm>
             <Text type="secondary">
               Showing {state.shares.length.toLocaleString()} of{" "}
               {state.totalCount.toLocaleString()} shares.
@@ -157,27 +315,36 @@ function PublicSharesPage() {
                 {
                   title: "Share",
                   dataIndex: "slug",
-                  render: (_value, share) => (
-                    <Space direction="vertical" size={0}>
-                      <a
-                        href={shareHref(share.slug)}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          openShare(share.slug);
-                        }}
-                      >
-                        {share.title || share.slug}
-                      </a>
-                      {share.title ? (
-                        <Text type="secondary">{share.slug}</Text>
-                      ) : null}
-                      {share.description ? (
-                        <Text type="secondary" ellipsis>
-                          {share.description}
-                        </Text>
-                      ) : null}
-                    </Space>
-                  ),
+                  render: (_value, share) => {
+                    const href = shareHref(share.slug);
+                    return (
+                      <Space direction="vertical" size={0}>
+                        <Space size={6}>
+                          <a href={href} target="_blank" rel="noreferrer">
+                            {share.title || share.slug}
+                          </a>
+                          <CopyButton
+                            value={absoluteShareUrl(share.slug)}
+                            size="small"
+                            noText
+                          />
+                          {share.legacy_url ? (
+                            <Tooltip title={share.legacy_url}>
+                              <Tag>Migrated</Tag>
+                            </Tooltip>
+                          ) : null}
+                        </Space>
+                        {share.title ? (
+                          <Text type="secondary">{share.slug}</Text>
+                        ) : null}
+                        {share.description ? (
+                          <Text type="secondary" ellipsis>
+                            {share.description}
+                          </Text>
+                        ) : null}
+                      </Space>
+                    );
+                  },
                 },
                 {
                   title: "Status",
@@ -185,7 +352,7 @@ function PublicSharesPage() {
                   render: (_value, share) => (
                     <Space direction="vertical" size={4}>
                       {availabilityTag(share)}
-                      {visibilityTag(share.visibility)}
+                      {exceptionalVisibilityTag(share)}
                       {share.site_license_grant_on_copy ? (
                         <Tag color="blue">
                           License on copy
@@ -201,37 +368,81 @@ function PublicSharesPage() {
                   ),
                 },
                 {
-                  title: "Project path",
-                  render: (_value, share) => (
-                    <Space direction="vertical" size={0}>
-                      <Text code>{share.project_id}</Text>
-                      <Text code>{share.path}</Text>
-                    </Space>
-                  ),
+                  title: "Updated by",
+                  width: 180,
+                  render: (_value, share) => {
+                    const updatedBy = share.updated_by ?? share.created_by;
+                    return (
+                      <Space direction="vertical" size={0}>
+                        {updatedBy ? (
+                          <User
+                            account_id={updatedBy}
+                            trunc={24}
+                            show_avatar
+                            avatarSize={18}
+                          />
+                        ) : (
+                          <Text type="secondary">Unknown</Text>
+                        )}
+                        {share.created_by && share.created_by !== updatedBy ? (
+                          <Text type="secondary">
+                            Created by{" "}
+                            <User account_id={share.created_by} trunc={18} />
+                          </Text>
+                        ) : null}
+                      </Space>
+                    );
+                  },
                 },
                 {
-                  title: "Legacy",
-                  width: 220,
-                  render: (_value, share) => (
-                    <Space direction="vertical" size={0}>
-                      {share.legacy_url ? (
-                        <Text ellipsis>{share.legacy_url}</Text>
-                      ) : (
-                        <Text type="secondary">No legacy URL</Text>
-                      )}
-                      {share.legacy_public_path_id ? (
-                        <Text type="secondary">
-                          {share.legacy_public_path_id}
-                        </Text>
-                      ) : null}
-                    </Space>
-                  ),
+                  title: "Project path",
+                  render: (_value, share) => {
+                    const archived =
+                      projectMap?.getIn?.([
+                        share.project_id,
+                        "state",
+                        "state",
+                      ]) == "archived";
+                    return (
+                      <Space direction="vertical" size={2}>
+                        <a
+                          href={projectPathHref(share)}
+                          onClick={(event) => {
+                            if (
+                              event.metaKey ||
+                              event.ctrlKey ||
+                              event.shiftKey ||
+                              event.altKey ||
+                              event.button !== 0
+                            ) {
+                              return;
+                            }
+                            event.preventDefault();
+                            load_target(projectPathTarget(share));
+                          }}
+                        >
+                          <ProjectTitle
+                            project_id={share.project_id}
+                            trunc={42}
+                            noClick
+                          />
+                        </a>
+                        <Text code>{projectPathLabel(share.path)}</Text>
+                        {archived ? (
+                          <Tag color="orange">
+                            Archived project: dearchive to access
+                          </Tag>
+                        ) : null}
+                      </Space>
+                    );
+                  },
                 },
               ]}
             />
           )}
         </Space>
       </Card>
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }

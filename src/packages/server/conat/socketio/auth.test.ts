@@ -84,6 +84,7 @@ jest.mock("@cocalc/server/auth/remember-me", () => ({
 jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   __esModule: true,
   hasProjectCollaboratorAccessAllowRemote: jest.fn(),
+  resolveProjectAccessAllowRemote: jest.fn(),
 }));
 
 jest.mock("@cocalc/server/projects/control/secret-token", () => ({
@@ -91,7 +92,10 @@ jest.mock("@cocalc/server/projects/control/secret-token", () => ({
   getProjectSecretToken: jest.fn(),
 }));
 
-import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import {
+  hasProjectCollaboratorAccessAllowRemote,
+  resolveProjectAccessAllowRemote,
+} from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import {
@@ -124,6 +128,8 @@ beforeEach(() => {
   ensureAccountSecurityStateReadyMock.mockReset().mockResolvedValue(undefined);
   isAccountBannedCachedMock.mockReset().mockReturnValue(false);
   getAccountRevokedBeforeCachedMock.mockReset().mockReturnValue(undefined);
+  (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
+  (resolveProjectAccessAllowRemote as jest.Mock).mockReset();
 });
 
 function projectHostBearerToken() {
@@ -506,10 +512,6 @@ describe("test isAllowed for subjects special to accounts (similar to projects)"
 });
 
 describe("test isAllowed for collaboration -- this is the most nontrivial one", () => {
-  beforeEach(() => {
-    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
-  });
-
   it("verifies an account can access a project it collaborates on", async () => {
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
       true,
@@ -529,10 +531,10 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
     });
   });
 
-  it("same account and project -- even if not collaborator still have permissions because of LRU cache!", async () => {
-    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
-      false,
-    );
+  it("does not reuse stale project collaborator authorization decisions", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
 
     expect(
       await isAllowed({
@@ -541,6 +543,52 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
         type: "pub",
       }),
     ).toBe(true);
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `project.${project_id}.foo`,
+        type: "pub",
+      }),
+    ).toBe(false);
+  });
+
+  it("allows viewer file subjects only for the matching viewer account", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      false,
+    );
+    (resolveProjectAccessAllowRemote as jest.Mock).mockResolvedValue({
+      role: "viewer",
+      read_policy: { rules: [{ action: "include", path: "share/**" }] },
+    });
+
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `fs-viewer.project-${project_id}.account-${account_id}`,
+        type: "pub",
+      }),
+    ).toBe(true);
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `fs-viewer.project-${project_id}.account-${account_id}`,
+        type: "sub",
+      }),
+    ).toBe(false);
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `fs-viewer.project-${project_id}.account-${account_id2}`,
+        type: "pub",
+      }),
+    ).toBe(false);
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `fs.project-${project_id}`,
+        type: "pub",
+      }),
+    ).toBe(false);
   });
 
   it("check on another project that not a collab on", async () => {

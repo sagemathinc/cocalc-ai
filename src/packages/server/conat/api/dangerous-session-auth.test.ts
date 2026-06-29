@@ -149,6 +149,23 @@ describe("requireDangerousSessionAuth", () => {
     });
   });
 
+  it("accepts fresh auth without 2FA when second factor is conditional", async () => {
+    hasActiveSecondFactorMock = jest.fn(async () => false);
+    const { requireDangerousSessionAuth } =
+      await import("./dangerous-session-auth");
+
+    await expect(
+      requireDangerousSessionAuth({
+        account_id: ACCOUNT_ID,
+        session_hash: SESSION_HASH,
+        require_second_factor: "if_enabled",
+      }),
+    ).resolves.toMatchObject({
+      account_id: ACCOUNT_ID,
+      session_hash: SESSION_HASH,
+    });
+  });
+
   it("accepts dev CLI fresh auth as a local non-production second factor", async () => {
     process.env.NODE_ENV = "development";
     hasActiveSecondFactorMock = jest.fn(async () => false);
@@ -207,6 +224,22 @@ describe("requireDangerousSessionAuth", () => {
         account_id: ACCOUNT_ID,
         session_hash: SESSION_HASH,
         require_second_factor: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+      message: "recent two-factor verification is required",
+    });
+  });
+
+  it("still requires recent subject 2FA for conditional checks when 2FA is enabled", async () => {
+    const { requireDangerousSessionAuth } =
+      await import("./dangerous-session-auth");
+
+    await expect(
+      requireDangerousSessionAuth({
+        account_id: ACCOUNT_ID,
+        session_hash: SESSION_HASH,
+        require_second_factor: "if_enabled",
       }),
     ).rejects.toMatchObject({
       code: "fresh_auth_required",

@@ -25,6 +25,7 @@ owns the local connection and token mechanics.
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -54,6 +55,7 @@ import {
   assertProjectHostAgentTokenAccess,
   hasAccountProjectHostTokenHostAccess,
 } from "./project-host-token-auth";
+import * as publicDirectoryShares from "./public-directory-shares";
 import {
   computeHostOperationalAvailability,
   defaultInterruptionRestorePolicy,
@@ -65,6 +67,8 @@ function pool() {
   return getPool();
 }
 
+const logger = getLogger("server:conat:api:hosts-connection-auth");
+
 async function hostControlClient(host_id: string, timeout?: number) {
   return await getRoutedHostControlClient({
     host_id,
@@ -73,12 +77,62 @@ async function hostControlClient(host_id: string, timeout?: number) {
 }
 
 async function hasPublicShareProjectHostTokenAccess({
+  account_id,
   host_id,
   project_id,
+  public_directory_share_id,
 }: {
+  account_id: string;
   host_id: string;
   project_id: string;
+  public_directory_share_id?: string;
 }): Promise<boolean> {
+  if (public_directory_share_id) {
+    try {
+      const response = await publicDirectoryShares.authorizeRead({
+        account_id,
+        project_id,
+        share_id: public_directory_share_id,
+      });
+      if (
+        response.project_id !== project_id ||
+        response.share_id !== public_directory_share_id
+      ) {
+        return false;
+      }
+      const { rowCount } = await pool().query(
+        `
+          SELECT 1
+          FROM projects
+          WHERE project_id=$1
+            AND host_id=$2
+            AND deleted IS NOT true
+          LIMIT 1
+        `,
+        [project_id, host_id],
+      );
+      const allowed = !!rowCount;
+      if (!allowed) {
+        logger.warn("public-share project-host token denied: host mismatch", {
+          account_id,
+          host_id,
+          project_id,
+          public_directory_share_id,
+        });
+      }
+      return allowed;
+    } catch (err) {
+      logger.warn("public-share project-host token denied", {
+        account_id,
+        host_id,
+        project_id,
+        public_directory_share_id,
+        err: `${(err as any)?.message ?? err}`,
+      });
+      return false;
+    }
+  }
+
   const { rowCount } = await pool().query(
     `
       SELECT 1
@@ -102,11 +156,13 @@ async function assertAccountCanIssueProjectHostToken({
   account_id,
   host_id,
   project_id,
+  public_directory_share_id,
   loadHostForListing,
 }: {
   account_id: string;
   host_id: string;
   project_id?: string;
+  public_directory_share_id?: string;
   loadHostForListing: (id: string, account_id?: string) => Promise<any>;
 }): Promise<"project" | "host" | "public-share"> {
   if (await isAdmin(account_id)) {
@@ -122,7 +178,14 @@ async function assertAccountCanIssueProjectHostToken({
       });
       return "project";
     } catch (err) {
-      if (await hasPublicShareProjectHostTokenAccess({ host_id, project_id })) {
+      if (
+        await hasPublicShareProjectHostTokenAccess({
+          account_id,
+          host_id,
+          project_id,
+          public_directory_share_id,
+        })
+      ) {
         return "public-share";
       }
       throw err;
@@ -193,12 +256,14 @@ export async function issueProjectHostAuthTokenLocalHelper({
   account_id,
   host_id,
   project_id,
+  public_directory_share_id,
   ttl_seconds,
   loadHostForListing,
 }: {
   account_id: string;
   host_id: string;
   project_id?: string;
+  public_directory_share_id?: string;
   ttl_seconds?: number;
   loadHostForListing: (id: string, account_id?: string) => Promise<any>;
 }): Promise<{
@@ -218,6 +283,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
     account_id,
     host_id,
     project_id,
+    public_directory_share_id,
     loadHostForListing,
   });
   if (project_id && accessMode === "project") {
@@ -294,11 +360,15 @@ export async function issueProjectHostAgentAuthTokenInternalHelper({
 export async function resolveHostConnectionLocalHelper({
   account_id,
   host_id,
+  project_id,
+  public_directory_share_id,
   allowMissing = false,
   loadMembership,
 }: {
   account_id: string;
   host_id: string;
+  project_id?: string;
+  public_directory_share_id?: string;
   allowMissing?: boolean;
   loadMembership: (account_id: string) => Promise<any>;
 }): Promise<HostConnectionInfo | undefined> {
@@ -347,7 +417,17 @@ export async function resolveHostConnectionLocalHelper({
        LIMIT 1`,
       [host_id, account_id],
     );
-    if (!projectRows.length) {
+    const publicShareAllowed =
+      projectRows.length === 0 &&
+      !!project_id &&
+      !!public_directory_share_id &&
+      (await hasPublicShareProjectHostTokenAccess({
+        account_id,
+        host_id,
+        project_id,
+        public_directory_share_id,
+      }));
+    if (!projectRows.length && !publicShareAllowed) {
       throw new Error("not authorized");
     }
   }

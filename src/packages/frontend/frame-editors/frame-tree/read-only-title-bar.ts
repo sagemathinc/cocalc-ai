@@ -27,3 +27,19 @@ export function frameTitleBarTerminalButtonVisible({
 }): boolean {
   return !readOnlyPreview && !terminalsDisabled && type !== "terminal";
 }
+
+export function frameTitleBarTimeTravelButtonVisible({
+  readOnlyPreview,
+}: {
+  readOnlyPreview: boolean;
+}): boolean {
+  return !readOnlyPreview;
+}
+
+export function frameTitleBarAgentButtonVisible({
+  readOnlyPreview,
+}: {
+  readOnlyPreview: boolean;
+}): boolean {
+  return !readOnlyPreview;
+}

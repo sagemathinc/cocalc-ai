@@ -134,6 +134,7 @@ interface FileListItemProps {
   onClose?: (e: React.MouseEvent | undefined, name: string) => void;
   onMouseDown?: (e: React.MouseEvent, name: string) => void;
   onStar?: (next: boolean) => void;
+  publicationIndicator?: React.JSX.Element | null;
   selected?: boolean;
   setShowCheckboxIndex?: (index: number | null) => void;
   showCheckbox?: boolean;
@@ -162,6 +163,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     onClose,
     onMouseDown,
     onStar,
+    publicationIndicator,
     selected,
     setShowCheckboxIndex,
     showCheckbox,
@@ -404,8 +406,8 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         // additional mouseLeave to prevent stale hover state icon
         onMouseLeave={handleMouseLeave}
       >
-        {renderBodyLeft()} {renderStarred()} {renderName()} {renderExtra(2)}{" "}
-        {renderExtra(1)}
+        {renderBodyLeft()} {renderStarred()} {renderName()}{" "}
+        {publicationIndicator} {renderExtra(2)} {renderExtra(1)}
         {renderCloseItem(item)}
       </div>
     );
@@ -441,7 +443,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         (effective_current_path?.startsWith(SNAPSHOTS) ?? false);
 
       const { name, icon, hideFlyout } = FILE_ACTIONS[key];
-      if (hideFlyout) return;
+      if (hideFlyout) continue;
 
       ctx.push({
         key,

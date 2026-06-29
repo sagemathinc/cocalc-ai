@@ -94,6 +94,43 @@ export default function PublicViewerFileContents({
     return <OpenRawFile rawUrl={rawUrl} label={"Open or Download..."} />;
   }
 
+  if (isMarkdown(ext)) {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <MarkdownRenderer
+          content={content}
+          style={style}
+          fileContext={resolvedFileContext}
+        />
+      </Suspense>
+    );
+  }
+
+  if (ext === "chat" || ext === "sage-chat") {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <ChatRenderer
+          content={content}
+          fileContext={resolvedFileContext}
+          style={style}
+        />
+      </Suspense>
+    );
+  }
+
+  if (ext === "tasks") {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <TasksRenderer
+          content={content}
+          path={path}
+          project_id={fileContext?.project_id}
+          fontSize={fontSize}
+        />
+      </Suspense>
+    );
+  }
+
   if (isCodemirror(ext)) {
     return (
       <Suspense fallback={<LoadingRenderer />}>
@@ -102,18 +139,6 @@ export default function PublicViewerFileContents({
           fontSize={fontSize}
           lineNumbers={lineNumbers}
           mode={codemirrorMode(ext)?.name}
-        />
-      </Suspense>
-    );
-  }
-
-  if (isMarkdown(ext)) {
-    return (
-      <Suspense fallback={<LoadingRenderer />}>
-        <MarkdownRenderer
-          content={content}
-          style={style}
-          fileContext={resolvedFileContext}
         />
       </Suspense>
     );
@@ -153,31 +178,6 @@ export default function PublicViewerFileContents({
     return (
       <Suspense fallback={<LoadingRenderer />}>
         <SlidesRenderer content={content} fileContext={resolvedFileContext} />
-      </Suspense>
-    );
-  }
-
-  if (ext === "chat" || ext === "sage-chat") {
-    return (
-      <Suspense fallback={<LoadingRenderer />}>
-        <ChatRenderer
-          content={content}
-          fileContext={resolvedFileContext}
-          style={style}
-        />
-      </Suspense>
-    );
-  }
-
-  if (ext === "tasks") {
-    return (
-      <Suspense fallback={<LoadingRenderer />}>
-        <TasksRenderer
-          content={content}
-          path={path}
-          project_id={fileContext?.project_id}
-          fontSize={fontSize}
-        />
       </Suspense>
     );
   }

@@ -317,7 +317,7 @@ export const SearchBar = memo(
           />
         );
       }
-      if (isTerminalMode(file_search)) {
+      if (!readOnly && isTerminalMode(file_search)) {
         return (
           <TerminalModeDisplay
             style={{
@@ -334,7 +334,7 @@ export const SearchBar = memo(
           />
         );
       }
-      if (isAgentMode(file_search)) {
+      if (!readOnly && isAgentMode(file_search)) {
         return (
           <Alert
             style={HelpStyle}
@@ -432,21 +432,13 @@ export const SearchBar = memo(
         actions.setFlyoutExpanded("search", true);
         return;
       }
-      if (isTerminalMode(value)) {
-        if (readOnly) {
-          set_error("Viewers cannot run terminal commands in this project.");
-          return;
-        }
+      if (!readOnly && isTerminalMode(value)) {
         if (value.slice(1).trim().length > 0) {
           addHistoryEntry(value);
         }
         const command = value.slice(1, value.length);
         execute_command(command);
-      } else if (isAgentMode(value)) {
-        if (readOnly) {
-          set_error("Viewers cannot run agents in this project.");
-          return;
-        }
+      } else if (!readOnly && isAgentMode(value)) {
         if (extractAgentPrompt(value).length > 0) {
           addHistoryEntry(value);
         }
@@ -575,8 +567,8 @@ export const SearchBar = memo(
               disabled={disabled || !!ext_selection}
               status={
                 file_search.length > 0 &&
-                !isTerminalMode(file_search) &&
-                !isAgentMode(file_search)
+                (readOnly ||
+                  (!isTerminalMode(file_search) && !isAgentMode(file_search)))
                   ? "warning"
                   : undefined
               }

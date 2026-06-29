@@ -30,6 +30,6 @@ export async function requireDangerousProjectMutationAuth({
     account_id,
     browser_id,
     session_hash,
-    require_second_factor: true,
+    require_second_factor: "if_enabled",
   });
 }

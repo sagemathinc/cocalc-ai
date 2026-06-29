@@ -9,6 +9,7 @@ export interface UserFacingError {
 }
 
 const CALL_HUB_SUFFIX = /\s*-\s*callHub:[\s\S]*$/i;
+const REMOTE_FUNCTION_PREFIX = /^calling remote function '[^']+':\s*/i;
 const GENERIC_ERROR_MESSAGES = new Set([
   "an error occurred",
   "error occurred",
@@ -25,7 +26,9 @@ export function normalizeUserFacingError(error: unknown): UserFacingError {
   const normalizedRaw = normalizeWhitespace(raw);
   const normalizedMessage = normalizeWhitespace(message);
   const hasTechnicalWrapper =
-    CALL_HUB_SUFFIX.test(raw) || raw.toLowerCase().includes("callhub:");
+    CALL_HUB_SUFFIX.test(raw) ||
+    raw.toLowerCase().includes("callhub:") ||
+    REMOTE_FUNCTION_PREFIX.test(raw.trim());
   const hasStructuredWrapper = looksLikeStructuredErrorString(raw);
   const structuredDetails = structuredErrorDetails(error, raw);
   const normalizedStructuredDetails = normalizeWhitespace(structuredDetails);
@@ -107,6 +110,7 @@ function stripLeadingErrorPrefixes(value: string): string {
     const next = s
       .replace(/^error\s*:\s*/i, "")
       .replace(/^error\s*-\s*/i, "")
+      .replace(REMOTE_FUNCTION_PREFIX, "")
       .trim();
     if (next === s) break;
     s = next;

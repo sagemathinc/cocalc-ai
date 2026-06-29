@@ -117,6 +117,31 @@ describe("ArchiveProjectModal", () => {
     );
   });
 
+  it("warns when archived projects have public shares", () => {
+    const { container } = render(
+      <ArchiveProjectModal
+        open
+        projects={[
+          {
+            project_id: "project-1",
+            title: "Published Project",
+            state: "opened",
+            publicShareCount: 2,
+          },
+        ]}
+        onCancel={jest.fn()}
+        onArchive={jest.fn()}
+      />,
+    );
+
+    expect(container).toHaveTextContent(
+      "Public shares are not available when a project is archived.",
+    );
+    expect(container).toHaveTextContent(
+      "This project has public shares. They will not be accessible again until the project is restored.",
+    );
+  });
+
   it("shows batch-specific state and skipped-project copy", () => {
     const { container } = render(
       <ArchiveProjectModal

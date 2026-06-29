@@ -28,6 +28,7 @@ export type ShareCommandDeps = {
 
 type ShareTargetOptions = {
   slug?: string;
+  viaFs?: boolean;
 };
 
 type ShareCopyOptions = ShareTargetOptions & {
@@ -190,6 +191,23 @@ function formatDirectoryEntries(
   }));
 }
 
+function formatFilesystemListingEntries({
+  files,
+  parentPath,
+}: {
+  files: Record<string, any>;
+  parentPath: string;
+}): Array<Record<string, unknown>> {
+  return Object.entries(files).map(([name, info]) => ({
+    name,
+    path: parentPath === "." ? name : posix.join(parentPath, name),
+    is_dir: info?.isDir === true || info?.type === "d",
+    size: info?.size ?? null,
+    mtime: info?.mtime ?? null,
+    link_target: info?.linkTarget ?? null,
+  }));
+}
+
 function defaultDownloadDestination(path: string): string {
   if (path === ".") {
     throw new Error(
@@ -270,6 +288,10 @@ export function registerShareCommand(
     .command("ls <share>")
     .description("list a directory inside a published share")
     .option("--slug <slug>", "explicit share path slug")
+    .option(
+      "--via-fs",
+      "list via the share filesystem service instead of the hub listing RPC",
+    )
     .action(
       async (target: string, opts: ShareTargetOptions, command: Command) => {
         await deps.withContext(command, "share ls", async (ctx: any) => {
@@ -279,6 +301,15 @@ export function registerShareCommand(
             target,
             slug: opts.slug,
           });
+          if (opts.viaFs) {
+            const fs = await deps.resolveShareFilesystem(ctx, resolved.share);
+            const projectPath = shareProjectPath(resolved.share, resolved.path);
+            const snapshot = await fs.getListing(projectPath);
+            return formatFilesystemListingEntries({
+              files: snapshot.files ?? {},
+              parentPath: projectPath,
+            });
+          }
           const response = (await deps.hubCallByName(
             ctx,
             "publicDirectoryShares.listDirectory",

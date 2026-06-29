@@ -34,6 +34,7 @@ export interface PublicDirectoryShareSummary {
   description?: string | null;
   license?: string | null;
   image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   redirect?: string | null;
   legacy_public_path_id?: string | null;
   legacy_url?: string | null;
@@ -44,9 +45,20 @@ export interface PublicDirectoryShareSummary {
   site_license_grant_on_copy: boolean;
   site_license_copy_requires_grant: boolean;
   disabled: boolean;
+  created_by?: string | null;
+  updated_by?: string | null;
   last_edited?: Date | string | null;
   created_at?: Date | string | null;
   updated_at?: Date | string | null;
+}
+
+export interface PublicDirectoryShareTheme {
+  title?: string | null;
+  description?: string | null;
+  color?: string | null;
+  accent_color?: string | null;
+  icon?: string | null;
+  image_blob?: string | null;
 }
 
 export interface ResolvedPublicDirectoryShare extends PublicDirectoryShareSummary {
@@ -93,6 +105,17 @@ export interface ListProjectPublicDirectorySharesOptions {
   include_disabled?: boolean;
 }
 
+export interface DisableMyPublicDirectorySharesByActorOptions {
+  account_id?: string;
+  session_hash?: string | null;
+  actor_account_id: string;
+}
+
+export interface DisableMyPublicDirectorySharesByActorResponse {
+  disabled_count: number;
+  share_ids: string[];
+}
+
 export interface UpsertPublicDirectoryShareOptions {
   account_id?: string;
   id?: string;
@@ -107,6 +130,7 @@ export interface UpsertPublicDirectoryShareOptions {
   description?: string | null;
   license?: string | null;
   image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   redirect?: string | null;
   legacy_public_path_id?: string | null;
   legacy_url?: string | null;
@@ -129,6 +153,8 @@ export interface CreatePublicDirectoryShareOptions {
   title?: string | null;
   description?: string | null;
   license?: string | null;
+  image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   site_license_id?: string | null;
   site_license_pool_id?: string | null;
   site_license_duration_days?: number | null;
@@ -143,6 +169,8 @@ export interface UpdatePublicDirectoryShareOptions {
   title?: string | null;
   description?: string | null;
   license?: string | null;
+  image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   site_license_id?: string | null;
   site_license_pool_id?: string | null;
   site_license_duration_days?: number | null;
@@ -179,6 +207,42 @@ export interface AuthorizePublicDirectoryShareReadResponse {
   project_id: string;
   share_id: string;
   read_policy: ProjectViewerReadPolicy;
+}
+
+export interface GrantTemporaryViewerAccessOptions {
+  account_id?: string;
+  slug: string;
+}
+
+export interface GrantTemporaryViewerAccessResponse {
+  project_id: string;
+  share_id: string;
+  path: string;
+  read_policy: ProjectViewerReadPolicy;
+  expires_at: Date | string;
+  project_url: string;
+  project_title?: string | null;
+  share_title?: string | null;
+  share_description?: string | null;
+  license?: string | null;
+  image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
+  site_license_grant_on_copy?: boolean;
+  site_license_copy_requires_grant?: boolean;
+  host_id?: string | null;
+  host_connection?: ResolvedPublicDirectoryShare["host_connection"];
+  owning_bay_id?: string | null;
+}
+
+export interface GetTemporaryViewerReadPolicyOptions {
+  account_id?: string;
+  project_id: string;
+}
+
+export interface GetTemporaryViewerReadPolicyResponse {
+  project_id: string;
+  account_id: string;
+  read_policy?: ProjectViewerReadPolicy;
 }
 
 export interface PublicDirectoryShareDirectoryEntry {
@@ -226,6 +290,7 @@ export interface CopyPublicDirectoryShareToNewProjectResponse extends CopyPublic
   created_project: true;
   requested_host_id?: string | null;
   placed_on_requested_host: boolean;
+  host_placement_message?: string | null;
 }
 
 export interface PublicDirectoryShares {
@@ -241,6 +306,9 @@ export interface PublicDirectoryShares {
   listProject: (
     opts: ListProjectPublicDirectorySharesOptions,
   ) => Promise<ListPublicDirectorySharesResponse>;
+  disableMineByActor: (
+    opts: DisableMyPublicDirectorySharesByActorOptions,
+  ) => Promise<DisableMyPublicDirectorySharesByActorResponse>;
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
@@ -262,6 +330,12 @@ export interface PublicDirectoryShares {
   authorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
+  grantTemporaryViewerAccess: (
+    opts: GrantTemporaryViewerAccessOptions,
+  ) => Promise<GrantTemporaryViewerAccessResponse>;
+  getTemporaryViewerReadPolicy: (
+    opts: GetTemporaryViewerReadPolicyOptions,
+  ) => Promise<GetTemporaryViewerReadPolicyResponse>;
 }
 
 export const publicDirectoryShares = {
@@ -269,6 +343,7 @@ export const publicDirectoryShares = {
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
   listProject: authFirstRequireAccount,
+  disableMineByActor: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
   create: authFirstRequireAccount,
   update: authFirstRequireAccount,
@@ -276,4 +351,6 @@ export const publicDirectoryShares = {
   copyToProject: authFirstRequireAccount,
   copyToNewProject: authFirstRequireAccount,
   authorizeRead: authFirst,
+  grantTemporaryViewerAccess: authFirstRequireAccount,
+  getTemporaryViewerReadPolicy: authFirst,
 } as const;

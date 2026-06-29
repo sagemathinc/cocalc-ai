@@ -7,7 +7,7 @@ import rustic from "@cocalc/backend/sandbox/rustic";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import { ConatError } from "@cocalc/conat/core/client";
 import getPool from "@cocalc/database/pool";
-import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
+import { publishProjectRemoveFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { releaseProjectAppPublicSubdomainsForProject } from "@cocalc/server/app-public-subdomains";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
@@ -626,21 +626,11 @@ async function purgeProjectRows({
 async function publishProjectHardDeleteRemoveEvents(
   project: ProjectRow,
 ): Promise<void> {
-  const ts = Date.now();
-  await Promise.all(
-    visibleAccountIdsFromUsers(project.users).map((account_id) =>
-      publishAccountFeedEventBestEffort({
-        account_id,
-        event: {
-          type: "project.remove",
-          ts,
-          account_id,
-          project_id: project.project_id,
-          reason: "membership_removed",
-        },
-      }),
-    ),
-  );
+  await publishProjectRemoveFeedEventsBestEffort({
+    project_id: project.project_id,
+    account_ids: visibleAccountIdsFromUsers(project.users),
+    default_bay_id: getConfiguredBayId(),
+  });
 }
 
 function clampBackupRetentionDays(days: number | undefined): number {

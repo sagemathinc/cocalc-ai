@@ -102,6 +102,7 @@ import {
   getProjectUserRole,
   isViewerProjectRole,
 } from "@cocalc/frontend/project/realtime-access";
+import { isPublicDirectoryShareHost } from "@cocalc/frontend/projects/host-info";
 
 export interface ConatConnectionStatus {
   state: "connected" | "connecting" | "disconnected";
@@ -184,17 +185,61 @@ function reconnectDebugWarn(...args: any[]): void {
   console.warn(...args);
 }
 
+function compactError(err: unknown): Record<string, any> {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      stack: err.stack?.split("\n").slice(0, 8).join("\n"),
+    };
+  }
+  if (typeof err === "object" && err != null) {
+    const result: Record<string, any> = {};
+    for (const key of ["name", "message", "code", "status", "type"]) {
+      const value = (err as Record<string, any>)[key];
+      if (value != null) {
+        result[key] = value;
+      }
+    }
+    if (Object.keys(result).length) return result;
+  }
+  return { message: `${err}` };
+}
+
+function logProjectHostRoutingDiagnostic(
+  event: string,
+  payload: Record<string, any>,
+  level: "info" | "warn" = "info",
+): void {
+  if (!isLocalStorageFlagEnabled(RECONNECT_DEBUG_STORAGE_KEY)) {
+    return;
+  }
+  const safePayload = {
+    source: "frontend:conat:project-host-routing",
+    event,
+    ...payload,
+  };
+  const line = `[project-host-routing] ${JSON.stringify(safePayload)}`;
+  if (level === "warn") {
+    console.warn(line);
+  } else {
+    console.info(line);
+  }
+}
+
 type RoutedHubClientState = {
   host_id: string;
   routing_key: string;
   address: string;
   host_session_id?: string;
+  public_directory_share_id?: string;
   project_ids: Set<string>;
   last_project_id?: string;
   client: ReturnType<typeof connectToConat>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
   connectInFlight?: Promise<boolean>;
   reconnectAttempts: number;
+  lastConnectError?: unknown;
 };
 
 type ProjectHostTokenState = {
@@ -205,12 +250,28 @@ type ProjectHostTokenState = {
   retryAfter?: number;
   lastError?: any;
   lastProjectId?: string;
+  lastPublicDirectoryShareId?: string;
 };
 
 type ProjectHostBrowserSessionState = {
   address?: string;
   establishedAt?: number;
+  project_id?: string;
+  public_directory_share_id?: string;
   inFlight?: Promise<void>;
+};
+
+type HostRoutingInfo = {
+  host_id: string;
+  routing_key: string;
+  address: string;
+  host_session_id?: string;
+  public_directory_share_id?: string;
+};
+
+type PublicDirectoryShareRoutingInfo = HostRoutingInfo & {
+  project_id: string;
+  share_id: string;
 };
 
 export class ConatClient extends EventEmitter {
@@ -224,6 +285,9 @@ export class ConatClient extends EventEmitter {
   private projectHostTokens: { [host_id: string]: ProjectHostTokenState } = {};
   private projectHostBrowserSessions: {
     [routing_key: string]: ProjectHostBrowserSessionState;
+  } = {};
+  private publicDirectoryShareRoutingByProjectId: {
+    [project_id: string]: PublicDirectoryShareRoutingInfo;
   } = {};
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
@@ -255,6 +319,7 @@ export class ConatClient extends EventEmitter {
         reconnecting: state.reconnectTimer != null,
         reconnectAttempts: state.reconnectAttempts,
         host_session_id: state.host_session_id,
+        public_directory_share_id: state.public_directory_share_id,
         project_ids: Array.from(state.project_ids),
       }),
     ),
@@ -262,6 +327,7 @@ export class ConatClient extends EventEmitter {
   private summarizeRoutedHubClientState = (state: RoutedHubClientState) => ({
     address: state.address,
     host_session_id: state.host_session_id,
+    public_directory_share_id: state.public_directory_share_id,
     project_ids: Array.from(state.project_ids),
     last_project_id: state.last_project_id,
     connected: !!state.client?.conn?.connected,
@@ -867,6 +933,7 @@ export class ConatClient extends EventEmitter {
             lastError:
               state.lastError == null ? undefined : `${state.lastError}`,
             lastProjectId: state.lastProjectId,
+            lastPublicDirectoryShareId: state.lastPublicDirectoryShareId,
           },
         ]),
       ),
@@ -1070,6 +1137,9 @@ export class ConatClient extends EventEmitter {
 
   private getHostInfo(host_id: string): ImmutableMap<string, any> | undefined {
     const hostInfo = redux.getStore("projects")?.get("host_info")?.get(host_id);
+    if (isPublicDirectoryShareHost(host_id)) {
+      return hostInfo;
+    }
     if (!hostInfo) {
       redux.getActions("projects")?.ensure_host_info(host_id);
       return;
@@ -1091,14 +1161,7 @@ export class ConatClient extends EventEmitter {
     );
   };
 
-  private getHostRoutingInfo(host_id: string):
-    | undefined
-    | {
-        host_id: string;
-        routing_key: string;
-        address: string;
-        host_session_id?: string;
-      } {
+  private getHostRoutingInfo(host_id: string): HostRoutingInfo | undefined {
     const hostInfo = this.getHostInfo(host_id);
     const routedState = this.findRoutedHubClientForHost(host_id);
     const routeId = routedState
@@ -1111,14 +1174,7 @@ export class ConatClient extends EventEmitter {
     host_id: string,
     hostInfo?: ImmutableMap<string, any>,
     route_id = host_id,
-  ):
-    | undefined
-    | {
-        host_id: string;
-        routing_key: string;
-        address: string;
-        host_session_id?: string;
-      } {
+  ): HostRoutingInfo | undefined {
     if (!hostInfo) return;
     const localProxy = hostInfo.get("local_proxy");
     let address: string;
@@ -1133,6 +1189,8 @@ export class ConatClient extends EventEmitter {
       return;
     }
     const host_session_id = `${hostInfo.get("host_session_id") ?? ""}`.trim();
+    const public_directory_share_id =
+      `${hostInfo.get("public_directory_share_id") ?? ""}`.trim() || undefined;
     return {
       host_id,
       // Normal project hosts expose a host-level connect URL and safely share
@@ -1141,19 +1199,90 @@ export class ConatClient extends EventEmitter {
       routing_key: localProxy ? `${host_id}:${route_id}` : host_id,
       address,
       ...(host_session_id ? { host_session_id } : {}),
+      ...(public_directory_share_id ? { public_directory_share_id } : {}),
     };
   }
 
-  private getProjectRoutingInfo(project_id: string):
-    | undefined
-    | {
-        host_id: string;
-        routing_key: string;
-        address: string;
-        host_session_id?: string;
-      } {
+  private buildHostRoutingInfoFromConnection({
+    hostConnection,
+    public_directory_share_id,
+    route_id,
+  }: {
+    hostConnection?: HostConnectionInfo | null;
+    public_directory_share_id?: string;
+    route_id: string;
+  }): HostRoutingInfo | undefined {
+    if (!hostConnection?.host_id) return;
+    let address = `${hostConnection.connect_url ?? ""}`.trim();
+    if (hostConnection.local_proxy && typeof window !== "undefined") {
+      const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
+      address = `${window.location.origin}${basePath}/${route_id}`;
+    }
+    if (!address || address === this.address) {
+      return;
+    }
+    const host_session_id = `${hostConnection.host_session_id ?? ""}`.trim();
+    return {
+      host_id: hostConnection.host_id,
+      routing_key: hostConnection.local_proxy
+        ? `${hostConnection.host_id}:${route_id}`
+        : hostConnection.host_id,
+      address,
+      ...(host_session_id ? { host_session_id } : {}),
+      ...(public_directory_share_id ? { public_directory_share_id } : {}),
+    };
+  }
+
+  registerPublicDirectoryShareRouting({
+    project_id,
+    share_id,
+    host_connection,
+  }: {
+    project_id: string;
+    share_id: string;
+    host_connection?: HostConnectionInfo | null;
+  }): void {
+    if (!isValidUUID(project_id) || !isValidUUID(share_id)) return;
+    const routing = this.buildHostRoutingInfoFromConnection({
+      hostConnection: host_connection,
+      public_directory_share_id: share_id,
+      route_id: project_id,
+    });
+    if (!routing) return;
+    this.publicDirectoryShareRoutingByProjectId[project_id] = {
+      ...routing,
+      project_id,
+      share_id,
+    };
+    const current = this.routedHubClients[routing.routing_key];
+    if (current) {
+      const shareChanged = current.public_directory_share_id !== share_id;
+      const hostSessionChanged =
+        routing.host_session_id != null &&
+        current.host_session_id !== routing.host_session_id;
+      current.public_directory_share_id = share_id;
+      current.host_session_id = routing.host_session_id;
+      current.address = routing.address;
+      if (shareChanged || hostSessionChanged) {
+        this.invalidateProjectHostToken(routing.host_id, {
+          resetFailureState: true,
+        });
+        this.invalidateProjectHostBrowserSession(routing.routing_key);
+      }
+      this.registerTrackedProjectForHost(routing.host_id, current, project_id);
+    }
+  }
+
+  private getProjectRoutingInfo(
+    project_id: string,
+  ): HostRoutingInfo | undefined {
     if (lite) {
       return;
+    }
+    const publicShareRouting =
+      this.publicDirectoryShareRoutingByProjectId[project_id];
+    if (publicShareRouting) {
+      return publicShareRouting;
     }
     // [ ] TODO: need a ttl cache, since otherwise this gets called
     // on literally every packet sent to the project!
@@ -1170,7 +1299,12 @@ export class ConatClient extends EventEmitter {
     const projectBayId =
       `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
     const hostBayId = `${hostInfo.get("bay_id") ?? ""}`.trim();
-    if (projectBayId && hostBayId && projectBayId !== hostBayId) {
+    if (
+      projectBayId &&
+      hostBayId &&
+      projectBayId !== hostBayId &&
+      !isPublicDirectoryShareHost(host_id)
+    ) {
       // Cross-bay placement is valid. Refresh any stale cached host info, but
       // do not suppress direct browser->project-host routing just because the
       // control-plane bay and host bay differ.
@@ -1203,15 +1337,7 @@ export class ConatClient extends EventEmitter {
 
   private ensureProjectRoutingInfo = async (
     project_id: string,
-  ): Promise<
-    | undefined
-    | {
-        host_id: string;
-        routing_key: string;
-        address: string;
-        host_session_id?: string;
-      }
-  > => {
+  ): Promise<HostRoutingInfo | undefined> => {
     if (lite) {
       return;
     }
@@ -1227,28 +1353,30 @@ export class ConatClient extends EventEmitter {
     const hostBayId = `${hostInfo?.get?.("bay_id") ?? ""}`.trim();
     const bayMismatch =
       !!host_id && !!projectBayId && !!hostBayId && projectBayId !== hostBayId;
+    const publicDirectoryShareHost = isPublicDirectoryShareHost(host_id);
     const initial = this.getProjectRoutingInfo(project_id);
-    if (initial && !bayMismatch) return initial;
+    if (initial && (!bayMismatch || publicDirectoryShareHost)) return initial;
     if (!host_id) return initial;
+    if (publicDirectoryShareHost) return initial;
     await redux.getActions("projects")?.ensure_host_info(host_id, bayMismatch);
     return this.getProjectRoutingInfo(project_id) ?? initial;
   };
 
   private refreshHostRoutingInfo = async (
     host_id: string,
-  ): Promise<
-    | undefined
-    | {
-        host_id: string;
-        routing_key: string;
-        address: string;
-        host_session_id?: string;
-      }
-  > => {
+  ): Promise<HostRoutingInfo | undefined> => {
     reconnectDebugLog(`refreshing routed host info for ${host_id}`, {
       host_id,
       ...this.reconnectDebugContext(),
     });
+    if (isPublicDirectoryShareHost(host_id)) {
+      const routing = this.getHostRoutingInfo(host_id);
+      reconnectDebugLog(
+        `using cached public-share host info for ${host_id}`,
+        routing,
+      );
+      return routing;
+    }
     try {
       await withTimeout(
         Promise.resolve(
@@ -1505,6 +1633,18 @@ export class ConatClient extends EventEmitter {
     return result;
   };
 
+  private getPublicShareProjectIdsForHost = (host_id: string): Set<string> => {
+    const result = new Set<string>();
+    for (const [project_id, routing] of Object.entries(
+      this.publicDirectoryShareRoutingByProjectId,
+    )) {
+      if (routing.host_id === host_id) {
+        result.add(project_id);
+      }
+    }
+    return result;
+  };
+
   private syncTrackedProjectsForHost = (
     host_id: string,
     state?: RoutedHubClientState,
@@ -1514,8 +1654,12 @@ export class ConatClient extends EventEmitter {
       return new Set();
     }
     const openProjects = this.getOpenProjectIdsForHost(host_id);
+    const publicShareProjects = this.getPublicShareProjectIdsForHost(host_id);
     for (const project_id of Array.from(current.project_ids)) {
-      if (!openProjects.has(project_id)) {
+      if (
+        !openProjects.has(project_id) &&
+        !publicShareProjects.has(project_id)
+      ) {
         current.project_ids.delete(project_id);
       }
     }
@@ -1705,16 +1849,24 @@ export class ConatClient extends EventEmitter {
   private getProjectHostToken = async ({
     host_id,
     project_id,
+    public_directory_share_id,
   }: {
     host_id: string;
     project_id?: string;
+    public_directory_share_id?: string;
   }): Promise<string> => {
     const now = Date.now();
     let state = this.projectHostTokens[host_id];
+    const tokenMatchesRequestedContext =
+      state?.token != null &&
+      (!project_id || state.lastProjectId === project_id) &&
+      (!public_directory_share_id ||
+        state.lastPublicDirectoryShareId === public_directory_share_id);
     if (
       state?.token &&
       state?.expiresAt &&
-      now < state.expiresAt - PROJECT_HOST_TOKEN_TTL_LEEWAY_MS
+      now < state.expiresAt - PROJECT_HOST_TOKEN_TTL_LEEWAY_MS &&
+      tokenMatchesRequestedContext
     ) {
       return state.token;
     }
@@ -1724,6 +1876,9 @@ export class ConatClient extends EventEmitter {
     }
     if (project_id) {
       state.lastProjectId = project_id;
+    }
+    if (public_directory_share_id) {
+      state.lastPublicDirectoryShareId = public_directory_share_id;
     }
     if (state.inFlight) {
       reconnectDebugLog(
@@ -1748,16 +1903,30 @@ export class ConatClient extends EventEmitter {
       throw this.getProjectHostTokenCooldownError(state);
     }
     const authProjectId = project_id ?? state.lastProjectId;
+    const authPublicDirectoryShareId =
+      public_directory_share_id ?? state.lastPublicDirectoryShareId;
     reconnectDebugLog(`requesting project-host auth token for ${host_id}`, {
       host_id,
       project_id: authProjectId,
+      public_directory_share_id: authPublicDirectoryShareId,
       failureCount: state.failureCount ?? 0,
     });
+    const args: {
+      host_id: string;
+      project_id?: string;
+      public_directory_share_id?: string;
+    } = {
+      host_id,
+      project_id: authProjectId,
+    };
+    if (authPublicDirectoryShareId) {
+      args.public_directory_share_id = authPublicDirectoryShareId;
+    }
     const request = (
       this.callHub({
         service: "api",
         name: "hosts.issueProjectHostAuthToken",
-        args: [{ host_id, project_id: authProjectId }],
+        args: [args],
         timeout: PROJECT_HOST_AUTH_TIMEOUT_MS,
       }) as Promise<{ token: string; expires_at: number }>
     )
@@ -1770,6 +1939,7 @@ export class ConatClient extends EventEmitter {
         reconnectDebugLog(`received project-host auth token for ${host_id}`, {
           host_id,
           project_id: authProjectId,
+          public_directory_share_id: authPublicDirectoryShareId,
           expires_at,
         });
         return token;
@@ -1786,6 +1956,7 @@ export class ConatClient extends EventEmitter {
           {
             host_id,
             project_id: authProjectId,
+            public_directory_share_id: authPublicDirectoryShareId,
             failureCount: state!.failureCount,
             retryAfter: state!.retryAfter,
             err,
@@ -1807,35 +1978,53 @@ export class ConatClient extends EventEmitter {
     routing_key = host_id,
     address,
     project_id,
+    public_directory_share_id,
   }: {
     host_id: string;
     routing_key?: string;
     address: string;
     project_id?: string;
+    public_directory_share_id?: string;
   }): Promise<void> => {
     let state = this.projectHostBrowserSessions[routing_key];
     if (!state) {
       state = {};
       this.projectHostBrowserSessions[routing_key] = state;
     }
-    if (state.address === address && state.establishedAt != null) {
+    const routedState = this.routedHubClients[routing_key];
+    const authProjectId =
+      project_id ??
+      (routedState
+        ? this.pickTrackedProjectForHost(host_id, routedState)
+        : undefined);
+    if (
+      state.address === address &&
+      state.establishedAt != null &&
+      state.project_id === authProjectId &&
+      state.public_directory_share_id === public_directory_share_id
+    ) {
       return;
     }
     if (state.inFlight) {
       return await state.inFlight;
     }
     const request = (async () => {
-      const routedState = this.routedHubClients[routing_key];
-      const authProjectId =
-        project_id ??
-        (routedState
-          ? this.pickTrackedProjectForHost(host_id, routedState)
-          : undefined);
       const token = await this.getProjectHostToken({
         host_id,
         project_id: authProjectId,
+        public_directory_share_id,
       });
       const url = `${address.replace(/\/+$/, "")}${PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH}`;
+      logProjectHostRoutingDiagnostic("browser-session-bootstrap-start", {
+        routing_key,
+        host_id,
+        project_id: authProjectId,
+        public_directory_share_id,
+        address,
+        url,
+        window_location:
+          typeof window === "undefined" ? undefined : window.location.href,
+      });
       reconnectDebugLog(
         `bootstrapping project-host browser session for ${host_id}`,
         {
@@ -1856,6 +2045,20 @@ export class ConatClient extends EventEmitter {
         this.invalidateProjectHostToken(host_id);
         this.invalidateProjectHostBrowserSession(routing_key);
         const message = await response.text().catch(() => "");
+        logProjectHostRoutingDiagnostic(
+          "browser-session-bootstrap-http-error",
+          {
+            routing_key,
+            host_id,
+            project_id: authProjectId,
+            public_directory_share_id,
+            address,
+            url,
+            status: response.status,
+            body: message,
+          },
+          "warn",
+        );
         const err = new Error(
           `project-host browser session bootstrap failed: status=${response.status}${message ? ` body=${message}` : ""}`,
         );
@@ -1863,7 +2066,17 @@ export class ConatClient extends EventEmitter {
         throw err;
       }
       state!.address = address;
+      state!.project_id = authProjectId;
+      state!.public_directory_share_id = public_directory_share_id;
       state!.establishedAt = Date.now();
+      logProjectHostRoutingDiagnostic("browser-session-bootstrap-ok", {
+        routing_key,
+        host_id,
+        project_id: authProjectId,
+        public_directory_share_id,
+        address,
+        url,
+      });
       reconnectDebugLog(
         `bootstrapped project-host browser session for ${host_id}`,
         {
@@ -1924,8 +2137,22 @@ export class ConatClient extends EventEmitter {
           routing_key,
           address: state.address,
           project_id: authProjectId,
+          public_directory_share_id: state.public_directory_share_id,
         });
       } catch (err) {
+        state.lastConnectError = err;
+        logProjectHostRoutingDiagnostic(
+          "browser-session-bootstrap-failed",
+          {
+            routing_key,
+            host_id,
+            project_id: authProjectId,
+            public_directory_share_id: state.public_directory_share_id,
+            address: state.address,
+            err: compactError(err),
+          },
+          "warn",
+        );
         if (!this.isProjectHostAuthBackoffError(err)) {
           reconnectDebugWarn(
             `failed preparing project-host browser session for host ${host_id}`,
@@ -1952,11 +2179,23 @@ export class ConatClient extends EventEmitter {
           `calling connect() on routed host client ${host_id}`,
           {
             host_id,
+            routing_key,
             reconnectAttempts: state.reconnectAttempts,
             address: state.address,
             host_session_id: state.host_session_id,
+            public_directory_share_id: state.public_directory_share_id,
           },
         );
+        logProjectHostRoutingDiagnostic("socket-connect-start", {
+          routing_key,
+          host_id,
+          project_id: authProjectId,
+          public_directory_share_id: state.public_directory_share_id,
+          reconnectAttempts: state.reconnectAttempts,
+          address: state.address,
+          host_session_id: state.host_session_id,
+          connected: !!state.client.conn?.connected,
+        });
         const socket: any = state.client.conn;
         if (typeof socket?.connect === "function") {
           socket.connect();
@@ -1968,6 +2207,19 @@ export class ConatClient extends EventEmitter {
         reconnectDebugWarn(
           `failed reconnecting routed hub client for host ${host_id}`,
           err,
+        );
+        state.lastConnectError = err;
+        logProjectHostRoutingDiagnostic(
+          "socket-connect-threw",
+          {
+            routing_key,
+            host_id,
+            project_id: authProjectId,
+            public_directory_share_id: state.public_directory_share_id,
+            address: state.address,
+            err: compactError(err),
+          },
+          "warn",
         );
         this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
         return false;
@@ -2018,14 +2270,7 @@ export class ConatClient extends EventEmitter {
         reconnectAttempts: state.reconnectAttempts,
       },
     );
-    let refreshed:
-      | {
-          host_id: string;
-          routing_key: string;
-          address: string;
-          host_session_id?: string;
-        }
-      | undefined;
+    let refreshed: HostRoutingInfo | undefined;
     try {
       refreshed = await this.refreshHostRoutingInfo(host_id);
     } catch (err) {
@@ -2076,6 +2321,16 @@ export class ConatClient extends EventEmitter {
       refreshed.host_session_id !== state.host_session_id
     ) {
       state.host_session_id = refreshed.host_session_id;
+      this.invalidateProjectHostToken(host_id, {
+        resetFailureState: true,
+      });
+      this.invalidateProjectHostBrowserSession(routing_key);
+    }
+    if (
+      refreshed?.public_directory_share_id != null &&
+      refreshed.public_directory_share_id !== state.public_directory_share_id
+    ) {
+      state.public_directory_share_id = refreshed.public_directory_share_id;
       this.invalidateProjectHostToken(host_id, {
         resetFailureState: true,
       });
@@ -2270,6 +2525,7 @@ export class ConatClient extends EventEmitter {
     routing_key = host_id,
     address,
     host_session_id,
+    public_directory_share_id,
     project_id,
     project_ids,
   }: {
@@ -2277,6 +2533,7 @@ export class ConatClient extends EventEmitter {
     routing_key?: string;
     address: string;
     host_session_id?: string;
+    public_directory_share_id?: string;
     project_id?: string;
     project_ids?: Iterable<string>;
   }): ReturnType<typeof connectToConat> => {
@@ -2287,6 +2544,14 @@ export class ConatClient extends EventEmitter {
         current.host_session_id !== host_session_id
       ) {
         current.host_session_id = host_session_id;
+        this.invalidateProjectHostToken(host_id, { resetFailureState: true });
+        this.invalidateProjectHostBrowserSession(routing_key);
+      }
+      if (
+        current.public_directory_share_id !== public_directory_share_id &&
+        public_directory_share_id != null
+      ) {
+        current.public_directory_share_id = public_directory_share_id;
         this.invalidateProjectHostToken(host_id, { resetFailureState: true });
         this.invalidateProjectHostBrowserSession(routing_key);
       }
@@ -2306,6 +2571,8 @@ export class ConatClient extends EventEmitter {
           nextAddress: address,
           previousRoutingKey: current.routing_key,
           nextRoutingKey: routing_key,
+          previousPublicDirectoryShareId: current.public_directory_share_id,
+          nextPublicDirectoryShareId: public_directory_share_id,
           project_id,
         },
       });
@@ -2315,6 +2582,7 @@ export class ConatClient extends EventEmitter {
       routing_key,
       address,
       host_session_id,
+      public_directory_share_id,
       project_ids: new Set<string>(),
       reconnectAttempts: 0,
       client: connectToConat({
@@ -2328,10 +2596,18 @@ export class ConatClient extends EventEmitter {
       }),
     };
     state.client.on("connected", () => {
+      logProjectHostRoutingDiagnostic("socket-connected", {
+        routing_key,
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+        public_directory_share_id: state.public_directory_share_id,
+      });
       reconnectDebugLog(`routed host connected ${host_id}`, {
         host_id,
         address: state.address,
         host_session_id: state.host_session_id,
+        public_directory_share_id: state.public_directory_share_id,
       });
       state.reconnectAttempts = 0;
       if (state.reconnectTimer != null) {
@@ -2346,6 +2622,17 @@ export class ConatClient extends EventEmitter {
     });
     state.client.on("info", (info) => {
       const error = `${info?.user?.error ?? ""}`.trim();
+      logProjectHostRoutingDiagnostic("socket-info", {
+        routing_key,
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+        public_directory_share_id: state.public_directory_share_id,
+        account_id: info?.user?.account_id,
+        project_id: info?.user?.project_id,
+        host_id_from_info: info?.user?.host_id,
+        error: error || undefined,
+      });
       if (!error || !this.isProjectHostAuthError({ message: error })) {
         return;
       }
@@ -2353,6 +2640,7 @@ export class ConatClient extends EventEmitter {
         host_id,
         address: state.address,
         host_session_id: state.host_session_id,
+        public_directory_share_id: state.public_directory_share_id,
         error,
       });
       this.noteProjectHostAuthBackoff(host_id, error);
@@ -2366,14 +2654,29 @@ export class ConatClient extends EventEmitter {
         host_id,
         address: state.address,
         host_session_id: state.host_session_id,
+        public_directory_share_id: state.public_directory_share_id,
       });
       this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
     });
     state.client.conn.on("connect_error", (err) => {
+      state.lastConnectError = err;
+      logProjectHostRoutingDiagnostic(
+        "socket-connect-error",
+        {
+          routing_key,
+          host_id,
+          address: state.address,
+          host_session_id: state.host_session_id,
+          public_directory_share_id: state.public_directory_share_id,
+          err: compactError(err),
+        },
+        "warn",
+      );
       console.warn(`routed host connect_error ${host_id}`, {
         host_id,
         address: state.address,
         host_session_id: state.host_session_id,
+        public_directory_share_id: state.public_directory_share_id,
         err,
       });
       if (this.isProjectHostAuthError(err)) {
@@ -2394,6 +2697,77 @@ export class ConatClient extends EventEmitter {
     this.routedHubClients[routing_key] = state;
     void this.connectRoutedHost({ routing_key, state, project_id });
     return state.client;
+  };
+
+  private ensureRoutedHubClientConnected = async ({
+    routing_key,
+    project_id,
+  }: {
+    routing_key: string;
+    project_id: string;
+  }): Promise<void> => {
+    const state = this.routedHubClients[routing_key];
+    if (!state) {
+      throw new Error(
+        `routed project-host client '${routing_key}' was not created`,
+      );
+    }
+    logProjectHostRoutingDiagnostic("ensure-connected-start", {
+      routing_key,
+      project_id,
+      host_id: state.host_id,
+      address: state.address,
+      host_session_id: state.host_session_id,
+      connected: !!state.client.conn?.connected,
+      signed_in: !!state.client.info?.user,
+    });
+    const connected = await this.connectRoutedHost({
+      routing_key,
+      state,
+      project_id,
+    });
+    if (!connected && !state.client.conn?.connected) {
+      logProjectHostRoutingDiagnostic(
+        "ensure-connected-waiting-for-sign-in",
+        {
+          routing_key,
+          project_id,
+          host_id: state.host_id,
+          address: state.address,
+          last_error: compactError(state.lastConnectError),
+        },
+        "warn",
+      );
+    }
+    try {
+      await state.client.waitUntilSignedIn({
+        timeout: PROJECT_HOST_AUTH_TIMEOUT_MS,
+      });
+      logProjectHostRoutingDiagnostic("ensure-connected-ok", {
+        routing_key,
+        project_id,
+        host_id: state.host_id,
+        address: state.address,
+        connected: !!state.client.conn?.connected,
+        user: state.client.info?.user,
+      });
+    } catch (err) {
+      state.lastConnectError = err;
+      logProjectHostRoutingDiagnostic(
+        "ensure-connected-failed",
+        {
+          routing_key,
+          project_id,
+          host_id: state.host_id,
+          address: state.address,
+          connected: !!state.client.conn?.connected,
+          user: state.client.info?.user,
+          err: compactError(err),
+        },
+        "warn",
+      );
+      throw err;
+    }
   };
 
   private permanentlyDisconnected = false;
@@ -2720,7 +3094,17 @@ export class ConatClient extends EventEmitter {
     }
     const routing = await this.ensureProjectRoutingInfo(project_id);
     if (routing) {
-      return this.getOrCreateRoutedHubClient({ ...routing, project_id });
+      const client = this.getOrCreateRoutedHubClient({
+        ...routing,
+        project_id,
+      });
+      if (requireRouting) {
+        await this.ensureRoutedHubClientConnected({
+          routing_key: routing.routing_key,
+          project_id,
+        });
+      }
+      return client;
     }
     if (requireRouting) {
       throw Error(

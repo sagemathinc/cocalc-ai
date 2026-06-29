@@ -637,6 +637,8 @@ export function registerAuthCommand(
       | {
           value: string;
           account_id?: string | null;
+          apiBaseUrl?: string | null;
+          bay_id?: string | null;
           fresh_auth_until?: string | Date | null;
           factor_level?: string | null;
         }
@@ -667,12 +669,16 @@ export function registerAuthCommand(
       }
       bootstrappedDevSession = {
         ...bootstrappedDevSession,
-        account_id: requestedAccountId,
+        account_id: bootstrappedDevSession.account_id ?? requestedAccountId,
       };
-      cookieHeader = buildCookieHeader(apiBaseUrl, {
+      const bootstrappedApiBaseUrl =
+        `${bootstrappedDevSession.apiBaseUrl ?? ""}`.trim()
+          ? normalizeUrl(`${bootstrappedDevSession.apiBaseUrl}`)
+          : apiBaseUrl;
+      cookieHeader = buildCookieHeader(bootstrappedApiBaseUrl, {
         ...effective,
         cookie: buildRememberMeCookieHeader(
-          apiBaseUrl,
+          bootstrappedApiBaseUrl,
           bootstrappedDevSession.value,
         ),
         hubPassword,
@@ -683,10 +689,10 @@ export function registerAuthCommand(
       const profileName = sanitizeProfileName(globals.profile);
       const next = {
         ...(config.profiles[profileName] ?? {}),
-        api: apiBaseUrl,
-        account_id: requestedAccountId,
+        api: bootstrappedApiBaseUrl,
+        account_id: bootstrappedDevSession.account_id ?? requestedAccountId,
         cookie: buildRememberMeCookieHeader(
-          apiBaseUrl,
+          bootstrappedApiBaseUrl,
           bootstrappedDevSession.value,
         ),
       };
@@ -707,6 +713,8 @@ export function registerAuthCommand(
             (`${bootstrappedDevSession.account_id ?? ""}`.trim() ||
               getExplicitAccountId(effective)) ??
             null,
+          api: `${bootstrappedDevSession.apiBaseUrl ?? ""}`.trim() || null,
+          bay_id: `${bootstrappedDevSession.bay_id ?? ""}`.trim() || null,
           factor_level:
             `${bootstrappedDevSession.factor_level ?? "totp"}`.trim() || null,
           fresh_auth_until: bootstrappedDevSession.fresh_auth_until

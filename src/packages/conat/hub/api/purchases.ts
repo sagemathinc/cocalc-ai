@@ -58,6 +58,7 @@ export interface MembershipUsageLimits {
   blob_account_count?: number;
   blob_project_total_bytes?: number;
   blob_project_count?: number;
+  public_directory_shares?: number;
   rootfs_count?: number;
   rootfs_total_storage_gb?: number;
   rootfs_max_storage_gb?: number;
@@ -145,6 +146,7 @@ export interface AccountUsageLimitOverrides {
   blob_account_count?: NumericLimitRule;
   blob_project_total_bytes?: NumericLimitRule;
   blob_project_count?: NumericLimitRule;
+  public_directory_shares?: NumericLimitRule;
   rootfs_count?: NumericLimitRule;
   rootfs_total_storage_gb?: NumericLimitRule;
   rootfs_max_storage_gb?: NumericLimitRule;

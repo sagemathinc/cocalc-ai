@@ -4,28 +4,54 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { assertCollab } from "@cocalc/server/conat/api/util";
 import { getSiteLicenseOverview } from "@cocalc/server/conat/api/purchases";
-import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import { getProjectFsClient } from "@cocalc/server/conat/file-server-client";
 import createProject from "@cocalc/server/projects/create";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
-import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveHostBayAcrossCluster,
+  resolveProjectBayAcrossCluster,
+} from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
-import { assignSiteLicensePoolSeat as assignSiteLicensePoolSeatDirect } from "@cocalc/server/membership/site-licenses";
+import {
+  assignSiteLicensePoolSeat as assignSiteLicensePoolSeatDirect,
+  revokeSiteLicensePoolSeat as revokeSiteLicensePoolSeatDirect,
+} from "@cocalc/server/membership/site-licenses";
 import {
   assertCanIncreaseAccountStorage,
   getProjectOwnerAccountId,
+  getPublicDirectoryShareLimitForAccount,
 } from "@cocalc/server/membership/project-limits";
 import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
+import {
+  getProjectLabels,
+  setProjectLabels,
+  type ProjectLabelPatch,
+} from "@cocalc/server/projects/labels";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
+import {
+  DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT,
+  MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+  PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX,
+  publicDirectoryShareProjectLabelKey,
+  publicDirectoryShareProjectLabelValue,
+} from "@cocalc/util/public-directory-share-labels";
 import {
   viewerReadPolicyAllowsPath,
   type ProjectViewerReadPolicy,
@@ -46,14 +72,21 @@ import type {
   PublicDirectoryShareAvailability,
   PublicDirectoryShareDirectoryEntry,
   PublicDirectoryShareSummary,
+  PublicDirectoryShareTheme,
   PublicDirectoryShareVisibility,
   CopyPublicDirectoryShareToNewProjectOptions,
   CopyPublicDirectoryShareToNewProjectResponse,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
+  DisableMyPublicDirectorySharesByActorOptions,
+  DisableMyPublicDirectorySharesByActorResponse,
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
   CreatePublicDirectoryShareOptions,
+  GetTemporaryViewerReadPolicyOptions,
+  GetTemporaryViewerReadPolicyResponse,
+  GrantTemporaryViewerAccessOptions,
+  GrantTemporaryViewerAccessResponse,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
   UpdatePublicDirectoryShareOptions,
@@ -62,6 +95,8 @@ import type {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
+const DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS = 7;
+const log = getLogger("server:public-directory-shares");
 
 type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
   metadata?: Record<string, unknown> | null;
@@ -101,6 +136,26 @@ interface SiteLicenseGrantConfig {
   copy_requires_grant: boolean;
 }
 
+type TemporaryViewerGrantRow = {
+  id: string;
+  public_project_path_id: string;
+  project_id: string;
+  account_id: string;
+  read_policy: ProjectViewerReadPolicy;
+  status: string;
+  expires_at: Date | string;
+};
+
+type PublicShareSiteLicenseGrantRow = {
+  id: string;
+  public_project_path_id: string;
+  assignment_id: string;
+  package_id: string;
+  target_account_id: string;
+  actor_account_id: string;
+  status: string;
+};
+
 function isSlugUniqueViolation(err: unknown): boolean {
   const error = err as PostgresErrorLike | undefined;
   return (
@@ -124,6 +179,11 @@ export function normalizePublicDirectoryShareSlug(slug: string): string {
   if (!trimmed) {
     throw Error("slug must be nonempty");
   }
+  if (trimmed.length > MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH) {
+    throw Error(
+      `slug must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH} characters`,
+    );
+  }
   if (trimmed.includes("//")) {
     throw Error("slug must not contain duplicate slashes");
   }
@@ -140,12 +200,24 @@ export function normalizePublicDirectoryShareSlug(slug: string): string {
 
 export function normalizePublicDirectorySharePath(path: string): string {
   const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
+  if (
+    posix.isAbsolute(raw) &&
+    raw !== "/home/user" &&
+    !raw.startsWith("/home/user/")
+  ) {
+    throw Error("path must be in /home/user");
+  }
   const runtimeHomeRelative = projectRuntimeHomeRelativePath(raw);
   const normalizedPath =
     runtimeHomeRelative == null ? raw : runtimeHomeRelative;
   const trimmed = normalizedPath.trim().replace(/^\/+|\/+$/g, "");
   if (!trimmed || trimmed === ".") {
     return ".";
+  }
+  if (trimmed.length > MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH) {
+    throw Error(
+      `path must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH} characters`,
+    );
   }
   if (trimmed.includes("//")) {
     throw Error("path must not contain duplicate slashes");
@@ -208,6 +280,133 @@ function defaultTitleForPath(path: string): string {
   return posix.basename(path) || path;
 }
 
+function normalizeOptionalPublicShareText({
+  field,
+  maxLength,
+  value,
+}: {
+  field: string;
+  maxLength: number;
+  value?: string | null;
+}): string | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  if (text.length > maxLength) {
+    throw Error(`${field} must be at most ${maxLength} characters`);
+  }
+  return text;
+}
+
+function normalizePublicShareTitle({
+  fallback,
+  value,
+}: {
+  fallback: string;
+  value?: string | null;
+}): string {
+  const fallbackTitle = fallback.slice(
+    0,
+    MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+  );
+  return (
+    normalizeOptionalPublicShareText({
+      field: "title",
+      maxLength: MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+      value,
+    }) ?? fallbackTitle
+  );
+}
+
+function normalizePublicShareDescription(value?: string | null): string | null {
+  return normalizeOptionalPublicShareText({
+    field: "description",
+    maxLength: MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH,
+    value,
+  });
+}
+
+function normalizePublicShareLicense(value?: string | null): string | null {
+  return normalizeOptionalPublicShareText({
+    field: "license",
+    maxLength: MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH,
+    value,
+  });
+}
+
+function normalizePublicShareThemeString({
+  field,
+  value,
+  maxLength = 256,
+}: {
+  field: string;
+  value?: string | null;
+  maxLength?: number;
+}): string | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  if (text.length > maxLength) {
+    throw Error(`${field} must be at most ${maxLength} characters`);
+  }
+  return text;
+}
+
+function normalizePublicShareThemeStyle(
+  theme?: PublicDirectoryShareTheme | null,
+): PublicDirectoryShareTheme | null {
+  if (theme == null) return null;
+  const normalized: PublicDirectoryShareTheme = {
+    color: normalizePublicShareThemeString({
+      field: "theme color",
+      value: theme.color,
+      maxLength: 64,
+    }),
+    accent_color: normalizePublicShareThemeString({
+      field: "theme accent color",
+      value: theme.accent_color,
+      maxLength: 64,
+    }),
+    icon: normalizePublicShareThemeString({
+      field: "theme icon",
+      value: theme.icon,
+      maxLength: 128,
+    }),
+    image_blob: normalizePublicShareThemeString({
+      field: "theme image",
+      value: theme.image_blob,
+      maxLength: 256,
+    }),
+  };
+  return Object.values(normalized).some((value) => value != null)
+    ? normalized
+    : null;
+}
+
+function publicShareThemeFromMetadata(
+  metadata?: Record<string, unknown> | null,
+): PublicDirectoryShareTheme | null {
+  const theme = metadata?.theme as PublicDirectoryShareTheme | undefined | null;
+  return normalizePublicShareThemeStyle(theme);
+}
+
+function publicShareMetadataWithTheme({
+  metadata,
+  theme,
+}: {
+  metadata?: Record<string, unknown> | null;
+  theme?: PublicDirectoryShareTheme | null;
+}): Record<string, unknown> {
+  const next = { ...(metadata ?? {}) };
+  if (theme !== undefined) {
+    const normalized = normalizePublicShareThemeStyle(theme);
+    if (normalized == null) {
+      delete next.theme;
+    } else {
+      next.theme = normalized;
+    }
+  }
+  return next;
+}
+
 function defaultCopiedProjectTitle(
   share: ResolvedPublicDirectoryShare,
 ): string {
@@ -238,12 +437,23 @@ export function publicDirectoryShareReadPolicyForPath(
       ...include,
       { action: "exclude", path: ".snapshots" },
       { action: "exclude", path: ".snapshots/**" },
+      { action: "exclude", path: ".backups" },
+      { action: "exclude", path: ".backups/**" },
       { action: "exclude", path: ".ssh" },
       { action: "exclude", path: ".ssh/**" },
-      { action: "exclude", path: ".local/share/cocalc" },
-      { action: "exclude", path: ".local/share/cocalc/**" },
+      { action: "exclude", path: ".cache" },
+      { action: "exclude", path: ".cache/**" },
+      { action: "exclude", path: ".local" },
+      { action: "exclude", path: ".local/**" },
     ],
   };
+}
+
+function assertPublicDirectorySharePathAllowed(path: string): void {
+  const readPolicy = publicDirectoryShareReadPolicyForPath(path);
+  if (!viewerReadPolicyAllowsPath({ policy: readPolicy, path })) {
+    throw Error("path is excluded from public sharing");
+  }
 }
 
 function joinProjectSharePath(rootPath: string, relativePath: string): string {
@@ -273,9 +483,50 @@ function entryAllowed({
   });
 }
 
+async function copySourceForPublicDirectoryShare({
+  account_id,
+  share,
+  relativePath,
+}: {
+  account_id: string;
+  share: ResolvedPublicDirectoryShare;
+  relativePath: string;
+}): Promise<{
+  project_id: string;
+  path: string | string[];
+  base_path?: string;
+}> {
+  const projectPath = joinProjectSharePath(share.path, relativePath);
+  if (projectPath !== ".") {
+    return {
+      project_id: share.project_id,
+      path: projectPath,
+    };
+  }
+
+  const fs = await getProjectFsClient({
+    account_id,
+    project_id: share.project_id,
+  });
+  const listing = await fs.getListing(".");
+  const paths = Object.keys(listing.files ?? {})
+    .filter((name) => name !== "." && name !== "..")
+    .filter((name) => entryAllowed({ share, relativePath: name }))
+    .sort((left, right) => left.localeCompare(right));
+  if (paths.length === 0) {
+    throw Error("This shared project has no files available to copy.");
+  }
+  return {
+    project_id: share.project_id,
+    path: paths,
+    base_path: ".",
+  };
+}
+
 function rowToSummary(
   row: PublicDirectoryShareRow,
 ): PublicDirectoryShareSummary {
+  const themeStyle = publicShareThemeFromMetadata(row.metadata);
   return {
     id: row.id,
     project_id: row.project_id,
@@ -289,6 +540,14 @@ function rowToSummary(
     description: row.description ?? null,
     license: row.license ?? null,
     image: row.image ?? null,
+    theme: {
+      title: row.title ?? null,
+      description: row.description ?? null,
+      color: themeStyle?.color ?? null,
+      accent_color: themeStyle?.accent_color ?? null,
+      icon: themeStyle?.icon ?? null,
+      image_blob: row.image ?? themeStyle?.image_blob ?? null,
+    },
     redirect: row.redirect ?? null,
     legacy_public_path_id: row.legacy_public_path_id ?? null,
     legacy_url: row.legacy_url ?? null,
@@ -301,10 +560,58 @@ function rowToSummary(
     site_license_copy_requires_grant:
       row.site_license_copy_requires_grant === true,
     disabled: row.disabled === true,
+    created_by: row.created_by ?? null,
+    updated_by: row.updated_by ?? null,
     last_edited: row.last_edited ?? null,
     created_at: row.created_at ?? null,
     updated_at: row.updated_at ?? null,
   };
+}
+
+async function syncPublicDirectoryShareProjectLabels({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id?: string | null;
+}): Promise<void> {
+  try {
+    const [currentLabels, { rows }] = await Promise.all([
+      getProjectLabels({ project_id }),
+      getPool().query<PublicDirectoryShareRow>(
+        `
+          SELECT *
+          FROM public_project_paths
+          WHERE project_id=$1
+            AND disabled IS FALSE
+            AND visibility <> 'disabled'
+          ORDER BY path ASC, slug ASC
+        `,
+        [project_id],
+      ),
+    ]);
+
+    const labels: ProjectLabelPatch = {};
+    for (const key of Object.keys(currentLabels)) {
+      if (key.startsWith(PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX)) {
+        labels[key] = null;
+      }
+    }
+    for (const row of rows) {
+      const value = publicDirectoryShareProjectLabelValue(rowToSummary(row));
+      if (value == null) continue;
+      labels[publicDirectoryShareProjectLabelKey(row.id)] = value;
+    }
+    if (Object.keys(labels).length === 0) return;
+
+    await setProjectLabels({ project_id, account_id, labels });
+  } catch (err) {
+    log.warn("failed to sync public directory share project labels", {
+      project_id,
+      account_id,
+      error: `${err}`,
+    });
+  }
 }
 
 export async function ensurePublicDirectorySharesSchema(): Promise<void> {
@@ -357,6 +664,11 @@ export async function ensurePublicDirectorySharesSchema(): Promise<void> {
         WHERE disabled IS FALSE
     `);
     await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_paths_created_by_active_idx
+        ON public_project_paths(created_by)
+        WHERE disabled IS FALSE AND visibility <> 'disabled'
+    `);
+    await pool.query(`
       CREATE INDEX IF NOT EXISTS public_project_paths_availability_status_idx
         ON public_project_paths(availability_status)
     `);
@@ -398,6 +710,60 @@ export async function ensurePublicDirectorySharesSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS public_project_path_slugs_owning_bay_id_idx
         ON public_project_path_slugs(owning_bay_id)
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public_project_path_viewer_grants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        public_project_path_id UUID NOT NULL,
+        project_id UUID NOT NULL,
+        account_id UUID NOT NULL,
+        read_policy JSONB NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'active',
+        grant_reason TEXT NOT NULL DEFAULT 'share-url',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_used_at TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP,
+        revoked_by UUID,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        UNIQUE(public_project_path_id, account_id)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_viewer_grants_project_account_idx
+        ON public_project_path_viewer_grants(project_id, account_id)
+        WHERE status = 'active'
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_viewer_grants_expiry_idx
+        ON public_project_path_viewer_grants(expires_at)
+        WHERE status = 'active'
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public_project_path_site_license_grants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        public_project_path_id UUID NOT NULL,
+        assignment_id UUID NOT NULL,
+        package_id UUID NOT NULL,
+        target_account_id UUID NOT NULL,
+        actor_account_id UUID NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        revoked_at TIMESTAMP,
+        revoked_by UUID,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        UNIQUE(public_project_path_id, assignment_id)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_site_license_grants_share_idx
+        ON public_project_path_site_license_grants(public_project_path_id)
+        WHERE status = 'active'
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_path_site_license_grants_assignment_idx
+        ON public_project_path_site_license_grants(assignment_id)
+        WHERE status = 'active'
+    `);
   })();
   await schemaReady;
 }
@@ -412,6 +778,48 @@ async function assertEnabled(): Promise<void> {
 async function assertAdmin(account_id: string | undefined): Promise<void> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("user must be an admin");
+  }
+}
+
+async function getActivePublicDirectoryShareCountForAccount(
+  account_id: string,
+): Promise<number> {
+  const { rows } = await getPool().query<{ count: string | number }>(
+    `
+      SELECT COUNT(*) AS count
+      FROM public_project_paths
+      WHERE created_by=$1
+        AND disabled IS FALSE
+        AND visibility <> 'disabled'
+    `,
+    [account_id],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function assertCanCreatePublicDirectoryShare(
+  account_id: string,
+): Promise<void> {
+  const [limit, current] = await Promise.all([
+    getPublicDirectoryShareLimitForAccount({ account_id }).catch((err) => {
+      log.warn(
+        "failed to resolve public directory share limit; using default",
+        {
+          account_id,
+          error: `${err}`,
+        },
+      );
+      return DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT;
+    }),
+    getActivePublicDirectoryShareCountForAccount(account_id),
+  ]);
+  const effectiveLimit = Number.isFinite(limit)
+    ? limit
+    : DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT;
+  if (current >= effectiveLimit) {
+    throw Error(
+      `public directory share limit reached (${current}/${effectiveLimit}); disable an existing public share or upgrade membership`,
+    );
   }
 }
 
@@ -431,6 +839,90 @@ function seedSiteLicenseClient() {
     client: getInterBayFabricClient(),
     dest_bay: getConfiguredClusterSeedBayId(),
   });
+}
+
+async function revokeShareSiteLicenseGrant({
+  grant,
+  revoked_by,
+}: {
+  grant: PublicShareSiteLicenseGrantRow;
+  revoked_by?: string | null;
+}): Promise<void> {
+  const { rows } = await getPool().query<{ id: string }>(
+    `
+      SELECT id
+      FROM membership_package_assignments
+      WHERE id=$1
+        AND package_id=$2
+        AND account_id=$3
+        AND revoked_at IS NULL
+      LIMIT 1
+    `,
+    [grant.assignment_id, grant.package_id, grant.target_account_id],
+  );
+  if (!rows[0]) {
+    await getPool().query(
+      `
+        UPDATE public_project_path_site_license_grants
+        SET status='stale',
+            revoked_at=NOW(),
+            revoked_by=$2
+        WHERE id=$1
+          AND status='active'
+      `,
+      [grant.id, revoked_by ?? null],
+    );
+    return;
+  }
+  const actorAccountId = revoked_by ?? grant.actor_account_id;
+  const revoked =
+    getConfiguredBayId() === getConfiguredClusterSeedBayId()
+      ? await revokeSiteLicensePoolSeatDirect({
+          actor_account_id: actorAccountId,
+          package_id: grant.package_id,
+          target_account_id: grant.target_account_id,
+          trusted_admin: true,
+        })
+      : (
+          await seedSiteLicenseClient().revokeSiteLicensePoolSeat({
+            actor_account_id: actorAccountId,
+            package_id: grant.package_id,
+            target_account_id: grant.target_account_id,
+            trusted_admin: true,
+          })
+        ).revoked;
+  await getPool().query(
+    `
+      UPDATE public_project_path_site_license_grants
+      SET status=$2,
+          revoked_at=NOW(),
+          revoked_by=$3
+      WHERE id=$1
+        AND status='active'
+    `,
+    [grant.id, revoked ? "revoked" : "stale", actorAccountId],
+  );
+}
+
+async function revokeShareSiteLicenseGrants({
+  public_project_path_id,
+  revoked_by,
+}: {
+  public_project_path_id: string;
+  revoked_by?: string | null;
+}): Promise<void> {
+  const { rows } = await getPool().query<PublicShareSiteLicenseGrantRow>(
+    `
+      SELECT *
+      FROM public_project_path_site_license_grants
+      WHERE public_project_path_id=$1
+        AND status='active'
+    `,
+    [public_project_path_id],
+  );
+  for (const grant of rows) {
+    await revokeShareSiteLicenseGrant({ grant, revoked_by });
+  }
 }
 
 async function validateSiteLicenseGrantConfig(
@@ -499,21 +991,49 @@ async function assignSiteLicenseGrantForShare({
     row.site_license_duration_days,
   );
   const expiresAt = siteLicenseGrantExpiresAt(durationDays);
-  if (getConfiguredBayId() === getConfiguredClusterSeedBayId()) {
-    await assignSiteLicensePoolSeatDirect({
-      actor_account_id: actorAccountId,
-      package_id: packageId,
-      target_account_id: account_id,
-      grant_expires_at: expiresAt,
-    });
-  } else {
-    await seedSiteLicenseClient().assignSiteLicensePoolSeat({
-      actor_account_id: actorAccountId,
-      package_id: packageId,
-      target_account_id: account_id,
-      grant_expires_at: expiresAt,
-    });
-  }
+  const assignment =
+    getConfiguredBayId() === getConfiguredClusterSeedBayId()
+      ? await assignSiteLicensePoolSeatDirect({
+          actor_account_id: actorAccountId,
+          package_id: packageId,
+          target_account_id: account_id,
+          grant_expires_at: expiresAt,
+        })
+      : await seedSiteLicenseClient().assignSiteLicensePoolSeat({
+          actor_account_id: actorAccountId,
+          package_id: packageId,
+          target_account_id: account_id,
+          grant_expires_at: expiresAt,
+        });
+  await getPool().query(
+    `
+      INSERT INTO public_project_path_site_license_grants (
+        public_project_path_id, assignment_id, package_id, target_account_id,
+        actor_account_id, status, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, 'active', $6::jsonb)
+      ON CONFLICT (public_project_path_id, assignment_id) DO UPDATE SET
+        package_id=EXCLUDED.package_id,
+        target_account_id=EXCLUDED.target_account_id,
+        actor_account_id=EXCLUDED.actor_account_id,
+        status='active',
+        revoked_at=NULL,
+        revoked_by=NULL,
+        metadata=EXCLUDED.metadata
+    `,
+    [
+      row.id,
+      assignment.id,
+      packageId,
+      account_id,
+      actorAccountId,
+      JSON.stringify({
+        slug: row.slug,
+        grant_id: assignment.grant_id ?? null,
+        expires_at: expiresAt.toISOString(),
+      }),
+    ],
+  );
   const membershipClass = row.site_license_membership_tier_id ?? null;
   return {
     granted: true,
@@ -567,6 +1087,44 @@ function publicShareHostConnection(
       : undefined,
     online: status === "running",
   };
+}
+
+async function resolvePublicShareHostConnection({
+  account_id,
+  row,
+}: {
+  account_id: string;
+  row: PublicDirectoryShareRow;
+}): Promise<HostConnectionInfo | null> {
+  const local = publicShareHostConnection(row);
+  if (local?.ready) {
+    return local;
+  }
+  if (!row.host_id) {
+    return local;
+  }
+  const hostBay = await resolveHostBayAcrossCluster(row.host_id);
+  if (!hostBay?.bay_id || hostBay.bay_id === getConfiguredBayId()) {
+    return local;
+  }
+  try {
+    return await getInterBayBridge()
+      .hostConnection(hostBay.bay_id, { timeout_ms: 10_000 })
+      .get({
+        account_id,
+        host_id: row.host_id,
+        project_id: row.project_id,
+        public_directory_share_id: row.id,
+      });
+  } catch (err) {
+    log.warn("failed to resolve public share host connection across bays", {
+      project_id: row.project_id,
+      host_id: row.host_id,
+      host_bay_id: hostBay.bay_id,
+      err: `${(err as Error | undefined)?.message ?? err}`,
+    });
+    return local;
+  }
 }
 
 async function resolveRow({
@@ -636,6 +1194,8 @@ async function resolveRow({
   let availabilityStatus = summary.availability_status;
   let availabilityMessage = summary.availability_message ?? null;
   let owningBayId = row.owning_bay_id ?? null;
+  let projectTitle = row.project_title ?? null;
+  let hostId = row.host_id ?? null;
   if (availabilityStatus !== "available") {
     const ownership = await resolveProjectBayAcrossCluster(row.project_id);
     if (ownership?.bay_id) {
@@ -644,6 +1204,36 @@ async function resolveRow({
       owningBayId = ownership.bay_id;
     }
   }
+  if (
+    (!owningBayId || !hostId || !projectTitle) &&
+    availabilityStatus === "available"
+  ) {
+    const ownership = await resolveProjectBayAcrossCluster(row.project_id);
+    if (ownership?.bay_id) {
+      try {
+        const project = await getInterBayBridge()
+          .projectReference(ownership.bay_id, { timeout_ms: 10_000 })
+          .get({ account_id, project_id: row.project_id });
+        if (project != null) {
+          owningBayId = owningBayId ?? project.owning_bay_id;
+          hostId = hostId ?? project.host_id;
+          projectTitle = projectTitle ?? project.title;
+        }
+      } catch (err) {
+        log.warn("failed to resolve public share project reference", {
+          project_id: row.project_id,
+          project_bay_id: ownership.bay_id,
+          err: `${(err as Error | undefined)?.message ?? err}`,
+        });
+      }
+    }
+  }
+  const rowWithProjectReference: PublicDirectoryShareRow = {
+    ...row,
+    host_id: hostId,
+    owning_bay_id: owningBayId,
+    project_title: projectTitle,
+  };
   return {
     row,
     share: {
@@ -652,11 +1242,14 @@ async function resolveRow({
       availability_message: availabilityMessage,
       available: availabilityStatus === "available",
       read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
-      project_title: row.project_title ?? null,
-      host_id: row.host_id ?? null,
+      project_title: projectTitle,
+      host_id: hostId,
       host_connection:
         availabilityStatus === "available"
-          ? publicShareHostConnection(row)
+          ? await resolvePublicShareHostConnection({
+              account_id,
+              row: rowWithProjectReference,
+            })
           : null,
       owning_bay_id: owningBayId,
     },
@@ -667,6 +1260,140 @@ export async function resolve(
   opts: ResolvePublicDirectoryShareOptions,
 ): Promise<ResolvedPublicDirectoryShare> {
   return (await resolveRow(opts)).share;
+}
+
+function temporaryViewerGrantExpiresAt(): Date {
+  return new Date(
+    Date.now() + DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS * 24 * 60 * 60 * 1000,
+  );
+}
+
+function projectViewerUrl(share: ResolvedPublicDirectoryShare): string {
+  const encodedPath =
+    share.path === "."
+      ? ""
+      : `/${share.path.split("/").map(encodeURIComponent).join("/")}`;
+  return `/projects/${share.project_id}/files${encodedPath}?viewer=1&share=${encodeURIComponent(share.id)}`;
+}
+
+async function revokeTemporaryViewerGrantsForShare({
+  public_project_path_id,
+  revoked_by,
+  status = "revoked",
+}: {
+  public_project_path_id: string;
+  revoked_by?: string | null;
+  status?: "revoked" | "disabled";
+}): Promise<void> {
+  await getPool().query(
+    `
+      UPDATE public_project_path_viewer_grants
+      SET status=$2,
+          revoked_at=NOW(),
+          revoked_by=$3
+      WHERE public_project_path_id=$1
+        AND status='active'
+    `,
+    [public_project_path_id, status, revoked_by ?? null],
+  );
+}
+
+export async function grantTemporaryViewerAccess({
+  account_id,
+  slug,
+}: GrantTemporaryViewerAccessOptions): Promise<GrantTemporaryViewerAccessResponse> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  const { share } = await resolveRow({ account_id, slug });
+  if (!share.available) {
+    throw Error(
+      share.availability_message || "This shared directory is not available.",
+    );
+  }
+  const expiresAt = temporaryViewerGrantExpiresAt();
+  await getPool().query(
+    `
+      INSERT INTO public_project_path_viewer_grants (
+        public_project_path_id, project_id, account_id, read_policy, status,
+        grant_reason, expires_at, last_used_at, metadata
+      )
+      VALUES ($1, $2, $3, $4::jsonb, 'active', 'share-url', $5, NOW(), $6::jsonb)
+      ON CONFLICT (public_project_path_id, account_id) DO UPDATE SET
+        project_id=EXCLUDED.project_id,
+        read_policy=EXCLUDED.read_policy,
+        status='active',
+        expires_at=EXCLUDED.expires_at,
+        last_used_at=NOW(),
+        revoked_at=NULL,
+        revoked_by=NULL,
+        metadata=EXCLUDED.metadata
+    `,
+    [
+      share.id,
+      share.project_id,
+      account_id,
+      JSON.stringify(share.read_policy),
+      expiresAt,
+      JSON.stringify({ slug: share.slug }),
+    ],
+  );
+  return {
+    project_id: share.project_id,
+    share_id: share.id,
+    path: share.path,
+    read_policy: share.read_policy,
+    expires_at: expiresAt,
+    project_url: projectViewerUrl(share),
+    project_title: share.project_title,
+    share_title: share.title,
+    share_description: share.description,
+    license: share.license,
+    image: share.image,
+    theme: share.theme,
+    site_license_grant_on_copy: share.site_license_grant_on_copy,
+    site_license_copy_requires_grant: share.site_license_copy_requires_grant,
+    host_id: share.host_id,
+    host_connection: share.host_connection,
+    owning_bay_id: share.owning_bay_id,
+  };
+}
+
+export async function getTemporaryViewerReadPolicy({
+  account_id,
+  project_id,
+}: GetTemporaryViewerReadPolicyOptions): Promise<GetTemporaryViewerReadPolicyResponse> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  const { rows } = await getPool().query<TemporaryViewerGrantRow>(
+    `
+      SELECT g.*
+      FROM public_project_path_viewer_grants g
+      JOIN public_project_paths p ON p.id=g.public_project_path_id
+      WHERE g.project_id=$1
+        AND g.account_id=$2
+        AND g.status='active'
+        AND g.expires_at > NOW()
+        AND p.disabled IS FALSE
+        AND p.visibility <> 'disabled'
+        AND p.project_id=g.project_id
+    `,
+    [project_id, account_id],
+  );
+  const rules = rows.flatMap((row) =>
+    Array.isArray(row.read_policy?.rules) ? row.read_policy.rules : [],
+  );
+  return {
+    project_id,
+    account_id,
+    read_policy: rules.length > 0 ? { rules } : undefined,
+  };
 }
 
 export async function authorizeRead({
@@ -859,6 +1586,57 @@ export async function listProject({
   };
 }
 
+export async function disableMineByActor({
+  account_id,
+  session_hash,
+  actor_account_id,
+}: DisableMyPublicDirectorySharesByActorOptions): Promise<DisableMyPublicDirectorySharesByActorResponse> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(actor_account_id)) {
+    throw Error("invalid actor_account_id");
+  }
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  if (!cleanedSessionHash) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  await requireFreshAuthForSessionHash({
+    account_id,
+    session_hash: cleanedSessionHash,
+  });
+  const { rows } = await getPool().query<{ id: string }>(
+    `
+      SELECT pps.id
+      FROM public_project_paths pps
+      JOIN projects p ON p.project_id=pps.project_id
+      WHERE COALESCE(p.users -> $1::text ->> 'group', '') IN ('owner', 'collaborator')
+        AND pps.disabled IS FALSE
+        AND pps.visibility <> 'disabled'
+        AND (pps.created_by=$2::uuid OR pps.updated_by=$2::uuid)
+      ORDER BY pps.updated_at DESC, pps.created_at DESC
+    `,
+    [account_id, actor_account_id],
+  );
+  const shareIds: string[] = [];
+  for (const { id } of rows) {
+    await update({
+      account_id,
+      id,
+      disabled: true,
+    });
+    shareIds.push(id);
+  }
+  return {
+    disabled_count: shareIds.length,
+    share_ids: shareIds,
+  };
+}
+
 export async function upsert(
   opts: UpsertPublicDirectoryShareOptions,
 ): Promise<PublicDirectoryShareSummary> {
@@ -875,10 +1653,28 @@ async function savePublicDirectoryShare(
   }
   const slug = normalizePublicDirectoryShareSlug(opts.slug);
   const path = normalizePublicDirectorySharePath(opts.path);
+  assertPublicDirectorySharePathAllowed(path);
   const visibility = normalizeVisibility(opts.visibility);
   const availabilityStatus = normalizeAvailability(opts.availability_status);
   const disabled = opts.disabled === true || visibility === "disabled";
   const id = opts.id && isValidUUID(opts.id) ? opts.id : undefined;
+  const title = normalizeOptionalPublicShareText({
+    field: "title",
+    maxLength: MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+    value: opts.title,
+  });
+  const description = normalizePublicShareDescription(opts.description);
+  const license = normalizePublicShareLicense(opts.license);
+  const image =
+    normalizePublicShareThemeString({
+      field: "image",
+      value: opts.image ?? opts.theme?.image_blob,
+      maxLength: 256,
+    }) ?? null;
+  const metadata = publicShareMetadataWithTheme({
+    metadata: opts.metadata,
+    theme: opts.theme,
+  });
   const bayId = getConfiguredBayId();
   const params = [
     id,
@@ -889,10 +1685,10 @@ async function savePublicDirectoryShare(
     opts.requires_auth !== false,
     availabilityStatus,
     opts.availability_message ?? null,
-    opts.title ?? null,
-    opts.description ?? null,
-    opts.license ?? null,
-    opts.image ?? null,
+    title,
+    description,
+    license,
+    image,
     opts.redirect ?? null,
     opts.site_license_id ?? null,
     opts.site_license_pool_id ?? null,
@@ -900,7 +1696,7 @@ async function savePublicDirectoryShare(
     opts.site_license_duration_days ?? null,
     opts.site_license_grant_on_copy === true,
     opts.site_license_copy_requires_grant === true,
-    JSON.stringify(opts.metadata ?? {}),
+    JSON.stringify(metadata),
     opts.legacy_public_path_id ?? null,
     opts.legacy_url ?? null,
     opts.account_id ?? null,
@@ -986,6 +1782,21 @@ async function savePublicDirectoryShare(
     `,
     [slug, bayId, row.id, row.project_id, row.disabled],
   );
+  if (row.disabled || row.visibility === "disabled") {
+    await revokeTemporaryViewerGrantsForShare({
+      public_project_path_id: row.id,
+      revoked_by: opts.account_id ?? null,
+      status: "disabled",
+    });
+    await revokeShareSiteLicenseGrants({
+      public_project_path_id: row.id,
+      revoked_by: opts.account_id ?? null,
+    });
+  }
+  await syncPublicDirectoryShareProjectLabels({
+    project_id: row.project_id,
+    account_id: opts.account_id ?? null,
+  });
   return rowToSummary(row);
 }
 
@@ -1042,7 +1853,7 @@ export async function update(
     title: opts.title ?? current.title ?? null,
     description: opts.description ?? current.description ?? null,
     license: opts.license ?? current.license ?? null,
-    image: current.image ?? null,
+    image: opts.image ?? opts.theme?.image_blob ?? current.image ?? null,
     redirect: current.redirect ?? null,
     legacy_public_path_id: current.legacy_public_path_id ?? null,
     legacy_url: current.legacy_url ?? null,
@@ -1055,6 +1866,7 @@ export async function update(
     site_license_copy_requires_grant:
       siteLicenseGrant?.copy_requires_grant ?? false,
     metadata: current.metadata ?? {},
+    theme: opts.theme,
     last_edited: current.last_edited ?? null,
     disabled,
   });
@@ -1075,14 +1887,12 @@ export async function create(
     account_id: opts.account_id,
     project_id: opts.project_id,
   });
+  await assertCanCreatePublicDirectoryShare(opts.account_id);
   const slug = normalizePublicDirectoryShareSlug(opts.slug);
   const path = normalizePublicDirectorySharePath(opts.path);
-  const fs = (
-    await getExplicitProjectRoutedClient({
-      account_id: opts.account_id,
-      project_id: opts.project_id,
-    })
-  ).fs({
+  assertPublicDirectorySharePathAllowed(path);
+  const fs = await getProjectFsClient({
+    account_id: opts.account_id,
     project_id: opts.project_id,
   });
   try {
@@ -1101,9 +1911,14 @@ export async function create(
     visibility: "unlisted",
     requires_auth: true,
     availability_status: "available",
-    title: opts.title?.trim() || defaultTitleForPath(path),
-    description: opts.description?.trim() || null,
-    license: opts.license?.trim() || null,
+    title: normalizePublicShareTitle({
+      fallback: defaultTitleForPath(path),
+      value: opts.title,
+    }),
+    description: normalizePublicShareDescription(opts.description),
+    license: normalizePublicShareLicense(opts.license),
+    image: opts.image ?? opts.theme?.image_blob ?? null,
+    theme: opts.theme,
     site_license_id: siteLicenseGrant?.site_license_id ?? null,
     site_license_pool_id: siteLicenseGrant?.site_license_pool_id ?? null,
     site_license_membership_tier_id:
@@ -1179,6 +1994,11 @@ export async function copyToProject({
     throw Error("path is not part of this shared directory");
   }
   const destPath = normalizePublicDirectorySharePath(destination_path ?? ".");
+  const copySource = await copySourceForPublicDirectoryShare({
+    account_id,
+    share,
+    relativePath,
+  });
   const op = await createLro({
     kind: "copy-path-between-projects",
     scope_type: "project",
@@ -1187,8 +2007,7 @@ export async function copyToProject({
     routing: "hub",
     input: {
       src: {
-        project_id: share.project_id,
-        path: joinProjectSharePath(share.path, relativePath),
+        ...copySource,
       },
       src_read_policy: share.read_policy,
       dests: [
@@ -1302,12 +2121,14 @@ export async function copyToNewProject({
   };
   let destinationProjectId: string;
   let placedOnRequestedHost = !!createOpts.host_id;
+  let hostPlacementMessage: string | null = null;
   try {
     destinationProjectId = await createProject(createOpts);
   } catch (err) {
     if (!createOpts.host_id || !isHostPlacementFailure(err)) {
       throw err;
     }
+    hostPlacementMessage = `${(err as Error).message ?? err}`;
     placedOnRequestedHost = false;
     destinationProjectId = await createProject({
       ...createOpts,
@@ -1327,6 +2148,7 @@ export async function copyToNewProject({
     created_project: true,
     requested_host_id: createOpts.host_id ?? null,
     placed_on_requested_host: placedOnRequestedHost,
+    host_placement_message: hostPlacementMessage,
   };
 }
 
@@ -1346,11 +2168,8 @@ export async function listDirectory({
   if (!entryAllowed({ share, relativePath })) {
     throw Error("path is not part of this shared directory");
   }
-  const fs = (
-    await getExplicitProjectRoutedClient({
-      project_id: share.project_id,
-    })
-  ).fs({
+  const fs = await getProjectFsClient({
+    account_id,
     project_id: share.project_id,
   });
   const projectPath = joinProjectSharePath(share.path, relativePath);

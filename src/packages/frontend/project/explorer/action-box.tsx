@@ -26,11 +26,12 @@ import {
   Well,
 } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon, LoginLink } from "@cocalc/frontend/components";
+import { Icon, LoginLink, ThemeEditorModal } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   file_actions,
@@ -55,6 +56,16 @@ import {
   SNAPSHOTS,
 } from "@cocalc/util/consts/snapshots";
 import { BACKUPS } from "@cocalc/util/consts/backups";
+import {
+  MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+} from "@cocalc/util/public-directory-share-labels";
+import {
+  themeDraftFromTheme,
+  type ThemeEditorDraft,
+} from "@cocalc/frontend/theme/types";
 
 export const PRE_STYLE = {
   marginBottom: "15px",
@@ -72,25 +83,8 @@ export const PRE_STYLE = {
 
 const MAX_RENDERED_SELECTED_FILES = 500;
 
-function slugPart(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "files"
-  );
-}
-
-function defaultPublicShareSlug({
-  project_id,
-  path,
-}: {
-  project_id: string;
-  path: string;
-}): string {
-  const tail = misc.path_split(path.replace(/\/+$/, "")).tail;
-  return `${project_id}/${slugPart(tail || "files")}`;
+function defaultPublicShareSlug(): string {
+  return misc.secure_random_token(12);
 }
 
 function publicShareUrl(slug: string): string {
@@ -102,15 +96,65 @@ function publicShareUrl(slug: string): string {
 
 function normalizeSharePath(path: string): string {
   const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
-  for (const home of ["/home/user", "/root"]) {
-    if (raw === home) return ".";
-    if (raw.startsWith(`${home}/`)) {
-      const relative = raw.slice(home.length + 1).replace(/^\/+|\/+$/g, "");
-      return relative || ".";
-    }
+  const home = "/home/user";
+  if (raw === home) return ".";
+  if (raw.startsWith(`${home}/`)) {
+    const relative = raw.slice(home.length + 1).replace(/^\/+|\/+$/g, "");
+    return relative || ".";
   }
   const relative = raw.replace(/^\/+|\/+$/g, "");
   return relative || ".";
+}
+
+function pathIsBlockedPublicShareRoot(path: string): boolean {
+  const root = normalizeSharePath(path).split("/")[0];
+  return root === SNAPSHOTS || root === BACKUPS;
+}
+
+function pathIsPublishable(path: string): boolean {
+  const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
+  const inHome =
+    !raw.startsWith("/") ||
+    raw === "/home/user" ||
+    raw.startsWith("/home/user/");
+  return inHome && !pathIsBlockedPublicShareRoot(path);
+}
+
+function defaultPublishTitle(path: string): string {
+  return normalizeSharePath(path) === "."
+    ? "Project files"
+    : misc.path_split(path).tail || "Files";
+}
+
+function defaultPublishTheme(path: string): ThemeEditorDraft {
+  return {
+    title: defaultPublishTitle(path),
+    description: "",
+    color: null,
+    accent_color: null,
+    icon: "folder-open",
+    image_blob: "",
+  };
+}
+
+function publishThemeFromShare(
+  share: PublicDirectoryShareSummary | null | undefined,
+  path: string,
+): ThemeEditorDraft {
+  if (share == null) {
+    return defaultPublishTheme(path);
+  }
+  return themeDraftFromTheme(
+    {
+      title: share.theme?.title ?? share.title ?? "",
+      description: share.theme?.description ?? share.description ?? "",
+      color: share.theme?.color ?? null,
+      accent_color: share.theme?.accent_color ?? null,
+      icon: share.theme?.icon ?? "folder-open",
+      image_blob: share.theme?.image_blob ?? share.image ?? "",
+    },
+    defaultPublishTitle(path),
+  );
 }
 
 interface SiteLicensePoolOption {
@@ -222,6 +266,10 @@ export function ActionBox({
   const [publishDescription, setPublishDescription] = useState<string>("");
   const [publishLicense, setPublishLicense] = useState<string>("");
   const [publishSlug, setPublishSlug] = useState<string>("");
+  const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
+  const [publishTheme, setPublishTheme] = useState<ThemeEditorDraft>(() =>
+    defaultPublishTheme(""),
+  );
   const [publishUrl, setPublishUrl] = useState<string>("");
   const [publishError, setPublishError] = useState<string>("");
   const [publishing, setPublishing] = useState<boolean>(false);
@@ -269,17 +317,17 @@ export function ActionBox({
   }, [actions, dnd_copy_dest]);
 
   useEffect(() => {
-    if (file_action !== "publish") {
+    if (lite || file_action !== "publish") {
       return;
     }
     const path = checked_files.first();
     if (typeof path !== "string") {
       return;
     }
-    setPublishTitle((cur) => cur || misc.path_split(path).tail || "Files");
-    setPublishSlug(
-      (cur) => cur || defaultPublicShareSlug({ project_id, path }),
-    );
+    const defaultTheme = defaultPublishTheme(path);
+    setPublishTitle((cur) => cur || defaultTheme.title);
+    setPublishTheme((cur) => (cur.title ? cur : defaultTheme));
+    setPublishSlug((cur) => cur || defaultPublicShareSlug());
     let canceled = false;
     setPublishShareLoading(true);
     setExistingPublishShare(null);
@@ -298,8 +346,10 @@ export function ActionBox({
         );
         setExistingPublishShare(share ?? null);
         if (share) {
-          setPublishTitle(share.title || misc.path_split(path).tail || "Files");
-          setPublishDescription(share.description ?? "");
+          const theme = publishThemeFromShare(share, path);
+          setPublishTheme(theme);
+          setPublishTitle(theme.title);
+          setPublishDescription(theme.description);
           setPublishLicense(share.license ?? "");
           setPublishSlug(share.slug);
           setPublishUrl(publicShareUrl(share.slug));
@@ -328,6 +378,7 @@ export function ActionBox({
 
   useEffect(() => {
     if (
+      lite ||
       file_action !== "publish" ||
       !publicDirectorySharesEnabled ||
       user_type !== "signed_in"
@@ -375,6 +426,8 @@ export function ActionBox({
     setPublishDescription("");
     setPublishLicense("");
     setPublishSlug("");
+    setPublishTheme(defaultPublishTheme(""));
+    setPublishThemeOpen(false);
     setPublishUrl("");
     setPublishError("");
     setPublishing(false);
@@ -964,6 +1017,16 @@ export function ActionBox({
     );
   }
 
+  function updatePublishTheme(patch: Partial<ThemeEditorDraft>): void {
+    setPublishTheme((current) => ({ ...current, ...patch }));
+    if (patch.title !== undefined) {
+      setPublishTitle(patch.title);
+    }
+    if (patch.description !== undefined) {
+      setPublishDescription(patch.description);
+    }
+  }
+
   async function savePublication(): Promise<void> {
     const path = checked_files.first();
     if (typeof path !== "string") {
@@ -980,9 +1043,11 @@ export function ActionBox({
         ? {
             id: existingPublishShare.id,
             slug: publishSlug,
-            title: publishTitle,
-            description: publishDescription,
+            title: publishTheme.title || publishTitle,
+            description: publishTheme.description || publishDescription,
             license: publishLicense,
+            image: publishTheme.image_blob,
+            theme: publishTheme,
             site_license_grant_on_copy: publishGrantOnCopy,
             site_license_copy_requires_grant: publishCopyRequiresGrant,
             site_license_id: publishGrantOnCopy
@@ -999,9 +1064,11 @@ export function ActionBox({
             project_id,
             path,
             slug: publishSlug,
-            title: publishTitle,
-            description: publishDescription,
+            title: publishTheme.title || publishTitle,
+            description: publishTheme.description || publishDescription,
             license: publishLicense,
+            image: publishTheme.image_blob,
+            theme: publishTheme,
             site_license_grant_on_copy: publishGrantOnCopy,
             site_license_copy_requires_grant: publishCopyRequiresGrant,
             site_license_id: publishGrantOnCopy
@@ -1071,10 +1138,22 @@ export function ActionBox({
     if (typeof path !== "string") {
       return <Alert bsStyle="warning">Select one directory to publish.</Alert>;
     }
+    if (lite) {
+      return null;
+    }
     if (!publicDirectorySharesEnabled) {
       return (
         <Alert bsStyle="warning">
           Public directory shares are not enabled on this site.
+        </Alert>
+      );
+    }
+    if (!pathIsPublishable(path)) {
+      return (
+        <Alert bsStyle="warning">
+          Only directories in <code>/home/user</code> can be published.{" "}
+          <code>{SNAPSHOTS}</code> and <code>{BACKUPS}</code> are excluded from
+          public sharing.
         </Alert>
       );
     }
@@ -1090,8 +1169,16 @@ export function ActionBox({
     }
     const displayPath = normalizeSharePath(path);
     const poolOptions = siteLicensePoolOptions();
+    const publishThemeError =
+      publishTheme.title.length > MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH
+        ? `Title must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH} characters`
+        : publishTheme.description.length >
+            MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH
+          ? `Description must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH} characters`
+          : undefined;
     const canPublish =
       publishSlug.trim().length > 0 &&
+      publishThemeError == null &&
       !publishing &&
       !publishShareLoading &&
       (!publishGrantOnCopy || publishSiteLicensePoolId.trim().length > 0);
@@ -1112,7 +1199,8 @@ export function ActionBox({
         ) : (
           <Alert bsStyle="info">
             Publish <code>{displayPath}</code> as an unlisted shared directory.
-            Viewers must know the URL and be signed in to CoCalc.
+            Viewers must know the URL and be signed in to CoCalc. Your
+            membership tier limits how many directories you can publish.
           </Alert>
         )}
         {publishShareLoading ? (
@@ -1121,11 +1209,75 @@ export function ActionBox({
           </Alert>
         ) : null}
         <div>
-          <Typography.Text strong>Title</Typography.Text>
+          <Typography.Text strong>Branding</Typography.Text>
+          <div
+            style={{
+              alignItems: "center",
+              background: publishTheme.accent_color
+                ? `${publishTheme.accent_color}22`
+                : COLORS.GRAY_LLL,
+              border: `1px solid ${publishTheme.color ?? COLORS.GRAY_LL}`,
+              borderRadius: 8,
+              display: "flex",
+              gap: 12,
+              marginTop: 6,
+              padding: 10,
+            }}
+          >
+            <div
+              style={{
+                alignItems: "center",
+                background: publishTheme.accent_color ?? COLORS.GRAY_LL,
+                borderRadius: 8,
+                color: publishTheme.color ?? undefined,
+                display: "flex",
+                flex: "0 0 auto",
+                height: 42,
+                justifyContent: "center",
+                width: 42,
+              }}
+            >
+              <Icon name={(publishTheme.icon || "folder-open") as any} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Typography.Text strong>
+                {publishTheme.title || "Untitled publication"}
+              </Typography.Text>
+              <div>
+                <Typography.Text type="secondary">
+                  {publishTheme.description || "No description"}
+                </Typography.Text>
+              </div>
+              {publishTheme.image_blob ? (
+                <Typography.Text type="secondary">
+                  Image selected
+                </Typography.Text>
+              ) : null}
+            </div>
+            <AntdButton onClick={() => setPublishThemeOpen(true)}>
+              Edit branding...
+            </AntdButton>
+          </div>
+          <ThemeEditorModal
+            open={publishThemeOpen}
+            title="Edit publication branding"
+            value={publishTheme}
+            onChange={updatePublishTheme}
+            onCancel={() => setPublishThemeOpen(false)}
+            onSave={() => setPublishThemeOpen(false)}
+            projectId={project_id}
+            defaultIcon="folder-open"
+            error={publishThemeError}
+          />
+        </div>
+        <div>
+          <Typography.Text strong>License</Typography.Text>
           <AntdInput
-            value={publishTitle}
-            onChange={(e) => setPublishTitle(e.target.value)}
-            placeholder="Shared directory title"
+            value={publishLicense}
+            onChange={(e) => setPublishLicense(e.target.value)}
+            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH}
+            placeholder="Optional license, e.g. CC-BY 4.0"
+            showCount
           />
         </div>
         <div>
@@ -1134,25 +1286,14 @@ export function ActionBox({
             value={publishSlug}
             onChange={(e) => setPublishSlug(e.target.value)}
             addonBefore="/share/"
-            placeholder={`${project_id}/files`}
+            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH}
+            placeholder="random-token or custom/path"
+            showCount
           />
-        </div>
-        <div>
-          <Typography.Text strong>Description</Typography.Text>
-          <AntdInput.TextArea
-            value={publishDescription}
-            onChange={(e) => setPublishDescription(e.target.value)}
-            placeholder="Optional description for viewers"
-            rows={3}
-          />
-        </div>
-        <div>
-          <Typography.Text strong>License</Typography.Text>
-          <AntdInput
-            value={publishLicense}
-            onChange={(e) => setPublishLicense(e.target.value)}
-            placeholder="Optional license, e.g. CC-BY 4.0"
-          />
+          <Typography.Text type="secondary">
+            New shares default to an unguessable random token. Replace it with a
+            readable path if you want a cleaner URL.
+          </Typography.Text>
         </div>
         <div>
           <Checkbox

@@ -10,6 +10,7 @@ import {
   type ProjectActions,
 } from "@cocalc/frontend/project_store";
 import type { FileAction } from "@cocalc/frontend/project_actions";
+import { lite } from "@cocalc/frontend/lite";
 import { isDisabledSnapshots, isSnapshotPath } from "./action-utils";
 
 interface Props {
@@ -47,6 +48,9 @@ export function FileActionsDropdown({
     return [
       ...(extraItems ?? []),
       ...names.flatMap((name) => {
+        if (lite && name === "publish") {
+          return [];
+        }
         if (isSnapshotPath(current_path) && isDisabledSnapshots(name)) {
           return [];
         }

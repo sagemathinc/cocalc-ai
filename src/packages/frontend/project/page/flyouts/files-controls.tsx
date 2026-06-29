@@ -63,6 +63,7 @@ interface FilesSelectedControlsProps {
   refreshBackups?: () => void;
   showActions?: boolean;
   showInfo?: boolean;
+  readOnlyViewer?: boolean;
 }
 
 export function FilesSelectedControls({
@@ -76,6 +77,7 @@ export function FilesSelectedControls({
   refreshBackups,
   showActions = true,
   showInfo = true,
+  readOnlyViewer = false,
 }: FilesSelectedControlsProps) {
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
@@ -249,6 +251,9 @@ export function FilesSelectedControls({
 
   const openSelectedMenuItems = useMemo((): MenuItems => {
     if (actions == null || checked_files.size === 0) return [];
+    if (readOnlyViewer) {
+      return [];
+    }
     return [
       {
         disabled: selectedOpenablePaths.length === 0,
@@ -270,7 +275,7 @@ export function FilesSelectedControls({
         },
       },
     ];
-  }, [actions, checked_files.size, selectedOpenablePaths]);
+  }, [actions, checked_files.size, readOnlyViewer, selectedOpenablePaths]);
 
   function renderFileInfoTop() {
     if (checked_files.size !== 0) return;
@@ -505,10 +510,23 @@ export function FilesSelectedControls({
       return renderBackupButtons();
     }
     if (mode === "top" && checked_files.size === 0) return;
+    if (readOnlyViewer) {
+      return (
+        <Button
+          size="small"
+          type="primary"
+          onClick={() => actions?.set_file_action("copy")}
+        >
+          <Icon name="copy" /> Copy
+        </Button>
+      );
+    }
 
     return (
       <Space orientation="horizontal" wrap>
-        {checked_files.size > 0 ? renderOpenFile() : undefined}
+        {checked_files.size > 0 && !readOnlyViewer
+          ? renderOpenFile()
+          : undefined}
         <FileActionsDropdown
           names={names}
           current_path={effective_current_path}
@@ -527,13 +545,15 @@ export function FilesSelectedControls({
   }
 
   const actionButtons = showActions
-    ? singleFile
-      ? singleFile.isDir
-        ? renderButtons(ACTION_BUTTONS_DIR)
-        : renderButtons(ACTION_BUTTONS_FILE)
-      : checked_files.size > 1
-        ? renderButtons(ACTION_BUTTONS_MULTI)
-        : undefined
+    ? readOnlyViewer && checked_files.size > 0
+      ? renderButtons(["copy"])
+      : singleFile
+        ? singleFile.isDir
+          ? renderButtons(ACTION_BUTTONS_DIR)
+          : renderButtons(ACTION_BUTTONS_FILE)
+        : checked_files.size > 1
+          ? renderButtons(ACTION_BUTTONS_MULTI)
+          : undefined
     : undefined;
   const fileInfo = showInfo ? renderFileInfo() : undefined;
   if (actionButtons == null && fileInfo == null) {

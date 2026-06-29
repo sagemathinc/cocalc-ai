@@ -1450,6 +1450,14 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.configureFinancialMembershipRenewalHomeBay(opts),
     publicDirectoryShareResolve: async (opts) =>
       await publicDirectoryShares.resolve(opts),
+    publicDirectoryShareListProject: async (opts) =>
+      await publicDirectoryShares.listProject(opts),
+    publicDirectoryShareCreate: async (opts) =>
+      await publicDirectoryShares.create(opts),
+    publicDirectoryShareUpdate: async (opts) =>
+      await publicDirectoryShares.update(opts),
+    publicDirectoryShareUpsert: async (opts) =>
+      await publicDirectoryShares.upsert(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShares.authorizeRead(opts),
     publicDirectoryShareListDirectory: async (opts) =>
@@ -1458,6 +1466,10 @@ async function startAccountLocalService(): Promise<void> {
       await publicDirectoryShares.copyToProject(opts),
     publicDirectoryShareCopyToNewProject: async (opts) =>
       await publicDirectoryShares.copyToNewProject(opts),
+    publicDirectoryShareGrantTemporaryViewerAccess: async (opts) =>
+      await publicDirectoryShares.grantTemporaryViewerAccess(opts),
+    publicDirectoryShareGetTemporaryViewerReadPolicy: async (opts) =>
+      await publicDirectoryShares.getTemporaryViewerReadPolicy(opts),
   };
   services.push(
     ...createInterBayAccountLocalHandler({
@@ -2489,12 +2501,20 @@ async function startHostControlService(): Promise<void> {
 async function startProjectHostAuthTokenService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayProjectHostAuthTokenApi = {
-    issue: async ({ account_id, actor, host_id, project_id, ttl_seconds }) =>
+    issue: async ({
+      account_id,
+      actor,
+      host_id,
+      project_id,
+      public_directory_share_id,
+      ttl_seconds,
+    }) =>
       await issueProjectHostAuthTokenLocal({
         account_id,
         actor,
         host_id,
         project_id,
+        public_directory_share_id,
         ttl_seconds,
       }),
   };

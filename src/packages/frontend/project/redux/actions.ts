@@ -73,6 +73,11 @@ import {
 } from "@cocalc/frontend/project/page/activity-bar-storage";
 import { transform_get_url } from "@cocalc/frontend/project/transform-get-url";
 import { NewFilenames, normalize } from "@cocalc/frontend/project/utils";
+import {
+  shouldUsePublicViewerFileEditor,
+  VIEWER_FILE_EDITOR_EXTENSION,
+} from "@cocalc/frontend/project/viewer-file-editor-consts";
+import { publicDirectoryShareUrlForLocalUrl } from "@cocalc/frontend/project/public-directory-share-url";
 import { API } from "@cocalc/frontend/project/websocket/api";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import {
@@ -124,17 +129,10 @@ import {
   getProjectUserRole,
   isViewerProjectRole,
 } from "@cocalc/frontend/project/realtime-access";
-import {
-  isAudio,
-  isImage,
-  isPDF,
-  isVideo,
-} from "@cocalc/frontend/file-extensions";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
 import { EditorLoadError } from "../../file-editors-error";
-import ViewerFilePreview from "@cocalc/frontend/project/viewer-file-preview";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { workingDirectoryForProjectFile as effectiveWorkingDirectoryForProjectFile } from "@cocalc/frontend/project/workspaces/chat-working-directory";
@@ -153,7 +151,6 @@ import {
 } from "@cocalc/frontend/project/log-state";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import { createSharedLroListClient } from "@cocalc/frontend/lro/shared-list";
-import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
 import {
   buildProjectLogRowsFromStream,
   filterProjectLogRows,
@@ -203,29 +200,32 @@ const { defaults, required } = misc;
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
-const PUBLIC_RENDERER_ONLY_EXTENSIONS = new Set([
-  "board",
-  "ipynb",
-  "pdf",
-  "slides",
-  "tasks",
+
+const VIEWER_EDITOR_EXTENSION_OVERRIDES = new globalThis.Map<string, string>([
+  // Terminal files are project runtime sessions, not passive file viewers.
+  // In read-only viewer mode, show the underlying file as text instead.
+  ["term", "txt"],
 ]);
 
-function canUseFrameEditorReadOnlyPreview(path: string, ext?: string): boolean {
+function shouldUseFrameEditorReadOnlyPreview(
+  path: string,
+  ext?: string,
+): boolean {
   const resolvedExt = `${ext ?? misc.filename_extension(path) ?? ""}`
     .trim()
     .toLowerCase();
-  if (resolvedExt === "chat" || resolvedExt === "sage-chat") return true;
-  if (PUBLIC_RENDERER_ONLY_EXTENSIONS.has(resolvedExt)) return false;
-  if (
-    isImage(resolvedExt) ||
-    isVideo(resolvedExt) ||
-    isAudio(resolvedExt) ||
-    isPDF(resolvedExt)
-  ) {
+  if (resolvedExt === VIEWER_FILE_EDITOR_EXTENSION) {
     return false;
   }
-  return getSyncDocDescriptor(path).doctype === "syncstring";
+  return true;
+}
+
+function viewerEditorExtension(ext?: string): string | undefined {
+  const resolvedExt = `${ext ?? ""}`.trim().toLowerCase();
+  if (shouldUsePublicViewerFileEditor(resolvedExt)) {
+    return VIEWER_FILE_EDITOR_EXTENSION;
+  }
+  return VIEWER_EDITOR_EXTENSION_OVERRIDES.get(resolvedExt) ?? ext;
 }
 
 export const QUERIES = {
@@ -854,6 +854,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return getProjectHomeDirectory(this.project_id);
   };
 
+  private getPublicDirectoryShareRootForPaths = (): string | undefined => {
+    const store = this.get_store();
+    const sharePath = `${store?.get("public_directory_share_path") ?? ""}`
+      .trim()
+      .replace(/^\/+|\/+$/g, "");
+    if (!sharePath) return;
+    if (sharePath === ".") {
+      return this.getHomeDirectoryForPaths();
+    }
+    return this.toAbsoluteCurrentPath(sharePath);
+  };
+
   private isVirtualListingPath = (path: string): boolean => {
     return isVirtualListingPath(path);
   };
@@ -954,7 +966,23 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       local_url = this._last_history_state ?? "files/";
     }
     this._last_history_state = local_url;
-    set_url(this._url_in_project(local_url), hash);
+    set_url(
+      this.publicDirectoryShareUrlForLocalUrl(local_url) ??
+        this._url_in_project(local_url),
+      hash,
+    );
+  }
+
+  private publicDirectoryShareUrlForLocalUrl(
+    localUrl: string,
+  ): string | undefined {
+    if (!this.hasPublicDirectoryShare()) return;
+    const store = this.get_store();
+    const slug = `${store?.get("public_directory_share_slug") ?? ""}`.trim();
+    if (!slug) return;
+    const shareRoot = this.getPublicDirectoryShareRootForPaths();
+    if (!shareRoot) return;
+    return publicDirectoryShareUrlForLocalUrl({ localUrl, shareRoot, slug });
   }
 
   move_file_tab(opts: { old_index: number; new_index: number }): void {
@@ -1096,13 +1124,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         // Treat "/" as a fallback state. Re-entering the files tab should land in
         // HOME unless the user is already on a concrete filesystem path.
         const existingPathAbs = store.get("current_path_abs") ?? "/";
+        const homePathAbs =
+          openProjectHomeFiles && this.hasPublicDirectoryShare()
+            ? (this.getPublicDirectoryShareRootForPaths() ??
+              this.getHomeDirectoryForPaths())
+            : this.getHomeDirectoryForPaths();
         const currentPathAbs = openProjectHomeFiles
-          ? this.getHomeDirectoryForPaths()
+          ? homePathAbs
           : existingPathAbs;
         const filesPathAbs =
-          currentPathAbs === "/"
-            ? this.getHomeDirectoryForPaths()
-            : currentPathAbs;
+          currentPathAbs === "/" ? homePathAbs : currentPathAbs;
         if (filesPathAbs !== existingPathAbs) {
           this.set_current_path(filesPathAbs);
         }
@@ -1623,16 +1654,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         const syncPath = this.get_sync_path(path);
         const ext = this.open_files?.get(path, "ext");
         const isViewer = this.isViewerProjectUser();
-        const isPublicDirectoryShare = this.hasPublicDirectoryShare();
-        const { name, Editor } =
-          isPublicDirectoryShare ||
-          (isViewer && !canUseFrameEditorReadOnlyPreview(syncPath, ext))
-            ? { name: undefined, Editor: ViewerFilePreview }
-            : await this.init_file_react_redux(
-                syncPath,
-                ext,
-                isViewer ? { readOnlyPreview: true } : undefined,
-              );
+        const editorExt = isViewer ? viewerEditorExtension(ext) : ext;
+        const initOptions =
+          isViewer && shouldUseFrameEditorReadOnlyPreview(syncPath, editorExt)
+            ? { readOnlyPreview: true }
+            : undefined;
+        const { name, Editor } = await this.init_file_react_redux(
+          syncPath,
+          editorExt,
+          initOptions,
+        );
         const current_info = this.get_store()
           ?.get("open_files")
           .getIn([path, "component"]) as any;
@@ -2115,10 +2146,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     // Be forgiving if a route-like path is passed here.
     if (path === "files") {
-      path = this.getHomeDirectoryForPaths();
+      path =
+        this.getPublicDirectoryShareRootForPaths() ??
+        this.getHomeDirectoryForPaths();
     } else if (path.startsWith("files/")) {
       const rel = path.replace(/^files\/+/, "");
-      path = rel.length === 0 ? this.getHomeDirectoryForPaths() : `/${rel}`;
+      path =
+        rel.length === 0
+          ? (this.getPublicDirectoryShareRootForPaths() ??
+            this.getHomeDirectoryForPaths())
+          : `/${rel}`;
     }
     try {
       await this.ensureProjectIsOpen(foreground_project);
@@ -2829,6 +2866,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       project_id: this.project_id,
       caller: "ProjectActions.fs",
       share_id: share_id || undefined,
+      viewer: !share_id && this.isViewerProjectUser() ? true : undefined,
     });
     return await this.filesystemPromise;
   };

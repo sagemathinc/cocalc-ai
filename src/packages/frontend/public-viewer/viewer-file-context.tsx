@@ -62,6 +62,9 @@ function defaultUrlTransform(
   tag?: string,
 ): string | undefined {
   const value = `${href ?? ""}`.trim();
+  if (isUnsafeHref(value)) {
+    return undefined;
+  }
   if (
     !value ||
     value.startsWith("data:") ||
@@ -77,7 +80,7 @@ function defaultUrlTransform(
   if (value.startsWith("/")) {
     return `${rawBaseUrl.origin}${value}`;
   }
-  return new URL(value, rawBaseUrl).toString();
+  return resolveUrl(value, rawBaseUrl)?.toString();
 }
 
 function PublicViewerAnchor({
@@ -98,6 +101,13 @@ function PublicViewerAnchor({
   style?: CSSProperties;
 }): JSX.Element {
   const value = `${href ?? ""}`.trim();
+  if (isUnsafeHref(value)) {
+    return (
+      <a {...attributes} title={title} style={style}>
+        {children}
+      </a>
+    );
+  }
   if (
     !value ||
     value.startsWith("#") ||
@@ -119,7 +129,14 @@ function PublicViewerAnchor({
       </a>
     );
   }
-  const resolvedRawUrl = new URL(value, rawBaseUrl);
+  const resolvedRawUrl = resolveUrl(value, rawBaseUrl);
+  if (resolvedRawUrl == null) {
+    return (
+      <a {...attributes} href={href} title={title} style={style}>
+        {children}
+      </a>
+    );
+  }
   const viewerUrl = new URL(window.location.href);
   const resolvedPath = resolveViewerPath(currentPath, value);
   viewerUrl.searchParams.set("source", resolvedRawUrl.toString());
@@ -135,6 +152,23 @@ function PublicViewerAnchor({
 function resolveViewerPath(currentPath: string, href: string): string {
   const current = currentPath.startsWith("/") ? currentPath : `/${currentPath}`;
   return new URL(href, `https://public-viewer.invalid${current}`).pathname;
+}
+
+function resolveUrl(href: string, base: URL): URL | undefined {
+  try {
+    return new URL(href, base);
+  } catch {
+    return undefined;
+  }
+}
+
+function isUnsafeHref(href: string): boolean {
+  const value = href.trim().toLowerCase();
+  return (
+    value.startsWith("javascript:") ||
+    value.startsWith("data:") ||
+    value.startsWith("vbscript:")
+  );
 }
 
 function basename(path: string): string {

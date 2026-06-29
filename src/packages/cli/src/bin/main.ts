@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import {
   mkdir as mkdirLocal,
   readFile as readFileLocal,
@@ -8,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { URL } from "node:url";
 import { Command } from "commander";
 
@@ -666,6 +667,121 @@ function parseEnvFile(text: string): Record<string, string> {
   return out;
 }
 
+function localHubUrl(bindHost: string | undefined, port: string | number) {
+  const normalizedPort = Number(port);
+  if (!Number.isFinite(normalizedPort) || normalizedPort <= 0) {
+    return;
+  }
+  const host = `${bindHost ?? ""}`.trim() || "localhost";
+  return `http://${host}:${normalizedPort}`;
+}
+
+function findLocalDevRepoRoot(currentPostgresDir: string): string | undefined {
+  const candidates = [
+    process.env.COCALC_REPO_ROOT,
+    process.env.PWD,
+    process.cwd(),
+    join(__dirname, "..", "..", "..", ".."),
+    join(currentPostgresDir, "..", "..", ".."),
+  ];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const root = `${candidate ?? ""}`.trim();
+    if (!root) continue;
+    const normalized = resolve(root);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (
+      existsSync(join(normalized, "packages", "server", "dist")) &&
+      existsSync(join(normalized, "scripts", "dev", "hub-daemon.sh"))
+    ) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+type LocalDevHubBay = {
+  bay_id?: string;
+  apiBaseUrl: string;
+  postgresDir: string;
+  hubPasswordPath: string;
+};
+
+function loadLocalDevHubBays({
+  repoRoot,
+  currentPostgresDir,
+  currentHubPasswordPath,
+  currentApiBaseUrl,
+}: {
+  repoRoot: string;
+  currentPostgresDir: string;
+  currentHubPasswordPath: string;
+  currentApiBaseUrl: string;
+}): LocalDevHubBay[] {
+  const result: LocalDevHubBay[] = [
+    {
+      bay_id: process.env.COCALC_BAY_ID,
+      apiBaseUrl: currentApiBaseUrl,
+      postgresDir: currentPostgresDir,
+      hubPasswordPath: currentHubPasswordPath,
+    },
+  ];
+  const script = join(repoRoot, "scripts", "dev", "hub-daemon.sh");
+  if (!existsSync(script)) {
+    return result;
+  }
+  const env = spawnSync("bash", [script, "env"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: process.env,
+  });
+  if (env.status !== 0 || !env.stdout) {
+    return result;
+  }
+  const vars = parseEnvFile(env.stdout);
+  const count = Number(vars.HUB_CLUSTER_BAY_COUNT ?? 0);
+  if (!Number.isFinite(count) || count <= 0) {
+    return result;
+  }
+  const primaryPostgresDir = join(repoRoot, "data", "app", "postgres");
+  const seen = new Set(
+    result.map((bay) => `${bay.postgresDir}|${bay.apiBaseUrl}`),
+  );
+  for (let i = 0; i < count; i += 1) {
+    const prefix = `HUB_CLUSTER_BAY_${i}_`;
+    const bay_id = `${vars[`${prefix}ID`] ?? ""}`.trim() || undefined;
+    const apiBaseUrl = localHubUrl(
+      vars[`${prefix}BIND_HOST`],
+      vars[`${prefix}PORT`] ?? "",
+    );
+    if (!apiBaseUrl) continue;
+    const dataDir = `${vars[`${prefix}DATA_DIR`] ?? ""}`.trim();
+    const postgresDir = dataDir
+      ? join(dataDir, "postgres")
+      : primaryPostgresDir;
+    const hubPasswordPath = dataDir
+      ? join(postgresDir, "secrets", "conat-password")
+      : join(primaryPostgresDir, "secrets", "conat-password");
+    if (
+      !existsSync(join(postgresDir, "local-postgres.env")) ||
+      !existsSync(hubPasswordPath)
+    ) {
+      continue;
+    }
+    const key = `${postgresDir}|${apiBaseUrl}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({
+      bay_id,
+      apiBaseUrl: normalizeUrl(apiBaseUrl),
+      postgresDir,
+      hubPasswordPath,
+    });
+  }
+  return result;
+}
+
 function isLoopbackApiBaseUrl(apiBaseUrl: string): boolean {
   try {
     return isLoopbackHostName(new URL(apiBaseUrl).hostname);
@@ -688,6 +804,9 @@ async function maybeCreateLocalDevRememberMeCookie({
   | {
       value: string;
       session_hash: string;
+      account_id?: string;
+      apiBaseUrl?: string;
+      bay_id?: string;
       fresh_auth_until?: Date | null;
       factor_level?: "totp" | null;
     }
@@ -706,9 +825,11 @@ async function maybeCreateLocalDevRememberMeCookie({
     return;
   }
   const secretsDir = join(hubPasswordRaw, "..");
-  const postgresDir = join(secretsDir, "..");
-  const repoRoot = join(postgresDir, "..", "..", "..");
-  const localPostgresEnv = join(postgresDir, "local-postgres.env");
+  const currentPostgresDir = join(secretsDir, "..");
+  const repoRoot = findLocalDevRepoRoot(currentPostgresDir);
+  if (!repoRoot) {
+    return;
+  }
   const rememberMeModule = join(
     repoRoot,
     "packages",
@@ -725,117 +846,201 @@ async function maybeCreateLocalDevRememberMeCookie({
     "auth",
     "auth-sessions.js",
   );
-  if (!existsSync(localPostgresEnv) || !existsSync(rememberMeModule)) {
+  if (!existsSync(rememberMeModule)) {
     return;
   }
-  const vars = parseEnvFile(readFileSync(localPostgresEnv, "utf8"));
-  const prev = {
-    PGHOST: process.env.PGHOST,
-    PGUSER: process.env.PGUSER,
-    PGDATABASE: process.env.PGDATABASE,
-    BASE_PATH: process.env.BASE_PATH,
-    API_SERVER: process.env.API_SERVER,
-    COCALC_PROJECT_ID: process.env.COCALC_PROJECT_ID,
-    COCALC_PRODUCT: process.env.COCALC_PRODUCT,
-  };
-  try {
-    if (vars.PGHOST) process.env.PGHOST = vars.PGHOST;
-    if (vars.PGUSER) process.env.PGUSER = vars.PGUSER;
-    if (vars.PGDATABASE) process.env.PGDATABASE = vars.PGDATABASE;
-    delete process.env.BASE_PATH;
-    delete process.env.API_SERVER;
-    delete process.env.COCALC_PROJECT_ID;
-    process.env.COCALC_PRODUCT = "launchpad";
-    const mod = requireCjs(rememberMeModule) as {
-      createRememberMeCookie?: (
-        account_id: string,
-        ttl_s?: number,
-      ) => Promise<{ value?: string; hash?: string }>;
-    };
-    const { value, hash } =
-      (await mod.createRememberMeCookie?.(
-        requestedAccountId,
-        Math.floor(LOCAL_DEV_SIGN_IN_COOKIE_MAX_AGE_MS / 1000),
-      )) ?? {};
-    if (typeof value !== "string" || !value.trim()) {
+
+  async function tryBay(bay: LocalDevHubBay): Promise<
+    | {
+        value: string;
+        session_hash: string;
+        account_id: string;
+        apiBaseUrl: string;
+        bay_id?: string;
+        fresh_auth_until?: Date | null;
+        factor_level?: "totp" | null;
+      }
+    | undefined
+  > {
+    const localPostgresEnv = join(bay.postgresDir, "local-postgres.env");
+    if (!existsSync(localPostgresEnv)) {
       return;
     }
-    const session_hash = `${hash ?? ""}`.trim();
-    if (!session_hash) {
-      if (freshAuthDuration) {
+    const vars = parseEnvFile(readFileSync(localPostgresEnv, "utf8"));
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...vars,
+      COCALC_HUB_PASSWORD: bay.hubPasswordPath,
+      COCALC_PRODUCT: "launchpad",
+      COCALC_BAY_ID: bay.bay_id ?? "",
+      COCALC_DEV_AUTH_ACCOUNT_ID: requestedAccountId,
+      COCALC_DEV_AUTH_TTL_S: `${Math.floor(
+        LOCAL_DEV_SIGN_IN_COOKIE_MAX_AGE_MS / 1000,
+      )}`,
+      COCALC_DEV_AUTH_REMEMBER_ME_MODULE: rememberMeModule,
+      COCALC_DEV_AUTH_SESSIONS_MODULE: authSessionsModule,
+      COCALC_DEV_AUTH_FRESH_DURATION: freshAuthDuration ?? "",
+      COCALC_DEV_AUTH_BAY_ID: bay.bay_id ?? "",
+      DEBUG_CONSOLE: "no",
+    };
+    delete childEnv.BASE_PATH;
+    delete childEnv.API_SERVER;
+    delete childEnv.COCALC_PROJECT_ID;
+    const marker = "__COCALC_DEV_AUTH_RESULT__";
+    const script = `
+const marker = ${JSON.stringify(marker)};
+async function main() {
+  try {
+    const rememberMe = require(process.env.COCALC_DEV_AUTH_REMEMBER_ME_MODULE);
+    if (typeof rememberMe.createRememberMeCookie !== "function") {
+      throw new Error("createRememberMeCookie is not available");
+    }
+    const created = await rememberMe.createRememberMeCookie(
+      process.env.COCALC_DEV_AUTH_ACCOUNT_ID,
+      Number(process.env.COCALC_DEV_AUTH_TTL_S || 0),
+    );
+    const value = String((created && created.value) || "").trim();
+    const session_hash = String((created && created.hash) || "").trim();
+    if (!value) {
+      console.log(marker + JSON.stringify({ ok: false, message: "empty remember me cookie" }));
+      return;
+    }
+    const freshDuration = String(process.env.COCALC_DEV_AUTH_FRESH_DURATION || "").trim();
+    const result = { ok: true, value, session_hash };
+    if (freshDuration) {
+      if (!session_hash) {
+        console.log(marker + JSON.stringify({ ok: false, message: "remember me cookie hash is missing" }));
         return;
       }
-      return { value: value.trim(), session_hash };
+      const sessionsPath = String(process.env.COCALC_DEV_AUTH_SESSIONS_MODULE || "");
+      const authSessions = require(sessionsPath);
+      if (
+        typeof authSessions.ensureAuthSessionForRememberMeHash !== "function" ||
+        typeof authSessions.setSessionFreshAuth !== "function"
+      ) {
+        console.log(marker + JSON.stringify({ ok: false, message: "auth session helpers are not available" }));
+        return;
+      }
+      await authSessions.ensureAuthSessionForRememberMeHash({ session_hash });
+      const fresh_auth_until = new Date(
+        Date.now() +
+          (typeof authSessions.resolveFreshAuthDurationMs === "function"
+            ? authSessions.resolveFreshAuthDurationMs({
+                duration: freshDuration,
+                factor_level: "totp",
+              })
+            : 15 * 60_000),
+      );
+      await authSessions.setSessionFreshAuth({
+        account_id: process.env.COCALC_DEV_AUTH_ACCOUNT_ID,
+        session_hash,
+        factor_level: "totp",
+        fresh_auth_until,
+        metadata_patch: {
+          dev_cli_fresh_auth: true,
+          dev_cli_fresh_auth_at: new Date().toISOString(),
+          dev_cli_fresh_auth_bay_id: process.env.COCALC_DEV_AUTH_BAY_ID || null,
+        },
+      });
+      result.fresh_auth_until = fresh_auth_until.toISOString();
+      result.factor_level = "totp";
     }
-    if (!freshAuthDuration) {
-      return { value: value.trim(), session_hash };
-    }
-    if (!existsSync(authSessionsModule)) {
-      return;
-    }
-    const authSessions = requireCjs(authSessionsModule) as {
-      ensureAuthSessionForRememberMeHash?: (opts: {
-        session_hash: string;
-      }) => Promise<unknown>;
-      resolveFreshAuthDurationMs?: (opts: {
-        duration: "default" | "extended";
-        factor_level: "totp";
-      }) => number;
-      setSessionFreshAuth?: (opts: {
-        account_id: string;
-        session_hash: string;
-        factor_level: "totp";
-        fresh_auth_until: Date;
-        metadata_patch?: Record<string, unknown>;
-      }) => Promise<void>;
-    };
-    if (
-      !authSessions.ensureAuthSessionForRememberMeHash ||
-      !authSessions.setSessionFreshAuth
-    ) {
-      return;
-    }
-    await authSessions.ensureAuthSessionForRememberMeHash({ session_hash });
-    const fresh_auth_until = new Date(
-      Date.now() +
-        (authSessions.resolveFreshAuthDurationMs?.({
-          duration: freshAuthDuration,
-          factor_level: "totp",
-        }) ?? 15 * 60_000),
-    );
-    await authSessions.setSessionFreshAuth({
-      account_id: requestedAccountId,
-      session_hash,
-      factor_level: "totp",
-      fresh_auth_until,
-      metadata_patch: {
-        dev_cli_fresh_auth: true,
-        dev_cli_fresh_auth_at: new Date().toISOString(),
-      },
-    });
-    return {
-      value: value.trim(),
-      session_hash,
-      fresh_auth_until,
-      factor_level: "totp",
-    };
-  } finally {
-    if (prev.PGHOST === undefined) delete process.env.PGHOST;
-    else process.env.PGHOST = prev.PGHOST;
-    if (prev.PGUSER === undefined) delete process.env.PGUSER;
-    else process.env.PGUSER = prev.PGUSER;
-    if (prev.PGDATABASE === undefined) delete process.env.PGDATABASE;
-    else process.env.PGDATABASE = prev.PGDATABASE;
-    if (prev.BASE_PATH === undefined) delete process.env.BASE_PATH;
-    else process.env.BASE_PATH = prev.BASE_PATH;
-    if (prev.API_SERVER === undefined) delete process.env.API_SERVER;
-    else process.env.API_SERVER = prev.API_SERVER;
-    if (prev.COCALC_PROJECT_ID === undefined)
-      delete process.env.COCALC_PROJECT_ID;
-    else process.env.COCALC_PROJECT_ID = prev.COCALC_PROJECT_ID;
-    if (prev.COCALC_PRODUCT === undefined) delete process.env.COCALC_PRODUCT;
-    else process.env.COCALC_PRODUCT = prev.COCALC_PRODUCT;
+    console.log(marker + JSON.stringify(result));
+  } catch (err) {
+    console.log(marker + JSON.stringify({
+      ok: false,
+      message: String((err && err.message) || err),
+      stack: String((err && err.stack) || ""),
+    }));
   }
+}
+main().finally(() => process.exit(0));
+`;
+    const child = spawnSync(process.execPath, ["-e", script], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: childEnv,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const output = `${child.stdout ?? ""}\n${child.stderr ?? ""}`;
+    const line = output
+      .split(/\r?\n/)
+      .reverse()
+      .find((value) => value.startsWith(marker));
+    if (!line) {
+      throw new Error(
+        `failed to create local dev remember me cookie in ${bay.bay_id ?? bay.apiBaseUrl}: ${
+          child.error?.message ?? child.stderr ?? child.stdout ?? "no result"
+        }`,
+      );
+    }
+    const parsed = JSON.parse(line.slice(marker.length)) as {
+      ok?: boolean;
+      value?: string;
+      session_hash?: string;
+      fresh_auth_until?: string;
+      factor_level?: "totp";
+      message?: string;
+      stack?: string;
+    };
+    if (!parsed.ok) {
+      if (`${parsed.message ?? ""}`.toLowerCase().includes("not found")) {
+        return;
+      }
+      throw new Error(
+        `failed to create local dev remember me cookie in ${bay.bay_id ?? bay.apiBaseUrl}: ${
+          parsed.message ?? "unknown error"
+        }`,
+      );
+    }
+    const value = `${parsed.value ?? ""}`.trim();
+    if (!value) return;
+    const session_hash = `${parsed.session_hash ?? ""}`.trim();
+    if (!session_hash && freshAuthDuration) {
+      return;
+    }
+    const fresh_auth_until = parsed.fresh_auth_until
+      ? new Date(parsed.fresh_auth_until)
+      : null;
+    if (parsed.fresh_auth_until && Number.isNaN(fresh_auth_until?.getTime())) {
+      return;
+    }
+    if (freshAuthDuration && !fresh_auth_until) {
+      return;
+    }
+    if (fresh_auth_until) {
+      return {
+        value,
+        session_hash,
+        account_id: requestedAccountId,
+        apiBaseUrl: bay.apiBaseUrl,
+        bay_id: bay.bay_id,
+        fresh_auth_until,
+        factor_level: parsed.factor_level ?? "totp",
+      };
+    }
+    return {
+      value,
+      session_hash,
+      account_id: requestedAccountId,
+      apiBaseUrl: bay.apiBaseUrl,
+      bay_id: bay.bay_id,
+    };
+  }
+
+  const bays = loadLocalDevHubBays({
+    repoRoot,
+    currentPostgresDir,
+    currentHubPasswordPath: hubPasswordRaw,
+    currentApiBaseUrl: apiBaseUrl,
+  });
+  for (const bay of bays) {
+    const cookie = await tryBay(bay);
+    if (cookie) {
+      return cookie;
+    }
+  }
+  return;
 }
 
 type LiteConnectionInfo = {
@@ -2822,6 +3027,10 @@ const browserCommandDeps = {
   selectedProfileName,
   globalsFrom,
   resolveProject,
+  resolvePublicDirectoryShare: async (ctx, slug) =>
+    await hubCallByName(ctx as any, "publicDirectoryShares.resolve", [
+      { slug },
+    ]),
   resolveProjectConatClient,
   createBrowserSessionClient,
 } satisfies BrowserCommandDeps;

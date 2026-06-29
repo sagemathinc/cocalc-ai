@@ -16,6 +16,7 @@ import {
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 import { humanSize } from "@cocalc/util/misc";
+import { DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT } from "@cocalc/util/public-directory-share-labels";
 import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 import { resolveMembershipForAccount } from "./resolve";
 import {
@@ -185,6 +186,12 @@ function extractMaxBackupsPerProject(
   return getEffectiveMembershipUsageLimits(resolution).max_backups_per_project;
 }
 
+function extractPublicDirectoryShareLimit(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution).public_directory_shares;
+}
+
 function extractProjectCollaboratorInviteLimit(
   resolution: MembershipResolution,
 ): number | undefined {
@@ -263,6 +270,21 @@ export async function getProjectBackupLimit({
     fallback: DEFAULT_MAX_BACKUPS_PER_PROJECT,
     extract: extractMaxBackupsPerProject,
   });
+}
+
+export async function getPublicDirectoryShareLimitForAccount({
+  account_id,
+  resolution,
+}: {
+  account_id: string;
+  resolution?: MembershipResolution;
+}): Promise<number> {
+  const effectiveResolution =
+    resolution ?? (await resolveMembershipForAccount(account_id));
+  return (
+    extractPublicDirectoryShareLimit(effectiveResolution) ??
+    DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT
+  );
 }
 
 export async function assertCanOwnAdditionalProject({

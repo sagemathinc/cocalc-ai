@@ -65,6 +65,7 @@ import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
@@ -105,6 +106,30 @@ import {
 } from "./listing-error";
 
 type ActiveFileSort = ReturnType<typeof normalizeActiveFileSort>;
+
+function normalizePublicShareListingPath({
+  listingPath,
+  sharePath,
+}: {
+  listingPath: string;
+  sharePath: string;
+}): string {
+  const homeRelative = projectRuntimeHomeRelativePath(listingPath);
+  const projectRelative =
+    homeRelative ?? listingPath.replace(/^\/+/, "").replace(/\/+$/g, "");
+  const normalizedSharePath =
+    sharePath === "." ? "" : sharePath.replace(/^\/+/, "").replace(/\/+$/g, "");
+  if (!normalizedSharePath) {
+    return projectRelative || ".";
+  }
+  if (
+    projectRelative === normalizedSharePath ||
+    projectRelative.startsWith(`${normalizedSharePath}/`)
+  ) {
+    return projectRelative;
+  }
+  return listingPath;
+}
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -260,14 +285,41 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     path: effective_current_path,
     homePath,
   });
+  const filesystemListingPath = publicDirectoryShare
+    ? normalizePublicShareListingPath({
+        listingPath,
+        sharePath: publicDirectoryShare.path,
+      })
+    : listingPath;
+  const publicDirectoryShareRootPath = publicDirectoryShare
+    ? normalizeAbsolutePath(
+        join(
+          homePath,
+          publicDirectoryShare.path === "." ? "" : publicDirectoryShare.path,
+        ),
+      )
+    : undefined;
+  const publicShareListingDebugContext = useMemo(
+    () =>
+      publicDirectoryShare
+        ? {
+            kind: "public-directory-share" as const,
+            project_id,
+            share_id: publicDirectoryShare.id,
+            share_path: publicDirectoryShare.path,
+          }
+        : undefined,
+    [project_id, publicDirectoryShare],
+  );
   let {
     refresh,
     listing: rawListing,
     error: listingError,
   } = useListing({
     fs: inBackupsPath ? null : fs,
-    path: listingPath,
+    path: filesystemListingPath,
     watch: !readOnlyViewer,
+    debugContext: publicShareListingDebugContext,
   });
   const {
     listing: backupsListing,
@@ -319,6 +371,12 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
+  const temporaryPublicShareRoute = !!useTypedRedux(
+    { project_id },
+    "temporary_public_share_route",
+  );
+  const suppressProjectHistory =
+    !!publicDirectoryShare || temporaryPublicShareRoute;
   const displayListingError = listingError;
   const applyNavigationWorkspaceSelection = useCallback(
     (path: string) => {
@@ -334,9 +392,11 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   );
   const navigateExplorerRaw = useCallback(
     (path: string) => {
-      navigateBrowsingPath(project_id, path, { updateUrl: true });
+      navigateBrowsingPath(project_id, path, {
+        updateUrl: !suppressProjectHistory,
+      });
     },
-    [project_id],
+    [project_id, suppressProjectHistory],
   );
   const navHistory = useNavigationHistory(
     project_id,
@@ -887,7 +947,12 @@ You can either wait for this host to become available again, or move this ${proj
                 >
                   <PathNavigator
                     project_id={project_id}
-                    showSourceSelector
+                    showSourceSelector={!readOnlyViewer}
+                    navigationRoot={
+                      readOnlyViewer
+                        ? (publicDirectoryShareRootPath ?? homePath)
+                        : undefined
+                    }
                     currentPath={effective_current_path}
                     historyPath={effective_history_path}
                     onNavigate={navigateExplorer}
@@ -942,7 +1007,10 @@ You can either wait for this host to become available again, or move this ${proj
                 flex: "0 1 auto",
               }}
             >
-              <UsersViewing project_id={project_id} />
+              <UsersViewing
+                project_id={project_id}
+                disabled={!!publicDirectoryShare}
+              />
             </div>
           </div>
         </div>
@@ -1074,7 +1142,7 @@ You can either wait for this host to become available again, or move this ${proj
                     minWidth: "20em",
                   }}
                 >
-                  {!lite && (
+                  {!lite && !readOnlyViewer && (
                     <DiskUsage
                       current_path={effective_current_path}
                       style={{ marginBottom: "10px", marginRight: "5px" }}
@@ -1289,7 +1357,15 @@ You can either wait for this host to become available again, or move this ${proj
                       onNavigateDirectory={navigateExplorer}
                       readOnly={readOnlyViewer}
                       allowReadOnlyCopy={readOnlyViewer}
+                      root_path={
+                        readOnlyViewer
+                          ? (publicDirectoryShareRootPath ?? homePath)
+                          : publicDirectoryShareRootPath
+                      }
                       openUploadFiles={openUploadFiles}
+                      useSimpleTable={!!publicDirectoryShare}
+                      foregroundProjectOnOpen={!suppressProjectHistory}
+                      changeHistoryOnOpen={!suppressProjectHistory}
                     />
                   )}
                 </MaybeFileUploadWrapper>
@@ -1297,14 +1373,16 @@ You can either wait for this host to become available again, or move this ${proj
             )}
           </div>
         </div>
-        <ExplorerTour
-          project_id={project_id}
-          newFileRef={newFileRef}
-          searchAndTerminalBar={searchAndTerminalBar}
-          fileListingRef={fileListingRef}
-          currentDirectoryRef={currentDirectoryRef}
-          miscButtonsRef={miscButtonsRef}
-        />
+        {!readOnlyViewer && (
+          <ExplorerTour
+            project_id={project_id}
+            newFileRef={newFileRef}
+            searchAndTerminalBar={searchAndTerminalBar}
+            fileListingRef={fileListingRef}
+            currentDirectoryRef={currentDirectoryRef}
+            miscButtonsRef={miscButtonsRef}
+          />
+        )}
       </div>
     </FileDndProvider>
   );
@@ -1379,7 +1457,11 @@ function FileListingBody({
   onNavigateDirectory,
   readOnly,
   allowReadOnlyCopy,
+  root_path,
   openUploadFiles,
+  useSimpleTable,
+  foregroundProjectOnOpen,
+  changeHistoryOnOpen,
 }: {
   visibleListing: DirectoryListingEntry[] | null | undefined;
   active_file_sort: { column_name: string; is_descending: boolean };
@@ -1393,7 +1475,11 @@ function FileListingBody({
   onNavigateDirectory: (path: string) => void;
   readOnly: boolean;
   allowReadOnlyCopy: boolean;
+  root_path?: string;
   openUploadFiles?: () => void;
+  useSimpleTable?: boolean;
+  foregroundProjectOnOpen?: boolean;
+  changeHistoryOnOpen?: boolean;
 }) {
   if (visibleListing == null) {
     return (
@@ -1416,7 +1502,11 @@ function FileListingBody({
       onNavigateDirectory={onNavigateDirectory}
       readOnly={readOnly}
       allowReadOnlyCopy={allowReadOnlyCopy}
+      root_path={root_path}
       openUploadFiles={openUploadFiles}
+      useSimpleTable={useSimpleTable}
+      foregroundProjectOnOpen={foregroundProjectOnOpen}
+      changeHistoryOnOpen={changeHistoryOnOpen}
     />
   );
 }

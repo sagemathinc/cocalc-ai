@@ -115,6 +115,118 @@ environment, or host placement. For the short creation flow, see
 [Create a project](/docs/projects/create-project).
 `;
 
+export const PUBLISH_FILES_BODY = String.raw`
+## What file publishing is for
+
+Publish project files when you want to share read-only content from a project
+through an unlisted URL. A published share points at one folder, or at the
+whole project HOME directory.
+
+Use file publishing for examples, notebooks, reports, course material,
+workshop folders, chat logs, and other project content that should be viewable
+or copyable without making the viewer a normal collaborator.
+
+This is different from [RootFS publishing](/docs/projects/publish-rootfs).
+RootFS publishing shares a reusable software environment. File publishing
+shares read-only files under \`/home/user\`.
+
+## Publish a folder
+
+Open the project and use one of these entry points:
+
+1. In the file explorer, right-click a folder and choose **Publish**.
+2. Select a folder, then use the file action to publish it.
+3. Open **Settings** and use the **Publish** section to create or manage
+   shares.
+
+The file explorer shows a **Published** tag for paths that are already shared.
+Click that tag to open the publish configuration for that path.
+
+## Publish the whole project
+
+The project-level **Settings -> Publish** section is the easiest place to
+publish the whole project. Whole-project publishing means publishing
+\`/home/user\`, not the operating system, project host, secrets, snapshots, or
+backups.
+
+Whole-project shares automatically exclude private and internal paths such as
+\`.ssh\`, \`.cache\`, \`.local\`, \`.snapshots\`, and \`.backups\`. You also
+cannot publish \`.snapshots\` or \`.backups\` directly.
+
+Publishing is only allowed for paths inside \`/home/user\`. Project secrets are
+mounted outside HOME under \`/run/secrets/cocalc\`, so they are not project
+files and are not included in public shares.
+
+## Share URLs and slugs
+
+Each published item has a URL of the form:
+
+~~~text
+/share/<slug>
+~~~
+
+CoCalc creates an unguessable short slug by default. You can change the slug to
+something easier to remember if the link is meant to be public or easy to type.
+Slugs are global, URL-safe names; if a slug is already in use, choose another.
+
+Shares are unlisted. CoCalc does not publish a directory of public shares, but
+anyone who receives the URL may be able to open it. Treat the URL as a sharing
+link, not as a private secret.
+
+## Viewer access model
+
+A viewer who opens a share must be signed in. Opening the share grants that
+account temporary read-only viewer access scoped to the published path.
+
+The project host enforces the read policy on the backend. The UI hides editing,
+terminal, agent, and other write or execution features in viewer mode, but the
+backend policy is the security boundary. A path-restricted viewer must not be
+able to list, fetch, or copy files outside the published path.
+
+Multiple shares can exist in the same project. Each share has its own path,
+slug, enabled state, and viewer grant behavior.
+
+## Read-only viewing and copying
+
+Published files open in CoCalc's normal read-only viewers where possible:
+notebooks render as notebooks, markdown renders as markdown, text files use the
+editor viewer, and chat files use a read-only chat view.
+
+Viewers can copy selected files or folders to a project they own or create a
+new project and copy the selected content there. Copying uses the same
+path-restricted policy as viewing. Whole-project copies exclude private and
+internal paths.
+
+When the source and destination projects can be placed on the same host, copies
+are usually fast. Cross-host or cross-bay copies can take longer, and CoCalc
+shows progress while the copy is running.
+
+## Disable or unpublish
+
+Disable a share when the content should no longer be reachable through its
+public URL. Temporary viewer access is revoked after the disabled state
+propagates; this should be a matter of minutes, not days.
+
+Disabling a share does not recall content that a viewer already saw, downloaded,
+or copied into another project. If you accidentally publish secrets or malicious
+content, disable the share immediately and rotate any exposed credentials.
+
+## Archived projects
+
+Public shares are not available while the source project is archived. Restore
+or restart the project before expecting published links to work again.
+
+## Manage all shares
+
+Use **Project Settings -> Publish** to manage shares in the current project,
+including whole-project publishing.
+
+Use **Account Settings -> Public Shares** to review public shares across
+projects you can manage, open their URLs, copy links, jump to the project path,
+and disable shares. Destructive bulk actions require fresh authentication and a
+clear confirmation.
+`;
+
 export const PUBLISH_ROOTFS_BODY = String.raw`
 ## What RootFS publishing is for
 

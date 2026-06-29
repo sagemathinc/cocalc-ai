@@ -19,6 +19,7 @@ let listProjectAccessRequestBlocksMock: jest.Mock;
 let unblockProjectAccessRequesterMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
 let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
+let applyAccountProjectFeedRemoveOnHomeBayMock: jest.Mock;
 
 jest.setTimeout(15_000);
 
@@ -93,6 +94,13 @@ jest.mock("@cocalc/server/projects/details", () => ({
   __esModule: true,
   loadProjectReadDetailsDirect: (...args: any[]) =>
     loadProjectReadDetailsDirectMock(...args),
+}));
+
+jest.mock("@cocalc/server/account/project-feed", () => ({
+  __esModule: true,
+  applyAccountProjectFeedRemoveOnHomeBay: (...args: any[]) =>
+    applyAccountProjectFeedRemoveOnHomeBayMock(...args),
+  publishProjectAccountFeedEventsBestEffort: jest.fn(async () => undefined),
 }));
 
 describe("remote project detail reads", () => {
@@ -257,6 +265,7 @@ describe("remote project detail reads", () => {
     assertClusterAccountTrustedForProductAccessMock = jest.fn(
       async () => undefined,
     );
+    applyAccountProjectFeedRemoveOnHomeBayMock = jest.fn(async () => undefined);
   });
 
   it("routes getProjectCreated through the owning bay", async () => {
@@ -273,6 +282,26 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
     });
     expect(loadProjectReadDetailsDirectMock).not.toHaveBeenCalled();
+  });
+
+  it("removes stale account project projections when ownership no longer resolves", async () => {
+    resolveProjectBayMock = jest.fn(async () => null);
+
+    const { getProjectRegion } = await import("./projects");
+    await expect(
+      getProjectRegion({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).rejects.toThrow("project not found");
+
+    expect(applyAccountProjectFeedRemoveOnHomeBayMock).toHaveBeenCalledWith({
+      type: "project.remove",
+      ts: expect.any(Number),
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      reason: "membership_removed",
+    });
   });
 
   it("routes email-token invite creation through the owning bay", async () => {

@@ -136,6 +136,8 @@ interface Props {
   is_active: boolean;
   publicDirectoryShare?: ResolvedPublicDirectoryShare;
   publicDirectorySharePath?: string;
+  publicDirectorySharePathIsDirectory?: boolean;
+  forceForeground?: boolean;
 }
 
 export const ProjectPage: React.FC<Props> = (props: Props) => {
@@ -240,6 +242,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const modal = useTypedRedux({ project_id }, "modal");
   const open_files = useTypedRedux({ project_id }, "open_files");
+  const openFilesReady = open_files != null;
   const open_files_order = useTypedRedux({ project_id }, "open_files_order");
   const active_project_tab = useTypedRedux(
     { project_id },
@@ -254,11 +257,21 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (!actions) return;
     const share = props.publicDirectoryShare;
     if (!share) {
-      actions.setState({ public_directory_share_id: undefined });
+      actions.setState({
+        public_directory_share_id: undefined,
+        public_directory_share_path: undefined,
+        public_directory_share_slug: undefined,
+        temporary_public_share_route: false,
+      });
       actions.clearFilesystemClient();
       return;
     }
-    actions.setState({ public_directory_share_id: share.id });
+    actions.setState({
+      public_directory_share_id: share.id,
+      public_directory_share_path: share.path,
+      public_directory_share_slug: share.slug,
+      temporary_public_share_route: true,
+    });
     actions.clearFilesystemClient();
     const sharePath = share.path === "." ? "." : share.path;
     const shareRelativePath = `${props.publicDirectorySharePath ?? ""}`
@@ -267,16 +280,22 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     const targetPath = shareRelativePath
       ? path_to_file(sharePath, shareRelativePath)
       : "";
+    const targetIsFile =
+      targetPath != null &&
+      targetPath.length > 0 &&
+      !props.publicDirectorySharePathIsDirectory;
+
+    if (targetIsFile && !openFilesReady) {
+      return;
+    }
 
     actions.set_current_path(
-      targetPath ? path_split(targetPath).head || sharePath : sharePath,
+      targetIsFile
+        ? path_split(targetPath).head || sharePath
+        : targetPath || sharePath,
     );
-    actions.set_active_tab("files", {
-      update_file_listing: false,
-      change_history: false,
-    });
     actions.set_all_files_unchecked?.();
-    if (targetPath) {
+    if (targetIsFile) {
       actions.open_file({
         path: targetPath,
         foreground: true,
@@ -284,16 +303,29 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         change_history: false,
         explicit: false,
       });
+    } else {
+      actions.set_active_tab("files", {
+        update_file_listing: false,
+        change_history: false,
+      });
     }
     return () => {
-      actions.setState({ public_directory_share_id: undefined });
+      actions.setState({
+        public_directory_share_id: undefined,
+        public_directory_share_path: undefined,
+        public_directory_share_slug: undefined,
+        temporary_public_share_route: false,
+      });
       actions.clearFilesystemClient();
     };
   }, [
     actions,
     props.publicDirectoryShare?.id,
     props.publicDirectoryShare?.path,
+    props.publicDirectoryShare?.slug,
     props.publicDirectorySharePath,
+    props.publicDirectorySharePathIsDirectory,
+    openFilesReady,
   ]);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(
@@ -310,6 +342,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const workspaceChrome = workspaceStrongThemeChrome(
     projectCtx.workspaces.current,
   );
+  const projectPageIsForeground =
+    props.forceForeground || props.publicDirectoryShare
+      ? true
+      : active_top_tab == project_id;
 
   const narrowerPX = useMemo(() => {
     return hideActionButtons ? HIDDEN_RAIL_TOP_LEFT_WIDTH_PX : 0;
@@ -473,7 +509,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     }
     const path = getRecoverableActiveEditorPath({
       isActive: is_active,
-      activeTopTab: active_top_tab,
+      activeTopTab: props.publicDirectoryShare ? project_id : active_top_tab,
       projectId: project_id,
       activeProjectTab: active_project_tab,
       openFiles: open_files,
@@ -494,6 +530,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     is_active,
     open_files,
     project_id,
+    props.publicDirectoryShare,
   ]);
 
   useEffect(() => {
@@ -619,7 +656,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           : path;
       const tab_name = path_to_tab(path);
       const tabIsVisible =
-        active_top_tab == project_id &&
+        projectPageIsForeground &&
         initialWorkspaceRender.displayActiveTab === tab_name;
       return v.push(
         <FrameContext.Provider

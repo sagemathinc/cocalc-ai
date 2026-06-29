@@ -4,8 +4,10 @@
  */
 
 import {
+  frameTitleBarAgentButtonVisible,
   frameTitleBarMenuVisible,
   frameTitleBarTerminalButtonVisible,
+  frameTitleBarTimeTravelButtonVisible,
 } from "../read-only-title-bar";
 
 describe("read-only preview frame title bar", () => {
@@ -62,5 +64,23 @@ describe("read-only preview frame title bar", () => {
         type: "terminal",
       }),
     ).toBe(false);
+  });
+
+  it("hides TimeTravel and Agent launch affordances in read-only preview mode", () => {
+    expect(
+      frameTitleBarTimeTravelButtonVisible({ readOnlyPreview: true }),
+    ).toBe(false);
+    expect(frameTitleBarAgentButtonVisible({ readOnlyPreview: true })).toBe(
+      false,
+    );
+  });
+
+  it("keeps TimeTravel and Agent launch affordances outside read-only preview mode", () => {
+    expect(
+      frameTitleBarTimeTravelButtonVisible({ readOnlyPreview: false }),
+    ).toBe(true);
+    expect(frameTitleBarAgentButtonVisible({ readOnlyPreview: false })).toBe(
+      true,
+    );
   });
 });

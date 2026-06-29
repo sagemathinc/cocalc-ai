@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import HomePageButton from "./button";
 
+let mockPublicDirectorySharePath: string | undefined;
+
 const mockActions = {
   set_active_tab: jest.fn(),
   setFlyoutExpanded: jest.fn(),
@@ -13,6 +15,7 @@ const mockActions = {
 jest.mock("@cocalc/frontend/app-framework", () => ({
   ...jest.requireActual("@cocalc/frontend/app-framework"),
   useActions: () => mockActions,
+  useTypedRedux: () => mockPublicDirectorySharePath,
 }));
 
 jest.mock("@cocalc/frontend/project/home-directory", () => ({
@@ -22,6 +25,7 @@ jest.mock("@cocalc/frontend/project/home-directory", () => ({
 describe("HomePageButton", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPublicDirectorySharePath = undefined;
   });
 
   it("opens the full-page files explorer at resolved project home", async () => {
@@ -39,5 +43,21 @@ describe("HomePageButton", () => {
     expect(mockActions.set_file_search).toHaveBeenCalledWith("");
     expect(mockActions.set_current_path).not.toHaveBeenCalled();
     expect(mockActions.set_active_tab).not.toHaveBeenCalled();
+  });
+
+  it("opens the root of a public directory share instead of project home", async () => {
+    mockPublicDirectorySharePath = "share/x";
+
+    render(<HomePageButton project_id="p" active={false} width={48} />);
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => {
+      expect(mockActions.open_directory).toHaveBeenCalledWith(
+        "/Users/wstein/share/x",
+        false,
+        true,
+        false,
+      );
+    });
   });
 });

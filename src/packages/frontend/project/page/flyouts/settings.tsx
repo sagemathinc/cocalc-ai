@@ -23,6 +23,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { lite } from "@cocalc/frontend/lite";
 import {
   PROJECT_PEOPLE_DOCS_ACTION_EVENT,
+  PROJECT_PUBLISH_DOCS_ACTION_EVENT,
   PROJECT_SECRETS_DOCS_ACTION_EVENT,
   RUNTIME_IMAGE_DOCS_ACTION_EVENT,
 } from "@cocalc/frontend/project/docs-actions";
@@ -85,6 +86,11 @@ function SettingsFlyoutContent(_: Readonly<Props>): React.JSX.Element {
       if (detail?.projectId !== project_id) return;
       setExpandedPanelsHandler(["people"]);
     };
+    const handlePublishReveal = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (detail?.projectId !== project_id) return;
+      setExpandedPanelsHandler(["publish"]);
+    };
     const handleEnvironmentReveal = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: string }>).detail;
       if (detail?.projectId !== project_id) return;
@@ -102,10 +108,18 @@ function SettingsFlyoutContent(_: Readonly<Props>): React.JSX.Element {
       PROJECT_PEOPLE_DOCS_ACTION_EVENT,
       handlePeopleReveal,
     );
+    window.addEventListener(
+      PROJECT_PUBLISH_DOCS_ACTION_EVENT,
+      handlePublishReveal,
+    );
     return () => {
       window.removeEventListener(
         PROJECT_PEOPLE_DOCS_ACTION_EVENT,
         handlePeopleReveal,
+      );
+      window.removeEventListener(
+        PROJECT_PUBLISH_DOCS_ACTION_EVENT,
+        handlePublishReveal,
       );
       window.removeEventListener(
         PROJECT_SECRETS_DOCS_ACTION_EVENT,

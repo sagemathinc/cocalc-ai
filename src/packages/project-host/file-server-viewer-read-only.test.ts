@@ -155,6 +155,44 @@ describe("viewer read-only filesystem boundary", () => {
     );
   });
 
+  it("allows navigation to a shared descendant without allowing sibling reads", async () => {
+    const fs = mockFilesystem({
+      canonicalSyncIdentityPath: jest.fn(async (path: string) => path),
+      getListing: jest.fn(async () => ({
+        files: {
+          x: { type: "d", isDir: true, size: 0, mtime: 1 },
+          sibling: { type: "d", isDir: true, size: 0, mtime: 1 },
+          "root.txt": { type: "f", size: 1, mtime: 1 },
+        },
+      })),
+      readFile: jest.fn(async () => "shared"),
+    });
+    const viewerFs = createViewerReadOnlyFilesystem({
+      fs,
+      readPolicy: { rules: [{ action: "include", path: "share/x/**" }] },
+    });
+
+    await expect(viewerFs.getListing("share")).resolves.toMatchObject({
+      files: {
+        x: { type: "d" },
+      },
+    });
+    await expect(viewerFs.getListing("share")).resolves.not.toHaveProperty([
+      "files",
+      "sibling",
+    ]);
+    await expect(viewerFs.getListing("share")).resolves.not.toHaveProperty([
+      "files",
+      "root.txt",
+    ]);
+    await expect(viewerFs.readFile("share/x/y.txt")).resolves.toBe("shared");
+    await expect(
+      viewerFs.readFile("share/sibling/y.txt"),
+    ).rejects.toMatchObject({
+      code: "EACCES",
+    });
+  });
+
   it("rejects listings outside allowed paths and their ancestors", async () => {
     const fs = mockFilesystem();
     const viewerFs = createViewerReadOnlyFilesystem({

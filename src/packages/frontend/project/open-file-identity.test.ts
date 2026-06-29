@@ -30,7 +30,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function makeOpenFilesHarness() {
+function makeOpenFilesHarness(extraStoreValues: Record<string, unknown> = {}) {
   const openFilesState = new Map<string, Record<string, any>>();
   const open_files = {
     has(path: string) {
@@ -56,6 +56,9 @@ function makeOpenFilesHarness() {
           getIn: (path: [string, string]) =>
             openFilesState.get(path[0])?.[path[1]],
         };
+      }
+      if (Object.hasOwn(extraStoreValues, key)) {
+        return extraStoreValues[key];
       }
       return undefined;
     },
@@ -617,6 +620,65 @@ describe("open_file workspaceSelection passthrough", () => {
 describe("open_file wait_for_ready", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("bootstraps the editor component for public share viewer opens", async () => {
+    const path = "/home/user/share/a.md";
+    const saveSession = jest.fn();
+    const ensureOpenFileComponent = jest.fn();
+    const { open_files, openFilesState, store } = makeOpenFilesHarness({
+      public_directory_share_id: "share-id",
+      public_directory_share_path: "share",
+      public_directory_share_slug: "test2",
+    });
+
+    jest.spyOn(redux as any, "getStore").mockImplementation((name: string) => {
+      if (name === "page") {
+        return { get: jest.fn().mockReturnValue(false) };
+      }
+      return undefined;
+    });
+    jest
+      .spyOn(redux as any, "getActions")
+      .mockImplementation((name: string) => {
+        if (name === "page") {
+          return { save_session: saveSession };
+        }
+        return {};
+      });
+
+    const actions = {
+      project_id: "project-1",
+      get_store: () => store,
+      open_files,
+      fs: () => ({
+        canonicalSyncIdentityPath: jest.fn().mockResolvedValue(path),
+      }),
+      open_in_new_browser_window: jest.fn(),
+      foreground_project: jest.fn(),
+      set_active_tab: jest.fn(),
+      set_current_path: jest.fn(),
+      ensure_open_file_component: ensureOpenFileComponent,
+    } as any;
+
+    await open_file(actions, {
+      path,
+      foreground: true,
+      foreground_project: false,
+      wait_for_ready: true,
+    });
+
+    expect(openFilesState.get(path)).toMatchObject({
+      display_path: path,
+      ext: "md",
+      sync_path: path,
+    });
+    expect(ensureOpenFileComponent).toHaveBeenCalledWith(path, {
+      noFocus: true,
+    });
+    expect(actions.set_active_tab).toHaveBeenCalledWith(`editor-${path}`, {
+      change_history: false,
+    });
   });
 
   it("opens side chat when the target file is already open", async () => {

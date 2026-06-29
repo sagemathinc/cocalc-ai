@@ -44,7 +44,7 @@ describe("requireDangerousProjectMutationAuth", () => {
       account_id: "acct-1",
       browser_id: "browser-1",
       session_hash: "cli-session",
-      require_second_factor: true,
+      require_second_factor: "if_enabled",
     });
   });
 
@@ -62,7 +62,7 @@ describe("requireDangerousProjectMutationAuth", () => {
       account_id: "acct-1",
       browser_id: "browser-1",
       session_hash: undefined,
-      require_second_factor: true,
+      require_second_factor: "if_enabled",
     });
   });
 

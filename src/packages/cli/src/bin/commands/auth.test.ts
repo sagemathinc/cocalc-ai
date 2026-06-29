@@ -723,6 +723,9 @@ test("auth elevate --dev bootstraps a local dev session when only hub password a
           return {
             value: "remember-cookie-1",
             session_hash: "session-hash-1",
+            account_id: "00000000-1000-4000-8000-000000000056",
+            apiBaseUrl: "http://127.0.0.1:13114",
+            bay_id: "bay-1",
             factor_level: "totp",
             fresh_auth_until: "2026-05-08T18:00:00.000Z",
           };
@@ -737,11 +740,13 @@ test("auth elevate --dev bootstraps a local dev session when only hub password a
     assert.equal(bootstrapArgs.freshAuthDuration, "extended");
     assert.equal(capture.data.bootstrapped_session, true);
     assert.equal(capture.data.dev, true);
+    assert.equal(capture.data.api, "http://127.0.0.1:13114");
+    assert.equal(capture.data.bay_id, "bay-1");
     assert.equal(capture.data.factor_level, "totp");
     assert.equal(capture.data.fresh_auth_until, "2026-05-08T18:00:00.000Z");
     assert.equal(config.current_profile, "default");
     assert.deepEqual(config.profiles.default, {
-      api: "http://127.0.0.1:9100",
+      api: "http://127.0.0.1:13114",
       account_id: "00000000-1000-4000-8000-000000000056",
       cookie: "remember_me=remember-cookie-1",
     });

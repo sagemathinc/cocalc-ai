@@ -54,6 +54,7 @@ jest.mock("@cocalc/frontend/hosts/open-host-drawer", () => ({
 import {
   DOCS_ACTION_ACK_EVENT,
   PROJECT_SECRETS_DOCS_ACTION_EVENT,
+  PROJECT_PUBLISH_DOCS_ACTION_EVENT,
   RUNTIME_IMAGE_DOCS_ACTION_EVENT,
   listDocsAppActions,
   revealDocsAction,
@@ -124,6 +125,7 @@ describe("project docs actions", () => {
         "latex.open",
         "r.markdown.open",
         "settings.runtime.rootfs",
+        "settings.project.publish",
         "settings.people.collaborators",
         "file.timetravel.open",
         "project.codex.open",
@@ -492,6 +494,7 @@ describe("project docs actions", () => {
       ]),
     );
     expect(actionIds).not.toContain("settings.people.collaborators");
+    expect(actionIds).not.toContain("settings.project.publish");
     expect(actionIds).not.toContain("hosts.open");
     expect(actionIds).not.toContain("projects.create.open");
     expect(actionIds).not.toContain("docs.browser.open");
@@ -839,6 +842,38 @@ describe("project docs actions", () => {
       action_id: "settings.people.collaborators",
       opened: true,
       panel: "people",
+      tab: "settings",
+    });
+  });
+
+  it("opens the publish settings panel", async () => {
+    const events: any[] = [];
+    window.addEventListener(PROJECT_PUBLISH_DOCS_ACTION_EVENT, (event) => {
+      events.push((event as CustomEvent).detail);
+    });
+
+    const result = await revealDocsAction({
+      actionId: "settings.project.publish",
+      projectId: "project-1",
+    });
+
+    expect(events[0]).toMatchObject({
+      actionId: "settings.project.publish",
+      projectId: "project-1",
+    });
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
+      change_history: false,
+      noFocus: true,
+    });
+    expect(
+      JSON.parse(window.localStorage.getItem("project-1::flyout")!),
+    ).toMatchObject({
+      settings: ["publish"],
+    });
+    expect(result).toMatchObject({
+      action_id: "settings.project.publish",
+      opened: true,
+      panel: "publish",
       tab: "settings",
     });
   });

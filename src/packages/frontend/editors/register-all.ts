@@ -15,6 +15,7 @@ One you add a new built in editor, it should go here.
 import "./archive/actions";
 import "./stopwatch/register";
 import "./media-viewer/register";
+import "@cocalc/frontend/project/viewer-file-editor-register";
 
 // Raw data editors
 import "./data-editor/generic";

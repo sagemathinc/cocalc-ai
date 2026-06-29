@@ -14,6 +14,23 @@ const PROJECT_FS_RETRY_DELAYS_MS = [1000, 2000, 5000] as const;
 
 type ConatErrorLike = Error & { code?: string | number; data?: unknown };
 
+function logPublicShareFs(
+  level: "info" | "warn",
+  message: string,
+  details: Record<string, unknown>,
+) {
+  if (level !== "warn") {
+    return;
+  }
+  const payload = {
+    source: "frontend:project:listing:use-fs",
+    event: message,
+    ...details,
+  };
+  const line = `[public-directory-share] ${message} ${JSON.stringify(payload)}`;
+  console.warn(line);
+}
+
 function isRetryableProjectFsError(err: unknown): boolean {
   const code = String((err as ConatErrorLike | undefined)?.code ?? "");
   if (code === "408") {
@@ -29,6 +46,7 @@ function isRetryableProjectFsError(err: unknown): boolean {
     message.includes("no subscribers matching") ||
     message.includes("timeout") ||
     message.includes("unable to route") ||
+    message.includes("unable to connect routed project-host client") ||
     message.includes("host routing info unavailable") ||
     message.includes("project host id unavailable") ||
     message.includes("project not running") ||
@@ -52,10 +70,13 @@ export default function useFs({
   viewer?: boolean;
   enabled?: boolean;
 }): FilesystemClient | null {
-  const { publicDirectoryShare } = useProjectContext();
+  const { projectAccess, publicDirectoryShare } = useProjectContext();
+  const readOnlyViewer = projectAccess.role === "viewer";
+  const effectiveViewer =
+    viewer ?? (publicDirectoryShare ? undefined : readOnlyViewer);
   return useFsWithRefresh({
     project_id,
-    viewer,
+    viewer: effectiveViewer === true ? true : undefined,
     share_id: publicDirectoryShare?.id,
     enabled,
   }).fs;
@@ -88,6 +109,15 @@ export function useFsWithRefresh({
     const connect = async () => {
       let attempt = 0;
       while (!canceled) {
+        const started = Date.now();
+        if (share_id) {
+          logPublicShareFs("info", "filesystem bootstrap start", {
+            project_id,
+            share_id,
+            attempt: attempt + 1,
+            viewer,
+          });
+        }
         try {
           const nextFs = await withTimeout(
             webapp_client.conat_client.projectFs({
@@ -105,14 +135,34 @@ export function useFsWithRefresh({
           if (!canceled) {
             setFs(nextFs);
           }
+          if (share_id) {
+            logPublicShareFs("info", "filesystem bootstrap ready", {
+              project_id,
+              share_id,
+              attempt: attempt + 1,
+              elapsed_ms: Date.now() - started,
+            });
+          }
           return;
         } catch (err) {
           if (canceled) {
             return;
           }
+          const retryable = isRetryableProjectFsError(err);
           logger.warn(`unable to initialize filesystem client: ${err}`);
+          if (share_id) {
+            logPublicShareFs("warn", "filesystem bootstrap failed", {
+              project_id,
+              share_id,
+              attempt: attempt + 1,
+              elapsed_ms: Date.now() - started,
+              retryable,
+              code: (err as ConatErrorLike | undefined)?.code,
+              message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+            });
+          }
           setFs(null);
-          if (!isRetryableProjectFsError(err)) {
+          if (!retryable) {
             return;
           }
           const delayMs =

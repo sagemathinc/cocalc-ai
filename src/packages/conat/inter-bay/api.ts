@@ -54,10 +54,20 @@ import type {
   CopyPublicDirectoryShareToNewProjectResponse,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
+  CreatePublicDirectoryShareOptions,
+  GetTemporaryViewerReadPolicyOptions,
+  GetTemporaryViewerReadPolicyResponse,
+  GrantTemporaryViewerAccessOptions,
+  GrantTemporaryViewerAccessResponse,
   ListPublicDirectoryShareDirectoryOptions,
   ListPublicDirectoryShareDirectoryResponse,
+  ListProjectPublicDirectorySharesOptions,
+  ListPublicDirectorySharesResponse,
+  PublicDirectoryShareSummary,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
+  UpdatePublicDirectoryShareOptions,
+  UpsertPublicDirectoryShareOptions,
 } from "@cocalc/conat/hub/api/public-directory-shares";
 import type {
   LegacyMigrationApplyFinancialOptions,
@@ -378,6 +388,8 @@ export interface GetProjectDetailsRequest {
 export interface GetHostConnectionRequest {
   host_id: string;
   account_id: string;
+  project_id?: string;
+  public_directory_share_id?: string;
 }
 
 export interface HostRehomePrepareRequest {
@@ -463,6 +475,7 @@ export interface IssueProjectHostAuthTokenRequest {
   account_id?: string;
   actor?: "account" | "hub";
   project_id?: string;
+  public_directory_share_id?: string;
   ttl_seconds?: number;
 }
 
@@ -2149,10 +2162,16 @@ export type AccountLocalMethod =
   | "legacy-migration-get-financial-membership-grant-home-bay"
   | "legacy-migration-configure-financial-renewal-home-bay"
   | "public-directory-share-resolve"
+  | "public-directory-share-list-project"
+  | "public-directory-share-create"
+  | "public-directory-share-update"
+  | "public-directory-share-upsert"
   | "public-directory-share-authorize-read"
   | "public-directory-share-list-directory"
   | "public-directory-share-copy-to-project"
-  | "public-directory-share-copy-to-new-project";
+  | "public-directory-share-copy-to-new-project"
+  | "public-directory-share-grant-temporary-viewer-access"
+  | "public-directory-share-get-temporary-viewer-read-policy";
 export type AuthTokenMethod =
   | "requires-token"
   | "validate"
@@ -3340,6 +3359,18 @@ export interface InterBayAccountLocalApi {
   publicDirectoryShareResolve: (
     opts: ResolvePublicDirectoryShareOptions,
   ) => Promise<ResolvedPublicDirectoryShare>;
+  publicDirectoryShareListProject: (
+    opts: ListProjectPublicDirectorySharesOptions,
+  ) => Promise<ListPublicDirectorySharesResponse>;
+  publicDirectoryShareCreate: (
+    opts: CreatePublicDirectoryShareOptions,
+  ) => Promise<PublicDirectoryShareSummary>;
+  publicDirectoryShareUpdate: (
+    opts: UpdatePublicDirectoryShareOptions,
+  ) => Promise<PublicDirectoryShareSummary>;
+  publicDirectoryShareUpsert: (
+    opts: UpsertPublicDirectoryShareOptions,
+  ) => Promise<PublicDirectoryShareSummary>;
   publicDirectoryShareAuthorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
@@ -3352,6 +3383,12 @@ export interface InterBayAccountLocalApi {
   publicDirectoryShareCopyToNewProject: (
     opts: CopyPublicDirectoryShareToNewProjectOptions,
   ) => Promise<CopyPublicDirectoryShareToNewProjectResponse>;
+  publicDirectoryShareGrantTemporaryViewerAccess: (
+    opts: GrantTemporaryViewerAccessOptions,
+  ) => Promise<GrantTemporaryViewerAccessResponse>;
+  publicDirectoryShareGetTemporaryViewerReadPolicy: (
+    opts: GetTemporaryViewerReadPolicyOptions,
+  ) => Promise<GetTemporaryViewerReadPolicyResponse>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -5882,6 +5919,42 @@ export function createInterBayAccountLocalClient({
       method: "public-directory-share-resolve",
     }),
   });
+  const publicDirectoryShareListProjectClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareListProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-list-project",
+    }),
+  });
+  const publicDirectoryShareCreateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareCreate">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-create",
+    }),
+  });
+  const publicDirectoryShareUpdateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareUpdate">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-update",
+    }),
+  });
+  const publicDirectoryShareUpsertClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareUpsert">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-upsert",
+    }),
+  });
   const publicDirectoryShareAuthorizeReadClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "publicDirectoryShareAuthorizeRead">
   >({
@@ -5918,6 +5991,32 @@ export function createInterBayAccountLocalClient({
       method: "public-directory-share-copy-to-new-project",
     }),
   });
+  const publicDirectoryShareGrantTemporaryViewerAccessClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGrantTemporaryViewerAccess"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "public-directory-share-grant-temporary-viewer-access",
+      }),
+    });
+  const publicDirectoryShareGetTemporaryViewerReadPolicyClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGetTemporaryViewerReadPolicy"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "public-directory-share-get-temporary-viewer-read-policy",
+      }),
+    });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -6182,6 +6281,16 @@ export function createInterBayAccountLocalClient({
       ),
     publicDirectoryShareResolve: async (opts) =>
       await publicDirectoryShareResolveClient.publicDirectoryShareResolve(opts),
+    publicDirectoryShareListProject: async (opts) =>
+      await publicDirectoryShareListProjectClient.publicDirectoryShareListProject(
+        opts,
+      ),
+    publicDirectoryShareCreate: async (opts) =>
+      await publicDirectoryShareCreateClient.publicDirectoryShareCreate(opts),
+    publicDirectoryShareUpdate: async (opts) =>
+      await publicDirectoryShareUpdateClient.publicDirectoryShareUpdate(opts),
+    publicDirectoryShareUpsert: async (opts) =>
+      await publicDirectoryShareUpsertClient.publicDirectoryShareUpsert(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShareAuthorizeReadClient.publicDirectoryShareAuthorizeRead(
         opts,
@@ -6196,6 +6305,14 @@ export function createInterBayAccountLocalClient({
       ),
     publicDirectoryShareCopyToNewProject: async (opts) =>
       await publicDirectoryShareCopyToNewProjectClient.publicDirectoryShareCopyToNewProject(
+        opts,
+      ),
+    publicDirectoryShareGrantTemporaryViewerAccess: async (opts) =>
+      await publicDirectoryShareGrantTemporaryViewerAccessClient.publicDirectoryShareGrantTemporaryViewerAccess(
+        opts,
+      ),
+    publicDirectoryShareGetTemporaryViewerReadPolicy: async (opts) =>
+      await publicDirectoryShareGetTemporaryViewerReadPolicyClient.publicDirectoryShareGetTemporaryViewerReadPolicy(
         opts,
       ),
   };
@@ -7532,6 +7649,62 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareListProject">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-list-project",
+      }),
+      impl: {
+        publicDirectoryShareListProject: async (opts) =>
+          await impl.publicDirectoryShareListProject(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareCreate">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-create",
+      }),
+      impl: {
+        publicDirectoryShareCreate: async (opts) =>
+          await impl.publicDirectoryShareCreate(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareUpdate">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-update",
+      }),
+      impl: {
+        publicDirectoryShareUpdate: async (opts) =>
+          await impl.publicDirectoryShareUpdate(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareUpsert">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-upsert",
+      }),
+      impl: {
+        publicDirectoryShareUpsert: async (opts) =>
+          await impl.publicDirectoryShareUpsert(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "publicDirectoryShareAuthorizeRead">
     >({
       ...options,
@@ -7585,6 +7758,40 @@ export function createInterBayAccountLocalHandler({
       impl: {
         publicDirectoryShareCopyToNewProject: async (opts) =>
           await impl.publicDirectoryShareCopyToNewProject(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGrantTemporaryViewerAccess"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-grant-temporary-viewer-access",
+      }),
+      impl: {
+        publicDirectoryShareGrantTemporaryViewerAccess: async (opts) =>
+          await impl.publicDirectoryShareGrantTemporaryViewerAccess(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "publicDirectoryShareGetTemporaryViewerReadPolicy"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-temporary-viewer-read-policy",
+      }),
+      impl: {
+        publicDirectoryShareGetTemporaryViewerReadPolicy: async (opts) =>
+          await impl.publicDirectoryShareGetTemporaryViewerReadPolicy(opts),
       },
     }),
   ];

@@ -5,14 +5,19 @@
 
 import { Button } from "antd";
 
-import { useActions } from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 
+import { path_to_file } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 
 export default function HomePageButton({ project_id, active, width }) {
   const actions = useActions({ project_id });
+  const publicDirectorySharePath = useTypedRedux(
+    { project_id },
+    "public_directory_share_path",
+  ) as string | undefined;
 
   return (
     <Button
@@ -29,6 +34,18 @@ export default function HomePageButton({ project_id, active, width }) {
       }}
       onClick={() => {
         void resolveProjectHomeDirectory(project_id).then((home) => {
+          const sharePath = `${publicDirectorySharePath ?? ""}`
+            .trim()
+            .replace(/^\/+|\/+$/g, "");
+          if (sharePath) {
+            actions?.open_directory(
+              sharePath !== "." ? path_to_file(home, sharePath) : home,
+              false,
+              true,
+              false,
+            );
+            return;
+          }
           actions?.open_directory(home);
         });
         actions?.setFlyoutExpanded("files", false, false);

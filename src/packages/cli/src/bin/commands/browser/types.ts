@@ -277,6 +277,11 @@ export type BrowserCommandContext = {
         expires_at?: number;
       }>;
     };
+    publicDirectoryShares?: {
+      resolve: (opts: { slug: string }) => Promise<{
+        project_id: string;
+      }>;
+    };
   };
 };
 
@@ -304,6 +309,12 @@ export type BrowserCommandDeps = {
     project_id: string;
     title?: string;
     host_id?: string | null;
+  }>;
+  resolvePublicDirectoryShare: (
+    ctx: BrowserCommandContext,
+    slug: string,
+  ) => Promise<{
+    project_id: string;
   }>;
   resolveProjectConatClient: (
     ctx: BrowserCommandContext,
@@ -592,7 +603,10 @@ export type BrowserActionRegisterUtils = {
     activeOnly?: boolean;
   }) => Promise<BrowserSessionInfo>;
   resolveTargetProjectId: (opts: {
-    deps: Pick<BrowserCommandDeps, "resolveProject">;
+    deps: Pick<
+      BrowserCommandDeps,
+      "resolveProject" | "resolvePublicDirectoryShare"
+    >;
     ctx: BrowserCommandContext;
     project?: string;
     projectId?: string;
@@ -644,7 +658,10 @@ export type BrowserHarnessRegisterUtils = {
     activeOnly?: boolean;
   }) => Promise<BrowserSessionInfo>;
   resolveTargetProjectId: (opts: {
-    deps: Pick<BrowserCommandDeps, "resolveProject">;
+    deps: Pick<
+      BrowserCommandDeps,
+      "resolveProject" | "resolvePublicDirectoryShare"
+    >;
     ctx: BrowserCommandContext;
     project?: string;
     projectId?: string;
@@ -682,7 +699,10 @@ export type BrowserInspectRegisterUtils = {
     activeOnly?: boolean;
   }) => Promise<BrowserSessionInfo>;
   resolveTargetProjectId: (opts: {
-    deps: Pick<BrowserCommandDeps, "resolveProject">;
+    deps: Pick<
+      BrowserCommandDeps,
+      "resolveProject" | "resolvePublicDirectoryShare"
+    >;
     ctx: BrowserCommandContext;
     project?: string;
     projectId?: string;

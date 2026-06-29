@@ -48,6 +48,7 @@ interface Props {
   onGoForward?: () => void;
   backHistory?: string[];
   forwardHistory?: string[];
+  navigationRoot?: string;
 }
 
 const LONG_PRESS_MS = 400;
@@ -249,6 +250,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
     onGoForward,
     backHistory = [],
     forwardHistory = [],
+    navigationRoot,
   }: Readonly<Props>) => {
     const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
     const historyPathAbs = useTypedRedux({ project_id }, "history_path_abs");
@@ -297,7 +299,15 @@ export const PathNavigator: React.FC<Props> = React.memo(
         actions?.open_directory(path, true, false);
       }
     };
+    const normalizedNavigationRoot =
+      navigationRoot != null
+        ? normalizeAbsolutePath(navigationRoot)
+        : undefined;
     const navigateHome = () => {
+      if (normalizedNavigationRoot != null) {
+        navigate(normalizedNavigationRoot);
+        return;
+      }
       void resolveProjectHomeDirectory(project_id).then(navigate);
     };
 
@@ -316,6 +326,13 @@ export const PathNavigator: React.FC<Props> = React.memo(
     const sourceForPath = (
       path: string,
     ): { key: SourceKey; rootPath: string } => {
+      if (
+        normalizedNavigationRoot != null &&
+        (path === normalizedNavigationRoot ||
+          path.startsWith(`${normalizedNavigationRoot}/`))
+      ) {
+        return { key: "home", rootPath: normalizedNavigationRoot };
+      }
       if (!path.startsWith("/")) {
         return { key: "home", rootPath: homePath };
       }
@@ -440,7 +457,9 @@ export const PathNavigator: React.FC<Props> = React.memo(
               <Tooltip
                 title={
                   currentSource.key === "home"
-                    ? "Go to home directory"
+                    ? normalizedNavigationRoot != null
+                      ? "Go to top of visible files"
+                      : "Go to home directory"
                     : `Go to ${currentSource.rootPath}`
                 }
               >
@@ -513,7 +532,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
     }
 
     function renderUP() {
-      const canGoUp = currentPath !== "/";
+      const canGoUp =
+        currentPath !== "/" &&
+        (normalizedNavigationRoot == null ||
+          currentPath !== normalizedNavigationRoot);
 
       return (
         <Button
@@ -528,7 +550,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
             navigate(parentPath);
           }}
           disabled={!canGoUp}
-          title={canGoUp ? "Go up one directory" : "Already at root directory"}
+          title={canGoUp ? "Go up one directory" : "Already at top directory"}
         />
       );
     }

@@ -660,6 +660,7 @@ describe("ConatClient routed project-host reconnect", () => {
       connect: jest.fn(),
       close: jest.fn(),
       request: jest.fn(async () => ({ data: 123 })),
+      waitUntilSignedIn: jest.fn(async () => undefined),
       fs: jest.fn(() => routedFsClient),
     };
 
@@ -787,6 +788,9 @@ describe("ConatClient routed project-host reconnect", () => {
     await expect(
       client.projectFs({ project_id, caller: "test.projectFs" }),
     ).resolves.toBe(routedFsClient);
+    expect(routedClient.waitUntilSignedIn).toHaveBeenCalledWith({
+      timeout: 4000,
+    });
     expect(routedClient.fs).toHaveBeenCalledWith({ project_id });
 
     await expect(client.listings({ project_id })).resolves.toBe(
@@ -848,9 +852,7 @@ describe("ConatClient routed project-host reconnect", () => {
         getStore: jest.fn((name: string) => {
           if (name !== "projects") return undefined;
           return immutable.Map({
-            open_projects: immutable.List([
-              "00000000-0000-4000-8000-000000000001",
-            ]),
+            open_projects: immutable.List([]),
             project_map: immutable.Map({
               "00000000-0000-4000-8000-000000000001": immutable.Map({
                 host_id: "host-1",
@@ -1330,6 +1332,15 @@ describe("ConatClient routed project-host reconnect", () => {
       { address: "http://hub", remote: true },
     ) as any;
 
+    client.registerPublicDirectoryShareRouting({
+      project_id: "00000000-0000-4000-8000-000000000001",
+      share_id: "11111111-1111-4111-8111-111111111111",
+      host_connection: {
+        host_id: "host-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+      },
+    });
     client.getOrCreateRoutedHubClient({
       host_id: "host-1",
       address: "http://project-host",
@@ -1730,9 +1741,11 @@ describe("ConatClient routed project-host reconnect", () => {
     client.projectHostTokens["host-1"] = {
       token: "cached-token",
       expiresAt: Date.now() + 60_000,
+      lastProjectId: "00000000-0000-4000-8000-000000000001",
     };
     client.projectHostBrowserSessions["host-1"] = {
       address: "http://project-host",
+      project_id: "00000000-0000-4000-8000-000000000001",
       establishedAt: Date.now(),
     };
 
@@ -1949,9 +1962,11 @@ describe("ConatClient routed project-host reconnect", () => {
     client.projectHostTokens["host-1"] = {
       token: "cached-token",
       expiresAt: Date.now() + 60_000,
+      lastProjectId: "00000000-0000-4000-8000-000000000001",
     };
     client.projectHostBrowserSessions["host-1"] = {
       address: "http://project-host",
+      project_id: "00000000-0000-4000-8000-000000000001",
       establishedAt: Date.now(),
     };
 
@@ -2378,6 +2393,213 @@ describe("ConatClient routed project-host reconnect", () => {
         args: [{ host_id: "host-1" }],
       },
       expect.objectContaining({ timeout: 5_000 }),
+    );
+    expect(connect).toHaveBeenCalledTimes(1);
+
+    jest.useRealTimers();
+  });
+
+  it("does not privately resolve host info when reconnecting a public directory share", async () => {
+    jest.useFakeTimers();
+
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+
+    const hubRequest = jest.fn(async (_subject: string, mesg: any) => {
+      if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+        return {
+          data: {
+            token: "token-1",
+            expires_at: Date.now() + 5 * 60_000,
+          },
+        };
+      }
+      throw Error(`unexpected hub request ${mesg?.name}`);
+    });
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: true,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: hubRequest,
+    };
+
+    const connect = jest.fn();
+    const eventHandlers: Record<string, Function> = {};
+    const routedClient = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn((event: string, cb: Function) => {
+        eventHandlers[event] = cb;
+      }),
+      connect,
+      close: jest.fn(),
+      request: jest.fn(),
+    };
+
+    const ensureHostInfo = jest.fn(async () => undefined);
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            open_projects: immutable.List([
+              "00000000-0000-4000-8000-000000000001",
+            ]),
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-0",
+              }),
+            }),
+            host_info: immutable.Map({
+              "host-1": immutable.Map({
+                bay_id: "bay-0",
+                connect_url: "http://project-host",
+                host_session_id: "session-1",
+                public_directory_share_connection: true,
+                public_directory_share_id:
+                  "11111111-1111-4111-8111-111111111111",
+                updated_at: Date.now() - 120_000,
+              }),
+            }),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) =>
+        opts?.address === "http://project-host" ? routedClient : hubClient,
+      ),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    connect.mockClear();
+
+    eventHandlers.disconnected?.();
+
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    expect(ensureHostInfo).not.toHaveBeenCalled();
+    expect(hubRequest).not.toHaveBeenCalledWith(
+      "hub.account.acct-1.api",
+      {
+        name: "hosts.resolveHostConnection",
+        args: [{ host_id: "host-1" }],
+      },
+      expect.any(Object),
+    );
+    expect(hubRequest).toHaveBeenCalledWith(
+      "hub.account.acct-1.api",
+      {
+        name: "hosts.issueProjectHostAuthToken",
+        args: [
+          {
+            host_id: "host-1",
+            project_id: "00000000-0000-4000-8000-000000000001",
+            public_directory_share_id: "11111111-1111-4111-8111-111111111111",
+          },
+        ],
+      },
+      expect.objectContaining({ timeout: 4_000 }),
     );
     expect(connect).toHaveBeenCalledTimes(1);
 
@@ -2895,6 +3117,232 @@ describe("ConatClient routed project-host reconnect", () => {
     );
 
     warn.mockRestore();
+    jest.useRealTimers();
+  });
+
+  it("does not reuse project-host tokens or browser sessions across public shares on the same host", async () => {
+    jest.useFakeTimers();
+
+    const connectCalls: any[] = [];
+    const tokenRequests: any[] = [];
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          tokenRequests.push(mesg.args?.[0]);
+          return {
+            data: {
+              token: `token-${tokenRequests.length}`,
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
+    const routedClient = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      request: jest.fn(),
+    };
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: immutable.Map({
+              "host-1": immutable.Map({
+                bay_id: "bay-1",
+                connect_url: "http://project-host",
+                host_session_id: "session-1",
+                updated_at: Date.now(),
+              }),
+            }),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: jest.fn(),
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) => {
+        connectCalls.push(opts);
+        if (opts?.address === "http://hub") {
+          return hubClient;
+        }
+        return routedClient;
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    const project_id = "00000000-0000-4000-8000-000000000001";
+    const shareA = "11111111-1111-4111-8111-111111111111";
+    const shareB = "22222222-2222-4222-8222-222222222222";
+
+    client.registerPublicDirectoryShareRouting({
+      project_id,
+      share_id: shareA,
+      host_connection: {
+        host_id: "host-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+      },
+    });
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      public_directory_share_id: shareA,
+      project_id,
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    await client.ensureProjectHostBrowserSession({
+      host_id: "host-1",
+      address: "http://project-host",
+      project_id,
+      public_directory_share_id: shareA,
+    });
+
+    expect(client.projectHostTokens["host-1"]?.token).toBe("token-1");
+    expect(tokenRequests).toEqual([
+      expect.objectContaining({ public_directory_share_id: shareA }),
+    ]);
+
+    client.registerPublicDirectoryShareRouting({
+      project_id,
+      share_id: shareB,
+      host_connection: {
+        host_id: "host-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+      },
+    });
+    await client.ensureProjectHostBrowserSession({
+      host_id: "host-1",
+      address: "http://project-host",
+      project_id,
+      public_directory_share_id: shareB,
+    });
+
+    expect(client.projectHostTokens["host-1"]?.token).toBe("token-2");
+    expect(tokenRequests).toEqual([
+      expect.objectContaining({ public_directory_share_id: shareA }),
+      expect.objectContaining({ public_directory_share_id: shareB }),
+    ]);
+    expect(client.projectHostBrowserSessions["host-1"]).toEqual(
+      expect.objectContaining({
+        address: "http://project-host",
+        project_id,
+        public_directory_share_id: shareB,
+      }),
+    );
+
     jest.useRealTimers();
   });
 

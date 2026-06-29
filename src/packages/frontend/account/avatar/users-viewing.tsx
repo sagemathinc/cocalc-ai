@@ -133,13 +133,17 @@ export function UsersViewing(props: Readonly<Props>) {
     project_id,
     "public_directory_share_projection",
   );
+  const hasKnownProjectRole = project_id == null || projectRole != null;
   const isViewer =
     project_id != null && isViewerProjectRole(projectRole ?? undefined);
   const { users } = useUsersViewing(
     project_id,
     path,
     max_age_s,
-    !disabled && !isViewer && !publicDirectoryShareProjection,
+    !disabled &&
+      hasKnownProjectRole &&
+      !isViewer &&
+      !publicDirectoryShareProjection,
   );
 
   function render_active_users(users) {

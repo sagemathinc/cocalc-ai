@@ -72,6 +72,7 @@ interface FilesBottomProps {
   refreshBackups?: () => void;
   currentPath: string;
   onNavigate: (path: string) => void;
+  readOnlyViewer?: boolean;
 }
 
 export function FilesBottom({
@@ -89,6 +90,7 @@ export function FilesBottom({
   refreshBackups,
   currentPath,
   onNavigate,
+  readOnlyViewer = false,
 }: FilesBottomProps) {
   const [mode, setMode] = modeState;
   const effective_current_path = currentPath;
@@ -343,7 +345,9 @@ export function FilesBottom({
   function renderSelectExtra() {
     return (
       <Space size="small" orientation="horizontal" wrap>
-        {singleFile != null ? renderDownloadView() : undefined}
+        {!readOnlyViewer && singleFile != null
+          ? renderDownloadView()
+          : undefined}
         <FilesSelectButtons
           setMode={setMode}
           checked_files={checked_files}
@@ -366,6 +370,7 @@ export function FilesBottom({
         mode="bottom"
         activeFile={activeFile}
         refreshBackups={refreshBackups}
+        readOnlyViewer={readOnlyViewer}
       />
     );
   }
@@ -533,14 +538,18 @@ export function FilesBottom({
       className: "cc-project-flyout-files-panel",
       children: renderSelected(),
     },
-    {
-      key: "terminal",
-      label: terminalHeader(),
-      extra: renderTerminalExtra(),
-      style: { ...style, borderTop: FIX_BORDER },
-      className: "cc-project-flyout-files-panel",
-      children: renderTerminal(),
-    },
+    ...(readOnlyViewer
+      ? []
+      : [
+          {
+            key: "terminal",
+            label: terminalHeader(),
+            extra: renderTerminalExtra(),
+            style: { ...style, borderTop: FIX_BORDER },
+            className: "cc-project-flyout-files-panel",
+            children: renderTerminal(),
+          },
+        ]),
   ];
 
   return (

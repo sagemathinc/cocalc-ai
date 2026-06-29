@@ -73,6 +73,15 @@ describe("normalizeUserFacingError", () => {
     expect(normalized.message).toBe("The server request failed.");
     expect(normalized.details).toBe(raw);
   });
+
+  it("removes remote function wrappers from user-facing messages", () => {
+    const raw =
+      "calling remote function 'publicDirectoryShareGrantTemporaryViewerAccess': public directory share not found";
+    const normalized = normalizeUserFacingError(raw);
+
+    expect(normalized.message).toBe("public directory share not found");
+    expect(normalized.details).toBe(raw);
+  });
 });
 
 describe("stringifyError", () => {

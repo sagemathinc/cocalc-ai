@@ -89,7 +89,7 @@ export async function requireDangerousSessionAuth({
   account_id?: string | null;
   browser_id?: string | null;
   session_hash?: string | null;
-  require_second_factor?: boolean;
+  require_second_factor?: boolean | "if_enabled";
   allow_actor_impersonation?: boolean;
 }): Promise<AccountAuthSessionRow> {
   const accountId = `${account_id ?? ""}`.trim();
@@ -133,7 +133,13 @@ export async function requireDangerousSessionAuth({
         },
       );
     }
-    if (!(await hasActiveSecondFactor(impersonation.actor_account_id))) {
+    const actorHasSecondFactor = await hasActiveSecondFactor(
+      impersonation.actor_account_id,
+    );
+    if (!actorHasSecondFactor && require_second_factor === "if_enabled") {
+      return session;
+    }
+    if (!actorHasSecondFactor) {
       throw twoFactorRequired(
         "actor must enable two-factor authentication for this operation",
       );
@@ -146,7 +152,11 @@ export async function requireDangerousSessionAuth({
     return session;
   }
 
-  if (!(await hasActiveSecondFactor(accountId))) {
+  const accountHasSecondFactor = await hasActiveSecondFactor(accountId);
+  if (!accountHasSecondFactor && require_second_factor === "if_enabled") {
+    return session;
+  }
+  if (!accountHasSecondFactor) {
     if (!isDevCliFreshAuth(session)) {
       throw twoFactorRequired(
         "two-factor authentication is required for this operation",

@@ -24,8 +24,13 @@ jest.mock("@cocalc/frontend/editors/slate/editable-markdown", () => ({
   EditableMarkdown: (props: any) => mockEditableMarkdown(props),
 }));
 
-jest.mock("@cocalc/frontend/chat/viewer", () => () => (
-  <div data-testid="chat-viewer" />
+jest.mock("@cocalc/frontend/chat/viewer", () => (props: any) => (
+  <div
+    data-testid="chat-viewer"
+    data-readonly={`${props.readOnly === true}`}
+    data-show-thread-list={`${props.showThreadList === true}`}
+    data-virtualized={`${props.virtualized !== false}`}
+  />
 ));
 
 jest.mock("@cocalc/frontend/editors/task-editor/history-viewer", () => ({
@@ -135,5 +140,21 @@ describe("TimeTravel Viewer", () => {
       "internal-jsonl",
     );
     expect(mockToIpynb).toHaveBeenCalledWith(doc);
+  });
+
+  it("renders chat history with the compact thread selector", () => {
+    render(
+      <Viewer
+        {...baseProps}
+        ext="chat"
+        path="/home/user/history.chat"
+        doc={() => ({ get: () => [] }) as any}
+      />,
+    );
+
+    const viewer = screen.getByTestId("chat-viewer");
+    expect(viewer).toHaveAttribute("data-readonly", "true");
+    expect(viewer).toHaveAttribute("data-virtualized", "false");
+    expect(viewer).toHaveAttribute("data-show-thread-list", "true");
   });
 });

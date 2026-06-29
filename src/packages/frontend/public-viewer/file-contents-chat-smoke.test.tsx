@@ -1,8 +1,38 @@
 import { render, screen } from "@testing-library/react";
 import { from_str } from "@cocalc/sync/editor/immer-db/doc";
-import PublicViewerChatRenderer from "./renderers/chat";
+import { getSortedDates } from "@cocalc/frontend/chat/chat-log";
+import PublicViewerChatRenderer, {
+  createChatViewerDocument,
+} from "./renderers/chat";
 
-test("renders chat content as a readable transcript", async () => {
+jest.mock("@cocalc/frontend/chat/viewer", () => ({
+  __esModule: true,
+  default: ({
+    doc,
+    readOnly,
+    virtualized,
+    showThreadList,
+  }: {
+    doc: () => any;
+    readOnly?: boolean;
+    virtualized?: boolean;
+    showThreadList?: boolean;
+  }) => {
+    const rows = doc()?.get?.() ?? [];
+    return (
+      <div
+        data-testid="chat-viewer"
+        data-readonly={`${readOnly === true}`}
+        data-virtualized={`${virtualized !== false}`}
+        data-show-thread-list={`${showThreadList === true}`}
+      >
+        {JSON.stringify(rows)}
+      </div>
+    );
+  },
+}));
+
+test("renders chat content with the real chat viewer adapter", async () => {
   const content = [
     JSON.stringify({
       event: "chat-thread-config",
@@ -32,13 +62,22 @@ test("renders chat content as a readable transcript", async () => {
     />,
   );
 
-  expect(await screen.findByText("Demo Thread")).toBeTruthy();
-  expect(await screen.findByText("alice")).toBeTruthy();
-  expect(await screen.findByText("Hello from chat")).toBeTruthy();
-  expect(await screen.findByText("This is a shared log.")).toBeTruthy();
+  const viewer = await screen.findByTestId("chat-viewer");
+  expect(viewer.dataset.readonly).toBe("true");
+  expect(viewer.dataset.virtualized).toBe("false");
+  expect(viewer.dataset.showThreadList).toBe("true");
+  expect(viewer.parentElement).toHaveStyle({
+    display: "flex",
+    flexDirection: "column",
+    height: "100%",
+  });
+  expect(viewer.textContent).toContain("chat-thread-config");
+  expect(viewer.textContent).toContain("Demo Thread");
+  expect(viewer.textContent).toContain("alice");
+  expect(viewer.textContent).toContain("Hello from chat");
 });
 
-test("renders native chat files stored as immer syncdb content", async () => {
+test("adapts native chat files stored as immer syncdb content", () => {
   const doc = from_str(
     "",
     ["date", "sender_id", "event", "message_id", "thread_id"],
@@ -66,16 +105,66 @@ test("renders native chat files stored as immer syncdb content", async () => {
       ],
     });
 
-  render(
-    <PublicViewerChatRenderer
-      content={doc.to_str()}
-      fileContext={{ noSanitize: false }}
-    />,
+  const rows = createChatViewerDocument(doc.to_str()).get() as any[];
+  expect(rows).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        event: "chat-thread-config",
+        name: "Native Thread",
+      }),
+      expect.objectContaining({
+        event: "chat",
+        sender_id: "bob",
+        message_id: "msg-1",
+      }),
+    ]),
   );
+});
 
-  expect(await screen.findByText("Native Thread")).toBeTruthy();
-  expect(await screen.findByText("bob")).toBeTruthy();
-  expect(
-    await screen.findByText("Rendered from the project-host file."),
-  ).toBeTruthy();
+test("parsed json-lines chat rows produce visible chat dates", () => {
+  const content = [
+    JSON.stringify({
+      event: "chat",
+      sender_id: "gpt-5.4-mini",
+      date: "2026-06-28T21:29:10.604Z",
+      history: [
+        {
+          author_id: "gpt-5.4-mini",
+          content: "Codex authentication expired.",
+          date: "2026-06-28T21:29:29.581Z",
+        },
+      ],
+      message_id: "assistant-1",
+      thread_id: "thread-1",
+      parent_message_id: "human-1",
+    }),
+    JSON.stringify({
+      sender_id: "user-1",
+      event: "chat",
+      schema_version: 2,
+      history: [
+        {
+          author_id: "user-1",
+          content: "hi ther",
+          date: "2026-06-28T21:29:38.136Z",
+        },
+      ],
+      date: "2026-06-28T21:29:38.136Z",
+      message_id: "human-2",
+      thread_id: "thread-2",
+      editing: {},
+    }),
+  ].join("\n");
+  const rows = createChatViewerDocument(content).get() as any[];
+  const messages = new Map<string, any>();
+  for (const row of rows) {
+    messages.set(`${new Date(row.date).valueOf()}`, {
+      ...row,
+      date: new Date(row.date),
+    });
+  }
+
+  const { dates } = getSortedDates(messages as any, "user-1");
+
+  expect(dates).toHaveLength(2);
 });

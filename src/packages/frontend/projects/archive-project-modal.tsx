@@ -19,6 +19,7 @@ export interface ArchiveProjectModalItem {
   title?: string | null;
   state?: string | null;
   archiveAllowedByAdminOnly?: boolean;
+  publicShareCount?: number;
 }
 
 interface Props {
@@ -48,6 +49,13 @@ export function ArchiveProjectModal({
   const adminOnlyCount = projects.filter(
     ({ archiveAllowedByAdminOnly }) => archiveAllowedByAdminOnly === true,
   ).length;
+  const publicShareProjectCount = projects.filter(
+    ({ publicShareCount }) => (publicShareCount ?? 0) > 0,
+  ).length;
+  const publicShareCount = projects.reduce(
+    (total, project) => total + (project.publicShareCount ?? 0),
+    0,
+  );
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState("");
 
@@ -143,6 +151,18 @@ export function ArchiveProjectModal({
           {single ? `this ${projectLabelLower}` : `these ${projectsLabelLower}`}{" "}
           away when you do not need active compute.
         </div>
+        {publicShareCount > 0 ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Public shares are not available when a project is archived."
+            description={
+              single
+                ? "This project has public shares. They will not be accessible again until the project is restored."
+                : `${publicShareProjectCount} selected ${projectsLabelLower} have ${publicShareCount} public share(s). Those shares will not be accessible again until their projects are restored.`
+            }
+          />
+        ) : undefined}
         {adminOnlyCount > 0 ? (
           <Alert
             type="warning"

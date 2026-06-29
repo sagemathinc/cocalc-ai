@@ -86,7 +86,9 @@ import {
 } from "@cocalc/frontend/projects/host-routing-error";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import { FileDndProvider } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
+import { PublicDirectoryShareIndicator } from "@cocalc/frontend/project/explorer/public-directory-share-indicator";
 import { useFlyoutNavigation } from "./use-flyout-navigation";
+import { triggerFlyoutFileAction } from "./file-action-trigger";
 import { sortedTypeFilterOptions } from "@cocalc/frontend/project/explorer/file-listing/utils";
 import {
   fileListingFingerprint,
@@ -98,6 +100,10 @@ import {
   LEGACY_RESTORE_STATUS_LABEL,
   LEGACY_SOURCE_PROJECT_LABEL,
 } from "@cocalc/util/legacy-migration";
+import {
+  publicDirectoryShareIndicatorsForPath,
+  publicDirectoryShareLabelsFromProjectLabels,
+} from "@cocalc/util/public-directory-share-labels";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -215,6 +221,13 @@ export function FilesFlyout({
   const legacyRestoreStatus = projectLabelValue(
     projectLabels,
     LEGACY_RESTORE_STATUS_LABEL,
+  );
+  const publicShareLabels = useMemo(
+    () =>
+      readOnlyViewer || lite
+        ? []
+        : publicDirectoryShareLabelsFromProjectLabels(projectLabels),
+    [projectLabels, readOnlyViewer],
   );
   const previousLegacyRestoreStatus = usePrevious(legacyRestoreStatus);
   // mainly controls what a single click does, plus additional UI elements
@@ -892,6 +905,25 @@ export function FilesFlyout({
         }}
         checked_files={checked_files}
         isStarred={isStarred}
+        publicationIndicator={
+          item.name !== ".." && publicShareLabels.length > 0 ? (
+            <PublicDirectoryShareIndicator
+              compact
+              indicators={publicDirectoryShareIndicatorsForPath({
+                labels: publicShareLabels,
+                path: fullPath,
+              })}
+              onOpenShare={(share) =>
+                triggerFlyoutFileAction({
+                  actions,
+                  action: "publish",
+                  path: share.path,
+                  multiple: false,
+                })
+              }
+            />
+          ) : null
+        }
         onStar={(starState: boolean) => {
           const normalizedPath =
             item.isDir && !fullPath.endsWith("/") ? `${fullPath}/` : fullPath;
@@ -1156,8 +1188,9 @@ export function FilesFlyout({
           })
         }
         onTerminalCommand={() => allowListingUpdatesFor()}
+        readOnlyViewer={readOnlyViewer}
       />
-      {!lite && (
+      {!lite && (!readOnlyViewer || checked_files.size > 0) && (
         <div
           style={{
             alignItems: "center",
@@ -1166,12 +1199,14 @@ export function FilesFlyout({
             padding: "0 5px 5px",
           }}
         >
-          <DiskUsage
-            compact
-            current_path={effective_current_path}
-            project_id={project_id}
-            style={{ margin: 0 }}
-          />
+          {!readOnlyViewer ? (
+            <DiskUsage
+              compact
+              current_path={effective_current_path}
+              project_id={project_id}
+              style={{ margin: 0 }}
+            />
+          ) : null}
           <FilesSelectedControls
             project_id={project_id}
             checked_files={checked_files}
@@ -1182,6 +1217,7 @@ export function FilesFlyout({
             activeFile={activeFile}
             refreshBackups={refreshBackups}
             showInfo={false}
+            readOnlyViewer={readOnlyViewer}
           />
         </div>
       )}
@@ -1219,6 +1255,7 @@ export function FilesFlyout({
         refreshBackups={refreshBackups}
         currentPath={effective_current_path}
         onNavigate={navigateFlyout}
+        readOnlyViewer={readOnlyViewer}
       />
       {modal}
     </div>

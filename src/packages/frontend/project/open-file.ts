@@ -35,6 +35,7 @@ import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operatio
 import { normalize } from "./utils";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
+import { publicDirectoryShareUrlForDisplayPath } from "./public-directory-share-url";
 import {
   getProjectUserRole,
   isViewerProjectRole,
@@ -319,6 +320,18 @@ export async function open_file(
   }
   opts.path = normalize(opts.path);
   const displayPath = opts.path;
+  const publicDirectoryShareOpen = isPublicDirectoryShareOpen(actions);
+  if (publicDirectoryShareOpen) {
+    // Share routes are aliases for path-scoped viewer access. Never let a
+    // share file open switch the browser to the normal project URL.
+    opts.foreground_project = false;
+    opts.change_history = false;
+    if (opts.foreground) {
+      updatePublicDirectoryShareUrl(actions, displayPath, projectHome, {
+        replace: !opts.explicit,
+      });
+    }
+  }
   if (opts.foreground) {
     applyWorkspaceSelectionForForegroundOpen(
       actions.project_id,
@@ -425,7 +438,6 @@ export async function open_file(
   }
 
   if (isViewerProjectOpen(actions)) {
-    const publicDirectoryShareOpen = isPublicDirectoryShareOpen(actions);
     const changeHistory = publicDirectoryShareOpen
       ? false
       : opts.change_history;
@@ -454,6 +466,7 @@ export async function open_file(
     actions.open_files?.set(displayPath, "display_path", displayPath);
     actions.open_files?.set(displayPath, "fragmentId", opts.fragmentId ?? "");
     redux.getActions("page").save_session();
+    actions.ensure_open_file_component?.(displayPath, { noFocus: true });
     if (opts.foreground) {
       actions.set_current_path(workingDirectory());
       if (!publicDirectoryShareOpen) {
@@ -659,7 +672,36 @@ function isViewerProjectOpen(actions: ProjectActions): boolean {
 }
 
 function isPublicDirectoryShareOpen(actions: ProjectActions): boolean {
-  return !!`${actions.get_store()?.get("public_directory_share_id") ?? ""}`.trim();
+  return !!`${
+    actions.get_store?.()?.get("public_directory_share_id") ?? ""
+  }`.trim();
+}
+
+function updatePublicDirectoryShareUrl(
+  actions: ProjectActions,
+  displayPath: string,
+  projectHome: string,
+  { replace }: { replace: boolean },
+): void {
+  if (typeof window === "undefined") return;
+  const store = actions.get_store?.();
+  const slug = `${store?.get("public_directory_share_slug") ?? ""}`.trim();
+  const sharePath = `${store?.get("public_directory_share_path") ?? ""}`
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  const nextPath = publicDirectoryShareUrlForDisplayPath({
+    displayPath,
+    projectHome,
+    sharePath,
+    slug,
+  });
+  if (nextPath == null) return;
+  if (window.location.pathname === nextPath) return;
+  if (replace) {
+    window.history.replaceState(window.history.state, "", nextPath);
+  } else {
+    window.history.pushState(window.history.state, "", nextPath);
+  }
 }
 
 function toAbsoluteOpenPath(path: string, projectHome: string): string {

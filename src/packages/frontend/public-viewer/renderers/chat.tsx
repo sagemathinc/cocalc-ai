@@ -3,109 +3,20 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { useMemo } from "react";
 import type { CSSProperties, JSX } from "react";
-import type { IFileContext } from "@cocalc/frontend/lib/file-context";
-import Markdown from "@cocalc/frontend/editors/slate/static-markdown-public";
-import { normalizeChatMessage } from "@cocalc/frontend/chat/normalize";
+import ChatViewer from "@cocalc/frontend/chat/viewer";
 import { parseChatPreviewRows } from "@cocalc/frontend/chat/preview";
+import type { IFileContext } from "@cocalc/frontend/lib/file-context";
+import type { Document } from "@cocalc/sync/editor/generic/types";
 import { withViewerFileContext } from "../viewer-file-context";
 
-type ChatRow = {
-  event?: string;
-  sender_id?: string;
-  date?: string | number;
-  history?: Array<{ author_id?: string; content?: string; date?: string }>;
-  name?: string;
-  thread_id?: string;
-};
-
-function formatDate(value: unknown): string | undefined {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || value <= 0) return undefined;
-    return new Date(value).toLocaleString();
-  }
-  const raw = `${value ?? ""}`.trim();
-  if (!raw) return undefined;
-  const date = new Date(raw);
-  if (Number.isNaN(date.valueOf())) return raw;
-  return date.toLocaleString();
-}
-
-function escapeInline(value: string): string {
-  return value.replace(/[\\`*_{}\[\]()#+\-.!|>]/g, "\\$&");
-}
-
-function buildChatMarkdown(content: string): string {
-  const rows: ChatRow[] = [];
-  const threadNames = new Map<string, string>();
-  for (const row of parseChatPreviewRows(content).rows) {
-    recordChatRow({ row: row as ChatRow, rows, threadNames });
-  }
-
-  rows.sort((a, b) => {
-    const left = new Date(`${a.date ?? ""}`).valueOf();
-    const right = new Date(`${b.date ?? ""}`).valueOf();
-    return left - right;
-  });
-
-  if (rows.length === 0) {
-    return "No chat messages were found in this file.";
-  }
-
-  const out: string[] = [];
-  let lastThreadId: string | undefined;
-  for (const row of rows) {
-    const latest = Array.isArray(row.history) ? row.history[0] : undefined;
-    const message = `${latest?.content ?? ""}`.trim();
-    if (!message) continue;
-
-    const threadId = `${row.thread_id ?? ""}`.trim() || undefined;
-    if (threadId && threadId !== lastThreadId) {
-      const threadName = threadNames.get(threadId);
-      out.push(
-        `## ${escapeInline(threadName || "Thread")} \`${escapeInline(threadId)}\``,
-      );
-      out.push("");
-      lastThreadId = threadId;
-    }
-
-    const author =
-      `${latest?.author_id ?? row.sender_id ?? "unknown"}`.trim() || "unknown";
-    const when = formatDate(latest?.date ?? row.date);
-    out.push(`### ${escapeInline(author)}`);
-    if (when) {
-      out.push(`*${escapeInline(when)}*`);
-      out.push("");
-    }
-    out.push(message);
-    out.push("");
-    out.push("---");
-    out.push("");
-  }
-
-  const markdown = out.join("\n").trim();
-  return markdown || "No chat messages were found in this file.";
-}
-
-function recordChatRow({
-  row,
-  rows,
-  threadNames,
-}: {
-  row: ChatRow;
-  rows: ChatRow[];
-  threadNames: Map<string, string>;
-}): void {
-  if (row?.event === "chat-thread-config" && row.thread_id) {
-    const name = `${row.name ?? ""}`.trim();
-    if (name) {
-      threadNames.set(row.thread_id, name);
-    }
-  }
-  if (row?.event === "chat") {
-    const normalized = normalizeChatMessage(row).message ?? row;
-    rows.push(normalized as ChatRow);
-  }
+export function createChatViewerDocument(content: string): Document {
+  const rows = parseChatPreviewRows(content).rows;
+  return {
+    get: () => rows,
+    to_str: () => content,
+  } as unknown as Document;
 }
 
 export default function PublicViewerChatRenderer({
@@ -117,8 +28,25 @@ export default function PublicViewerChatRenderer({
   style?: CSSProperties;
   fileContext: IFileContext;
 }): JSX.Element {
+  const doc = useMemo(() => {
+    const parsed = createChatViewerDocument(content);
+    return () => parsed;
+  }, [content]);
+
   return withViewerFileContext(
-    <Markdown value={buildChatMarkdown(content)} style={style} />,
+    <div
+      style={{
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        padding: "12px 16px",
+        ...style,
+      }}
+    >
+      <ChatViewer doc={doc} readOnly virtualized={false} showThreadList />
+    </div>,
     fileContext,
   );
 }

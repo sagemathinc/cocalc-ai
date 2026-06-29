@@ -75,7 +75,7 @@ function mockFs({
 }
 
 describe("copy viewer read policy enforcement", () => {
-  it("recursively accepts a directory only when every child is allowed", async () => {
+  it("skips recursive validation when a non-dereferencing copy is allowed for the whole subtree", async () => {
     const { assertCopySourceAllowedByReadPolicy } = await import("./copy");
     const fs = mockFs({
       canonical: {
@@ -99,13 +99,43 @@ describe("copy viewer read policy enforcement", () => {
         options: { recursive: true },
       }),
     ).resolves.toBeUndefined();
-    expect(fs.readdir).toHaveBeenCalledWith("public", { withFileTypes: true });
-    expect(fs.readdir).toHaveBeenCalledWith("public/nested", {
-      withFileTypes: true,
-    });
+    expect(fs.stat).toHaveBeenCalledWith("public");
+    expect(fs.readdir).not.toHaveBeenCalled();
   });
 
-  it("rejects recursive directory copy when any child is denied", async () => {
+  it("walks recursive copies when the policy has a nested exclusion", async () => {
+    const { assertCopySourceAllowedByReadPolicy } = await import("./copy");
+    const fs = mockFs({
+      canonical: {
+        public: "/home/user/public",
+        "public/a.txt": "/home/user/public/a.txt",
+        "public/private": "/home/user/public/private",
+        "public/private/secret.txt": "/home/user/public/private/secret.txt",
+      },
+      dirs: new Set(["public", "public/private"]),
+      children: {
+        public: ["a.txt", "private"],
+        "public/private": ["secret.txt"],
+      },
+    });
+
+    await expect(
+      assertCopySourceAllowedByReadPolicy({
+        fs,
+        read_policy: {
+          rules: [
+            { action: "include", path: "public/**" },
+            { action: "exclude", path: "public/private/**" },
+          ],
+        },
+        src_paths: ["public"],
+        options: { recursive: true },
+      }),
+    ).rejects.toMatchObject({ code: "EACCES" });
+    expect(fs.readdir).toHaveBeenCalledWith("public", { withFileTypes: true });
+  });
+
+  it("rejects denied child targets when recursive copy dereferences symlinks", async () => {
     const { assertCopySourceAllowedByReadPolicy } = await import("./copy");
     const fs = mockFs({
       canonical: {
@@ -124,7 +154,7 @@ describe("copy viewer read policy enforcement", () => {
         fs,
         read_policy: { rules: [{ action: "include", path: "public/**" }] },
         src_paths: ["public"],
-        options: { recursive: true },
+        options: { recursive: true, dereference: true },
       }),
     ).rejects.toMatchObject({ code: "EACCES" });
   });
