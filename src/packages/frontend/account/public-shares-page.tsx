@@ -12,6 +12,7 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading, Tooltip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
+import { load_target } from "@cocalc/frontend/history";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -67,7 +68,13 @@ function projectPathHref(share: PublicDirectoryShareSummary): string {
       ? []
       : share.path.split("/").filter((part) => part.length > 0);
   const encodedPath = parts.map(encodeURIComponent).join("/");
-  return `/projects/${share.project_id}/files/${encodedPath}`;
+  return `/projects/${share.project_id}/files/${encodedPath}${
+    encodedPath ? "/" : ""
+  }`;
+}
+
+function projectPathTarget(share: PublicDirectoryShareSummary): string {
+  return projectPathHref(share).replace(/^\/+/, "");
 }
 
 function projectPathLabel(path: string): string {
@@ -232,7 +239,22 @@ function PublicSharesPage() {
                       ]) == "archived";
                     return (
                       <Space direction="vertical" size={2}>
-                        <a href={projectPathHref(share)}>
+                        <a
+                          href={projectPathHref(share)}
+                          onClick={(event) => {
+                            if (
+                              event.metaKey ||
+                              event.ctrlKey ||
+                              event.shiftKey ||
+                              event.altKey ||
+                              event.button !== 0
+                            ) {
+                              return;
+                            }
+                            event.preventDefault();
+                            load_target(projectPathTarget(share));
+                          }}
+                        >
                           <ProjectTitle
                             project_id={share.project_id}
                             trunc={42}
