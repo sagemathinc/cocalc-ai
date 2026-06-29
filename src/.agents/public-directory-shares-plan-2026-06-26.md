@@ -426,14 +426,62 @@ so it works well for both explicit viewers and temporary share viewers:
   "Share entire project";
 - the share management UI should show whether a share targets a folder or the
   entire project;
-- the owner/collaborator file listing should clearly indicate when the current
-  directory or a listed descendant is public, e.g. by loading public-share
-  metadata on first project/explorer load and rendering a compact "Published"
-  badge/action near matching directories;
 - whole-project shares should still show the same read-only banner and primary
   "Copy" action as folder shares.
 
 This work benefits both public shares and normal project viewers.
+
+### Publication Awareness UI
+
+Before the feature is considered complete, owners and collaborators must have a
+clear way to see what is published from the normal project file explorer. It
+should not be necessary to remember share URLs or open a separate admin page to
+know which folders are public.
+
+Use `public_project_paths` / `public_directory_shares` as the authoritative
+source of truth. For fast frontend display, maintain generated project labels as
+an autosynced, non-authoritative UI index:
+
+- generate one reserved label per active share, e.g. `system:public-share` or
+  `public-share:<share_id>`;
+- label payload should include at least `share_id`, `path`, `slug`, `title`,
+  `visibility`, `disabled`, `requires_auth`, `updated_at`, and whether the
+  share is a whole-project share;
+- labels are written only by server share create/update/disable/delete paths;
+- the UI must never treat labels as security state, and users must not edit
+  these labels directly;
+- a periodic repair job should be able to rebuild the generated labels from the
+  authoritative share table;
+- if labels are missing or stale, security is unchanged. The worst acceptable
+  result is missing or stale UI decoration, not incorrect file access.
+
+Explorer behavior:
+
+- show a compact blue `Published` pill or globe indicator on the exact row whose
+  path is a published share root;
+- if a directory contains published descendants, show a quieter `Contains
+published` indicator or an outline globe, not a full badge on every child;
+- when browsing inside a published subtree, show a small banner or breadcrumb
+  note such as `Inside published share: <slug>` with `Copy link` and `Manage`
+  actions;
+- if multiple shares overlap, the direct row indicator should expose a popover
+  listing the relevant shares and whether each is direct, an ancestor, or a
+  descendant;
+- whole-project shares should be indicated at the project HOME/root level, with
+  wording that makes the global safety exclusions clear.
+
+Management behavior:
+
+- add a project-level "Published items" view or panel listing all shares in path
+  order with slug, title, visibility, status, copy URL, edit, and disable
+  actions;
+- the publish dialog should warn when the selected path is already published,
+  is inside a broader published share, or contains nested published shares;
+- disabling a share updates the authoritative share row first, then updates the
+  generated label, and temporary access revocation must not depend on label
+  propagation;
+- for unlisted shares, owner/collaborator UI may show recent viewer identity by
+  display name and account id, but not email by default.
 
 ### Copy UX
 
@@ -602,6 +650,9 @@ account ids/emails for support and abuse response.
 - Add tests for whole-project viewer roots: HOME listing has no parent escape,
   `/tmp` and `/` navigation are unavailable, and safety exclusions are not
   listed or fetchable.
+- Add generated public-share project labels and explorer decorations so
+  owners/collaborators can see direct published paths, containing directories,
+  overlapping shares, and whole-project shares from the normal file explorer.
 
 #### Phase C: Temporary Grant Backend
 
