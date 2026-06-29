@@ -68,6 +68,14 @@ async function grantShareRoute(rawPath: string): Promise<{
   throw lastError ?? new Error("Published folder not found");
 }
 
+function shareRouteErrorMessage(err: unknown): string {
+  const message = normalizeUserFacingError(err).message;
+  if (/public directory share not found/i.test(message)) {
+    return "Published folder not found.";
+  }
+  return message;
+}
+
 function materializeTemporaryViewerProject({
   accountId,
   grant,
@@ -315,7 +323,7 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
         },
       )
       .catch((err) => {
-        if (!canceled) setError(normalizeUserFacingError(err).message);
+        if (!canceled) setError(shareRouteErrorMessage(err));
       })
       .finally(() => {
         if (!canceled) setLoading(false);
