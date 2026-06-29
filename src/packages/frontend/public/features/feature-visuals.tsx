@@ -5,10 +5,11 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Flex, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_RADIUS } from "@cocalc/frontend/public/theme";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -70,6 +71,43 @@ export function StoryCard({
         <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
           {children}
         </Paragraph>
+      </Flex>
+    </div>
+  );
+}
+
+export function ContextList({
+  accent = PUBLIC_COLORS.brand,
+  items,
+  title,
+}: {
+  accent?: string;
+  items: { icon: IconName; label: ReactNode }[];
+  title?: ReactNode;
+}) {
+  return (
+    <div
+      className="cocalc-feature-context-list"
+      style={{
+        borderLeft: `3px solid ${accent}33`,
+        paddingLeft: 18,
+      }}
+    >
+      <Flex vertical gap={12}>
+        {title != null && <Text strong>{title}</Text>}
+        {items.map(({ icon, label }, index) => (
+          <Flex align="center" gap={10} key={`${icon}-${index}`}>
+            <Icon
+              name={icon}
+              style={{
+                color: accent,
+                flex: "0 0 auto",
+                fontSize: 17,
+              }}
+            />
+            <Text strong>{label}</Text>
+          </Flex>
+        ))}
       </Flex>
     </div>
   );
@@ -169,6 +207,118 @@ export function StartCard({
       >
         {label}
       </Button>
+    </div>
+  );
+}
+
+export function FeatureFinalBand({
+  action,
+  children,
+  relatedLinks,
+  relatedTitle = "Related",
+  title,
+}: {
+  action: {
+    body: ReactNode;
+    href: string;
+    label: string;
+    title: ReactNode;
+  };
+  children: ReactNode;
+  relatedLinks?: { href: string; label: ReactNode }[];
+  relatedTitle?: ReactNode;
+  title: ReactNode;
+}) {
+  return (
+    <div
+      className="cocalc-feature-final-band"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PUBLIC_RADIUS.panel,
+        padding: 24,
+      }}
+    >
+      <Row gutter={[24, 24]} align="stretch">
+        <Col xs={24} lg={15} style={{ display: "flex" }}>
+          <Flex vertical gap={14} style={{ width: "100%" }}>
+            <Title level={3} style={{ margin: 0 }}>
+              {title}
+            </Title>
+            {children}
+          </Flex>
+        </Col>
+        <Col xs={24} lg={9} style={{ display: "flex" }}>
+          <div
+            className="cocalc-feature-final-panel"
+            style={{
+              background: PUBLIC_COLORS.surfaceMuted,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PUBLIC_RADIUS.panel,
+              color: PUBLIC_COLORS.heading,
+              display: "flex",
+              height: "100%",
+              padding: 22,
+              width: "100%",
+            }}
+          >
+            <Flex vertical gap={14} justify="center" style={{ width: "100%" }}>
+              <Title
+                level={3}
+                style={{ color: PUBLIC_COLORS.heading, margin: 0 }}
+              >
+                {action.title}
+              </Title>
+              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+                {action.body}
+              </Paragraph>
+              <Button
+                href={action.href}
+                size="large"
+                style={{ marginTop: 4, width: "fit-content" }}
+                type="primary"
+              >
+                {action.label}
+              </Button>
+            </Flex>
+          </div>
+        </Col>
+        {relatedLinks?.length ? (
+          <Col xs={24}>
+            <Flex
+              align="center"
+              className="cocalc-feature-final-related-row"
+              gap={12}
+              wrap
+            >
+              <Text
+                className="cocalc-feature-final-related-label"
+                strong
+                style={{ color: PUBLIC_COLORS.mutedText, flex: "0 0 auto" }}
+              >
+                {relatedTitle}
+              </Text>
+              <Flex
+                align="center"
+                className="cocalc-feature-final-related-links"
+                gap={12}
+                wrap
+              >
+                {relatedLinks.map(({ href, label }) => (
+                  <Button
+                    href={href}
+                    key={href}
+                    style={{ minHeight: 24, paddingInline: 0 }}
+                    type="link"
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </Flex>
+            </Flex>
+          </Col>
+        ) : null}
+      </Row>
     </div>
   );
 }
