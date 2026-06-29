@@ -479,6 +479,10 @@ async function upsertAccounts(rows: Record<string, any>[]): Promise<void> {
   await requeueSkippedRestoresWithArtifacts(rows);
 }
 
+function legacyBoolean(value: unknown): boolean {
+  return value === true || `${value}`.toLowerCase() === "true";
+}
+
 async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
   await ensureProjectsSchema();
   await pool().query(
@@ -492,6 +496,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
           owner_legacy_account_id TEXT,
           legacy_users JSONB,
           hidden BOOLEAN,
+          deleted BOOLEAN,
           last_edited TIMESTAMPTZ,
           last_active TIMESTAMPTZ,
           disk_mb DOUBLE PRECISION,
@@ -541,6 +546,8 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
            NOW()
       FROM input
      WHERE COALESCE(legacy_project_id, '') <> ''
+       AND COALESCE(deleted, false)=false
+       AND COALESCE(hidden, false)=false
     ON CONFLICT (legacy_project_id) DO UPDATE SET
       title=EXCLUDED.title,
       description=EXCLUDED.description,
@@ -992,6 +999,12 @@ async function importFile({
   let batches = 0;
   for await (const row of readRows(file, options.limit)) {
     normalizeRow(target, row);
+    if (
+      target === "projects" &&
+      (legacyBoolean(row.deleted) || legacyBoolean(row.hidden))
+    ) {
+      continue;
+    }
     batch.push(row);
     rows += 1;
     if (batch.length >= options.batchSize) {
