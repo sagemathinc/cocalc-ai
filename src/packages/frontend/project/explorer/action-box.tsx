@@ -96,13 +96,18 @@ function normalizeSharePath(path: string): string {
   return relative || ".";
 }
 
+function pathIsBlockedPublicShareRoot(path: string): boolean {
+  const root = normalizeSharePath(path).split("/")[0];
+  return root === SNAPSHOTS || root === BACKUPS;
+}
+
 function pathIsPublishable(path: string): boolean {
   const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
-  return (
+  const inHome =
     !raw.startsWith("/") ||
     raw === "/home/user" ||
-    raw.startsWith("/home/user/")
-  );
+    raw.startsWith("/home/user/");
+  return inHome && !pathIsBlockedPublicShareRoot(path);
 }
 
 function defaultPublishTitle(path: string): string {
@@ -1081,7 +1086,9 @@ export function ActionBox({
     if (!pathIsPublishable(path)) {
       return (
         <Alert bsStyle="warning">
-          Only directories in <code>/home/user</code> can be published.
+          Only directories in <code>/home/user</code> can be published.{" "}
+          <code>{SNAPSHOTS}</code> and <code>{BACKUPS}</code> are excluded from
+          public sharing.
         </Alert>
       );
     }

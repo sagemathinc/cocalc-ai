@@ -135,6 +135,15 @@ describe("public directory share normalization", () => {
       false,
     );
     expect(
+      viewerReadPolicyAllowsPath({ policy, path: ".snapshots/2026-06-28" }),
+    ).toBe(false);
+    expect(viewerReadPolicyAllowsPath({ policy, path: ".backups" })).toBe(
+      false,
+    );
+    expect(
+      viewerReadPolicyAllowsPath({ policy, path: ".backups/2026-06-28" }),
+    ).toBe(false);
+    expect(
       viewerReadPolicyAllowsPath({
         policy,
         path: ".local/share/cocalc/project-log.db",
@@ -147,6 +156,18 @@ describe("public directory share normalization", () => {
         path: ".cache/cocalc/project/secrets",
       }),
     ).toBe(false);
+  });
+
+  it("excludes snapshot and backup paths even when directly shared", () => {
+    for (const path of [
+      ".snapshots",
+      ".snapshots/a",
+      ".backups",
+      ".backups/a",
+    ]) {
+      const policy = publicDirectoryShareReadPolicyForPath(path);
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(false);
+    }
   });
 });
 

@@ -298,6 +298,8 @@ export function publicDirectoryShareReadPolicyForPath(
       ...include,
       { action: "exclude", path: ".snapshots" },
       { action: "exclude", path: ".snapshots/**" },
+      { action: "exclude", path: ".backups" },
+      { action: "exclude", path: ".backups/**" },
       { action: "exclude", path: ".ssh" },
       { action: "exclude", path: ".ssh/**" },
       { action: "exclude", path: ".cache" },
