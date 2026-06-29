@@ -27,6 +27,7 @@ import {
 import {
   assertCanIncreaseAccountStorage,
   getProjectOwnerAccountId,
+  getPublicDirectoryShareLimitForAccount,
 } from "@cocalc/server/membership/project-limits";
 import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
 import {
@@ -36,8 +37,12 @@ import {
 } from "@cocalc/server/projects/labels";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
 import {
+  DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT,
+  MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH,
   MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH,
   MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
   PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX,
   publicDirectoryShareProjectLabelKey,
   publicDirectoryShareProjectLabelValue,
@@ -266,6 +271,59 @@ function normalizeAvailability(
 function defaultTitleForPath(path: string): string {
   if (path === ".") return "Project files";
   return posix.basename(path) || path;
+}
+
+function normalizeOptionalPublicShareText({
+  field,
+  maxLength,
+  value,
+}: {
+  field: string;
+  maxLength: number;
+  value?: string | null;
+}): string | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  if (text.length > maxLength) {
+    throw Error(`${field} must be at most ${maxLength} characters`);
+  }
+  return text;
+}
+
+function normalizePublicShareTitle({
+  fallback,
+  value,
+}: {
+  fallback: string;
+  value?: string | null;
+}): string {
+  const fallbackTitle = fallback.slice(
+    0,
+    MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+  );
+  return (
+    normalizeOptionalPublicShareText({
+      field: "title",
+      maxLength: MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+      value,
+    }) ?? fallbackTitle
+  );
+}
+
+function normalizePublicShareDescription(value?: string | null): string | null {
+  return normalizeOptionalPublicShareText({
+    field: "description",
+    maxLength: MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH,
+    value,
+  });
+}
+
+function normalizePublicShareLicense(value?: string | null): string | null {
+  return normalizeOptionalPublicShareText({
+    field: "license",
+    maxLength: MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH,
+    value,
+  });
 }
 
 function defaultCopiedProjectTitle(
@@ -508,6 +566,11 @@ export async function ensurePublicDirectorySharesSchema(): Promise<void> {
         WHERE disabled IS FALSE
     `);
     await pool.query(`
+      CREATE INDEX IF NOT EXISTS public_project_paths_created_by_active_idx
+        ON public_project_paths(created_by)
+        WHERE disabled IS FALSE AND visibility <> 'disabled'
+    `);
+    await pool.query(`
       CREATE INDEX IF NOT EXISTS public_project_paths_availability_status_idx
         ON public_project_paths(availability_status)
     `);
@@ -617,6 +680,39 @@ async function assertEnabled(): Promise<void> {
 async function assertAdmin(account_id: string | undefined): Promise<void> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("user must be an admin");
+  }
+}
+
+async function getActivePublicDirectoryShareCountForAccount(
+  account_id: string,
+): Promise<number> {
+  const { rows } = await getPool().query<{ count: string | number }>(
+    `
+      SELECT COUNT(*) AS count
+      FROM public_project_paths
+      WHERE created_by=$1
+        AND disabled IS FALSE
+        AND visibility <> 'disabled'
+    `,
+    [account_id],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function assertCanCreatePublicDirectoryShare(
+  account_id: string,
+): Promise<void> {
+  const [limit, current] = await Promise.all([
+    getPublicDirectoryShareLimitForAccount({ account_id }),
+    getActivePublicDirectoryShareCountForAccount(account_id),
+  ]);
+  const effectiveLimit = Number.isFinite(limit)
+    ? limit
+    : DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT;
+  if (current >= effectiveLimit) {
+    throw Error(
+      `public directory share limit reached (${current}/${effectiveLimit}); disable an existing public share or upgrade membership`,
+    );
   }
 }
 
@@ -1376,6 +1472,13 @@ async function savePublicDirectoryShare(
   const availabilityStatus = normalizeAvailability(opts.availability_status);
   const disabled = opts.disabled === true || visibility === "disabled";
   const id = opts.id && isValidUUID(opts.id) ? opts.id : undefined;
+  const title = normalizeOptionalPublicShareText({
+    field: "title",
+    maxLength: MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+    value: opts.title,
+  });
+  const description = normalizePublicShareDescription(opts.description);
+  const license = normalizePublicShareLicense(opts.license);
   const bayId = getConfiguredBayId();
   const params = [
     id,
@@ -1386,9 +1489,9 @@ async function savePublicDirectoryShare(
     opts.requires_auth !== false,
     availabilityStatus,
     opts.availability_message ?? null,
-    opts.title ?? null,
-    opts.description ?? null,
-    opts.license ?? null,
+    title,
+    description,
+    license,
     opts.image ?? null,
     opts.redirect ?? null,
     opts.site_license_id ?? null,
@@ -1587,6 +1690,7 @@ export async function create(
     account_id: opts.account_id,
     project_id: opts.project_id,
   });
+  await assertCanCreatePublicDirectoryShare(opts.account_id);
   const slug = normalizePublicDirectoryShareSlug(opts.slug);
   const path = normalizePublicDirectorySharePath(opts.path);
   assertPublicDirectorySharePathAllowed(path);
@@ -1610,9 +1714,12 @@ export async function create(
     visibility: "unlisted",
     requires_auth: true,
     availability_status: "available",
-    title: opts.title?.trim() || defaultTitleForPath(path),
-    description: opts.description?.trim() || null,
-    license: opts.license?.trim() || null,
+    title: normalizePublicShareTitle({
+      fallback: defaultTitleForPath(path),
+      value: opts.title,
+    }),
+    description: normalizePublicShareDescription(opts.description),
+    license: normalizePublicShareLicense(opts.license),
     site_license_id: siteLicenseGrant?.site_license_id ?? null,
     site_license_pool_id: siteLicenseGrant?.site_license_pool_id ?? null,
     site_license_membership_tier_id:

@@ -80,6 +80,9 @@ describe("membership tier templates", () => {
       250,
     );
     expect(
+      (tier.usage_limits as Record<string, unknown>)?.public_directory_shares,
+    ).toBe(1000);
+    expect(
       (tier.usage_limits as Record<string, unknown>)?.rootfs_oci_images,
     ).toBe(true);
   });
@@ -131,6 +134,7 @@ describe("membership tier templates", () => {
         notification_email_send_limit_7d: 1000,
         prepaid_host_usage_limit_5h_usd: 100,
         prepaid_host_usage_limit_7d_usd: 1000,
+        public_directory_shares: 100,
         rootfs_count: 20,
         rootfs_total_storage_gb: 25,
         rootfs_max_storage_gb: 10,

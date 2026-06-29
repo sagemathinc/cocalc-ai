@@ -15,6 +15,7 @@ import {
   update,
 } from "./index";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { getPublicDirectoryShareLimitForAccount } from "@cocalc/server/membership/project-limits";
 import {
   MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH,
   MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
@@ -259,6 +260,51 @@ describe("public directory temporary viewer grants", () => {
       account_id: OWNER_ID,
       project_id: PROJECT_ID,
     });
+  });
+
+  it("enforces the active-share quota per publishing account", async () => {
+    const limit = await getPublicDirectoryShareLimitForAccount({
+      account_id: OWNER_ID,
+    });
+    await getPool().query(
+      `
+        INSERT INTO projects (project_id, title, users, last_edited)
+        VALUES ($1, 'Publish project', '{}'::jsonb, NOW())
+        ON CONFLICT (project_id) DO NOTHING
+      `,
+      [PROJECT_ID],
+    );
+    await getPool().query(
+      `
+        INSERT INTO public_project_paths (
+          id, project_id, path, slug, visibility, requires_auth,
+          availability_status, created_by, updated_by, disabled
+        )
+        SELECT
+          gen_random_uuid(),
+          $1,
+          'share-' || i::text,
+          'quota-' || i::text,
+          'unlisted',
+          TRUE,
+          'available',
+          $2,
+          $2,
+          FALSE
+        FROM generate_series(1, $3::int) AS i
+      `,
+      [PROJECT_ID, OWNER_ID, limit],
+    );
+
+    await expect(
+      create({
+        account_id: OWNER_ID,
+        project_id: PROJECT_ID,
+        path: "share",
+        slug: "over-quota",
+      }),
+    ).rejects.toThrow("public directory share limit reached");
+    expect(mockGetProjectFsClient).not.toHaveBeenCalled();
   });
 
   it("grants path-scoped viewer access for a signed-in share visitor", async () => {

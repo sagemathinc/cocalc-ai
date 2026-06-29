@@ -142,7 +142,8 @@ export function PublishPanel({
             <code>/home/user</code>; private internals such as <code>.ssh</code>
             {", "}
             <code>.cache</code>, <code>.local</code>, and{" "}
-            <code>.snapshots</code> are excluded.
+            <code>.snapshots</code> are excluded. Your membership tier limits
+            how many active directories you can publish.
           </Paragraph>
         }
       />

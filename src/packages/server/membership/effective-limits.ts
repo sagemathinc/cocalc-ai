@@ -183,6 +183,9 @@ export function normalizeMembershipEffectiveLimits(
     blob_project_count: normalizeNonNegativeInteger(
       usageLimits?.blob_project_count,
     ),
+    public_directory_shares: normalizeNonNegativeInteger(
+      usageLimits?.public_directory_shares,
+    ),
     rootfs_count: normalizeNonNegativeInteger(usageLimits?.rootfs_count),
     rootfs_total_storage_gb: normalizeNonNegativeNumber(
       usageLimits?.rootfs_total_storage_gb,

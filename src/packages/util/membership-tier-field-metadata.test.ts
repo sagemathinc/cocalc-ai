@@ -86,9 +86,15 @@ describe("membership tier field metadata", () => {
       "project_defaults",
       "memory",
     ]);
+    expect(
+      membershipTierFieldPath("usage_limits.public_directory_shares"),
+    ).toEqual(["usage_limits", "public_directory_shares"]);
     expect(membershipTierFieldDisplayUnit("usage_limits.cpu_5h_seconds")).toBe(
       "CPU-hours",
     );
+    expect(
+      membershipTierFieldDisplayUnit("usage_limits.public_directory_shares"),
+    ).toBe("shares");
     expect(membershipTierFieldDisplayUnit("price_monthly")).toBe("USD");
   });
 

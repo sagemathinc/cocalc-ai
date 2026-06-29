@@ -56,6 +56,12 @@ import {
   SNAPSHOTS,
 } from "@cocalc/util/consts/snapshots";
 import { BACKUPS } from "@cocalc/util/consts/backups";
+import {
+  MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
+} from "@cocalc/util/public-directory-share-labels";
 
 export const PRE_STYLE = {
   marginBottom: "15px",
@@ -1126,7 +1132,8 @@ export function ActionBox({
         ) : (
           <Alert bsStyle="info">
             Publish <code>{displayPath}</code> as an unlisted shared directory.
-            Viewers must know the URL and be signed in to CoCalc.
+            Viewers must know the URL and be signed in to CoCalc. Your
+            membership tier limits how many directories you can publish.
           </Alert>
         )}
         {publishShareLoading ? (
@@ -1139,7 +1146,9 @@ export function ActionBox({
           <AntdInput
             value={publishTitle}
             onChange={(e) => setPublishTitle(e.target.value)}
+            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH}
             placeholder="Shared directory title"
+            showCount
           />
         </div>
         <div>
@@ -1148,7 +1157,9 @@ export function ActionBox({
             value={publishSlug}
             onChange={(e) => setPublishSlug(e.target.value)}
             addonBefore="/share/"
+            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH}
             placeholder="random-token or custom/path"
+            showCount
           />
           <Typography.Text type="secondary">
             New shares default to an unguessable random token. Replace it with a
@@ -1160,8 +1171,10 @@ export function ActionBox({
           <AntdInput.TextArea
             value={publishDescription}
             onChange={(e) => setPublishDescription(e.target.value)}
+            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH}
             placeholder="Optional description for viewers"
             rows={3}
+            showCount
           />
         </div>
         <div>
@@ -1169,7 +1182,9 @@ export function ActionBox({
           <AntdInput
             value={publishLicense}
             onChange={(e) => setPublishLicense(e.target.value)}
+            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH}
             placeholder="Optional license, e.g. CC-BY 4.0"
+            showCount
           />
         </div>
         <div>
