@@ -143,7 +143,7 @@ The realistic attacks and mistakes are:
 
 Add explicit defaults to project container launch:
 
-- `--ulimit=nofile=4096:4096`
+- `--ulimit=nofile=8192:8192`
 - `--ulimit=core=0:0`
 - `--pids-limit=4096`, already present
 - `--shm-size=64m`, unless a project entitlement explicitly raises it later
@@ -151,10 +151,10 @@ Add explicit defaults to project container launch:
 Keep these configurable through project-host environment variables, not through
 normal user-facing project settings:
 
-- `COCALC_PROJECT_NOFILE_LIMIT`, default `4096`
+- `COCALC_PROJECT_NOFILE_LIMIT`, default `8192`
 - `COCALC_PROJECT_CORE_LIMIT`, default `0`
 - `COCALC_PROJECT_SHM_SIZE`, default `64m`
-- `COCALC_PROJECT_PID_LIMIT`, default `4096`
+- `COCALC_PROJECT_PIDS_LIMIT`, default `4096`
 
 Implementation points:
 

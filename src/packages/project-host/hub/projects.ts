@@ -129,7 +129,16 @@ import { assertProjectDiskQuotaStartAllowed } from "../project-start-quota";
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
 const MB = 1_000_000;
-const DEFAULT_PID_LIMIT = 4096;
+const DEFAULT_PID_LIMIT = positiveIntegerEnv("COCALC_PROJECT_PIDS_LIMIT", 4096);
+const DEFAULT_NOFILE_LIMIT = positiveIntegerEnv(
+  "COCALC_PROJECT_NOFILE_LIMIT",
+  8192,
+);
+const DEFAULT_CORE_LIMIT = nonNegativeIntegerEnv(
+  "COCALC_PROJECT_CORE_LIMIT",
+  0,
+);
+const DEFAULT_SHM_SIZE = process.env.COCALC_PROJECT_SHM_SIZE?.trim() || "64m";
 const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
 const PROJECT_OWNER_LIMITS_CACHE_TTL_MS = 5 * 60_000;
 const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
@@ -154,6 +163,22 @@ const accountLimitsInflight = new Map<
   string,
   Promise<MembershipEffectiveLimits>
 >();
+
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function nonNegativeIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
 let listeningProjectPortOffsetsCache:
   | {
       value: Set<number>;
@@ -424,7 +449,12 @@ function normalizeRunQuota(run_quota?: any): any | undefined {
 }
 
 function runnerConfigFromQuota(run_quota?: any): Partial<Configuration> {
-  const limits: Partial<Configuration> = {};
+  const limits: Partial<Configuration> = {
+    pids: DEFAULT_PID_LIMIT,
+    nofile: DEFAULT_NOFILE_LIMIT,
+    core: DEFAULT_CORE_LIMIT,
+    shmSize: DEFAULT_SHM_SIZE,
+  };
   if (!run_quota) return limits;
 
   if (run_quota.cpu_limit != null) {
@@ -440,8 +470,6 @@ function runnerConfigFromQuota(run_quota?: any): Partial<Configuration> {
 
   if (run_quota.pids_limit != null) {
     limits.pids = run_quota.pids_limit;
-  } else {
-    limits.pids = DEFAULT_PID_LIMIT;
   }
 
   if (run_quota.disk_quota != null) {

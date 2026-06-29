@@ -97,6 +97,7 @@ import {
   runRuntimeConformanceStartupChecks,
   startRuntimeConformanceMonitor,
 } from "./runtime-conformance";
+import { ensureProjectHostKernelSysctls } from "./host-sysctl";
 import { startRuntimePostureMonitor } from "./runtime-posture";
 import { startProjectSnapshotBackupMaintenance } from "./snapshot-backup-maintenance";
 import {
@@ -450,6 +451,7 @@ export async function main(
     url: process.env.PROJECT_HOST_INTERNAL_URL ?? "",
     urlName: "PROJECT_HOST_INTERNAL_URL",
   });
+  await ensureProjectHostKernelSysctls();
   await runRuntimeConformanceStartupChecks();
   const stopRuntimeConformanceMonitor = startRuntimeConformanceMonitor();
   const tls = resolveTlsConfig(host, port);

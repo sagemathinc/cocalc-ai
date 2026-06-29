@@ -606,6 +606,24 @@ export interface HostManagedRootfsReleaseLifecycle {
   gc_status?: RootfsReleaseGcStatus;
 }
 
+export interface HostKernelSysctlMismatch {
+  key: string;
+  target: number;
+  actual: number | null;
+}
+
+export interface HostKernelSysctlSnapshot {
+  collected_at?: string;
+  config_path?: string;
+  targets: Record<string, number>;
+  values: Record<string, number | null>;
+  ok: boolean;
+  mismatches: HostKernelSysctlMismatch[];
+  apply_attempted?: boolean;
+  apply_succeeded?: boolean;
+  error?: string;
+}
+
 export interface HostCurrentMetrics {
   collected_at?: string;
   cpu_percent?: number;
@@ -639,6 +657,7 @@ export interface HostCurrentMetrics {
   running_project_count?: number;
   starting_project_count?: number;
   stopping_project_count?: number;
+  kernel_sysctls?: HostKernelSysctlSnapshot;
 }
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
