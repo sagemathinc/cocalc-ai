@@ -73,27 +73,8 @@ export const PRE_STYLE = {
 
 const MAX_RENDERED_SELECTED_FILES = 500;
 
-function slugPart(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "files"
-  );
-}
-
-function defaultPublicShareSlug({
-  project_id,
-  path,
-}: {
-  project_id: string;
-  path: string;
-}): string {
-  const sharePath = normalizeSharePath(path);
-  const tail =
-    sharePath === "." ? "project" : misc.path_split(sharePath).tail || "files";
-  return `${project_id}/${slugPart(tail || "files")}`;
+function defaultPublicShareSlug(): string {
+  return misc.secure_random_token(12);
 }
 
 function publicShareUrl(slug: string): string {
@@ -294,9 +275,7 @@ export function ActionBox({
       return;
     }
     setPublishTitle((cur) => cur || defaultPublishTitle(path));
-    setPublishSlug(
-      (cur) => cur || defaultPublicShareSlug({ project_id, path }),
-    );
+    setPublishSlug((cur) => cur || defaultPublicShareSlug());
     let canceled = false;
     setPublishShareLoading(true);
     setExistingPublishShare(null);
@@ -1162,8 +1141,12 @@ export function ActionBox({
             value={publishSlug}
             onChange={(e) => setPublishSlug(e.target.value)}
             addonBefore="/share/"
-            placeholder={`${project_id}/files`}
+            placeholder="random-token or custom/path"
           />
+          <Typography.Text type="secondary">
+            New shares default to an unguessable random token. Replace it with a
+            readable path if you want a cleaner URL.
+          </Typography.Text>
         </div>
         <div>
           <Typography.Text strong>Description</Typography.Text>
