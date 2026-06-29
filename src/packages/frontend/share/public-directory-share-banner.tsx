@@ -79,10 +79,17 @@ function shareImageUrl(
   }
 }
 
+export function normalizeShareDescriptionMarkdown(value: string): string {
+  // Some legacy public_paths descriptions were imported with doubled LaTeX
+  // escapes, e.g. "\\(" instead of "\(". Collapse only LaTeX-looking
+  // sequences so ordinary markdown backslashes are not broadly rewritten.
+  return value.replace(/\\\\(?=(?:[()[\]]|[A-Za-z]+))/g, "\\");
+}
+
 function ShareDescription({ value }: { value: string }) {
   return (
     <StaticMarkdown
-      value={value}
+      value={normalizeShareDescriptionMarkdown(value)}
       style={{
         margin: "4px 0 0",
       }}
