@@ -83,6 +83,11 @@ jest.mock("@cocalc/frontend/components/theme-image-input", () => ({
     `/blobs/${filename ?? "theme-image.png"}?uuid=${blob}`,
 }));
 
+jest.mock("@cocalc/frontend/editors/slate/static-markdown-public", () => ({
+  __esModule: true,
+  default: ({ value }: { value: string }) => <div>{value}</div>,
+}));
+
 jest.mock("@cocalc/frontend/components/user-facing-error", () => ({
   normalizeUserFacingError: (err: unknown) => ({
     message: (err as any)?.message ?? `${err}`,
