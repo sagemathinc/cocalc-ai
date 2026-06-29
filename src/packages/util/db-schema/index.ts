@@ -72,6 +72,7 @@ import "./project-host-bootstrap-tokens";
 import "./project-backup-repos";
 import "./project-backup-indexes";
 import "./project-collab-invites";
+import "./project-entitlement-overrides";
 import "./project-events-outbox";
 import "./project-labels";
 import "./project-host-route-invalidations";

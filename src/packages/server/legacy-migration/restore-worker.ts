@@ -18,6 +18,7 @@ import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
 import { createLro, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
+import { upsertLegacyMigrationProjectDiskQuotaOverride } from "@cocalc/server/membership/project-entitlement-overrides";
 import {
   LEGACY_PROJECT_RESTORE_LRO_KIND,
   LEGACY_RESTORE_ERROR_LABEL,
@@ -66,6 +67,10 @@ const PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS = Math.max(
 );
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_LEGACY_PROJECTS_BUCKET = "cocalc-projects";
+const RESTORED_PROJECT_QUOTA_HEADROOM_MB = Math.max(
+  0,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_QUOTA_HEADROOM_MB", 1024),
+);
 
 let running = false;
 let inFlight = 0;
@@ -146,6 +151,14 @@ async function ensureLegacyMigrationRestoreSchema(): Promise<void> {
 function positiveInteger(value: unknown): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+function restoredProjectDiskQuotaMb(
+  restored_bytes: unknown,
+): number | undefined {
+  const bytes = positiveInteger(restored_bytes);
+  if (bytes == null) return;
+  return Math.ceil(bytes / 1_000_000) + RESTORED_PROJECT_QUOTA_HEADROOM_MB;
 }
 
 function nestedValue(obj: any, path: string[]): unknown {
@@ -676,6 +689,29 @@ async function markRestored({
   await setRestoreLabels({ row, restore_status: "restored" });
 }
 
+async function ensureRestoredProjectDiskQuota({
+  row,
+  result,
+}: {
+  row: LegacyRestoreRow;
+  result: Record<string, any>;
+}): Promise<number | undefined> {
+  const quotaUsedBytes = positiveInteger(result.quota_used_bytes);
+  const uncompressedBytes = positiveInteger(result.uncompressed_bytes);
+  const desired = restoredProjectDiskQuotaMb(
+    Math.max(quotaUsedBytes ?? 0, uncompressedBytes ?? 0),
+  );
+  if (desired == null) return;
+  await upsertLegacyMigrationProjectDiskQuotaOverride({
+    project_id: row.project_id,
+    legacy_project_id: row.legacy_project_id,
+    disk_quota_mb: desired,
+    restored_used_bytes: quotaUsedBytes ?? uncompressedBytes,
+    headroom_mb: RESTORED_PROJECT_QUOTA_HEADROOM_MB,
+  });
+  return desired;
+}
+
 async function markFailed({
   row,
   err,
@@ -816,14 +852,24 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
         lro: { op_id, scope_type: "project", scope_id: row.project_id },
       }),
     });
+    const restoredResult = {
+      ...result,
+      artifact_bucket: bucket,
+      artifact_key: key,
+      restored_at: new Date().toISOString(),
+      worker_id: WORKER_ID,
+    };
+    const diskQuotaMb = await ensureRestoredProjectDiskQuota({
+      row,
+      result: restoredResult,
+    });
     await markRestored({
       row,
       result: {
-        ...result,
-        artifact_bucket: bucket,
-        artifact_key: key,
-        restored_at: new Date().toISOString(),
-        worker_id: WORKER_ID,
+        ...restoredResult,
+        ...(diskQuotaMb == null
+          ? {}
+          : { restored_project_disk_quota_mb: diskQuotaMb }),
       },
     });
   } catch (err) {

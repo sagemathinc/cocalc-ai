@@ -159,6 +159,8 @@ export const TABLE_OWNERSHIP = {
       "project_backup_indexes",
       "project_collab_invite_blocks",
       "project_collab_invites",
+      "project_entitlement_override_events",
+      "project_entitlement_overrides",
       "project_events_outbox",
       "project_labels",
       "public_project_paths",

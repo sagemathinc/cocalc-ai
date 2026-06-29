@@ -26,8 +26,10 @@ function formatDirectoryEntry(
 
 export function ProjectDirectorySummaryButton({
   project_id,
+  style,
 }: {
   project_id: string;
+  style?: React.CSSProperties;
 }) {
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<ProjectDirectorySummary | null>(null);
@@ -55,7 +57,7 @@ export function ProjectDirectorySummaryButton({
   }, [project_id]);
 
   return (
-    <div style={{ marginTop: "8px" }}>
+    <div style={{ marginTop: "8px", ...style }}>
       <Space wrap>
         <Button size="small" loading={loading} onClick={load}>
           Directory summary

@@ -203,6 +203,37 @@ describe("filesystem explicit routing", () => {
     server.close();
   });
 
+  it("expires cached read-only filesystem subjects", async () => {
+    const { fsReadOnlyServer } = await import("./fs");
+    const fs0 = jest.fn(async () => ({
+      readFile: jest.fn(async () => "ok"),
+    }));
+    let handlers: any;
+    const close = jest.fn();
+    const client = {
+      service: jest.fn(async (_subject, svc) => {
+        handlers = svc;
+        return { close };
+      }),
+    } as any;
+
+    const subject =
+      "fs-viewer-test.project-00000000-0000-4000-8000-000000000000.account-11111111-1111-4111-8111-111111111111";
+    const server = await fsReadOnlyServer({
+      service: "fs-viewer-test",
+      client,
+      fs: fs0 as any,
+      cacheTtlMs: 1,
+    });
+
+    await handlers.readFile.call({ subject }, "/home/user/a.txt", "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await handlers.readFile.call({ subject }, "/home/user/a.txt", "utf8");
+
+    expect(fs0).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+
   it("reuses an existing watch server when the subject is already registered", async () => {
     const { fsClient } = await import("./fs");
     const { EventEmitter } = await import("events");

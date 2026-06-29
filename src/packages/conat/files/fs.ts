@@ -428,6 +428,7 @@ interface ReadOnlyOptions {
   client: Client;
   fs: (subject?: string) => Promise<Filesystem>;
   project_id?: string;
+  cacheTtlMs?: number;
 }
 
 export type ReadOnlyFilesystem = Pick<
@@ -445,6 +446,8 @@ export type ReadOnlyFilesystem = Pick<
 > &
   Pick<Required<Filesystem>, "canonicalSyncIdentityPath">;
 
+const DEFAULT_READ_ONLY_FILESYSTEM_CACHE_TTL_MS = 60_000;
+
 function rejectReadOnlyLock(lock: unknown): void {
   if (lock == null || lock === 0) return;
   const err = new Error(
@@ -459,6 +462,7 @@ export async function fsReadOnlyServer({
   fs: fs0,
   client,
   project_id,
+  cacheTtlMs = DEFAULT_READ_ONLY_FILESYSTEM_CACHE_TTL_MS,
 }: ReadOnlyOptions) {
   const resolvedClient = requireClient(client, "fsReadOnlyServer");
   const subject = project_id
@@ -473,7 +477,7 @@ export async function fsReadOnlyServer({
     } catch {}
   };
   const cache = new TTL<string, Filesystem>({
-    ttl: 60 * 1000 * 60,
+    ttl: cacheTtlMs,
     dispose: closeFilesystem,
   });
   const fs = reuseInFlight(async (subject) => {

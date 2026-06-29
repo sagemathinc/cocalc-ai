@@ -124,6 +124,7 @@ import {
   endProjectHostActivity,
   noteProjectHostActivityProgress,
 } from "../health-progress";
+import { assertProjectDiskQuotaStartAllowed } from "../project-start-quota";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -995,6 +996,17 @@ async function startRunnerWithStorageReservation<T>({
   });
 }
 
+async function assertStartDiskQuotaAllowed(project_id: string): Promise<void> {
+  await assertProjectDiskQuotaStartAllowed({
+    project_id,
+    logger,
+    getQuota: async (id) => {
+      const vol = await getVolume(id);
+      return await vol.quota.get();
+    },
+  });
+}
+
 function publishStartProgress({
   activity_id,
   project_id,
@@ -1350,6 +1362,17 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           "Automatic starts are disabled for this project. Use the project Start button, then try again.",
         );
       }
+      publishStartProgress({
+        activity_id,
+        project_id,
+        op_id,
+        phase: "check_quota",
+        progress: 3,
+        message: "checking project disk quota",
+      });
+      await timings.measure("check_quota", async () => {
+        await assertStartDiskQuotaAllowed(project_id);
+      });
       upsertProjectStopState({
         project_id,
         last_started_ms: Date.now(),

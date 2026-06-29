@@ -205,7 +205,8 @@ shows progress while the copy is running.
 
 Disable a share when the content should no longer be reachable through its
 public URL. Temporary viewer access is revoked after the disabled state
-propagates; this should be a matter of minutes, not days.
+propagates. Already-open viewers may keep access for up to about one minute
+while short authorization caches expire.
 
 Disabling a share does not recall content that a viewer already saw, downloaded,
 or copied into another project. If you accidentally publish secrets or malicious
