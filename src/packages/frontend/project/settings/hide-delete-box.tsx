@@ -18,6 +18,7 @@ import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
+import { publicShareCountFromProject } from "@cocalc/frontend/projects/public-share-labels";
 import RemoveMyself from "@cocalc/frontend/projects/remove-myself";
 import { ArchiveProject } from "./archive-project";
 import MoveProject from "./move-project";
@@ -248,6 +249,7 @@ export function ProjectLocationBox(props: Readonly<Props>) {
   const isEmbedded = embedded || isFlyout;
   const project_id = project.get("project_id");
   const state = project.getIn(["state", "state"]);
+  const publicShareCount = publicShareCountFromProject(project);
   const lifecycleBusy =
     state == null ||
     ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
@@ -277,7 +279,21 @@ export function ProjectLocationBox(props: Readonly<Props>) {
         <DangerActionRow
           icon="file-archive"
           title="Archive Project"
-          description="Remove the active copy from its host. Starting later restores from backup, which is slower, and snapshots are removed."
+          description={
+            <Space direction="vertical" size={4}>
+              <span>
+                Remove the active copy from its host. Starting later restores
+                from backup, which is slower, and snapshots are removed.
+              </span>
+              {publicShareCount > 0 ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Public shares are not available when a project is archived."
+                />
+              ) : null}
+            </Space>
+          }
           action={
             <ArchiveProject
               project_id={project_id}

@@ -30,6 +30,7 @@ import {
   LeaveOrDeleteProjectsModal,
   type LeaveOrDeleteProjectsPlan,
 } from "./leave-or-delete-projects-modal";
+import { publicShareCountFromProject } from "./public-share-labels";
 import {
   runLeaveOrDeleteProjectsSequentially,
   type BulkLeaveOrDeleteProgress,
@@ -262,6 +263,7 @@ export function ProjectsOperations({
             account_id,
             isAdmin,
           ),
+          publicShareCount: publicShareCountFromProject(project),
         };
       }),
     [selectedArchiveIds, project_map, account_id, isAdmin],

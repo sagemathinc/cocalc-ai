@@ -15,6 +15,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { ArchiveProjectModal } from "@cocalc/frontend/projects/archive-project-modal";
+import { publicShareCountFromProject } from "@cocalc/frontend/projects/public-share-labels";
 
 interface Props {
   project_id: string;
@@ -54,6 +55,7 @@ export function ArchiveProject({ project_id, disabled, size }: Props) {
             state: `${project?.getIn(["state", "state"]) ?? ""}`,
             archiveAllowedByAdminOnly:
               isAdmin && !isOwner && !storageHistoryEnabled,
+            publicShareCount: publicShareCountFromProject(project),
           },
         ]}
         onCancel={() => setOpen(false)}

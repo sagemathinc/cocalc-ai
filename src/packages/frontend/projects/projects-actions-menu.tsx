@@ -43,6 +43,7 @@ import {
 import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
 import { ArchiveProjectModal } from "./archive-project-modal";
 import { HardDeleteProjectModal } from "./hard-delete-project-modal";
+import { publicShareCountFromProjectLabels } from "./public-share-labels";
 import { confirmRemoveMyselfFromProject } from "./remove-myself";
 
 const FILES_SUBMENU_LIST_STYLE: CSS = {
@@ -447,6 +448,7 @@ export function ProjectActionsMenu({ record, onToggleDetails }: Props) {
             title: record.title,
             state: record.state?.get?.("state"),
             archiveAllowedByAdminOnly,
+            publicShareCount: publicShareCountFromProjectLabels(record.labels),
           },
         ]}
         onCancel={() => setArchiveOpen(false)}
