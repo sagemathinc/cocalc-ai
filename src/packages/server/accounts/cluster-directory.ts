@@ -57,6 +57,36 @@ function withCurrentBayParam(sql: string, param: string): string {
   return sql.replace(/\$CURRENT_BAY\$/g, param);
 }
 
+async function clusterAccountDirectoryColumnExists(
+  column_name: string,
+): Promise<boolean> {
+  const { rows } = await getPool().query<{ exists: boolean }>(
+    `
+    SELECT EXISTS (
+      SELECT 1
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = $1
+         AND column_name = $2
+    ) AS exists
+    `,
+    [TABLE, column_name],
+  );
+  return rows[0]?.exists === true;
+}
+
+async function addClusterAccountDirectoryColumnIfMissing(
+  column_name: string,
+  definition: string,
+): Promise<void> {
+  if (await clusterAccountDirectoryColumnExists(column_name)) {
+    return;
+  }
+  await getPool().query(
+    `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS ${definition}`,
+  );
+}
+
 type BanEmailEquivalenceRule = {
   canonical: string;
   domains: string[];
@@ -182,11 +212,9 @@ export async function ensureClusterAccountDirectorySchema(): Promise<void> {
       provisioned BOOLEAN NOT NULL DEFAULT TRUE
     )
   `);
-  await pool.query(
-    `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS display_name VARCHAR(254)`,
-  );
-  await pool.query(
-    `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS email_address_verified BOOLEAN`,
+  await addClusterAccountDirectoryColumnIfMissing(
+    "email_address_verified",
+    "email_address_verified BOOLEAN",
   );
   await pool.query(`
     UPDATE ${TABLE}

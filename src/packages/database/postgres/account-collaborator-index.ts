@@ -110,9 +110,6 @@ async function ensureClusterAccountDirectorySchema(
       provisioned BOOLEAN NOT NULL DEFAULT TRUE
     )
   `);
-  await db.query(
-    `ALTER TABLE ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} ADD COLUMN IF NOT EXISTS display_name VARCHAR(254)`,
-  );
 }
 
 export async function listProjectedCollaboratorsForAccount(opts: {

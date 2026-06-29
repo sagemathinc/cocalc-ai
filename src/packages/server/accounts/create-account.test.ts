@@ -28,10 +28,11 @@ describe("accounts.createAccount", () => {
       firstName: "Phase",
       lastName: "One",
       account_id: "11111111-1111-4111-8111-111111111111",
+      created_by: "10.1.2.3",
     });
 
     expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining("home_bay_id"),
+      expect.stringContaining("created_by"),
       [
         "phase1-account@test.local",
         "hashed-password",
@@ -48,6 +49,7 @@ describe("accounts.createAccount", () => {
         null,
         false,
         null,
+        "10.1.2.3",
       ],
     );
   });
@@ -80,6 +82,7 @@ describe("accounts.createAccount", () => {
         "bay-7",
         null,
         false,
+        null,
         null,
       ],
     );

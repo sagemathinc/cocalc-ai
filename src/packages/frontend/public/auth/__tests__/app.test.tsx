@@ -452,6 +452,26 @@ describe("PublicAuthApp", () => {
     expect(googleLink).toHaveAttribute("aria-disabled", "false");
   });
 
+  it("includes policy acceptance on generic Google sign-in", async () => {
+    render(
+      <PublicAuthApp
+        config={config({
+          terms_of_service_url: "https://example.com/terms",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+        initialSSOStrategies={[{ name: "google", display: "Google" }]}
+      />,
+    );
+
+    expect(screen.getByText(/By continuing with Google/)).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Agree and continue with Google" }),
+    ).toHaveProperty("href", expect.stringContaining("/auth/google"));
+    expect(
+      screen.getByRole("link", { name: "Agree and continue with Google" }),
+    ).toHaveProperty("href", expect.stringContaining("terms=1"));
+  });
+
   it("does not require Terms of Service acceptance when policies are not configured", async () => {
     mockedApi.mockResolvedValueOnce(false);
 

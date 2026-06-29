@@ -135,7 +135,7 @@ describe("PassportLogin SSO account creation", () => {
       first_name: "Ada",
       last_name: "Lovelace",
       emails: ["Ada+SSO@Example.COM"],
-      req: {},
+      req: { ip: "10.1.2.3" },
       res: {},
       update_on_login: false,
       host: "",
@@ -154,6 +154,7 @@ describe("PassportLogin SSO account creation", () => {
       password: "",
       display_name: "Ada Lovelace",
       home_bay_id: "bay-sso",
+      created_by: "10.1.2.3",
       customize: undefined,
       ephemeral: undefined,
       other_settings: expect.objectContaining({
@@ -223,6 +224,7 @@ describe("PassportLogin SSO account creation", () => {
     expect(createClusterAccountMock).toHaveBeenCalledWith(
       expect.objectContaining({
         email_address: "ada@example.com",
+        created_by: "10.1.2.3",
         trusted_product_access: true,
         trusted_product_access_reason: "registration_token",
         customize: { member: true },
