@@ -477,6 +477,11 @@ Management behavior:
 - add a project-level "Published items" view or panel listing all shares in path
   order with slug, title, visibility, status, copy URL, edit, and disable
   actions;
+- when editing a share slug, show a clear Popconfirm/confirmation explaining
+  old-link behavior before saving: the previous slug is reserved for a retention
+  window, is not globally reusable during that window, and does not
+  automatically grant access to the new slug unless an explicit redirect policy
+  is later enabled;
 - the publish dialog should warn when the selected path is already published,
   is inside a broader published share, or contains nested published shares;
 - disabling a share updates the authoritative share row first, then updates the
@@ -1558,3 +1563,9 @@ Migration:
   small seed/global slug directory mapping `lower(slug)` to owning bay, public
   path id, and project id so `/share/...` can route correctly in future
   multibay deployments.
+- Changing a share slug should not create an automatic permanent redirect and
+  should not immediately free the old slug for unrelated users. Keep historical
+  slug reservations for a retention window, e.g. 30-90 days. During that window,
+  the previous slug should resolve to a safe moved/disabled state or be
+  reclaimable only by the same share/project owner. Any future redirect behavior
+  must be explicit and visible to the publisher before saving.
