@@ -26,6 +26,7 @@ import {
   Well,
 } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -102,15 +103,23 @@ function publicShareUrl(slug: string): string {
 
 function normalizeSharePath(path: string): string {
   const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
-  for (const home of ["/home/user", "/root"]) {
-    if (raw === home) return ".";
-    if (raw.startsWith(`${home}/`)) {
-      const relative = raw.slice(home.length + 1).replace(/^\/+|\/+$/g, "");
-      return relative || ".";
-    }
+  const home = "/home/user";
+  if (raw === home) return ".";
+  if (raw.startsWith(`${home}/`)) {
+    const relative = raw.slice(home.length + 1).replace(/^\/+|\/+$/g, "");
+    return relative || ".";
   }
   const relative = raw.replace(/^\/+|\/+$/g, "");
   return relative || ".";
+}
+
+function pathIsPublishable(path: string): boolean {
+  const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
+  return (
+    !raw.startsWith("/") ||
+    raw === "/home/user" ||
+    raw.startsWith("/home/user/")
+  );
 }
 
 interface SiteLicensePoolOption {
@@ -269,7 +278,7 @@ export function ActionBox({
   }, [actions, dnd_copy_dest]);
 
   useEffect(() => {
-    if (file_action !== "publish") {
+    if (lite || file_action !== "publish") {
       return;
     }
     const path = checked_files.first();
@@ -328,6 +337,7 @@ export function ActionBox({
 
   useEffect(() => {
     if (
+      lite ||
       file_action !== "publish" ||
       !publicDirectorySharesEnabled ||
       user_type !== "signed_in"
@@ -1071,10 +1081,20 @@ export function ActionBox({
     if (typeof path !== "string") {
       return <Alert bsStyle="warning">Select one directory to publish.</Alert>;
     }
+    if (lite) {
+      return null;
+    }
     if (!publicDirectorySharesEnabled) {
       return (
         <Alert bsStyle="warning">
           Public directory shares are not enabled on this site.
+        </Alert>
+      );
+    }
+    if (!pathIsPublishable(path)) {
+      return (
+        <Alert bsStyle="warning">
+          Only directories in <code>/home/user</code> can be published.
         </Alert>
       );
     }

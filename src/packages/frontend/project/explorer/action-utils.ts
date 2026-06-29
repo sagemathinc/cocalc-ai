@@ -1,4 +1,5 @@
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
+import { lite } from "@cocalc/frontend/lite";
 
 export const ACTION_BUTTONS_DIR = [
   "download",
@@ -8,7 +9,7 @@ export const ACTION_BUTTONS_DIR = [
   "duplicate",
   "move",
   "copy",
-  "publish",
+  ...(lite ? [] : (["publish"] as const)),
 ] as const;
 
 export const ACTION_BUTTONS_FILE = [

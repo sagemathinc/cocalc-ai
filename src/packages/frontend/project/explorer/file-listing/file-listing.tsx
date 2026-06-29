@@ -55,6 +55,7 @@ import {
 import * as misc from "@cocalc/util/misc";
 import { useBackupsCacheVersion } from "@cocalc/frontend/project/listing/use-backups";
 import { useFilesCacheVersion } from "@cocalc/frontend/project/listing/use-files";
+import { lite } from "@cocalc/frontend/lite";
 import {
   extractSnapshotTimestamp,
   SnapshotTimestamp,
@@ -504,7 +505,7 @@ export function FileListing({
   );
   const publicShareLabels = useMemo(
     () =>
-      readOnly
+      readOnly || lite
         ? []
         : publicDirectoryShareLabelsFromProjectLabels(projectLabels),
     [projectLabels, readOnly],

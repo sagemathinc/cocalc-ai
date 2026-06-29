@@ -224,7 +224,7 @@ export function FilesFlyout({
   );
   const publicShareLabels = useMemo(
     () =>
-      readOnlyViewer
+      readOnlyViewer || lite
         ? []
         : publicDirectoryShareLabelsFromProjectLabels(projectLabels),
     [projectLabels, readOnlyViewer],

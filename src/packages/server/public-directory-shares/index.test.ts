@@ -66,12 +66,20 @@ describe("public directory share normalization", () => {
   it("normalizes shared project paths", () => {
     expect(normalizePublicDirectorySharePath("")).toBe(".");
     expect(normalizePublicDirectorySharePath(".")).toBe(".");
-    expect(normalizePublicDirectorySharePath("/docs/examples/")).toBe(
+    expect(normalizePublicDirectorySharePath("docs/examples/")).toBe(
       "docs/examples",
     );
     expect(normalizePublicDirectorySharePath("/home/user/x")).toBe("x");
     expect(normalizePublicDirectorySharePath("/home/user")).toBe(".");
-    expect(normalizePublicDirectorySharePath("/root/legacy")).toBe("legacy");
+    expect(() => normalizePublicDirectorySharePath("/root/legacy")).toThrow(
+      "path must be in /home/user",
+    );
+    expect(() => normalizePublicDirectorySharePath("/docs/examples")).toThrow(
+      "path must be in /home/user",
+    );
+    expect(() => normalizePublicDirectorySharePath("/tmp/share")).toThrow(
+      "path must be in /home/user",
+    );
   });
 
   it("rejects unsafe project paths", () => {
@@ -129,6 +137,13 @@ describe("public directory share normalization", () => {
       viewerReadPolicyAllowsPath({
         policy,
         path: ".local/share/cocalc/project-log.db",
+      }),
+    ).toBe(false);
+    expect(viewerReadPolicyAllowsPath({ policy, path: ".cache" })).toBe(false);
+    expect(
+      viewerReadPolicyAllowsPath({
+        policy,
+        path: ".cache/cocalc/project/secrets",
       }),
     ).toBe(false);
   });

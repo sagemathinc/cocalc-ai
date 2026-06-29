@@ -185,6 +185,13 @@ export function normalizePublicDirectoryShareSlug(slug: string): string {
 
 export function normalizePublicDirectorySharePath(path: string): string {
   const raw = `${path ?? ""}`.trim().replace(/\\/g, "/");
+  if (
+    posix.isAbsolute(raw) &&
+    raw !== "/home/user" &&
+    !raw.startsWith("/home/user/")
+  ) {
+    throw Error("path must be in /home/user");
+  }
   const runtimeHomeRelative = projectRuntimeHomeRelativePath(raw);
   const normalizedPath =
     runtimeHomeRelative == null ? raw : runtimeHomeRelative;
@@ -290,10 +297,19 @@ export function publicDirectoryShareReadPolicyForPath(
       { action: "exclude", path: ".snapshots/**" },
       { action: "exclude", path: ".ssh" },
       { action: "exclude", path: ".ssh/**" },
-      { action: "exclude", path: ".local/share/cocalc" },
-      { action: "exclude", path: ".local/share/cocalc/**" },
+      { action: "exclude", path: ".cache" },
+      { action: "exclude", path: ".cache/**" },
+      { action: "exclude", path: ".local" },
+      { action: "exclude", path: ".local/**" },
     ],
   };
+}
+
+function assertPublicDirectorySharePathAllowed(path: string): void {
+  const readPolicy = publicDirectoryShareReadPolicyForPath(path);
+  if (!viewerReadPolicyAllowsPath({ policy: readPolicy, path })) {
+    throw Error("path is excluded from public sharing");
+  }
 }
 
 function joinProjectSharePath(rootPath: string, relativePath: string): string {
@@ -321,6 +337,47 @@ function entryAllowed({
     policy: share.read_policy,
     path: joinProjectSharePath(share.path, relativePath),
   });
+}
+
+async function copySourceForPublicDirectoryShare({
+  share,
+  relativePath,
+}: {
+  share: ResolvedPublicDirectoryShare;
+  relativePath: string;
+}): Promise<{
+  project_id: string;
+  path: string | string[];
+  base_path?: string;
+}> {
+  const projectPath = joinProjectSharePath(share.path, relativePath);
+  if (projectPath !== ".") {
+    return {
+      project_id: share.project_id,
+      path: projectPath,
+    };
+  }
+
+  const fs = (
+    await getExplicitProjectRoutedClient({
+      project_id: share.project_id,
+    })
+  ).fs({
+    project_id: share.project_id,
+  });
+  const listing = await fs.getListing(".");
+  const paths = Object.keys(listing.files ?? {})
+    .filter((name) => name !== "." && name !== "..")
+    .filter((name) => entryAllowed({ share, relativePath: name }))
+    .sort((left, right) => left.localeCompare(right));
+  if (paths.length === 0) {
+    throw Error("This shared project has no files available to copy.");
+  }
+  return {
+    project_id: share.project_id,
+    path: paths,
+    base_path: ".",
+  };
 }
 
 function rowToSummary(
@@ -1257,6 +1314,7 @@ async function savePublicDirectoryShare(
   }
   const slug = normalizePublicDirectoryShareSlug(opts.slug);
   const path = normalizePublicDirectorySharePath(opts.path);
+  assertPublicDirectorySharePathAllowed(path);
   const visibility = normalizeVisibility(opts.visibility);
   const availabilityStatus = normalizeAvailability(opts.availability_status);
   const disabled = opts.disabled === true || visibility === "disabled";
@@ -1474,6 +1532,7 @@ export async function create(
   });
   const slug = normalizePublicDirectoryShareSlug(opts.slug);
   const path = normalizePublicDirectorySharePath(opts.path);
+  assertPublicDirectorySharePathAllowed(path);
   const fs = (
     await getExplicitProjectRoutedClient({
       account_id: opts.account_id,
@@ -1576,6 +1635,10 @@ export async function copyToProject({
     throw Error("path is not part of this shared directory");
   }
   const destPath = normalizePublicDirectorySharePath(destination_path ?? ".");
+  const copySource = await copySourceForPublicDirectoryShare({
+    share,
+    relativePath,
+  });
   const op = await createLro({
     kind: "copy-path-between-projects",
     scope_type: "project",
@@ -1584,8 +1647,7 @@ export async function copyToProject({
     routing: "hub",
     input: {
       src: {
-        project_id: share.project_id,
-        path: joinProjectSharePath(share.path, relativePath),
+        ...copySource,
       },
       src_read_policy: share.read_policy,
       dests: [
