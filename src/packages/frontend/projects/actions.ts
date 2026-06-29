@@ -33,6 +33,7 @@ import type {
 import type {
   AccountProjectListWindowRow,
   AccountProjectListWindowSort,
+  ProjectMetadataPatch,
 } from "@cocalc/conat/hub/api/projects";
 import { defaults, is_valid_uuid_string, uuid } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
@@ -2327,15 +2328,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await table?.set(obj, merge);
   };
 
-  // Set something in the projects table of the database directly
-  // using a query, instead of using sync'd table mechanism, which
-  // is what projects_table_set does.
-  private async projects_query_set(obj: object): Promise<void> {
-    await webapp_client.async_query({
-      query: {
-        projects: obj,
-      },
-      options: [{ set: true }],
+  // Set project metadata through the owning-bay project API instead of the
+  // synced table or account-local user query paths.
+  private async projects_query_set(
+    obj: ProjectMetadataPatch & { project_id: string },
+  ): Promise<void> {
+    const { project_id, ...patch } = obj;
+    await webapp_client.conat_client.hub.projects.setProjectMetadata({
+      project_id,
+      patch,
     });
   }
 

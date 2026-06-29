@@ -13,7 +13,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 
 import {
   ArrowRightOutlined,
@@ -43,6 +43,7 @@ import {
 } from "antd";
 import {
   type DocsAccess,
+  getDocsEntry,
   listDocsEntries,
   searchDocsEntries,
   type DocsAction,
@@ -339,11 +340,69 @@ export function DocsFontSizeFrame({
   );
 }
 
-export function DocsMarkdown({ value }: { value: string }) {
+export function normalizeDocsMarkdownValue(value: string): string {
+  return value.replace(/\\`/g, "`");
+}
+
+export function docsEntryForInternalHref(href: string): DocsEntry | undefined {
+  const raw = `${href ?? ""}`.trim();
+  if (!raw) return;
+  let path = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      if (
+        typeof window !== "undefined" &&
+        url.origin !== window.location.origin
+      ) {
+        return;
+      }
+      path = url.pathname;
+    } catch {
+      return;
+    }
+  }
+  const normalized = path
+    .replace(/[?#].*$/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!normalized.startsWith("docs/") && !normalized.startsWith("app-docs/")) {
+    return;
+  }
+  const slug = normalized.replace(/^(?:app-docs|docs)\/?/, "");
+  return getDocsEntry(slug, { includeAdmin: true, includeSignedIn: true });
+}
+
+export function DocsMarkdown({
+  onInternalDocsLink,
+  value,
+}: {
+  onInternalDocsLink?: (entry: DocsEntry) => void;
+  value: string;
+}) {
+  const handleClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (onInternalDocsLink == null) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest("a");
+      const href = anchor?.getAttribute("href");
+      if (href == null) return;
+      const entry = docsEntryForInternalHref(href);
+      if (entry == null) return;
+      event.preventDefault();
+      onInternalDocsLink(entry);
+    },
+    [onInternalDocsLink],
+  );
   return (
-    <div className="cocalc-docs-markdown" data-testid="docs-markdown">
+    <div
+      className="cocalc-docs-markdown"
+      data-testid="docs-markdown"
+      onClick={handleClick}
+    >
       <Suspense fallback={<Text type="secondary">Loading markdown...</Text>}>
-        <StaticMarkdown value={value} />
+        <StaticMarkdown value={normalizeDocsMarkdownValue(value)} />
       </Suspense>
     </div>
   );
@@ -1533,7 +1592,10 @@ export function DocsDetailContent({
           onRunAction={onRunAction}
         />
         <div style={DOCS_BROWSER_FLYOUT_MARKDOWN_STYLE}>
-          <DocsMarkdown value={entry.body} />
+          <DocsMarkdown
+            onInternalDocsLink={linearNavigation?.onSelectEntry}
+            value={entry.body}
+          />
         </div>
         {privateState?.renderLearnedControl?.(entry)}
         <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
@@ -1592,7 +1654,10 @@ export function DocsDetailContent({
         style={DOCS_BROWSER_CARD_STYLE}
         styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
       >
-        <DocsMarkdown value={entry.body} />
+        <DocsMarkdown
+          onInternalDocsLink={linearNavigation?.onSelectEntry}
+          value={entry.body}
+        />
       </Card>
       {privateState?.renderLearnedControl?.(entry)}
       <DocsLinearNavigation layout={layout} navigation={linearNavigation} />

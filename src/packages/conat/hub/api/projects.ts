@@ -7,6 +7,7 @@ import {
 import {
   type CourseInfo,
   type CreateProjectOptions,
+  type ProjectTheme,
 } from "@cocalc/util/db-schema/projects";
 import { type SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
@@ -776,6 +777,11 @@ export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
 export type ProjectLabels = Record<string, string>;
 export type ProjectLabelPatch = Record<string, string | null | undefined>;
+export interface ProjectMetadataPatch {
+  title?: string;
+  description?: string;
+  theme?: ProjectTheme | null;
+}
 
 export const projects = {
   createProject: authFirstRequireAccount,
@@ -813,6 +819,7 @@ export const projects = {
   getProjectEnv: authFirstRequireAccount,
   getAdminProjectDirectorySummary: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
+  setProjectMetadata: authFirstRequireAccount,
   setProjectManageUsersOwnerOnly: authFirstRequireAccount,
   listProjectSecrets: authFirstRequireAccount,
   setProjectSecret: authFirstRequireAccount,
@@ -1007,6 +1014,12 @@ export interface Projects {
     account_id?: string;
     project_id: string;
     env: ProjectEnv;
+  }) => Promise<void>;
+
+  setProjectMetadata: (opts: {
+    account_id?: string;
+    project_id: string;
+    patch: ProjectMetadataPatch;
   }) => Promise<void>;
 
   setProjectManageUsersOwnerOnly: (opts: {

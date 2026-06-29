@@ -32,6 +32,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, LoginLink, ThemeEditorModal } from "@cocalc/frontend/components";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   file_actions,
@@ -1168,25 +1169,53 @@ export function ActionBox({
       !publishing &&
       !publishShareLoading &&
       (!publishGrantOnCopy || publishSiteLicensePoolId.trim().length > 0);
+    const openPublishingDocs = () =>
+      openProjectDocs({
+        projectId: project_id,
+        slug: "projects/publish-files",
+      });
     return (
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {existingPublishShare ? (
           <Alert bsStyle="success">
-            <code>{displayPath}</code> is already published at{" "}
-            <a
-              href={publicShareUrl(existingPublishShare.slug)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {publicShareUrl(existingPublishShare.slug)}
-            </a>
-            . Edit the metadata below or unpublish it.
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <span>
+                <code>{displayPath}</code> is already published at{" "}
+                <a
+                  href={publicShareUrl(existingPublishShare.slug)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {publicShareUrl(existingPublishShare.slug)}
+                </a>
+                . Edit the metadata below or unpublish it.
+              </span>
+              <AntdButton
+                size="small"
+                icon={<Icon name="book" />}
+                onClick={openPublishingDocs}
+              >
+                Open publishing docs
+              </AntdButton>
+            </Space>
           </Alert>
         ) : (
           <Alert bsStyle="info">
-            Publish <code>{displayPath}</code> as an unlisted shared directory.
-            Viewers must know the URL and be signed in to CoCalc. Your
-            membership tier limits how many directories you can publish.
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <span>
+                Publish <code>{displayPath}</code> as an unlisted shared
+                directory. Viewers must know the URL and be signed in to CoCalc.
+                Your membership tier limits how many directories you can
+                publish.
+              </span>
+              <AntdButton
+                size="small"
+                icon={<Icon name="book" />}
+                onClick={openPublishingDocs}
+              >
+                Open publishing docs
+              </AntdButton>
+            </Space>
           </Alert>
         )}
         {publishShareLoading ? (
