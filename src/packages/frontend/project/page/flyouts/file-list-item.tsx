@@ -443,7 +443,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         (effective_current_path?.startsWith(SNAPSHOTS) ?? false);
 
       const { name, icon, hideFlyout } = FILE_ACTIONS[key];
-      if (hideFlyout) return;
+      if (hideFlyout) continue;
 
       ctx.push({
         key,
