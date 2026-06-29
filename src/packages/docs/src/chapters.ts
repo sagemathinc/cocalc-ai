@@ -24,8 +24,13 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     category: "Projects",
     startEntryId: "projects.create-project",
     summary:
-      "Create projects, choose runtime settings, manage secrets, find work, and open project tools.",
-    workflows: ["Create projects", "Configure runtime", "Organize work"],
+      "Create projects, choose runtime settings, manage secrets, publish read-only content, find work, and open project tools.",
+    workflows: [
+      "Create projects",
+      "Configure runtime",
+      "Publish content",
+      "Organize work",
+    ],
   },
   {
     category: "AI",

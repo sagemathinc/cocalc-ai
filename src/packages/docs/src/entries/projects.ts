@@ -11,6 +11,7 @@ import {
   OPEN_TERMINAL_BODY,
   PROJECT_LIST_BODY,
   PROJECT_SECRETS_BODY,
+  PUBLISH_FILES_BODY,
   PUBLISH_ROOTFS_BODY,
   ROOTFS_BODY,
   TASKS_BODY,
@@ -115,6 +116,33 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     summary:
       "Find, open, create, and organize the CoCalc projects you can access.",
     title: "Use the projects page",
+  },
+  {
+    actions: [
+      {
+        description: "Open project Settings -> Publish.",
+        executable: true,
+        id: "settings.project.publish",
+        label: "Open publishing",
+        parameters: projectActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: PUBLISH_FILES_BODY.trim(),
+    category: "Projects",
+    id: "projects.publish-files",
+    image: docsIcon(
+      "/public/docs/create-project-5b221552.webp",
+      "A project folder with read-only public share links",
+    ),
+    lastReviewed: "2026-06-29",
+    searchKeywords:
+      "public directory shares publish files folders whole project unlisted viewer copy slug",
+    slug: "projects/publish-files",
+    status: "ready",
+    summary:
+      "Publish read-only project folders or the whole project with unlisted signed-in share links.",
+    title: "Publish project files",
   },
   {
     actions: [
