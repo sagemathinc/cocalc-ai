@@ -95,6 +95,9 @@ const PROJECT_ARCHIVE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const LEGACY_FINANCIAL_HOME_BAY_TIMEOUT_MS = MAX_INTEREST_TIMEOUT + 30_000;
 const DEFAULT_ARCHIVE_INDEX_MAX_ENTRIES = 5_000;
 const MAX_ARCHIVE_INDEX_MAX_ENTRIES = 50_000;
+export const MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST = 50;
+export const MAX_LEGACY_ARCHIVE_SELECTION_PATHS = 1_000;
+export const MAX_LEGACY_ARCHIVE_SELECTION_PATH_LENGTH = 4_096;
 const LEGACY_STRIPE_UPGRADE_PLAN_IDS = new Set([
   "standard",
   "premium",
@@ -1001,8 +1004,11 @@ export async function ensureVerifiedEmailLinksForAllAccounts(): Promise<number> 
   return rowCount ?? 0;
 }
 
-async function currentMembershipExists(account_id: string): Promise<boolean> {
-  const { rows } = await getPool().query(
+async function currentMembershipExists(
+  account_id: string,
+  client?: PoolClient,
+): Promise<boolean> {
+  const { rows } = await (client ?? getPool()).query(
     `
     SELECT 1
       FROM subscriptions
@@ -1020,6 +1026,7 @@ async function currentMembershipExists(account_id: string): Promise<boolean> {
 async function currentLegacyMigrationMembershipSubscription(
   account_id: string,
   client?: PoolClient,
+  { includeExpired = false }: { includeExpired?: boolean } = {},
 ): Promise<LegacyMigrationMembershipSubscription | null> {
   const { rows } = await (
     client ?? getPool()
@@ -1030,11 +1037,11 @@ async function currentLegacyMigrationMembershipSubscription(
      WHERE account_id=$1
        AND metadata->>'type'='membership'
        AND metadata->>'source_id'='legacy-migration'
-       AND current_period_end >= NOW()
+       AND ($2::BOOLEAN OR current_period_end >= NOW())
      ORDER BY current_period_end DESC
      LIMIT 1
     `,
-    [account_id],
+    [account_id, includeExpired],
   );
   return rows[0] ?? null;
 }
@@ -1585,6 +1592,18 @@ async function claimPendingFinancialAccounts({
   return pending.filter((row) => claimedIds.has(row.legacy_account_id));
 }
 
+async function lockLegacyMigrationMembershipGrant({
+  account_id,
+  client,
+}: {
+  account_id: string;
+  client: PoolClient;
+}): Promise<void> {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    `legacy-migration-membership-grant:${account_id}`,
+  ]);
+}
+
 async function finishFinancialClaim({
   legacy_account_id,
   credit_purchase_id,
@@ -1659,6 +1678,7 @@ export async function applyFinancialMigrationHomeBay({
 
   const client = await getTransactionClient();
   try {
+    await lockLegacyMigrationMembershipGrant({ account_id, client });
     const accountCheck = await client.query(
       `
       SELECT 1
@@ -1675,12 +1695,13 @@ export async function applyFinancialMigrationHomeBay({
     const existingGrant = await currentLegacyMigrationMembershipSubscription(
       account_id,
       client,
+      { includeExpired: true },
     );
     if (
       selectedClass != null &&
       selectedCost != null &&
       existingGrant == null &&
-      (await currentMembershipExists(account_id))
+      (await currentMembershipExists(account_id, client))
     ) {
       throw new Error("this account already has an active membership");
     }
@@ -2816,16 +2837,7 @@ export async function importProjects({
   }
   await ensureLegacyMigrationProjectImportSchema();
   const mode = normalizeRestoreMode(restore_mode);
-  const ids = Array.from(
-    new Set(
-      (legacy_project_ids ?? [])
-        .map((id) => `${id ?? ""}`.trim())
-        .filter(Boolean),
-    ),
-  );
-  if (ids.length === 0) {
-    throw Error("select at least one legacy project");
-  }
+  const ids = normalizeLegacyProjectImportIds(legacy_project_ids);
   const results: LegacyMigrationImportProjectResult[] = [];
   for (const legacy_project_id of ids) {
     results.push(
@@ -2954,12 +2966,51 @@ function archiveIndexFromRestoreResult(
   return index && typeof index === "object" ? index : undefined;
 }
 
-function normalizePathList(paths?: string[]): string[] | undefined {
+export function normalizeLegacyProjectImportIds(
+  legacy_project_ids?: string[],
+): string[] {
+  const ids = Array.from(
+    new Set(
+      (legacy_project_ids ?? [])
+        .map((id) => `${id ?? ""}`.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (ids.length === 0) {
+    throw Error("select at least one legacy project");
+  }
+  if (ids.length > MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST) {
+    throw Error(
+      `import at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} legacy projects at a time`,
+    );
+  }
+  return ids;
+}
+
+export function normalizeLegacyArchiveSelectionPathList(
+  paths?: string[],
+  label = "paths",
+): string[] | undefined {
   const normalized = Array.from(
     new Set(
       (paths ?? []).map((path) => `${path ?? ""}`.trim()).filter(Boolean),
     ),
   );
+  if (normalized.length > MAX_LEGACY_ARCHIVE_SELECTION_PATHS) {
+    throw Error(
+      `${label} can include at most ${MAX_LEGACY_ARCHIVE_SELECTION_PATHS} paths`,
+    );
+  }
+  for (const path of normalized) {
+    if (path.length > MAX_LEGACY_ARCHIVE_SELECTION_PATH_LENGTH) {
+      throw Error(
+        `${label} contains a path longer than ${MAX_LEGACY_ARCHIVE_SELECTION_PATH_LENGTH} characters`,
+      );
+    }
+    if (path.includes("\0")) {
+      throw Error(`${label} contains a path with a NUL byte`);
+    }
+  }
   return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -3214,8 +3265,14 @@ export async function restoreArchiveSelection({
     await importedProjectForAccount({ account_id, legacy_project_id }),
   );
   const project_id = row.project_id!;
-  const include = normalizePathList(include_paths);
-  const exclude = normalizePathList(exclude_paths);
+  const include = normalizeLegacyArchiveSelectionPathList(
+    include_paths,
+    "include_paths",
+  );
+  const exclude = normalizeLegacyArchiveSelectionPathList(
+    exclude_paths,
+    "exclude_paths",
+  );
   if (include == null && exclude == null) {
     throw new Error("select at least one include or exclude path");
   }
