@@ -189,12 +189,6 @@ import {
 } from "@cocalc/server/projects/project-secrets";
 import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/project-secret-ssh-key";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
-import {
-  clearProjectEntitlementOverrideLocal,
-  getProjectEntitlementOverrideLocal,
-  setProjectEntitlementOverrideLocal,
-} from "@cocalc/server/membership/project-entitlement-overrides";
-import { getProject } from "@cocalc/server/projects/control";
 import { getSeedMembershipTierById } from "@cocalc/server/membership/tiers";
 import {
   assignMembershipPackageSeat,
@@ -1270,7 +1264,16 @@ export async function getAdminProjectEntitlementOverride({
   if (!(await isAdmin(account_id))) {
     throw new Error("must be an admin");
   }
-  return (await getProjectEntitlementOverrideLocal(project_id)) ?? null;
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return await getInterBayBridge()
+    .projectControl(ownership.bay_id)
+    .getProjectEntitlementOverride({
+      project_id,
+      epoch: ownership.epoch,
+    });
 }
 
 export async function setAdminProjectEntitlementOverride({
@@ -1296,26 +1299,21 @@ export async function setAdminProjectEntitlementOverride({
   ) {
     throw new Error("disk_quota_mb must be a nonnegative finite number");
   }
-  const normalizedDiskQuota = Math.ceil(disk_quota_mb);
-  const override = await setProjectEntitlementOverrideLocal({
-    project_id,
-    actor_account_id: account_id,
-    source: "admin",
-    reason,
-    override: {
-      enabled: true,
-      expires_at: expires_at ?? null,
-      project_defaults: {
-        disk_quota: { mode: "minimum", value: normalizedDiskQuota },
-      },
-    },
-  });
-  await getProject(project_id).setAllQuotas();
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["run_quota"],
-  });
-  return override;
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return await getInterBayBridge()
+    .projectControl(ownership.bay_id)
+    .setProjectEntitlementOverride({
+      project_id,
+      actor_account_id: account_id,
+      disk_quota_mb,
+      reason,
+      expires_at,
+      source: "admin",
+      epoch: ownership.epoch,
+    });
 }
 
 export async function clearAdminProjectEntitlementOverride({
@@ -1330,16 +1328,18 @@ export async function clearAdminProjectEntitlementOverride({
   if (!(await isAdmin(account_id))) {
     throw new Error("must be an admin");
   }
-  await clearProjectEntitlementOverrideLocal({
-    project_id,
-    actor_account_id: account_id,
-    reason,
-  });
-  await getProject(project_id).setAllQuotas();
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["run_quota"],
-  });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  await getInterBayBridge()
+    .projectControl(ownership.bay_id)
+    .clearProjectEntitlementOverride({
+      project_id,
+      actor_account_id: account_id,
+      reason,
+      epoch: ownership.epoch,
+    });
 }
 
 export async function getProjectRootfs({

@@ -19,7 +19,14 @@ import {
   Typography,
   message,
 } from "antd";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Key,
+  type ReactNode,
+} from "react";
 import { defineMessage } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -79,6 +86,10 @@ type LegacyMigrationState = {
   unverifiedEmailMatches: LegacyMigrationMatchedAccount[];
 };
 
+// Keep in sync with src/packages/server/legacy-migration/index.ts.
+// This is one-off migration code, so duplicating the small constant is simpler
+// than introducing a shared frontend/backend package dependency.
+const MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST = 50;
 const PROJECT_LOAD_LIMIT = 1000;
 type LegacyProjectStatusFilter =
   | "all"
@@ -522,6 +533,12 @@ function LegacyProjectBulkImportModal({
       setError("Select one or more ready legacy projects first.");
       return;
     }
+    if (projects.length > MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST) {
+      setError(
+        `Restore at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} legacy projects at a time. Restore this batch, then select the next batch.`,
+      );
+      return;
+    }
     if (!draft.rootfs_image.trim()) {
       setError("Choose an image before restoring selected projects.");
       return;
@@ -571,7 +588,7 @@ function LegacyProjectBulkImportModal({
           message={`Restore ${projects.length.toLocaleString()} selected legacy project${
             projects.length === 1 ? "" : "s"
           }`}
-          description={`CoCalc will create these projects using the same image and host, then restore their files in the background. Last known disk use: ${formatDiskMb(lastKnownDiskMb)}. Archived size: ${formatBytes(archivedBytes)}.`}
+          description={`CoCalc will create these projects using the same image and host, then restore their files in the background. Restore at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} projects per batch. Last known disk use: ${formatDiskMb(lastKnownDiskMb)}. Archived size: ${formatBytes(archivedBytes)}.`}
         />
         {error ? <Alert showIcon type="error" message={error} /> : null}
         {rootfsError ? (
@@ -854,6 +871,22 @@ export function LegacyMigrationPage() {
         ids.has(project.legacy_project_id) && bulkRestoreSelectable(project),
     );
   }, [filteredProjects, selectedLegacyProjectIds]);
+  const selectedProjectCountAtLimit =
+    selectedProjects.length >= MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST;
+
+  function setSelectedLegacyProjectKeys(keys: Key[]): void {
+    const next = keys.map((key) => `${key}`);
+    if (next.length > MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST) {
+      void message.warning(
+        `You can restore at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} legacy projects at a time. CoCalc selected the first ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST}; restore this batch, then select the next batch.`,
+      );
+      setSelectedLegacyProjectIds(
+        next.slice(0, MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST),
+      );
+      return;
+    }
+    setSelectedLegacyProjectIds(next);
+  }
 
   async function handleBulkImported(
     results: LegacyMigrationImportProjectResult[],
@@ -881,6 +914,15 @@ export function LegacyMigrationPage() {
     if (selectedProjects.length === 0) {
       void message.info(
         "Select one or more ready, not-yet-restored projects first.",
+      );
+      return;
+    }
+    if (selectedProjects.length > MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST) {
+      setSelectedLegacyProjectIds((ids) =>
+        ids.slice(0, MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST),
+      );
+      void message.warning(
+        `Restore at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} projects at a time.`,
       );
       return;
     }
@@ -1329,6 +1371,14 @@ export function LegacyMigrationPage() {
                   }
                 />
               ) : null}
+              {selectedProjectCountAtLimit ? (
+                <Alert
+                  showIcon
+                  type="warning"
+                  message={`Restore at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} projects per batch`}
+                  description="Restore the selected batch first, then select the next batch of legacy projects."
+                />
+              ) : null}
               <Table<LegacyMigrationProjectSummary>
                 columns={columns}
                 dataSource={filteredProjects}
@@ -1364,8 +1414,7 @@ export function LegacyMigrationPage() {
                       ? "Select this project for bulk restore."
                       : "Only not-yet-restored projects with available archives can be selected.",
                   }),
-                  onChange: (keys) =>
-                    setSelectedLegacyProjectIds(keys.map((key) => `${key}`)),
+                  onChange: (keys) => setSelectedLegacyProjectKeys([...keys]),
                   preserveSelectedRowKeys: true,
                   selectedRowKeys: selectedLegacyProjectIds,
                 }}

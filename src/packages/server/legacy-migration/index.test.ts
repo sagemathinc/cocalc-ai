@@ -3,7 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { legacyProjectArchiveUncompressedBytes } from ".";
+import {
+  MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST,
+  legacyProjectArchiveUncompressedBytes,
+  normalizeLegacyProjectImportIds,
+} from ".";
 
 describe("legacy migration manifest helpers", () => {
   it("extracts advisory uncompressed project archive sizes", () => {
@@ -31,5 +35,25 @@ describe("legacy migration manifest helpers", () => {
     expect(
       legacyProjectArchiveUncompressedBytes({ uncompressed_bytes: "nope" }),
     ).toBeUndefined();
+  });
+
+  it("normalizes and bounds project import request ids", () => {
+    expect(normalizeLegacyProjectImportIds([" a ", "b", "a", ""])).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(() => normalizeLegacyProjectImportIds([])).toThrow(
+      "select at least one legacy project",
+    );
+    expect(() =>
+      normalizeLegacyProjectImportIds(
+        Array.from(
+          { length: MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST + 1 },
+          (_, i) => `project-${i}`,
+        ),
+      ),
+    ).toThrow(
+      `import at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} legacy projects at a time`,
+    );
   });
 });

@@ -23,7 +23,7 @@ export class ProjectDiskQuotaExceededError extends Error {
 
   constructor({ used, size }: ProjectQuota) {
     super(
-      `Project disk quota exceeded: this project is using ${humanSize(used)} of ${humanSize(size)}, so it cannot be started. You do not need to start the project to browse, edit, download, or delete files. Delete files, upgrade your membership for more project disk space, or contact support.`,
+      `Project disk quota exceeded: this project is using ${humanSize(used)} of ${humanSize(size)}, so it cannot be started. You do not need to start the project to browse, edit, download, or delete files and snapshots. Delete files, delete snapshots, upgrade your membership for more project disk space, or contact support.`,
     );
     this.name = "ProjectDiskQuotaExceededError";
     this.quota_used_bytes = used;

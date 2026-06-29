@@ -6,15 +6,7 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -23,12 +15,10 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import * as zlib from "node:zlib";
 
 import { data } from "@cocalc/backend/data";
-import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import type {
   LroRef,
   ProjectArchiveEntry,
-  ProjectArchiveIndexResult,
   ProjectArchiveRestoreResult,
   SignedProjectArchiveDownload,
 } from "@cocalc/conat/files/file-server";
@@ -171,14 +161,6 @@ function normalizeProjectArchivePathRoots(
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function mergeProjectArchivePathRoots(
-  ...pathLists: (string[] | undefined)[]
-): string[] | undefined {
-  return normalizeProjectArchivePathRoots(
-    pathLists.flatMap((paths) => paths ?? []),
-  );
-}
-
 function restoredProjectQuotaBytes({
   previous_quota_bytes,
   restored_bytes,
@@ -199,54 +181,17 @@ function archivePathMatchesRoot(path: string, root: string): boolean {
 
 function shouldRestoreArchivePath({
   archivePath,
-  include,
   exclude,
 }: {
   archivePath: string;
-  include?: string[];
   exclude?: string[];
 }): boolean {
   const normalized = normalizeProjectArchiveMemberPath(archivePath);
-  if (!normalized) return include == null && exclude == null;
+  if (!normalized) return exclude == null;
   if (exclude?.some((root) => archivePathMatchesRoot(normalized, root))) {
     return false;
   }
-  if (include == null) return true;
-  return include.some((root) => archivePathMatchesRoot(normalized, root));
-}
-
-function projectArchiveCacheRoot(project_id: string): string {
-  return join(data, "cache", "legacy-project-archives", project_id);
-}
-
-function projectArchiveCacheId(download: SignedProjectArchiveDownload): string {
-  return createHash("sha256")
-    .update(`${download.bucket ?? ""}\0${download.key ?? ""}\0`)
-    .update(`${download.sha256 ?? ""}\0${download.bytes ?? ""}`)
-    .digest("hex")
-    .slice(0, 32);
-}
-
-function assertSafeArchiveCacheId(cache_id: string): void {
-  if (!/^[0-9a-f]{32,64}$/i.test(cache_id)) {
-    throw new Error("invalid project archive cache id");
-  }
-}
-
-function projectArchiveCachePaths({
-  project_id,
-  cache_id,
-}: {
-  project_id: string;
-  cache_id: string;
-}): { dir: string; archive: string; index: string } {
-  assertSafeArchiveCacheId(cache_id);
-  const dir = join(projectArchiveCacheRoot(project_id), cache_id);
-  return {
-    dir,
-    archive: join(dir, "project.tar.zst"),
-    index: join(dir, "index.json"),
-  };
+  return true;
 }
 
 function runProjectArchiveTarCommand({
@@ -402,42 +347,28 @@ function parseTarVerboseLine(line: string):
 
 async function scanProjectArchiveTar({
   archivePath,
-  include,
   exclude,
   member_list_path,
-  collect_entries,
-  max_entries,
   max_uncompressed_bytes,
   lro,
 }: {
   archivePath: string;
-  include?: string[];
   exclude?: string[];
   member_list_path?: string;
-  collect_entries?: boolean;
-  max_entries?: number;
   max_uncompressed_bytes?: number;
   lro?: LroRef;
 }): Promise<{
   file_count: number;
   uncompressed_bytes: number;
-  entries: ProjectArchiveEntry[];
   skipped_file_count: number;
   skipped_bytes: number;
   skipped_files: ProjectArchiveEntry[];
-  truncated: boolean;
 }> {
   let file_count = 0;
   let uncompressed_bytes = 0;
   let skipped_file_count = 0;
   let skipped_bytes = 0;
-  const entries: ProjectArchiveEntry[] = [];
   const skipped_files: ProjectArchiveEntry[] = [];
-  let truncated = false;
-  const entryLimit =
-    typeof max_entries === "number" && Number.isFinite(max_entries)
-      ? Math.max(0, Math.floor(max_entries))
-      : 0;
   const memberList =
     member_list_path != null ? createWriteStream(member_list_path) : undefined;
   let lastProgress = 0;
@@ -468,7 +399,6 @@ async function scanProjectArchiveTar({
         if (
           !shouldRestoreArchivePath({
             archivePath: parsed.path,
-            include,
             exclude,
           })
         ) {
@@ -491,28 +421,12 @@ async function scanProjectArchiveTar({
               type: parsed.type,
               mtime: parsed.mtime,
             });
-          } else {
-            truncated = true;
           }
           return;
         }
         if (parsed.path.trim()) {
           file_count += 1;
           memberList?.write(`${parsed.path}\n`);
-          if (collect_entries) {
-            if (entryLimit === 0 || entries.length < entryLimit) {
-              if (normalized) {
-                entries.push({
-                  path: normalized,
-                  size: parsed.size,
-                  type: parsed.type,
-                  mtime: parsed.mtime,
-                });
-              }
-            } else {
-              truncated = true;
-            }
-          }
         }
         uncompressed_bytes += parsed.size;
         const now = Date.now();
@@ -547,11 +461,9 @@ async function scanProjectArchiveTar({
   return {
     file_count,
     uncompressed_bytes,
-    entries,
     skipped_file_count,
     skipped_bytes,
     skipped_files,
-    truncated,
   };
 }
 
@@ -724,31 +636,6 @@ async function downloadSignedProjectArchive({
   return { bytes, sha256 };
 }
 
-async function readCachedProjectArchiveIndex({
-  indexPath,
-}: {
-  indexPath: string;
-}): Promise<ProjectArchiveIndexResult | undefined> {
-  if (!(await exists(indexPath))) return;
-  const raw = JSON.parse(await readFile(indexPath, "utf8"));
-  if (!raw || typeof raw !== "object" || !raw.cache_id) return;
-  return raw as ProjectArchiveIndexResult;
-}
-
-async function hashProjectArchiveFile(
-  archivePath: string,
-): Promise<{ bytes: number; sha256: string }> {
-  const archiveStat = await stat(archivePath);
-  const sha256 = await new Promise<string>((resolve, reject) => {
-    const hash = createHash("sha256");
-    createReadStream(archivePath)
-      .on("data", (chunk) => hash.update(chunk))
-      .on("error", reject)
-      .on("end", () => resolve(hash.digest("hex")));
-  });
-  return { bytes: archiveStat.size, sha256 };
-}
-
 export function createLegacyProjectArchiveHandlers({
   getOrEnsureVolume,
   getProjectQuota,
@@ -759,113 +646,24 @@ export function createLegacyProjectArchiveHandlers({
   touchProjectLastEdited,
   logger,
 }: LegacyProjectArchiveDeps): {
-  cacheProjectArchive: (opts: {
-    project_id: string;
-    download: SignedProjectArchiveDownload;
-    max_entries?: number;
-    lro?: LroRef;
-  }) => Promise<ProjectArchiveIndexResult>;
   restoreProjectArchive: (opts: {
     project_id: string;
-    download?: SignedProjectArchiveDownload;
-    cache_id?: string;
-    include_paths?: string[];
-    exclude_paths?: string[];
+    download: SignedProjectArchiveDownload;
     max_uncompressed_bytes?: number;
     temporary_quota_grace?: boolean;
     lro?: LroRef;
   }) => Promise<ProjectArchiveRestoreResult>;
 } {
   return {
-    async cacheProjectArchive({
-      project_id,
-      download,
-      max_entries,
-      lro,
-    }: {
-      project_id: string;
-      download: SignedProjectArchiveDownload;
-      max_entries?: number;
-      lro?: LroRef;
-    }): Promise<ProjectArchiveIndexResult> {
-      const started = Date.now();
-      await getOrEnsureVolume(project_id);
-      const cache_id = projectArchiveCacheId(download);
-      const paths = projectArchiveCachePaths({ project_id, cache_id });
-      await mkdir(paths.dir, { recursive: true });
-      const cached = await readCachedProjectArchiveIndex({
-        indexPath: paths.index,
-      });
-      const archiveExists = await exists(paths.archive);
-      if (cached != null && archiveExists) {
-        const requestedEntryLimit =
-          typeof max_entries === "number" && Number.isFinite(max_entries)
-            ? Math.max(0, Math.floor(max_entries))
-            : 0;
-        if (
-          !cached.truncated ||
-          requestedEntryLimit === 0 ||
-          requestedEntryLimit <= (cached.entries?.length ?? 0)
-        ) {
-          return cached;
-        }
-      }
-
-      const downloaded = archiveExists
-        ? await hashProjectArchiveFile(paths.archive)
-        : await downloadSignedProjectArchive({
-            download,
-            dest: paths.archive,
-            lro,
-          });
-      const {
-        file_count,
-        uncompressed_bytes,
-        entries,
-        skipped_file_count,
-        skipped_bytes,
-        skipped_files,
-        truncated,
-      } = await scanProjectArchiveTar({
-        archivePath: paths.archive,
-        exclude: normalizeProjectArchivePathRoots(
-          LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
-        ),
-        collect_entries: true,
-        max_entries,
-        lro,
-      });
-      const result: ProjectArchiveIndexResult = {
-        cache_id,
-        ...downloaded,
-        file_count,
-        uncompressed_bytes,
-        entries,
-        skipped_file_count,
-        skipped_bytes,
-        skipped_files,
-        truncated,
-        duration_ms: Date.now() - started,
-      };
-      await writeFile(paths.index, JSON.stringify(result), "utf8");
-      return result;
-    },
-
     async restoreProjectArchive({
       project_id,
       download,
-      cache_id,
-      include_paths,
-      exclude_paths,
       max_uncompressed_bytes,
       temporary_quota_grace,
       lro,
     }: {
       project_id: string;
-      download?: SignedProjectArchiveDownload;
-      cache_id?: string;
-      include_paths?: string[];
-      exclude_paths?: string[];
+      download: SignedProjectArchiveDownload;
       max_uncompressed_bytes?: number;
       temporary_quota_grace?: boolean;
       lro?: LroRef;
@@ -880,34 +678,16 @@ export function createLegacyProjectArchiveHandlers({
       let quotaSizeToRestore: number | undefined;
       let quotaGraceEnabled = false;
       let quotaGraceMarkedActive = false;
-      if (cache_id) {
-        archivePath = projectArchiveCachePaths({
-          project_id,
-          cache_id,
-        }).archive;
-        if (!(await exists(archivePath))) {
-          throw new Error("cached project archive is not available");
-        }
-      } else {
-        if (download == null) {
-          throw new Error(
-            "project archive restore requires download or cache_id",
-          );
-        }
-        const tmpRoot = archiveRestoreTmpRoot();
-        await mkdir(tmpRoot, { recursive: true });
-        tmpDir = await mkdtemp(join(tmpRoot, `${project_id}-`));
-        archivePath = join(tmpDir, "project.tar.zst");
-      }
+      const tmpRoot = archiveRestoreTmpRoot();
+      await mkdir(tmpRoot, { recursive: true });
+      tmpDir = await mkdtemp(join(tmpRoot, `${project_id}-`));
+      archivePath = join(tmpDir, "project.tar.zst");
       try {
-        const downloaded =
-          download != null && !cache_id
-            ? await downloadSignedProjectArchive({
-                download,
-                dest: archivePath,
-                lro,
-              })
-            : await hashProjectArchiveFile(archivePath);
+        const downloaded = await downloadSignedProjectArchive({
+          download,
+          dest: archivePath,
+          lro,
+        });
         if (temporary_quota_grace) {
           if (getProjectQuota == null || setProjectQuota == null) {
             throw new Error(
@@ -944,14 +724,11 @@ export function createLegacyProjectArchiveHandlers({
             }
           }
         }
-        const include = normalizeProjectArchivePathRoots(include_paths);
-        const exclude = mergeProjectArchivePathRoots(
+        const exclude = normalizeProjectArchivePathRoots(
           LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS,
-          exclude_paths,
         );
-        const useSelection = include != null || exclude != null;
         let member_list_path: string | undefined;
-        if (useSelection) {
+        if (exclude != null) {
           const tmpRoot = archiveRestoreTmpRoot();
           await mkdir(tmpRoot, { recursive: true });
           memberListTmpDir = await mkdtemp(
@@ -971,14 +748,13 @@ export function createLegacyProjectArchiveHandlers({
           skipped_files,
         } = await scanProjectArchiveTar({
           archivePath,
-          include,
           exclude,
           member_list_path,
           max_uncompressed_bytes,
           lro,
         });
-        if (useSelection && file_count === 0) {
-          throw new Error("selected archive paths matched no files");
+        if (exclude != null && file_count === 0) {
+          throw new Error("legacy project archive matched no restorable files");
         }
         if (member_list_path != null) {
           await chmod(member_list_path, 0o644);

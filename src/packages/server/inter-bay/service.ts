@@ -23,8 +23,10 @@ import {
   createInterBayProjectControlActiveOpHandler,
   createInterBayProjectControlBackupHandler,
   createInterBayProjectControlCheckStartAdmissionHandler,
+  createInterBayProjectControlClearEntitlementOverrideHandler,
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
+  createInterBayProjectControlGetEntitlementOverrideHandler,
   createInterBayProjectControlHandler,
   createInterBayProjectControlAcceptRehomeHandler,
   createInterBayProjectControlSetUsageAccountHandler,
@@ -32,6 +34,7 @@ import {
   createInterBayProjectControlMoveHandler,
   createInterBayProjectControlRehomeHandler,
   createInterBayProjectControlRestartHandler,
+  createInterBayProjectControlSetEntitlementOverrideHandler,
   createInterBayProjectControlStateHandler,
   createInterBayProjectLroHandler,
   createInterBayProjectReferenceHandler,
@@ -265,12 +268,15 @@ import {
   handleProjectControlActiveOperation,
   handleProjectControlBackup,
   handleProjectControlCheckStartAdmission,
+  handleProjectControlClearEntitlementOverride,
   handleProjectControlAcceptRehome,
+  handleProjectControlGetEntitlementOverride,
   handleProjectControlSetUsageAccount,
   handleProjectControlAssignHost,
   handleProjectControlMove,
   handleProjectControlRehome,
   handleProjectControlRestart,
+  handleProjectControlSetEntitlementOverride,
   handleProjectControlStart,
   handleProjectControlState,
   handleProjectDetailsGet,
@@ -1450,10 +1456,6 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.listProjects(opts ?? {}),
     legacyMigrationImportProjects: async (opts) =>
       await legacyMigration.importProjects(opts),
-    legacyMigrationPrepareArchiveSelection: async (opts) =>
-      await legacyMigration.prepareArchiveSelection(opts),
-    legacyMigrationRestoreArchiveSelection: async (opts) =>
-      await legacyMigration.restoreArchiveSelection(opts),
     legacyMigrationRetryProjectRestore: async (opts) =>
       await legacyMigration.retryProjectRestore(opts),
     legacyMigrationPreviewFinancialMigration: async (opts) =>
@@ -1562,6 +1564,12 @@ async function startProjectControlStartService(): Promise<void> {
     rehome: async (opts) => await handleProjectControlRehome(opts),
     acceptRehome: async (opts) => await handleProjectControlAcceptRehome(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
+    getProjectEntitlementOverride: async (opts) =>
+      await handleProjectControlGetEntitlementOverride(opts),
+    setProjectEntitlementOverride: async (opts) =>
+      await handleProjectControlSetEntitlementOverride(opts),
+    clearProjectEntitlementOverride: async (opts) =>
+      await handleProjectControlClearEntitlementOverride(opts),
   };
   const bay_id = getConfiguredBayId();
   logger.debug("starting inter-bay listener", {
@@ -1642,6 +1650,24 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlActiveOpHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlGetEntitlementOverrideHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlSetEntitlementOverrideHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlClearEntitlementOverrideHandler({
       client,
       bay_id,
       parallel: true,

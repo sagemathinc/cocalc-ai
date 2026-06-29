@@ -26,6 +26,19 @@ Project containers currently get:
 - disk and scratch quotas before container startup.
 - `/tmp` as either project scratch or a bounded tmpfs.
 
+Project-host already has several resource-control paths that this plan should
+reuse instead of duplicating:
+
+- `src/packages/project-host/host-pressure.ts` samples host memory pressure,
+  ranks stop candidates using stop policy, priority, recent activity, startup
+  protection, and admin `protect`/`deprioritize` overrides, then stops projects.
+- `src/packages/project-host/sqlite/stop-policy.ts` stores the host-local stop
+  policy and pressure-stop state used by that ranking.
+- `src/packages/project-host/cpu-usage.ts` samples managed CPU usage and lets
+  hub policy request a project stop for CPU/abuse cases.
+- project-host heartbeats already publish current host metrics and pressure
+  state to the registry for operator visibility and placement decisions.
+
 Project hosts currently raise shared host-side kernel limits:
 
 - `fs.inotify.max_user_instances = 8192`
@@ -40,7 +53,9 @@ The major gaps are:
 - no per-project or per-account accounting for inotify instances and watches.
 - no enforcement action when a project consumes a large fraction of shared
   per-UID host resources.
-- no cooldown/quarantine path tied to project-host resource violations.
+- no quarantine path tied to repeated project-host resource violations.
+- no restart admission block for repeated resource-limit violations beyond the
+  existing short host-pressure cooldown.
 - no regular metrics that show how close a host is to shared kernel limits.
 
 ## Threat Model
@@ -100,13 +115,16 @@ Implementation points:
 
 These defaults are deliberately conservative but not tiny. They should not break
 normal Jupyter, terminal, VS Code language server, or browser preview use. The
-watchdog below handles aggregate resource abuse that static limits cannot
-represent cleanly.
+resource-pressure sampler below handles aggregate resource abuse that static
+limits cannot represent cleanly.
 
-## Watchdog Accounting
+## Resource Pressure Accounting
 
-Add a project-host resource watchdog that samples running project containers and
-records per-project resource usage.
+Add a resource-pressure sampler that feeds the existing host-pressure
+controller. It should not be a separate stop scheduler. The sampler's job is to
+attribute shared host-kernel resource usage to projects and accounts, then
+publish pressure signals such as `inotify_watches`, `inotify_instances`,
+`file_descriptors`, `sockets`, and `kernel_keys`.
 
 Sample every `15s` by default:
 
@@ -128,9 +146,25 @@ Recommended implementation:
 - Only open `/proc/<pid>/fdinfo/<fd>` when the fd symlink resolves to
   `anon_inode:inotify`.
 - Count inotify watches by counting `inotify wd:` lines in fdinfo.
-- Bound each scan by elapsed time and max entries so the watchdog cannot itself
+- Bound each scan by elapsed time and max entries so the sampler cannot itself
   become a host load problem.
 - Emit metrics and structured logs with scan duration and truncated-scan flags.
+
+Integration points:
+
+- Extend `HostCurrentMetrics` with aggregate resource-pressure counters and
+  largest-offender summaries.
+- Extend `classifyHostPressure` so memory is one pressure input rather than the
+  only pressure input.
+- Keep `HostPressureZone` as the common `normal | observe | pressure |
+  emergency` state machine.
+- Extend `buildStopCandidates` to accept an optional direct-offender map. A
+  direct project offender should rank before generic victims, while generic
+  host pressure should keep the existing priority/recent-activity ordering.
+- Reuse `project_stop_policy` and `project_stop_state` for cooldown/ranking
+  state so memory pressure and shared-kernel-resource pressure do not diverge.
+- Reuse `reportProjectPressureAction` for durable project log entries, adding
+  resource type, measured value, threshold, and sample timestamp.
 
 Initial limits with current bootstrap sysctls:
 
@@ -152,28 +186,36 @@ not fixed forever. The implementation should compute:
 - account warn threshold: min(configured value, 12.5% of host global)
 - account stop threshold: min(configured value, 25% of host global)
 
-If a host later changes `fs.inotify.*`, the watchdog thresholds should adapt.
+If a host later changes `fs.inotify.*`, the thresholds should adapt.
 
 ## Enforcement
 
-Enforcement should be staged:
+Enforcement should be staged through the existing host-pressure controller:
 
 1. Metrics-only mode for the first deployment.
-2. Stop-project mode after metrics look sane on staging.
-3. Cooldown and quarantine mode after stop-project behavior is validated.
+2. Pressure-signal mode: publish observe/pressure/emergency states without
+   stopping for new resource types.
+3. Stop-project mode after metrics look sane on staging.
+4. Cooldown and quarantine mode after stop-project behavior is validated.
 
 Stop behavior:
 
-- Stop the offending project cleanly first.
-- If clean stop times out, force-remove the container.
-- Record a project-host resource violation event with resource type, measured
-  value, threshold, and sample timestamp.
+- Prefer stopping a direct offender when the sampler identifies one.
+- If there is no clear direct offender, use the existing host-pressure candidate
+  ranking: stop lower-priority, older, less-protected projects first.
+- Stop the selected project through the same `stopProjectForPressure` path used
+  by memory pressure.
+- If clean stop times out, force-remove the container using the same fallback
+  mechanism used for other project-host stop failures.
+- Record a project-host pressure event with resource type, measured value,
+  threshold, and sample timestamp.
 - Add a user-visible project status note: "Stopped because it exhausted project
   host resource limits."
 
 Cooldown behavior:
 
-- First violation: block restart for 10 minutes.
+- First violation: use the existing host-pressure cooldown, defaulting to 10-15
+  minutes depending on final configuration.
 - Second violation within 24 hours: block restart for 1 hour.
 - Third violation within 24 hours: quarantine the project until admin review.
 - Account aggregate violations should quarantine at account resource level only
@@ -217,7 +259,8 @@ The first pass should explicitly track and cap:
 - memory through existing cgroup controls.
 - tmp through existing tmpfs/scratch limits.
 - disk through existing btrfs quota enforcement.
-- inotify instances and watches through watchdog measurement and enforcement.
+- inotify instances and watches through resource-pressure measurement and
+  host-pressure enforcement.
 - sockets through fd scan and `nofile`.
 - kernel keys through host pressure metrics and likely seccomp deny.
 
@@ -227,7 +270,8 @@ limit for every project on the host.
 
 ## Low-Load Monitoring Design
 
-The watchdog must not create meaningful host load.
+The resource sampler must not create meaningful host load, and it must not make
+the existing host-pressure loop expensive.
 
 Rules:
 
@@ -241,7 +285,9 @@ Rules:
   threshold crossings.
 
 The scan should be cheap in normal cases because most projects have far fewer
-than the `4096` pids limit and only a small number of inotify descriptors.
+than the `4096` pids limit and only a small number of inotify descriptors. The
+host-pressure controller should consume the most recent sampler snapshot instead
+of synchronously scanning `/proc` during candidate selection.
 
 ## Stress Test Harness
 
@@ -273,8 +319,10 @@ Expected validation:
 
 - `fds` should hit per-process `nofile` without harming other projects.
 - `processes` should hit `--pids-limit`.
-- `inotify-watches` should trigger watchdog stop before host-wide exhaustion.
-- `inotify-instances` should trigger watchdog stop before host-wide exhaustion.
+- `inotify-watches` should trigger host-pressure stop before host-wide
+  exhaustion.
+- `inotify-instances` should trigger host-pressure stop before host-wide
+  exhaustion.
 - repeated violations should produce cooldown, then quarantine.
 - normal project start, terminal, Jupyter, and language server workloads should
   stay below warning thresholds.
@@ -290,8 +338,8 @@ Expose these metrics per host:
 - total project inotify watches.
 - largest project inotify instances and watches.
 - largest account aggregate inotify instances and watches.
-- watchdog scan duration.
-- watchdog scan truncation count.
+- resource sampler scan duration.
+- resource sampler scan truncation count.
 - stop/cooldown/quarantine counts by reason.
 - host keyring pressure.
 
@@ -312,13 +360,15 @@ Phase 1:
 
 Phase 2:
 
-- Add watchdog metrics-only mode.
+- Add resource-pressure metrics-only mode feeding host metrics.
 - Deploy to staging and run the stress harness.
 - Tune thresholds against real sample data.
 
 Phase 3:
 
-- Enable stop-project enforcement for clear project-level violations.
+- Extend host-pressure classification and candidate ranking to consume
+  resource-pressure signals.
+- Enable stop-project enforcement for clear project-level resource violations.
 - Add user-visible stopped reason and restart cooldown.
 - Validate repeated `inotify-watches` and `inotify-instances` tests.
 
@@ -339,5 +389,6 @@ Phase 4:
   containers?
 - Should advanced projects be allowed higher `nofile` or inotify thresholds as
   an admin-only override?
-- Should the watchdog be part of the existing project-host daemon or a separate
-  process supervised by the host bootstrap watchdog?
+- Should the resource sampler live inside the existing project-host daemon, or
+  be a small sidecar process that only publishes snapshots consumed by
+  host-pressure?
