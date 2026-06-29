@@ -262,6 +262,65 @@ describe("public directory temporary viewer grants", () => {
     });
   });
 
+  it("persists public share theme metadata", async () => {
+    await getPool().query(
+      `
+        INSERT INTO projects (project_id, title, users, last_edited)
+        VALUES ($1, 'Publish project', '{}'::jsonb, NOW())
+        ON CONFLICT (project_id) DO NOTHING
+      `,
+      [PROJECT_ID],
+    );
+
+    const share = await create({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      path: "share",
+      slug: "themed-share",
+      title: "Themed share",
+      description: "Initial description",
+      theme: {
+        color: "#123456",
+        accent_color: "#abcdef",
+        icon: "book",
+        image_blob: "8ac75262-dcd0-4a0a-883c-bce078e30c17",
+      },
+    });
+
+    expect(share.image).toBe("8ac75262-dcd0-4a0a-883c-bce078e30c17");
+    expect(share.theme).toMatchObject({
+      title: "Themed share",
+      description: "Initial description",
+      color: "#123456",
+      accent_color: "#abcdef",
+      icon: "book",
+      image_blob: "8ac75262-dcd0-4a0a-883c-bce078e30c17",
+    });
+
+    const updated = await update({
+      account_id: OWNER_ID,
+      id: share.id,
+      title: "Updated themed share",
+      description: "Updated description",
+      theme: {
+        color: "#654321",
+        accent_color: null,
+        icon: "graduation-cap",
+        image_blob: "7376cfe6-f014-41ef-880b-e64b57fbd85a",
+      },
+    });
+
+    expect(updated.image).toBe("7376cfe6-f014-41ef-880b-e64b57fbd85a");
+    expect(updated.theme).toMatchObject({
+      title: "Updated themed share",
+      description: "Updated description",
+      color: "#654321",
+      accent_color: null,
+      icon: "graduation-cap",
+      image_blob: "7376cfe6-f014-41ef-880b-e64b57fbd85a",
+    });
+  });
+
   it("does not fail creation when generated project-label sync cannot see the project", async () => {
     const share = await create({
       account_id: OWNER_ID,

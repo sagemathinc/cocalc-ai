@@ -34,6 +34,7 @@ export interface PublicDirectoryShareSummary {
   description?: string | null;
   license?: string | null;
   image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   redirect?: string | null;
   legacy_public_path_id?: string | null;
   legacy_url?: string | null;
@@ -49,6 +50,15 @@ export interface PublicDirectoryShareSummary {
   last_edited?: Date | string | null;
   created_at?: Date | string | null;
   updated_at?: Date | string | null;
+}
+
+export interface PublicDirectoryShareTheme {
+  title?: string | null;
+  description?: string | null;
+  color?: string | null;
+  accent_color?: string | null;
+  icon?: string | null;
+  image_blob?: string | null;
 }
 
 export interface ResolvedPublicDirectoryShare extends PublicDirectoryShareSummary {
@@ -120,6 +130,7 @@ export interface UpsertPublicDirectoryShareOptions {
   description?: string | null;
   license?: string | null;
   image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   redirect?: string | null;
   legacy_public_path_id?: string | null;
   legacy_url?: string | null;
@@ -142,6 +153,8 @@ export interface CreatePublicDirectoryShareOptions {
   title?: string | null;
   description?: string | null;
   license?: string | null;
+  image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   site_license_id?: string | null;
   site_license_pool_id?: string | null;
   site_license_duration_days?: number | null;
@@ -156,6 +169,8 @@ export interface UpdatePublicDirectoryShareOptions {
   title?: string | null;
   description?: string | null;
   license?: string | null;
+  image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
   site_license_id?: string | null;
   site_license_pool_id?: string | null;
   site_license_duration_days?: number | null;

@@ -31,7 +31,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon, LoginLink } from "@cocalc/frontend/components";
+import { Icon, LoginLink, ThemeEditorModal } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   file_actions,
@@ -62,6 +62,10 @@ import {
   MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
   MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH,
 } from "@cocalc/util/public-directory-share-labels";
+import {
+  themeDraftFromTheme,
+  type ThemeEditorDraft,
+} from "@cocalc/frontend/theme/types";
 
 export const PRE_STYLE = {
   marginBottom: "15px",
@@ -120,6 +124,37 @@ function defaultPublishTitle(path: string): string {
   return normalizeSharePath(path) === "."
     ? "Project files"
     : misc.path_split(path).tail || "Files";
+}
+
+function defaultPublishTheme(path: string): ThemeEditorDraft {
+  return {
+    title: defaultPublishTitle(path),
+    description: "",
+    color: null,
+    accent_color: null,
+    icon: "folder-open",
+    image_blob: "",
+  };
+}
+
+function publishThemeFromShare(
+  share: PublicDirectoryShareSummary | null | undefined,
+  path: string,
+): ThemeEditorDraft {
+  if (share == null) {
+    return defaultPublishTheme(path);
+  }
+  return themeDraftFromTheme(
+    {
+      title: share.theme?.title ?? share.title ?? "",
+      description: share.theme?.description ?? share.description ?? "",
+      color: share.theme?.color ?? null,
+      accent_color: share.theme?.accent_color ?? null,
+      icon: share.theme?.icon ?? "folder-open",
+      image_blob: share.theme?.image_blob ?? share.image ?? "",
+    },
+    defaultPublishTitle(path),
+  );
 }
 
 interface SiteLicensePoolOption {
@@ -231,6 +266,10 @@ export function ActionBox({
   const [publishDescription, setPublishDescription] = useState<string>("");
   const [publishLicense, setPublishLicense] = useState<string>("");
   const [publishSlug, setPublishSlug] = useState<string>("");
+  const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
+  const [publishTheme, setPublishTheme] = useState<ThemeEditorDraft>(() =>
+    defaultPublishTheme(""),
+  );
   const [publishUrl, setPublishUrl] = useState<string>("");
   const [publishError, setPublishError] = useState<string>("");
   const [publishing, setPublishing] = useState<boolean>(false);
@@ -285,7 +324,9 @@ export function ActionBox({
     if (typeof path !== "string") {
       return;
     }
-    setPublishTitle((cur) => cur || defaultPublishTitle(path));
+    const defaultTheme = defaultPublishTheme(path);
+    setPublishTitle((cur) => cur || defaultTheme.title);
+    setPublishTheme((cur) => (cur.title ? cur : defaultTheme));
     setPublishSlug((cur) => cur || defaultPublicShareSlug());
     let canceled = false;
     setPublishShareLoading(true);
@@ -305,8 +346,10 @@ export function ActionBox({
         );
         setExistingPublishShare(share ?? null);
         if (share) {
-          setPublishTitle(share.title || defaultPublishTitle(path));
-          setPublishDescription(share.description ?? "");
+          const theme = publishThemeFromShare(share, path);
+          setPublishTheme(theme);
+          setPublishTitle(theme.title);
+          setPublishDescription(theme.description);
           setPublishLicense(share.license ?? "");
           setPublishSlug(share.slug);
           setPublishUrl(publicShareUrl(share.slug));
@@ -383,6 +426,8 @@ export function ActionBox({
     setPublishDescription("");
     setPublishLicense("");
     setPublishSlug("");
+    setPublishTheme(defaultPublishTheme(""));
+    setPublishThemeOpen(false);
     setPublishUrl("");
     setPublishError("");
     setPublishing(false);
@@ -972,6 +1017,16 @@ export function ActionBox({
     );
   }
 
+  function updatePublishTheme(patch: Partial<ThemeEditorDraft>): void {
+    setPublishTheme((current) => ({ ...current, ...patch }));
+    if (patch.title !== undefined) {
+      setPublishTitle(patch.title);
+    }
+    if (patch.description !== undefined) {
+      setPublishDescription(patch.description);
+    }
+  }
+
   async function savePublication(): Promise<void> {
     const path = checked_files.first();
     if (typeof path !== "string") {
@@ -988,9 +1043,11 @@ export function ActionBox({
         ? {
             id: existingPublishShare.id,
             slug: publishSlug,
-            title: publishTitle,
-            description: publishDescription,
+            title: publishTheme.title || publishTitle,
+            description: publishTheme.description || publishDescription,
             license: publishLicense,
+            image: publishTheme.image_blob,
+            theme: publishTheme,
             site_license_grant_on_copy: publishGrantOnCopy,
             site_license_copy_requires_grant: publishCopyRequiresGrant,
             site_license_id: publishGrantOnCopy
@@ -1007,9 +1064,11 @@ export function ActionBox({
             project_id,
             path,
             slug: publishSlug,
-            title: publishTitle,
-            description: publishDescription,
+            title: publishTheme.title || publishTitle,
+            description: publishTheme.description || publishDescription,
             license: publishLicense,
+            image: publishTheme.image_blob,
+            theme: publishTheme,
             site_license_grant_on_copy: publishGrantOnCopy,
             site_license_copy_requires_grant: publishCopyRequiresGrant,
             site_license_id: publishGrantOnCopy
@@ -1110,8 +1169,16 @@ export function ActionBox({
     }
     const displayPath = normalizeSharePath(path);
     const poolOptions = siteLicensePoolOptions();
+    const publishThemeError =
+      publishTheme.title.length > MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH
+        ? `Title must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH} characters`
+        : publishTheme.description.length >
+            MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH
+          ? `Description must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH} characters`
+          : undefined;
     const canPublish =
       publishSlug.trim().length > 0 &&
+      publishThemeError == null &&
       !publishing &&
       !publishShareLoading &&
       (!publishGrantOnCopy || publishSiteLicensePoolId.trim().length > 0);
@@ -1142,12 +1209,74 @@ export function ActionBox({
           </Alert>
         ) : null}
         <div>
-          <Typography.Text strong>Title</Typography.Text>
+          <Typography.Text strong>Branding</Typography.Text>
+          <div
+            style={{
+              alignItems: "center",
+              background: publishTheme.accent_color
+                ? `${publishTheme.accent_color}22`
+                : COLORS.GRAY_LLL,
+              border: `1px solid ${publishTheme.color ?? COLORS.GRAY_LL}`,
+              borderRadius: 8,
+              display: "flex",
+              gap: 12,
+              marginTop: 6,
+              padding: 10,
+            }}
+          >
+            <div
+              style={{
+                alignItems: "center",
+                background: publishTheme.accent_color ?? COLORS.GRAY_LL,
+                borderRadius: 8,
+                color: publishTheme.color ?? undefined,
+                display: "flex",
+                flex: "0 0 auto",
+                height: 42,
+                justifyContent: "center",
+                width: 42,
+              }}
+            >
+              <Icon name={(publishTheme.icon || "folder-open") as any} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Typography.Text strong>
+                {publishTheme.title || "Untitled publication"}
+              </Typography.Text>
+              <div>
+                <Typography.Text type="secondary">
+                  {publishTheme.description || "No description"}
+                </Typography.Text>
+              </div>
+              {publishTheme.image_blob ? (
+                <Typography.Text type="secondary">
+                  Image selected
+                </Typography.Text>
+              ) : null}
+            </div>
+            <AntdButton onClick={() => setPublishThemeOpen(true)}>
+              Edit branding...
+            </AntdButton>
+          </div>
+          <ThemeEditorModal
+            open={publishThemeOpen}
+            title="Edit publication branding"
+            value={publishTheme}
+            onChange={updatePublishTheme}
+            onCancel={() => setPublishThemeOpen(false)}
+            onSave={() => setPublishThemeOpen(false)}
+            projectId={project_id}
+            defaultIcon="folder-open"
+            error={publishThemeError}
+          />
+        </div>
+        <div>
+          <Typography.Text strong>License</Typography.Text>
           <AntdInput
-            value={publishTitle}
-            onChange={(e) => setPublishTitle(e.target.value)}
-            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_TITLE_LENGTH}
-            placeholder="Shared directory title"
+            value={publishLicense}
+            onChange={(e) => setPublishLicense(e.target.value)}
+            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH}
+            placeholder="Optional license, e.g. CC-BY 4.0"
             showCount
           />
         </div>
@@ -1165,27 +1294,6 @@ export function ActionBox({
             New shares default to an unguessable random token. Replace it with a
             readable path if you want a cleaner URL.
           </Typography.Text>
-        </div>
-        <div>
-          <Typography.Text strong>Description</Typography.Text>
-          <AntdInput.TextArea
-            value={publishDescription}
-            onChange={(e) => setPublishDescription(e.target.value)}
-            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH}
-            placeholder="Optional description for viewers"
-            rows={3}
-            showCount
-          />
-        </div>
-        <div>
-          <Typography.Text strong>License</Typography.Text>
-          <AntdInput
-            value={publishLicense}
-            onChange={(e) => setPublishLicense(e.target.value)}
-            maxLength={MAX_PUBLIC_DIRECTORY_SHARE_LICENSE_LENGTH}
-            placeholder="Optional license, e.g. CC-BY 4.0"
-            showCount
-          />
         </div>
         <div>
           <Checkbox

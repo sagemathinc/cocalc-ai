@@ -68,6 +68,7 @@ import type {
   PublicDirectoryShareAvailability,
   PublicDirectoryShareDirectoryEntry,
   PublicDirectoryShareSummary,
+  PublicDirectoryShareTheme,
   PublicDirectoryShareVisibility,
   CopyPublicDirectoryShareToNewProjectOptions,
   CopyPublicDirectoryShareToNewProjectResponse,
@@ -328,6 +329,80 @@ function normalizePublicShareLicense(value?: string | null): string | null {
   });
 }
 
+function normalizePublicShareThemeString({
+  field,
+  value,
+  maxLength = 256,
+}: {
+  field: string;
+  value?: string | null;
+  maxLength?: number;
+}): string | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  if (text.length > maxLength) {
+    throw Error(`${field} must be at most ${maxLength} characters`);
+  }
+  return text;
+}
+
+function normalizePublicShareThemeStyle(
+  theme?: PublicDirectoryShareTheme | null,
+): PublicDirectoryShareTheme | null {
+  if (theme == null) return null;
+  const normalized: PublicDirectoryShareTheme = {
+    color: normalizePublicShareThemeString({
+      field: "theme color",
+      value: theme.color,
+      maxLength: 64,
+    }),
+    accent_color: normalizePublicShareThemeString({
+      field: "theme accent color",
+      value: theme.accent_color,
+      maxLength: 64,
+    }),
+    icon: normalizePublicShareThemeString({
+      field: "theme icon",
+      value: theme.icon,
+      maxLength: 128,
+    }),
+    image_blob: normalizePublicShareThemeString({
+      field: "theme image",
+      value: theme.image_blob,
+      maxLength: 256,
+    }),
+  };
+  return Object.values(normalized).some((value) => value != null)
+    ? normalized
+    : null;
+}
+
+function publicShareThemeFromMetadata(
+  metadata?: Record<string, unknown> | null,
+): PublicDirectoryShareTheme | null {
+  const theme = metadata?.theme as PublicDirectoryShareTheme | undefined | null;
+  return normalizePublicShareThemeStyle(theme);
+}
+
+function publicShareMetadataWithTheme({
+  metadata,
+  theme,
+}: {
+  metadata?: Record<string, unknown> | null;
+  theme?: PublicDirectoryShareTheme | null;
+}): Record<string, unknown> {
+  const next = { ...(metadata ?? {}) };
+  if (theme !== undefined) {
+    const normalized = normalizePublicShareThemeStyle(theme);
+    if (normalized == null) {
+      delete next.theme;
+    } else {
+      next.theme = normalized;
+    }
+  }
+  return next;
+}
+
 function defaultCopiedProjectTitle(
   share: ResolvedPublicDirectoryShare,
 ): string {
@@ -447,6 +522,7 @@ async function copySourceForPublicDirectoryShare({
 function rowToSummary(
   row: PublicDirectoryShareRow,
 ): PublicDirectoryShareSummary {
+  const themeStyle = publicShareThemeFromMetadata(row.metadata);
   return {
     id: row.id,
     project_id: row.project_id,
@@ -460,6 +536,14 @@ function rowToSummary(
     description: row.description ?? null,
     license: row.license ?? null,
     image: row.image ?? null,
+    theme: {
+      title: row.title ?? null,
+      description: row.description ?? null,
+      color: themeStyle?.color ?? null,
+      accent_color: themeStyle?.accent_color ?? null,
+      icon: themeStyle?.icon ?? null,
+      image_blob: row.image ?? themeStyle?.image_blob ?? null,
+    },
     redirect: row.redirect ?? null,
     legacy_public_path_id: row.legacy_public_path_id ?? null,
     legacy_url: row.legacy_url ?? null,
@@ -1498,6 +1582,16 @@ async function savePublicDirectoryShare(
   });
   const description = normalizePublicShareDescription(opts.description);
   const license = normalizePublicShareLicense(opts.license);
+  const image =
+    normalizePublicShareThemeString({
+      field: "image",
+      value: opts.image ?? opts.theme?.image_blob,
+      maxLength: 256,
+    }) ?? null;
+  const metadata = publicShareMetadataWithTheme({
+    metadata: opts.metadata,
+    theme: opts.theme,
+  });
   const bayId = getConfiguredBayId();
   const params = [
     id,
@@ -1511,7 +1605,7 @@ async function savePublicDirectoryShare(
     title,
     description,
     license,
-    opts.image ?? null,
+    image,
     opts.redirect ?? null,
     opts.site_license_id ?? null,
     opts.site_license_pool_id ?? null,
@@ -1519,7 +1613,7 @@ async function savePublicDirectoryShare(
     opts.site_license_duration_days ?? null,
     opts.site_license_grant_on_copy === true,
     opts.site_license_copy_requires_grant === true,
-    JSON.stringify(opts.metadata ?? {}),
+    JSON.stringify(metadata),
     opts.legacy_public_path_id ?? null,
     opts.legacy_url ?? null,
     opts.account_id ?? null,
@@ -1676,7 +1770,7 @@ export async function update(
     title: opts.title ?? current.title ?? null,
     description: opts.description ?? current.description ?? null,
     license: opts.license ?? current.license ?? null,
-    image: current.image ?? null,
+    image: opts.image ?? opts.theme?.image_blob ?? current.image ?? null,
     redirect: current.redirect ?? null,
     legacy_public_path_id: current.legacy_public_path_id ?? null,
     legacy_url: current.legacy_url ?? null,
@@ -1689,6 +1783,7 @@ export async function update(
     site_license_copy_requires_grant:
       siteLicenseGrant?.copy_requires_grant ?? false,
     metadata: current.metadata ?? {},
+    theme: opts.theme,
     last_edited: current.last_edited ?? null,
     disabled,
   });
@@ -1739,6 +1834,8 @@ export async function create(
     }),
     description: normalizePublicShareDescription(opts.description),
     license: normalizePublicShareLicense(opts.license),
+    image: opts.image ?? opts.theme?.image_blob ?? null,
+    theme: opts.theme,
     site_license_id: siteLicenseGrant?.site_license_id ?? null,
     site_license_pool_id: siteLicenseGrant?.site_license_pool_id ?? null,
     site_license_membership_tier_id:

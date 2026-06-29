@@ -70,6 +70,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   }),
 }));
 
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: ({ name }: any) => <span data-testid={`icon-${name}`} />,
+}));
+
 jest.mock("@cocalc/frontend/projects/select-project", () => ({
   SelectProject: () => <div>SelectProject</div>,
 }));
@@ -115,6 +119,7 @@ function share(): ResolvedPublicDirectoryShare {
     description: null,
     license: null,
     image: null,
+    theme: null,
     redirect: null,
     legacy_public_path_id: null,
     legacy_url: null,

@@ -9,6 +9,7 @@ import { useState } from "react";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
 import { useActions } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
@@ -51,7 +52,7 @@ function sharePublisherLine(share: ResolvedPublicDirectoryShare): string {
 function shareImageUrl(
   share: ResolvedPublicDirectoryShare,
 ): string | undefined {
-  const value = share.image?.trim();
+  const value = (share.theme?.image_blob ?? share.image)?.trim();
   if (!value) return;
 
   // Uploaded theme images are stored as blob UUIDs.
@@ -142,6 +143,9 @@ export function PublicDirectoryShareBanner({
   const image = shareImageUrl(share);
   const description = share.description?.trim();
   const license = share.license?.trim();
+  const themeColor = share.theme?.color?.trim() || COLORS.ANTD_LINK_BLUE;
+  const themeAccent = share.theme?.accent_color?.trim();
+  const themeIcon = share.theme?.icon?.trim() || "folder-open";
 
   function openCopyModal() {
     setCopyMode("new");
@@ -252,7 +256,8 @@ export function PublicDirectoryShareBanner({
         type="info"
         showIcon
         style={{
-          borderLeft: `4px solid ${COLORS.ANTD_LINK_BLUE}`,
+          background: themeAccent ? `${themeAccent}22` : undefined,
+          borderLeft: `4px solid ${themeColor}`,
           borderRadius: 0,
         }}
         title={
@@ -276,7 +281,23 @@ export function PublicDirectoryShareBanner({
                   width: 84,
                 }}
               />
-            ) : null}
+            ) : (
+              <div
+                style={{
+                  alignItems: "center",
+                  background: themeAccent ?? COLORS.GRAY_LL,
+                  border: `1px solid ${COLORS.GRAY_LL}`,
+                  borderRadius: 6,
+                  color: themeColor,
+                  display: "flex",
+                  height: 56,
+                  justifyContent: "center",
+                  width: 56,
+                }}
+              >
+                <Icon name={themeIcon as any} style={{ fontSize: 24 }} />
+              </div>
+            )}
             <div style={{ flex: 1, minWidth: 0 }}>
               <Space wrap>
                 <Text strong>{title}</Text>
