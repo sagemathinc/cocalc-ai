@@ -9,10 +9,10 @@ import { COLORS } from "@cocalc/util/theme";
 // outside the base public palette.
 export const FEATURE_ACCENTS = {
   ai: COLORS.AI_ASSISTANT_FONT,
-  automations: "#096dd9",
-  julia: "#9558b2",
-  linux: "#096dd9",
-  linuxSecondary: "#278c83",
+  automations: COLORS.FEATURE_BLUE,
+  julia: COLORS.FEATURE_JULIA_PURPLE,
+  linux: COLORS.FEATURE_BLUE,
+  linuxSecondary: COLORS.FEATURE_TEAL,
   octave: COLORS.FG_RED,
   teaching: COLORS.RUN,
 } as const;
