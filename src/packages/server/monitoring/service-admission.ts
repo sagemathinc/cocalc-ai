@@ -65,6 +65,8 @@ async function getRecentServiceAdmissionDenials(): Promise<
 }
 
 function formatRow(row: ServiceAdmissionDenialRow): string {
+  const firstMs = timeMs(row.first_time);
+  const lastMs = timeMs(row.last_time);
   const lastTime =
     row.last_time instanceof Date
       ? row.last_time.toISOString()
@@ -74,20 +76,71 @@ function formatRow(row: ServiceAdmissionDenialRow): string {
     `source=${row.source}`,
     `count=${row.count}`,
     `active/max=${row.max_current}/${row.max_maximum}`,
+    firstMs != null && lastMs != null
+      ? `span=${formatDuration(Math.max(0, lastMs - firstMs))}`
+      : undefined,
     `last=${lastTime}`,
-  ].join(" ");
+  ]
+    .filter((part) => part != null)
+    .join(" ");
+}
+
+function timeMs(value: Date | string): number | undefined {
+  const ms = value instanceof Date ? value.getTime() : Date.parse(`${value}`);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function formatIso(value: number | undefined): string | undefined {
+  return value == null ? undefined : new Date(value).toISOString();
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  if (ms < 60_000) {
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+  return `${(ms / 60_000).toFixed(1)}m`;
+}
+
+function observedSpan(rows: ServiceAdmissionDenialRow[]): {
+  first?: number;
+  last?: number;
+  spanMs?: number;
+} {
+  const times = rows.flatMap((row) =>
+    [timeMs(row.first_time), timeMs(row.last_time)].filter(
+      (value): value is number => value != null,
+    ),
+  );
+  if (!times.length) {
+    return {};
+  }
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  return { first, last, spanMs: Math.max(0, last - first) };
 }
 
 export async function runServiceAdmissionAlertCheck(): Promise<number> {
   const rows = await getRecentServiceAdmissionDenials();
   const total = rows.reduce((sum, row) => sum + row.count, 0);
   if (total < ALERT_MIN_DENIALS) return 0;
+  const span = observedSpan(rows);
+  const spanSummary =
+    span.spanMs != null
+      ? `Observed denial span across top groups: ${formatDuration(span.spanMs)} (${formatIso(span.first)} to ${formatIso(span.last)}).`
+      : "Observed denial span across top groups: unavailable.";
   await adminAlert({
     subject: "Service admission denials are high",
     body: [
       `Service admission denied ${total} requests in the last ${ALERT_WINDOW_MINUTES} minutes.`,
       "",
-      "This usually means a hub/API admission limit is actively rejecting user-visible work. Top denied methods:",
+      spanSummary,
+      "",
+      "A short span usually indicates a burst or retry fan-out; sustained or repeated bursts still need investigation.",
+      "",
+      "Top denied methods/services:",
       "",
       ...rows.map(formatRow),
     ].join("\n"),
