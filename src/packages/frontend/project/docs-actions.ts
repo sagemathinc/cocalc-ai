@@ -63,12 +63,6 @@ export interface ProjectPeopleDocsActionDetail {
   requestId?: string;
 }
 
-export interface ProjectPublishDocsActionDetail {
-  actionId?: DocsActionId;
-  projectId: string;
-  requestId?: string;
-}
-
 export interface DocsActionAckDetail {
   actionId: DocsActionId;
   projectId?: string;
@@ -207,18 +201,6 @@ function dispatchProjectPeopleEvent(projectId: string): void {
       PROJECT_PEOPLE_DOCS_ACTION_EVENT,
       {
         detail: { actionId: "settings.people.collaborators", projectId },
-      },
-    ),
-  );
-}
-
-function dispatchProjectPublishEvent(projectId: string): void {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(
-    new CustomEvent<ProjectPublishDocsActionDetail>(
-      PROJECT_PUBLISH_DOCS_ACTION_EVENT,
-      {
-        detail: { actionId: "settings.project.publish", projectId },
       },
     ),
   );
@@ -609,23 +591,6 @@ function revealProjectPeople(projectId: string): DocsActionRevealResult {
     action_id: "settings.people.collaborators",
     opened: true,
     panel: "people",
-    project_id: projectId,
-    tab: "settings",
-  };
-}
-
-function revealProjectPublish(projectId: string): DocsActionRevealResult {
-  openSettingsPanel(projectId, "publish");
-  if (typeof window !== "undefined") {
-    window.location.hash = "publish";
-  }
-  dispatchProjectPublishEvent(projectId);
-  setTimeout(() => dispatchProjectPublishEvent(projectId), 100);
-  setTimeout(() => dispatchProjectPublishEvent(projectId), 500);
-  return {
-    action_id: "settings.project.publish",
-    opened: true,
-    panel: "publish",
     project_id: projectId,
     tab: "settings",
   };
@@ -1108,11 +1073,6 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
     id: "settings.environment.secrets",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
     run: ({ projectId }) => revealProjectSecrets(projectId),
-  },
-  "settings.project.publish": {
-    id: "settings.project.publish",
-    isAvailable: ({ projectId }) => validateProjectId(projectId),
-    run: ({ projectId }) => revealProjectPublish(projectId),
   },
   "project.terminal.open": {
     id: "project.terminal.open",

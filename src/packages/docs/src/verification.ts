@@ -417,14 +417,6 @@ const secrets = api.waitForText({ includes: "Project Secrets", timeout_ms: ${UI_
 return { ok: environment.ok === true && secrets.ok === true, environment, secrets };`,
     };
   }
-  if (actionId === "settings.project.publish") {
-    return {
-      description: "Project Publish settings are visible.",
-      code: `const publish = api.waitForText({ includes: "Publish", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
-const wholeProject = api.waitForText({ includes: "Publish entire project", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
-return { ok: publish.ok === true && wholeProject.ok === true, publish, wholeProject };`,
-    };
-  }
   if (actionId === "project.terminal.open" || actionId === "terminal.open") {
     return {
       description: "Terminal file tab and xterm UI are visible.",
