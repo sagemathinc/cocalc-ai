@@ -190,7 +190,10 @@ export class Projects extends Component<Props, State> {
         <Col md={3}>{this.render_last_active(project)}</Col>
         <Col md={3}>
           <Space wrap>
-            <ProjectDirectorySummaryButton project_id={project.project_id} />
+            <ProjectDirectorySummaryButton
+              project_id={project.project_id}
+              style={{ marginTop: 0 }}
+            />
             <ProjectEntitlementOverrideButton project_id={project.project_id} />
           </Space>
         </Col>
