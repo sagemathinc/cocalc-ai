@@ -11,6 +11,7 @@ const DEFAULT_BUCKET = "cocalc-projects";
 const DEFAULT_PREFIX = "prod3/default/";
 const DEFAULT_SUFFIX = ".tar.zst";
 const DEFAULT_BATCH_SIZE = 2000;
+const DEFAULT_UPDATE_BATCH_SIZE = 50_000;
 const LIST_PAGE_SIZE = 1000;
 
 type Options = {
@@ -18,6 +19,7 @@ type Options = {
   prefix: string;
   suffix: string;
   batchSize: number;
+  updateBatchSize: number;
   dryRun: boolean;
   markMissingUnavailable: boolean;
   endpoint?: string;
@@ -44,6 +46,12 @@ type Stats = {
   totalCompressedBytes: number;
 };
 
+type UpdateBatchResult = {
+  candidates: number;
+  marked?: number;
+  updated: number;
+};
+
 type QueryClient = {
   query: <T = any>(
     text: string,
@@ -67,6 +75,8 @@ Options:
   --prefix <prefix>     Object key prefix to list. Default: ${DEFAULT_PREFIX}.
   --suffix <suffix>     Object key suffix for project archives. Default: ${DEFAULT_SUFFIX}.
   --batch-size <n>      Database insert batch size. Default: ${DEFAULT_BATCH_SIZE}.
+  --update-batch-size <n>
+                        Permanent project row update batch size. Default: ${DEFAULT_UPDATE_BATCH_SIZE}.
   --endpoint <url>      R2 S3 endpoint. Defaults to COCALC_LEGACY_PROJECTS_R2_ENDPOINT
                         or https://<site r2_account_id>.r2.cloudflarestorage.com.
   --access-key <key>    R2 access key. Defaults to site setting r2_access_key_id.
@@ -87,6 +97,7 @@ function parseArgs(argv: string[]): Options {
     prefix: DEFAULT_PREFIX,
     suffix: DEFAULT_SUFFIX,
     batchSize: DEFAULT_BATCH_SIZE,
+    updateBatchSize: DEFAULT_UPDATE_BATCH_SIZE,
     dryRun: false,
     markMissingUnavailable: true,
   };
@@ -113,6 +124,8 @@ function parseArgs(argv: string[]): Options {
       options.suffix = required(value, arg);
     } else if (arg === "--batch-size") {
       options.batchSize = positiveInt(value, arg);
+    } else if (arg === "--update-batch-size") {
+      options.updateBatchSize = positiveInt(value, arg);
     } else if (arg === "--endpoint") {
       options.endpoint = required(value, arg);
     } else if (arg === "--access-key") {
@@ -278,8 +291,9 @@ async function createTempTable(client: QueryClient): Promise<void> {
       artifact_key TEXT NOT NULL,
       artifact_bytes BIGINT NOT NULL,
       etag TEXT,
-      last_modified TIMESTAMPTZ
-    ) ON COMMIT DROP
+      last_modified TIMESTAMPTZ,
+      available_applied BOOLEAN NOT NULL DEFAULT FALSE
+    ) ON COMMIT PRESERVE ROWS
   `);
 }
 
@@ -335,6 +349,140 @@ async function insertTempBatch({
   return rowCount ?? 0;
 }
 
+async function applyAvailableRefresh({
+  client,
+  options,
+}: {
+  client: QueryClient;
+  options: Options;
+}): Promise<number> {
+  let total = 0;
+  let batches = 0;
+  while (true) {
+    const { rows } = await client.query<UpdateBatchResult>(
+      `
+      WITH candidates AS (
+        SELECT legacy_project_id
+          FROM legacy_migration_r2_artifacts_refresh
+         WHERE available_applied=false
+         ORDER BY legacy_project_id
+         LIMIT $2::INTEGER
+      ),
+      updated AS (
+        UPDATE legacy_migration_projects p
+           SET artifact_bucket=$1::text,
+               artifact_key=r.artifact_key,
+               artifact_status='available',
+               artifact_manifest=jsonb_strip_nulls(
+                 COALESCE(p.artifact_manifest, '{}'::jsonb)
+                 || jsonb_build_object(
+                      'artifact_bytes', r.artifact_bytes,
+                      'compressed_bytes', r.artifact_bytes,
+                      'r2_bucket', $1::text,
+                      'r2_key', r.artifact_key,
+                      'r2_etag', r.etag,
+                      'r2_last_modified', r.last_modified,
+                      'r2_refreshed_at', NOW()
+                    )
+               ),
+               updated=NOW()
+          FROM legacy_migration_r2_artifacts_refresh r
+          JOIN candidates c
+            ON c.legacy_project_id=r.legacy_project_id
+         WHERE p.legacy_project_id=r.legacy_project_id
+        RETURNING 1
+      ),
+      marked AS (
+        UPDATE legacy_migration_r2_artifacts_refresh r
+           SET available_applied=true
+          FROM candidates c
+         WHERE r.legacy_project_id=c.legacy_project_id
+        RETURNING 1
+      )
+      SELECT (SELECT COUNT(*)::INTEGER FROM candidates) AS candidates,
+             (SELECT COUNT(*)::INTEGER FROM marked) AS marked,
+             (SELECT COUNT(*)::INTEGER FROM updated) AS updated
+      `,
+      [options.bucket, options.updateBatchSize],
+    );
+    const result = rows[0] ?? { candidates: 0, updated: 0 };
+    if (result.candidates === 0) return total;
+    total += result.updated;
+    batches += 1;
+    console.log(
+      `${options.dryRun ? "would mark" : "marked"} ${total.toLocaleString()} project(s) available (${batches.toLocaleString()} batch(es))`,
+    );
+  }
+}
+
+async function applyUnavailableRefresh({
+  client,
+  options,
+}: {
+  client: QueryClient;
+  options: Options;
+}): Promise<number> {
+  if (!options.markMissingUnavailable) return 0;
+  let total = 0;
+  let batches = 0;
+  while (true) {
+    const { rows } = await client.query<UpdateBatchResult>(
+      `
+      WITH candidates AS (
+        SELECT p.legacy_project_id
+          FROM legacy_migration_projects p
+         WHERE (p.artifact_bucket IS NULL OR p.artifact_bucket=$1::text)
+           AND (
+             p.artifact_key IS NULL
+             OR p.artifact_key=$2::text || p.legacy_project_id || $3::text
+             OR p.artifact_key LIKE $2::text || '%'
+           )
+           AND NOT (
+             p.artifact_status='unavailable'
+             AND p.artifact_key IS NULL
+             AND COALESCE(p.artifact_manifest->>'r2_missing', '')='true'
+           )
+           AND NOT EXISTS (
+             SELECT 1
+               FROM legacy_migration_r2_artifacts_refresh r
+              WHERE r.legacy_project_id=p.legacy_project_id
+           )
+         ORDER BY p.legacy_project_id
+         LIMIT $4::INTEGER
+      ),
+      updated AS (
+        UPDATE legacy_migration_projects p
+           SET artifact_key=NULL,
+               artifact_status='unavailable',
+               artifact_manifest=jsonb_strip_nulls(
+                 COALESCE(p.artifact_manifest, '{}'::jsonb)
+                 || jsonb_build_object(
+                      'r2_bucket', $1::text,
+                      'r2_key', NULL::text,
+                      'r2_missing', true,
+                      'r2_refreshed_at', NOW()
+                    )
+               ),
+               updated=NOW()
+          FROM candidates c
+         WHERE p.legacy_project_id=c.legacy_project_id
+        RETURNING 1
+      )
+      SELECT (SELECT COUNT(*)::INTEGER FROM candidates) AS candidates,
+             (SELECT COUNT(*)::INTEGER FROM updated) AS updated
+      `,
+      [options.bucket, options.prefix, options.suffix, options.updateBatchSize],
+    );
+    const result = rows[0] ?? { candidates: 0, updated: 0 };
+    if (result.candidates === 0) return total;
+    total += result.updated;
+    batches += 1;
+    console.log(
+      `${options.dryRun ? "would mark" : "marked"} ${total.toLocaleString()} project(s) unavailable (${batches.toLocaleString()} batch(es))`,
+    );
+  }
+}
+
 async function applyAvailabilityRefresh({
   client,
   options,
@@ -342,67 +490,10 @@ async function applyAvailabilityRefresh({
   client: QueryClient;
   options: Options;
 }): Promise<Pick<Stats, "availableRows" | "unavailableRows">> {
-  const available = await client.query(
-    `
-    UPDATE legacy_migration_projects p
-       SET artifact_bucket=$1::text,
-           artifact_key=r.artifact_key,
-           artifact_status='available',
-           artifact_manifest=jsonb_strip_nulls(
-             COALESCE(p.artifact_manifest, '{}'::jsonb)
-             || jsonb_build_object(
-                  'artifact_bytes', r.artifact_bytes,
-                  'compressed_bytes', r.artifact_bytes,
-                  'r2_bucket', $1::text,
-                  'r2_key', r.artifact_key,
-                  'r2_etag', r.etag,
-                  'r2_last_modified', r.last_modified,
-                  'r2_refreshed_at', NOW()
-                )
-           ),
-           updated=NOW()
-      FROM legacy_migration_r2_artifacts_refresh r
-     WHERE p.legacy_project_id=r.legacy_project_id
-    `,
-    [options.bucket],
-  );
-
-  let unavailableRows = 0;
-  if (options.markMissingUnavailable) {
-    const unavailable = await client.query(
-      `
-      UPDATE legacy_migration_projects p
-         SET artifact_key=NULL,
-             artifact_status='unavailable',
-             artifact_manifest=jsonb_strip_nulls(
-               COALESCE(p.artifact_manifest, '{}'::jsonb)
-               || jsonb_build_object(
-                    'r2_bucket', $1::text,
-                    'r2_key', NULL::text,
-                    'r2_missing', true,
-                    'r2_refreshed_at', NOW()
-                  )
-             ),
-             updated=NOW()
-       WHERE (p.artifact_bucket IS NULL OR p.artifact_bucket=$1::text)
-         AND (
-           p.artifact_key IS NULL
-           OR p.artifact_key=$2::text || p.legacy_project_id || $3::text
-           OR p.artifact_key LIKE $2::text || '%'
-         )
-         AND NOT EXISTS (
-           SELECT 1
-             FROM legacy_migration_r2_artifacts_refresh r
-            WHERE r.legacy_project_id=p.legacy_project_id
-         )
-      `,
-      [options.bucket, options.prefix, options.suffix],
-    );
-    unavailableRows = unavailable.rowCount ?? 0;
-  }
-
+  const availableRows = await applyAvailableRefresh({ client, options });
+  const unavailableRows = await applyUnavailableRefresh({ client, options });
   return {
-    availableRows: available.rowCount ?? 0,
+    availableRows,
     unavailableRows,
   };
 }
@@ -418,9 +509,9 @@ async function refreshArtifactsFromR2(options: Options): Promise<Stats> {
     unavailableRows: 0,
     totalCompressedBytes: 0,
   };
+  let dryRunTransaction = false;
   try {
-    await client.query("BEGIN");
-    await client.query("SET LOCAL statement_timeout = '30min'");
+    await client.query("SET statement_timeout = '30min'");
     await createTempTable(client);
     const batch: Array<{
       legacy_project_id: string;
@@ -452,19 +543,41 @@ async function refreshArtifactsFromR2(options: Options): Promise<Stats> {
           batch.length = 0;
         }
       }
+      if (stats.pages % 100 === 0) {
+        console.log(
+          `listed ${stats.listedObjects.toLocaleString()} object(s), matched ${stats.matchedObjects.toLocaleString()} archive(s) after ${stats.pages.toLocaleString()} page(s)`,
+        );
+      }
     }
     if (batch.length > 0) {
       stats.insertedTempRows += await insertTempBatch({ client, rows: batch });
     }
+    console.log(
+      `inserted ${stats.insertedTempRows.toLocaleString()} temporary R2 archive row(s)`,
+    );
+    if (options.dryRun) {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL statement_timeout = '30min'");
+      dryRunTransaction = true;
+    }
     const updated = await applyAvailabilityRefresh({ client, options });
     stats.availableRows = updated.availableRows;
     stats.unavailableRows = updated.unavailableRows;
-    await client.query(options.dryRun ? "ROLLBACK" : "COMMIT");
+    if (dryRunTransaction) {
+      await client.query("ROLLBACK");
+      dryRunTransaction = false;
+    }
     return stats;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (dryRunTransaction) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      dryRunTransaction = false;
+    }
     throw err;
   } finally {
+    await client
+      .query("DROP TABLE IF EXISTS legacy_migration_r2_artifacts_refresh")
+      .catch(() => undefined);
     client.release();
   }
 }
