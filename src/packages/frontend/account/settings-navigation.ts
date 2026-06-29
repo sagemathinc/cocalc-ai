@@ -15,7 +15,6 @@ export type SettingsNavigationContext = {
   isAdmin: boolean;
   isLite: boolean;
   legacyMigrationEnabled: boolean;
-  publicDirectorySharesEnabled: boolean;
   stripeEnabled: boolean;
   zendesk: boolean;
 };
@@ -27,10 +26,6 @@ export function useSettingsNavigationContext(): SettingsNavigationContext {
     legacyMigrationEnabled: !!useTypedRedux(
       "customize",
       "legacy_migration_enabled",
-    ),
-    publicDirectorySharesEnabled: !!useTypedRedux(
-      "customize",
-      "public_directory_shares_enabled",
     ),
     stripeEnabled: !!useTypedRedux("customize", "stripe_enabled"),
     zendesk: !!useTypedRedux("customize", "zendesk"),
@@ -87,8 +82,7 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
     type: "page",
     page: "public-shares",
     overview: "primary",
-    visible: ({ isLite, publicDirectorySharesEnabled }) =>
-      !isLite && publicDirectorySharesEnabled,
+    visible: ({ isLite }) => !isLite,
   },
   {
     type: "page",

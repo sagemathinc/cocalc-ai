@@ -125,7 +125,6 @@ export interface CustomizeState {
   policy_pages: string;
   legacy_migration_enabled?: boolean;
   legacy_migration_page_message?: string;
-  public_directory_shares_enabled?: boolean;
   share_server: boolean;
   site_description: string;
   site_name: string;

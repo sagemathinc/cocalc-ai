@@ -18,7 +18,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { alert_message } from "@cocalc/frontend/alerts";
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useActions } from "@cocalc/frontend/app-framework";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
@@ -57,10 +57,6 @@ export function PublishPanel({
 }: {
   project_id: string;
 }): React.JSX.Element {
-  const publicDirectorySharesEnabled = !!useTypedRedux(
-    "customize",
-    "public_directory_shares_enabled",
-  );
   const actions = useActions({ project_id });
   const [shares, setShares] = useState<PublicDirectoryShareSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -68,10 +64,6 @@ export function PublishPanel({
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
   async function loadShares(): Promise<void> {
-    if (!publicDirectorySharesEnabled) {
-      setShares([]);
-      return;
-    }
     setLoading(true);
     setError("");
     try {
@@ -91,7 +83,7 @@ export function PublishPanel({
 
   useEffect(() => {
     void loadShares();
-  }, [project_id, publicDirectorySharesEnabled]);
+  }, [project_id]);
 
   async function openPublishModal(path: string): Promise<void> {
     if (actions == null) return;
@@ -118,16 +110,6 @@ export function PublishPanel({
     } catch (err) {
       setError(normalizeUserFacingError(err).message);
     }
-  }
-
-  if (!publicDirectorySharesEnabled) {
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        message="Public directory sharing is not enabled on this site."
-      />
-    );
   }
 
   return (

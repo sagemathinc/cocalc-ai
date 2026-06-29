@@ -7,7 +7,6 @@ import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { lroStreamName } from "@cocalc/conat/lro/names";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -768,13 +767,6 @@ export async function ensurePublicDirectorySharesSchema(): Promise<void> {
   await schemaReady;
 }
 
-async function assertEnabled(): Promise<void> {
-  const settings = await getServerSettings();
-  if (settings.public_directory_shares_enabled !== true) {
-    throw Error("public directory shares are not enabled");
-  }
-}
-
 async function assertAdmin(account_id: string | undefined): Promise<void> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("user must be an admin");
@@ -1131,7 +1123,6 @@ async function resolveRow({
   account_id,
   slug,
 }: ResolvePublicDirectoryShareOptions): Promise<ResolvedPublicDirectoryShareRow> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   const normalizedSlug = normalizePublicDirectoryShareSlug(slug);
   const { rows } = await getPool().query<PublicDirectoryShareRow>(
@@ -1363,7 +1354,6 @@ export async function getTemporaryViewerReadPolicy({
   account_id,
   project_id,
 }: GetTemporaryViewerReadPolicyOptions): Promise<GetTemporaryViewerReadPolicyResponse> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   if (!account_id) {
     throw Error("user must be signed in");
@@ -1401,7 +1391,6 @@ export async function authorizeRead({
   project_id,
   share_id,
 }: AuthorizePublicDirectoryShareReadOptions): Promise<AuthorizePublicDirectoryShareReadResponse> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   if (!account_id) {
     throw Error("user must be signed in");
@@ -1473,7 +1462,6 @@ export async function list({
   include_unlisted,
   include_unavailable = true,
 }: ListPublicDirectorySharesOptions = {}): Promise<ListPublicDirectorySharesResponse> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   const normalizedLimit = normalizeLimit(limit);
   const normalizedOffset = normalizeOffset(offset);
@@ -1516,7 +1504,6 @@ export async function listMine({
   offset,
   include_disabled = false,
 }: ListMyPublicDirectorySharesOptions = {}): Promise<ListPublicDirectorySharesResponse> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   if (!account_id) {
     throw Error("user must be signed in");
@@ -1549,7 +1536,6 @@ export async function listProject({
   offset,
   include_disabled = false,
 }: ListProjectPublicDirectorySharesOptions): Promise<ListPublicDirectorySharesResponse> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   if (!account_id) {
     throw Error("user must be signed in");
@@ -1591,7 +1577,6 @@ export async function disableMineByActor({
   session_hash,
   actor_account_id,
 }: DisableMyPublicDirectorySharesByActorOptions): Promise<DisableMyPublicDirectorySharesByActorResponse> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   if (!account_id) {
     throw Error("user must be signed in");
@@ -1803,7 +1788,6 @@ async function savePublicDirectoryShare(
 export async function update(
   opts: UpdatePublicDirectoryShareOptions,
 ): Promise<PublicDirectoryShareSummary> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   if (!opts.account_id) {
     throw Error("user must be signed in");
@@ -1875,7 +1859,6 @@ export async function update(
 export async function create(
   opts: CreatePublicDirectoryShareOptions,
 ): Promise<PublicDirectoryShareSummary> {
-  await assertEnabled();
   await ensurePublicDirectorySharesSchema();
   if (!opts.account_id) {
     throw Error("user must be signed in");

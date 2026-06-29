@@ -99,10 +99,6 @@ function projectPathLabel(path: string): string {
 }
 
 function PublicSharesPage() {
-  const publicDirectorySharesEnabled = !!useTypedRedux(
-    "customize",
-    "public_directory_shares_enabled",
-  );
   const projectMap = useTypedRedux("projects", "project_map");
   const [state, setState] = useState<PublicSharesState>({
     error: "",
@@ -185,9 +181,8 @@ function PublicSharesPage() {
   }
 
   useEffect(() => {
-    if (!publicDirectorySharesEnabled) return;
     void loadShares();
-  }, [publicDirectorySharesEnabled]);
+  }, []);
 
   useEffect(() => {
     if (!bulkActorAccountId) return;
@@ -195,16 +190,6 @@ function PublicSharesPage() {
       setBulkActorAccountId(undefined);
     }
   }, [actorAccountIds, bulkActorAccountId]);
-
-  if (!publicDirectorySharesEnabled) {
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        message="Public directory shares are not enabled on this site."
-      />
-    );
-  }
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>

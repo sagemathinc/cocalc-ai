@@ -30,10 +30,6 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
   getProjectFsClient: (...args: any[]) => mockGetProjectFsClient(...args),
 }));
 
-jest.mock("@cocalc/database/settings/server-settings", () => ({
-  getServerSettings: async () => ({ public_directory_shares_enabled: true }),
-}));
-
 jest.mock("@cocalc/server/conat/api/util", () => ({
   assertCollab: jest.fn(async () => undefined),
 }));

@@ -115,7 +115,6 @@ export type SiteSettingsKeys =
   | "public_signup_without_registration_token"
   | "legacy_migration_enabled"
   | "legacy_migration_page_message"
-  | "public_directory_shares_enabled"
   | "landing_pages"
   | "project_hosts_google-cloud_enabled"
   | "project_hosts_hyperstack_enabled"
@@ -908,16 +907,6 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Migration"],
     group: "Access & Identity",
     subgroup: "Migration",
-  },
-  public_directory_shares_enabled: {
-    name: "Enable public directory shares",
-    desc: "Expose signed-in public directory share URLs and APIs. This is intended for cocalc.com share-server migration and should stay disabled unless public_project_paths data has been imported or owner UI is ready.",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-    tags: ["Migration"],
-    group: "Access & Identity",
-    subgroup: "Sharing",
   },
   landing_pages: {
     name: "Landing pages",
