@@ -90,7 +90,9 @@ function defaultPublicShareSlug({
   project_id: string;
   path: string;
 }): string {
-  const tail = misc.path_split(path.replace(/\/+$/, "")).tail;
+  const sharePath = normalizeSharePath(path);
+  const tail =
+    sharePath === "." ? "project" : misc.path_split(sharePath).tail || "files";
   return `${project_id}/${slugPart(tail || "files")}`;
 }
 
@@ -120,6 +122,12 @@ function pathIsPublishable(path: string): boolean {
     raw === "/home/user" ||
     raw.startsWith("/home/user/")
   );
+}
+
+function defaultPublishTitle(path: string): string {
+  return normalizeSharePath(path) === "."
+    ? "Project files"
+    : misc.path_split(path).tail || "Files";
 }
 
 interface SiteLicensePoolOption {
@@ -285,7 +293,7 @@ export function ActionBox({
     if (typeof path !== "string") {
       return;
     }
-    setPublishTitle((cur) => cur || misc.path_split(path).tail || "Files");
+    setPublishTitle((cur) => cur || defaultPublishTitle(path));
     setPublishSlug(
       (cur) => cur || defaultPublicShareSlug({ project_id, path }),
     );
@@ -307,7 +315,7 @@ export function ActionBox({
         );
         setExistingPublishShare(share ?? null);
         if (share) {
-          setPublishTitle(share.title || misc.path_split(path).tail || "Files");
+          setPublishTitle(share.title || defaultPublishTitle(path));
           setPublishDescription(share.description ?? "");
           setPublishLicense(share.license ?? "");
           setPublishSlug(share.slug);

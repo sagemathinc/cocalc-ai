@@ -23,6 +23,7 @@ import { EnvironmentOverview } from "./environment-overview";
 import { ProjectLocationBox } from "./hide-delete-box";
 import { ManagedEgress } from "./managed-egress";
 import { ProjectControl } from "./project-control";
+import { PublishPanel } from "./publish";
 import { RecoveryPanel } from "./recovery-panel";
 import type { ProjectSettingsNavItem } from "./section-nav";
 import { SSHPanel } from "./ssh";
@@ -185,6 +186,16 @@ export function useProjectSettingsSections({
             layout="flyout"
           />
         ),
+      },
+      {
+        id: "publish",
+        icon: "link",
+        label: "Publish",
+        title: "Publish",
+        description:
+          "Manage published read-only folders and publish this entire project.",
+        className: "cc-project-flyout-settings-panel",
+        children: <PublishPanel project_id={project_id} />,
       },
       {
         id: "environment",
