@@ -1,6 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import PublicViewerIpynbRenderer from "./renderers/ipynb";
 
+jest.mock("@cocalc/frontend/codemirror/static", () => ({
+  __esModule: true,
+  default: {
+    runMode: (value: string, _mode: unknown, append: (text: string) => void) =>
+      append(value),
+  },
+}));
+
 test("renders ipynb content as a readable notebook", async () => {
   const content = JSON.stringify({
     cells: [
@@ -47,7 +55,7 @@ test("renders ipynb content as a readable notebook", async () => {
       await screen.findAllByText((_, elt) => {
         return (
           elt?.tagName === "PRE" &&
-          elt.classList.contains("cocalc-slate-code-block") &&
+          elt.classList.contains("CodeMirror") &&
           `${elt.textContent ?? ""}`.includes("print('hello world')")
         );
       })
@@ -58,7 +66,7 @@ test("renders ipynb content as a readable notebook", async () => {
   expect(await screen.findByText("Python 3")).toBeTruthy();
 });
 
-test("renders trusted notebook html output directly without iframe sandboxing", async () => {
+test("renders notebook html output inside a sandboxed iframe", async () => {
   const content = JSON.stringify({
     cells: [
       {
@@ -95,8 +103,8 @@ test("renders trusted notebook html output directly without iframe sandboxing", 
     />,
   );
 
-  const html = await screen.findByTestId("public-html-output");
-  expect(html.querySelector("iframe")).toBeNull();
-  expect(await screen.findByText("Notebook HTML")).toBeTruthy();
-  expect(await screen.findByText("Click me")).toBeTruthy();
+  const iframe = await screen.findByTitle("Jupyter HTML output");
+  expect(iframe.tagName).toBe("IFRAME");
+  expect(iframe.getAttribute("sandbox")).toContain("allow-scripts");
+  expect(iframe.getAttribute("srcdoc")).toContain("Notebook HTML");
 });

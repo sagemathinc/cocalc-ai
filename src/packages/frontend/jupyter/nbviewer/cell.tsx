@@ -12,6 +12,7 @@ interface Props {
   history: string[];
   edits: { [id: string]: string } | null;
   setEdits: (edits: { [id: string]: string } | null) => void;
+  readOnly?: boolean;
 }
 
 export default function Cell({
@@ -23,6 +24,7 @@ export default function Cell({
   history,
   edits,
   setEdits,
+  readOnly,
 }: Props) {
   const [output, setOutput] = useState<null | ReactNode>(null);
   return (
@@ -36,6 +38,7 @@ export default function Cell({
         history={history}
         edits={edits}
         setEdits={setEdits}
+        readOnly={readOnly}
       />
       {edits == null && output == null && (
         <CellOutput cell={cell} project_id={project_id} directory={directory} />

@@ -114,6 +114,7 @@ export function CodeMirrorStatic(props: Props) {
          out every possible bad input that could cause this), since
          it completely crashes cocalc. */
       console.warn(`WARNING: CodeMirror.runMode failed -- ${err}`);
+      append(props.value);
     }
     append("\n"); // TODO: should this have 2 parameters?
 

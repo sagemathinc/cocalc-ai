@@ -31,7 +31,11 @@ export function buildViewerFileContext({
   // intentionally render them in the trusted mode instead of re-sanitizing
   // markdown/HTML output. This is what allows notebook HTML output, embedded
   // markdown HTML, etc. to behave like the underlying document expects.
-  const defaults: IFileContext = { noSanitize: true };
+  const defaults: IFileContext = {
+    disableExtraButtons: true,
+    disableMarkdownCodebar: true,
+    noSanitize: true,
+  };
   if (typeof window === "undefined") {
     return { ...defaults, ...fileContext };
   }
