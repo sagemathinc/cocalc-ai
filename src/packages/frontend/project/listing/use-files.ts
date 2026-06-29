@@ -329,6 +329,33 @@ export default function useFiles({
           });
           throttledUpdateRef.current = throttledUpdate;
           listing.on("change", throttledUpdate);
+          try {
+            const snapshot = await getListingSnapshot({
+              fs,
+              path,
+              debugContext,
+            });
+            if (requestId.current !== id) return;
+            listing.files = snapshot.files ?? {};
+            if (cacheId != null) {
+              cache.set(key(cacheId, path), listing.files);
+              notifyCacheListeners();
+              cacheNeighbors({ fs, cacheId, path, files: listing.files });
+            }
+            update();
+          } catch (err) {
+            if (requestId.current !== id) return;
+            logPublicShareFiles(
+              "warn",
+              "listing watcher catch-up failed",
+              debugContext,
+              {
+                path,
+                code: (err as ConatErrorLike | undefined)?.code,
+                message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+              },
+            );
+          }
         } catch (err) {
           if (requestId.current !== id) return;
           console.warn("listing watcher bootstrap failed", { path, err });
