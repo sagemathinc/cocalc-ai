@@ -118,15 +118,6 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     title: "Use the projects page",
   },
   {
-    actions: [
-      {
-        description: "Open project Settings -> Publish.",
-        executable: true,
-        id: "settings.project.publish",
-        label: "Open publishing",
-        parameters: projectActionParameters(),
-      },
-    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: PUBLISH_FILES_BODY.trim(),
     category: "Projects",
@@ -136,6 +127,8 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
       "A project folder with read-only public share links",
     ),
     lastReviewed: "2026-06-29",
+    noActionReason:
+      "This page is normally opened from the publishing UI, so an action that reopens the same panel is redundant.",
     searchKeywords:
       "public directory shares publish files folders whole project unlisted viewer copy slug",
     slug: "projects/publish-files",

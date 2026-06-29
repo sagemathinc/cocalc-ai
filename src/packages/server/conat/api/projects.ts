@@ -160,6 +160,7 @@ import type {
   ProjectRootfsPublishConfig,
   ProjectLabelPatch,
   ProjectLabels,
+  ProjectMetadataPatch,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   CourseManagerAccessResult,
@@ -1654,6 +1655,122 @@ export async function setProjectEnv({
   await publishProjectDetailInvalidationBestEffort({
     project_id,
     fields: ["env"],
+  });
+}
+
+function normalizeProjectMetadataPatch(
+  patch: ProjectMetadataPatch,
+): ProjectMetadataPatch {
+  if (patch == null || typeof patch !== "object") {
+    throw new Error("patch must be an object");
+  }
+  const normalized: ProjectMetadataPatch = {};
+  if (Object.hasOwn(patch, "title")) {
+    if (typeof patch.title !== "string") {
+      throw new Error("title must be a string");
+    }
+    normalized.title = patch.title;
+  }
+  if (Object.hasOwn(patch, "description")) {
+    if (typeof patch.description !== "string") {
+      throw new Error("description must be a string");
+    }
+    normalized.description = patch.description;
+  }
+  if (Object.hasOwn(patch, "theme")) {
+    const theme = patch.theme ?? null;
+    if (theme != null && typeof theme !== "object") {
+      throw new Error("theme must be an object or null");
+    }
+    normalized.theme = theme;
+  }
+  if (Object.keys(normalized).length === 0) {
+    throw new Error("no project metadata fields specified");
+  }
+  return normalized;
+}
+
+export async function setProjectMetadata({
+  account_id,
+  project_id,
+  patch,
+}: {
+  account_id?: string;
+  project_id: string;
+  patch: ProjectMetadataPatch;
+}): Promise<void> {
+  const actor = requireAccountId(account_id);
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  const normalized = normalizeProjectMetadataPatch(patch);
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .projectCollabInvite(ownership.bay_id)
+      .setProjectMetadata({
+        account_id: actor,
+        project_id,
+        patch: normalized,
+      });
+    return;
+  }
+  await setLocalProjectMetadata({
+    account_id: actor,
+    project_id,
+    patch: normalized,
+  });
+}
+
+export async function setLocalProjectMetadata({
+  account_id,
+  project_id,
+  patch,
+}: {
+  account_id: string;
+  project_id: string;
+  patch: ProjectMetadataPatch;
+}): Promise<void> {
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) {
+    throw new Error("invalid account_id or project_id");
+  }
+  const normalized = normalizeProjectMetadataPatch(patch);
+  await assertCollab({ account_id, project_id });
+  const fields = Object.keys(normalized) as (keyof ProjectMetadataPatch)[];
+  const assignments = fields.map((field, index) => `${field} = $${index + 2}`);
+  await withProjectRehomeWriteFence({
+    project_id,
+    action: "set project metadata",
+    fn: async (db) => {
+      const { rowCount } = await db.query(
+        `UPDATE projects
+            SET ${assignments.join(", ")}
+          WHERE project_id = $1
+            AND COALESCE(owning_bay_id, $${fields.length + 2}) = $${fields.length + 2}`,
+        [
+          project_id,
+          ...fields.map((field) => normalized[field]),
+          getConfiguredBayId(),
+        ],
+      );
+      if (rowCount !== 1) {
+        throw new Error(`project ${project_id} not found on owning bay`);
+      }
+      await appendProjectOutboxEventForProject({
+        db,
+        event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: getConfiguredBayId(),
+      });
+    },
+  });
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields,
   });
 }
 

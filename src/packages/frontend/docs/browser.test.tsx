@@ -23,13 +23,35 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { getDocsEntry, listDocsEntries } from "@cocalc/docs";
-import { DocsBrowser } from "./browser";
+import {
+  DocsBrowser,
+  docsEntryForInternalHref,
+  normalizeDocsMarkdownValue,
+} from "./browser";
 
 describe("DocsBrowser", () => {
   beforeEach(() => {
     mockListHosts.mockClear();
     mockGetConnectionTargets.mockClear();
     mockProbeConnectionTarget.mockClear();
+  });
+
+  it("normalizes escaped inline-code backticks from raw docs strings", () => {
+    expect(normalizeDocsMarkdownValue("Open \\`/home/user\\`")).toBe(
+      "Open `/home/user`",
+    );
+  });
+
+  it("resolves internal docs markdown links without browser navigation", () => {
+    expect(docsEntryForInternalHref("/docs/projects/publish-rootfs")?.id).toBe(
+      "projects.publish-rootfs",
+    );
+    expect(
+      docsEntryForInternalHref("/app-docs/projects/publish-files?x=1#top")?.id,
+    ).toBe("projects.publish-files");
+    expect(docsEntryForInternalHref("https://example.com/docs/projects")).toBe(
+      undefined,
+    );
   });
 
   it("notifies when the detail view returns to the index", () => {
