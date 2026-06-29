@@ -11,7 +11,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
-import { PublicDirectoryShareBanner } from "./public-directory-share-banner";
+import {
+  normalizeShareDescriptionMarkdown,
+  PublicDirectoryShareBanner,
+} from "./public-directory-share-banner";
 
 const copyToNewProject = jest.fn();
 const copyToProject = jest.fn();
@@ -81,6 +84,11 @@ jest.mock("@cocalc/frontend/projects/select-project", () => ({
 jest.mock("@cocalc/frontend/components/theme-image-input", () => ({
   blobImageUrl: (blob: string, filename?: string) =>
     `/blobs/${filename ?? "theme-image.png"}?uuid=${blob}`,
+}));
+
+jest.mock("@cocalc/frontend/editors/slate/static-markdown-public", () => ({
+  __esModule: true,
+  default: ({ value }: { value: string }) => <div>{value}</div>,
 }));
 
 jest.mock("@cocalc/frontend/components/user-facing-error", () => ({
@@ -154,6 +162,14 @@ describe("PublicDirectoryShareBanner", () => {
     });
     lroWait.mockResolvedValue({ status: "succeeded" });
     getProjectRegion.mockResolvedValue("wnam");
+  });
+
+  it("normalizes doubled legacy LaTeX escapes in share descriptions", () => {
+    expect(
+      normalizeShareDescriptionMarkdown(
+        "Equation: \\\\(x^2\\\\) and \\\\[y = \\\\alpha\\\\]",
+      ),
+    ).toBe("Equation: \\(x^2\\) and \\[y = \\alpha\\]");
   });
 
   it("shows public share branding metadata in the banner", () => {

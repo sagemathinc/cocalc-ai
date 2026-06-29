@@ -18,6 +18,7 @@ interface Props {
   style?: CSSProperties;
   cellListStyle?: CSSProperties;
   scrollBottom?: boolean;
+  readOnly?: boolean;
 }
 
 export default function Notebook({
@@ -28,6 +29,7 @@ export default function Notebook({
   style,
   cellListStyle,
   scrollBottom,
+  readOnly,
 }: Props) {
   const ref = useBottomScroller<HTMLDivElement>(scrollBottom, cocalcJupyter);
   let { cellList, cells, cmOptions, metadata, kernelspec } = cocalcJupyter;
@@ -50,6 +52,7 @@ export default function Notebook({
           directory={path ? path_split(path).head : undefined}
           kernel={kernelspec.name}
           style={cellListStyle}
+          readOnly={readOnly}
         />
       </div>
     </JupyterContext.Provider>

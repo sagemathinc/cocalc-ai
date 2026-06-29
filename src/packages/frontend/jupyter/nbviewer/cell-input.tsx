@@ -21,6 +21,7 @@ interface Props {
   history: string[];
   edits: { [id: string]: string } | null;
   setEdits: (edits: { [id: string]: string } | null) => void;
+  readOnly?: boolean;
 }
 
 export default function CellInput({
@@ -32,6 +33,7 @@ export default function CellInput({
   history,
   edits,
   setEdits,
+  readOnly,
 }: Props) {
   const value = edits?.[cell["id"] ?? ""] ?? cell["input"] ?? "";
   const [editing, setEditing] = useState<boolean>(false);
@@ -49,27 +51,30 @@ export default function CellInput({
     }, 1);
   };
 
-  const controlBar = disableExtraButtons ? null : (
-    <div
-      style={{
-        borderBottom: "1px solid #ccc",
-        padding: "3px",
-        display: "flex",
-        background: "#f8f8f8",
-      }}
-    >
-      <div style={{ flex: 1 }} />
-      <ActionButtons
-        size="small"
-        input={newValue}
-        output={output}
-        setOutput={setOutput}
-        info={`${cmOptions.mode?.name} {kernel='${kernel}'}`}
-        history={history}
-        runRef={runRef}
-      />
-    </div>
-  );
+  const editable = !readOnly;
+
+  const controlBar =
+    disableExtraButtons || readOnly ? null : (
+      <div
+        style={{
+          borderBottom: "1px solid #ccc",
+          padding: "3px",
+          display: "flex",
+          background: "#f8f8f8",
+        }}
+      >
+        <div style={{ flex: 1 }} />
+        <ActionButtons
+          size="small"
+          input={newValue}
+          output={output}
+          setOutput={setOutput}
+          info={`${cmOptions.mode?.name} {kernel='${kernel}'}`}
+          history={history}
+          runRef={runRef}
+        />
+      </div>
+    );
 
   return (
     <div
@@ -84,7 +89,7 @@ export default function CellInput({
         <Markdown value={value} />
       ) : (
         <div style={{ overflow: "hidden", flex: 1 }}>
-          {editing && (
+          {editing && editable && (
             <div
               style={{
                 border: "1px solid #ccc",
@@ -119,7 +124,7 @@ export default function CellInput({
               value={value}
               options={cmOptions}
               addonBefore={controlBar}
-              onDoubleClick={() => setEditing(true)}
+              onDoubleClick={editable ? () => setEditing(true) : undefined}
             />
           )}
           {output}

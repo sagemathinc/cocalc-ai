@@ -11,6 +11,7 @@ interface Props {
   directory?: string;
   kernel: string;
   style?: CSS;
+  readOnly?: boolean;
 }
 
 export default function CellList({
@@ -22,6 +23,7 @@ export default function CellList({
   directory,
   kernel,
   style,
+  readOnly,
 }: Props) {
   // modifications to inputs of cells (used for temporary editing)
   const [edits, setEdits] = useState<{ [id: string]: string } | null>(null);
@@ -42,6 +44,7 @@ export default function CellList({
         project_id={project_id}
         directory={directory}
         history={history}
+        readOnly={readOnly}
       />,
     );
     if (cell["cell_type"] == "code") {

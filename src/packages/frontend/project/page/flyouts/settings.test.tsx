@@ -36,23 +36,37 @@ jest.mock("antd", () => {
       readOnly
     />
   );
+  const Empty = ({ description }: any) => <div>{description}</div>;
+  Empty.PRESENTED_IMAGE_SIMPLE = "simple";
+  const Modal = ({ children, open }: any) =>
+    open ? <div>{children}</div> : null;
   const Popconfirm = ({ children }: any) => <>{children}</>;
+  const Popover = ({ children }: any) => <>{children}</>;
   const Space = ({ children }: any) => <div>{children}</div>;
   Space.Compact = ({ children }: any) => <div>{children}</div>;
+  const Table = ({ children }: any) => <div>{children}</div>;
+  Table.Column = () => null;
+  const Tag = ({ children }: any) => <span>{children}</span>;
   return {
     Alert,
     Button,
     Card,
     Collapse,
+    Empty,
     InputNumber,
     message: {
       error: jest.fn(),
       success: jest.fn(),
     },
+    Modal,
     Popconfirm,
+    Popover,
     Space,
+    Table,
+    Tag,
     Tooltip: ({ children }: any) => <>{children}</>,
     Typography: {
+      Paragraph: ({ children }: any) => <p>{children}</p>,
       Text: ({ children }: any) => <span>{children}</span>,
     },
   };

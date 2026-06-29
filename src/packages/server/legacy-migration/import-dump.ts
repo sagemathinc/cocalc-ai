@@ -50,6 +50,7 @@ type PublicPathImportCounters = {
   filePathsAsDirectories: number;
   invalidSiteLicenseIds: number;
   skippedInvalid: number;
+  skippedMissingProject: number;
   skippedMissingRequired: number;
 };
 
@@ -68,6 +69,7 @@ const publicPathCounters: PublicPathImportCounters = {
   filePathsAsDirectories: 0,
   invalidSiteLicenseIds: 0,
   skippedInvalid: 0,
+  skippedMissingProject: 0,
   skippedMissingRequired: 0,
 };
 const seenPublicPathSlugs = new Map<string, string>();
@@ -86,6 +88,8 @@ function publicPathCounterDelta(
     invalidSiteLicenseIds:
       publicPathCounters.invalidSiteLicenseIds - before.invalidSiteLicenseIds,
     skippedInvalid: publicPathCounters.skippedInvalid - before.skippedInvalid,
+    skippedMissingProject:
+      publicPathCounters.skippedMissingProject - before.skippedMissingProject,
     skippedMissingRequired:
       publicPathCounters.skippedMissingRequired - before.skippedMissingRequired,
   };
@@ -744,7 +748,9 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
       return false;
     });
   if (payload.length === 0) return;
-  await pool().query(
+  const { rows: resultRows } = await pool().query<{
+    skipped_missing_project: number;
+  }>(
     `
     WITH input AS (
       SELECT *
@@ -768,23 +774,31 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
           disabled BOOLEAN
         )
     ),
-    prepared AS (
-      SELECT input.*,
-             CASE
-               WHEN projects.project_id IS NOT NULL THEN 'available'
-               WHEN COALESCE(legacy.artifact_status, '') = 'available' THEN 'pending'
-               ELSE 'unavailable'
-             END AS availability_status,
-             CASE
-               WHEN projects.project_id IS NOT NULL THEN NULL
-               WHEN COALESCE(legacy.artifact_status, '') = 'available'
-                 THEN 'This shared directory has been imported, but its project files have not been restored yet.'
-               ELSE 'This shared directory exists in the legacy share catalog, but its project archive is not available on this site yet.'
-             END AS availability_message
+    missing_project AS (
+      SELECT input.legacy_public_path_id
         FROM input
         LEFT JOIN projects ON projects.project_id=input.project_id
-        LEFT JOIN legacy_migration_projects legacy
-          ON legacy.legacy_project_id=input.project_id::text
+       WHERE input.legacy_public_path_id IS NOT NULL
+         AND projects.project_id IS NULL
+    ),
+    deleted_paths AS (
+      DELETE FROM public_project_paths p
+       USING missing_project
+       WHERE p.legacy_public_path_id=missing_project.legacy_public_path_id
+      RETURNING p.id
+    ),
+    deleted_slug_rows AS (
+      DELETE FROM public_project_path_slugs s
+       USING deleted_paths
+       WHERE s.public_project_path_id=deleted_paths.id
+      RETURNING 1
+    ),
+    prepared AS (
+      SELECT input.*,
+             'available'::text AS availability_status,
+             NULL::text AS availability_message
+        FROM input
+        JOIN projects ON projects.project_id=input.project_id
     ),
     upserted AS (
       INSERT INTO public_project_paths (
@@ -841,7 +855,8 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
         disabled=EXCLUDED.disabled,
         updated_at=NOW()
       RETURNING id, project_id, slug, disabled
-    )
+    ),
+    upserted_slug_rows AS (
     INSERT INTO public_project_path_slugs (
       slug_lower, slug, owning_bay_id, public_project_path_id, project_id,
       disabled, updated_at
@@ -855,9 +870,15 @@ async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
       project_id=EXCLUDED.project_id,
       disabled=EXCLUDED.disabled,
       updated_at=NOW()
+      RETURNING 1
+    )
+    SELECT COUNT(*)::int AS skipped_missing_project
+      FROM missing_project
     `,
     [JSON.stringify(payload), getConfiguredBayId()],
   );
+  publicPathCounters.skippedMissingProject +=
+    resultRows[0]?.skipped_missing_project ?? 0;
 }
 
 async function ensureRawRecordsSchema(): Promise<void> {
@@ -1123,7 +1144,7 @@ async function main(): Promise<void> {
     if (stats.publicPathDetails) {
       const details = stats.publicPathDetails;
       console.log(
-        `public_paths details: ${details.filePathsAsDirectories} file path(s) imported as containing directories; ${details.duplicateSlugs} duplicate slug(s) suffixed; ${details.invalidSiteLicenseIds} invalid site_license_id value(s) preserved in metadata; ${details.skippedInvalid} invalid row(s) skipped; ${details.skippedMissingRequired} row(s) skipped due to missing required fields`,
+        `public_paths details: ${details.filePathsAsDirectories} file path(s) imported as containing directories; ${details.duplicateSlugs} duplicate slug(s) suffixed; ${details.invalidSiteLicenseIds} invalid site_license_id value(s) preserved in metadata; ${details.skippedInvalid} invalid row(s) skipped; ${details.skippedMissingProject} row(s) skipped because the project has not been migrated; ${details.skippedMissingRequired} row(s) skipped due to missing required fields`,
       );
     }
   }

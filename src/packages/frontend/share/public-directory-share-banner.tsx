@@ -11,12 +11,13 @@ import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
-import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 
-const { Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 function formatMembershipGrantDescription(
   share: ResolvedPublicDirectoryShare,
@@ -76,6 +77,24 @@ function shareImageUrl(
   } catch {
     return;
   }
+}
+
+export function normalizeShareDescriptionMarkdown(value: string): string {
+  // Some legacy public_paths descriptions were imported with doubled LaTeX
+  // escapes, e.g. "\\(" instead of "\(". Collapse only LaTeX-looking
+  // sequences so ordinary markdown backslashes are not broadly rewritten.
+  return value.replace(/\\\\(?=(?:[()[\]]|[A-Za-z]+))/g, "\\");
+}
+
+function ShareDescription({ value }: { value: string }) {
+  return (
+    <StaticMarkdown
+      value={normalizeShareDescriptionMarkdown(value)}
+      style={{
+        margin: "4px 0 0",
+      }}
+    />
+  );
 }
 
 function compactBannerStorageKey(share: ResolvedPublicDirectoryShare): string {
@@ -368,11 +387,7 @@ export function PublicDirectoryShareBanner({
                     <Tag color="blue">temporary membership on copy</Tag>
                   ) : null}
                 </Space>
-                {description ? (
-                  <Paragraph style={{ margin: "4px 0 0" }}>
-                    {description}
-                  </Paragraph>
-                ) : null}
+                {description ? <ShareDescription value={description} /> : null}
                 {license ? (
                   <div>
                     <Text type="secondary">License: {license}</Text>
@@ -440,7 +455,7 @@ export function PublicDirectoryShareBanner({
         }
       >
         <Space direction="vertical" style={{ width: "100%" }}>
-          {share.description ? <Text>{share.description}</Text> : null}
+          {description ? <ShareDescription value={description} /> : null}
           {copyMode === "new" ? (
             <Text>
               CoCalc will create a new project and copy this published folder

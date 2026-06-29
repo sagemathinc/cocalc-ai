@@ -8,7 +8,7 @@ import type { CSSProperties } from "react";
 import { useMemo } from "react";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import parse from "@cocalc/jupyter/ipynb/parse";
-import PublicNotebook from "./public-notebook";
+import Notebook from "./notebook";
 
 interface Props {
   content: string;
@@ -45,7 +45,7 @@ export default function PublicNBViewer({ content, ...props }: Props) {
     );
   }
 
-  return <PublicNotebook cocalcJupyter={cocalcJupyter} {...props} />;
+  return <Notebook cocalcJupyter={cocalcJupyter} readOnly {...props} />;
 }
 
 function toFencedCodeBlock(content: string, language = ""): string {
