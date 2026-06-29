@@ -371,8 +371,8 @@ describe("PublicFeaturesApp", () => {
     },
     {
       slug: "julia",
-      title: "Use Julia in notebooks, terminals, Pluto, and source files.",
-      section: "Julia works best in CoCalc when the project matters.",
+      title: "Use Julia in Pluto, Jupyter, and shared modeling projects.",
+      section: "Keep Julia close to the rest of the research.",
     },
     {
       slug: "r-statistical-software",
