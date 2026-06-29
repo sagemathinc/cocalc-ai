@@ -2,6 +2,58 @@
 
 Date: 2026-06-26
 
+## Status: Done for Now
+
+Updated: 2026-06-29
+
+The current public directory shares implementation is good enough for the
+near-term CUP migration and normal product testing. Treat the rest of this file
+as historical design context plus future work, not as an active release-blocking
+checklist.
+
+The important deferred work to revisit someday:
+
+- **Blob storage via R2.** Blob metadata currently remains in Postgres, and the
+  practical multibay workaround is to keep blob writes/read serving centralized
+  enough that public-share theming images resolve consistently. Long term,
+  blobs should be stored in R2 when configured, served directly from R2 or via
+  signed/cacheable URLs, and migrated out of the database with a one-time
+  backfill.
+- **Seed-bay slug directory.** Slug lookup should use a small global directory
+  on the seed bay mapping `slug -> owning_bay_id, public_project_path_id,
+project_id`. This avoids probing every bay from
+  `src/packages/server/conat/api/public-directory-shares.ts` when resolving a
+  public share URL.
+- **Slug rename redirects and retention policy.** Changing a slug should have a
+  documented policy, likely reserving old slugs for a retention window and
+  optionally redirecting old links. The UI should explain this before saving a
+  slug change.
+- **Richer publication directory/index UX.** Owners have project-level and
+  account-level listings now, but a polished global/manage-all view could still
+  add better filtering, bulk workflows, audit summaries, and clearer archived
+  project state.
+- **Share analytics and audit history.** We should eventually record and expose
+  who created/updated each share, recent viewer counts, copy counts, grant-on-copy
+  outcomes, and admin-friendly abuse/support details.
+- **Tier-based share limits.** Add membership-tier limits for the number of
+  active published paths per account, with a safe default when the tier does not
+  configure one. Keep backend enforcement authoritative and surface the limit in
+  the publish dialog.
+- **Legacy migration reporting.** Keep improving reports for imported
+  `public_paths`, especially records whose backing project/files are missing,
+  disabled, archived, or mapped through legacy redirects.
+- **CLI cleanup/rewrite.** Any `cocalc-cli` commands that still target the old
+  public-content approach should be either deleted or rewritten to use the
+  current `public_project_paths` / public directory shares APIs.
+- **Large-scale multibay hardening.** The current architecture is acceptable for
+  the small number of dev bays and single-bay production site, but true many-bay
+  deployments should remove cross-bay probing, add reconciliation jobs for
+  generated labels and slug-directory rows, and expand routing tests.
+- **Long-tail viewer coverage.** The normal read-only frame editor approach is
+  the right direction. Continue testing uncommon file types and keep deleting
+  custom preview code that exists only because the earlier viewer approach was
+  incomplete.
+
 ## Context
 
 Cambridge University Press depends heavily on the old cocalc.com share server.
