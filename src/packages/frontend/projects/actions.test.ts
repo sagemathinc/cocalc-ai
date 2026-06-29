@@ -1294,6 +1294,34 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe("Shared Remote Project");
   });
 
+  it("does not query obsolete public_projects for inaccessible project titles", async () => {
+    mockedStore.get.mockImplementation((key) =>
+      key === "public_project_titles"
+        ? ImmutableMap<string, string>()
+        : undefined,
+    );
+    mockedStore.getIn.mockReturnValue(undefined);
+    mockedStore.async_wait.mockRejectedValueOnce("timeout");
+    const { actions, redux } = makeActions();
+
+    await expect(
+      actions.fetch_public_project_title("inaccessible-project"),
+    ).resolves.toBe("No Title");
+
+    expect(mockedWebappClient.async_query).not.toHaveBeenCalled();
+    expect(redux._set_state).toHaveBeenCalledWith(
+      {
+        projects: {
+          public_project_titles: ImmutableMap<string, string>().set(
+            "inaccessible-project",
+            "No Title",
+          ),
+        },
+      },
+      "projects",
+    );
+  });
+
   it("still fails when feed wait times out and direct bootstrap finds nothing", async () => {
     mockedStore.async_wait.mockRejectedValueOnce("timeout");
     mockedWebappClient.project_client.create.mockResolvedValueOnce(
