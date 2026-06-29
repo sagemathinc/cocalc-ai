@@ -161,6 +161,7 @@ import type {
   ProjectLabelPatch,
   ProjectLabels,
   ProjectMetadataPatch,
+  ProjectEntitlementOverride,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   CourseManagerAccessResult,
@@ -188,6 +189,12 @@ import {
 } from "@cocalc/server/projects/project-secrets";
 import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/project-secret-ssh-key";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import {
+  clearProjectEntitlementOverrideLocal,
+  getProjectEntitlementOverrideLocal,
+  setProjectEntitlementOverrideLocal,
+} from "@cocalc/server/membership/project-entitlement-overrides";
+import { getProject } from "@cocalc/server/projects/control";
 import { getSeedMembershipTierById } from "@cocalc/server/membership/tiers";
 import {
   assignMembershipPackageSeat,
@@ -1250,6 +1257,88 @@ export async function getAdminProjectDirectorySummary({
     path: path ?? DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT,
     max_depth,
     limit,
+  });
+}
+
+export async function getAdminProjectEntitlementOverride({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectEntitlementOverride | null> {
+  if (!(await isAdmin(account_id))) {
+    throw new Error("must be an admin");
+  }
+  return (await getProjectEntitlementOverrideLocal(project_id)) ?? null;
+}
+
+export async function setAdminProjectEntitlementOverride({
+  account_id,
+  project_id,
+  disk_quota_mb,
+  reason,
+  expires_at,
+}: {
+  account_id: string;
+  project_id: string;
+  disk_quota_mb: number;
+  reason: string;
+  expires_at?: Date | string | null;
+}): Promise<ProjectEntitlementOverride> {
+  if (!(await isAdmin(account_id))) {
+    throw new Error("must be an admin");
+  }
+  if (
+    typeof disk_quota_mb !== "number" ||
+    !Number.isFinite(disk_quota_mb) ||
+    disk_quota_mb < 0
+  ) {
+    throw new Error("disk_quota_mb must be a nonnegative finite number");
+  }
+  const normalizedDiskQuota = Math.ceil(disk_quota_mb);
+  const override = await setProjectEntitlementOverrideLocal({
+    project_id,
+    actor_account_id: account_id,
+    source: "admin",
+    reason,
+    override: {
+      enabled: true,
+      expires_at: expires_at ?? null,
+      project_defaults: {
+        disk_quota: { mode: "minimum", value: normalizedDiskQuota },
+      },
+    },
+  });
+  await getProject(project_id).setAllQuotas();
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["run_quota"],
+  });
+  return override;
+}
+
+export async function clearAdminProjectEntitlementOverride({
+  account_id,
+  project_id,
+  reason,
+}: {
+  account_id: string;
+  project_id: string;
+  reason: string;
+}): Promise<void> {
+  if (!(await isAdmin(account_id))) {
+    throw new Error("must be an admin");
+  }
+  await clearProjectEntitlementOverrideLocal({
+    project_id,
+    actor_account_id: account_id,
+    reason,
+  });
+  await getProject(project_id).setAllQuotas();
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["run_quota"],
   });
 }
 

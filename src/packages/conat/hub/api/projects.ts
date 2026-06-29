@@ -9,6 +9,7 @@ import {
   type CreateProjectOptions,
   type ProjectTheme,
 } from "@cocalc/util/db-schema/projects";
+import type { ProjectDefaultOverrides } from "./purchases";
 import { type SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import {
@@ -97,6 +98,18 @@ export interface ProjectDirectorySummary {
   limit: number;
   truncated: boolean;
   entries: ProjectDirectorySummaryEntry[];
+}
+
+export interface ProjectEntitlementOverride {
+  project_id: string;
+  enabled: boolean;
+  project_defaults?: ProjectDefaultOverrides;
+  reason?: string | null;
+  source?: string | null;
+  metadata?: Record<string, unknown>;
+  expires_at?: Date | string | null;
+  updated_by?: string | null;
+  updated_at: Date | string;
 }
 
 export interface CourseCollectAssignmentItem {
@@ -818,6 +831,9 @@ export const projects = {
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
   getAdminProjectDirectorySummary: authFirstRequireAccount,
+  getAdminProjectEntitlementOverride: authFirstRequireAccount,
+  setAdminProjectEntitlementOverride: authFirstRequireAccount,
+  clearAdminProjectEntitlementOverride: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
   setProjectMetadata: authFirstRequireAccount,
   setProjectManageUsersOwnerOnly: authFirstRequireAccount,
@@ -1074,6 +1090,25 @@ export interface Projects {
     max_depth?: number;
     limit?: number;
   }) => Promise<ProjectDirectorySummary>;
+
+  getAdminProjectEntitlementOverride: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectEntitlementOverride | null>;
+
+  setAdminProjectEntitlementOverride: (opts: {
+    account_id?: string;
+    project_id: string;
+    disk_quota_mb: number;
+    reason: string;
+    expires_at?: Date | string | null;
+  }) => Promise<ProjectEntitlementOverride>;
+
+  clearAdminProjectEntitlementOverride: (opts: {
+    account_id?: string;
+    project_id: string;
+    reason: string;
+  }) => Promise<void>;
 
   getProjectRootfsPublishConfig: (opts: {
     account_id?: string;

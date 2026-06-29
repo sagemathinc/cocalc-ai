@@ -17,11 +17,12 @@ import { Component, Rendered } from "@cocalc/frontend/app-framework";
 import { cmp, keys, trunc_middle } from "@cocalc/util/misc";
 import { Loading, TimeAgo } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
-import { Card } from "antd";
+import { Card, Space } from "antd";
 import { Row, Col } from "@cocalc/frontend/antd-bootstrap";
 import { FormattedMessage } from "react-intl";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectDirectorySummaryButton } from "../project-directory-summary-button";
+import { ProjectEntitlementOverrideButton } from "../project-entitlement-override-button";
 
 interface Project {
   project_id: string;
@@ -188,7 +189,10 @@ export class Projects extends Component<Props, State> {
         <Col md={3}>{this.render_description(project)}</Col>
         <Col md={3}>{this.render_last_active(project)}</Col>
         <Col md={3}>
-          <ProjectDirectorySummaryButton project_id={project.project_id} />
+          <Space wrap>
+            <ProjectDirectorySummaryButton project_id={project.project_id} />
+            <ProjectEntitlementOverrideButton project_id={project.project_id} />
+          </Space>
         </Col>
       </Row>
     );

@@ -52,6 +52,7 @@ import {
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
 import { getMembershipProjectDefaultsForAccount } from "@cocalc/server/membership/project-defaults";
+import { applyProjectEntitlementOverrideToRunQuota } from "@cocalc/server/membership/project-entitlement-overrides";
 import { assertLocalProjectOwnership } from "@cocalc/server/conat/project-local-access";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import {
@@ -590,6 +591,10 @@ export class BaseProject extends EventEmitter {
           nextRunQuota.disk_quota = storageQuota.disk_quota;
         }
       }
+      nextRunQuota = await applyProjectEntitlementOverrideToRunQuota({
+        project_id: this.project_id,
+        run_quota: nextRunQuota,
+      });
       nextRunQuota = withCocalcAiRuntimeSemantics(nextRunQuota);
     }
 

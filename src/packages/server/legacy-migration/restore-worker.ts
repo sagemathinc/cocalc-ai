@@ -18,6 +18,7 @@ import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
 import { createLro, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
+import { upsertLegacyMigrationProjectDiskQuotaOverride } from "@cocalc/server/membership/project-entitlement-overrides";
 import {
   LEGACY_PROJECT_RESTORE_LRO_KIND,
   LEGACY_RESTORE_ERROR_LABEL,
@@ -70,14 +71,6 @@ const RESTORED_PROJECT_QUOTA_HEADROOM_MB = Math.max(
   0,
   envToInt("COCALC_LEGACY_PROJECT_RESTORE_QUOTA_HEADROOM_MB", 1024),
 );
-const configuredRestoredProjectQuotaMultiplier = Number(
-  process.env.COCALC_LEGACY_PROJECT_RESTORE_QUOTA_MULTIPLIER ?? 1.05,
-);
-const RESTORED_PROJECT_QUOTA_MULTIPLIER = Number.isFinite(
-  configuredRestoredProjectQuotaMultiplier,
-)
-  ? Math.max(1, configuredRestoredProjectQuotaMultiplier)
-  : 1.05;
 
 let running = false;
 let inFlight = 0;
@@ -165,10 +158,7 @@ function restoredProjectDiskQuotaMb(
 ): number | undefined {
   const bytes = positiveInteger(restored_bytes);
   if (bytes == null) return;
-  return (
-    Math.ceil((bytes * RESTORED_PROJECT_QUOTA_MULTIPLIER) / 1_000_000) +
-    RESTORED_PROJECT_QUOTA_HEADROOM_MB
-  );
+  return Math.ceil(bytes / 1_000_000) + RESTORED_PROJECT_QUOTA_HEADROOM_MB;
 }
 
 function nestedValue(obj: any, path: string[]): unknown {
@@ -712,26 +702,13 @@ async function ensureRestoredProjectDiskQuota({
     Math.max(quotaUsedBytes ?? 0, uncompressedBytes ?? 0),
   );
   if (desired == null) return;
-  const { rows } = await getPool().query<{ run_quota: Record<string, any> }>(
-    "SELECT run_quota FROM projects WHERE project_id=$1",
-    [row.project_id],
-  );
-  const current = positiveInteger(rows[0]?.run_quota?.disk_quota);
-  if (current != null && current >= desired) return current;
-  await getPool().query(
-    `
-    UPDATE projects
-       SET run_quota=jsonb_set(
-             COALESCE(run_quota, '{}'::JSONB),
-             '{disk_quota}',
-             to_jsonb($2::INT),
-             true
-           ),
-           last_changed=NOW()
-     WHERE project_id=$1
-    `,
-    [row.project_id, desired],
-  );
+  await upsertLegacyMigrationProjectDiskQuotaOverride({
+    project_id: row.project_id,
+    legacy_project_id: row.legacy_project_id,
+    disk_quota_mb: desired,
+    restored_used_bytes: quotaUsedBytes ?? uncompressedBytes,
+    headroom_mb: RESTORED_PROJECT_QUOTA_HEADROOM_MB,
+  });
   return desired;
 }
 
