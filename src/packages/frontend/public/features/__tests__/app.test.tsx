@@ -376,8 +376,8 @@ describe("PublicFeaturesApp", () => {
     },
     {
       slug: "r-statistical-software",
-      title: "Use R when statistics is part of a larger workflow.",
-      section: "CoCalc is not trying to be RStudio.",
+      title: "Use R for statistics and reproducible reporting.",
+      section: "Keep R close to the rest of the analysis.",
     },
     {
       slug: "octave",
