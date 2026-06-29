@@ -28,7 +28,19 @@ import {
   getProjectOwnerAccountId,
 } from "@cocalc/server/membership/project-limits";
 import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
+import {
+  getProjectLabels,
+  setProjectLabels,
+  type ProjectLabelPatch,
+} from "@cocalc/server/projects/labels";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
+import {
+  MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
+  PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX,
+  publicDirectoryShareProjectLabelKey,
+  publicDirectoryShareProjectLabelValue,
+} from "@cocalc/util/public-directory-share-labels";
 import {
   viewerReadPolicyAllowsPath,
   type ProjectViewerReadPolicy,
@@ -152,6 +164,11 @@ export function normalizePublicDirectoryShareSlug(slug: string): string {
   if (!trimmed) {
     throw Error("slug must be nonempty");
   }
+  if (trimmed.length > MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH) {
+    throw Error(
+      `slug must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH} characters`,
+    );
+  }
   if (trimmed.includes("//")) {
     throw Error("slug must not contain duplicate slashes");
   }
@@ -174,6 +191,11 @@ export function normalizePublicDirectorySharePath(path: string): string {
   const trimmed = normalizedPath.trim().replace(/^\/+|\/+$/g, "");
   if (!trimmed || trimmed === ".") {
     return ".";
+  }
+  if (trimmed.length > MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH) {
+    throw Error(
+      `path must be at most ${MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH} characters`,
+    );
   }
   if (trimmed.includes("//")) {
     throw Error("path must not contain duplicate slashes");
@@ -333,6 +355,44 @@ function rowToSummary(
     created_at: row.created_at ?? null,
     updated_at: row.updated_at ?? null,
   };
+}
+
+async function syncPublicDirectoryShareProjectLabels({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id?: string | null;
+}): Promise<void> {
+  const [currentLabels, { rows }] = await Promise.all([
+    getProjectLabels({ project_id }),
+    getPool().query<PublicDirectoryShareRow>(
+      `
+        SELECT *
+        FROM public_project_paths
+        WHERE project_id=$1
+          AND disabled IS FALSE
+          AND visibility <> 'disabled'
+        ORDER BY path ASC, slug ASC
+      `,
+      [project_id],
+    ),
+  ]);
+
+  const labels: ProjectLabelPatch = {};
+  for (const key of Object.keys(currentLabels)) {
+    if (key.startsWith(PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX)) {
+      labels[key] = null;
+    }
+  }
+  for (const row of rows) {
+    const value = publicDirectoryShareProjectLabelValue(rowToSummary(row));
+    if (value == null) continue;
+    labels[publicDirectoryShareProjectLabelKey(row.id)] = value;
+  }
+  if (Object.keys(labels).length === 0) return;
+
+  await setProjectLabels({ project_id, account_id, labels });
 }
 
 export async function ensurePublicDirectorySharesSchema(): Promise<void> {
@@ -1319,6 +1379,10 @@ async function savePublicDirectoryShare(
       revoked_by: opts.account_id ?? null,
     });
   }
+  await syncPublicDirectoryShareProjectLabels({
+    project_id: row.project_id,
+    account_id: opts.account_id ?? null,
+  });
   return rowToSummary(row);
 }
 

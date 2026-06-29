@@ -23,7 +23,10 @@ import React, {
 import { TableVirtuoso, type TableVirtuosoHandle } from "react-virtuoso";
 import { useIntl } from "react-intl";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { file_options } from "@cocalc/frontend/editor-tmp";
@@ -63,6 +66,11 @@ import {
 } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
 import { getCachedDirectoryItemCount } from "./directory-item-count";
+import { PublicDirectoryShareIndicator } from "@cocalc/frontend/project/explorer/public-directory-share-indicator";
+import {
+  publicDirectoryShareIndicatorsForPath,
+  publicDirectoryShareLabelsFromProjectLabels,
+} from "@cocalc/util/public-directory-share-labels";
 
 import DirectoryPeek from "./directory-peek";
 import NoFiles from "./no-files";
@@ -294,6 +302,8 @@ function renderFileName(record: FileEntry) {
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
+        minWidth: 0,
+        flex: "0 1 auto",
         color: record.mask ? COLORS.GRAY_M : COLORS.TAB,
         ...(record.isOpen ? FILE_ITEM_OPENED_STYLE : undefined),
       }}
@@ -476,6 +486,7 @@ export function FileListing({
     useTypedRedux({ project_id }, "hide_masked_files") ?? false;
   const showHidden = useTypedRedux({ project_id }, "show_hidden") ?? false;
   const type_filter = useTypedRedux({ project_id }, "type_filter") ?? null;
+  const projectLabels = useProjectMapField(project_id, "labels");
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
   const { manageStarredFiles, workspaces } = useProjectContext();
@@ -490,6 +501,13 @@ export function FileListing({
   const openFiles = useMemo(
     () => new Set<string>(openFilesOrder?.toJS() ?? []),
     [openFilesOrder],
+  );
+  const publicShareLabels = useMemo(
+    () =>
+      readOnly
+        ? []
+        : publicDirectoryShareLabelsFromProjectLabels(projectLabels),
+    [projectLabels, readOnly],
   );
 
   const [contextMenu, setContextMenu] = useState<{
@@ -1259,7 +1277,25 @@ export function FileListing({
               />
             )}
           </td>
-          <td style={cellStyle}>{renderFileName(record)}</td>
+          <td style={cellStyle}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                minWidth: 0,
+              }}
+            >
+              {renderFileName(record)}
+              {record.name !== ".." && publicShareLabels.length > 0 && (
+                <PublicDirectoryShareIndicator
+                  indicators={publicDirectoryShareIndicatorsForPath({
+                    labels: publicShareLabels,
+                    path: record.fullPath,
+                  })}
+                />
+              )}
+            </div>
+          </td>
           <td style={{ ...cellStyle, width: COL_W.DATE }}>
             {renderTimestamp({
               mtime: record.mtime,
@@ -1361,6 +1397,7 @@ export function FileListing({
       numCols,
       onNavigateDirectory,
       project_id,
+      publicShareLabels,
       toggleExpandDir,
     ],
   );

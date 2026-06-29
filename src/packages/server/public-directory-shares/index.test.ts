@@ -13,6 +13,12 @@ import {
   update,
 } from "./index";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import {
+  MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH,
+  MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH,
+  publicDirectoryShareLabelsFromProjectLabels,
+  publicDirectoryShareProjectLabelKey,
+} from "@cocalc/util/public-directory-share-labels";
 import { viewerReadPolicyAllowsPath } from "@cocalc/util/project-access";
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -50,6 +56,11 @@ describe("public directory share normalization", () => {
     expect(() => normalizePublicDirectoryShareSlug("a/\u0000/b")).toThrow(
       "control characters",
     );
+    expect(() =>
+      normalizePublicDirectoryShareSlug(
+        "x".repeat(MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH + 1),
+      ),
+    ).toThrow("slug must be at most");
   });
 
   it("normalizes shared project paths", () => {
@@ -73,6 +84,11 @@ describe("public directory share normalization", () => {
     expect(() => normalizePublicDirectorySharePath("a/../b")).toThrow(
       "path segments",
     );
+    expect(() =>
+      normalizePublicDirectorySharePath(
+        "x".repeat(MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH + 1),
+      ),
+    ).toThrow("path must be at most");
   });
 
   it("generates path-scoped read policies", () => {
@@ -130,7 +146,8 @@ describe("public directory temporary viewer grants", () => {
         public_project_path_site_license_grants,
         public_project_path_viewer_grants,
         public_project_path_slugs,
-        public_project_paths
+        public_project_paths,
+        project_labels
       CASCADE
     `);
   });
@@ -255,5 +272,66 @@ describe("public directory temporary viewer grants", () => {
       [shareId],
     );
     expect(rows).toEqual([{ status: "stale" }]);
+  });
+
+  it("syncs generated project labels for active public shares", async () => {
+    const shareId = await insertShare();
+
+    await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      title: "Published test share",
+    });
+
+    const { rows } = await getPool().query<{ key: string; value: string }>(
+      `
+        SELECT key, value
+        FROM project_labels
+        WHERE project_id=$1
+        ORDER BY key
+      `,
+      [PROJECT_ID],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].key).toBe(publicDirectoryShareProjectLabelKey(shareId));
+    expect(
+      publicDirectoryShareLabelsFromProjectLabels({
+        [rows[0].key]: rows[0].value,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        id: shareId,
+        path: "share",
+        slug: "test2",
+        title: "Published test share",
+        visibility: "unlisted",
+      }),
+    ]);
+  });
+
+  it("removes generated project labels when a public share is disabled", async () => {
+    const shareId = await insertShare();
+    await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      title: "Published test share",
+    });
+
+    await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      disabled: true,
+    });
+
+    const { rows } = await getPool().query<{ key: string; value: string }>(
+      `
+        SELECT key, value
+        FROM project_labels
+        WHERE project_id=$1
+          AND key=$2
+      `,
+      [PROJECT_ID, publicDirectoryShareProjectLabelKey(shareId)],
+    );
+    expect(rows).toEqual([]);
   });
 });
