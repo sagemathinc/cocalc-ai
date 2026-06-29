@@ -49,7 +49,7 @@ const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
   appBasePath,
   "public/fonts/space-grotesk/SpaceGrotesk-wght.woff2",
 );
-const PUBLIC_PAGE_CSS = `
+export const PUBLIC_PAGE_CSS = `
   @font-face {
     font-family: "Space Grotesk";
     src: url("${PUBLIC_DISPLAY_FONT_URL}") format("woff2");
@@ -64,7 +64,7 @@ const PUBLIC_PAGE_CSS = `
   .cocalc-public-page h4,
   .cocalc-public-page .ant-card-head-title {
     font-family: ${PUBLIC_DISPLAY_FONT_FAMILY};
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
   }
 
   .cocalc-public-footer a:hover {
@@ -260,7 +260,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
               color: token.colorWhite,
               fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
               fontSize: token.fontSizeHeading4,
-              letterSpacing: "-0.02em",
+              letterSpacing: 0,
             }}
           >
             {siteName}
@@ -274,8 +274,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
           maxWidth: "34ch",
         }}
       >
-        Collaborative computation, teaching, and technical work in one
-        browser-based workspace.
+        AI-native workspace for research, teaching, and technical teams.
       </Paragraph>
       {defaultBrand ? (
         <Text style={{ color: PUBLIC_COLORS.footerText }}>
@@ -349,6 +348,7 @@ interface PublicPageProps {
   beforeTitle?: ReactNode;
   children: ReactNode;
   config?: PublicConfig;
+  hideTitleVisually?: boolean;
   sider?: ReactNode;
   siderLabel?: string;
   title?: ReactNode;
@@ -359,6 +359,7 @@ export function PublicPage({
   beforeTitle,
   children,
   config,
+  hideTitleVisually = false,
   sider,
   siderLabel,
   title,
@@ -374,7 +375,7 @@ export function PublicPage({
     <ConfigProvider
       theme={{
         token: {
-          borderRadius: 16,
+          borderRadius: 8,
           colorBgLayout: PUBLIC_COLORS.pageBackground,
           colorBorder: PUBLIC_COLORS.border,
           colorBorderSecondary: PUBLIC_COLORS.border,
@@ -439,9 +440,23 @@ export function PublicPage({
                 {title != null ? (
                   <Title
                     level={1}
-                    style={{
-                      textAlign: "center",
-                    }}
+                    style={
+                      hideTitleVisually
+                        ? {
+                            border: 0,
+                            clip: "rect(0 0 0 0)",
+                            height: 1,
+                            margin: -1,
+                            overflow: "hidden",
+                            padding: 0,
+                            position: "absolute",
+                            whiteSpace: "nowrap",
+                            width: 1,
+                          }
+                        : {
+                            textAlign: "center",
+                          }
+                    }
                   >
                     {title}
                   </Title>
@@ -491,14 +506,20 @@ export function PublicHero({ actions, subtitle, title }: PublicHeroProps) {
 }
 
 interface PublicSectionProps {
+  ariaLabel?: string;
   children: ReactNode;
   intro?: ReactNode;
   title?: ReactNode;
 }
 
-export function PublicSection({ children, intro, title }: PublicSectionProps) {
+export function PublicSection({
+  ariaLabel,
+  children,
+  intro,
+  title,
+}: PublicSectionProps) {
   return (
-    <section style={{ minWidth: 0 }}>
+    <section aria-label={ariaLabel} style={{ minWidth: 0 }}>
       <Flex vertical gap="middle">
         {title != null ? (
           <Title level={2} style={{ margin: 0 }}>
