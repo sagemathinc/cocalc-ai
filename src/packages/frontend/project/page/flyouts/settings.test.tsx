@@ -77,6 +77,12 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     }),
     getActions: () => ({}),
   },
+  useActions: () => ({
+    create_public_directory_share: jest.fn(),
+    delete_public_directory_share: jest.fn(),
+    list_public_directory_shares: jest.fn(async () => []),
+    update_public_directory_share: jest.fn(),
+  }),
   useEffect: require("react").useEffect,
   useProjectMapField: () => undefined,
   useState: require("react").useState,

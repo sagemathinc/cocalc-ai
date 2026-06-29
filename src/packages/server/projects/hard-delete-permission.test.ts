@@ -12,14 +12,17 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
+const loggerMock = {
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+};
+
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
-  default: jest.fn(() => ({
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-  })),
+  default: jest.fn(() => loggerMock),
+  getLogger: jest.fn(() => loggerMock),
 }));
 
 jest.mock("@cocalc/backend/sandbox/rustic", () => ({
