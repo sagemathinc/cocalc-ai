@@ -142,7 +142,13 @@ export function useCurrentUsage({
     // this draws a second bar, shorter, to indicate using "dedicated memory"
     const pct2 = valPct(Math.min(mem_req, mem_rss), mem_limit);
     return {
-      element: <PercentBar percent={mem_pct} percent2={pct2} />,
+      element: (
+        <PercentBar
+          percent={mem_pct}
+          percent2={pct2}
+          size={shortStr ? "small" : "default"}
+        />
+      ),
       display: `${Math.round(mem_rss)}MB (${round1(mem_pct)}%)`,
     };
   }

@@ -3,36 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { PoweroffOutlined } from "@ant-design/icons";
-import { Table, Typography } from "antd";
-import { useIntl } from "react-intl";
+import { Typography } from "antd";
 
 import { React } from "@cocalc/frontend/app-framework";
-import { NoWrap, QuestionMarkText, Tip } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
-import { PROJECT_UPGRADES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
-import { Upgrades, upgrade2quota_key } from "@cocalc/util/upgrades/quota";
 import { Project } from "../types";
-import { renderBoolean } from "./components";
-import {
-  useCurrentUsage,
-  useDisplayedFields,
-  useMaxUpgrades,
-  useRunQuota,
-} from "./hooks";
-import {
-  QUOTAS_BOOLEAN,
-  QuotaData,
-  RunQuotaType,
-  SHOW_MAX,
-  Usage,
-  Value,
-  booleanValueStr,
-} from "./misc";
+import { useCurrentUsage, useRunQuota } from "./hooks";
 
 const { Text } = Typography;
-const PARAMS = PROJECT_UPGRADES.params;
 
 interface Props {
   project_id: string;
@@ -46,188 +24,44 @@ export const RunQuota: React.FC<Props> = React.memo(
     const { project_id, project_state, mode } = props;
     const isFlyout = mode === "flyout";
     const projectIsRunning = project_state === "running";
-    const intl = useIntl();
-    const projectLabel = intl.formatMessage(labels.project);
-    const projectLabelLower = projectLabel.toLowerCase();
-    //const projectStatus = project.get("status");
     const currentUsage = useCurrentUsage({ project_id, shortStr: isFlyout });
     const runQuota = useRunQuota(project_id, null);
-    const maxUpgrades = useMaxUpgrades();
-    const displayedFields = useDisplayedFields();
+    const usage = currentUsage?.memory_limit;
+    const limit = runQuota.memory_limit ?? "N/A";
 
-    function quotaValue(key: keyof RunQuotaType): Value {
-      const val = runQuota[key];
-      if (val == null) return "N/A";
-      return val;
-    }
-
-    function displayedName(name: keyof Upgrades): string {
-      if (name === "cores") return "CPU";
-      if (name === "memory") return "Memory";
-      const conf = PARAMS[name];
-      return isFlyout
-        ? (conf?.display_short ?? conf?.display ?? name)
-        : (conf?.display ?? name);
-    }
-
-    const data: QuotaData[] = React.useMemo(() => {
-      return displayedFields.map((name: keyof Upgrades): QuotaData => {
-        const key = upgrade2quota_key(name);
-        return {
-          key,
-          display: displayedName(name),
-          desc: PARAMS[name]?.desc ?? "",
-          quota: quotaValue(key),
-          maximum: maxUpgrades?.[name] ?? "N/A",
-          usage: currentUsage?.[key],
-        };
-      });
-    }, [runQuota, currentUsage, maxUpgrades, displayedFields]);
-
-    function renderExtraMaximum(
-      record: QuotaData,
-    ): React.JSX.Element | undefined {
-      if (SHOW_MAX.includes(record.key)) {
-        return <>The maximum possible quota is {record.maximum}.</>;
-      }
-    }
-
-    function renderExtraExplanation(): React.JSX.Element {
-      return <></>;
-    }
-
-    function renderQuotaValue(record: QuotaData): string {
-      const { key, quota, usage } = record;
-      if (QUOTAS_BOOLEAN.includes(key as any)) {
-        return `This quota is ${booleanValueStr(quota)}.`;
-      } else if (key === "gpu") {
-        return usage != null
-          ? `There are ${usage.display} GPU(s) requested.`
-          : ``;
-      } else if (key === "patch") {
-        return usage != null
-          ? `There are ${usage.display} patch(es) in total.`
-          : ``;
-      } else {
-        const curStr =
-          usage != null
-            ? `Usage right now is ${usage.display} with a limit of ${quota}`
-            : `The limit is ${quota}`;
-        return `${curStr}.`;
-      }
-    }
-
-    function renderExtra(record: QuotaData): React.JSX.Element {
-      return (
-        <>
-          {record.desc} {renderQuotaValue(record)} {renderExtraMaximum(record)}{" "}
-          {renderExtraExplanation()}
-        </>
-      );
-    }
-
-    function renderUsage(record: QuotaData): React.JSX.Element | undefined {
-      if (!projectIsRunning) return;
-      // the usage of a boolean quota is always the same as its value
-      if (QUOTAS_BOOLEAN.includes(record.key as any)) return;
-      if (record.key === "patch") return;
-      if (record.key === "gpu") return;
-      const usage: Usage = record.usage;
-      if (usage == null) return;
-      const { element } = usage;
-      // wrapped in "Text", because that works better with the table layout
-      return <NoWrap>{element}</NoWrap>;
-    }
-
-    function renderQuotaLimit(record: QuotaData) {
-      const val = record["quota"];
-
-      const style = projectIsRunning ? {} : { color: COLORS.GRAY_L };
-
-      if (typeof val === "boolean") {
-        return renderBoolean(val, projectIsRunning);
-      } else if (Array.isArray(val)) {
-        return val.length;
-      } else {
-        return (
-          <Text strong style={style}>
-            <NoWrap>{val}</NoWrap>
-          </Text>
-        );
-      }
-    }
-
-    function renderValueColumnTitle(): React.JSX.Element {
-      if (projectIsRunning) {
-        return (
-          <QuestionMarkText
-            tip={`Usage limit imposed by the current quota configuration. Change your membership to adjust this limit. ${projectLabel} needs to run in order to see the effective runtime quota.`}
-          >
-            Limit
-          </QuestionMarkText>
-        );
-      } else {
-        return (
-          <Tip
-            tip={`The ${projectLabelLower} is currently not running. The data is stale from the last run. Start the ${projectLabelLower} to see the effective quotas.`}
-          >
-            Limit <PoweroffOutlined style={{ color: COLORS.ANTD_RED_WARN }} />
-          </Tip>
-        );
-      }
-    }
-
-    function renderQuotas() {
-      if (data.length === 0) {
-        return null;
-      }
-      return (
-        <Table<QuotaData>
-          dataSource={data}
-          size="small"
-          pagination={false}
-          rowClassName={() => "cursor-pointer"}
-          expandable={{
-            expandedRowRender: (record) => renderExtra(record),
-            expandRowByClick: true,
-            expandIcon: isFlyout ? () => <></> : undefined,
+    return (
+      <div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "12px",
+            marginBottom: "8px",
           }}
         >
-          <Table.Column<QuotaData>
-            key="key"
-            title={
-              <QuestionMarkText tip="Name of the quota. Click on a row to expand details.">
-                Name
-              </QuestionMarkText>
-            }
-            render={(text) => <NoWrap>{text}</NoWrap>}
-            dataIndex="display"
-            width={"30%"}
-          />
-          <Table.Column<QuotaData>
-            key="key"
-            title={
-              <QuestionMarkText tip="Current setting or active usage.">
-                Usage
-              </QuestionMarkText>
-            }
-            dataIndex="key"
-            render={(_, record) => renderUsage(record)}
-            width={"45%"}
-            align={"left"}
-          />
-          <Table.Column<QuotaData>
-            key="key"
-            title={renderValueColumnTitle()}
-            dataIndex="limit"
-            render={(_, record) => renderQuotaLimit(record)}
-            width={"25%"}
-            align={"right"}
-          />
-        </Table>
-      );
-    }
-
-    return <div>{renderQuotas()}</div>;
+          <Text type="secondary">
+            {projectIsRunning
+              ? "Current memory usage"
+              : "Start the project to see current memory usage"}
+          </Text>
+          <Text
+            strong
+            style={projectIsRunning ? undefined : { color: COLORS.GRAY_L }}
+          >
+            Limit: {limit}
+          </Text>
+        </div>
+        {projectIsRunning && usage?.element ? (
+          <div>{usage.element}</div>
+        ) : (
+          <Text type="secondary">Memory usage is not available.</Text>
+        )}
+        {projectIsRunning && usage?.display ? (
+          <div style={{ marginTop: "6px" }}>
+            <Text type="secondary">{usage.display}</Text>
+          </div>
+        ) : null}
+      </div>
+    );
   },
 );
