@@ -1292,6 +1292,14 @@ export function FileListing({
                     labels: publicShareLabels,
                     path: record.fullPath,
                   })}
+                  onOpenShare={(share) =>
+                    triggerProjectFileAction({
+                      actions,
+                      action: "publish",
+                      path: share.path,
+                      multiple: false,
+                    })
+                  }
                 />
               )}
             </div>

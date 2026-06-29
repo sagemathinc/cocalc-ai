@@ -88,6 +88,7 @@ import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import { FileDndProvider } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { PublicDirectoryShareIndicator } from "@cocalc/frontend/project/explorer/public-directory-share-indicator";
 import { useFlyoutNavigation } from "./use-flyout-navigation";
+import { triggerFlyoutFileAction } from "./file-action-trigger";
 import { sortedTypeFilterOptions } from "@cocalc/frontend/project/explorer/file-listing/utils";
 import {
   fileListingFingerprint,
@@ -912,6 +913,14 @@ export function FilesFlyout({
                 labels: publicShareLabels,
                 path: fullPath,
               })}
+              onOpenShare={(share) =>
+                triggerFlyoutFileAction({
+                  actions,
+                  action: "publish",
+                  path: share.path,
+                  multiple: false,
+                })
+              }
             />
           ) : null
         }

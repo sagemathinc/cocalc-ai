@@ -472,6 +472,8 @@ published` indicator or an outline globe, not a full badge on every child;
 
 Management behavior:
 
+- clicking a direct `Published` indicator in the file explorer should open the
+  existing publish configuration dialog for that share/path;
 - add a project-level "Published items" view or panel listing all shares in path
   order with slug, title, visibility, status, copy URL, edit, and disable
   actions;
@@ -482,6 +484,33 @@ Management behavior:
   propagation;
 - for unlisted shares, owner/collaborator UI may show recent viewer identity by
   display name and account id, but not email by default.
+
+Publication metadata and theming:
+
+- add share-level presentation metadata modeled on the RootFS image manifest
+  theme controls where practical;
+- support at least color, accent color, icon, and image fields for a published
+  share;
+- reuse the existing generic theme editor instead of building a separate custom
+  theme editor if the data shape can be aligned;
+- store this metadata in the authoritative public share row/metadata, not only
+  in generated project labels;
+- generated labels may include a small subset of presentation metadata only for
+  fast owner/collaborator explorer decoration;
+- viewer/share pages should use the configured presentation metadata for
+  banners, landing/listing headers, and copy dialogs without affecting
+  authorization.
+
+Documentation:
+
+- add a publishing guide under `src/packages/docs`;
+- link to that guide from the publish configuration dialog;
+- document folder shares, whole-project shares, safety exclusions, unlisted URL
+  behavior, temporary viewer access, copy-to-project, and grant-on-copy
+  behavior;
+- explicitly state that disabling a share stops future access within the
+  configured revocation window, but previously copied/downloaded content cannot
+  be recalled.
 
 ### Copy UX
 

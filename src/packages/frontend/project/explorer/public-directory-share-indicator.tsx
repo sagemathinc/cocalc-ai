@@ -6,7 +6,10 @@
 import { Tag } from "antd";
 import type React from "react";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
-import type { PublicDirectorySharePathIndicators } from "@cocalc/util/public-directory-share-labels";
+import type {
+  PublicDirectorySharePathIndicators,
+  PublicDirectoryShareProjectLabel,
+} from "@cocalc/util/public-directory-share-labels";
 import { COLORS } from "@cocalc/util/theme";
 
 function shareLabel(path: string, slug: string): string {
@@ -16,9 +19,11 @@ function shareLabel(path: string, slug: string): string {
 export function PublicDirectoryShareIndicator({
   indicators,
   compact = false,
+  onOpenShare,
 }: {
   indicators?: PublicDirectorySharePathIndicators;
   compact?: boolean;
+  onOpenShare?: (share: PublicDirectoryShareProjectLabel) => void;
 }): React.JSX.Element | null {
   if (indicators == null) return null;
   const directCount = indicators.direct.length;
@@ -27,6 +32,7 @@ export function PublicDirectoryShareIndicator({
 
   const direct = directCount > 0;
   const shares = direct ? indicators.direct : indicators.descendants;
+  const primaryShare = shares[0];
   const label = direct
     ? directCount === 1
       ? "Published"
@@ -51,6 +57,12 @@ export function PublicDirectoryShareIndicator({
   return (
     <Tooltip title={title}>
       <Tag
+        onClick={(e) => {
+          if (!primaryShare || !onOpenShare) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onOpenShare(primaryShare);
+        }}
         style={{
           marginLeft: compact ? 4 : 8,
           marginRight: 0,
@@ -58,7 +70,7 @@ export function PublicDirectoryShareIndicator({
           color: direct ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_D,
           borderColor: direct ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_M,
           background: COLORS.GRAY_LLL,
-          cursor: "default",
+          cursor: onOpenShare ? "pointer" : "default",
         }}
       >
         <Icon name="link" style={{ marginRight: compact ? 0 : 4 }} />
