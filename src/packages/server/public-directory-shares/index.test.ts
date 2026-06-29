@@ -262,6 +262,29 @@ describe("public directory temporary viewer grants", () => {
     });
   });
 
+  it("does not fail creation when generated project-label sync cannot see the project", async () => {
+    const share = await create({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      path: "share",
+      slug: "label-sync-projection-drift",
+    });
+
+    expect(share.project_id).toBe(PROJECT_ID);
+    expect(share.slug).toBe("label-sync-projection-drift");
+
+    const { rows } = await getPool().query<{ slug: string }>(
+      `
+        SELECT slug
+        FROM public_project_paths
+        WHERE project_id=$1
+          AND slug=$2
+      `,
+      [PROJECT_ID, "label-sync-projection-drift"],
+    );
+    expect(rows).toEqual([{ slug: "label-sync-projection-drift" }]);
+  });
+
   it("enforces the active-share quota per publishing account", async () => {
     const limit = await getPublicDirectoryShareLimitForAccount({
       account_id: OWNER_ID,
