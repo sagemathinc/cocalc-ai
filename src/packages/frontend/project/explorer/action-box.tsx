@@ -229,10 +229,6 @@ export function ActionBox({
   const user_type = useTypedRedux("account", "user_type");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
-  const publicDirectorySharesEnabled = !!useTypedRedux(
-    "customize",
-    "public_directory_shares_enabled",
-  );
   const project_map = useTypedRedux("projects", "project_map");
   const project = project_map?.get?.(project_id);
   const projectGroup = account_id
@@ -377,12 +373,7 @@ export function ActionBox({
   }, [checked_files, file_action, project_id]);
 
   useEffect(() => {
-    if (
-      lite ||
-      file_action !== "publish" ||
-      !publicDirectorySharesEnabled ||
-      user_type !== "signed_in"
-    ) {
+    if (lite || file_action !== "publish" || user_type !== "signed_in") {
       setPublishSiteLicenseOverviews([]);
       setPublishSiteLicensePoolId("");
       return;
@@ -416,7 +407,7 @@ export function ActionBox({
     return () => {
       canceled = true;
     };
-  }, [account_id, file_action, publicDirectorySharesEnabled, user_type]);
+  }, [account_id, file_action, user_type]);
 
   function clear() {
     actions.set_all_files_unchecked();
@@ -772,7 +763,9 @@ export function ActionBox({
         <Col sm={4} style={{ color: COLORS.GRAY_M, marginBottom: "15px" }}>
           <h4>Target {projectLabel}</h4>
           <SelectProject
-            at_top={[project_id]}
+            at_top={readOnlySource ? undefined : [project_id]}
+            exclude={readOnlySource ? [project_id] : undefined}
+            fullCollaboratorOnly
             value={copy_destination_project_id}
             onChange={(copy_destination_project_id) => {
               if (copy_destination_project_id) {
@@ -1140,13 +1133,6 @@ export function ActionBox({
     }
     if (lite) {
       return null;
-    }
-    if (!publicDirectorySharesEnabled) {
-      return (
-        <Alert bsStyle="warning">
-          Public directory shares are not enabled on this site.
-        </Alert>
-      );
     }
     if (!pathIsPublishable(path)) {
       return (

@@ -2,11 +2,10 @@ import { InboxOutlined } from "@ant-design/icons";
 import { Alert, Button, Space, Typography, Upload } from "antd";
 import ImgCrop from "antd-img-crop";
 import { useMemo, useState } from "react";
+import { uploadBlobImage } from "@cocalc/frontend/blobs/upload-image";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { ThemeImageChoice } from "@cocalc/frontend/theme/types";
 import { join } from "path";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { uuid } from "@cocalc/util/misc";
 
 export function blobImageUrl(
   blob: string | undefined | null,
@@ -21,24 +20,12 @@ async function uploadThemeImageBlob(
   file: Blob & { name?: string },
   projectId?: string,
 ): Promise<string> {
-  const blob = await blobToBase64(file);
-  const id = uuid();
-  await webapp_client.conat_client.hub.db.saveBlob({
-    ...(projectId ? { project_id: projectId } : {}),
-    uuid: id,
-    blob,
+  const { uuid } = await uploadBlobImage({
+    file,
+    filename: file.name,
+    projectId,
   });
-  return id;
-}
-
-async function blobToBase64(file: Blob): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
+  return uuid;
 }
 
 function pickPastedImage(
@@ -49,6 +36,14 @@ function pickPastedImage(
     const file = item.getAsFile();
     if (file) return file;
   }
+}
+
+function ignoreAntdUploadRequest({
+  onSuccess,
+}: {
+  onSuccess?: (body: unknown) => void;
+}): void {
+  onSuccess?.("ok");
 }
 
 interface ThemeImageInputProps {
@@ -146,6 +141,7 @@ export function ThemeImageInput({
       >
         <Upload.Dragger
           name="file"
+          customRequest={ignoreAntdUploadRequest}
           showUploadList={false}
           onDrop={(e) => {
             e.preventDefault();

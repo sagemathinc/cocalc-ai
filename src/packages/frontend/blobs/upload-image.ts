@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { join } from "path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { pastedBlobFilename } from "@cocalc/frontend/editors/slate/upload-utils";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
 interface UploadBlobImageOptions {
   file: Blob;
@@ -32,7 +32,8 @@ export async function uploadBlobImage({
   const formData = new FormData();
   formData.append("file", file, resolvedFilename);
   const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
-  const response = await fetch(`${join(appBasePath, "blobs")}${query}`, {
+  const base = joinUrlPath(appBasePath, "blobs");
+  const response = await fetch(`${base}${query}`, {
     method: "POST",
     body: formData,
     credentials: "include",
@@ -47,11 +48,7 @@ export async function uploadBlobImage({
   }
   return {
     filename: resolvedFilename,
-    url: `${join(
-      appBasePath,
-      "blobs",
-      encodeURIComponent(resolvedFilename),
-    )}?uuid=${uuid}`,
+    url: `${base}/${encodeURIComponent(resolvedFilename)}?uuid=${uuid}`,
     uuid,
   };
 }

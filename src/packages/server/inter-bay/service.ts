@@ -139,7 +139,9 @@ import {
 } from "@cocalc/server/membership/grants";
 import { getMembershipTiers } from "@cocalc/server/membership/tiers";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
+import { getAccountIdFromRememberMe as getLocalAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
+import { saveBlobToDatabase } from "@cocalc/server/blobs/save";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import {
   activateMembershipClaimIdentityDirect,
@@ -792,6 +794,18 @@ async function startAccountLocalService(): Promise<void> {
         code,
       }),
     }),
+    getAccountIdFromRememberMe: async ({ hash }) => ({
+      account_id: await getLocalAccountIdFromRememberMe(hash),
+    }),
+    saveBlob: async ({ uuid, data, ttl, project_id, account_id }) => {
+      await saveBlobToDatabase({
+        uuid,
+        blob: data,
+        ttl,
+        project_id,
+        account_id,
+      });
+    },
     verifySignInPassword: async ({ email_address, password }) =>
       await verifyLocalSignInPassword({ email_address, password }),
     createCliLoginSession: async (opts) =>

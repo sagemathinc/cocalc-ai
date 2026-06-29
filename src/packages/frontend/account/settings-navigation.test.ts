@@ -11,7 +11,6 @@ const visibleContext: SettingsNavigationContext = {
   isAdmin: false,
   isLite: false,
   legacyMigrationEnabled: true,
-  publicDirectorySharesEnabled: true,
   stripeEnabled: true,
   zendesk: true,
 };
@@ -124,21 +123,8 @@ describe("settings-navigation", () => {
     ).toBe(true);
   });
 
-  it("hides public shares unless explicitly enabled", () => {
-    const disabledNavigation = getVisibleSettingsNavigation({
-      ...visibleContext,
-      publicDirectorySharesEnabled: false,
-    });
-    expect(
-      disabledNavigation.some(
-        (node) => node.type === "page" && node.page === "public-shares",
-      ),
-    ).toBe(false);
-
-    const enabledNavigation = getVisibleSettingsNavigation({
-      ...visibleContext,
-      publicDirectorySharesEnabled: true,
-    });
+  it("shows public shares outside lite mode", () => {
+    const enabledNavigation = getVisibleSettingsNavigation(visibleContext);
     expect(
       enabledNavigation.some(
         (node) => node.type === "page" && node.page === "public-shares",

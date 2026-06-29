@@ -107,7 +107,6 @@ export interface Customize {
   shareServer?: boolean;
   legacy_migration_enabled?: boolean;
   legacy_migration_page_message?: string;
-  public_directory_shares_enabled?: boolean;
   landingPages?: boolean;
   dns?: string;
   siteURL?: string;

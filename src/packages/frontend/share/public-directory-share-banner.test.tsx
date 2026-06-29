@@ -144,6 +144,7 @@ function share(): ResolvedPublicDirectoryShare {
 describe("PublicDirectoryShareBanner", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
     copyToNewProject.mockResolvedValue({
       destination_project_id: "new-project",
       op_id: "op-1",
@@ -205,6 +206,17 @@ describe("PublicDirectoryShareBanner", () => {
       <PublicDirectoryShareBanner share={unsafeShare} />,
     );
     expect(unsafeView.container.querySelector("img")).toBeNull();
+  });
+
+  it("collapses and expands the share banner", () => {
+    render(<PublicDirectoryShareBanner share={share()} />);
+
+    fireEvent.click(screen.getByText("Collapse"));
+    expect(screen.getByText("Expand")).toBeTruthy();
+    expect(screen.getByText("Test Share")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Expand"));
+    expect(screen.getByText("Collapse")).toBeTruthy();
   });
 
   it("waits for create-project copy success before opening the new project", async () => {

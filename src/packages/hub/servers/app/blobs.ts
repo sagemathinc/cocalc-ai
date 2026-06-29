@@ -5,6 +5,9 @@ import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { database_is_working } from "@cocalc/server/metrics/hub_register";
 import { callback2 } from "@cocalc/util/async-utils";
 import { getLogger } from "@cocalc/hub/logger";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 
 const logger = getLogger("hub:servers:app:blobs");
 
@@ -33,6 +36,17 @@ export default function init(router: Router) {
   const database = getDatabase();
   // return uuid-indexed blobs (mainly used for graphics)
   router.get("/blobs/*path", async (req, res) => {
+    const seedBayId = getConfiguredClusterSeedBayId();
+    if (getConfiguredBayId() !== seedBayId) {
+      const seedOrigin = await getBayPublicOriginForRequest(req, seedBayId);
+      if (seedOrigin) {
+        res.redirect(
+          302,
+          `${seedOrigin.replace(/\/+$/, "")}${req.originalUrl}`,
+        );
+        return;
+      }
+    }
     logger.debug(`${JSON.stringify(req.query)}, ${req.path}`);
     const uuid = `${req.query.uuid}`;
     if (req.headers["if-none-match"] === uuid) {

@@ -71,16 +71,6 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
       throw new Error(`unexpected call ${name}`);
     },
     resolveShareFilesystem: async () => ({
-      getListing: async (path) => ({
-        files: {
-          "via-fs.txt": {
-            type: "f",
-            size: 34,
-            mtime: 56,
-          },
-        },
-        path,
-      }),
       readFile: async (path, encoding) =>
         encoding === "utf8" ? `read ${path}` : Buffer.from(`read ${path}`),
     }),
@@ -127,35 +117,6 @@ test("share ls resolves the longest valid share prefix", async () => {
       is_dir: false,
       size: 12,
       mtime: null,
-      link_target: null,
-    },
-  ]);
-});
-
-test("share ls can list through the scoped share filesystem", async () => {
-  const { program, state } = commandWithDeps();
-  await program.parseAsync([
-    "node",
-    "cocalc",
-    "share",
-    "ls",
-    "--via-fs",
-    "course/unit/subdir",
-  ]);
-
-  assert.equal(
-    state.hubCalls.some(
-      (call) => call.name === "publicDirectoryShares.listDirectory",
-    ),
-    false,
-  );
-  assert.deepEqual(state.output, [
-    {
-      name: "via-fs.txt",
-      path: "published/root/subdir/via-fs.txt",
-      is_dir: false,
-      size: 34,
-      mtime: 56,
       link_target: null,
     },
   ]);

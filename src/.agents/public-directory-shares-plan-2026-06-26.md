@@ -1461,8 +1461,8 @@ Case handling:
 ### Phase 4: Redirect and Production Cutover
 
 - Add cocalc.com shutdown-site redirect rules for CUP paths.
-- Deploy public share APIs and frontend behind site setting
-  `public_directory_shares_enabled`.
+- Deploy unlisted share APIs and frontend as a normal signed-in sharing
+  product, without a site-wide feature flag.
 - Import CUP records in production.
 - Enable redirects for a small allowlist.
 - Test live CUP links with real migrated projects.
