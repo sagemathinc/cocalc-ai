@@ -6,7 +6,6 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { ThemeImageChoice } from "@cocalc/frontend/theme/types";
 import { join } from "path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { uuid } from "@cocalc/util/misc";
 
 export function blobImageUrl(
   blob: string | undefined | null,
@@ -21,8 +20,9 @@ async function uploadThemeImageBlob(
   file: Blob & { name?: string },
   projectId?: string,
 ): Promise<string> {
-  const blob = await blobToBase64(file);
-  const id = uuid();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const blob = bytesToBase64(bytes);
+  const id = await uuidSha1FromBytes(bytes);
   await webapp_client.conat_client.hub.db.saveBlob({
     ...(projectId ? { project_id: projectId } : {}),
     uuid: id,
@@ -31,14 +31,30 @@ async function uploadThemeImageBlob(
   return id;
 }
 
-async function blobToBase64(file: Blob): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
   }
   return btoa(binary);
+}
+
+async function uuidSha1FromBytes(bytes: Uint8Array): Promise<string> {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const digest = await crypto.subtle.digest("SHA-1", buffer);
+  const sha1 = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  let i = -1;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    i += 1;
+    if (c === "x") {
+      return sha1[i] ?? "0";
+    }
+    return ((parseInt(`0x${sha1[i] ?? "0"}`, 16) & 0x3) | 0x8).toString(16);
+  });
 }
 
 function pickPastedImage(
