@@ -974,6 +974,14 @@ export interface AccountLocalVerifyFreshAuthCredentialsResult {
   factor_level: "none" | "totp" | "recovery_code" | "passkey";
 }
 
+export interface AccountLocalSaveBlobRequest {
+  uuid: string;
+  data: Uint8Array;
+  ttl?: number | string | null;
+  project_id?: string | null;
+  account_id?: string | null;
+}
+
 export interface AccountLocalVerifySignInPasswordRequest {
   email_address: string;
   password: string;
@@ -2075,6 +2083,7 @@ export type AccountLocalMethod =
   | "create-impersonation-grant"
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
+  | "save-blob"
   | "create-cli-login-session"
   | "redeem-verify-email"
   | "send-email-verification"
@@ -3095,6 +3104,7 @@ export interface InterBayAccountLocalApi {
   verifyFreshAuthCredentials: (
     opts: AccountLocalVerifyFreshAuthCredentialsRequest,
   ) => Promise<AccountLocalVerifyFreshAuthCredentialsResult>;
+  saveBlob: (opts: AccountLocalSaveBlobRequest) => Promise<void>;
   verifySignInPassword: (
     opts: AccountLocalVerifySignInPasswordRequest,
   ) => Promise<AccountLocalVerifySignInPasswordResult>;
@@ -5110,6 +5120,15 @@ export function createInterBayAccountLocalClient({
       method: "verify-fresh-auth-credentials",
     }),
   });
+  const saveBlobClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "saveBlob">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "save-blob",
+    }),
+  });
   const verifySignInPasswordClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "verifySignInPassword">
   >({
@@ -6032,6 +6051,7 @@ export function createInterBayAccountLocalClient({
       await createImpersonationGrantClient.createImpersonationGrant(opts),
     verifyFreshAuthCredentials: async (opts) =>
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
+    saveBlob: async (opts) => await saveBlobClient.saveBlob(opts),
     verifySignInPassword: async (opts) =>
       await verifySignInPasswordClient.verifySignInPassword(opts),
     createCliLoginSession: async (opts) =>
@@ -6421,6 +6441,17 @@ export function createInterBayAccountLocalHandler({
       impl: {
         verifyFreshAuthCredentials: async (opts) =>
           await impl.verifyFreshAuthCredentials(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "saveBlob">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "save-blob",
+      }),
+      impl: {
+        saveBlob: async (opts) => await impl.saveBlob(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "verifySignInPassword">>(

@@ -78,6 +78,34 @@ function shareImageUrl(
   }
 }
 
+function compactBannerStorageKey(share: ResolvedPublicDirectoryShare): string {
+  return `cocalc-public-share-banner-compact:${share.slug}`;
+}
+
+function initialCompactBanner(share: ResolvedPublicDirectoryShare): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(compactBannerStorageKey(share)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setCompactBannerPreference(
+  share: ResolvedPublicDirectoryShare,
+  compact: boolean,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = compactBannerStorageKey(share);
+    if (compact) {
+      window.localStorage.setItem(key, "1");
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {}
+}
+
 function siteLicenseGrantMessage(
   grant:
     | {
@@ -138,6 +166,7 @@ export function PublicDirectoryShareBanner({
   const [copyMessage, setCopyMessage] = useState("");
   const [copyProgress, setCopyProgress] = useState("");
   const [placementMessage, setPlacementMessage] = useState("");
+  const [compact, setCompact] = useState(() => initialCompactBanner(share));
   const title = shareTitle(share);
   const publisher = sharePublisherLine(share);
   const image = shareImageUrl(share);
@@ -154,6 +183,11 @@ export function PublicDirectoryShareBanner({
     setCopyProgress("");
     setPlacementMessage("");
     setOpen(true);
+  }
+
+  function setCompactMode(next: boolean) {
+    setCompact(next);
+    setCompactBannerPreference(share, next);
   }
 
   async function copyToNewProject() {
@@ -250,89 +284,118 @@ export function PublicDirectoryShareBanner({
     }
   }
 
+  const compactBanner = compact ? (
+    <div
+      style={{
+        alignItems: "center",
+        background: themeAccent ? `${themeAccent}22` : COLORS.GRAY_LLL,
+        borderLeft: `4px solid ${themeColor}`,
+        borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+        display: "flex",
+        gap: 8,
+        minHeight: 34,
+        padding: "3px 10px",
+      }}
+    >
+      <Icon name={themeIcon as any} style={{ color: themeColor }} />
+      <Text strong ellipsis style={{ flex: 1, minWidth: 0 }}>
+        {title}
+      </Text>
+      <Button size="small" onClick={openCopyModal}>
+        Copy
+      </Button>
+      <Button size="small" type="link" onClick={() => setCompactMode(false)}>
+        Expand
+      </Button>
+    </div>
+  ) : null;
+
   return (
     <>
-      <Alert
-        type="info"
-        showIcon
-        style={{
-          background: themeAccent ? `${themeAccent}22` : undefined,
-          borderLeft: `4px solid ${themeColor}`,
-          borderRadius: 0,
-        }}
-        title={
-          <div
-            style={{
-              alignItems: "center",
-              display: "flex",
-              gap: 12,
-              width: "100%",
-            }}
-          >
-            {image ? (
-              <img
-                alt={title}
-                src={image}
-                style={{
-                  border: `1px solid ${COLORS.GRAY_LL}`,
-                  borderRadius: 6,
-                  height: 56,
-                  objectFit: "cover",
-                  width: 84,
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  alignItems: "center",
-                  background: themeAccent ?? COLORS.GRAY_LL,
-                  border: `1px solid ${COLORS.GRAY_LL}`,
-                  borderRadius: 6,
-                  color: themeColor,
-                  display: "flex",
-                  height: 56,
-                  justifyContent: "center",
-                  width: 56,
-                }}
-              >
-                <Icon name={themeIcon as any} style={{ fontSize: 24 }} />
-              </div>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Space wrap>
-                <Text strong>{title}</Text>
-                <Text>{shareScopeDescription(share)}</Text>
-                <Tag>{share.slug}</Tag>
-                {share.site_license_grant_on_copy ? (
-                  <Tag color="blue">temporary membership on copy</Tag>
-                ) : null}
-              </Space>
-              {publisher ? (
-                <div>
-                  <Text type="secondary">{publisher}</Text>
+      {compactBanner ?? (
+        <Alert
+          type="info"
+          showIcon
+          style={{
+            background: themeAccent ? `${themeAccent}22` : undefined,
+            borderLeft: `4px solid ${themeColor}`,
+            borderRadius: 0,
+          }}
+          title={
+            <div
+              style={{
+                alignItems: "center",
+                display: "flex",
+                gap: 14,
+                width: "100%",
+              }}
+            >
+              {image ? (
+                <img
+                  alt={title}
+                  src={image}
+                  style={{
+                    border: `1px solid ${COLORS.GRAY_LL}`,
+                    borderRadius: 8,
+                    height: 76,
+                    objectFit: "cover",
+                    width: 116,
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    alignItems: "center",
+                    background: themeAccent ?? COLORS.GRAY_LL,
+                    border: `1px solid ${COLORS.GRAY_LL}`,
+                    borderRadius: 8,
+                    color: themeColor,
+                    display: "flex",
+                    height: 76,
+                    justifyContent: "center",
+                    width: 76,
+                  }}
+                >
+                  <Icon name={themeIcon as any} style={{ fontSize: 32 }} />
                 </div>
-              ) : null}
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Space wrap>
+                  <Text strong>{title}</Text>
+                  <Text>{shareScopeDescription(share)}</Text>
+                  <Tag>{share.slug}</Tag>
+                  {share.site_license_grant_on_copy ? (
+                    <Tag color="blue">temporary membership on copy</Tag>
+                  ) : null}
+                </Space>
+                {description ? (
+                  <Paragraph style={{ margin: "4px 0 0" }}>
+                    {description}
+                  </Paragraph>
+                ) : null}
+                {license ? (
+                  <div>
+                    <Text type="secondary">License: {license}</Text>
+                  </div>
+                ) : null}
+                {publisher ? (
+                  <div>
+                    <Text type="secondary">{publisher}</Text>
+                  </div>
+                ) : null}
+              </div>
+              <Space>
+                <Button size="small" type="primary" onClick={openCopyModal}>
+                  Copy
+                </Button>
+                <Button size="small" onClick={() => setCompactMode(true)}>
+                  Collapse
+                </Button>
+              </Space>
             </div>
-            <Button size="small" type="primary" onClick={openCopyModal}>
-              Copy
-            </Button>
-          </div>
-        }
-        description={
-          description || license ? (
-            <div style={{ marginTop: 4 }}>
-              {description ? (
-                <Paragraph style={{ marginBottom: license ? 4 : 0 }}>
-                  {description}
-                </Paragraph>
-              ) : null}
-              {license ? (
-                <Text type="secondary">License: {license}</Text>
-              ) : null}
-            </div>
-          ) : undefined
-        }
-      />
+          }
+        />
+      )}
       <Modal
         title="Copy published folder"
         open={open}

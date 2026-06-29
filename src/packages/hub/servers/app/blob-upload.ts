@@ -7,13 +7,15 @@ allows for attaching files to github issue comments.
 // See also src/packages/project/upload.ts
 
 import { Router } from "express";
-import { callback2 } from "@cocalc/util/async-utils";
-import { getDatabase } from "../database";
-const { save_blob } = require("@cocalc/hub/blobs");
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getLogger } from "@cocalc/hub/logger";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import getAccount from "@cocalc/server/auth/get-account";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { saveBlobToDatabase } from "@cocalc/server/blobs/save";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import formidable from "formidable";
 import { readFile, unlink } from "fs/promises";
 import { uuidsha1 } from "@cocalc/backend/misc_node";
@@ -98,8 +100,44 @@ function ensureBlobUploadRateLimit({
   }
 }
 
+async function saveUploadedBlob({
+  uuid,
+  blob,
+  ttl,
+  project_id,
+  account_id,
+}: {
+  uuid: string;
+  blob: Buffer;
+  ttl?: unknown;
+  project_id?: string;
+  account_id: string;
+}): Promise<void> {
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (getConfiguredBayId() === seedBayId) {
+    await saveBlobToDatabase({
+      uuid,
+      blob,
+      ttl,
+      project_id,
+      account_id,
+    });
+    return;
+  }
+  await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: seedBayId,
+    timeout: 30_000,
+  }).saveBlob({
+    uuid,
+    data: blob,
+    ttl: typeof ttl === "string" ? ttl : undefined,
+    project_id: project_id ?? null,
+    account_id,
+  });
+}
+
 export default function init(router: Router) {
-  const database = getDatabase();
   router.post("/blobs", async (req, res) => {
     const account_id = await getAccount(req);
     if (!account_id) {
@@ -107,8 +145,14 @@ export default function init(router: Router) {
       return;
     }
     const { project_id, ttl } = req.query;
-    if (typeof project_id == "string" && project_id) {
-      if (!(await isCollaborator({ account_id, project_id }))) {
+    const projectId = typeof project_id == "string" ? project_id : undefined;
+    if (projectId) {
+      if (
+        !(await hasProjectCollaboratorAccessAllowRemote({
+          account_id,
+          project_id: projectId,
+        }))
+      ) {
         res.status(403).send("user must be collaborator on project");
         return;
       }
@@ -156,13 +200,15 @@ export default function init(router: Router) {
           if (typeof hash == "string") {
             uuid = uuidsha1("", hash);
           }
+          if (!uuid) {
+            throw Error("unable to compute uploaded blob uuid");
+          }
           const blob = await readFile(filepath);
-          await callback2(save_blob, {
+          await saveUploadedBlob({
             uuid,
             blob,
             ttl,
-            project_id,
-            database,
+            project_id: projectId,
             account_id,
           });
         } finally {
