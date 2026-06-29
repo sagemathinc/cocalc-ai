@@ -2,11 +2,10 @@ import { InboxOutlined } from "@ant-design/icons";
 import { Alert, Button, Space, Typography, Upload } from "antd";
 import ImgCrop from "antd-img-crop";
 import { useMemo, useState } from "react";
-import { blobToContentAddressedBase64 } from "@cocalc/frontend/blobs/content-address";
+import { uploadBlobImage } from "@cocalc/frontend/blobs/upload-image";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { ThemeImageChoice } from "@cocalc/frontend/theme/types";
 import { join } from "path";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export function blobImageUrl(
   blob: string | undefined | null,
@@ -21,11 +20,10 @@ async function uploadThemeImageBlob(
   file: Blob & { name?: string },
   projectId?: string,
 ): Promise<string> {
-  const { blob, uuid } = await blobToContentAddressedBase64(file);
-  await webapp_client.conat_client.hub.db.saveBlob({
-    ...(projectId ? { project_id: projectId } : {}),
-    uuid,
-    blob,
+  const { uuid } = await uploadBlobImage({
+    file,
+    filename: file.name,
+    projectId,
   });
   return uuid;
 }
