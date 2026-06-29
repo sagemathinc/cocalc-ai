@@ -44,6 +44,8 @@ export interface PublicDirectoryShareSummary {
   site_license_grant_on_copy: boolean;
   site_license_copy_requires_grant: boolean;
   disabled: boolean;
+  created_by?: string | null;
+  updated_by?: string | null;
   last_edited?: Date | string | null;
   created_at?: Date | string | null;
   updated_at?: Date | string | null;
@@ -91,6 +93,17 @@ export interface ListProjectPublicDirectorySharesOptions {
   limit?: number;
   offset?: number;
   include_disabled?: boolean;
+}
+
+export interface DisableMyPublicDirectorySharesByActorOptions {
+  account_id?: string;
+  session_hash?: string | null;
+  actor_account_id: string;
+}
+
+export interface DisableMyPublicDirectorySharesByActorResponse {
+  disabled_count: number;
+  share_ids: string[];
 }
 
 export interface UpsertPublicDirectoryShareOptions {
@@ -272,6 +285,9 @@ export interface PublicDirectoryShares {
   listProject: (
     opts: ListProjectPublicDirectorySharesOptions,
   ) => Promise<ListPublicDirectorySharesResponse>;
+  disableMineByActor: (
+    opts: DisableMyPublicDirectorySharesByActorOptions,
+  ) => Promise<DisableMyPublicDirectorySharesByActorResponse>;
   upsert: (
     opts: UpsertPublicDirectoryShareOptions,
   ) => Promise<PublicDirectoryShareSummary>;
@@ -306,6 +322,7 @@ export const publicDirectoryShares = {
   list: authFirstRequireAccount,
   listMine: authFirstRequireAccount,
   listProject: authFirstRequireAccount,
+  disableMineByActor: authFirstRequireAccount,
   upsert: authFirstRequireAccount,
   create: authFirstRequireAccount,
   update: authFirstRequireAccount,

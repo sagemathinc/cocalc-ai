@@ -4,6 +4,7 @@
  */
 
 import {
+  disableMineByActor,
   ensurePublicDirectorySharesSchema,
   getTemporaryViewerReadPolicy,
   grantTemporaryViewerAccess,
@@ -254,6 +255,17 @@ describe("public directory temporary viewer grants", () => {
       project_id: PROJECT_ID,
     });
     expect(policy.read_policy).toBeUndefined();
+  });
+
+  it("requires fresh auth before bulk disabling shares by actor", async () => {
+    await insertShare();
+
+    await expect(
+      disableMineByActor({
+        account_id: OWNER_ID,
+        actor_account_id: OWNER_ID,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
   });
 
   it("clears tracked site-license grants when a share is disabled", async () => {

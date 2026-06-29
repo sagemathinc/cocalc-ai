@@ -97,6 +97,7 @@ export async function getTemporaryViewerReadPolicy(
 
 export {
   create,
+  disableMineByActor,
   list,
   listMine,
   listProject,

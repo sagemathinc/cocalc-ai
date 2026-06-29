@@ -8,6 +8,7 @@ import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { assertCollab } from "@cocalc/server/conat/api/util";
@@ -66,6 +67,8 @@ import type {
   CopyPublicDirectoryShareToNewProjectResponse,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
+  DisableMyPublicDirectorySharesByActorOptions,
+  DisableMyPublicDirectorySharesByActorResponse,
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
   CreatePublicDirectoryShareOptions,
@@ -408,6 +411,8 @@ function rowToSummary(
     site_license_copy_requires_grant:
       row.site_license_copy_requires_grant === true,
     disabled: row.disabled === true,
+    created_by: row.created_by ?? null,
+    updated_by: row.updated_by ?? null,
     last_edited: row.last_edited ?? null,
     created_at: row.created_at ?? null,
     updated_at: row.updated_at ?? null,
@@ -1295,6 +1300,57 @@ export async function listProject({
   return {
     shares: rows.map(rowToSummary),
     total_count: Number(rows[0]?.total_count ?? 0),
+  };
+}
+
+export async function disableMineByActor({
+  account_id,
+  session_hash,
+  actor_account_id,
+}: DisableMyPublicDirectorySharesByActorOptions): Promise<DisableMyPublicDirectorySharesByActorResponse> {
+  await assertEnabled();
+  await ensurePublicDirectorySharesSchema();
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!isValidUUID(actor_account_id)) {
+    throw Error("invalid actor_account_id");
+  }
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  if (!cleanedSessionHash) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  await requireFreshAuthForSessionHash({
+    account_id,
+    session_hash: cleanedSessionHash,
+  });
+  const { rows } = await getPool().query<{ id: string }>(
+    `
+      SELECT pps.id
+      FROM public_project_paths pps
+      JOIN projects p ON p.project_id=pps.project_id
+      WHERE COALESCE(p.users -> $1::text ->> 'group', '') IN ('owner', 'collaborator')
+        AND pps.disabled IS FALSE
+        AND pps.visibility <> 'disabled'
+        AND (pps.created_by=$2::uuid OR pps.updated_by=$2::uuid)
+      ORDER BY pps.updated_at DESC, pps.created_at DESC
+    `,
+    [account_id, actor_account_id],
+  );
+  const shareIds: string[] = [];
+  for (const { id } of rows) {
+    await update({
+      account_id,
+      id,
+      disabled: true,
+    });
+    shareIds.push(id);
+  }
+  return {
+    disabled_count: shareIds.length,
+    share_ids: shareIds,
   };
 }
 
