@@ -3,9 +3,10 @@ import { Alert, Button, Space, Typography, Upload } from "antd";
 import ImgCrop from "antd-img-crop";
 import { useMemo, useState } from "react";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { pastedBlobFilename } from "@cocalc/frontend/editors/slate/upload-utils";
 import type { ThemeImageChoice } from "@cocalc/frontend/theme/types";
 import { join } from "path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { uuid } from "@cocalc/util/misc";
 
 export function blobImageUrl(
   blob: string | undefined | null,
@@ -20,25 +21,24 @@ async function uploadThemeImageBlob(
   file: Blob & { name?: string },
   projectId?: string,
 ): Promise<string> {
-  const filename =
-    typeof file.name === "string" && file.name.trim()
-      ? file.name.trim()
-      : pastedBlobFilename(file.type);
-  const formData = new FormData();
-  formData.append("file", file, filename);
-  const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
-  const response = await fetch(`${join(appBasePath, "blobs")}${query}`, {
-    method: "POST",
-    body: formData,
-    credentials: "include",
+  const blob = await blobToBase64(file);
+  const id = uuid();
+  await webapp_client.conat_client.hub.db.saveBlob({
+    ...(projectId ? { project_id: projectId } : {}),
+    uuid: id,
+    blob,
   });
-  if (!response.ok) {
-    const message = await response.text();
-    throw Error(message || `HTTP ${response.status}`);
+  return id;
+}
+
+async function blobToBase64(file: Blob): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
   }
-  const { uuid } = await response.json();
-  if (!uuid) throw Error("missing upload uuid");
-  return uuid;
+  return btoa(binary);
 }
 
 function pickPastedImage(
@@ -88,10 +88,6 @@ export function ThemeImageInput({
   }, [recentImageChoices]);
 
   async function handleBlob(file: Blob & { name?: string }) {
-    if (!projectId) {
-      setError("Unable to upload an image without a project id.");
-      return;
-    }
     try {
       setUploading(true);
       setError("");

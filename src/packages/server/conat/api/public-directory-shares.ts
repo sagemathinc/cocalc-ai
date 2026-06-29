@@ -9,11 +9,15 @@ import type {
   AuthorizePublicDirectoryShareReadOptions,
   CopyPublicDirectoryShareToNewProjectOptions,
   CopyPublicDirectoryShareToProjectOptions,
+  CreatePublicDirectoryShareOptions,
   GetTemporaryViewerReadPolicyOptions,
   GrantTemporaryViewerAccessOptions,
   ListPublicDirectoryShareDirectoryOptions,
+  ListProjectPublicDirectorySharesOptions,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
+  UpdatePublicDirectoryShareOptions,
+  UpsertPublicDirectoryShareOptions,
 } from "@cocalc/conat/hub/api/public-directory-shares";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -180,6 +184,55 @@ export async function copyToNewProject(
   });
 }
 
+export async function listProject(
+  opts: ListProjectPublicDirectorySharesOptions,
+) {
+  const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
+  return await callPublicDirectoryShareBay({
+    bay_id,
+    local: async () => await publicDirectoryShares.listProject(opts),
+    remote: async (client) =>
+      await client.publicDirectoryShareListProject(opts),
+  });
+}
+
+export async function create(opts: CreatePublicDirectoryShareOptions) {
+  const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
+  return await callPublicDirectoryShareBay({
+    bay_id,
+    local: async () => await publicDirectoryShares.create(opts),
+    remote: async (client) => await client.publicDirectoryShareCreate(opts),
+  });
+}
+
+export async function upsert(opts: UpsertPublicDirectoryShareOptions) {
+  const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
+  return await callPublicDirectoryShareBay({
+    bay_id,
+    local: async () => await publicDirectoryShares.upsert(opts),
+    remote: async (client) => await client.publicDirectoryShareUpsert(opts),
+  });
+}
+
+export async function update(opts: UpdatePublicDirectoryShareOptions) {
+  let lastNotFound: unknown;
+  for (const bay_id of await publicDirectoryShareSearchBayIds()) {
+    try {
+      return await callPublicDirectoryShareBay({
+        bay_id,
+        local: async () => await publicDirectoryShares.update(opts),
+        remote: async (client) => await client.publicDirectoryShareUpdate(opts),
+      });
+    } catch (err) {
+      if (!isPublicDirectoryShareNotFound(err)) {
+        throw err;
+      }
+      lastNotFound = err;
+    }
+  }
+  throw lastNotFound ?? Error("public directory share not found");
+}
+
 export async function grantTemporaryViewerAccess(
   opts: GrantTemporaryViewerAccessOptions,
 ) {
@@ -239,11 +292,7 @@ export async function getTemporaryViewerReadPolicy(
 }
 
 export {
-  create,
   disableMineByActor,
   list,
   listMine,
-  listProject,
-  update,
-  upsert,
 } from "@cocalc/server/public-directory-shares";

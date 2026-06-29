@@ -9,6 +9,7 @@ import {
   Empty,
   Modal,
   Popconfirm,
+  Popover,
   Space,
   Table,
   Tag,
@@ -131,22 +132,28 @@ export function PublishPanel({
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Alert
-        type="info"
-        showIcon
-        message="Publish read-only project content"
-        description={
-          <Paragraph style={{ marginBottom: 0 }}>
-            Published directories are unlisted and visible to signed-in CoCalc
-            users who know the URL. Publishing the entire project means{" "}
-            <code>/home/user</code>; private internals such as <code>.ssh</code>
-            {", "}
-            <code>.cache</code>, <code>.local</code>, and{" "}
-            <code>.snapshots</code> are excluded. Your membership tier limits
-            how many active directories you can publish.
-          </Paragraph>
-        }
-      />
+      <Space align="center" style={{ justifyContent: "space-between" }}>
+        <Text strong>Publish read-only project content</Text>
+        <Popover
+          title="About public project shares"
+          content={
+            <Paragraph style={{ maxWidth: 340, marginBottom: 0 }}>
+              Published directories are unlisted and visible to signed-in CoCalc
+              users who know the URL. Publishing the entire project means{" "}
+              <code>/home/user</code>; private internals such as{" "}
+              <code>.ssh</code>, <code>.cache</code>, <code>.local</code>, and{" "}
+              <code>.snapshots</code> are excluded. Your membership tier limits
+              how many active directories you can publish.
+            </Paragraph>
+          }
+        >
+          <Button
+            size="small"
+            shape="circle"
+            icon={<Icon name="question-circle" />}
+          />
+        </Popover>
+      </Space>
 
       <Space wrap>
         <Button
@@ -181,75 +188,55 @@ export function PublishPanel({
           size="small"
         >
           <Table.Column<PublicDirectoryShareSummary>
-            title="Path"
-            render={(_, share) => (
-              <Space direction="vertical" size={0}>
-                <Text strong>{pathLabel(share.path)}</Text>
-                <Text code>
-                  {share.path === "." ? "/home/user" : share.path}
-                </Text>
-              </Space>
-            )}
-          />
-          <Table.Column<PublicDirectoryShareSummary>
-            title="Share URL"
-            render={(_, share) => {
-              const url = shareUrl(share.slug);
-              return (
-                <Space direction="vertical" size={0}>
-                  <a href={url} target="_blank" rel="noreferrer">
-                    {share.slug}
-                  </a>
-                  {share.title ? (
-                    <Text type="secondary">{share.title}</Text>
-                  ) : null}
-                </Space>
-              );
-            }}
-          />
-          <Table.Column<PublicDirectoryShareSummary>
-            title="Status"
-            width={150}
-            render={(_, share) => (
-              <Space direction="vertical" size={4}>
-                <Tag color={visibilityColor(share.visibility)}>
-                  {share.visibility}
-                </Tag>
-                {share.site_license_grant_on_copy ? (
-                  <Tag color="blue">membership on copy</Tag>
-                ) : null}
-              </Space>
-            )}
-          />
-          <Table.Column<PublicDirectoryShareSummary>
-            title="Actions"
-            width={260}
+            title="Published paths"
             render={(_, share) => {
               const url = shareUrl(share.slug);
               const editPath = share.path === "." ? "/home/user" : share.path;
               return (
-                <Space wrap>
-                  <Button
-                    size="small"
-                    onClick={() => void openPublishModal(editPath)}
-                  >
-                    Edit
-                  </Button>
-                  <CopyButton value={url} size="small" />
-                  <Button size="small" href={url} target="_blank">
-                    View
-                  </Button>
-                  <Popconfirm
-                    title="Disable this publication?"
-                    description="The URL will stop granting viewer access. People who already copied files keep their copies."
-                    okText="Disable"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={() => void disableShare(share)}
-                  >
-                    <Button size="small" danger>
-                      Disable
+                <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                  <div>
+                    <Text strong>{pathLabel(share.path)}</Text>{" "}
+                    <Text code>
+                      {share.path === "." ? "/home/user" : share.path}
+                    </Text>
+                  </div>
+                  <Space wrap size={[4, 4]}>
+                    <Tag color={visibilityColor(share.visibility)}>
+                      {share.visibility}
+                    </Tag>
+                    {share.site_license_grant_on_copy ? (
+                      <Tag color="blue">membership on copy</Tag>
+                    ) : null}
+                    {share.title ? <Tag>{share.title}</Tag> : null}
+                  </Space>
+                  <Space wrap size={[6, 6]}>
+                    <a href={url} target="_blank" rel="noreferrer">
+                      /share/{share.slug}
+                    </a>
+                    <CopyButton value={url} size="small" />
+                  </Space>
+                  <Space wrap size={[6, 6]}>
+                    <Button
+                      size="small"
+                      onClick={() => void openPublishModal(editPath)}
+                    >
+                      Edit
                     </Button>
-                  </Popconfirm>
+                    <Button size="small" href={url} target="_blank">
+                      View
+                    </Button>
+                    <Popconfirm
+                      title="Disable this publication?"
+                      description="The URL will stop granting viewer access. People who already copied files keep their copies."
+                      okText="Disable"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => void disableShare(share)}
+                    >
+                      <Button size="small" danger>
+                        Disable
+                      </Button>
+                    </Popconfirm>
+                  </Space>
                 </Space>
               );
             }}

@@ -3764,9 +3764,13 @@ function preferredHostRow(
 export async function resolveHostConnection({
   account_id,
   host_id,
+  project_id,
+  public_directory_share_id,
 }: {
   account_id?: string;
   host_id: string;
+  project_id?: string;
+  public_directory_share_id?: string;
 }): Promise<HostConnectionInfo> {
   const owner = requireAccount(account_id);
   if (!host_id) {
@@ -3774,13 +3778,18 @@ export async function resolveHostConnection({
   }
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(host_id);
   if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .get({ account_id: owner, host_id });
+    return await getInterBayBridge().hostConnection(remoteBay).get({
+      account_id: owner,
+      host_id,
+      project_id,
+      public_directory_share_id,
+    });
   }
   const local = await resolveHostConnectionLocal({
     account_id: owner,
     host_id,
+    project_id,
+    public_directory_share_id,
     allowMissing: true,
   });
   if (local) {
@@ -3792,22 +3801,28 @@ export async function resolveHostConnection({
   }
   return await getInterBayBridge()
     .hostConnection(hostBay.bay_id)
-    .get({ account_id: owner, host_id });
+    .get({ account_id: owner, host_id, project_id, public_directory_share_id });
 }
 
 export async function resolveHostConnectionLocal({
   account_id,
   host_id,
+  project_id,
+  public_directory_share_id,
   allowMissing = false,
 }: {
   account_id?: string;
   host_id: string;
+  project_id?: string;
+  public_directory_share_id?: string;
   allowMissing?: boolean;
 }): Promise<HostConnectionInfo | undefined> {
   const owner = requireAccount(account_id);
   return await resolveHostConnectionLocalHelper({
     account_id: owner,
     host_id,
+    project_id,
+    public_directory_share_id,
     allowMissing,
     loadMembership,
   });

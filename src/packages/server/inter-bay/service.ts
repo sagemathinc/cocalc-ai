@@ -1450,6 +1450,14 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.configureFinancialMembershipRenewalHomeBay(opts),
     publicDirectoryShareResolve: async (opts) =>
       await publicDirectoryShares.resolve(opts),
+    publicDirectoryShareListProject: async (opts) =>
+      await publicDirectoryShares.listProject(opts),
+    publicDirectoryShareCreate: async (opts) =>
+      await publicDirectoryShares.create(opts),
+    publicDirectoryShareUpdate: async (opts) =>
+      await publicDirectoryShares.update(opts),
+    publicDirectoryShareUpsert: async (opts) =>
+      await publicDirectoryShares.upsert(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShares.authorizeRead(opts),
     publicDirectoryShareListDirectory: async (opts) =>

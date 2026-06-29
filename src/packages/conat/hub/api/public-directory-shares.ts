@@ -223,6 +223,12 @@ export interface GrantTemporaryViewerAccessResponse {
   project_url: string;
   project_title?: string | null;
   share_title?: string | null;
+  share_description?: string | null;
+  license?: string | null;
+  image?: string | null;
+  theme?: PublicDirectoryShareTheme | null;
+  site_license_grant_on_copy?: boolean;
+  site_license_copy_requires_grant?: boolean;
   host_id?: string | null;
   host_connection?: ResolvedPublicDirectoryShare["host_connection"];
   owning_bay_id?: string | null;

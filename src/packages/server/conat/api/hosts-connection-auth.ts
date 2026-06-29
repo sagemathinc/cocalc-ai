@@ -360,11 +360,15 @@ export async function issueProjectHostAgentAuthTokenInternalHelper({
 export async function resolveHostConnectionLocalHelper({
   account_id,
   host_id,
+  project_id,
+  public_directory_share_id,
   allowMissing = false,
   loadMembership,
 }: {
   account_id: string;
   host_id: string;
+  project_id?: string;
+  public_directory_share_id?: string;
   allowMissing?: boolean;
   loadMembership: (account_id: string) => Promise<any>;
 }): Promise<HostConnectionInfo | undefined> {
@@ -413,7 +417,17 @@ export async function resolveHostConnectionLocalHelper({
        LIMIT 1`,
       [host_id, account_id],
     );
-    if (!projectRows.length) {
+    const publicShareAllowed =
+      projectRows.length === 0 &&
+      !!project_id &&
+      !!public_directory_share_id &&
+      (await hasPublicShareProjectHostTokenAccess({
+        account_id,
+        host_id,
+        project_id,
+        public_directory_share_id,
+      }));
+    if (!projectRows.length && !publicShareAllowed) {
       throw new Error("not authorized");
     }
   }

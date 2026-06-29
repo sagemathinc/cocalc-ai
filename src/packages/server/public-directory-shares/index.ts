@@ -1110,7 +1110,12 @@ async function resolvePublicShareHostConnection({
   try {
     return await getInterBayBridge()
       .hostConnection(hostBay.bay_id, { timeout_ms: 10_000 })
-      .get({ account_id, host_id: row.host_id });
+      .get({
+        account_id,
+        host_id: row.host_id,
+        project_id: row.project_id,
+        public_directory_share_id: row.id,
+      });
   } catch (err) {
     log.warn("failed to resolve public share host connection across bays", {
       project_id: row.project_id,
@@ -1189,6 +1194,8 @@ async function resolveRow({
   let availabilityStatus = summary.availability_status;
   let availabilityMessage = summary.availability_message ?? null;
   let owningBayId = row.owning_bay_id ?? null;
+  let projectTitle = row.project_title ?? null;
+  let hostId = row.host_id ?? null;
   if (availabilityStatus !== "available") {
     const ownership = await resolveProjectBayAcrossCluster(row.project_id);
     if (ownership?.bay_id) {
@@ -1197,6 +1204,36 @@ async function resolveRow({
       owningBayId = ownership.bay_id;
     }
   }
+  if (
+    (!owningBayId || !hostId || !projectTitle) &&
+    availabilityStatus === "available"
+  ) {
+    const ownership = await resolveProjectBayAcrossCluster(row.project_id);
+    if (ownership?.bay_id) {
+      try {
+        const project = await getInterBayBridge()
+          .projectReference(ownership.bay_id, { timeout_ms: 10_000 })
+          .get({ account_id, project_id: row.project_id });
+        if (project != null) {
+          owningBayId = owningBayId ?? project.owning_bay_id;
+          hostId = hostId ?? project.host_id;
+          projectTitle = projectTitle ?? project.title;
+        }
+      } catch (err) {
+        log.warn("failed to resolve public share project reference", {
+          project_id: row.project_id,
+          project_bay_id: ownership.bay_id,
+          err: `${(err as Error | undefined)?.message ?? err}`,
+        });
+      }
+    }
+  }
+  const rowWithProjectReference: PublicDirectoryShareRow = {
+    ...row,
+    host_id: hostId,
+    owning_bay_id: owningBayId,
+    project_title: projectTitle,
+  };
   return {
     row,
     share: {
@@ -1205,11 +1242,14 @@ async function resolveRow({
       availability_message: availabilityMessage,
       available: availabilityStatus === "available",
       read_policy: publicDirectoryShareReadPolicyForPath(summary.path),
-      project_title: row.project_title ?? null,
-      host_id: row.host_id ?? null,
+      project_title: projectTitle,
+      host_id: hostId,
       host_connection:
         availabilityStatus === "available"
-          ? await resolvePublicShareHostConnection({ account_id, row })
+          ? await resolvePublicShareHostConnection({
+              account_id,
+              row: rowWithProjectReference,
+            })
           : null,
       owning_bay_id: owningBayId,
     },
@@ -1307,6 +1347,12 @@ export async function grantTemporaryViewerAccess({
     project_url: projectViewerUrl(share),
     project_title: share.project_title,
     share_title: share.title,
+    share_description: share.description,
+    license: share.license,
+    image: share.image,
+    theme: share.theme,
+    site_license_grant_on_copy: share.site_license_grant_on_copy,
+    site_license_copy_requires_grant: share.site_license_copy_requires_grant,
     host_id: share.host_id,
     host_connection: share.host_connection,
     owning_bay_id: share.owning_bay_id,
