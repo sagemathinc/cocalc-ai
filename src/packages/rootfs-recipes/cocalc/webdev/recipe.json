@@ -1,0 +1,196 @@
+{
+  "id": "cocalc/webdev",
+  "version": 1,
+  "description": "Install a broad web development environment for CoCalc and other large TypeScript/web projects.",
+  "inputs": {
+    "python_prefix": {
+      "type": "string",
+      "default": "/opt/cocalc-webdev-python"
+    },
+    "python_packages": {
+      "type": "array",
+      "default": [
+        "bash_kernel",
+        "ipykernel",
+        "ipywidgets",
+        "jupyter-console",
+        "jupyterlab",
+        "notebook",
+        "pip",
+        "pre-commit",
+        "pytest",
+        "requests",
+        "ruff",
+        "setuptools",
+        "uv",
+        "wheel"
+      ]
+    },
+    "pnpm_version": {
+      "type": "string",
+      "default": "latest"
+    },
+    "yarn_version": {
+      "type": "string",
+      "default": "latest"
+    },
+    "npm_global_packages": {
+      "type": "array",
+      "default": [
+        "typescript",
+        "tsx",
+        "npm-check-updates",
+        "serve",
+        "http-server",
+        "tslab"
+      ]
+    },
+    "deno_prefix": {
+      "type": "string",
+      "default": "/opt/deno"
+    },
+    "deno_version": {
+      "type": "string",
+      "default": "latest"
+    },
+    "bun_prefix": {
+      "type": "string",
+      "default": "/opt/bun"
+    },
+    "bun_version": {
+      "type": "string",
+      "default": "latest"
+    },
+    "code_server_prefix": {
+      "type": "string",
+      "default": "/opt/code-server"
+    },
+    "code_server_version": {
+      "type": "string",
+      "default": "latest"
+    },
+    "code_server_extensions": {
+      "type": "array",
+      "default": []
+    },
+    "code_server_extensions_dir": {
+      "type": "string",
+      "default": "/opt/code-server/extensions"
+    },
+    "code_server_user_data_dir": {
+      "type": "string",
+      "default": "/opt/code-server/user-data"
+    },
+    "owner_uid": {
+      "type": "string",
+      "default": "2001"
+    },
+    "owner_gid": {
+      "type": "string",
+      "default": "2001"
+    }
+  },
+  "run": {
+    "shell": "bash",
+    "script": "install.sh"
+  },
+  "verify": {
+    "shell": "bash",
+    "script": "verify.sh"
+  },
+  "contributes": {
+    "metadata": {
+      "family": "web-development",
+      "tags": [
+        "webdev",
+        "typescript",
+        "node",
+        "pnpm",
+        "deno",
+        "bun",
+        "python",
+        "postgresql",
+        "redis",
+        "chromium",
+        "code-server",
+        "vscode",
+        "cocalc"
+      ]
+    },
+    "theme": {
+      "icon": "code-2",
+      "color": "#ffffff",
+      "accent_color": "#1f7a5c"
+    },
+    "content": {
+      "version": 1,
+      "title": "Web Development",
+      "subtitle": "Node, pnpm, yarn, Deno, Bun, GitHub CLI, native build tools, Chromium, PostgreSQL, Redis, code-server, and Jupyter kernels.",
+      "highlights": [
+        "System-wide pnpm and yarn",
+        "Deno and Bun runtimes",
+        "Native build toolchain",
+        "Chromium for browser tests",
+        "PostgreSQL and Redis for app development",
+        "VS Code in the browser",
+        "Python, Node.js, Bash, uv, and Jupyter"
+      ],
+      "actions": [
+        {
+          "kind": "open-file",
+          "label": "Open webdev README",
+          "path": "/opt/cocalc-webdev/README.md"
+        },
+        {
+          "kind": "external-link",
+          "label": "pnpm documentation",
+          "url": "https://pnpm.io/"
+        },
+        {
+          "kind": "external-link",
+          "label": "GitHub CLI documentation",
+          "url": "https://cli.github.com/manual/"
+        },
+        {
+          "kind": "project-app",
+          "label": "Launch VS Code",
+          "description": "Start code-server using the bundled web development installation.",
+          "app_spec": {
+            "version": 1,
+            "id": "code-server",
+            "title": "code-server",
+            "kind": "service",
+            "command": {
+              "exec": "bash",
+              "args": [
+                "-lc",
+                "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none --extensions-dir=/opt/code-server/extensions --user-data-dir=/opt/code-server/user-data"
+              ]
+            },
+            "lifecycle": {
+              "mode": "managed"
+            },
+            "network": {
+              "listen_host": "127.0.0.1",
+              "port": 6004,
+              "protocol": "http"
+            },
+            "proxy": {
+              "base_path": "/apps/code-server",
+              "strip_prefix": true,
+              "websocket": true,
+              "open_mode": "proxy",
+              "health_path": "/healthz",
+              "readiness_timeout_s": 120
+            },
+            "wake": {
+              "enabled": true,
+              "keep_warm_s": 1800,
+              "startup_timeout_s": 120
+            }
+          }
+        }
+      ]
+    }
+  }
+}

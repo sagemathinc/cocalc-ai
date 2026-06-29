@@ -111,6 +111,22 @@ export interface FileTextPreview {
   mtime: number;
 }
 
+export interface DirectorySummaryEntry {
+  path: string;
+  type: "directory" | "file" | "symlink" | "other";
+  size: number | null;
+  mtime: string | null;
+}
+
+export interface DirectorySummary {
+  project_id: string;
+  root: string;
+  max_depth: number;
+  limit: number;
+  truncated: boolean;
+  entries: DirectorySummaryEntry[];
+}
+
 export interface Fileserver {
   mount: (opts: {
     project_id: string;
@@ -273,6 +289,14 @@ export interface Fileserver {
     path: string;
     max_bytes?: number;
   }) => Promise<FileTextPreview>;
+
+  // Admin-only project-host-side directory summary for abuse triage.
+  getDirectorySummary: (opts: {
+    project_id: string;
+    path?: string;
+    max_depth?: number;
+    limit?: number;
+  }) => Promise<DirectorySummary>;
 
   /////////////
   // SNAPSHOTS

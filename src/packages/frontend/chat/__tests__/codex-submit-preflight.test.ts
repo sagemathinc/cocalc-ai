@@ -1,6 +1,7 @@
 import {
   ensureProjectRunningForCodex,
   isCodexPaymentSourceDefinitelyUnconfigured,
+  isCodexPaymentSourceNeedsUserConfiguration,
   isCodexPaymentSourceUsable,
   isCodexSubmitTarget,
 } from "../codex-submit-preflight";
@@ -26,6 +27,40 @@ describe("Codex submit preflight", () => {
     expect(
       isCodexPaymentSourceDefinitelyUnconfigured({
         source: "subscription",
+      } as any),
+    ).toBe(false);
+  });
+
+  it("prompts for user-managed Codex credentials for site-billed sources", () => {
+    expect(isCodexPaymentSourceNeedsUserConfiguration(undefined)).toBe(false);
+    expect(
+      isCodexPaymentSourceNeedsUserConfiguration({ source: "none" } as any),
+    ).toBe(true);
+    expect(
+      isCodexPaymentSourceNeedsUserConfiguration({
+        source: "site-api-key",
+        siteAiUsageLimitPositive: false,
+      } as any),
+    ).toBe(true);
+    expect(
+      isCodexPaymentSourceNeedsUserConfiguration({
+        source: "site-api-key",
+        siteAiUsageLimitPositive: true,
+      } as any),
+    ).toBe(false);
+    expect(
+      isCodexPaymentSourceNeedsUserConfiguration({
+        source: "site-api-key",
+      } as any),
+    ).toBe(false);
+    expect(
+      isCodexPaymentSourceNeedsUserConfiguration({
+        source: "subscription",
+      } as any),
+    ).toBe(false);
+    expect(
+      isCodexPaymentSourceNeedsUserConfiguration({
+        source: "account-api-key",
       } as any),
     ).toBe(false);
   });

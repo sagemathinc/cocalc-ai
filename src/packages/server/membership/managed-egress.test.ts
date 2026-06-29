@@ -356,6 +356,29 @@ describe("managed egress history", () => {
         metadata: { interface_name: "ens4" },
       },
     ]);
+
+    queryMock.mockClear();
+    listActiveAbuseReviewAnnotationsMock.mockClear();
+    getAdminAccountMembershipStatusMapMock.mockClear();
+
+    const cachedResult = await getManagedEgressAdminOverview({
+      start: "2026-04-28T10:00:00.000Z",
+      end: "2026-04-29T10:00:00.000Z",
+      top_account_limit: 5,
+      top_project_limit: 5,
+      recent_event_limit: 5,
+    });
+
+    expect(cachedResult.total_bytes).toBe(8192);
+    expect(
+      queryMock.mock.calls.filter(([sql]) =>
+        `${sql}`.includes(
+          "SELECT events.category, COALESCE(SUM(events.bytes), 0) AS bytes",
+        ),
+      ),
+    ).toHaveLength(0);
+    expect(listActiveAbuseReviewAnnotationsMock).toHaveBeenCalledTimes(1);
+    expect(getAdminAccountMembershipStatusMapMock).toHaveBeenCalledTimes(1);
   });
 
   it("aggregates admin-wide history into bounded time buckets", async () => {

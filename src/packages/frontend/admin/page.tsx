@@ -38,6 +38,7 @@ import { SiteLicensesAdmin } from "./site-licenses";
 import { AdminPurchaseAdmin } from "./admin-purchase";
 import { UsageStatistics } from "./stats/page";
 import { AdminDataExplorer } from "./admin-data-explorer";
+import { RetentionAdminOverview } from "./retention-overview";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -403,6 +404,14 @@ function getAdminSections({
       icon: "exchange",
       group: "operations",
       component: () => <ManagedEgressAdminOverview />,
+    },
+    {
+      key: "retention",
+      title: "Retention",
+      description: "Browse signup cohorts and managed-compute retention.",
+      icon: "line-chart",
+      group: "operations",
+      component: () => <RetentionAdminOverview />,
     },
     {
       key: "bay-ops",

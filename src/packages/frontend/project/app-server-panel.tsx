@@ -221,6 +221,24 @@ const PRESET_KIND_TAG_STYLE: CSSProperties = {
   borderColor: COLORS.GRAY_L0,
   color: COLORS.GRAY_M,
 };
+const HIDDEN_APP_TEMPLATE_KEYS = new Set([
+  "cocalc-public-viewer",
+  "public-notes",
+]);
+const HIDDEN_APP_ROW_IDS = new Set(["host-metrics-state", "metrics-state"]);
+
+function isUserVisiblePreset(preset: AppServerPreset): boolean {
+  return (
+    !HIDDEN_APP_TEMPLATE_KEYS.has(preset.key) &&
+    !HIDDEN_APP_TEMPLATE_KEYS.has(preset.id)
+  );
+}
+
+function isUserVisibleAppRow(row: ManagedAppStatus): boolean {
+  return (
+    !HIDDEN_APP_ROW_IDS.has(row.id) && !HIDDEN_APP_TEMPLATE_KEYS.has(row.id)
+  );
+}
 
 function presetCategoryLabel(category?: string): string | undefined {
   if (!category) return;
@@ -751,6 +769,125 @@ function MetricStat({
   );
 }
 
+function buildSpecFromPreset(preset: AppServerPreset): AppSpec {
+  const id = `${preset.id ?? ""}`.trim();
+  if (!id) {
+    throw new Error("App template is missing an app id.");
+  }
+  if (preset.kind === "service") {
+    const command = `${preset.command ?? ""}`.trim();
+    if (!command) {
+      throw new Error(`${preset.label} is missing a launch command.`);
+    }
+    const portText = `${preset.preferredPort ?? ""}`.trim();
+    const parsedPort = portText ? Number(portText) : undefined;
+    if (
+      parsedPort != null &&
+      (!Number.isInteger(parsedPort) || parsedPort <= 0)
+    ) {
+      throw new Error(`${preset.label} has an invalid preferred port.`);
+    }
+    return {
+      version: 1,
+      id,
+      title: `${preset.title ?? ""}`.trim() || undefined,
+      kind: "service",
+      command: {
+        exec: "bash",
+        args: ["-lc", command],
+      },
+      network: {
+        listen_host: "127.0.0.1",
+        port: parsedPort,
+        protocol: "http",
+      },
+      proxy: {
+        base_path: defaultBasePath(id),
+        strip_prefix: true,
+        websocket: true,
+        open_mode: preset.serviceOpenMode ?? "proxy",
+        health_path: `${preset.healthPath ?? ""}`.trim() || undefined,
+        readiness_timeout_s: 45,
+      },
+      wake: {
+        enabled: true,
+        keep_warm_s: 1800,
+        startup_timeout_s: 120,
+      },
+    };
+  }
+
+  const root = `${preset.staticRoot ?? ""}`.trim();
+  if (!root) {
+    throw new Error(`${preset.label} is missing a static root path.`);
+  }
+  const refreshCommand = `${preset.staticRefreshCommand ?? ""}`.trim();
+  const viewerFileTypes = parseViewerFileTypes(
+    preset.staticViewerFileTypes?.join(",") ?? ".md,.ipynb,.slides,.board",
+  );
+  const viewerAutoRefresh =
+    `${preset.staticViewerAutoRefresh ?? ""}`.trim().length > 0
+      ? Number(preset.staticViewerAutoRefresh)
+      : undefined;
+  const viewerCacheMode = preset.staticViewerCacheMode ?? "balanced";
+  const refreshStaleAfter =
+    `${preset.staticRefreshStaleAfter ?? ""}`.trim().length > 0
+      ? Number(preset.staticRefreshStaleAfter)
+      : undefined;
+  const refreshTimeout =
+    `${preset.staticRefreshTimeout ?? ""}`.trim().length > 0
+      ? Number(preset.staticRefreshTimeout)
+      : undefined;
+  const defaultRefreshStaleAfter =
+    preset.staticIntegrationMode === "cocalc-public-viewer"
+      ? Number(defaultPublicViewerRefreshStaleAfter(viewerCacheMode))
+      : 3600;
+  return {
+    version: 1,
+    id,
+    title: `${preset.title ?? ""}`.trim() || undefined,
+    kind: "static",
+    static: {
+      root,
+      index: `${preset.staticIndex ?? ""}`.trim() || undefined,
+      cache_control: `${preset.staticCacheControl ?? ""}`.trim() || undefined,
+      refresh: refreshCommand
+        ? {
+            command: {
+              exec: "bash",
+              args: ["-lc", refreshCommand],
+            },
+            stale_after_s: refreshStaleAfter ?? defaultRefreshStaleAfter,
+            timeout_s: refreshTimeout ?? 120,
+            trigger_on_hit: preset.staticRefreshOnHit ?? true,
+          }
+        : undefined,
+    },
+    proxy: {
+      base_path: defaultBasePath(id),
+      strip_prefix: true,
+      websocket: false,
+      readiness_timeout_s: 45,
+    },
+    integration:
+      preset.staticIntegrationMode === "cocalc-public-viewer"
+        ? {
+            mode: "cocalc-public-viewer",
+            file_types: viewerFileTypes,
+            manifest:
+              `${preset.staticViewerManifest ?? ""}`.trim() || undefined,
+            auto_refresh_s: viewerAutoRefresh ?? 0,
+            cache_mode: viewerCacheMode,
+          }
+        : undefined,
+    wake: {
+      enabled: false,
+      keep_warm_s: 0,
+      startup_timeout_s: 0,
+    },
+  };
+}
+
 function MetricsSparkline({
   values,
   width = 120,
@@ -984,6 +1121,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [loading, setLoading] = useState<boolean>(false);
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [launchBusyKey, setLaunchBusyKey] = useState<string | undefined>(
+    undefined,
+  );
   const [submittingToAgent, setSubmittingToAgent] = useState<boolean>(false);
   const [rowAction, setRowAction] = useState<{
     appId: string;
@@ -1161,9 +1301,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     staticViewerFileTypes,
   ]);
 
+  const userVisibleRows = useMemo(
+    () => rows.filter(isUserVisibleAppRow),
+    [rows],
+  );
+
   const filteredRows = useMemo(() => {
     const needle = rowSearch.trim().toLowerCase();
-    return rows.filter((row) => {
+    return userVisibleRows.filter((row) => {
       const spec = specById[row.id];
       const rowHasError =
         !!row.error ||
@@ -1191,37 +1336,48 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         `${value ?? ""}`.toLowerCase().includes(needle),
       );
     });
-  }, [rowFilter, rowSearch, rows, specById, startupFailures]);
+  }, [rowFilter, rowSearch, specById, startupFailures, userVisibleRows]);
 
   const summaryCounts = useMemo(() => {
-    const running = rows.filter((row) => row.state === "running").length;
-    const exposed = rows.filter((row) => isPublicExposure(row)).length;
-    const attention = rows.filter(
+    const running = userVisibleRows.filter(
+      (row) => row.state === "running",
+    ).length;
+    const exposed = userVisibleRows.filter((row) =>
+      isPublicExposure(row),
+    ).length;
+    const attention = userVisibleRows.filter(
       (row) =>
         !!row.error ||
         !!startupFailures[row.id] ||
         (row.warnings?.length ?? 0) > 0,
     ).length;
     return {
-      total: rows.length,
+      total: userVisibleRows.length,
       running,
-      stopped: Math.max(0, rows.length - running),
+      stopped: Math.max(0, userVisibleRows.length - running),
       exposed,
       attention,
     };
-  }, [rows, startupFailures]);
+  }, [startupFailures, userVisibleRows]);
   const siteOrigin = useMemo(() => {
     if (typeof window === "undefined" || !window.location?.origin) return "";
     return window.location.origin.replace(/\/+$/, "");
   }, []);
+  const visibleInstalledTemplates = useMemo(
+    () =>
+      installedTemplates.filter(
+        (item) =>
+          !HIDDEN_APP_TEMPLATE_KEYS.has(item.key) &&
+          !HIDDEN_APP_ROW_IDS.has(item.key),
+      ),
+    [installedTemplates],
+  );
 
   const quickPresetKeys = useMemo(
     () => [
       "jupyterlab",
       "code-server",
       "streamlit",
-      "cocalc-public-viewer",
-      "public-notes",
       "gradio",
       "fastapi",
       "marimo",
@@ -1252,10 +1408,16 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       .map((key) => presetByKey.get(key))
       .filter((preset): preset is AppServerPreset => {
         if (preset == null || seen.has(preset.key)) return false;
+        if (!isUserVisiblePreset(preset)) return false;
         seen.add(preset.key);
         return true;
       });
-    return [...ranked, ...presets.filter((preset) => !seen.has(preset.key))];
+    return [
+      ...ranked,
+      ...presets.filter(
+        (preset) => !seen.has(preset.key) && isUserVisiblePreset(preset),
+      ),
+    ];
   }, [expandedPresetKeys, presets]);
   const quickPresets = useMemo(() => {
     const presetByKey = new Map(
@@ -1273,6 +1435,42 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       presetSearchText(preset).includes(needle),
     );
   }, [orderedPresets, presetBrowserOpen, presetBrowserSearch, quickPresets]);
+  const presetRows = useMemo(() => {
+    const next: Record<string, ManagedAppStatus | undefined> = {};
+    for (const row of userVisibleRows) {
+      const spec = specById[row.id];
+      const preset =
+        matchPresetForSpec(spec, presets) ??
+        presets.find(
+          (candidate) => candidate.id === row.id || candidate.key === row.id,
+        );
+      if (preset && !next[preset.key]) {
+        next[preset.key] = row;
+      }
+    }
+    return next;
+  }, [presets, specById, userVisibleRows]);
+  const installedLaunchPresets = useMemo(
+    () =>
+      quickPresets.filter((preset) => {
+        if (presetRows[preset.key]) return false;
+        const template = installedTemplateMap[preset.key];
+        return template?.available;
+      }),
+    [installedTemplateMap, presetRows, quickPresets],
+  );
+  const visibleLaunchRows = useMemo(
+    () =>
+      [...userVisibleRows].sort((a, b) => {
+        if (a.state !== b.state) return a.state === "running" ? -1 : 1;
+        return (a.title || a.id).localeCompare(b.title || b.id);
+      }),
+    [userVisibleRows],
+  );
+  const showLaunchCard =
+    visibleLaunchRows.length > 0 ||
+    installedLaunchPresets.length > 0 ||
+    detectingInstalledTemplates;
 
   useEffect(() => {
     let cancelled = false;
@@ -1322,23 +1520,23 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   const startableRows = useMemo(
     () =>
-      rows.filter(
+      userVisibleRows.filter(
         (row) =>
           row.kind === "service" &&
           row.lifecycle_mode !== "unmanaged" &&
           row.state !== "running",
       ),
-    [rows],
+    [userVisibleRows],
   );
   const stoppableRows = useMemo(
     () =>
-      rows.filter(
+      userVisibleRows.filter(
         (row) =>
           row.kind === "service" &&
           row.lifecycle_mode !== "unmanaged" &&
           row.state === "running",
       ),
-    [rows],
+    [userVisibleRows],
   );
 
   const refresh = useCallback(async () => {
@@ -2020,6 +2218,108 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
+  async function onLaunchRow(row: ManagedAppStatus) {
+    if (
+      row.state === "running" ||
+      row.kind === "static" ||
+      row.lifecycle_mode === "unmanaged"
+    ) {
+      await openStatus(row);
+      return;
+    }
+    try {
+      setLaunchBusyKey(`row:${row.id}`);
+      setSubmitting(true);
+      setError(undefined);
+      setStartupFailures((prev) => ({ ...prev, [row.id]: undefined }));
+      const spec = specById[row.id] ?? (await api.apps.getAppSpec(row.id));
+      setSpecById((prev) => ({ ...prev, [row.id]: spec }));
+      const missingInstall = await getMissingInstallForSpec(spec);
+      if (missingInstall) {
+        reportMissingInstall({
+          appId: row.id,
+          action: "start",
+          preset: missingInstall.preset,
+          template: missingInstall.template,
+        });
+        return;
+      }
+      const status = await api.apps.ensureRunning(row.id, {
+        timeout: 90_000,
+        interval: 1000,
+      });
+      await refreshAfterMutation();
+      await openStatus(status);
+    } catch (err) {
+      await reportStartupFailure({
+        appId: row.id,
+        action: "start",
+        err,
+      });
+      await refreshAfterMutation();
+    } finally {
+      setSubmitting(false);
+      setLaunchBusyKey(undefined);
+    }
+  }
+
+  async function onLaunchPreset(preset: AppServerPreset) {
+    const existing = presetRows[preset.key];
+    if (existing) {
+      await onLaunchRow(existing);
+      return;
+    }
+    let createdId: string | undefined;
+    try {
+      setLaunchBusyKey(`preset:${preset.key}`);
+      setSubmitting(true);
+      setError(undefined);
+      const spec = buildSpecFromPreset(preset);
+      setStartupFailures((prev) => ({ ...prev, [spec.id]: undefined }));
+      const { id } = await api.apps.upsertAppSpec(spec);
+      createdId = id;
+      let status = await api.apps.statusApp(id);
+      if (spec.kind === "service") {
+        const missingInstall = await getMissingInstallForSpec(spec);
+        if (missingInstall) {
+          await refreshAfterMutation();
+          reportMissingInstall({
+            appId: id,
+            action: "start-after-save",
+            preset: missingInstall.preset,
+            template: missingInstall.template,
+          });
+          return;
+        }
+        status = await api.apps.ensureRunning(id, {
+          timeout: 90_000,
+          interval: 1000,
+        });
+      }
+      await refreshAfterMutation();
+      await openStatus(status);
+    } catch (err) {
+      if (createdId) {
+        await reportStartupFailure({
+          appId: createdId,
+          action: "start-after-save",
+          err,
+        });
+        await refreshAfterMutation();
+      } else {
+        setError(normalizeError(err));
+      }
+    } finally {
+      setSubmitting(false);
+      setLaunchBusyKey(undefined);
+    }
+  }
+
+  function configurePreset(preset: AppServerPreset) {
+    applyPreset(preset.key);
+    setCreatorOpen(true);
+  }
+
   async function onCreateUnmanagedFromDetected(item: DetectedAppPort) {
     try {
       setSubmitting(true);
@@ -2588,7 +2888,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       </Modal>
       <Modal
         open={installedTemplatesOpen}
-        title={`Installed templates (${installedTemplates.length})`}
+        title={`Installed templates (${visibleInstalledTemplates.length})`}
         footer={null}
         onCancel={() => setInstalledTemplatesOpen(false)}
         width={720}
@@ -2599,7 +2899,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           they start.
         </Paragraph>
         <Space wrap style={{ width: "100%" }}>
-          {installedTemplates.map((item) => (
+          {visibleInstalledTemplates.map((item) => (
             <Tag
               key={item.key}
               color={
@@ -2655,7 +2955,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             </Button>
             <Button
               onClick={() => {
-                if (installedTemplates.length > 0) {
+                if (visibleInstalledTemplates.length > 0) {
                   setInstalledTemplatesOpen(true);
                   return;
                 }
@@ -2663,16 +2963,187 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               }}
               loading={detectingInstalledTemplates}
             >
-              {installedTemplates.length > 0
-                ? `Installed templates (${installedTemplates.length})`
+              {visibleInstalledTemplates.length > 0
+                ? `Installed templates (${visibleInstalledTemplates.length})`
                 : "Detect installed templates"}
             </Button>
           </Space>
         </Space>
       </Card>
+      {showLaunchCard ? (
+        <Card
+          size="small"
+          title="Run apps"
+          extra={
+            visibleInstalledTemplates.length > 0 ? (
+              <Button
+                type="link"
+                onClick={() => setInstalledTemplatesOpen(true)}
+              >
+                Installed runtimes
+              </Button>
+            ) : null
+          }
+        >
+          <Space orientation="vertical" style={{ width: "100%" }} size={10}>
+            <Typography.Text type="secondary">
+              Start with the apps that already exist or are detected as
+              installed in this project. Advanced configuration is below.
+            </Typography.Text>
+            {detectingInstalledTemplates &&
+            visibleLaunchRows.length === 0 &&
+            installedLaunchPresets.length === 0 ? (
+              <Spin />
+            ) : null}
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+              }}
+            >
+              {visibleLaunchRows.map((row) => {
+                const isRunning = row.state === "running";
+                const isStatic = row.kind === "static";
+                const isUnmanaged = row.lifecycle_mode === "unmanaged";
+                const canOpen =
+                  !!row.url ||
+                  !!buildPublicUrlFromExposure(row, publicAppPolicy);
+                return (
+                  <div
+                    key={`launch-${row.id}`}
+                    style={{
+                      background: "white",
+                      border: `1px solid ${COLORS.GRAY_LL}`,
+                      borderRadius: 8,
+                      display: "grid",
+                      gap: 8,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <Typography.Text
+                          strong
+                          ellipsis={{ tooltip: row.title || row.id }}
+                          style={{ display: "block" }}
+                        >
+                          {row.title || row.id}
+                        </Typography.Text>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ display: "block", fontSize: 12 }}
+                        >
+                          {row.id}
+                        </Typography.Text>
+                      </div>
+                      <Space size={4} wrap>
+                        <Tag color={isRunning ? "green" : "default"}>
+                          {isRunning ? "running" : "stopped"}
+                        </Tag>
+                        {isStatic ? <Tag>static</Tag> : null}
+                      </Space>
+                    </div>
+                    <Space wrap>
+                      <Button
+                        type="primary"
+                        size="small"
+                        loading={launchBusyKey === `row:${row.id}`}
+                        disabled={
+                          (submitting && launchBusyKey !== `row:${row.id}`) ||
+                          ((isRunning || isStatic || isUnmanaged) && !canOpen)
+                        }
+                        onClick={() => void onLaunchRow(row)}
+                      >
+                        {isRunning || isStatic || isUnmanaged
+                          ? "Open"
+                          : "Start and open"}
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={submitting}
+                        onClick={() => toggleRowExpanded(row.id)}
+                      >
+                        {expandedRows[row.id] ? "Hide details" : "Details"}
+                      </Button>
+                    </Space>
+                  </div>
+                );
+              })}
+              {installedLaunchPresets.map((preset) => {
+                const template = installedTemplateMap[preset.key];
+                return (
+                  <div
+                    key={`installed-${preset.key}`}
+                    style={{
+                      background: "white",
+                      border: `1px solid ${COLORS.GRAY_LL}`,
+                      borderRadius: 8,
+                      display: "grid",
+                      gap: 8,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <Typography.Text
+                          strong
+                          ellipsis={{ tooltip: preset.label }}
+                          style={{ display: "block" }}
+                        >
+                          {preset.label}
+                        </Typography.Text>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ display: "block", fontSize: 12 }}
+                        >
+                          {template?.details || preset.description}
+                        </Typography.Text>
+                      </div>
+                      <Tag color="green">installed</Tag>
+                    </div>
+                    <Space wrap>
+                      <Button
+                        type="primary"
+                        size="small"
+                        loading={launchBusyKey === `preset:${preset.key}`}
+                        disabled={
+                          submitting && launchBusyKey !== `preset:${preset.key}`
+                        }
+                        onClick={() => void onLaunchPreset(preset)}
+                      >
+                        Run
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={submitting}
+                        onClick={() => configurePreset(preset)}
+                      >
+                        Configure
+                      </Button>
+                    </Space>
+                  </div>
+                );
+              })}
+            </div>
+          </Space>
+        </Card>
+      ) : null}
       <Card
         size="small"
-        title="Create a managed application"
+        title="Create or configure an app"
         extra={
           <Button
             type="link"
@@ -3393,7 +3864,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 disabled={!canSaveForm}
                 onClick={() => void onCreate()}
               >
-                Save app
+                {startNow ? "Save, start, and open" : "Save app"}
               </Button>
             </Space>
           </Space>
@@ -3460,13 +3931,13 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       ) : null}
       <Card size="small" title={`Managed apps (${summaryCounts.total})`}>
         {loading ? <Spin /> : null}
-        {!loading && rows.length === 0 ? (
+        {!loading && userVisibleRows.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description="No apps yet."
           />
         ) : null}
-        {!loading && rows.length > 0 ? (
+        {!loading && userVisibleRows.length > 0 ? (
           <Space
             wrap
             style={{

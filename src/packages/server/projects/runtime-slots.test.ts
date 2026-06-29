@@ -262,4 +262,21 @@ describe("runtime slot admission", () => {
       ["project-runtime-slot-admission:sponsor"],
     );
   });
+
+  it("heartbeats runtime slots by joining sponsor id to accounts.account_id", async () => {
+    const { heartbeatProjectRuntimeSlotsBatchLocal } =
+      await import("./runtime-slots");
+    await heartbeatProjectRuntimeSlotsBatchLocal({
+      slots: [makeSlot("project-1")],
+      client: { query: queryMock } as any,
+    });
+
+    const insertSql = queryMock.mock.calls
+      .map((call) => `${call[0]}`)
+      .find((sql) => sql.includes("INSERT INTO project_runtime_slots"));
+    expect(insertSql).toContain(
+      "JOIN accounts ON accounts.account_id = input.sponsor_account_id",
+    );
+    expect(insertSql).not.toContain("JOIN accounts USING (sponsor_account_id)");
+  });
 });

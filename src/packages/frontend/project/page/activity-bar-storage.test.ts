@@ -59,14 +59,12 @@ describe("activity-bar storage", () => {
         "new",
         "search",
         "docs",
-        "settings",
-        "rootfs",
         "active",
         "log",
         "servers",
         "info",
       ],
-      hidden: ["settings", "log"],
+      hidden: ["log"],
     });
     expect(redux.getStore("page")?.get("activity_bar_collapsed")).toBe(true);
     expect(redux.getStore("page")?.get("activity_bar_labels")).toBe(false);
@@ -78,8 +76,6 @@ describe("activity-bar storage", () => {
         "new",
         "search",
         "docs",
-        "settings",
-        "rootfs",
         "active",
         "log",
         "servers",
@@ -88,7 +84,7 @@ describe("activity-bar storage", () => {
     );
     expect(
       redux.getStore("page")?.get("activity_bar_hidden")?.toJS?.(),
-    ).toEqual(["settings", "log"]);
+    ).toEqual(["log"]);
   });
 
   it("uses local defaults when local storage is empty", () => {
@@ -105,9 +101,7 @@ describe("activity-bar storage", () => {
         "new",
         "search",
         "docs",
-        "settings",
         "workspaces",
-        "rootfs",
         "active",
         "log",
         "servers",

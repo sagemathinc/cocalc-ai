@@ -11,6 +11,7 @@ export type AdminSection =
   | "managed-egress"
   | "membership-tiers"
   | "project-backup-shards"
+  | "retention"
   | "registration-tokens"
   | "rootfs"
   | "site-setup"
@@ -30,6 +31,7 @@ const ADMIN_SECTIONS = new Set<AdminSection>([
   "managed-egress",
   "membership-tiers",
   "project-backup-shards",
+  "retention",
   "registration-tokens",
   "rootfs",
   "site-setup",

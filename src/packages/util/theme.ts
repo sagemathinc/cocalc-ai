@@ -124,6 +124,10 @@ const MAIN_COLORS = {
   AI_ASSISTANT_FONT: "#f0a11d",
 
   RUN: "#389e0d", // the green color of the run button
+
+  FEATURE_BLUE: "#096dd9",
+  FEATURE_JULIA_PURPLE: "#9558b2",
+  FEATURE_TEAL: "#278c83",
 } as const;
 
 export const COLORS = {

@@ -11,13 +11,14 @@ import { Button } from "antd";
 import * as immutable from "immutable";
 import { useEffect } from "react";
 
-import { CSS, React, redux, useRedux } from "@cocalc/frontend/app-framework";
+import { React, redux, useRedux } from "@cocalc/frontend/app-framework";
 import { useRef } from "react";
 
 // Support for all the MIME types
 import "./output-messages/mime-types/init-frontend";
 
 // React components that implement parts of the Jupyter notebook.
+import { alert_message } from "@cocalc/frontend/alerts";
 import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { ErrorDisplay, Icon, Text, Tooltip } from "@cocalc/frontend/components";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
@@ -43,13 +44,19 @@ import * as toolComponents from "./ai";
 import { NBConvert } from "./nbconvert";
 import { Kernel } from "./status";
 
-export const ERROR_STYLE: CSS = {
-  maxHeight: "30vh",
-  overflow: "auto",
-} as const;
-
 const JUPYTER_TEST_SET_KERNEL_ERROR_EVENT =
   "cocalc:jupyter:set-kernel-error-for-test";
+
+function formatNotebookActionError(error: unknown): string {
+  const details = `${error}`.trim();
+  if (!details) {
+    return "A notebook action did not finish. If the notebook is working normally, no action is needed.";
+  }
+  if (details.toLowerCase() === "timeout") {
+    return "A notebook action took longer than expected. If the notebook is working normally, no action is needed.";
+  }
+  return details;
+}
 
 interface Props {
   error?: string;
@@ -339,18 +346,15 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     "jupyter_classic",
   ]);
 
-  function render_error() {
-    if (error) {
-      return (
-        <ErrorDisplay
-          banner={true}
-          error={error}
-          style={ERROR_STYLE}
-          onClose={() => actions.set_error(undefined)}
-        />
-      );
-    }
-  }
+  useEffect(() => {
+    if (!error) return;
+    alert_message({
+      type: "error",
+      title: "Notebook issue",
+      message: formatNotebookActionError(error),
+    });
+    actions.set_error(undefined);
+  }, [actions, error]);
 
   function render_fatal() {
     return (
@@ -509,7 +513,6 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         }}
       >
         {!read_only && <KernelWarning name={name} actions={actions} />}
-        {render_error()}
         {render_modals()}
         {!read_only && (
           <Kernel

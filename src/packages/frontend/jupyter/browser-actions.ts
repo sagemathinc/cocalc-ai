@@ -10,6 +10,7 @@ web browser frontend.
 import * as awaiting from "awaiting";
 import { fromJS, Map, Set as iSet } from "immutable";
 import { debounce, isEqual } from "lodash";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
@@ -3635,8 +3636,14 @@ export class JupyterActions extends JupyterActions0 {
       // worked -- and also no need to show "kernel got killed" message since this was intentional.
       this.set_error("");
     } catch (err) {
-      // failed
-      this.set_error(err);
+      console.warn("Jupyter kernel stop was not confirmed in time", err);
+      this.set_error("");
+      alert_message({
+        type: "warning",
+        title: "Kernel stop is still pending",
+        message:
+          "CoCalc asked the kernel to stop, but the project did not confirm it within 30 seconds. If the notebook continues working normally, no action is needed.",
+      });
     }
   });
 

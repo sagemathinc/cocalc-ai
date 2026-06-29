@@ -137,15 +137,18 @@ function themedRootfsIconStyle({
 
 function filterTabsForProjectAccess({
   agentAIEnabled,
+  liteMode,
   names,
   viewer,
 }: {
   agentAIEnabled: boolean;
+  liteMode: boolean;
   names: readonly FixedTab[];
   viewer: boolean;
 }): FixedTab[] {
   return names.filter((name) => {
     if (!agentAIEnabled && name === "agents") return false;
+    if (liteMode && FIXED_PROJECT_TABS[name].noLite) return false;
     if (viewer && !VIEWER_FIXED_TABS.has(name)) return false;
     return true;
   });
@@ -154,6 +157,7 @@ function filterTabsForProjectAccess({
 function preserveUnavailableTabs(opts: {
   agentAIEnabled: boolean;
   hiddenTabs: readonly FixedTab[];
+  liteMode: boolean;
   nextHidden: FixedTab[];
   nextOrder: FixedTab[];
   originalOrder: readonly FixedTab[];
@@ -162,6 +166,7 @@ function preserveUnavailableTabs(opts: {
   const available = new Set(
     filterTabsForProjectAccess({
       agentAIEnabled: opts.agentAIEnabled,
+      liteMode: opts.liteMode,
       names: opts.originalOrder,
       viewer: opts.viewer,
     }),
@@ -263,7 +268,7 @@ export function VerticalFixedTabs({
   const account_id = useTypedRedux("account", "account_id");
   const active_flyout = useTypedRedux({ project_id }, "flyout");
   const viewer = projectAccess?.role === "viewer";
-  const rootfsTheme = useRootfsFixedTabTheme(!viewer);
+  const rootfsTheme = useRootfsFixedTabTheme(!viewer && !lite);
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const breakPoint = useRef<number>(0);
@@ -279,11 +284,13 @@ export function VerticalFixedTabs({
   const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(() => {
     const filteredOrder = filterTabsForProjectAccess({
       agentAIEnabled,
+      liteMode: lite,
       names: tabOrder,
       viewer,
     });
     const filteredHidden = filterTabsForProjectAccess({
       agentAIEnabled,
+      liteMode: lite,
       names: hiddenTabs,
       viewer,
     });
@@ -605,6 +612,7 @@ export function VerticalFixedTabs({
           const preserved = preserveUnavailableTabs({
             agentAIEnabled,
             hiddenTabs,
+            liteMode: lite,
             nextHidden,
             nextOrder,
             originalOrder: tabOrder,
@@ -616,6 +624,7 @@ export function VerticalFixedTabs({
         }}
         order={filterTabsForProjectAccess({
           agentAIEnabled,
+          liteMode: lite,
           names: tabOrder,
           viewer,
         })}
@@ -632,7 +641,7 @@ export function HiddenActivityBarLauncher() {
   const { showActBarLabels } = useAppContext();
   const account_id = useTypedRedux("account", "account_id");
   const viewer = projectAccess?.role === "viewer";
-  const rootfsTheme = useRootfsFixedTabTheme(!viewer);
+  const rootfsTheme = useRootfsFixedTabTheme(!viewer && !lite);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
@@ -645,6 +654,7 @@ export function HiddenActivityBarLauncher() {
     intl,
     names: filterTabsForProjectAccess({
       agentAIEnabled,
+      liteMode: lite,
       names: tabOrder,
       viewer,
     }),
@@ -736,6 +746,7 @@ export function HiddenActivityBarLauncher() {
           const preserved = preserveUnavailableTabs({
             agentAIEnabled,
             hiddenTabs,
+            liteMode: lite,
             nextHidden,
             nextOrder,
             originalOrder: tabOrder,
@@ -747,6 +758,7 @@ export function HiddenActivityBarLauncher() {
         }}
         order={filterTabsForProjectAccess({
           agentAIEnabled,
+          liteMode: lite,
           names: tabOrder,
           viewer,
         })}

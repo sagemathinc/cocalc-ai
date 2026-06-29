@@ -4,6 +4,8 @@ import immutable from "immutable";
 import { render, screen } from "@testing-library/react";
 import { SettingsFlyout } from "./settings";
 
+var mockLite = false;
+
 jest.mock("antd", () => {
   const Alert = ({ message, description }: any) => (
     <div>
@@ -34,23 +36,37 @@ jest.mock("antd", () => {
       readOnly
     />
   );
+  const Empty = ({ description }: any) => <div>{description}</div>;
+  Empty.PRESENTED_IMAGE_SIMPLE = "simple";
+  const Modal = ({ children, open }: any) =>
+    open ? <div>{children}</div> : null;
   const Popconfirm = ({ children }: any) => <>{children}</>;
+  const Popover = ({ children }: any) => <>{children}</>;
   const Space = ({ children }: any) => <div>{children}</div>;
   Space.Compact = ({ children }: any) => <div>{children}</div>;
+  const Table = ({ children }: any) => <div>{children}</div>;
+  Table.Column = () => null;
+  const Tag = ({ children }: any) => <span>{children}</span>;
   return {
     Alert,
     Button,
     Card,
     Collapse,
+    Empty,
     InputNumber,
     message: {
       error: jest.fn(),
       success: jest.fn(),
     },
+    Modal,
     Popconfirm,
+    Popover,
     Space,
+    Table,
+    Tag,
     Tooltip: ({ children }: any) => <>{children}</>,
     Typography: {
+      Paragraph: ({ children }: any) => <p>{children}</p>,
       Text: ({ children }: any) => <span>{children}</span>,
     },
   };
@@ -75,6 +91,12 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     }),
     getActions: () => ({}),
   },
+  useActions: () => ({
+    create_public_directory_share: jest.fn(),
+    delete_public_directory_share: jest.fn(),
+    list_public_directory_shares: jest.fn(async () => []),
+    update_public_directory_share: jest.fn(),
+  }),
   useEffect: require("react").useEffect,
   useProjectMapField: () => undefined,
   useState: require("react").useState,
@@ -212,7 +234,9 @@ jest.mock("@cocalc/frontend/project/settings/stop-project", () => ({
   StopProject: () => <button type="button">Stop</button>,
 }));
 jest.mock("@cocalc/frontend/lite", () => ({
-  lite: false,
+  get lite() {
+    return mockLite;
+  },
 }));
 jest.mock("@cocalc/frontend/project/page/flyouts/state", () => ({
   getFlyoutSettings: () => [],
@@ -233,6 +257,10 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 }));
 
 describe("SettingsFlyout", () => {
+  beforeEach(() => {
+    mockLite = false;
+  });
+
   it("includes recovery actions in flyout settings", () => {
     render(
       <SettingsFlyout
@@ -298,5 +326,26 @@ describe("SettingsFlyout", () => {
 
     expect(screen.getByText("People")).toBeTruthy();
     expect(screen.getByText("ProjectCollaboratorsContent")).toBeTruthy();
+  });
+
+  it("hides container runtime controls and unavailable sections in lite mode", () => {
+    mockLite = true;
+
+    render(
+      <SettingsFlyout
+        project_id="project-1"
+        wrap={(content) => <>{content}</>}
+      />,
+    );
+
+    expect(screen.queryByText("Status:")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move" })).toBeNull();
+    expect(screen.queryByText("Runtime")).toBeNull();
+    expect(screen.queryByText("ProjectControl")).toBeNull();
+    expect(screen.queryByText("UpgradeUsage")).toBeNull();
+    expect(screen.queryByText("Recovery")).toBeNull();
+    expect(screen.queryByText("Location")).toBeNull();
   });
 });

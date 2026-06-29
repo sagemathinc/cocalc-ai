@@ -88,6 +88,16 @@ describe("project create draft", () => {
     );
   });
 
+  it("allows the initial draft to require a user-entered title", () => {
+    const ctx = context({ defaultTitle: "" });
+    const draft = createInitialProjectDraft(ctx);
+
+    expect(draft.title).toBe("");
+    expect(projectDraftSummary(draft, ctx).warnings).toContain(
+      "Project title is required.",
+    );
+  });
+
   it("auto-selects an image only when there is one usable option", () => {
     const draft = createInitialProjectDraft(
       context({

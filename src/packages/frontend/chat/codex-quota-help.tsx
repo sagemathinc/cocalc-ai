@@ -16,11 +16,23 @@ const { Paragraph, Text } = Typography;
 export function isCodexUsageLimitMessage(text?: string): boolean {
   const normalized = `${text ?? ""}`.toLowerCase();
   return (
+    isCodexSiteAiUnavailableMessage(text) ||
     normalized.includes("ai usage limit reached") ||
     normalized.includes("llm usage limit reached") ||
+    normalized.includes("you have reached your 5-hour ai usage limit") ||
+    normalized.includes("you have reached your 7-day ai usage limit") ||
     ((normalized.includes("ai usage limit") ||
       normalized.includes("llm usage limit")) &&
       normalized.includes("upgrade your membership"))
+  );
+}
+
+export function isCodexSiteAiUnavailableMessage(text?: string): boolean {
+  const normalized = `${text ?? ""}`.toLowerCase();
+  return (
+    normalized.includes("cocalc ai usage is not included on this site") ||
+    normalized.includes("site-provided ai usage is not available") ||
+    normalized.includes("site-provided openai access is not available")
   );
 }
 
@@ -83,6 +95,10 @@ export function CodexQuotaHelp({
     () => isCodexUsageLimitMessage(message),
     [message],
   );
+  const showSiteAiUnavailable = useMemo(
+    () => isCodexSiteAiUnavailableMessage(message),
+    [message],
+  );
 
   if (!showUsageLimit && !authError) return null;
 
@@ -107,11 +123,31 @@ export function CodexQuotaHelp({
         ) : (
           <>
             <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              <Text strong>Need more Codex access?</Text> Connect your ChatGPT
-              Plan or add an OpenAI API key in AI settings. CoCalc shows which
-              source Codex will use; ChatGPT shows your remaining Codex usage.
+              {showSiteAiUnavailable ? (
+                <>
+                  <Text strong>AI is not included with CoCalc membership.</Text>{" "}
+                  Sign up for a ChatGPT plan, then connect it in CoCalc AI
+                  settings.
+                </>
+              ) : (
+                <>
+                  <Text strong>Need more Codex access?</Text> Connect your
+                  ChatGPT Plan in AI settings. ChatGPT shows your remaining
+                  Codex usage.
+                </>
+              )}
             </Paragraph>
             <Space wrap>
+              {showSiteAiUnavailable ? (
+                <Button
+                  size="small"
+                  href="https://chatgpt.com/pricing"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View ChatGPT plans
+                </Button>
+              ) : null}
               <Button
                 size="small"
                 type="primary"
@@ -119,14 +155,16 @@ export function CodexQuotaHelp({
               >
                 Open AI Settings
               </Button>
-              <Button
-                size="small"
-                href={CODEX_USAGE_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {CODEX_USAGE_LABEL}
-              </Button>
+              {!showSiteAiUnavailable ? (
+                <Button
+                  size="small"
+                  href={CODEX_USAGE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {CODEX_USAGE_LABEL}
+                </Button>
+              ) : null}
             </Space>
           </>
         )}
@@ -136,7 +174,9 @@ export function CodexQuotaHelp({
         title={
           authError
             ? "Codex Authentication"
-            : "Choose one: ChatGPT Plan or OpenAI API key"
+            : showUsageLimit
+              ? "Connect a ChatGPT Plan"
+              : "Choose one: ChatGPT Plan or OpenAI API key"
         }
         footer={null}
         onCancel={() => setSettingsOpen(false)}

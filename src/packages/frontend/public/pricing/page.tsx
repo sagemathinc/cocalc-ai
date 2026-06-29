@@ -284,7 +284,8 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     title: "Functionality",
     rows: [
       {
-        label: "Dedicated Project Host VM with much larger RAM, CPU, and Disk (pay as you go)",
+        label:
+          "Dedicated Project Host VM with much larger RAM, CPU, and Disk (pay as you go)",
         value: ({ tier }) =>
           formatBooleanValue(tierFeatures(tier).create_hosts),
       },
@@ -360,9 +361,9 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
               <th style={headerCellStyle} />
               {tiers.map((tier) => (
                 <th key={tier.id} scope="col" style={headerCellStyle}>
-                  <Title level={4} style={{ margin: 0 }}>
+                  <Text strong style={{ fontSize: 20, lineHeight: "28px" }}>
                     {tier.label ?? tier.id}
-                  </Title>
+                  </Text>
                 </th>
               ))}
             </tr>
@@ -376,9 +377,9 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
                     scope="colgroup"
                     style={groupCellStyle}
                   >
-                    <Title level={4} style={{ margin: 0 }}>
+                    <Text strong style={{ fontSize: 20, lineHeight: "28px" }}>
                       {group.title}
-                    </Title>
+                    </Text>
                   </th>
                 </tr>
                 {group.rows.map((row) => (
@@ -448,6 +449,12 @@ export default function PricingPage({
           team buys. Compare the operating models first — hosted, local, or
           self-hosted — then choose a plan below.
         </Paragraph>
+        <Alert
+          showIcon
+          style={{ maxWidth: 720 }}
+          title="AI integration included; AI usage requires your ChatGPT plan or API key."
+          type="info"
+        />
         <Flex gap={12} wrap>
           <Button href={publicPath("products")}>
             Compare operating models

@@ -7,12 +7,14 @@ import { CheckCircleTwoTone, CloseCircleTwoTone } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { COLORS } from "@cocalc/util/theme";
 import { Progress } from "antd";
+import type { ProgressProps } from "antd";
 
 export const PercentBar: React.FC<{
   percent?: number;
   percent2?: number; // part of the main bar, should be < percent
   format?: (pct?: number) => React.ReactNode;
-}> = ({ percent, percent2, format }) => {
+  size?: ProgressProps["size"];
+}> = ({ percent, percent2, format, size = "small" }) => {
   if (percent == null) return null;
 
   function props() {
@@ -25,7 +27,7 @@ export const PercentBar: React.FC<{
     <Progress
       percent={percent}
       strokeColor={COLORS.GRAY_L}
-      size={"small"}
+      size={size}
       format={format}
       status={"normal"}
       {...props()}

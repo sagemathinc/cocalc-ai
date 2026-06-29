@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import {
   CodexQuotaHelp,
   classifyCodexAuthErrorMessage,
+  isCodexSiteAiUnavailableMessage,
   isCodexUsageLimitMessage,
 } from "../codex-quota-help";
 
@@ -41,6 +42,13 @@ describe("isCodexUsageLimitMessage", () => {
         "**AI usage limit reached**\n\nYou have reached your 5-hour AI usage limit.",
       ),
     ).toBe(true);
+  });
+
+  it("detects the zero site AI limit text", () => {
+    const message =
+      "CoCalc AI usage is not included on this site. To use AI in CoCalc, sign up for a ChatGPT plan at https://chatgpt.com/pricing, then connect it in CoCalc AI settings.";
+    expect(isCodexUsageLimitMessage(message)).toBe(true);
+    expect(isCodexSiteAiUnavailableMessage(message)).toBe(true);
   });
 
   it("ignores unrelated chat content", () => {
@@ -109,6 +117,19 @@ describe("CodexQuotaHelp", () => {
     expect(screen.getByTestId("codex-credentials-panel").textContent).toContain(
       "project-1",
     );
+  });
+
+  it("renders ChatGPT-only guidance when site AI usage is unavailable", () => {
+    render(
+      <CodexQuotaHelp
+        message="CoCalc AI usage is not included on this site. To use AI in CoCalc, sign up for a ChatGPT plan at https://chatgpt.com/pricing, then connect it in CoCalc AI settings."
+        projectId="project-1"
+      />,
+    );
+
+    expect(screen.getByText("View ChatGPT plans")).toBeTruthy();
+    expect(screen.getByText("Open AI Settings")).toBeTruthy();
+    expect(screen.queryByText("Open ChatGPT Codex Usage")).toBeNull();
   });
 
   it("opens the credentials modal for expired auth errors", () => {

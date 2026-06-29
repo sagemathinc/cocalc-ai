@@ -92,12 +92,13 @@ export function AIUsageHelpContent() {
   return (
     <>
       <Paragraph>
-        AI usage is limited by a short 5-hour window and a longer 7-day window.
-        When you hit a limit, usage resets automatically.
+        Site-provided AI usage may be limited or unavailable. CoCalc membership
+        upgrades do not currently include additional AI usage on cocalc.ai.
       </Paragraph>
       <Paragraph>
-        Upgrade your membership for higher limits.{" "}
-        <A href="/settings/membership">Open Membership</A>.
+        To use AI in CoCalc, sign up for a ChatGPT plan at{" "}
+        <A href="https://chatgpt.com/pricing">chatgpt.com/pricing</A>, then
+        connect it in <A href="/settings/account/ai">CoCalc AI settings</A>.
       </Paragraph>
     </>
   );

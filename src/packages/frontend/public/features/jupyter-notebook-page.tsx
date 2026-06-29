@@ -436,7 +436,8 @@ export default function JupyterNotebookFeaturePage({
                 Jupyter, but project-native
               </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                Notebooks that keep running, collaborating, and remembering
+                Jupyter notebooks that keep running, collaborating, and
+                remembering
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
                 CoCalc keeps the familiar Jupyter notebook shape, then puts it

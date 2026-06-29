@@ -4,7 +4,14 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { Button, Modal, Popconfirm, Space, Tag } from "antd";
+import {
+  Button,
+  Modal,
+  Popconfirm,
+  Space,
+  Tag,
+  message as antdMessage,
+} from "antd";
 import {
   React,
   redux,
@@ -32,6 +39,7 @@ import type { ChatRoomModalHandlers } from "./chatroom-modals";
 import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
+import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
 import { ChatFontSizeControls } from "./chat-font-size-controls";
 import {
@@ -69,6 +77,7 @@ import {
 import { showActiveAutomationLimitModal } from "./automation-limit";
 import {
   AutomationConfigFields,
+  automationConfigMissingReason,
   buildAutomationDraft,
   describeAutomationSchedule,
   formatAutomationPausedReason,
@@ -112,7 +121,7 @@ import {
 import { CodexPaymentCredentialsModal } from "./codex";
 import {
   ensureProjectRunningForCodex,
-  isCodexPaymentSourceDefinitelyUnconfigured,
+  isCodexPaymentSourceNeedsUserConfiguration,
   isCodexSubmitTarget,
 } from "./codex-submit-preflight";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -1241,6 +1250,22 @@ export function ChatPanel({
   }, [actions, selectedThreadId]);
 
   const createThreadWithoutMessage = useCallback(async () => {
+    const allowCodexAutomation = newThreadSetup.agentMode === "codex";
+    const automationEnabled = newThreadSetup.automationConfig?.enabled === true;
+    if (automationEnabled) {
+      const missingReason = automationConfigMissingReason({
+        draft: buildAutomationDraft({
+          config: newThreadSetup.automationConfig,
+          enabled: true,
+          allowCodexRunKind: allowCodexAutomation,
+        }),
+        allowCodexRunKind: allowCodexAutomation,
+      });
+      if (missingReason) {
+        antdMessage.warning(missingReason);
+        return;
+      }
+    }
     const threadAgent =
       newThreadSetup.agentMode != null
         ? {
@@ -1283,12 +1308,9 @@ export function ChatPanel({
 
     const newThreadAutomationConfig = normalizeAutomationConfigForSave({
       draft: newThreadSetup.automationConfig,
-      allowCodexRunKind: newThreadSetup.agentMode === "codex",
+      allowCodexRunKind: allowCodexAutomation,
     });
-    if (
-      newThreadSetup.automationConfig?.enabled === true &&
-      newThreadAutomationConfig
-    ) {
+    if (automationEnabled && newThreadAutomationConfig) {
       try {
         await handleAutomationSave({
           threadId: threadKey,
@@ -1776,7 +1798,7 @@ export function ChatPanel({
     }
     if (
       isCodexSubmit &&
-      isCodexPaymentSourceDefinitelyUnconfigured(codexPaymentSource)
+      isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource)
     ) {
       refreshCodexPaymentSource?.();
       setCodexPaymentConfigOpen(true);
@@ -1799,6 +1821,21 @@ export function ChatPanel({
             content: `${err}`,
           });
         }
+        return;
+      }
+    }
+    if (!reply_thread_id && newThreadSetup.automationConfig?.enabled === true) {
+      const allowCodexAutomation = newThreadSetup.agentMode === "codex";
+      const missingReason = automationConfigMissingReason({
+        draft: buildAutomationDraft({
+          config: newThreadSetup.automationConfig,
+          enabled: true,
+          allowCodexRunKind: allowCodexAutomation,
+        }),
+        allowCodexRunKind: allowCodexAutomation,
+      });
+      if (missingReason) {
+        antdMessage.warning(missingReason);
         return;
       }
     }
@@ -2131,6 +2168,53 @@ export function ChatPanel({
     setActivityJumpToken((n) => n + 1);
   }, [actions, gitBrowserThreadKey, selectedThreadKey, setSelectedThreadKey]);
 
+  const selectedThreadMenuControl =
+    !readOnly && selectedThreadKey && selectedThread ? (
+      <ChatRoomThreadMenu
+        actions={actions}
+        threadKey={selectedThreadKey}
+        plainLabel={stripThreadHtml(
+          selectedThread.displayLabel ?? selectedThread.label ?? "Thread",
+        )}
+        hasCustomName={selectedThread.hasCustomName}
+        isPinned={selectedThread.isPinned}
+        isAI={selectedThread.isAI}
+        isAutomation={selectedThread.isAutomation}
+        isCodexThread={
+          selectedThread.isAI &&
+          isCodexModelName(`${selectedThreadMetadata?.agent_model ?? ""}`)
+        }
+        threadColor={selectedThread.threadColor}
+        threadIcon={selectedThread.threadIcon}
+        openAppearanceModal={
+          modalHandlers?.openAppearanceModal ?? (() => undefined)
+        }
+        openBehaviorModal={
+          modalHandlers?.openBehaviorModal ?? (() => undefined)
+        }
+        openGitBrowser={openGitBrowserForThread}
+        openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
+        openImportModal={modalHandlers?.openImportModal ?? (() => undefined)}
+        openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
+        confirmResetThread={
+          threadActionHandlers?.confirmResetThread ?? (() => undefined)
+        }
+        confirmDeleteThread={
+          threadActionHandlers?.confirmDeleteThread ?? (() => undefined)
+        }
+        openAutomationModal={openAutomationModalForThread}
+        buttonAriaLabel="Selected thread actions"
+      />
+    ) : null;
+  const threadPanelTopRightPrefix =
+    selectedThreadMenuControl != null ||
+    effectiveThreadPanelTopRightControlsPrefix != null ? (
+      <>
+        {selectedThreadMenuControl}
+        {effectiveThreadPanelTopRightControlsPrefix}
+      </>
+    ) : undefined;
+
   const automationScheduleSummary = describeAutomationSchedule(
     selectedThreadAutomationConfig,
   );
@@ -2420,7 +2504,7 @@ export function ChatPanel({
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
-        topRightControlsPrefix={effectiveThreadPanelTopRightControlsPrefix}
+        topRightControlsPrefix={threadPanelTopRightPrefix}
         compactTopRightControls={effectiveThreadPanelCompactTopRightControls}
         topRightControlsPortal={threadPanelTopRightControlsPortal}
         readOnly={readOnly}
@@ -2446,6 +2530,7 @@ export function ChatPanel({
             submitMentionsRef={submitMentionsRef}
             hasInput={hasInput}
             isSelectedThreadAI={isSelectedThreadAI}
+            isNewThreadCodex={newThreadSetup.agentMode === "codex"}
             hasActiveAcpTurn={hasRunningAcpTurn}
             threads={threads}
             selectedThread={selectedThread}
@@ -2453,6 +2538,10 @@ export function ChatPanel({
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}
             codexPaymentSourceLoading={codexPaymentSourceLoading}
+            onOpenCodexPaymentConfig={() => {
+              refreshCodexPaymentSource?.();
+              setCodexPaymentConfigOpen(true);
+            }}
           />
           <CodexPaymentCredentialsModal
             open={codexPaymentConfigOpen}

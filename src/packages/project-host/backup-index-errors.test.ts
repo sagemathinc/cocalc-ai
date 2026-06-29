@@ -11,6 +11,17 @@ describe("backup index error classification", () => {
     ).toBe(true);
   });
 
+  it("detects opendal missing config failures", () => {
+    expect(
+      isMissingRusticRepositoryError(
+        new Error(
+          "[WARN] service=s3 name=prod-apac path=config: stat failed NotFound (persistent) at stat\n" +
+            "error: `rustic_core` experienced an error related to `the configuration`.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("ignores unrelated backup errors", () => {
     expect(
       isMissingRusticRepositoryError(new Error("bucket 'x' does not exist")),

@@ -13,6 +13,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import { lite } from "@cocalc/frontend/lite";
 import {
   Customer,
   ProjectMap,
@@ -48,6 +49,7 @@ interface State {
 }
 
 export function ProjectSettings({ project_id }) {
+  if (lite) return null;
   return (
     <ProjectSettings0
       project_id={project_id}

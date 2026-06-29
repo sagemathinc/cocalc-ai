@@ -116,6 +116,7 @@ const workspaces = {
 
 jest.mock("../context", () => ({
   useProjectContext: () => ({
+    projectAccess: { role: "owner" },
     workspaces,
   }),
 }));

@@ -146,7 +146,10 @@ export function useProjectSettingsSections({
         />
       ),
     },
-    {
+  ];
+
+  if (!lite) {
+    sections.push({
       id: "resources",
       icon: "server",
       label: "Runtime",
@@ -168,8 +171,8 @@ export function useProjectSettingsSections({
           />
         </Space>
       ),
-    },
-  ];
+    });
+  }
 
   if (!lite) {
     sections.push(
@@ -252,7 +255,7 @@ export function useProjectSettingsSections({
         ),
       },
     );
-  } else {
+  } else if (!lite) {
     sections.push({
       id: "recovery",
       icon: "life-ring",
@@ -301,22 +304,24 @@ export function useProjectSettingsSections({
     });
   }
 
-  sections.push({
-    id: "location",
-    icon: "servers",
-    label: "Location",
-    title: "Location",
-    description:
-      "Hide, move, archive, or delete this project. These actions change where the project is available.",
-    children: (
-      <ProjectLocationBox
-        project={project}
-        actions={redux.getActions("projects")}
-        mode={componentMode}
-        embedded={embeddedInSection}
-      />
-    ),
-  });
+  if (!lite) {
+    sections.push({
+      id: "location",
+      icon: "servers",
+      label: "Location",
+      title: "Location",
+      description:
+        "Hide, move, archive, or delete this project. These actions change where the project is available.",
+      children: (
+        <ProjectLocationBox
+          project={project}
+          actions={redux.getActions("projects")}
+          mode={componentMode}
+          embedded={embeddedInSection}
+        />
+      ),
+    });
+  }
 
   return {
     sections,

@@ -2764,13 +2764,18 @@ export async function getSiteOpenAiApiKey({
 
 function formatUsageLimitMessage({
   window,
+  limit,
   reset_in,
 }: {
   window: "5h" | "7d";
+  limit: number;
   reset_in?: string;
 }): string {
+  if (limit <= 0) {
+    return "CoCalc AI usage is not included on this site. To use AI in CoCalc, sign up for a ChatGPT plan at https://chatgpt.com/pricing, then connect it in CoCalc AI settings.";
+  }
   const label = window === "5h" ? "5-hour" : "7-day";
-  return `You have reached your ${label} AI usage limit.${reset_in ? ` Limit resets in ${reset_in}.` : ""} Please try again later or upgrade your membership.`;
+  return `You have reached your ${label} AI usage limit.${reset_in ? ` Limit resets in ${reset_in}.` : ""} To keep using AI in CoCalc, connect a ChatGPT plan in CoCalc AI settings.`;
 }
 
 export async function checkCodexSiteUsageAllowance({
@@ -2823,6 +2828,7 @@ export async function checkCodexSiteUsageAllowance({
         allowed: false,
         reason: formatUsageLimitMessage({
           window: window.window,
+          limit,
           reset_in: window.reset_in,
         }),
         window: window.window,
@@ -7003,12 +7009,14 @@ export async function upgradeHostSoftware({
   targets,
   base_url,
   align_runtime_stack,
+  record_runtime_deployments,
 }: {
   account_id?: string;
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  record_runtime_deployments?: boolean;
 }): Promise<HostLroResponse> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
@@ -7020,6 +7028,7 @@ export async function upgradeHostSoftware({
         targets,
         base_url,
         align_runtime_stack,
+        record_runtime_deployments,
       });
   }
   const row = await loadHostForRootfsManagement(id, account_id);
@@ -7028,7 +7037,14 @@ export async function upgradeHostSoftware({
     kind: HOST_UPGRADE_LRO_KIND,
     row,
     account_id,
-    input: { id: row.id, account_id, targets, base_url, align_runtime_stack },
+    input: {
+      id: row.id,
+      account_id,
+      targets,
+      base_url,
+      align_runtime_stack,
+      record_runtime_deployments,
+    },
     dedupe_key: hostUpgradeDedupeKey({
       hostId: row.id,
       targets,

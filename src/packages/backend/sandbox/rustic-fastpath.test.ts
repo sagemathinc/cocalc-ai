@@ -114,4 +114,43 @@ describe("rustic TOML fast path", () => {
       execMock.mock.calls.flatMap(([opts]) => opts.safety as string[]),
     ).not.toContain("repoinfo");
   });
+
+  test("backup initializes TOML repo after opendal missing config error", async () => {
+    execMock
+      .mockResolvedValueOnce(
+        fail(
+          "[WARN] service=s3 name=prod-apac path=config: stat failed NotFound (persistent) at stat\n" +
+            "error: `rustic_core` experienced an error related to `the configuration`.",
+        ),
+      )
+      .mockResolvedValueOnce(ok(""))
+      .mockResolvedValueOnce(
+        ok(
+          JSON.stringify({
+            id: "backup-1",
+            time: "2026-05-05T18:00:00.000Z",
+            summary: {},
+            paths: ["a.txt"],
+          }),
+        ),
+      );
+
+    await rustic(["backup", "--json", "a.txt"], {
+      repo: "/tmp/project-repo-opendal.toml",
+      host: "project-1",
+      safeAbsPath: async (path: string) =>
+        `/sandbox/${path.replace(/^\/+/, "")}`,
+    });
+
+    expect(execMock).toHaveBeenCalledTimes(3);
+    expect(execMock.mock.calls[1][0].safety).toEqual([
+      "--no-progress",
+      "-P",
+      "/tmp/project-repo-opendal",
+      "init",
+    ]);
+    expect(execMock.mock.calls[2][0].safety).toEqual(
+      execMock.mock.calls[0][0].safety,
+    );
+  });
 });

@@ -15,7 +15,11 @@ import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { path_split } from "@cocalc/util/misc";
 import { CellList } from "./cell-list";
 import { cm_options } from "./cm_options";
-import { ERROR_STYLE } from "./main";
+
+const HISTORY_ERROR_STYLE = {
+  maxHeight: "30vh",
+  overflow: "auto",
+} as const;
 
 function get_cells(doc): { cells: Map<string, any>; cell_list: List<string> } {
   let cells = Map<string, any>();
@@ -55,7 +59,7 @@ export function HistoryViewer({ project_id, path, doc, font_size }) {
         <ErrorDisplay
           bsStyle="warning"
           error={kernel_error}
-          style={ERROR_STYLE}
+          style={HISTORY_ERROR_STYLE}
         />
       )}
       <CellList

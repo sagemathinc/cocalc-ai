@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -112,5 +118,61 @@ describe("syncSubscriptionAuthToRegistryIfChanged", () => {
       skipped: false,
     });
     expect(callHubMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("pulls registry auth when it is newer than local auth", async () => {
+    const root = mkTempDir("cocalc-auth-pull-");
+    const authPath = path.join(root, "auth.json");
+    writeFileSync(authPath, '{"token":"old"}\n');
+    const oldTime = new Date(Date.now() - 60_000);
+    utimesSync(authPath, oldTime, oldTime);
+
+    callHubMock.mockResolvedValue({
+      payload: '{"token":"new"}\n',
+      updated: new Date().toISOString(),
+    });
+    const { pullSubscriptionAuthFromRegistry } =
+      await import("./codex/codex-auth-registry");
+
+    await expect(
+      pullSubscriptionAuthFromRegistry({
+        projectId: "project-3",
+        accountId: "account-3",
+        codexHome: root,
+        onlyIfNewer: true,
+      }),
+    ).resolves.toMatchObject({
+      pulled: true,
+      source: "registry",
+    });
+    expect(readFileSync(authPath, "utf8")).toBe('{"token":"new"}\n');
+  });
+
+  it("keeps local auth when it is newer than registry auth", async () => {
+    const root = mkTempDir("cocalc-auth-pull-");
+    const authPath = path.join(root, "auth.json");
+    writeFileSync(authPath, '{"token":"local"}\n');
+    const newTime = new Date(Date.now() + 60_000);
+    utimesSync(authPath, newTime, newTime);
+
+    callHubMock.mockResolvedValue({
+      payload: '{"token":"registry"}\n',
+      updated: new Date().toISOString(),
+    });
+    const { pullSubscriptionAuthFromRegistry } =
+      await import("./codex/codex-auth-registry");
+
+    await expect(
+      pullSubscriptionAuthFromRegistry({
+        projectId: "project-4",
+        accountId: "account-4",
+        codexHome: root,
+        onlyIfNewer: true,
+      }),
+    ).resolves.toMatchObject({
+      pulled: false,
+      skipped: "local-newer",
+    });
+    expect(readFileSync(authPath, "utf8")).toBe('{"token":"local"}\n');
   });
 });

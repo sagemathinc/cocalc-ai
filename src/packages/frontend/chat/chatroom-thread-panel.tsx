@@ -81,6 +81,7 @@ import {
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { useCodexLiveActivityStatus } from "./use-codex-log";
 import {
+  automationConfigMissingReason,
   AutomationConfigFields,
   buildAutomationDraft,
   getDefaultAutomationConfig,
@@ -1246,6 +1247,12 @@ export function ChatRoomThreadPanel({
       allowCodexRunKind: newThreadSetup.agentMode === "codex",
     });
     const automationEnabled = automationDraft.enabled === true;
+    const automationMissingReason = automationEnabled
+      ? automationConfigMissingReason({
+          draft: automationDraft,
+          allowCodexRunKind: newThreadSetup.agentMode === "codex",
+        })
+      : undefined;
     const selectAgentMode = (mode: NewThreadAgentMode) => {
       if (mode === "codex") {
         const model = isCodexModelName(newThreadSetup.model)
@@ -1651,11 +1658,27 @@ export function ChatRoomThreadPanel({
               <Button size="small" onClick={onNewChat}>
                 Reset
               </Button>
-              <Button type="primary" onClick={() => void onCreateThread()}>
+              <Button
+                type="primary"
+                disabled={!!automationMissingReason}
+                onClick={() => void onCreateThread()}
+              >
                 {automationEnabled ? "Create automation chat" : "Create chat"}
               </Button>
             </Space>
           </div>
+          {automationMissingReason ? (
+            <div
+              style={{
+                color: COLORS.ANTD_RED,
+                fontSize: 12,
+                marginTop: 8,
+                textAlign: "right",
+              }}
+            >
+              {automationMissingReason}
+            </div>
+          ) : null}
         </div>
         {automationEnabled ? (
           <div
@@ -1701,7 +1724,10 @@ export function ChatRoomThreadPanel({
       actions?.getCodexConfig?.(selectedThreadId) != null),
   );
   const showTopControls =
-    !hideTopControls && (shouldShowCodexConfig || allowSidebarToggle);
+    !hideTopControls &&
+    (shouldShowCodexConfig ||
+      allowSidebarToggle ||
+      topRightControlsPrefix != null);
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread

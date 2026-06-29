@@ -4,6 +4,7 @@
  */
 
 import RootFilesystemImage from "@cocalc/frontend/project/settings/root-filesystem-image";
+import { lite } from "@cocalc/frontend/lite";
 import { FLYOUT_PADDING } from "./consts";
 
 interface Props {
@@ -15,7 +16,8 @@ export function RootfsPanel({
   layout = "flyout",
 }: {
   layout?: "flyout" | "page";
-}): React.JSX.Element {
+}): React.JSX.Element | null {
+  if (lite) return null;
   const page = layout === "page";
   return (
     <div

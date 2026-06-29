@@ -7,6 +7,7 @@ import { debounce } from "lodash";
 import { CSS, useEffect, useState } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { lite } from "@cocalc/frontend/lite";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useActivityBarPreferences } from "../activity-bar-storage";
@@ -27,6 +28,7 @@ export function FlyoutBody({
 }: FlyoutBodyProps) {
   const { project_id } = useProjectContext();
   const { collapsed: hideActionButtons } = useActivityBarPreferences();
+  const unavailableInLite = lite && FIXED_PROJECT_TABS[flyout]?.noLite;
 
   // No "Ref", because otherwise we don't trigger the useEffect below
   const [bodyDiv, setBodyDiv] = useState<HTMLDivElement | null>(null);
@@ -95,6 +97,8 @@ export function FlyoutBody({
     stopMouseDownPropagation: true,
     stopClickPropagation: true,
   });
+
+  if (unavailableInLite) return null;
 
   return (
     <div style={style} {...keyboardBoundaryProps}>

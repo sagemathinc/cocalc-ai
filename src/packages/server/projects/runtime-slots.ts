@@ -550,7 +550,7 @@ export async function heartbeatProjectRuntimeSlotsBatchLocal({
              CASE WHEN state='starting' THEN 'starting' ELSE 'running' END,
              NOW(), NOW(), $2, COALESCE(metadata, '{}'::jsonb)
         FROM input
-        JOIN accounts USING (sponsor_account_id)
+        JOIN accounts ON accounts.account_id = input.sponsor_account_id
        WHERE accounts.banned IS NOT TRUE
       ON CONFLICT (sponsor_account_id, project_id)
       DO UPDATE SET

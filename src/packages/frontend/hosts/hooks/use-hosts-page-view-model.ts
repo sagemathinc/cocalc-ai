@@ -1052,6 +1052,7 @@ export const useHostsPageViewModel = () => {
                 ? { base_url: `${baseUrl}/software` }
                 : {}),
               align_runtime_stack: true,
+              record_runtime_deployments: false,
             });
             trackHostOp(host.id, op);
             return host;

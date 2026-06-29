@@ -32,11 +32,6 @@ import {
   type ProjectRootfsSelection,
 } from "./project-create-draft";
 
-function defaultTitle(): string {
-  const ts = new Date().toISOString().split("T")[0];
-  return `Untitled ${ts}`;
-}
-
 export function useProjectCreateDraft({
   defaultValue,
 }: {
@@ -77,7 +72,7 @@ export function useProjectCreateDraft({
     [cloudflareCountry, cloudflareRegionCode],
   );
 
-  const defaultTitleValue = defaultValue || defaultTitle();
+  const defaultTitleValue = defaultValue.trim();
   const context = useMemo<ProjectCreateContext>(
     () => ({
       defaultTitle: defaultTitleValue,

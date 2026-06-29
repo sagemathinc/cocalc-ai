@@ -493,6 +493,7 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "project_collab_invite_inbox",
       "project_copies",
       "project_moves",
+      "public_project_path_viewer_grants",
       "project_secrets",
     ],
     {
@@ -508,6 +509,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
         "Project-scoped durable operational state created outside util/db-schema. Reads/writes must route to the project owning bay; rehome is unsafe until explicitly audited.",
     },
   ),
+
+  ...adHocEntries(["public_project_path_site_license_grants"], {
+    ownership: "project-owning",
+    authority: "mixed",
+    portability: "unsupported",
+    source: "server public directory share schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Project public-directory share grant state keyed through public_project_paths. Reads/writes must follow the owning project path; rehome is unsafe until explicitly audited.",
+  }),
 
   ...adHocEntries(
     ["project_host_availability_events", "project_host_rehome_operations"],

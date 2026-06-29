@@ -1841,7 +1841,7 @@ export interface Projects {
   }) => Promise<{
     id: string;
     accountId: string;
-    state: "pending" | "completed" | "failed" | "canceled";
+    state: "pending" | "syncing" | "completed" | "failed" | "canceled";
     verificationUrl?: string;
     userCode?: string;
     output: string;
@@ -1850,6 +1850,8 @@ export interface Projects {
     exitCode?: number | null;
     signal?: string | null;
     error?: string;
+    syncedToRegistry?: boolean;
+    syncError?: string;
   }>;
 
   codexDeviceAuthStatus: (opts: {
@@ -1859,7 +1861,7 @@ export interface Projects {
   }) => Promise<{
     id: string;
     accountId: string;
-    state: "pending" | "completed" | "failed" | "canceled";
+    state: "pending" | "syncing" | "completed" | "failed" | "canceled";
     verificationUrl?: string;
     userCode?: string;
     output: string;
@@ -1868,6 +1870,8 @@ export interface Projects {
     exitCode?: number | null;
     signal?: string | null;
     error?: string;
+    syncedToRegistry?: boolean;
+    syncError?: string;
   }>;
 
   codexDeviceAuthCancel: (opts: {

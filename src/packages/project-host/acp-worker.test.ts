@@ -21,6 +21,7 @@ const loggerDebugMock = jest.fn();
 const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
 const projectRunnerClientMock = jest.fn(() => ({ kind: "runner-client" }));
+const initProjectRunnerConatClientMock = jest.fn();
 const initProjectRunnerFilesystemMock = jest.fn();
 const sandboxExecMock = jest.fn();
 const initCodexProjectRunnerMock = jest.fn();
@@ -116,6 +117,11 @@ jest.mock("@cocalc/conat/project/runner/run", () => ({
 
 jest.mock("@cocalc/project-runner/run/filesystem", () => ({
   init: (...args: any[]) => initProjectRunnerFilesystemMock(...args),
+}));
+
+jest.mock("@cocalc/project-runner/run/conat-client", () => ({
+  initConatClient: (...args: any[]) =>
+    initProjectRunnerConatClientMock(...args),
 }));
 
 jest.mock("@cocalc/project-runner/run/sandbox-exec", () => ({
@@ -226,6 +232,13 @@ describe("project-host ACP worker runtime wiring", () => {
     expect(setAcpAdmissionLimitsProviderMock).toHaveBeenCalledTimes(1);
     expect(setAcpAdmissionDenialRecorderMock).toHaveBeenCalledTimes(1);
     expect(wireProjectsApiMock).toHaveBeenCalledTimes(1);
+    expect(initProjectRunnerConatClientMock).toHaveBeenCalledTimes(1);
+    expect(initProjectRunnerConatClientMock).toHaveBeenCalledWith(
+      connectMock.mock.results[0].value,
+    );
+    expect(initProjectRunnerFilesystemMock).toHaveBeenCalledWith({
+      client: connectMock.mock.results[0].value,
+    });
     expect(publishActiveAcpSessionsMock).toHaveBeenCalledTimes(1);
     expect(runDetachedAcpQueueWorkerMock).toHaveBeenCalledTimes(1);
   });

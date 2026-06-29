@@ -91,6 +91,7 @@ import {
 } from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getAIUsageLimits } from "@cocalc/server/ai/usage-status";
 import {
   enqueueRootfsPrepullForHost,
   enqueueRootfsPrepullForRunningHosts,
@@ -6277,6 +6278,13 @@ export async function getCodexPaymentSource({
     to_bool(settings.openai_enabled) &&
     !(await isAiLaunchDisabled()) &&
     !!`${settings.openai_api_key ?? ""}`.trim();
+  const siteAiUsageLimits = hasSiteApiKey
+    ? await getAIUsageLimits({ account_id })
+    : undefined;
+  const siteAiUsageLimitPositive =
+    siteAiUsageLimits != null
+      ? siteAiUsageLimits.units_5h > 0 && siteAiUsageLimits.units_7d > 0
+      : undefined;
   const [hasSubscription, hasProjectApiKeyStored, hasAccountApiKeyStored] =
     await Promise.all([
       hasExternalCredentialRouted({
@@ -6344,6 +6352,8 @@ export async function getCodexPaymentSource({
     hasProjectApiKey,
     hasAccountApiKey,
     hasSiteApiKey,
+    siteAiUsageLimitPositive,
+    siteAiUsageLimits,
     sharedHomeMode,
     project_id,
   };

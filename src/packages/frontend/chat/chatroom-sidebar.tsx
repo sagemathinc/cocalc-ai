@@ -288,6 +288,7 @@ export function ChatRoomSidebarContent({
       hasCustomName,
       unreadCount,
       isAI,
+      isAutomation,
       isPinned,
       threadColor,
       threadAccentColor,
@@ -390,6 +391,7 @@ export function ChatRoomSidebarContent({
               hasCustomName={hasCustomName}
               isPinned={isPinned}
               isAI={isAI}
+              isAutomation={isAutomation}
               isCodexThread={isCodexThread}
               threadColor={threadColor}
               threadIcon={threadIcon}

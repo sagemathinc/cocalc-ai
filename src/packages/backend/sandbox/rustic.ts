@@ -373,7 +373,13 @@ async function initializeTomlRepo(repo: string, common: string[]) {
 
 function isMissingTomlRepositoryError(err: unknown): boolean {
   const text = `${err ?? ""}`;
-  return text.includes("No repository config file found");
+  return (
+    text.includes("No repository config file found") ||
+    (text.includes("path=config") &&
+      text.includes("stat failed NotFound") &&
+      text.includes("rustic_core") &&
+      text.includes("the configuration"))
+  );
 }
 
 async function assertValidSnapshot({ snapshot, host, repo }) {

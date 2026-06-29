@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 import { ManagedCpuAdminOverview } from "./managed-cpu-overview";
 
@@ -357,6 +363,30 @@ describe("ManagedCpuAdminOverview", () => {
     const cpuCall = getManagedCpuAdminOverview.mock.calls[1][0];
     expect(cpuCall.start.toISOString()).toBe("2026-05-24T12:00:00.000Z");
     expect(cpuCall.end.toISOString()).toBe("2026-05-31T12:00:00.000Z");
+  });
+
+  it("does not auto-refresh CPU and egress overviews", async () => {
+    mockOverview();
+    render(<ManagedCpuAdminOverview />);
+
+    await waitFor(() => {
+      expect(getManagedCpuAdminOverview).toHaveBeenCalledTimes(1);
+      expect(getManagedEgressAdminOverview).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(5 * 60 * 1000);
+    });
+
+    expect(getManagedCpuAdminOverview).toHaveBeenCalledTimes(1);
+    expect(getManagedEgressAdminOverview).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => {
+      expect(getManagedCpuAdminOverview).toHaveBeenCalledTimes(2);
+      expect(getManagedEgressAdminOverview).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("resets shared membership usage windows through fresh auth", async () => {

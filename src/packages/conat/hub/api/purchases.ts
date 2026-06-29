@@ -996,6 +996,78 @@ export interface ManagedCpuAdminHistoryQuery {
   top_project_limit?: number;
 }
 
+export type AdminRetentionCohortUnit = "day" | "week";
+export type AdminRetentionActivitySignal =
+  | "browser-project-activity"
+  | "managed-cpu";
+export type AdminActiveUsersBucket = "hour" | "day" | "week";
+
+export interface AdminRetentionPeriodCell {
+  period_index: number;
+  period_start: string;
+  period_end: string;
+  complete: boolean;
+  active_accounts: number;
+  retention_pct: number;
+  rolling_active_accounts: number;
+  rolling_retention_pct: number;
+}
+
+export interface AdminRetentionCohortRow {
+  cohort_start: string;
+  cohort_end: string;
+  cohort_size: number;
+  periods: AdminRetentionPeriodCell[];
+}
+
+export interface AdminRetentionOverview {
+  start: string;
+  end: string;
+  unit: AdminRetentionCohortUnit;
+  period_count: number;
+  activity_signal: AdminRetentionActivitySignal;
+  exclude_banned: boolean;
+  opened_project_only: boolean;
+  cohorts: AdminRetentionCohortRow[];
+}
+
+export interface AdminRetentionOverviewQuery {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  unit?: AdminRetentionCohortUnit;
+  activity_signal?: AdminRetentionActivitySignal;
+  period_count?: number;
+  exclude_banned?: boolean;
+  opened_project_only?: boolean;
+}
+
+export interface AdminActiveUsersPoint {
+  start: string;
+  end: string;
+  active_accounts: number;
+}
+
+export interface AdminActiveUsersOverview {
+  start: string;
+  end: string;
+  bucket: AdminActiveUsersBucket;
+  activity_signal: AdminRetentionActivitySignal;
+  exclude_banned: boolean;
+  opened_project_only: boolean;
+  points: AdminActiveUsersPoint[];
+}
+
+export interface AdminActiveUsersOverviewQuery {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: AdminActiveUsersBucket;
+  activity_signal?: AdminRetentionActivitySignal;
+  exclude_banned?: boolean;
+  opened_project_only?: boolean;
+}
+
 export interface CreateAbuseReviewAnnotationQuery {
   account_id?: string;
   browser_id?: string;
@@ -1494,6 +1566,12 @@ export interface Purchases {
   getManagedCpuAdminHistory: (
     opts?: ManagedCpuAdminHistoryQuery,
   ) => Promise<ManagedCpuAdminHistory>;
+  getAdminRetentionOverview: (
+    opts?: AdminRetentionOverviewQuery,
+  ) => Promise<AdminRetentionOverview>;
+  getAdminActiveUsersOverview: (
+    opts?: AdminActiveUsersOverviewQuery,
+  ) => Promise<AdminActiveUsersOverview>;
   createAbuseReviewAnnotation: (
     opts?: CreateAbuseReviewAnnotationQuery,
   ) => Promise<AbuseReviewAnnotation>;
@@ -1559,6 +1637,8 @@ export const purchases = {
   getManagedEgressAdminHistory: authFirst,
   getManagedCpuAdminOverview: authFirst,
   getManagedCpuAdminHistory: authFirst,
+  getAdminRetentionOverview: authFirst,
+  getAdminActiveUsersOverview: authFirst,
   createAbuseReviewAnnotation: authFirst,
   listAbuseReviewAnnotations: authFirst,
   revokeAbuseReviewAnnotation: authFirst,
