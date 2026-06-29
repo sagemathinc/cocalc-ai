@@ -15,15 +15,26 @@ type ProjectSelectionList = { id: string; title: string }[];
 interface Props {
   exclude?: string[]; // project_id's to exclude
   at_top?: string[]; // include these projects at the top of the selector first (assuming they are in the project_map)
+  fullCollaboratorOnly?: boolean;
   onChange: (project_id: string) => void; // called when specific project selected
   value?: string; // currently selected project
   defaultValue?: string;
   style?: CSS;
 }
 
+function fullCollaboratorGroup(group: unknown): boolean {
+  return group === "owner" || group === "collaborator";
+}
+
+function hasFullCollaboratorAccess(project: any, account_id?: string): boolean {
+  if (!account_id) return false;
+  return fullCollaboratorGroup(project?.users?.[account_id]?.group);
+}
+
 export function SelectProject({
   exclude,
   at_top,
+  fullCollaboratorOnly = false,
   onChange,
   value,
   defaultValue,
@@ -53,6 +64,14 @@ export function SelectProject({
     if (at_top != null) {
       for (const project_id of at_top) {
         if (project_id != null && map.has(project_id)) {
+          if (
+            fullCollaboratorOnly &&
+            !fullCollaboratorGroup(
+              map.getIn([project_id, "users", account_id ?? "", "group"]),
+            )
+          ) {
+            continue;
+          }
           data.push({
             id: project_id,
             title: map.getIn([project_id, "title"]) as string,
@@ -75,13 +94,23 @@ export function SelectProject({
 
     const others: ProjectSelectionList = [];
     for (let i of v) {
+      if (fullCollaboratorOnly && !hasFullCollaboratorAccess(i, account_id)) {
+        continue;
+      }
       const is_hidden = !!i.users?.[account_id ?? ""]?.hide;
       if (i.project_id == value || is_hidden == include_hidden) {
         others.push({ id: i.project_id, title: i.title });
       }
     }
     return data.concat(others);
-  }, [project_map, exclude, at_top, include_hidden, value]);
+  }, [
+    project_map,
+    exclude,
+    at_top,
+    fullCollaboratorOnly,
+    include_hidden,
+    value,
+  ]);
 
   if (data == null) {
     return <Loading />;

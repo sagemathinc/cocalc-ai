@@ -405,6 +405,7 @@ export function PublicDirectoryShareBanner({
                   Destination project
                 </div>
                 <SelectProject
+                  fullCollaboratorOnly
                   value={destinationProjectId}
                   onChange={(projectId) =>
                     setDestinationProjectId(projectId ?? "")

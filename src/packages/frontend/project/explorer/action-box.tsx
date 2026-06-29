@@ -763,7 +763,9 @@ export function ActionBox({
         <Col sm={4} style={{ color: COLORS.GRAY_M, marginBottom: "15px" }}>
           <h4>Target {projectLabel}</h4>
           <SelectProject
-            at_top={[project_id]}
+            at_top={readOnlySource ? undefined : [project_id]}
+            exclude={readOnlySource ? [project_id] : undefined}
+            fullCollaboratorOnly
             value={copy_destination_project_id}
             onChange={(copy_destination_project_id) => {
               if (copy_destination_project_id) {
