@@ -240,13 +240,13 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("A terminal is a live project document."),
+      screen.getByText("A Linux terminal that lives in your project."),
     ).not.toBeNull();
     expect(
-      screen.getAllByText("A .term file gives the shell an address").length,
+      screen.getAllByText("Each terminal opens in its own folder.").length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getByText("Collaborate in one terminal stream"),
+      screen.getByText("Put the shell beside the work it changes"),
     ).not.toBeNull();
   });
 
@@ -267,7 +267,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start using CoCalc terminals")).toBeNull();
+    expect(screen.queryByText("Create account")).toBeNull();
   });
 
   it("renders the richer linux environment page", () => {
