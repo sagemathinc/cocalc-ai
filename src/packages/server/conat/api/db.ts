@@ -156,6 +156,9 @@ export async function saveBlob({
       `blob is too large (${buffer.byteLength} bytes; max ${MAX_BLOB_SIZE})`,
     );
   }
+  // Blob ids are content-addressed: uuid must equal uuidsha1(blob bytes).
+  // Clients intentionally compute this id before upload so they can reference
+  // blobs optimistically before the server acknowledges persistence.
   await assertCanSaveBlobForAccount({
     account_id,
     project_id,
