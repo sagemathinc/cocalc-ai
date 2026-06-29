@@ -53,6 +53,7 @@ const DEFAULT_PROJECT_HOST_ROOTCTL =
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const healthFailureStreaks = new Map<string, number>();
+const DEFAULT_BTRFS_MOUNTPOINT = "/mnt/cocalc";
 
 function timestampedConsole(
   method: "log" | "warn" | "error",
@@ -178,6 +179,39 @@ function loadEnvFromFile(envFile: string): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+function decodeProcMountPath(path: string): string {
+  return path.replace(/\\([0-7]{3})/g, (_, octal: string) =>
+    String.fromCharCode(parseInt(octal, 8)),
+  );
+}
+
+function mountedFilesystemType(
+  mountpoint: string,
+  mountsContent = fs.readFileSync("/proc/mounts", "utf8"),
+): string | undefined {
+  for (const line of mountsContent.split("\n")) {
+    if (!line) continue;
+    const parts = line.split(" ");
+    if (parts.length < 3) continue;
+    if (decodeProcMountPath(parts[1]) === mountpoint) {
+      return parts[2];
+    }
+  }
+  return undefined;
+}
+
+function defaultBtrfsMountpoint(): string | undefined {
+  try {
+    if (mountedFilesystemType(DEFAULT_BTRFS_MOUNTPOINT) === "btrfs") {
+      return DEFAULT_BTRFS_MOUNTPOINT;
+    }
+  } catch {
+    // Fall back to the sparse-image dev filesystem when /proc/mounts is not
+    // readable or does not prove that /mnt/cocalc is actually btrfs.
+  }
+  return undefined;
 }
 
 function daemonEnvFilePath(): string {
@@ -482,7 +516,16 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
     env.PROJECT_HOST_SSH_SERVER = `localhost:${2222 + index}`;
   }
   if (!env.COCALC_FILE_SERVER_MOUNTPOINT) {
-    env.COCALC_FILE_SERVER_MOUNTPOINT = "/mnt/cocalc";
+    const mountpoint = defaultBtrfsMountpoint();
+    if (mountpoint) {
+      env.COCALC_FILE_SERVER_MOUNTPOINT = mountpoint;
+    }
+  }
+  if (
+    env.COCALC_FILE_SERVER_MOUNTPOINT &&
+    !env.COCALC_PROJECT_RUNNER_MOUNTPOINT
+  ) {
+    env.COCALC_PROJECT_RUNNER_MOUNTPOINT = env.COCALC_FILE_SERVER_MOUNTPOINT;
   }
   if (!env.PROJECT_RUNNER_NAME) {
     env.PROJECT_RUNNER_NAME = String(index);
@@ -2888,6 +2931,7 @@ export const __test__ = {
   inferProjectHostBundleVersionFromPid,
   isPodmanStalePauseState,
   isRunning,
+  mountedFilesystemType,
   matchingAcpWorkerPids,
   matchingHostAgentPids,
   matchingProjectHostPids,

@@ -5,7 +5,7 @@
 
 import { createReadStream, existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { basename, join, posix } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { createInterface } from "node:readline";
 import { createGunzip } from "node:zlib";
 
@@ -25,11 +25,13 @@ type ImportTarget =
   | "artifacts"
   | "purchases"
   | "subscriptions"
+  | "stripe_subscriptions"
   | "site_licenses"
   | "public_paths";
 
 type Options = {
   dir?: string;
+  stripeSubscriptionsCsv?: string;
   only?: Set<string>;
   limit?: number;
   batchSize: number;
@@ -43,6 +45,12 @@ type ImportStats = {
   rows: number;
   batches: number;
   publicPathDetails?: PublicPathImportCounters;
+};
+
+type ImportFileSpec = {
+  file: string;
+  format: "ndjson-gz" | "stripe-csv";
+  target: ImportTarget;
 };
 
 type PublicPathImportCounters = {
@@ -59,6 +67,7 @@ const DEFAULT_ARTIFACT_BUCKET = "cocalc-projects";
 const DEFAULT_ARTIFACT_KEY_PREFIX = "prod3/default/";
 const DEFAULT_ARTIFACT_KEY_SUFFIX = ".tar.zst";
 const LEGACY_SOURCE_PROJECT_LABEL = "legacy.cocalc.com/project_id";
+const STRIPE_SUBSCRIPTIONS_SOURCE: ImportTarget = "stripe_subscriptions";
 let poolUsed = false;
 let rawRecordsSchemaReady: Promise<void> | undefined;
 let projectsSchemaReady: Promise<void> | undefined;
@@ -107,7 +116,11 @@ function usage(): never {
 Options:
   --dir <path>          Directory containing *.ndjson.gz files from kucalc db legacy-migration-dump.
                         Optional when only running --enable-legacy-projects-button.
-  --only <list>         Comma-separated import targets: accounts,projects,artifacts,purchases,subscriptions,site_licenses,public_paths.
+  --stripe-subscriptions-csv <path>
+                        Optional Stripe subscriptions CSV export. If omitted,
+                        import-dump auto-detects stripe_subscriptions.csv in
+                        the dump directory or subscriptions.csv next to it.
+  --only <list>         Comma-separated import targets: accounts,projects,artifacts,purchases,subscriptions,stripe_subscriptions,site_licenses,public_paths.
   --limit <n>           Stop after importing n rows per file, useful for smoke tests.
   --batch-size <n>      Rows per database batch. Default: ${DEFAULT_BATCH_SIZE}.
   --dry-run             Parse files and report counts without writing to the database.
@@ -143,6 +156,8 @@ function parseArgs(argv: string[]): Options {
     }
     if (arg === "--dir") {
       options.dir = value;
+    } else if (arg === "--stripe-subscriptions-csv") {
+      options.stripeSubscriptionsCsv = value;
     } else if (arg === "--only") {
       options.only = new Set(
         value
@@ -170,6 +185,7 @@ function parseArgs(argv: string[]): Options {
       "artifacts",
       "purchases",
       "subscriptions",
+      "stripe_subscriptions",
       "site_licenses",
       "public_paths",
     ]);
@@ -179,6 +195,57 @@ function parseArgs(argv: string[]): Options {
     }
   }
   return options as Options;
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      quoted = true;
+    } else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else if (ch !== "\r") {
+      field += ch;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((row) => row.some((field) => field.trim() !== ""));
+}
+
+function numberValue(value: unknown): number {
+  const n = Number(`${value ?? ""}`.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function utcIso(value: unknown): string | null {
+  const s = clean(value);
+  if (!s) return null;
+  const ms = new Date(`${s.replace(" ", "T")}Z`).getTime();
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : s;
 }
 
 function positiveInt(value: string, name: string): number {
@@ -373,6 +440,14 @@ function targetForFile(file: string): ImportTarget | undefined {
   if (name === "site_licenses.ndjson.gz") return "site_licenses";
   if (name === "public_paths.ndjson.gz") return "public_paths";
   return undefined;
+}
+
+function candidateStripeSubscriptionsCsv(dir: string): string | undefined {
+  const candidates = [
+    join(dir, "stripe_subscriptions.csv"),
+    join(dirname(dir), "subscriptions.csv"),
+  ];
+  return candidates.find((file) => existsSync(file));
 }
 
 async function loadManifest(dir: string): Promise<Record<string, any> | null> {
@@ -911,6 +986,7 @@ async function ensureRawRecordsSchema(): Promise<void> {
 function rawRecordId(row: Record<string, any>): string | null {
   return (
     clean(row.id) ??
+    clean(row.subscription_id) ??
     clean(row.legacy_project_id) ??
     clean(row.legacy_account_id) ??
     clean(row.invoice_id)
@@ -984,10 +1060,12 @@ async function writeBatch(
 
 async function importFile({
   file,
+  format,
   target,
   options,
 }: {
   file: string;
+  format: ImportFileSpec["format"];
   target: ImportTarget;
   options: Options;
 }): Promise<ImportStats> {
@@ -997,7 +1075,11 @@ async function importFile({
     target === "public_paths" ? publicPathCounterSnapshot() : undefined;
   let rows = 0;
   let batches = 0;
-  for await (const row of readRows(file, options.limit)) {
+  const source =
+    format === "stripe-csv"
+      ? readStripeSubscriptionCsvRows(file, options.limit)
+      : readRows(file, options.limit);
+  for await (const row of source) {
     normalizeRow(target, row);
     if (
       target === "projects" &&
@@ -1090,30 +1172,83 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
   }
 }
 
-async function filesToImport(
-  options: Options,
-): Promise<{ file: string; target: ImportTarget }[]> {
+async function* readStripeSubscriptionCsvRows(
+  file: string,
+  limit: number | undefined,
+): AsyncGenerator<Record<string, any>> {
+  const csvRows = parseCsv(await readFile(file, "utf8"));
+  const headers = csvRows.shift();
+  if (!headers) return;
+  const index = new Map(headers.map((field, i) => [field, i]));
+  const get = (row: string[], field: string) => row[index.get(field) ?? -1];
+  let count = 0;
+  for (const row of csvRows) {
+    const normalized = {
+      subscription_id: clean(get(row, "id")) ?? "",
+      stripe_customer_id: clean(get(row, "Customer ID")) ?? "",
+      customer_email: clean(get(row, "Customer Email")),
+      plan: clean(get(row, "Plan")) ?? "",
+      quantity: numberValue(get(row, "Quantity")) || 1,
+      currency: (clean(get(row, "Currency")) ?? "").toLowerCase(),
+      interval: clean(get(row, "Interval")) ?? "",
+      amount: numberValue(get(row, "Amount")),
+      status: clean(get(row, "Status")) ?? "",
+      created: utcIso(get(row, "Created (UTC)")),
+      start_date: utcIso(get(row, "Start Date (UTC)")),
+      current_period_start: utcIso(get(row, "Current Period Start (UTC)")),
+      current_period_end: utcIso(get(row, "Current Period End (UTC)")),
+      customer_name: clean(get(row, "Customer Name")),
+      service_metadata: clean(get(row, "service (metadata)")),
+      invoice_ninja_metadata: clean(get(row, "invoice_ninja (metadata)")),
+      account_id_metadata: clean(get(row, "account_id (metadata)")),
+      license_id_metadata: clean(get(row, "license_id (metadata)")),
+    };
+    if (!normalized.subscription_id || !normalized.stripe_customer_id) {
+      continue;
+    }
+    yield normalized;
+    count += 1;
+    if (limit != null && count >= limit) return;
+  }
+}
+
+async function filesToImport(options: Options): Promise<ImportFileSpec[]> {
   if (!options.dir) {
     throw new Error("--dir is required to import dump files");
   }
   const dir = options.dir;
   const entries = await readdir(dir);
-  const files = entries
-    .filter((file) => file.endsWith(".ndjson.gz"))
-    .map((file) => join(dir, file))
-    .map((file) => ({ file, target: targetForFile(file) }))
-    .filter(
-      (x): x is { file: string; target: ImportTarget } => x.target != null,
-    )
-    .filter((x) => !options.only || options.only.has(x.target));
+  const files: ImportFileSpec[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".ndjson.gz")) continue;
+    const file = join(dir, entry);
+    const target = targetForFile(file);
+    if (target == null || (options.only && !options.only.has(target))) {
+      continue;
+    }
+    files.push({ file, format: "ndjson-gz", target });
+  }
+  const stripeCsv =
+    options.stripeSubscriptionsCsv ?? candidateStripeSubscriptionsCsv(dir);
+  if (
+    stripeCsv &&
+    (!options.only || options.only.has(STRIPE_SUBSCRIPTIONS_SOURCE))
+  ) {
+    files.push({
+      file: stripeCsv,
+      format: "stripe-csv",
+      target: STRIPE_SUBSCRIPTIONS_SOURCE,
+    });
+  }
   const order: Record<ImportTarget, number> = {
     accounts: 0,
     projects: 1,
     artifacts: 2,
     purchases: 3,
     subscriptions: 4,
-    site_licenses: 5,
-    public_paths: 6,
+    stripe_subscriptions: 5,
+    site_licenses: 6,
+    public_paths: 7,
   };
   return files.sort((a, b) => order[a.target] - order[b.target]);
 }
@@ -1143,9 +1278,9 @@ async function main(): Promise<void> {
   if (files.length === 0) {
     throw new Error(`no supported dump files found in ${options.dir}`);
   }
-  for (const { file, target } of files) {
+  for (const { file, format, target } of files) {
     console.log(`importing ${target} from ${file}`);
-    const stats = await importFile({ file, target, options });
+    const stats = await importFile({ file, format, target, options });
     console.log(
       `imported ${stats.rows} ${target} row(s) from ${basename(stats.file)} in ${stats.batches} batch(es)`,
     );

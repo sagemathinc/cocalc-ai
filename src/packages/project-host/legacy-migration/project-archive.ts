@@ -61,6 +61,19 @@ const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
   ".ssh/.cocalc",
   ".ssh/authorized_keys",
 ];
+const RESTORED_PROJECT_QUOTA_HEADROOM_BYTES =
+  Math.max(
+    0,
+    envToInt("COCALC_LEGACY_PROJECT_RESTORE_QUOTA_HEADROOM_MB", 1024),
+  ) * 1_000_000;
+const configuredRestoredProjectQuotaMultiplier = Number(
+  process.env.COCALC_LEGACY_PROJECT_RESTORE_QUOTA_MULTIPLIER ?? 1.05,
+);
+const RESTORED_PROJECT_QUOTA_MULTIPLIER = Number.isFinite(
+  configuredRestoredProjectQuotaMultiplier,
+)
+  ? Math.max(1, configuredRestoredProjectQuotaMultiplier)
+  : 1.05;
 
 type LegacyProjectArchiveDeps = {
   getOrEnsureVolume: (project_id: string) => Promise<unknown>;
@@ -164,6 +177,20 @@ function mergeProjectArchivePathRoots(
   return normalizeProjectArchivePathRoots(
     pathLists.flatMap((paths) => paths ?? []),
   );
+}
+
+function restoredProjectQuotaBytes({
+  previous_quota_bytes,
+  restored_bytes,
+}: {
+  previous_quota_bytes?: number;
+  restored_bytes: number;
+}): number {
+  const restoredSize = Math.ceil(
+    restored_bytes * RESTORED_PROJECT_QUOTA_MULTIPLIER +
+      RESTORED_PROJECT_QUOTA_HEADROOM_BYTES,
+  );
+  return Math.max(previous_quota_bytes ?? 0, restoredSize);
 }
 
 function archivePathMatchesRoot(path: string, root: string): boolean {
@@ -850,6 +877,7 @@ export function createLegacyProjectArchiveHandlers({
       let memberListTmpDir: string | undefined;
       let archivePath: string;
       let savedQuotaSize: number | undefined;
+      let quotaSizeToRestore: number | undefined;
       let quotaGraceEnabled = false;
       let quotaGraceMarkedActive = false;
       if (cache_id) {
@@ -892,6 +920,7 @@ export function createLegacyProjectArchiveHandlers({
               const quota = await getProjectQuota(project_id);
               if (quota.size > 0) {
                 savedQuotaSize = quota.size;
+                quotaSizeToRestore = savedQuotaSize;
                 publishArchiveProgress({
                   lro,
                   phase: "quota",
@@ -964,6 +993,28 @@ export function createLegacyProjectArchiveHandlers({
           expected_uncompressed_bytes: uncompressed_bytes,
           lro,
         });
+        let quotaUsedBytes: number | undefined;
+        let quotaSizeBytes: number | undefined;
+        if (quotaGraceEnabled) {
+          try {
+            const quota = await getProjectQuota?.(project_id);
+            quotaUsedBytes = quota?.used;
+            quotaSizeBytes = quota?.size;
+          } catch (err) {
+            logger.warn(
+              "legacy project archive restore failed to read post-restore quota",
+              { project_id, err: `${err}` },
+            );
+          }
+          const restoredBytes = Math.max(
+            uncompressed_bytes,
+            quotaUsedBytes ?? 0,
+          );
+          quotaSizeToRestore = restoredProjectQuotaBytes({
+            previous_quota_bytes: savedQuotaSize,
+            restored_bytes: restoredBytes,
+          });
+        }
         publishArchiveProgress({
           lro,
           phase: "finish",
@@ -983,28 +1034,30 @@ export function createLegacyProjectArchiveHandlers({
           ...downloaded,
           file_count,
           uncompressed_bytes,
+          quota_used_bytes: quotaUsedBytes,
+          quota_size_bytes: quotaSizeToRestore ?? quotaSizeBytes,
           skipped_file_count,
           skipped_bytes,
           skipped_files,
           duration_ms: Date.now() - started,
         };
       } finally {
-        if (quotaGraceEnabled && savedQuotaSize != null) {
+        if (quotaGraceEnabled && quotaSizeToRestore != null) {
           try {
-            await setProjectQuota?.(project_id, savedQuotaSize);
+            await setProjectQuota?.(project_id, quotaSizeToRestore);
             publishArchiveProgress({
               lro,
               phase: "quota",
-              message: "restored project quota after migration",
+              message: "set project quota after migration",
               progress: 98,
               detail: {
-                quota_bytes: savedQuotaSize,
+                quota_bytes: quotaSizeToRestore,
               },
             });
           } catch (err) {
             logger.warn(
               "legacy project archive restore failed to restore project quota",
-              { project_id, savedQuotaSize, err: `${err}` },
+              { project_id, quotaSizeToRestore, err: `${err}` },
             );
           }
         }

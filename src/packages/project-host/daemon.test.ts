@@ -1595,6 +1595,56 @@ describe("project-host daemon stop", () => {
     expect(spawnSyncSpy).toHaveBeenCalled();
   });
 
+  it("does not default project storage to /mnt/cocalc unless it is btrfs", () => {
+    jest.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) => {
+      if (file === "/proc/mounts") {
+        return "dev /mnt/cocalc ext4 rw 0 0\n";
+      }
+      return (jest.requireActual("node:fs") as typeof fs).readFileSync(
+        file as any,
+        ...(args as any),
+      );
+    }) as typeof fs.readFileSync);
+    delete process.env.COCALC_FILE_SERVER_MOUNTPOINT;
+    delete process.env.COCALC_PROJECT_RUNNER_MOUNTPOINT;
+
+    const resolved = __test__.resolveEnv(0);
+
+    expect(resolved.env.COCALC_FILE_SERVER_MOUNTPOINT).toBeUndefined();
+    expect(resolved.env.COCALC_PROJECT_RUNNER_MOUNTPOINT).toBeUndefined();
+  });
+
+  it("uses /mnt/cocalc for both file-server and runner when it is btrfs", () => {
+    jest.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) => {
+      if (file === "/proc/mounts") {
+        return "dev /mnt/cocalc btrfs rw 0 0\n";
+      }
+      return (jest.requireActual("node:fs") as typeof fs).readFileSync(
+        file as any,
+        ...(args as any),
+      );
+    }) as typeof fs.readFileSync);
+    delete process.env.COCALC_FILE_SERVER_MOUNTPOINT;
+    delete process.env.COCALC_PROJECT_RUNNER_MOUNTPOINT;
+
+    const resolved = __test__.resolveEnv(0);
+
+    expect(resolved.env.COCALC_FILE_SERVER_MOUNTPOINT).toBe("/mnt/cocalc");
+    expect(resolved.env.COCALC_PROJECT_RUNNER_MOUNTPOINT).toBe("/mnt/cocalc");
+  });
+
+  it("defaults the runner mountpoint to an explicit file-server mountpoint", () => {
+    process.env.COCALC_FILE_SERVER_MOUNTPOINT = "/storage/cocalc";
+    delete process.env.COCALC_PROJECT_RUNNER_MOUNTPOINT;
+
+    const resolved = __test__.resolveEnv(0);
+
+    expect(resolved.env.COCALC_FILE_SERVER_MOUNTPOINT).toBe("/storage/cocalc");
+    expect(resolved.env.COCALC_PROJECT_RUNNER_MOUNTPOINT).toBe(
+      "/storage/cocalc",
+    );
+  });
+
   it("loads a local env overlay after the bootstrap env file", () => {
     const tempDir = mkTempDir("cocalc-project-host-daemon-env-");
     const envFile = path.join(tempDir, "project-host.env");

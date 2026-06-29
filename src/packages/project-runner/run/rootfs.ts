@@ -226,6 +226,7 @@ export async function mount({
       image,
       project_id,
     });
+    await mkdir(dirname(imageName), { recursive: true });
 
     if (ROOTFS_MOUNT_MODE === "copy") {
       const currentImage = await readFile(imageName, "utf8").catch(() => "");
@@ -246,7 +247,6 @@ export async function mount({
         command: "sudo",
         args: ["-n", STORAGE_WRAPPER, "copy-tree-reflink", lowerdir, merged],
       });
-      await mkdir(dirname(imageName), { recursive: true });
       await writeFile(imageName, image);
       addRelease(project_id, release);
       return merged;

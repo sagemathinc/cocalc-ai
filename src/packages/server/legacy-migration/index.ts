@@ -893,8 +893,20 @@ function legacyStripeSubscriptionRecordInfo(
 
 async function membershipPlans(): Promise<LegacyMigrationMembershipPlan[]> {
   const tiers = await getSeedMembershipTierMap({ includeDisabled: false });
-  return ["basic", "member"]
-    .map((id) => tiers[id])
+  return ["basic", "member", "pro"]
+    .map((id) => {
+      const tier = tiers[id];
+      if (tier != null) return tier;
+      if (id === "pro") {
+        return {
+          id: "pro",
+          label: "Pro",
+          price_monthly: 200,
+          price_yearly: 1800,
+        } as MembershipTierRecord;
+      }
+      return undefined;
+    })
     .filter((tier): tier is MembershipTierRecord => tier != null)
     .map((tier) => ({
       id: tier.id,
@@ -1310,12 +1322,17 @@ async function financialRowsForAccount(
 
 function suggestedMembershipClass({
   active_subscription_count,
+  pending_credit_amount,
   membership_already_applied,
 }: {
   active_subscription_count: number;
+  pending_credit_amount: number;
   membership_already_applied: boolean;
 }): string | null {
-  if (membership_already_applied || active_subscription_count <= 0) {
+  if (
+    membership_already_applied ||
+    (active_subscription_count <= 0 && pending_credit_amount <= 5)
+  ) {
     return null;
   }
   return "member";
@@ -1394,6 +1411,7 @@ async function financialPreviewForAccount(
     active_subscription_count,
     suggested_membership_class: suggestedMembershipClass({
       active_subscription_count,
+      pending_credit_amount,
       membership_already_applied,
     }),
     suggested_membership_interval:
@@ -1773,11 +1791,15 @@ async function applyFinancialMigrationHomeBayForAccount(
 
 function validateLegacyRenewalMembershipClass(
   membership_class?: string | null,
-): "basic" | "member" | null {
+): "basic" | "member" | "pro" | null {
   const value = clean(membership_class);
   if (value == null || value === "none") return null;
-  if (value === "basic" || value === "member") return value;
-  throw new Error("legacy migration renewal can only be basic or standard");
+  if (value === "basic" || value === "member" || value === "pro") {
+    return value;
+  }
+  throw new Error(
+    "legacy migration renewal can only be basic, standard, or pro",
+  );
 }
 
 export async function configureFinancialMembershipRenewalHomeBay({

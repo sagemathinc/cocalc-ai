@@ -90,14 +90,15 @@ function exceptionalVisibilityTag(share: PublicDirectoryShareSummary) {
 }
 
 function projectPathHref(share: PublicDirectoryShareSummary): string {
-  const parts =
-    share.path == "."
+  const parts = [
+    "home",
+    "user",
+    ...(share.path == "."
       ? []
-      : share.path.split("/").filter((part) => part.length > 0);
+      : share.path.split("/").filter((part) => part.length > 0)),
+  ];
   const encodedPath = parts.map(encodeURIComponent).join("/");
-  return `/projects/${share.project_id}/files/${encodedPath}${
-    encodedPath ? "/" : ""
-  }`;
+  return `/projects/${share.project_id}/files/${encodedPath}/`;
 }
 
 function projectPathTarget(share: PublicDirectoryShareSummary): string {

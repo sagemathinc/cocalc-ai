@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { load_target } from "@cocalc/frontend/history";
+import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { LegacyMigrationFinancialPreviewResponse } from "@cocalc/conat/hub/api/legacy-migration";
 import { legacyBillingMigrationReviewRequested } from "./legacy-billing-migration-review";
@@ -65,7 +66,10 @@ function hasVisibleLegacyBilling(
         preview.applied_credit_amount > 0 ||
         preview.active_subscription_count > 0 ||
         preview.membership_already_applied ||
-        !!preview.stripe_customer_id))
+        !!preview.stripe_customer_id ||
+        preview.legacy_accounts.some(
+          (account) => account.unvalued_active_site_license_count > 0,
+        )))
   );
 }
 
@@ -79,6 +83,7 @@ export default function LegacyBillingMigrationStatus({
     "customize",
     "legacy_migration_enabled",
   );
+  const helpEmail = useTypedRedux("customize", "help_email");
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
   const [error, setError] = useState("");
   const [applying, setApplying] = useState(false);
@@ -87,7 +92,7 @@ export default function LegacyBillingMigrationStatus({
     "month",
   );
   const [renewalSaving, setRenewalSaving] = useState<
-    "cancel" | "basic" | "member" | null
+    "cancel" | "basic" | "member" | "pro" | null
   >(null);
   const [hasPaymentMethods, setHasPaymentMethods] = useState<boolean | null>(
     null,
@@ -163,7 +168,9 @@ export default function LegacyBillingMigrationStatus({
     }
   }
 
-  async function configureRenewal(membership_class: "basic" | "member" | null) {
+  async function configureRenewal(
+    membership_class: "basic" | "member" | "pro" | null,
+  ) {
     if (!preview?.applied_membership_class) return;
     setRenewalSaving(membership_class ?? "cancel");
     setError("");
@@ -274,12 +281,19 @@ export default function LegacyBillingMigrationStatus({
   const grantDays = preview.suggested_membership_grant_days ?? 30;
   const basicPlan = preview.plans.find((plan) => plan.id === "basic");
   const memberPlan = preview.plans.find((plan) => plan.id === "member");
-  const basicPrice = planPriceLabel(basicPlan);
+  const proPlan = preview.plans.find((plan) => plan.id === "pro");
+  const suggestedPlan = preview.plans.find(
+    (plan) => plan.id === suggestedMembership,
+  );
+  const suggestedMembershipPrice = planPriceLabel(suggestedPlan);
   const basicIntervalPrice = planIntervalPriceLabel(basicPlan, renewalInterval);
   const memberIntervalPrice = planIntervalPriceLabel(
     memberPlan,
     renewalInterval,
   );
+  const proIntervalPrice = planIntervalPriceLabel(proPlan, renewalInterval);
+  const proRenewalLabel =
+    continueMembership === "pro" ? "Continue Pro" : "Upgrade to Pro";
   const activeRenewalClass = preview.membership_renewal_configured
     ? preview.membership_renewal_class
     : null;
@@ -292,9 +306,7 @@ export default function LegacyBillingMigrationStatus({
   );
   const unvaluedSiteLicenseCount = preview.legacy_accounts.reduce(
     (total, account) =>
-      account.claimed_by_account_id
-        ? total
-        : total + (account.unvalued_active_site_license_count ?? 0),
+      total + (account.unvalued_active_site_license_count ?? 0),
     0,
   );
 
@@ -338,7 +350,7 @@ export default function LegacyBillingMigrationStatus({
             pending
               ? `Click Apply now to add positive credit, remaining paid legacy value, Stripe customer metadata, and ${
                   suggestedMembership
-                    ? `a free ${grantDays}-day ${suggestedMembershipLabel} grant for active legacy subscriptions. It does not auto-charge; choose a paid plan later to continue.`
+                    ? `a free ${grantDays}-day ${suggestedMembershipLabel} grant for eligible legacy billing. The grant starts when you click Apply now. It does not auto-charge; choose a paid plan later to continue.`
                     : "legacy billing metadata."
                 } No project restore action is required.`
               : "Migrated legacy billing items are recorded in your CoCalc billing history and membership status."
@@ -354,7 +366,8 @@ export default function LegacyBillingMigrationStatus({
                 <span>
                   You can use the free membership until the grant ends. Choose
                   what should happen after that; you can change this any time
-                  before the free month ends. There is no immediate charge.
+                  before the free month ends. There is no immediate charge. The
+                  free {grantDays}-day grant starts when you click Apply now.
                 </span>
                 {preview.membership_grant_ends_at ? (
                   <Text type="secondary">
@@ -406,7 +419,24 @@ export default function LegacyBillingMigrationStatus({
                     {basicRenewalLabel}
                     {basicIntervalPrice ? ` (${basicIntervalPrice})` : ""}
                   </Button>
+                  <Button
+                    disabled={!proPlan}
+                    loading={renewalSaving === "pro"}
+                    onClick={() => void configureRenewal("pro")}
+                    size="small"
+                    type={activeRenewalClass === "pro" ? "primary" : "default"}
+                  >
+                    {proRenewalLabel}
+                    {proIntervalPrice ? ` (${proIntervalPrice})` : ""}
+                  </Button>
                 </Space>
+                <Text type="secondary">
+                  Compare membership tiers on the{" "}
+                  <a href="/pricing" rel="noreferrer" target="_blank">
+                    pricing page
+                  </a>
+                  .
+                </Text>
                 {preview.membership_renewal_configured ? (
                   <Text type="secondary">
                     Current selection:{" "}
@@ -474,16 +504,13 @@ export default function LegacyBillingMigrationStatus({
               {suggestedMembership ? (
                 <>
                   {grantDays} days of{" "}
-                  {suggestedMembership === "basic" ? (
-                    <a href="/pricing" rel="noreferrer" target="_blank">
-                      {suggestedMembershipLabel}
-                    </a>
-                  ) : (
-                    suggestedMembershipLabel
-                  )}
-                  {suggestedMembership === "basic" && basicPrice
-                    ? ` (${basicPrice})`
-                    : ""}
+                  <a href="/pricing" rel="noreferrer" target="_blank">
+                    {suggestedMembershipLabel}
+                  </a>
+                  {suggestedMembershipPrice
+                    ? ` (${suggestedMembershipPrice})`
+                    : ""}{" "}
+                  starting when you click Apply now
                 </>
               ) : preview.membership_already_applied ? (
                 "Already applied"
@@ -503,8 +530,37 @@ export default function LegacyBillingMigrationStatus({
           <Alert
             showIcon
             type="warning"
-            message="Some active legacy site licenses need review"
-            description={`${unvaluedSiteLicenseCount} active site license${unvaluedSiteLicenseCount === 1 ? "" : "s"} did not include enough price metadata to compute automatic credit. Support can review these manually.`}
+            message="Some active legacy site licenses need manual review"
+            description={
+              <Space direction="vertical" size="small">
+                <span>
+                  {unvaluedSiteLicenseCount} active legacy site license
+                  {unvaluedSiteLicenseCount === 1 ? "" : "s"} did not include
+                  enough price metadata to compute automatic credit. This does
+                  not block applying the automatic credit and membership grant,
+                  but support should review these manually.
+                </span>
+                <Space wrap>
+                  <Button
+                    onClick={() =>
+                      openSupportTab({
+                        type: "purchase",
+                        subject: "Legacy site license migration review",
+                        body: `Please review ${unvaluedSiteLicenseCount} active legacy site license(s) that did not include enough price metadata for automatic migration.`,
+                      })
+                    }
+                    size="small"
+                  >
+                    Create support ticket
+                  </Button>
+                  {helpEmail ? (
+                    <Button href={`mailto:${helpEmail}`} size="small">
+                      Email {helpEmail}
+                    </Button>
+                  ) : null}
+                </Space>
+              </Space>
+            }
           />
         ) : null}
         <Space wrap size={[4, 4]}>
@@ -523,6 +579,9 @@ export default function LegacyBillingMigrationStatus({
                 `credit: ${formatMoney(account.credit_amount)}`,
                 account.entitlement_credit_amount
                   ? `remaining paid value: ${formatMoney(account.entitlement_credit_amount)}`
+                  : "",
+                account.unvalued_active_site_license_count
+                  ? `site licenses needing review: ${account.unvalued_active_site_license_count}`
                   : "",
                 account.active_subscription_count
                   ? `subscriptions: ${account.active_subscription_count}`

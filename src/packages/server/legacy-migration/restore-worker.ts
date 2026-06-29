@@ -66,6 +66,18 @@ const PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS = Math.max(
 );
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_LEGACY_PROJECTS_BUCKET = "cocalc-projects";
+const RESTORED_PROJECT_QUOTA_HEADROOM_MB = Math.max(
+  0,
+  envToInt("COCALC_LEGACY_PROJECT_RESTORE_QUOTA_HEADROOM_MB", 1024),
+);
+const configuredRestoredProjectQuotaMultiplier = Number(
+  process.env.COCALC_LEGACY_PROJECT_RESTORE_QUOTA_MULTIPLIER ?? 1.05,
+);
+const RESTORED_PROJECT_QUOTA_MULTIPLIER = Number.isFinite(
+  configuredRestoredProjectQuotaMultiplier,
+)
+  ? Math.max(1, configuredRestoredProjectQuotaMultiplier)
+  : 1.05;
 
 let running = false;
 let inFlight = 0;
@@ -146,6 +158,17 @@ async function ensureLegacyMigrationRestoreSchema(): Promise<void> {
 function positiveInteger(value: unknown): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+function restoredProjectDiskQuotaMb(
+  restored_bytes: unknown,
+): number | undefined {
+  const bytes = positiveInteger(restored_bytes);
+  if (bytes == null) return;
+  return (
+    Math.ceil((bytes * RESTORED_PROJECT_QUOTA_MULTIPLIER) / 1_000_000) +
+    RESTORED_PROJECT_QUOTA_HEADROOM_MB
+  );
 }
 
 function nestedValue(obj: any, path: string[]): unknown {
@@ -676,6 +699,42 @@ async function markRestored({
   await setRestoreLabels({ row, restore_status: "restored" });
 }
 
+async function ensureRestoredProjectDiskQuota({
+  row,
+  result,
+}: {
+  row: LegacyRestoreRow;
+  result: Record<string, any>;
+}): Promise<number | undefined> {
+  const quotaUsedBytes = positiveInteger(result.quota_used_bytes);
+  const uncompressedBytes = positiveInteger(result.uncompressed_bytes);
+  const desired = restoredProjectDiskQuotaMb(
+    Math.max(quotaUsedBytes ?? 0, uncompressedBytes ?? 0),
+  );
+  if (desired == null) return;
+  const { rows } = await getPool().query<{ run_quota: Record<string, any> }>(
+    "SELECT run_quota FROM projects WHERE project_id=$1",
+    [row.project_id],
+  );
+  const current = positiveInteger(rows[0]?.run_quota?.disk_quota);
+  if (current != null && current >= desired) return current;
+  await getPool().query(
+    `
+    UPDATE projects
+       SET run_quota=jsonb_set(
+             COALESCE(run_quota, '{}'::JSONB),
+             '{disk_quota}',
+             to_jsonb($2::INT),
+             true
+           ),
+           last_changed=NOW()
+     WHERE project_id=$1
+    `,
+    [row.project_id, desired],
+  );
+  return desired;
+}
+
 async function markFailed({
   row,
   err,
@@ -816,14 +875,24 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
         lro: { op_id, scope_type: "project", scope_id: row.project_id },
       }),
     });
+    const restoredResult = {
+      ...result,
+      artifact_bucket: bucket,
+      artifact_key: key,
+      restored_at: new Date().toISOString(),
+      worker_id: WORKER_ID,
+    };
+    const diskQuotaMb = await ensureRestoredProjectDiskQuota({
+      row,
+      result: restoredResult,
+    });
     await markRestored({
       row,
       result: {
-        ...result,
-        artifact_bucket: bucket,
-        artifact_key: key,
-        restored_at: new Date().toISOString(),
-        worker_id: WORKER_ID,
+        ...restoredResult,
+        ...(diskQuotaMb == null
+          ? {}
+          : { restored_project_disk_quota_mb: diskQuotaMb }),
       },
     });
   } catch (err) {
