@@ -187,6 +187,74 @@ function viewerCopyDenied(path: string): NodeJS.ErrnoException {
   return err;
 }
 
+function ruleMayExcludeDescendant({
+  rulePath,
+  path: srcPath,
+}: {
+  rulePath: string;
+  path: string;
+}): boolean {
+  const normalizedRulePath = normalizeProjectViewerPolicyPath(rulePath);
+  if (normalizedRulePath == null) {
+    return false;
+  }
+  if (normalizedRulePath === "" || srcPath === "") {
+    return true;
+  }
+  const globIndexes = ["*", "?", "["]
+    .map((char) => normalizedRulePath.indexOf(char))
+    .filter((idx) => idx >= 0);
+  if (globIndexes.length > 0) {
+    const firstGlobIndex = Math.min(...globIndexes);
+    const literalPrefix = normalizedRulePath
+      .slice(0, firstGlobIndex)
+      .replace(/\/+$/, "");
+    return (
+      literalPrefix === "" ||
+      literalPrefix === srcPath ||
+      literalPrefix.startsWith(`${srcPath}/`) ||
+      srcPath.startsWith(`${literalPrefix}/`)
+    );
+  }
+  return (
+    normalizedRulePath === srcPath ||
+    normalizedRulePath.startsWith(`${srcPath}/`)
+  );
+}
+
+function hasNestedViewerPolicyExclusion({
+  read_policy,
+  path: srcPath,
+}: {
+  read_policy: ProjectViewerReadPolicy;
+  path: string;
+}): boolean {
+  return read_policy.rules.some(
+    (rule) =>
+      rule?.action === "exclude" &&
+      ruleMayExcludeDescendant({ rulePath: rule.path, path: srcPath }),
+  );
+}
+
+function canTrustViewerPolicySubtree({
+  read_policy,
+  path: srcPath,
+  options,
+}: {
+  read_policy: ProjectViewerReadPolicy;
+  path: string;
+  options?: CopyOptions;
+}): boolean {
+  if (options?.dereference) {
+    return false;
+  }
+  if (hasNestedViewerPolicyExclusion({ read_policy, path: srcPath })) {
+    return false;
+  }
+  const probe = srcPath ? `${srcPath}/.cocalc-copy-policy-probe` : ".";
+  return viewerReadPolicyAllowsPath({ policy: read_policy, path: probe });
+}
+
 async function canonicalViewerCopyPath({
   fs,
   path: srcPath,
@@ -254,6 +322,15 @@ export async function assertCopySourceAllowedByReadPolicy({
     }
     const stat = await fs.stat(srcPath);
     if (!stat.isDirectory()) {
+      return;
+    }
+    if (
+      canTrustViewerPolicySubtree({
+        read_policy,
+        path: canonical,
+        options,
+      })
+    ) {
       return;
     }
     const entries = (await fs.readdir(srcPath, {
