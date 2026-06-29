@@ -22,6 +22,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     conat_client: {
       hub: {
         projects: {
+          setProjectMetadata: jest.fn(async () => undefined),
           setProjectSshKey: jest.fn(async () => undefined),
           deleteProjectSshKey: jest.fn(async () => undefined),
         },
@@ -157,7 +158,7 @@ describe("ProjectsActions project metadata updates", () => {
     },
   );
 
-  it("forces direct projects_query_set calls to use set semantics", async () => {
+  it("routes direct project metadata writes through the project API", async () => {
     const { actions } = makeActions();
     const patch = {
       project_id,
@@ -171,12 +172,15 @@ describe("ProjectsActions project metadata updates", () => {
 
     await actions.projects_query_set(patch);
 
-    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
-      query: {
-        projects: patch,
+    expect(
+      mockedWebappClient.conat_client.hub.projects.setProjectMetadata,
+    ).toHaveBeenCalledWith({
+      project_id,
+      patch: {
+        theme: patch.theme,
       },
-      options: [{ set: true }],
     });
+    expect(mockedWebappClient.async_query).not.toHaveBeenCalled();
   });
 
   it("rolls back the local optimistic update when the direct query fails", async () => {

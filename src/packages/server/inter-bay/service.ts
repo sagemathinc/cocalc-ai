@@ -404,6 +404,7 @@ import {
 import {
   setLocalProjectDeletionProtection,
   setLocalProjectManageUsersOwnerOnly,
+  setLocalProjectMetadata,
   setLocalProjectsHidden,
 } from "@cocalc/server/conat/api/projects";
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
@@ -1851,6 +1852,7 @@ async function startProjectCollabInviteService(): Promise<void> {
         project_ids,
         hide,
       }),
+    setProjectMetadata: async (opts) => await setLocalProjectMetadata(opts),
     setManageUsersOwnerOnly: async (opts) =>
       await setLocalProjectManageUsersOwnerOnly(opts),
     setDeletionProtection: async (opts) =>
