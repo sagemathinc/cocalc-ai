@@ -284,7 +284,10 @@ describe("useFiles", () => {
     );
 
     const fs = {
-      getListing: jest.fn().mockResolvedValue({ files: {} }),
+      getListing: jest
+        .fn()
+        .mockResolvedValueOnce({ files: {} })
+        .mockResolvedValue({ files: listing.files }),
       listing: jest
         .fn()
         .mockRejectedValueOnce(transientErr)

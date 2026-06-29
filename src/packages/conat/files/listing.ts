@@ -104,6 +104,7 @@ export class Listing extends EventEmitter {
         return;
       }
       this.watch = watch;
+      await this.syncAfterWatchAttach();
       void this.handleUpdates();
     } catch (err) {
       if (this.files == null) {
@@ -113,6 +114,36 @@ export class Listing extends EventEmitter {
         return;
       }
       console.warn("WARNING:", err);
+    }
+  };
+
+  private syncAfterWatchAttach = async () => {
+    if (this.files == null) {
+      return;
+    }
+    const before = this.files;
+    try {
+      const { files, truncated } = await this.opts.fs.getListing(
+        this.opts.path,
+      );
+      if (this.files == null) {
+        return;
+      }
+      this.files = files;
+      this.truncated = truncated;
+      const changed = new Set([
+        ...Object.keys(before ?? {}),
+        ...Object.keys(files ?? {}),
+      ]);
+      for (const name of changed) {
+        if (!sameFileData(before?.[name], files?.[name])) {
+          this.emit("change", name, files?.[name]);
+        }
+      }
+    } catch (err) {
+      if (this.files != null) {
+        console.warn("WARNING:", err);
+      }
     }
   };
 
@@ -185,6 +216,19 @@ export class Listing extends EventEmitter {
     }
     this.emit("change", filename, this.files[filename]);
   };
+}
+
+function sameFileData(a: FileData | undefined, b: FileData | undefined) {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  return (
+    a.mtime === b.mtime &&
+    a.size === b.size &&
+    a.isDir === b.isDir &&
+    a.isSymLink === b.isSymLink &&
+    a.linkTarget === b.linkTarget &&
+    a.type === b.type
+  );
 }
 
 function isUnsupportedWatchError(err: unknown): boolean {

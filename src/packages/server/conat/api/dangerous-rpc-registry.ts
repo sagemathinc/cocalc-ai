@@ -570,6 +570,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: "collaborator-authorized project metadata labels",
   },
+  "projects.setLocalProjectMetadata": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "projects.setProjectMetadata": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "projects.recordProjectRootfsBuildPublish": {
     decision: "fresh-auth-not-required",
     reason:

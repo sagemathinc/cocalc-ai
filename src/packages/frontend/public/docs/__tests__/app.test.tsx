@@ -326,9 +326,14 @@ describe("public/docs", () => {
         "Project secrets mounted as protected read-only files",
       ),
     ).toHaveAttribute("src", "/public/docs/project-secrets-ea9872ae.webp");
-    expect(screen.getByText("settings.environment.secrets")).not.toBeNull();
+    const actionCard = screen
+      .getByText("Open this in CoCalc")
+      .closest(".ant-card")!;
     expect(
-      within(screen.getByText("Open this in CoCalc").closest(".ant-card")!)
+      within(actionCard).getByText("settings.environment.secrets"),
+    ).not.toBeNull();
+    expect(
+      within(actionCard)
         .getByRole("button", { name: "Open project secrets" })
         .getAttribute("data-cocalc-action-id"),
     ).toBe("settings.environment.secrets");

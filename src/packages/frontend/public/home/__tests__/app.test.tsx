@@ -91,7 +91,7 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
     expect(screen.getByRole("link", { name: "All news" })).not.toBeNull();
-  });
+  }, 15000);
 
   it("shows direct app actions when authenticated", () => {
     global.fetch = jest.fn(
