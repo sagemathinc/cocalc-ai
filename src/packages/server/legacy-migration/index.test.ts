@@ -4,11 +4,8 @@
  */
 
 import {
-  MAX_LEGACY_ARCHIVE_SELECTION_PATH_LENGTH,
-  MAX_LEGACY_ARCHIVE_SELECTION_PATHS,
   MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST,
   legacyProjectArchiveUncompressedBytes,
-  normalizeLegacyArchiveSelectionPathList,
   normalizeLegacyProjectImportIds,
 } from ".";
 
@@ -58,36 +55,5 @@ describe("legacy migration manifest helpers", () => {
     ).toThrow(
       `import at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} legacy projects at a time`,
     );
-  });
-
-  it("normalizes and bounds selective restore paths", () => {
-    expect(
-      normalizeLegacyArchiveSelectionPathList([" a ", "b", "a", ""], "paths"),
-    ).toEqual(["a", "b"]);
-    expect(
-      normalizeLegacyArchiveSelectionPathList(undefined, "paths"),
-    ).toBeUndefined();
-    expect(() =>
-      normalizeLegacyArchiveSelectionPathList(
-        Array.from(
-          { length: MAX_LEGACY_ARCHIVE_SELECTION_PATHS + 1 },
-          (_, i) => `path-${i}`,
-        ),
-        "include_paths",
-      ),
-    ).toThrow(
-      `include_paths can include at most ${MAX_LEGACY_ARCHIVE_SELECTION_PATHS} paths`,
-    );
-    expect(() =>
-      normalizeLegacyArchiveSelectionPathList(
-        ["x".repeat(MAX_LEGACY_ARCHIVE_SELECTION_PATH_LENGTH + 1)],
-        "exclude_paths",
-      ),
-    ).toThrow(
-      `exclude_paths contains a path longer than ${MAX_LEGACY_ARCHIVE_SELECTION_PATH_LENGTH} characters`,
-    );
-    expect(() =>
-      normalizeLegacyArchiveSelectionPathList(["bad\0path"], "paths"),
-    ).toThrow("paths contains a path with a NUL byte");
   });
 });

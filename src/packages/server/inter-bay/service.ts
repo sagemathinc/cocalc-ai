@@ -1447,10 +1447,6 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.listProjects(opts ?? {}),
     legacyMigrationImportProjects: async (opts) =>
       await legacyMigration.importProjects(opts),
-    legacyMigrationPrepareArchiveSelection: async (opts) =>
-      await legacyMigration.prepareArchiveSelection(opts),
-    legacyMigrationRestoreArchiveSelection: async (opts) =>
-      await legacyMigration.restoreArchiveSelection(opts),
     legacyMigrationRetryProjectRestore: async (opts) =>
       await legacyMigration.retryProjectRestore(opts),
     legacyMigrationPreviewFinancialMigration: async (opts) =>

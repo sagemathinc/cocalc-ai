@@ -21,25 +21,7 @@ export type LegacyMigrationProjectRestoreStatus =
   | "indexed"
   | "failed";
 
-export type LegacyMigrationProjectRestoreMode = "full" | "select";
-
-export interface LegacyMigrationArchiveEntry {
-  path: string;
-  size: number;
-  type: "file" | "directory" | "symlink" | "other";
-  mtime?: string;
-}
-
-export interface LegacyMigrationArchiveIndex {
-  cache_id: string;
-  bytes: number;
-  sha256: string;
-  file_count: number;
-  uncompressed_bytes: number;
-  entries: LegacyMigrationArchiveEntry[];
-  truncated: boolean;
-  duration_ms: number;
-}
+export type LegacyMigrationProjectRestoreMode = "full";
 
 export interface LegacyMigrationProjectSummary {
   legacy_project_id: string;
@@ -116,32 +98,6 @@ export interface LegacyMigrationImportProjectResult {
 
 export interface LegacyMigrationImportProjectsResponse {
   results: LegacyMigrationImportProjectResult[];
-}
-
-export interface LegacyMigrationPrepareArchiveSelectionOptions {
-  account_id?: string;
-  legacy_project_id: string;
-  max_entries?: number;
-}
-
-export interface LegacyMigrationPrepareArchiveSelectionResponse {
-  legacy_project_id: string;
-  project_id: string;
-  index: LegacyMigrationArchiveIndex;
-}
-
-export interface LegacyMigrationRestoreArchiveSelectionOptions {
-  account_id?: string;
-  legacy_project_id: string;
-  include_paths?: string[];
-  exclude_paths?: string[];
-}
-
-export interface LegacyMigrationRestoreArchiveSelectionResponse {
-  legacy_project_id: string;
-  project_id: string;
-  restore_status: LegacyMigrationProjectRestoreStatus;
-  result?: Record<string, any>;
 }
 
 export interface LegacyMigrationRetryProjectRestoreOptions {
@@ -295,12 +251,6 @@ export interface LegacyMigration {
   importProjects: (
     opts: LegacyMigrationImportProjectsOptions,
   ) => Promise<LegacyMigrationImportProjectsResponse>;
-  prepareArchiveSelection: (
-    opts: LegacyMigrationPrepareArchiveSelectionOptions,
-  ) => Promise<LegacyMigrationPrepareArchiveSelectionResponse>;
-  restoreArchiveSelection: (
-    opts: LegacyMigrationRestoreArchiveSelectionOptions,
-  ) => Promise<LegacyMigrationRestoreArchiveSelectionResponse>;
   retryProjectRestore: (
     opts: LegacyMigrationRetryProjectRestoreOptions,
   ) => Promise<LegacyMigrationRetryProjectRestoreResponse>;
@@ -318,8 +268,6 @@ export interface LegacyMigration {
 export const legacyMigration = {
   listProjects: authFirstRequireAccount,
   importProjects: authFirstRequireAccount,
-  prepareArchiveSelection: authFirstRequireAccount,
-  restoreArchiveSelection: authFirstRequireAccount,
   retryProjectRestore: authFirstRequireAccount,
   previewFinancialMigration: authFirstRequireAccount,
   applyFinancialMigration: authFirstRequireAccount,

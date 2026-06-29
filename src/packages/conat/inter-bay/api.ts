@@ -84,10 +84,6 @@ import type {
   LegacyMigrationImportProjectsResponse,
   LegacyMigrationListProjectsOptions,
   LegacyMigrationListProjectsResponse,
-  LegacyMigrationPrepareArchiveSelectionOptions,
-  LegacyMigrationPrepareArchiveSelectionResponse,
-  LegacyMigrationRestoreArchiveSelectionOptions,
-  LegacyMigrationRestoreArchiveSelectionResponse,
   LegacyMigrationRetryProjectRestoreOptions,
   LegacyMigrationRetryProjectRestoreResponse,
 } from "@cocalc/conat/hub/api/legacy-migration";
@@ -2178,8 +2174,6 @@ export type AccountLocalMethod =
   | "replace-membership-portable-state"
   | "legacy-migration-list-projects"
   | "legacy-migration-import-projects"
-  | "legacy-migration-prepare-archive-selection"
-  | "legacy-migration-restore-archive-selection"
   | "legacy-migration-retry-project-restore"
   | "legacy-migration-preview-financial-migration"
   | "legacy-migration-apply-financial-migration"
@@ -3362,12 +3356,6 @@ export interface InterBayAccountLocalApi {
   legacyMigrationImportProjects: (
     opts: LegacyMigrationImportProjectsOptions,
   ) => Promise<LegacyMigrationImportProjectsResponse>;
-  legacyMigrationPrepareArchiveSelection: (
-    opts: LegacyMigrationPrepareArchiveSelectionOptions,
-  ) => Promise<LegacyMigrationPrepareArchiveSelectionResponse>;
-  legacyMigrationRestoreArchiveSelection: (
-    opts: LegacyMigrationRestoreArchiveSelectionOptions,
-  ) => Promise<LegacyMigrationRestoreArchiveSelectionResponse>;
   legacyMigrationRetryProjectRestore: (
     opts: LegacyMigrationRetryProjectRestoreOptions,
   ) => Promise<LegacyMigrationRetryProjectRestoreResponse>;
@@ -5879,24 +5867,6 @@ export function createInterBayAccountLocalClient({
       method: "legacy-migration-import-projects",
     }),
   });
-  const legacyMigrationPrepareArchiveSelectionClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "legacyMigrationPrepareArchiveSelection">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: accountLocalSubject({
-      dest_bay,
-      method: "legacy-migration-prepare-archive-selection",
-    }),
-  });
-  const legacyMigrationRestoreArchiveSelectionClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "legacyMigrationRestoreArchiveSelection">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: accountLocalSubject({
-      dest_bay,
-      method: "legacy-migration-restore-archive-selection",
-    }),
-  });
   const legacyMigrationRetryProjectRestoreClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "legacyMigrationRetryProjectRestore">
   >({
@@ -6297,14 +6267,6 @@ export function createInterBayAccountLocalClient({
       ),
     legacyMigrationImportProjects: async (opts) =>
       await legacyMigrationImportProjectsClient.legacyMigrationImportProjects(
-        opts,
-      ),
-    legacyMigrationPrepareArchiveSelection: async (opts) =>
-      await legacyMigrationPrepareArchiveSelectionClient.legacyMigrationPrepareArchiveSelection(
-        opts,
-      ),
-    legacyMigrationRestoreArchiveSelection: async (opts) =>
-      await legacyMigrationRestoreArchiveSelectionClient.legacyMigrationRestoreArchiveSelection(
         opts,
       ),
     legacyMigrationRetryProjectRestore: async (opts) =>
@@ -7591,34 +7553,6 @@ export function createInterBayAccountLocalHandler({
       impl: {
         legacyMigrationImportProjects: async (opts) =>
           await impl.legacyMigrationImportProjects(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayAccountLocalApi, "legacyMigrationPrepareArchiveSelection">
-    >({
-      ...options,
-      service: "inter-bay-account-local",
-      subject: accountLocalSubject({
-        dest_bay: bay_id,
-        method: "legacy-migration-prepare-archive-selection",
-      }),
-      impl: {
-        legacyMigrationPrepareArchiveSelection: async (opts) =>
-          await impl.legacyMigrationPrepareArchiveSelection(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayAccountLocalApi, "legacyMigrationRestoreArchiveSelection">
-    >({
-      ...options,
-      service: "inter-bay-account-local",
-      subject: accountLocalSubject({
-        dest_bay: bay_id,
-        method: "legacy-migration-restore-archive-selection",
-      }),
-      impl: {
-        legacyMigrationRestoreArchiveSelection: async (opts) =>
-          await impl.legacyMigrationRestoreArchiveSelection(opts),
       },
     }),
     createServiceHandler<

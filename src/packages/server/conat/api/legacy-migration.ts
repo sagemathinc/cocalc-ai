@@ -14,8 +14,6 @@ import type {
   LegacyMigrationFinancialPreviewOptions,
   LegacyMigrationImportProjectsOptions,
   LegacyMigrationListProjectsOptions,
-  LegacyMigrationPrepareArchiveSelectionOptions,
-  LegacyMigrationRestoreArchiveSelectionOptions,
   LegacyMigrationRetryProjectRestoreOptions,
 } from "@cocalc/conat/hub/api/legacy-migration";
 
@@ -48,26 +46,6 @@ export async function importProjects(
   return isSeedBay()
     ? await localLegacyMigration.importProjects(opts)
     : await getSeedLegacyMigrationClient().legacyMigrationImportProjects(opts);
-}
-
-export async function prepareArchiveSelection(
-  opts: LegacyMigrationPrepareArchiveSelectionOptions,
-) {
-  return isSeedBay()
-    ? await localLegacyMigration.prepareArchiveSelection(opts)
-    : await getSeedLegacyMigrationClient().legacyMigrationPrepareArchiveSelection(
-        opts,
-      );
-}
-
-export async function restoreArchiveSelection(
-  opts: LegacyMigrationRestoreArchiveSelectionOptions,
-) {
-  return isSeedBay()
-    ? await localLegacyMigration.restoreArchiveSelection(opts)
-    : await getSeedLegacyMigrationClient().legacyMigrationRestoreArchiveSelection(
-        opts,
-      );
 }
 
 export async function retryProjectRestore(

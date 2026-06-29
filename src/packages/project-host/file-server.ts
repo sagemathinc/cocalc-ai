@@ -4632,9 +4632,6 @@ export async function initFileServer({
     restoreProjectArchive: reuseInFlight(
       legacyProjectArchiveHandlers.restoreProjectArchive,
     ),
-    cacheProjectArchive: reuseInFlight(
-      legacyProjectArchiveHandlers.cacheProjectArchive,
-    ),
     beginRestoreStaging,
     ensureRestoreStaging,
     finalizeRestoreStaging,

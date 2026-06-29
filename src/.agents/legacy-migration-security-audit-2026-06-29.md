@@ -53,8 +53,9 @@ Risk: a user creates too much work at once and overloads the hub/project hosts.
 Fixes in this pass:
 
 - One import RPC now accepts at most 50 unique legacy project ids.
-- Selective restore include/exclude path lists now accept at most 1000 paths.
-- Selective restore path entries are capped at 4096 characters and reject NUL.
+- The unused selective-restore API was removed. There is no frontend UI for
+  selecting archive paths, and migrated projects now get enough disk entitlement
+  headroom to make full restore the simpler and safer launch path.
 
 Existing mitigations:
 
@@ -75,8 +76,6 @@ Residual risk:
   over multiple RPC calls. This is probably acceptable for launch, but should be
   monitored by restore queue depth, per-account queued restore count, and host
   restore concurrency.
-- Selective restore still depends on project-host tar/indexing limits for
-  archive-internal size and file-count abuse.
 
 ### Financial migration authorization and idempotency
 
