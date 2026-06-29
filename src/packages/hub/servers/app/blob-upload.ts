@@ -7,15 +7,18 @@ allows for attaching files to github issue comments.
 // See also src/packages/project/upload.ts
 
 import { Router } from "express";
+import { HOME_BAY_ID_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getLogger } from "@cocalc/hub/logger";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import getAccount from "@cocalc/server/auth/get-account";
+import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { saveBlobToDatabase } from "@cocalc/server/blobs/save";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import Cookies from "cookies";
 import formidable from "formidable";
 import { readFile, unlink } from "fs/promises";
 import { uuidsha1 } from "@cocalc/backend/misc_node";
@@ -100,6 +103,50 @@ function ensureBlobUploadRateLimit({
   }
 }
 
+function getHomeBayIdFromCookie(req): string | undefined {
+  const value = new Cookies(req).get(HOME_BAY_ID_COOKIE_NAME);
+  const trimmed = `${value ?? ""}`.trim();
+  return trimmed || undefined;
+}
+
+async function getBlobUploadAccount(req): Promise<string | undefined> {
+  const account_id = await getAccount(req);
+  if (account_id) return account_id;
+
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const homeBayId = getHomeBayIdFromCookie(req);
+  if (
+    !homeBayId ||
+    homeBayId === getConfiguredBayId() ||
+    getConfiguredBayId() !== seedBayId
+  ) {
+    return;
+  }
+  const hashes = getRememberMeHashes(req);
+  if (hashes.length === 0) {
+    return;
+  }
+  const client = createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+    timeout: 10_000,
+  });
+  for (const hash of hashes) {
+    try {
+      const result = await client.getAccountIdFromRememberMe({ hash });
+      if (result.account_id) {
+        return result.account_id;
+      }
+    } catch (err) {
+      logger.debug("remote remember_me validation failed for blob upload", {
+        home_bay_id: homeBayId,
+        err: `${err}`,
+      });
+      return;
+    }
+  }
+}
+
 async function saveUploadedBlob({
   uuid,
   blob,
@@ -139,7 +186,7 @@ async function saveUploadedBlob({
 
 export default function init(router: Router) {
   router.post("/blobs", async (req, res) => {
-    const account_id = await getAccount(req);
+    const account_id = await getBlobUploadAccount(req);
     if (!account_id) {
       res.status(401).send("user must be signed in to upload files");
       return;

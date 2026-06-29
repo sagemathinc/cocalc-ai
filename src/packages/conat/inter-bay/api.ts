@@ -974,6 +974,14 @@ export interface AccountLocalVerifyFreshAuthCredentialsResult {
   factor_level: "none" | "totp" | "recovery_code" | "passkey";
 }
 
+export interface AccountLocalGetAccountIdFromRememberMeRequest {
+  hash: string;
+}
+
+export interface AccountLocalGetAccountIdFromRememberMeResult {
+  account_id?: string;
+}
+
 export interface AccountLocalSaveBlobRequest {
   uuid: string;
   data: Uint8Array;
@@ -2083,6 +2091,7 @@ export type AccountLocalMethod =
   | "create-impersonation-grant"
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
+  | "get-account-id-from-remember-me"
   | "save-blob"
   | "create-cli-login-session"
   | "redeem-verify-email"
@@ -3104,6 +3113,9 @@ export interface InterBayAccountLocalApi {
   verifyFreshAuthCredentials: (
     opts: AccountLocalVerifyFreshAuthCredentialsRequest,
   ) => Promise<AccountLocalVerifyFreshAuthCredentialsResult>;
+  getAccountIdFromRememberMe: (
+    opts: AccountLocalGetAccountIdFromRememberMeRequest,
+  ) => Promise<AccountLocalGetAccountIdFromRememberMeResult>;
   saveBlob: (opts: AccountLocalSaveBlobRequest) => Promise<void>;
   verifySignInPassword: (
     opts: AccountLocalVerifySignInPasswordRequest,
@@ -5129,6 +5141,15 @@ export function createInterBayAccountLocalClient({
       method: "save-blob",
     }),
   });
+  const getAccountIdFromRememberMeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getAccountIdFromRememberMe">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-account-id-from-remember-me",
+    }),
+  });
   const verifySignInPasswordClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "verifySignInPassword">
   >({
@@ -6051,6 +6072,8 @@ export function createInterBayAccountLocalClient({
       await createImpersonationGrantClient.createImpersonationGrant(opts),
     verifyFreshAuthCredentials: async (opts) =>
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
+    getAccountIdFromRememberMe: async (opts) =>
+      await getAccountIdFromRememberMeClient.getAccountIdFromRememberMe(opts),
     saveBlob: async (opts) => await saveBlobClient.saveBlob(opts),
     verifySignInPassword: async (opts) =>
       await verifySignInPasswordClient.verifySignInPassword(opts),
@@ -6452,6 +6475,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         saveBlob: async (opts) => await impl.saveBlob(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getAccountIdFromRememberMe">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-account-id-from-remember-me",
+      }),
+      impl: {
+        getAccountIdFromRememberMe: async (opts) =>
+          await impl.getAccountIdFromRememberMe(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "verifySignInPassword">>(

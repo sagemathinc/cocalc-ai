@@ -38,6 +38,14 @@ function pickPastedImage(
   }
 }
 
+function ignoreAntdUploadRequest({
+  onSuccess,
+}: {
+  onSuccess?: (body: unknown) => void;
+}): void {
+  onSuccess?.("ok");
+}
+
 interface ThemeImageInputProps {
   projectId?: string;
   value?: string | null;
@@ -133,6 +141,7 @@ export function ThemeImageInput({
       >
         <Upload.Dragger
           name="file"
+          customRequest={ignoreAntdUploadRequest}
           showUploadList={false}
           onDrop={(e) => {
             e.preventDefault();
