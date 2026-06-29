@@ -60,7 +60,7 @@ reuse instead of duplicating:
 - project-host heartbeats already publish current host metrics and pressure
   state to the registry for operator visibility and placement decisions.
 
-Project hosts currently raise shared host-side kernel limits:
+Target shared host-side kernel limits are:
 
 - `fs.inotify.max_user_instances = 8192`
 - `fs.inotify.max_user_watches = 2097152`
@@ -68,8 +68,41 @@ Project hosts currently raise shared host-side kernel limits:
 - `kernel.keys.maxkeys = 20000`
 - `kernel.keys.maxbytes = 25000000`
 
+However, a read-only production check on `us-south-1` on 2026-06-29 showed the
+target is not reliably applied everywhere:
+
+- active project containers: `64`.
+- host load: about `1`.
+- host memory: `62 GiB` total, `41 GiB` available.
+- sysctls:
+  - `fs.inotify.max_user_instances = 128`.
+  - `fs.inotify.max_user_watches = 507604`.
+  - `fs.inotify.max_queued_events = 16384`.
+  - `kernel.keys.maxkeys = 20000`.
+  - `kernel.keys.maxbytes = 25000000`.
+- no matching persisted `/etc/sysctl.d` inotify/key config was found.
+- `systemd-sysctl` was failed on that boot, with no retained journal details.
+- representative project containers already had:
+  - `PidsLimit = 4096`.
+  - `ShmSize = 65536000`.
+  - `RLIMIT_NOFILE = 1048576`.
+  - `RLIMIT_NPROC = 256923`.
+- a bounded full scan of the 64 project containers took `359ms` and found:
+  - `262` project pids.
+  - `2993` threads.
+  - `7284` file descriptors.
+  - `2106` socket descriptors.
+  - `5` inotify instances.
+  - `18` inotify watches.
+
+This means the first implementation step is not the sampler. It is making
+project-host bootstrap set, persist, and report the intended host sysctls, then
+making drift visible in host metrics.
+
 The major gaps are:
 
+- target inotify sysctls are not reliably applied or persisted on production
+  project hosts.
 - no explicit Podman `--ulimit nofile=...` for project containers.
 - no per-project or per-account accounting for inotify instances and watches.
 - no enforcement action when a project consumes a large fraction of shared
@@ -401,6 +434,23 @@ Expose recent violations in:
 - support diagnostic bundle.
 
 ## Rollout Plan
+
+Phase 0:
+
+- Add a project-host bootstrap sysctl step that writes a managed config file,
+  e.g. `/etc/sysctl.d/90-cocalc-project-host.conf`.
+- Apply and verify:
+  - `fs.inotify.max_user_instances = 8192`.
+  - `fs.inotify.max_user_watches = 2097152`.
+  - `fs.inotify.max_queued_events = 65536`.
+  - `kernel.keys.maxkeys = 20000`.
+  - `kernel.keys.maxbytes = 25000000`.
+- Surface the current sysctl values in host metrics and operator UI.
+- Add a host health warning when actual values are below target.
+- Add a bootstrap/startup log entry that records the actual values and whether
+  persistence succeeded.
+- Roll this out before enabling any sampler enforcement; otherwise the sampler
+  thresholds are calibrated against limits the host may not actually have.
 
 Phase 1:
 
