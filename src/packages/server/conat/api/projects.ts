@@ -214,7 +214,10 @@ import {
   assertProjectNotRehoming,
   withProjectRehomeWriteFence,
 } from "@cocalc/database/postgres/project-rehome-fence";
-import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import {
+  applyAccountProjectFeedRemoveOnHomeBay,
+  publishProjectAccountFeedEventsBestEffort,
+} from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
@@ -1132,6 +1135,20 @@ export async function getProjectReadDetailsAllowRemote({
   account_id: string;
   project_id: string;
 }) {
+  const removeStaleProjectedProject = () =>
+    applyAccountProjectFeedRemoveOnHomeBay({
+      type: "project.remove",
+      ts: Date.now(),
+      account_id,
+      project_id,
+      reason: "membership_removed",
+    }).catch((err) => {
+      log.warn("failed to remove stale account project projection", {
+        account_id,
+        project_id,
+        err: `${err}`,
+      });
+    });
   const localAccess = await getLocalProjectCollaboratorAccessStatus({
     account_id,
     project_id,
@@ -1158,12 +1175,16 @@ export async function getProjectReadDetailsAllowRemote({
   if (localAccess === "missing-project") {
     const ownership = await resolveProjectBay(project_id);
     if (!ownership) {
+      void removeStaleProjectedProject();
       throw new Error(PROJECT_NOT_FOUND_ERROR);
     }
   }
 
   const ownership = await resolveProjectBay(project_id);
   if (!ownership || ownership.bay_id === getConfiguredBayId()) {
+    if (!ownership) {
+      void removeStaleProjectedProject();
+    }
     throw new Error(PROJECT_NOT_FOUND_ERROR);
   }
   return await getInterBayBridge()

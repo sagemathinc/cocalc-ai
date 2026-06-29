@@ -275,6 +275,61 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
     expect(remoteRemove).not.toHaveBeenCalled();
   });
 
+  it("publishes hard-delete project removes to local and remote home bays", async () => {
+    const LOCAL_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+    const REMOTE_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
+    const remoteUpsert = jest.fn(async () => undefined);
+    const remoteRemove = jest.fn(async () => undefined);
+    isMultiBayClusterMock.mockReturnValue(true);
+    getClusterAccountsByIdsMock.mockResolvedValue([
+      {
+        account_id: LOCAL_ACCOUNT_ID,
+        home_bay_id: "bay-0",
+      },
+      {
+        account_id: REMOTE_ACCOUNT_ID,
+        home_bay_id: "bay-1",
+      },
+    ]);
+    createInterBayAccountProjectFeedClientMock.mockReturnValue({
+      upsert: remoteUpsert,
+      remove: remoteRemove,
+    });
+
+    const { publishProjectRemoveFeedEventsBestEffort } =
+      await import("./project-feed");
+
+    await publishProjectRemoveFeedEventsBestEffort({
+      project_id: "33333333-3333-4333-8333-333333333333",
+      account_ids: [LOCAL_ACCOUNT_ID, REMOTE_ACCOUNT_ID],
+      default_bay_id: "bay-0",
+      event_ts: new Date("2026-06-29T00:00:00.000Z"),
+    });
+
+    expect(publishAccountFeedEventBestEffortMock).toHaveBeenCalledWith({
+      account_id: LOCAL_ACCOUNT_ID,
+      event: {
+        type: "project.remove",
+        ts: Date.parse("2026-06-29T00:00:00.000Z"),
+        account_id: LOCAL_ACCOUNT_ID,
+        project_id: "33333333-3333-4333-8333-333333333333",
+        reason: "membership_removed",
+      },
+    });
+    expect(createInterBayAccountProjectFeedClientMock).toHaveBeenCalledWith({
+      client: { tag: "fabric" },
+      dest_bay: "bay-1",
+    });
+    expect(remoteRemove).toHaveBeenCalledWith({
+      type: "project.remove",
+      ts: Date.parse("2026-06-29T00:00:00.000Z"),
+      account_id: REMOTE_ACCOUNT_ID,
+      project_id: "33333333-3333-4333-8333-333333333333",
+      reason: "membership_removed",
+    });
+    expect(remoteUpsert).not.toHaveBeenCalled();
+  });
+
   it("installs the immediate project feed publisher on the db singleton", async () => {
     const {
       enableDbProjectAccountFeedPublishing,

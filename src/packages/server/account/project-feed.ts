@@ -287,6 +287,77 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
   }
 }
 
+export async function publishProjectRemoveFeedEventsBestEffort(opts: {
+  project_id: string;
+  account_ids: string[];
+  default_bay_id?: string;
+  event_ts?: string | Date | number | null;
+}): Promise<void> {
+  const bay_id =
+    `${opts.default_bay_id ?? getConfiguredBayId()}`.trim() || DEFAULT_BAY_ID;
+  const account_ids = [
+    ...new Set(
+      opts.account_ids.filter((account_id) =>
+        isValidUUID(`${account_id ?? ""}`),
+      ),
+    ),
+  ];
+  const ts = eventTimestampMs(opts.event_ts);
+  const eventFor = (account_id: string): AccountFeedProjectRemoveEvent => ({
+    type: "project.remove",
+    ts,
+    account_id,
+    project_id: opts.project_id,
+    reason: "membership_removed",
+  });
+  if (!isMultiBayCluster()) {
+    await Promise.all(
+      account_ids.map((account_id) =>
+        publishAccountFeedEventBestEffort({
+          account_id,
+          event: eventFor(account_id),
+        }),
+      ),
+    );
+    return;
+  }
+  const accountEntries = await getClusterAccountsByIds(account_ids);
+  const homeBayByAccountId = new Map(
+    accountEntries
+      .filter((row) => isValidUUID(`${row.account_id ?? ""}`))
+      .map((row) => [`${row.account_id}`, `${row.home_bay_id ?? ""}`.trim()]),
+  );
+  const fabric = getInterBayFabricClient();
+  const remoteClients = new Map<string, InterBayAccountProjectFeedApi>();
+  await Promise.all(
+    account_ids.map(async (account_id) => {
+      const event = eventFor(account_id);
+      const dest_bay = homeBayByAccountId.get(account_id);
+      if (!dest_bay || dest_bay === bay_id) {
+        await publishAccountFeedEventBestEffort({ account_id, event });
+        return;
+      }
+      const client =
+        remoteClients.get(dest_bay) ??
+        createInterBayAccountProjectFeedClient({
+          client: fabric,
+          dest_bay,
+        });
+      remoteClients.set(dest_bay, client);
+      try {
+        await client.remove(event);
+      } catch (err) {
+        logger.warn("failed to forward remote project remove feed event", {
+          project_id: opts.project_id,
+          account_id,
+          dest_bay,
+          err: `${err}`,
+        });
+      }
+    }),
+  );
+}
+
 export function enableDbProjectAccountFeedPublishing() {
   db().publishProjectAccountFeedEventsBestEffort =
     publishProjectAccountFeedEventsBestEffort;
