@@ -18,7 +18,8 @@ import { issueSignedObjectDownload } from "@cocalc/server/project-backup/r2";
 import { createLro, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
-import { upsertLegacyMigrationProjectDiskQuotaOverride } from "@cocalc/server/membership/project-entitlement-overrides";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import {
   LEGACY_PROJECT_RESTORE_LRO_KIND,
   LEGACY_RESTORE_ERROR_LABEL,
@@ -702,13 +703,25 @@ async function ensureRestoredProjectDiskQuota({
     Math.max(quotaUsedBytes ?? 0, uncompressedBytes ?? 0),
   );
   if (desired == null) return;
-  await upsertLegacyMigrationProjectDiskQuotaOverride({
-    project_id: row.project_id,
-    legacy_project_id: row.legacy_project_id,
-    disk_quota_mb: desired,
-    restored_used_bytes: quotaUsedBytes ?? uncompressedBytes,
-    headroom_mb: RESTORED_PROJECT_QUOTA_HEADROOM_MB,
-  });
+  const ownership = await resolveProjectBay(row.project_id);
+  if (ownership == null) {
+    throw new Error(`project ${row.project_id} not found`);
+  }
+  await getInterBayBridge()
+    .projectControl(ownership.bay_id)
+    .setProjectEntitlementOverride({
+      project_id: row.project_id,
+      disk_quota_mb: desired,
+      reason: "Legacy migration restored project storage",
+      source: "legacy_migration",
+      metadata: {
+        legacy_project_id: row.legacy_project_id,
+        restored_used_bytes: quotaUsedBytes ?? uncompressedBytes,
+        disk_quota_mb: desired,
+        headroom_mb: RESTORED_PROJECT_QUOTA_HEADROOM_MB,
+      },
+      epoch: ownership.epoch,
+    });
   return desired;
 }
 

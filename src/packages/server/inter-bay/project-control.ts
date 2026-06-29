@@ -14,11 +14,14 @@ import type {
   ProjectControlAssignHostRequest,
   ProjectControlAcceptRehomeRequest,
   ProjectControlBackupRequest,
+  ProjectControlClearEntitlementOverrideRequest,
+  ProjectControlGetEntitlementOverrideRequest,
   ProjectControlMoveRequest,
   ProjectControlMoveResponse,
   ProjectControlRehomeRequest,
   ProjectControlRehomeResponse,
   ProjectControlRestartRequest,
+  ProjectControlSetEntitlementOverrideRequest,
   ProjectControlSetUsageAccountRequest,
   ProjectControlSetUsageAccountResponse,
   ProjectControlStartRequest,
@@ -26,6 +29,7 @@ import type {
   ProjectControlStopRequest,
 } from "@cocalc/conat/inter-bay/api";
 import type { LroStatus, LroSummary } from "@cocalc/conat/hub/api/lro";
+import type { ProjectEntitlementOverride } from "@cocalc/conat/hub/api/projects";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { publishLroEvent } from "@cocalc/server/lro/stream";
@@ -33,6 +37,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
+import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { moveProject as moveProjectLocal } from "@cocalc/server/conat/api/projects";
 import { assignProjectHost as assignProjectHostLocal } from "@cocalc/server/conat/api/projects";
@@ -47,6 +52,11 @@ import { forwardRemoteStartLroProgress } from "@cocalc/server/inter-bay/start-lr
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
+import {
+  clearProjectEntitlementOverrideLocal,
+  getProjectEntitlementOverrideLocal,
+  setProjectEntitlementOverrideLocal,
+} from "@cocalc/server/membership/project-entitlement-overrides";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import {
   assertProjectAutostartEnabled,
@@ -150,6 +160,74 @@ async function assertCurrentProjectOwnership({
       actual_epoch: ownership.epoch,
     });
   }
+}
+
+export async function handleProjectControlGetEntitlementOverride({
+  project_id,
+  epoch,
+}: ProjectControlGetEntitlementOverrideRequest): Promise<ProjectEntitlementOverride | null> {
+  await assertCurrentProjectOwnership({ project_id, epoch });
+  return (await getProjectEntitlementOverrideLocal(project_id)) ?? null;
+}
+
+export async function handleProjectControlSetEntitlementOverride({
+  project_id,
+  actor_account_id,
+  disk_quota_mb,
+  reason,
+  expires_at,
+  source,
+  metadata,
+  epoch,
+}: ProjectControlSetEntitlementOverrideRequest): Promise<ProjectEntitlementOverride> {
+  await assertCurrentProjectOwnership({ project_id, epoch });
+  if (
+    typeof disk_quota_mb !== "number" ||
+    !Number.isFinite(disk_quota_mb) ||
+    disk_quota_mb < 0
+  ) {
+    throw new Error("disk_quota_mb must be a nonnegative finite number");
+  }
+  const normalizedDiskQuota = Math.ceil(disk_quota_mb);
+  const override = await setProjectEntitlementOverrideLocal({
+    project_id,
+    actor_account_id,
+    source: source ?? "admin",
+    reason,
+    override: {
+      enabled: true,
+      expires_at: expires_at ?? null,
+      project_defaults: {
+        disk_quota: { mode: "minimum", value: normalizedDiskQuota },
+      },
+      metadata: metadata ?? {},
+    },
+  });
+  await getProject(project_id).setAllQuotas();
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["run_quota"],
+  });
+  return override;
+}
+
+export async function handleProjectControlClearEntitlementOverride({
+  project_id,
+  actor_account_id,
+  reason,
+  epoch,
+}: ProjectControlClearEntitlementOverrideRequest): Promise<void> {
+  await assertCurrentProjectOwnership({ project_id, epoch });
+  await clearProjectEntitlementOverrideLocal({
+    project_id,
+    actor_account_id,
+    reason,
+  });
+  await getProject(project_id).setAllQuotas();
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["run_quota"],
+  });
 }
 
 export async function handleProjectControlStart(
