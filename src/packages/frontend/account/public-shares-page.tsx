@@ -35,6 +35,16 @@ import type { SettingsPageDefinition } from "./settings-page";
 
 const { Text } = Typography;
 const BULK_UNPUBLISH_CONFIRMATION = "UNPUBLISH";
+const SHARE_COLUMN_WIDTH = 420;
+const PROJECT_PATH_COLUMN_WIDTH = 340;
+
+const WRAPPING_CELL_TEXT_STYLE = {
+  display: "block",
+  maxWidth: "100%",
+  overflowWrap: "anywhere",
+  whiteSpace: "normal",
+  wordBreak: "break-word",
+} as const;
 
 type PublicSharesState = {
   error: string;
@@ -63,7 +73,7 @@ function availabilityTag(share: PublicDirectoryShareSummary) {
     case "unavailable":
       return <Tag>Not yet available</Tag>;
     default:
-      return <Tag>Unknown</Tag>;
+      return <Text type="secondary">-</Text>;
   }
 }
 
@@ -296,16 +306,39 @@ function PublicSharesPage() {
               rowKey="id"
               dataSource={state.shares}
               pagination={{ defaultPageSize: 25, showSizeChanger: true }}
+              scroll={{ x: 1140 }}
+              tableLayout="fixed"
               columns={[
                 {
                   title: "Share",
                   dataIndex: "slug",
+                  width: SHARE_COLUMN_WIDTH,
                   render: (_value, share) => {
                     const href = shareHref(share.slug);
                     return (
-                      <Space direction="vertical" size={0}>
-                        <Space size={6}>
-                          <a href={href} target="_blank" rel="noreferrer">
+                      <Space
+                        direction="vertical"
+                        size={0}
+                        style={{ maxWidth: SHARE_COLUMN_WIDTH, width: "100%" }}
+                      >
+                        <div
+                          style={{
+                            alignItems: "flex-start",
+                            display: "flex",
+                            gap: 6,
+                            minWidth: 0,
+                          }}
+                        >
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              ...WRAPPING_CELL_TEXT_STYLE,
+                              flex: "1 1 auto",
+                              minWidth: 0,
+                            }}
+                          >
                             {share.title || share.slug}
                           </a>
                           <CopyButton
@@ -315,15 +348,24 @@ function PublicSharesPage() {
                           />
                           {share.legacy_url ? (
                             <Tooltip title={share.legacy_url}>
-                              <Tag>Migrated</Tag>
+                              <Tag style={{ marginInlineEnd: 0 }}>Migrated</Tag>
                             </Tooltip>
                           ) : null}
-                        </Space>
+                        </div>
                         {share.title ? (
-                          <Text type="secondary">{share.slug}</Text>
+                          <Text
+                            type="secondary"
+                            style={WRAPPING_CELL_TEXT_STYLE}
+                          >
+                            {share.slug}
+                          </Text>
                         ) : null}
                         {share.description ? (
-                          <Text type="secondary" ellipsis>
+                          <Text
+                            type="secondary"
+                            ellipsis
+                            style={WRAPPING_CELL_TEXT_STYLE}
+                          >
                             {share.description}
                           </Text>
                         ) : null}
@@ -367,7 +409,7 @@ function PublicSharesPage() {
                             avatarSize={18}
                           />
                         ) : (
-                          <Text type="secondary">Unknown</Text>
+                          <Text type="secondary">-</Text>
                         )}
                         {share.created_by && share.created_by !== updatedBy ? (
                           <Text type="secondary">
@@ -381,6 +423,7 @@ function PublicSharesPage() {
                 },
                 {
                   title: "Project path",
+                  width: PROJECT_PATH_COLUMN_WIDTH,
                   render: (_value, share) => {
                     const archived =
                       projectMap?.getIn?.([
@@ -412,7 +455,9 @@ function PublicSharesPage() {
                             noClick
                           />
                         </a>
-                        <Text code>{projectPathLabel(share.path)}</Text>
+                        <Text code style={WRAPPING_CELL_TEXT_STYLE}>
+                          {projectPathLabel(share.path)}
+                        </Text>
                         {archived ? (
                           <Tag color="orange">
                             Archived project: dearchive to access
