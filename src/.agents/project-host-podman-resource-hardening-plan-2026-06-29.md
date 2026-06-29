@@ -15,6 +15,27 @@ This plan focuses on project containers run by project-host through rootless
 Podman. It does not attempt to solve heavyweight tenant isolation with separate
 VMs or per-project host users.
 
+## Density Constraint
+
+Project hosts must be designed for very high project density:
+
+- normal high-density target: up to `500` active projects on one host.
+- observed density: `150` running projects on one host with low CPU use.
+- stress-test density: up to `2000` active projects on larger hosts.
+
+This materially constrains the sampler design:
+
+- no normal-mode scan may walk every project, every process, and every file
+  descriptor every `15s`.
+- host-pressure must consume the latest available resource snapshot instead of
+  synchronously scanning `/proc` during stop-candidate selection.
+- sampler output must explicitly report stale or partial data so operators do
+  not confuse rolling estimates with an exact instant-wide measurement.
+- clear direct offenders should trigger pressure as soon as they are sampled;
+  generic host pressure should use rolling aggregate snapshots.
+- emergency mode may temporarily spend more scan budget, but even emergency
+  scans must be bounded and interruptible.
+
 ## Current State
 
 Project containers currently get:
@@ -126,7 +147,8 @@ attribute shared host-kernel resource usage to projects and accounts, then
 publish pressure signals such as `inotify_watches`, `inotify_instances`,
 `file_descriptors`, `sockets`, and `kernel_keys`.
 
-Sample every `15s` by default:
+Tick every `15s` by default, but scan only a bounded shard of projects per
+tick:
 
 - running project containers from Podman labels `role=project` and `project_id`.
 - container process ids.
@@ -142,13 +164,25 @@ Recommended implementation:
 - Prefer direct `/proc` inspection over invoking `podman top` for every
   project.
 - Build a pid-to-project map from `/proc/<pid>/cgroup` or Podman inspect output.
-- For each pid, scan `/proc/<pid>/fd`.
+- Maintain a round-robin queue of active projects, with priority boosts for
+  projects that recently started, previously violated limits, or have stale
+  samples.
+- In normal mode, scan at most a small batch per tick, e.g. `10-25` projects or
+  until the scan time budget is exhausted.
+- Target a full rolling sweep in about `5` minutes for `500` active projects.
+  For `2000` active projects, stale data is acceptable in normal mode as long
+  as clear direct offenders are caught on their next shard scan.
+- For each pid in the selected project shard, scan `/proc/<pid>/fd`.
 - Only open `/proc/<pid>/fdinfo/<fd>` when the fd symlink resolves to
   `anon_inode:inotify`.
 - Count inotify watches by counting `inotify wd:` lines in fdinfo.
 - Bound each scan by elapsed time and max entries so the sampler cannot itself
   become a host load problem.
 - Emit metrics and structured logs with scan duration and truncated-scan flags.
+- Keep the last sample per project in memory with `sampled_at`, counts, scan
+  status, and truncation flags.
+- Build host/account aggregate metrics from the rolling sample cache and expose
+  how many running projects have fresh, stale, missing, or truncated samples.
 
 Integration points:
 
@@ -187,6 +221,17 @@ not fixed forever. The implementation should compute:
 - account stop threshold: min(configured value, 25% of host global)
 
 If a host later changes `fs.inotify.*`, the thresholds should adapt.
+
+Snapshot freshness:
+
+- fresh sample target: project sampled within `5` minutes.
+- stale warning: project sample older than `10` minutes.
+- missing warning: running project has no sample after `10` minutes.
+- aggregate metrics should include freshness counts and should not claim to be
+  exact when many samples are stale or truncated.
+- direct project enforcement should only use a fresh or just-collected project
+  sample. Host-level observe/pressure state may use stale aggregate data, but
+  emergency stop decisions should prefer freshly sampled direct offenders.
 
 ## Enforcement
 
@@ -275,14 +320,19 @@ the existing host-pressure loop expensive.
 
 Rules:
 
-- Default interval: 15 seconds.
-- Skip a project if it was sampled less than 10 seconds ago.
-- Stop a scan cycle after 2 seconds by default and mark it truncated.
+- Default tick interval: 15 seconds.
+- Normal-mode batch target: `10-25` projects per tick, configurable.
+- Normal-mode scan budget: at most `500ms-1000ms` per tick by default.
+- Pressure-mode scan budget: at most `2s` per tick by default.
+- Skip a project if it was sampled less than 60 seconds ago unless it is being
+  rescanned for an active violation or emergency.
+- Stop a scan cycle when the time budget is exhausted and mark it truncated.
 - Never run more than one scan concurrently.
 - Use backoff if the previous scan was slow.
 - Record scan duration histogram.
 - Cap log volume by logging normal samples at debug level and only warning on
   threshold crossings.
+- Keep all `/proc` scanning off the synchronous stop-candidate ranking path.
 
 The scan should be cheap in normal cases because most projects have far fewer
 than the `4096` pids limit and only a small number of inotify descriptors. The
@@ -361,6 +411,7 @@ Phase 1:
 Phase 2:
 
 - Add resource-pressure metrics-only mode feeding host metrics.
+- Implement round-robin sharded sampling with freshness/truncation metrics.
 - Deploy to staging and run the stress harness.
 - Tune thresholds against real sample data.
 
@@ -379,16 +430,25 @@ Phase 4:
 - Add keyring seccomp deny if key pressure is observed or if testing confirms it
   is safe for normal workloads.
 
+## Resolved Decisions
+
+- Ship project-only cooldown/quarantine first. It is local, simpler, and likely
+  the right response for accidental recursive watchers or broken language
+  servers.
+- Design for `500` active projects per host, with stress-test awareness up to
+  `2000` active projects on larger hosts. This requires sharded sampling and
+  forbids full project/fd sweeps on every tick.
+- Prefer host-level configuration for higher `nofile` or inotify thresholds.
+  Dedicated-host and self-hosted deployments can safely own the blast radius for
+  higher limits. Per-project overrides are out of scope for the first pass.
+- Prefer implementing the sampler inside the existing project-host daemon path.
+  Adding another long-running process increases upgrade, supervision, and
+  operational complexity. If profiling shows Node event-loop impact, use a
+  bounded worker thread or short-lived helper before introducing a new daemon.
+
 ## Open Questions
 
-- Should cooldown/quarantine be project-only first, or should account aggregate
-  quarantine ship at the same time?
-- What is the expected maximum active project count per host for sizing host
-  global inotify limits?
 - Do any supported workloads require kernel keyring syscalls inside project
-  containers?
-- Should advanced projects be allowed higher `nofile` or inotify thresholds as
-  an admin-only override?
-- Should the resource sampler live inside the existing project-host daemon, or
-  be a small sidecar process that only publishes snapshots consumed by
-  host-pressure?
+  containers? Current expectation is no; web development, Jupyter notebooks, and
+  LaTeX should not normally need `add_key`, `keyctl`, or `request_key`. Validate
+  on staging before enabling a seccomp deny rule.
