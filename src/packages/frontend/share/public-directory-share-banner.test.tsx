@@ -58,6 +58,7 @@ jest.mock("antd", () => {
     Space,
     Tag: ({ children }: any) => <span>{children}</span>,
     Typography: {
+      Paragraph: ({ children }: any) => <p>{children}</p>,
       Text: ({ children }: any) => <span>{children}</span>,
     },
   };
@@ -71,6 +72,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("@cocalc/frontend/projects/select-project", () => ({
   SelectProject: () => <div>SelectProject</div>,
+}));
+
+jest.mock("@cocalc/frontend/components/theme-image-input", () => ({
+  blobImageUrl: (blob: string, filename?: string) =>
+    `/blobs/${filename ?? "theme-image.png"}?uuid=${blob}`,
 }));
 
 jest.mock("@cocalc/frontend/components/user-facing-error", () => ({
@@ -121,6 +127,8 @@ function share(): ResolvedPublicDirectoryShare {
     disabled: false,
     read_policy: { rules: [{ action: "include", path: "share/**" }] },
     available: true,
+    created_by: null,
+    updated_by: null,
     project_title: "Source Project",
     host_id: null,
     host_connection: null,
@@ -140,6 +148,58 @@ describe("PublicDirectoryShareBanner", () => {
     });
     lroWait.mockResolvedValue({ status: "succeeded" });
     getProjectRegion.mockResolvedValue("wnam");
+  });
+
+  it("shows public share branding metadata in the banner", () => {
+    const publicShare = {
+      ...share(),
+      created_by: "publisher-account-id",
+      description: "Course materials for the Cambridge workshop.",
+      image: "https://example.com/banner.png",
+      license: "CC-BY 4.0",
+    } as ResolvedPublicDirectoryShare;
+    const { container } = render(
+      <PublicDirectoryShareBanner share={publicShare} />,
+    );
+
+    expect(screen.getByText("Test Share")).toBeTruthy();
+    expect(
+      screen.getByText("Course materials for the Cambridge workshop."),
+    ).toBeTruthy();
+    expect(screen.getByText("License: CC-BY 4.0")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Published from Source Project · Publisher publisher-account-id",
+      ),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('img[alt="Test Share"]')?.getAttribute("src"),
+    ).toBe("https://example.com/banner.png");
+  });
+
+  it("renders uploaded theme image blobs and rejects unsafe image schemes", () => {
+    const blobShare = {
+      ...share(),
+      image: "8ac75262-dcd0-4a0a-883c-bce078e30c17",
+    } as ResolvedPublicDirectoryShare;
+    const blobView = render(<PublicDirectoryShareBanner share={blobShare} />);
+    expect(
+      blobView.container
+        .querySelector('img[alt="Test Share"]')
+        ?.getAttribute("src"),
+    ).toBe(
+      "/blobs/public-share-theme.png?uuid=8ac75262-dcd0-4a0a-883c-bce078e30c17",
+    );
+    blobView.unmount();
+
+    const unsafeShare = {
+      ...share(),
+      image: "javascript:alert(1)",
+    } as ResolvedPublicDirectoryShare;
+    const unsafeView = render(
+      <PublicDirectoryShareBanner share={unsafeShare} />,
+    );
+    expect(unsafeView.container.querySelector("img")).toBeNull();
   });
 
   it("waits for create-project copy success before opening the new project", async () => {

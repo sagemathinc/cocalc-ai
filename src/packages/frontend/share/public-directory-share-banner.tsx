@@ -9,11 +9,13 @@ import { useState } from "react";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
 import { useActions } from "@cocalc/frontend/app-framework";
+import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { COLORS } from "@cocalc/util/theme";
 
-const { Text } = Typography;
+const { Paragraph, Text } = Typography;
 
 function formatMembershipGrantDescription(
   share: ResolvedPublicDirectoryShare,
@@ -25,6 +27,54 @@ function formatMembershipGrantDescription(
 
 function shareTitle(share: ResolvedPublicDirectoryShare): string {
   return share.title?.trim() || share.slug;
+}
+
+function shareScopeDescription(share: ResolvedPublicDirectoryShare): string {
+  return share.path === "."
+    ? "This is a published, read-only project."
+    : "This is a published, read-only folder.";
+}
+
+function sharePublisherLine(share: ResolvedPublicDirectoryShare): string {
+  const parts: string[] = [];
+  const projectTitle = share.project_title?.trim();
+  if (projectTitle) {
+    parts.push(`Published from ${projectTitle}`);
+  }
+  const publisher = share.created_by?.trim() || share.updated_by?.trim();
+  if (publisher) {
+    parts.push(`Publisher ${publisher}`);
+  }
+  return parts.join(" · ");
+}
+
+function shareImageUrl(
+  share: ResolvedPublicDirectoryShare,
+): string | undefined {
+  const value = share.image?.trim();
+  if (!value) return;
+
+  // Uploaded theme images are stored as blob UUIDs.
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  ) {
+    return blobImageUrl(value, "public-share-theme.png");
+  }
+
+  try {
+    const base =
+      typeof window === "undefined"
+        ? "https://cocalc.com"
+        : window.location.origin;
+    const url = new URL(value, base);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return value;
+    }
+  } catch {
+    return;
+  }
 }
 
 function siteLicenseGrantMessage(
@@ -87,6 +137,11 @@ export function PublicDirectoryShareBanner({
   const [copyMessage, setCopyMessage] = useState("");
   const [copyProgress, setCopyProgress] = useState("");
   const [placementMessage, setPlacementMessage] = useState("");
+  const title = shareTitle(share);
+  const publisher = sharePublisherLine(share);
+  const image = shareImageUrl(share);
+  const description = share.description?.trim();
+  const license = share.license?.trim();
 
   function openCopyModal() {
     setCopyMode("new");
@@ -196,19 +251,65 @@ export function PublicDirectoryShareBanner({
       <Alert
         type="info"
         showIcon
-        style={{ borderRadius: 0 }}
+        style={{
+          borderLeft: `4px solid ${COLORS.ANTD_LINK_BLUE}`,
+          borderRadius: 0,
+        }}
         title={
-          <Space wrap>
-            <Text strong>{shareTitle(share)}</Text>
-            <Text>This is a published, read-only folder.</Text>
-            <Tag>{share.slug}</Tag>
-            {share.site_license_grant_on_copy ? (
-              <Tag color="blue">temporary membership on copy</Tag>
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              gap: 12,
+              width: "100%",
+            }}
+          >
+            {image ? (
+              <img
+                alt={title}
+                src={image}
+                style={{
+                  border: `1px solid ${COLORS.GRAY_LL}`,
+                  borderRadius: 6,
+                  height: 56,
+                  objectFit: "cover",
+                  width: 84,
+                }}
+              />
             ) : null}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Space wrap>
+                <Text strong>{title}</Text>
+                <Text>{shareScopeDescription(share)}</Text>
+                <Tag>{share.slug}</Tag>
+                {share.site_license_grant_on_copy ? (
+                  <Tag color="blue">temporary membership on copy</Tag>
+                ) : null}
+              </Space>
+              {publisher ? (
+                <div>
+                  <Text type="secondary">{publisher}</Text>
+                </div>
+              ) : null}
+            </div>
             <Button size="small" type="primary" onClick={openCopyModal}>
               Copy
             </Button>
-          </Space>
+          </div>
+        }
+        description={
+          description || license ? (
+            <div style={{ marginTop: 4 }}>
+              {description ? (
+                <Paragraph style={{ marginBottom: license ? 4 : 0 }}>
+                  {description}
+                </Paragraph>
+              ) : null}
+              {license ? (
+                <Text type="secondary">License: {license}</Text>
+              ) : null}
+            </div>
+          ) : undefined
         }
       />
       <Modal
