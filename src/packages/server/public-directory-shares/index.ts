@@ -17,7 +17,11 @@ import { getSiteLicenseOverview } from "@cocalc/server/conat/api/purchases";
 import { getProjectFsClient } from "@cocalc/server/conat/file-server-client";
 import createProject from "@cocalc/server/projects/create";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
-import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveHostBayAcrossCluster,
+  resolveProjectBayAcrossCluster,
+} from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -1085,6 +1089,39 @@ function publicShareHostConnection(
   };
 }
 
+async function resolvePublicShareHostConnection({
+  account_id,
+  row,
+}: {
+  account_id: string;
+  row: PublicDirectoryShareRow;
+}): Promise<HostConnectionInfo | null> {
+  const local = publicShareHostConnection(row);
+  if (local?.ready) {
+    return local;
+  }
+  if (!row.host_id) {
+    return local;
+  }
+  const hostBay = await resolveHostBayAcrossCluster(row.host_id);
+  if (!hostBay?.bay_id || hostBay.bay_id === getConfiguredBayId()) {
+    return local;
+  }
+  try {
+    return await getInterBayBridge()
+      .hostConnection(hostBay.bay_id, { timeout_ms: 10_000 })
+      .get({ account_id, host_id: row.host_id });
+  } catch (err) {
+    log.warn("failed to resolve public share host connection across bays", {
+      project_id: row.project_id,
+      host_id: row.host_id,
+      host_bay_id: hostBay.bay_id,
+      err: `${(err as Error | undefined)?.message ?? err}`,
+    });
+    return local;
+  }
+}
+
 async function resolveRow({
   account_id,
   slug,
@@ -1172,7 +1209,7 @@ async function resolveRow({
       host_id: row.host_id ?? null,
       host_connection:
         availabilityStatus === "available"
-          ? publicShareHostConnection(row)
+          ? await resolvePublicShareHostConnection({ account_id, row })
           : null,
       owning_bay_id: owningBayId,
     },

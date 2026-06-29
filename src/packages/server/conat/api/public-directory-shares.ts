@@ -110,12 +110,38 @@ export async function authorizeRead(
   opts: AuthorizePublicDirectoryShareReadOptions,
 ) {
   const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
-  return await callPublicDirectoryShareBay({
-    bay_id,
-    local: async () => await publicDirectoryShares.authorizeRead(opts),
-    remote: async (client) =>
-      await client.publicDirectoryShareAuthorizeRead(opts),
-  });
+  const attempted = new Set<string>();
+  const authorizeOnBay = async (candidate_bay_id: string) => {
+    attempted.add(candidate_bay_id);
+    return await callPublicDirectoryShareBay({
+      bay_id: candidate_bay_id,
+      local: async () => await publicDirectoryShares.authorizeRead(opts),
+      remote: async (client) =>
+        await client.publicDirectoryShareAuthorizeRead(opts),
+    });
+  };
+  try {
+    return await authorizeOnBay(bay_id);
+  } catch (err) {
+    if (!isPublicDirectoryShareNotFound(err)) {
+      throw err;
+    }
+    let lastNotFound: unknown = err;
+    for (const candidate_bay_id of await publicDirectoryShareSearchBayIds()) {
+      if (attempted.has(candidate_bay_id)) {
+        continue;
+      }
+      try {
+        return await authorizeOnBay(candidate_bay_id);
+      } catch (fallbackErr) {
+        if (!isPublicDirectoryShareNotFound(fallbackErr)) {
+          throw fallbackErr;
+        }
+        lastNotFound = fallbackErr;
+      }
+    }
+    throw lastNotFound ?? err;
+  }
 }
 
 export async function listDirectory(
@@ -171,13 +197,45 @@ export async function getTemporaryViewerReadPolicy(
   opts: GetTemporaryViewerReadPolicyOptions,
 ) {
   const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
-  return await callPublicDirectoryShareBay({
-    bay_id,
-    local: async () =>
-      await publicDirectoryShares.getTemporaryViewerReadPolicy(opts),
-    remote: async (client) =>
-      await client.publicDirectoryShareGetTemporaryViewerReadPolicy(opts),
-  });
+  const attempted = new Set<string>();
+  const rules: NonNullable<
+    Awaited<
+      ReturnType<typeof publicDirectoryShares.getTemporaryViewerReadPolicy>
+    >["read_policy"]
+  >["rules"] = [];
+  const readFromBay = async (candidate_bay_id: string) => {
+    attempted.add(candidate_bay_id);
+    const response = await callPublicDirectoryShareBay({
+      bay_id: candidate_bay_id,
+      local: async () =>
+        await publicDirectoryShares.getTemporaryViewerReadPolicy(opts),
+      remote: async (client) =>
+        await client.publicDirectoryShareGetTemporaryViewerReadPolicy(opts),
+    });
+    if (Array.isArray(response.read_policy?.rules)) {
+      rules.push(...response.read_policy.rules);
+    }
+  };
+
+  await readFromBay(bay_id);
+  for (const candidate_bay_id of await publicDirectoryShareSearchBayIds()) {
+    if (attempted.has(candidate_bay_id)) {
+      continue;
+    }
+    try {
+      await readFromBay(candidate_bay_id);
+    } catch (err) {
+      log.warn(
+        "failed checking remote bay for public share temporary viewer grants",
+        { bay_id: candidate_bay_id, err },
+      );
+    }
+  }
+  return {
+    project_id: opts.project_id,
+    account_id: opts.account_id ?? "",
+    read_policy: rules.length > 0 ? { rules } : undefined,
+  };
 }
 
 export {

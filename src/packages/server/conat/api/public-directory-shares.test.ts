@@ -170,7 +170,7 @@ describe("public directory share conat API routing", () => {
     ].publicDirectoryShareGetTemporaryViewerReadPolicy.mockResolvedValue({
       account_id: "account-id",
       project_id: "project-id",
-      read_policy: { rules: [] },
+      read_policy: { rules: [{ action: "include", path: "share/**" }] },
     });
 
     await expect(
@@ -181,17 +181,96 @@ describe("public directory share conat API routing", () => {
     ).resolves.toEqual({
       account_id: "account-id",
       project_id: "project-id",
-      read_policy: { rules: [] },
+      read_policy: { rules: [{ action: "include", path: "share/**" }] },
     });
     expect(
       mockPublicDirectoryShares.getTemporaryViewerReadPolicy,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledWith({
+      account_id: "account-id",
+      project_id: "project-id",
+    });
     expect(
       mockRemoteClients["bay-1"]
         .publicDirectoryShareGetTemporaryViewerReadPolicy,
     ).toHaveBeenCalledWith({
       account_id: "account-id",
       project_id: "project-id",
+    });
+  });
+
+  it("merges temporary viewer read policies from registered bays", async () => {
+    mockResolveProjectBayAcrossCluster.mockResolvedValue({ bay_id: "bay-0" });
+    mockPublicDirectoryShares.getTemporaryViewerReadPolicy.mockResolvedValue({
+      account_id: "account-id",
+      project_id: "project-id",
+      read_policy: undefined,
+    });
+    mockRemoteClients[
+      "bay-1"
+    ].publicDirectoryShareGetTemporaryViewerReadPolicy.mockResolvedValue({
+      account_id: "account-id",
+      project_id: "project-id",
+      read_policy: { rules: [{ action: "include", path: "share/**" }] },
+    });
+
+    await expect(
+      publicDirectoryShares.getTemporaryViewerReadPolicy({
+        account_id: "account-id",
+        project_id: "project-id",
+      }),
+    ).resolves.toEqual({
+      account_id: "account-id",
+      project_id: "project-id",
+      read_policy: { rules: [{ action: "include", path: "share/**" }] },
+    });
+    expect(
+      mockPublicDirectoryShares.getTemporaryViewerReadPolicy,
+    ).toHaveBeenCalledWith({
+      account_id: "account-id",
+      project_id: "project-id",
+    });
+    expect(
+      mockRemoteClients["bay-1"]
+        .publicDirectoryShareGetTemporaryViewerReadPolicy,
+    ).toHaveBeenCalledWith({
+      account_id: "account-id",
+      project_id: "project-id",
+    });
+  });
+
+  it("falls back across registered bays when authorizing a share by id", async () => {
+    mockResolveProjectBayAcrossCluster.mockResolvedValue({ bay_id: "bay-0" });
+    mockPublicDirectoryShares.authorizeRead.mockRejectedValue(notFound());
+    mockRemoteClients[
+      "bay-1"
+    ].publicDirectoryShareAuthorizeRead.mockResolvedValue({
+      project_id: "project-id",
+      share_id: "share-id",
+      read_policy: { rules: [] },
+    });
+
+    await expect(
+      publicDirectoryShares.authorizeRead({
+        account_id: "account-id",
+        project_id: "project-id",
+        share_id: "share-id",
+      }),
+    ).resolves.toEqual({
+      project_id: "project-id",
+      share_id: "share-id",
+      read_policy: { rules: [] },
+    });
+    expect(mockPublicDirectoryShares.authorizeRead).toHaveBeenCalledWith({
+      account_id: "account-id",
+      project_id: "project-id",
+      share_id: "share-id",
+    });
+    expect(
+      mockRemoteClients["bay-1"].publicDirectoryShareAuthorizeRead,
+    ).toHaveBeenCalledWith({
+      account_id: "account-id",
+      project_id: "project-id",
+      share_id: "share-id",
     });
   });
 });
