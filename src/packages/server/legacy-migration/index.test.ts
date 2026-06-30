@@ -8,7 +8,10 @@ import {
   legacyProjectArchiveUncompressedBytes,
   normalizeLegacyProjectImportIds,
 } from ".";
-import { legacyPublicPathSlugFromRecord } from "./public-path-slugs";
+import {
+  legacyPublicPathSlugFromRecord,
+  normalizeLegacyPublicPathDescription,
+} from "./public-path-slugs";
 
 describe("legacy migration manifest helpers", () => {
   it("extracts advisory uncompressed project archive sizes", () => {
@@ -60,6 +63,17 @@ describe("legacy migration manifest helpers", () => {
 });
 
 describe("legacy public path slug helpers", () => {
+  it("normalizes escaped legacy public path description newlines", () => {
+    expect(
+      normalizeLegacyPublicPathDescription(
+        "First paragraph.\\n\\nSecond paragraph.\\n- item",
+      ),
+    ).toBe("First paragraph.\n\nSecond paragraph.\n- item");
+    expect(normalizeLegacyPublicPathDescription("\\newcommand")).toBe(
+      "\\newcommand",
+    );
+  });
+
   it("reconstructs legacy public URLs from owner name, project URL name, and public path name", () => {
     expect(
       legacyPublicPathSlugFromRecord(

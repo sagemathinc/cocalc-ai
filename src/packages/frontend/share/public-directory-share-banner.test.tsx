@@ -172,6 +172,14 @@ describe("PublicDirectoryShareBanner", () => {
     ).toBe("Equation: \\(x^2\\) and \\[y = \\alpha\\]");
   });
 
+  it("normalizes escaped legacy newlines in share descriptions", () => {
+    expect(
+      normalizeShareDescriptionMarkdown(
+        "First paragraph.\\n\\nSecond paragraph.\\n- item",
+      ),
+    ).toBe("First paragraph.\n\nSecond paragraph.\n- item");
+  });
+
   it("shows public share branding metadata in the banner", () => {
     const publicShare = {
       ...share(),
