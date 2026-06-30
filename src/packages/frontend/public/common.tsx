@@ -6,8 +6,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Suspense, lazy } from "react";
 
-import { CopyOutlined } from "@ant-design/icons";
-import { App as AntdApp, Button, Empty, Flex, Spin, Typography } from "antd";
+import { Button, Empty, Flex, Spin, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getSiteName,
@@ -19,14 +18,14 @@ import {
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import type { PublicTopNavActiveKey } from "@cocalc/frontend/public/layout/top-nav";
-import {
-  alpha,
-  PUBLIC_COLORS,
-  PUBLIC_ELEVATION,
-} from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import "./code-block.css";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
+const StaticMarkdown = lazy(
+  () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
+);
 const { Text } = Typography;
 
 export { getSiteName };
@@ -97,96 +96,46 @@ export function LinkButton({
   );
 }
 
-const MONO = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-
-function CodeCopyButton({ value }: { value: string }) {
-  const { message } = AntdApp.useApp();
-  return (
-    <Button
-      aria-label="Copy to clipboard"
-      className="cocalc-code-copy-button"
-      icon={<CopyOutlined />}
-      onClick={() => {
-        if (typeof navigator === "undefined" || navigator.clipboard == null) {
-          void message.info("Copy the code manually.");
-          return;
-        }
-        void navigator.clipboard.writeText(value).then(
-          () => void message.success("Copied"),
-          () => void message.error("Could not copy."),
-        );
-      }}
-      size="small"
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        boxShadow: PUBLIC_ELEVATION.compact,
-        color: PUBLIC_COLORS.heading,
-        position: "absolute",
-        right: 8,
-        top: 8,
-        zIndex: 2,
-      }}
-      type="text"
-    />
-  );
-}
-
 // Shared, copyable code block for public pages — curl examples, install
-// commands, snippets. The one copyable-code pattern across features + products.
+// commands, snippets. Render through the public Slate static markdown path so
+// copy behavior and syntax highlighting stay consistent with docs pages.
 export function CodeBlock({
   ariaLabel = "Code example",
   code,
+  language = "",
 }: {
   ariaLabel?: string;
   code: string;
+  language?: string;
 }) {
   return (
-    <div
-      aria-label={ariaLabel}
-      className="cocalc-code-block"
-      style={{
-        background: PUBLIC_COLORS.surfaceMuted,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        position: "relative",
-      }}
-    >
-      <CodeCopyButton value={code} />
-      <pre
-        className="cocalc-code-block-scroll"
-        style={{
-          color: PUBLIC_COLORS.heading,
-          fontFamily: MONO,
-          fontSize: 13,
-          lineHeight: 1.7,
-          margin: 0,
-          overflowX: "auto",
-          padding: "14px 64px 14px 16px",
-          whiteSpace: "pre",
-        }}
-      >
-        {code}
-      </pre>
-      <div
-        aria-hidden="true"
-        className="cocalc-code-block-fade"
-        style={{
-          background: `linear-gradient(90deg, ${alpha(
-            PUBLIC_COLORS.surfaceMuted,
-            0,
-          )} 0%, ${PUBLIC_COLORS.surfaceMuted} 82%)`,
-          borderRadius: "0 8px 8px 0",
-          bottom: 1,
-          pointerEvents: "none",
-          position: "absolute",
-          right: 1,
-          top: 1,
-          width: 32,
-        }}
-      />
+    <div aria-label={ariaLabel} className="cocalc-public-code-block">
+      <Suspense fallback={<pre>{code}</pre>}>
+        <StaticMarkdown value={toFencedCodeBlock(code, language)} />
+      </Suspense>
     </div>
   );
+}
+
+function toFencedCodeBlock(content: string, language = ""): string {
+  const text = `${content ?? ""}`;
+  const fence = "`".repeat(Math.max(3, maxBacktickRun(text) + 1));
+  const info = language.trim();
+  return `${fence}${info}\n${text}\n${fence}`;
+}
+
+function maxBacktickRun(text: string): number {
+  let run = 0;
+  let max = 0;
+  for (const ch of text) {
+    if (ch === "`") {
+      run += 1;
+      max = Math.max(max, run);
+    } else {
+      run = 0;
+    }
+  }
+  return max;
 }
 
 export function PublicSectionShell({
