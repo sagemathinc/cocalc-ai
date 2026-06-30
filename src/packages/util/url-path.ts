@@ -25,3 +25,12 @@ export function joinUrlPath(
 
   return `${leadingSlash ? "/" : ""}${segments.join("/")}`;
 }
+
+export function appendUrlPath(
+  url: string,
+  ...parts: Array<string | undefined | null>
+): string {
+  const path = joinUrlPath(...parts).replace(/^\/+/, "");
+  const base = url.replace(/\/+$/, "");
+  return path ? `${base}/${path}` : base;
+}
