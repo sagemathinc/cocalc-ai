@@ -2,15 +2,13 @@ import getLogger from "@cocalc/backend/logger";
 import type { HostKernelSysctlSnapshot } from "@cocalc/conat/hub/api/hosts";
 import { execFile as execFileCb } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { promisify } from "node:util";
 
 const logger = getLogger("project-host:host-sysctl");
 const execFile = promisify(execFileCb);
 
 const CONFIG_PATH = "/etc/sysctl.d/90-cocalc-project-host.conf";
-const TMP_CONFIG_PATH = join(tmpdir(), "90-cocalc-project-host.conf");
+const ROOTCTL_PATH = "/usr/local/sbin/cocalc-project-host-rootctl";
 
 export const PROJECT_HOST_SYSCTL_TARGETS: Record<string, number> = {
   "fs.inotify.max_user_instances": 8192,
@@ -79,22 +77,7 @@ async function applySysctlConfigAsRoot(): Promise<void> {
 }
 
 async function applySysctlConfigWithSudo(): Promise<void> {
-  await writeFile(TMP_CONFIG_PATH, buildProjectHostSysctlConfig(), {
-    mode: 0o644,
-  });
-  await execFile("sudo", [
-    "-n",
-    "install",
-    "-m",
-    "0644",
-    "-o",
-    "root",
-    "-g",
-    "root",
-    TMP_CONFIG_PATH,
-    CONFIG_PATH,
-  ]);
-  await execFile("sudo", ["-n", "sysctl", "--system"]);
+  await execFile("sudo", ["-n", ROOTCTL_PATH, "apply-sysctls"]);
 }
 
 export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctlSnapshot> {
