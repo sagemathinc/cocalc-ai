@@ -58,6 +58,14 @@ function limitFromRatio(total: number, ratio: number): number | undefined {
   return value;
 }
 
+function parseIntegerLimit(name: string, value: unknown, min: number): number {
+  const parsed = parseInt(`${value}`, 10);
+  if (!isFinite(parsed) || parsed < min) {
+    throw Error(`invalid ${name} limit: '${parsed}'`);
+  }
+  return parsed;
+}
+
 export async function podmanLimits(config?: Configuration): Promise<string[]> {
   const args: string[] = [];
 
@@ -102,13 +110,28 @@ export async function podmanLimits(config?: Configuration): Promise<string[]> {
 
   // PIDs
   if (config.pids != null) {
-    const pids = parseInt(`${config.pids}`, 10);
-    if (!isFinite(pids) || pids <= 0) {
-      throw Error(`invalid pids limit: '${pids}'`);
-    }
+    const pids = parseIntegerLimit("pids", config.pids, 1);
 
     // Total processes in the container:
     args.push(`--pids-limit=${pids}`);
+  }
+
+  if (config.nofile != null) {
+    const nofile = parseIntegerLimit("nofile", config.nofile, 1);
+    args.push(`--ulimit=nofile=${nofile}:${nofile}`);
+  }
+
+  if (config.core != null) {
+    const core = parseIntegerLimit("core", config.core, 0);
+    args.push(`--ulimit=core=${core}:${core}`);
+  }
+
+  if (config.shmSize != null) {
+    const shmSize = `${config.shmSize}`.trim();
+    if (!shmSize) {
+      throw Error("invalid shmSize limit: ''");
+    }
+    args.push(`--shm-size=${shmSize}`);
   }
 
   return args;

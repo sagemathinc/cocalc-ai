@@ -60,7 +60,9 @@ export interface LroRef {
   scope_id: string;
 }
 
-export type ManagedProjectEgressOverride = "admin-host-drain";
+export type ManagedProjectEgressOverride =
+  | "admin-host-drain"
+  | "legacy-migration-initial-backup";
 export type ManagedBackupEgressOverride = ManagedProjectEgressOverride;
 
 export interface SignedProjectArchiveDownload {

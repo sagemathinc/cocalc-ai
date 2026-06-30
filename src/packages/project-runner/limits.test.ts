@@ -79,4 +79,23 @@ describe("podmanLimits memory pressure controls", () => {
       "--memory-swap=1200",
     ]);
   });
+
+  it("adds explicit process and kernel-resource limits", async () => {
+    const { podmanLimits } = await import("./run/limits");
+
+    await expect(
+      podmanLimits({
+        pids: 4096,
+        nofile: 8192,
+        core: 0,
+        shmSize: "64m",
+      }),
+    ).resolves.toEqual([
+      "--cpu-shares=1024",
+      "--pids-limit=4096",
+      "--ulimit=nofile=8192:8192",
+      "--ulimit=core=0:0",
+      "--shm-size=64m",
+    ]);
+  });
 });

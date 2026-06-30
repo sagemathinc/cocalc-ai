@@ -1,6 +1,9 @@
 # Project Host Podman Resource Hardening Plan
 
-Status: proposed implementation plan
+Status: Phase 0, Phase 1, Phase 2 metrics, gated Phase 3 direct-offender
+enforcement/restart cooldown, and host-local repeated direct-resource-stop
+quarantine landed. Admin unquarantine, account aggregate enforcement, and
+keyring hardening remain.
 
 Date: 2026-06-29
 
@@ -14,6 +17,27 @@ repeated violations.
 This plan focuses on project containers run by project-host through rootless
 Podman. It does not attempt to solve heavyweight tenant isolation with separate
 VMs or per-project host users.
+
+## Density Constraint
+
+Project hosts must be designed for very high project density:
+
+- normal high-density target: up to `500` active projects on one host.
+- observed density: `150` running projects on one host with low CPU use.
+- stress-test density: up to `2000` active projects on larger hosts.
+
+This materially constrains the sampler design:
+
+- no normal-mode scan may walk every project, every process, and every file
+  descriptor every `15s`.
+- host-pressure must consume the latest available resource snapshot instead of
+  synchronously scanning `/proc` during stop-candidate selection.
+- sampler output must explicitly report stale or partial data so operators do
+  not confuse rolling estimates with an exact instant-wide measurement.
+- clear direct offenders should trigger pressure as soon as they are sampled;
+  generic host pressure should use rolling aggregate snapshots.
+- emergency mode may temporarily spend more scan budget, but even emergency
+  scans must be bounded and interruptible.
 
 ## Current State
 
@@ -39,7 +63,7 @@ reuse instead of duplicating:
 - project-host heartbeats already publish current host metrics and pressure
   state to the registry for operator visibility and placement decisions.
 
-Project hosts currently raise shared host-side kernel limits:
+Target shared host-side kernel limits are:
 
 - `fs.inotify.max_user_instances = 8192`
 - `fs.inotify.max_user_watches = 2097152`
@@ -47,8 +71,41 @@ Project hosts currently raise shared host-side kernel limits:
 - `kernel.keys.maxkeys = 20000`
 - `kernel.keys.maxbytes = 25000000`
 
+However, a read-only production check on `us-south-1` on 2026-06-29 showed the
+target is not reliably applied everywhere:
+
+- active project containers: `64`.
+- host load: about `1`.
+- host memory: `62 GiB` total, `41 GiB` available.
+- sysctls:
+  - `fs.inotify.max_user_instances = 128`.
+  - `fs.inotify.max_user_watches = 507604`.
+  - `fs.inotify.max_queued_events = 16384`.
+  - `kernel.keys.maxkeys = 20000`.
+  - `kernel.keys.maxbytes = 25000000`.
+- no matching persisted `/etc/sysctl.d` inotify/key config was found.
+- `systemd-sysctl` was failed on that boot, with no retained journal details.
+- representative project containers already had:
+  - `PidsLimit = 4096`.
+  - `ShmSize = 65536000`.
+  - `RLIMIT_NOFILE = 1048576`.
+  - `RLIMIT_NPROC = 256923`.
+- a bounded full scan of the 64 project containers took `359ms` and found:
+  - `262` project pids.
+  - `2993` threads.
+  - `7284` file descriptors.
+  - `2106` socket descriptors.
+  - `5` inotify instances.
+  - `18` inotify watches.
+
+This means the first implementation step is not the sampler. It is making
+project-host bootstrap set, persist, and report the intended host sysctls, then
+making drift visible in host metrics.
+
 The major gaps are:
 
+- target inotify sysctls are not reliably applied or persisted on production
+  project hosts.
 - no explicit Podman `--ulimit nofile=...` for project containers.
 - no per-project or per-account accounting for inotify instances and watches.
 - no enforcement action when a project consumes a large fraction of shared
@@ -89,7 +146,7 @@ The realistic attacks and mistakes are:
 
 Add explicit defaults to project container launch:
 
-- `--ulimit=nofile=4096:4096`
+- `--ulimit=nofile=8192:8192`
 - `--ulimit=core=0:0`
 - `--pids-limit=4096`, already present
 - `--shm-size=64m`, unless a project entitlement explicitly raises it later
@@ -97,10 +154,10 @@ Add explicit defaults to project container launch:
 Keep these configurable through project-host environment variables, not through
 normal user-facing project settings:
 
-- `COCALC_PROJECT_NOFILE_LIMIT`, default `4096`
+- `COCALC_PROJECT_NOFILE_LIMIT`, default `8192`
 - `COCALC_PROJECT_CORE_LIMIT`, default `0`
 - `COCALC_PROJECT_SHM_SIZE`, default `64m`
-- `COCALC_PROJECT_PID_LIMIT`, default `4096`
+- `COCALC_PROJECT_PIDS_LIMIT`, default `4096`
 
 Implementation points:
 
@@ -126,7 +183,8 @@ attribute shared host-kernel resource usage to projects and accounts, then
 publish pressure signals such as `inotify_watches`, `inotify_instances`,
 `file_descriptors`, `sockets`, and `kernel_keys`.
 
-Sample every `15s` by default:
+Tick every `15s` by default, but scan only a bounded shard of projects per
+tick:
 
 - running project containers from Podman labels `role=project` and `project_id`.
 - container process ids.
@@ -142,13 +200,25 @@ Recommended implementation:
 - Prefer direct `/proc` inspection over invoking `podman top` for every
   project.
 - Build a pid-to-project map from `/proc/<pid>/cgroup` or Podman inspect output.
-- For each pid, scan `/proc/<pid>/fd`.
+- Maintain a round-robin queue of active projects, with priority boosts for
+  projects that recently started, previously violated limits, or have stale
+  samples.
+- In normal mode, scan at most a small batch per tick, e.g. `10-25` projects or
+  until the scan time budget is exhausted.
+- Target a full rolling sweep in about `5` minutes for `500` active projects.
+  For `2000` active projects, stale data is acceptable in normal mode as long
+  as clear direct offenders are caught on their next shard scan.
+- For each pid in the selected project shard, scan `/proc/<pid>/fd`.
 - Only open `/proc/<pid>/fdinfo/<fd>` when the fd symlink resolves to
   `anon_inode:inotify`.
 - Count inotify watches by counting `inotify wd:` lines in fdinfo.
 - Bound each scan by elapsed time and max entries so the sampler cannot itself
   become a host load problem.
 - Emit metrics and structured logs with scan duration and truncated-scan flags.
+- Keep the last sample per project in memory with `sampled_at`, counts, scan
+  status, and truncation flags.
+- Build host/account aggregate metrics from the rolling sample cache and expose
+  how many running projects have fresh, stale, missing, or truncated samples.
 
 Integration points:
 
@@ -188,6 +258,17 @@ not fixed forever. The implementation should compute:
 
 If a host later changes `fs.inotify.*`, the thresholds should adapt.
 
+Snapshot freshness:
+
+- fresh sample target: project sampled within `5` minutes.
+- stale warning: project sample older than `10` minutes.
+- missing warning: running project has no sample after `10` minutes.
+- aggregate metrics should include freshness counts and should not claim to be
+  exact when many samples are stale or truncated.
+- direct project enforcement should only use a fresh or just-collected project
+  sample. Host-level observe/pressure state may use stale aggregate data, but
+  emergency stop decisions should prefer freshly sampled direct offenders.
+
 ## Enforcement
 
 Enforcement should be staged through the existing host-pressure controller:
@@ -201,8 +282,12 @@ Enforcement should be staged through the existing host-pressure controller:
 Stop behavior:
 
 - Prefer stopping a direct offender when the sampler identifies one.
-- If there is no clear direct offender, use the existing host-pressure candidate
-  ranking: stop lower-priority, older, less-protected projects first.
+- In the first stop-project rollout, resource-only pressure without a clear
+  project-level offender only publishes host pressure state. It does not stop a
+  generic lower-priority project based on rolling aggregate resource data.
+- Mixed memory pressure and resource pressure still uses the existing
+  host-pressure candidate ranking: stop lower-priority, older, less-protected
+  projects first.
 - Stop the selected project through the same `stopProjectForPressure` path used
   by memory pressure.
 - If clean stop times out, force-remove the container using the same fallback
@@ -217,7 +302,8 @@ Cooldown behavior:
 - First violation: use the existing host-pressure cooldown, defaulting to 10-15
   minutes depending on final configuration.
 - Second violation within 24 hours: block restart for 1 hour.
-- Third violation within 24 hours: quarantine the project until admin review.
+- Third direct resource-offender stop within 24 hours: quarantine the project
+  for 24 hours; add admin review/unquarantine UI later.
 - Account aggregate violations should quarantine at account resource level only
   after multiple projects from the same account violate limits.
 
@@ -275,14 +361,19 @@ the existing host-pressure loop expensive.
 
 Rules:
 
-- Default interval: 15 seconds.
-- Skip a project if it was sampled less than 10 seconds ago.
-- Stop a scan cycle after 2 seconds by default and mark it truncated.
+- Default tick interval: 15 seconds.
+- Normal-mode batch target: `10-25` projects per tick, configurable.
+- Normal-mode scan budget: at most `500ms-1000ms` per tick by default.
+- Pressure-mode scan budget: at most `2s` per tick by default.
+- Skip a project if it was sampled less than 60 seconds ago unless it is being
+  rescanned for an active violation or emergency.
+- Stop a scan cycle when the time budget is exhausted and mark it truncated.
 - Never run more than one scan concurrently.
 - Use backoff if the previous scan was slow.
 - Record scan duration histogram.
 - Cap log volume by logging normal samples at debug level and only warning on
   threshold crossings.
+- Keep all `/proc` scanning off the synchronous stop-candidate ranking path.
 
 The scan should be cheap in normal cases because most projects have far fewer
 than the `4096` pids limit and only a small number of inotify descriptors. The
@@ -352,6 +443,23 @@ Expose recent violations in:
 
 ## Rollout Plan
 
+Phase 0:
+
+- Add a project-host bootstrap sysctl step that writes a managed config file,
+  e.g. `/etc/sysctl.d/90-cocalc-project-host.conf`.
+- Apply and verify:
+  - `fs.inotify.max_user_instances = 8192`.
+  - `fs.inotify.max_user_watches = 2097152`.
+  - `fs.inotify.max_queued_events = 65536`.
+  - `kernel.keys.maxkeys = 20000`.
+  - `kernel.keys.maxbytes = 25000000`.
+- Surface the current sysctl values in host metrics and operator UI.
+- Add a host health warning when actual values are below target.
+- Add a bootstrap/startup log entry that records the actual values and whether
+  persistence succeeded.
+- Roll this out before enabling any sampler enforcement; otherwise the sampler
+  thresholds are calibrated against limits the host may not actually have.
+
 Phase 1:
 
 - Add `nofile`, `core`, and `shm-size` Podman launch limits.
@@ -361,6 +469,9 @@ Phase 1:
 Phase 2:
 
 - Add resource-pressure metrics-only mode feeding host metrics.
+- Implement round-robin sharded sampling with freshness/truncation metrics.
+- Use and maintain the dangerous project-side stress harness at
+  `src/.agents/project-host-resource-stress-test.mjs`.
 - Deploy to staging and run the stress harness.
 - Tune thresholds against real sample data.
 
@@ -368,27 +479,39 @@ Phase 3:
 
 - Extend host-pressure classification and candidate ranking to consume
   resource-pressure signals.
-- Enable stop-project enforcement for clear project-level resource violations.
-- Add user-visible stopped reason and restart cooldown.
+- Enable stop-project enforcement for clear project-level resource violations
+  with `COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE=enforce`.
+- Use `COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE=signal` first when validating
+  staging or production host behavior. The default remains `metrics`.
+- Add user-visible stopped reason and restart cooldown admission blocking.
 - Validate repeated `inotify-watches` and `inotify-instances` tests.
 
 Phase 4:
 
-- Add durable quarantine state and admin unquarantine UI.
+- Add admin unquarantine UI for host-local project quarantines.
 - Add account aggregate enforcement.
 - Add keyring seccomp deny if key pressure is observed or if testing confirms it
   is safe for normal workloads.
 
+## Resolved Decisions
+
+- Ship project-only cooldown/quarantine first. It is local, simpler, and likely
+  the right response for accidental recursive watchers or broken language
+  servers.
+- Design for `500` active projects per host, with stress-test awareness up to
+  `2000` active projects on larger hosts. This requires sharded sampling and
+  forbids full project/fd sweeps on every tick.
+- Prefer host-level configuration for higher `nofile` or inotify thresholds.
+  Dedicated-host and self-hosted deployments can safely own the blast radius for
+  higher limits. Per-project overrides are out of scope for the first pass.
+- Prefer implementing the sampler inside the existing project-host daemon path.
+  Adding another long-running process increases upgrade, supervision, and
+  operational complexity. If profiling shows Node event-loop impact, use a
+  bounded worker thread or short-lived helper before introducing a new daemon.
+
 ## Open Questions
 
-- Should cooldown/quarantine be project-only first, or should account aggregate
-  quarantine ship at the same time?
-- What is the expected maximum active project count per host for sizing host
-  global inotify limits?
 - Do any supported workloads require kernel keyring syscalls inside project
-  containers?
-- Should advanced projects be allowed higher `nofile` or inotify thresholds as
-  an admin-only override?
-- Should the resource sampler live inside the existing project-host daemon, or
-  be a small sidecar process that only publishes snapshots consumed by
-  host-pressure?
+  containers? Current expectation is no; web development, Jupyter notebooks, and
+  LaTeX should not normally need `add_key`, `keyctl`, or `request_key`. Validate
+  on staging before enabling a seccomp deny rule.

@@ -634,6 +634,61 @@ export async function publishHostCompatibilityArtifact({
   };
 }
 
+export async function publishHostBootstrapArtifact({
+  client,
+  config,
+  entry,
+  selector = "latest",
+}: {
+  client: SoftwareR2Client;
+  config: SoftwareRemoteConfig;
+  entry: SoftwareRemoteIndexEntry;
+  selector?: string;
+}): Promise<{
+  selector: string;
+  key: string;
+  url: string;
+  sha256_key: string;
+  sha256_url: string;
+}> {
+  if (entry.files.length !== 1 || entry.files[0].name !== "bootstrap.py") {
+    throw new Error(
+      `software host-bootstrap publish expected one bootstrap.py file in ${entry.artifact_id}`,
+    );
+  }
+  const file = entry.files[0];
+  const body = await client.getR2ObjectBuffer({
+    auth: config.auth,
+    key: file.key,
+  });
+  if (!body) {
+    throw new Error(`software host-bootstrap artifact is missing: ${file.key}`);
+  }
+  const key = `software/bootstrap/${selector}/bootstrap.py`;
+  await client.putR2ObjectFromBuffer({
+    auth: config.auth,
+    key,
+    body,
+    contentType: "text/x-python",
+    cacheControl: config.indexCacheControl,
+  });
+  const sha256Key = `${key}.sha256`;
+  await client.putR2ObjectFromBuffer({
+    auth: config.auth,
+    key: sha256Key,
+    body: Buffer.from(`${file.sha256}  bootstrap.py\n`, "utf8"),
+    contentType: "text/plain",
+    cacheControl: config.indexCacheControl,
+  });
+  return {
+    selector,
+    key,
+    url: publicUrl(config, key),
+    sha256_key: sha256Key,
+    sha256_url: publicUrl(config, sha256Key),
+  };
+}
+
 function hostCompatibilityPlatform({
   artifact,
   fileName,

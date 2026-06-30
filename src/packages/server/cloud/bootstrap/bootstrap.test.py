@@ -1227,7 +1227,19 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 rootctl.read_text(encoding="utf-8"),
             )
             self.assertIn(
+                f'HELPER_SCHEMA_VERSION="{bootstrap.HELPER_SCHEMA_VERSION}"',
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
                 "capture-forensics)",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "apply-sysctls)",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "fs.inotify.max_user_instances = 8192",
                 rootctl.read_text(encoding="utf-8"),
             )
             self.assertIn(
@@ -1235,6 +1247,28 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 rootctl.read_text(encoding="utf-8"),
             )
             subprocess.run(["bash", "-n", str(rootctl)], check=True)
+
+    def test_helper_schema_installed_reads_rootctl_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            rootctl = Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
+            rootctl.parent.mkdir(parents=True)
+            rootctl.write_text(
+                f'#!/usr/bin/env bash\nHELPER_SCHEMA_VERSION="{bootstrap.HELPER_SCHEMA_VERSION}"\n',
+                encoding="utf-8",
+            )
+
+            original_rootctl_path = bootstrap.project_host_rootctl_path
+            try:
+                bootstrap.project_host_rootctl_path = lambda _cfg=None: rootctl
+                self.assertEqual(
+                    bootstrap.helper_schema_installed(cfg),
+                    bootstrap.HELPER_SCHEMA_VERSION,
+                )
+                rootctl.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+                self.assertIsNone(bootstrap.helper_schema_installed(cfg))
+            finally:
+                bootstrap.project_host_rootctl_path = original_rootctl_path
 
     def test_write_env_sets_project_pool_defaults_without_overriding_existing_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

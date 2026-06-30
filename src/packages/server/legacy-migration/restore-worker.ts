@@ -64,10 +64,24 @@ const DEFAULT_MAX_PARALLEL_PER_HOST = Math.max(
 const RESTORE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const PROJECT_HOST_RESTORE_RPC_TIMEOUT_MS = Math.max(
   5 * 60 * 1000,
-  envToInt("COCALC_LEGACY_PROJECT_RESTORE_HOST_RPC_TIMEOUT_MS", 30 * 60 * 1000),
+  envToInt(
+    "COCALC_LEGACY_PROJECT_RESTORE_HOST_RPC_TIMEOUT_MS",
+    3 * 60 * 60 * 1000,
+  ),
+);
+const LEGACY_INITIAL_BACKUP_TIMEOUT_MS = Math.max(
+  5 * 60 * 1000,
+  envToInt(
+    "COCALC_LEGACY_PROJECT_INITIAL_BACKUP_TIMEOUT_MS",
+    3 * 60 * 60 * 1000,
+  ),
 );
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_LEGACY_PROJECTS_BUCKET = "cocalc-projects";
+const LEGACY_INITIAL_BACKUP_TAGS = [
+  "legacy-migration",
+  "legacy-migration-initial",
+];
 const RESTORED_PROJECT_QUOTA_HEADROOM_MB = Math.max(
   0,
   envToInt("COCALC_LEGACY_PROJECT_RESTORE_QUOTA_HEADROOM_MB", 1024),
@@ -725,6 +739,65 @@ async function ensureRestoredProjectDiskQuota({
   return desired;
 }
 
+async function createInitialLegacyMigrationBackup({
+  row,
+  client,
+  op_id,
+}: {
+  row: LegacyRestoreRow;
+  client: Awaited<ReturnType<typeof getProjectFileServerClient>>;
+  op_id: string;
+}): Promise<
+  | {
+      status: "created";
+      id: string;
+      time: string;
+    }
+  | {
+      status: "failed";
+      error: string;
+    }
+> {
+  await publishRestoreProgress({
+    row,
+    phase: "backup",
+    message: "creating initial backup after legacy restore",
+    progress: 96,
+    detail: {
+      tags: LEGACY_INITIAL_BACKUP_TAGS,
+      managed_egress_override: "legacy-migration-initial-backup",
+    },
+  });
+  try {
+    const backup = await withTimeout({
+      timeoutMs: LEGACY_INITIAL_BACKUP_TIMEOUT_MS,
+      message: `legacy migration initial backup timed out after ${LEGACY_INITIAL_BACKUP_TIMEOUT_MS}ms`,
+      promise: client.createBackup({
+        project_id: row.project_id,
+        tags: LEGACY_INITIAL_BACKUP_TAGS,
+        managed_egress_override: "legacy-migration-initial-backup",
+        lro: { op_id, scope_type: "project", scope_id: row.project_id },
+      }),
+    });
+    return {
+      status: "created",
+      id: backup.id,
+      time:
+        backup.time instanceof Date
+          ? backup.time.toISOString()
+          : `${backup.time}`,
+    };
+  } catch (err) {
+    const error = `${err}`.slice(0, 4000);
+    logger.warn("legacy migration initial backup failed", {
+      legacy_project_id: row.legacy_project_id,
+      project_id: row.project_id,
+      err: error,
+    });
+    return { status: "failed", error };
+  }
+}
+
 async function markFailed({
   row,
   err,
@@ -876,6 +949,11 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
       row,
       result: restoredResult,
     });
+    const initialBackup = await createInitialLegacyMigrationBackup({
+      row,
+      client,
+      op_id,
+    });
     await markRestored({
       row,
       result: {
@@ -883,6 +961,7 @@ async function restoreOne(row: LegacyRestoreRow): Promise<void> {
         ...(diskQuotaMb == null
           ? {}
           : { restored_project_disk_quota_mb: diskQuotaMb }),
+        legacy_initial_backup: initialBackup,
       },
     });
   } catch (err) {

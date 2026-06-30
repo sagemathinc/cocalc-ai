@@ -44,6 +44,7 @@ import {
   indexKey,
   loadDefaultSoftwareR2Client,
   manifestRemoteEntry,
+  publishHostBootstrapArtifact,
   publishHostCompatibilityArtifact,
   publishReleaseChannelArtifact,
   readDeploymentIndex,
@@ -428,6 +429,7 @@ function softwareInfoOverview() {
         "bay-scaffold",
       ],
       project_hosts: [
+        "host-bootstrap",
         "project-host",
         "project",
         "tools",
@@ -502,6 +504,51 @@ function rawSoftwareComponentInfo(
       common_failure_modes: [
         "Selected bay artifact is missing from local and remote stores.",
         "Rocket cannot infer the bay SSH target from the profile API URL.",
+      ],
+    };
+  }
+
+  if (component === "host-bootstrap") {
+    return {
+      component,
+      title: "Project-host bootstrap script",
+      status: "build-and-deploy",
+      artifact_component: "host-bootstrap",
+      target_kind: "project-host-fleet",
+      purpose:
+        "Publish the bootstrap.py used when project hosts bootstrap or refresh host-level operational helpers.",
+      lifecycle: [
+        "Record packages/server/cloud/bootstrap/bootstrap.py as an immutable software artifact.",
+        "Push the artifact to the R2 software artifact store.",
+        "Publish software/bootstrap/latest/bootstrap.py and bootstrap.py.sha256.",
+        "Reconcile online project hosts so they refresh bootstrap-managed host state.",
+      ],
+      commands: {
+        build: ["cocalc software build host-bootstrap:<tag>"],
+        push: ["cocalc software push host-bootstrap:<tag-or-id>"],
+        deploy: [
+          "cocalc software deploy --build host-bootstrap:<tag> <profile>",
+        ],
+        smoke: ["cocalc software smoke host-bootstrap <profile>"],
+        history: ["cocalc software history host-bootstrap <profile>"],
+        rollback: [
+          "cocalc software rollback host-bootstrap <profile> <artifact-id>",
+        ],
+      },
+      related_components: ["project-host"],
+      operator_notes: [
+        "This replaces the old manual publish:bootstrap step for normal deploys.",
+        "The latest bootstrap URL is mutable, so deploy history is the audit trail for what changed.",
+        "Use this after bootstrap/sysctl/rootctl changes that do not require rebuilding project-host runtime.",
+      ],
+      agent_notes: [
+        "Build does not run pnpm; it records the source bootstrap.py file.",
+        "Deploy publishes the latest bootstrap object and runs host reconcile --all-online --wait.",
+      ],
+      common_failure_modes: [
+        "R2 software credentials are missing.",
+        "The profile has no reachable online hosts to reconcile.",
+        "An old deployed project-host runtime does not yet know how to consume the changed bootstrap behavior.",
       ],
     };
   }
@@ -797,6 +844,8 @@ function softwareComponentDescription(
       return "Cloudflared is the bay tunnel helper that connects the bay to Cloudflare-managed ingress. This deploy path is intentionally separate so tunnel-related changes do not imply a hub worker rollout.";
     case "bay-scaffold":
       return "The bay scaffold is the systemd units, scripts, and environment templates that define how bay services run. Deploy this when operational wiring changes but application runtime code does not need a full rollout.";
+    case "host-bootstrap":
+      return "Host-bootstrap is the mutable bootstrap.py entry point project hosts download for host-level setup and helper refreshes. Deploying it publishes software/bootstrap/latest/bootstrap.py and reconciles online project hosts.";
     case "host-conat-router":
       return "This component targets the project-host-local Conat router managed component, not the bay router. It uses a project-host artifact and reconciles the managed component across online project hosts.";
     case "host-conat-persist":
@@ -1279,6 +1328,22 @@ function packageBuildInfo(
   return undefined;
 }
 
+function hostBootstrapBuildInfo(component: SoftwareBuildComponent):
+  | {
+      artifactName: "bootstrap.py";
+      source: (srcRoot: string) => string;
+    }
+  | undefined {
+  if (component !== "host-bootstrap") {
+    return undefined;
+  }
+  return {
+    artifactName: "bootstrap.py",
+    source: (srcRoot) =>
+      join(srcRoot, "packages", "server", "cloud", "bootstrap", "bootstrap.py"),
+  };
+}
+
 async function listStarReleaseFiles(
   outputDir: string,
 ): Promise<Array<{ source: string; name: string }>> {
@@ -1493,6 +1558,40 @@ function runtimeArtifactForHostUpgradeArtifact(
 
 function isStarSmokeComponent(component: SoftwareDeployComponent): boolean {
   return component === "star";
+}
+
+function isHostBootstrapSmokeComponent(
+  component: SoftwareDeployComponent,
+): boolean {
+  return component === "host-bootstrap";
+}
+
+async function smokeHostBootstrapChecks({
+  timeoutMs,
+  deps,
+}: {
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareSmokeCheck[]> {
+  const baseUrl = softwarePublicBaseUrl(deps);
+  const bootstrapUrl = `${baseUrl}/software/bootstrap/latest/bootstrap.py`;
+  return [
+    await runTimedSmokeCheck(
+      "host bootstrap.py",
+      async () => await fetchSmokeUrl({ url: bootstrapUrl, timeoutMs, deps }),
+      deps,
+    ),
+    await runTimedSmokeCheck(
+      "host bootstrap.py sha256",
+      async () =>
+        await fetchSmokeUrl({
+          url: `${bootstrapUrl}.sha256`,
+          timeoutMs,
+          deps,
+        }),
+      deps,
+    ),
+  ];
 }
 
 async function smokeStarChecks({
@@ -2300,6 +2399,7 @@ async function buildFromFile({
   if (!sourceFile) {
     const info = rocketBuildInfo(component);
     const packageInfo = packageBuildInfo(component, artifactId);
+    const bootstrapInfo = hostBootstrapBuildInfo(component);
     const starInfo =
       component === "star"
         ? {
@@ -2311,76 +2411,83 @@ async function buildFromFile({
             ),
           }
         : undefined;
-    if (!info && !packageInfo && !starInfo) {
-      throw new Error(
-        `software build ${component} is not wired yet; use --from-file <path> to create a local artifact manifest from an existing file`,
-      );
-    }
-    if (!deps.runCommand) {
-      throw new Error("software build requires runCommand dependency");
-    }
-    let command = "pnpm";
-    let commandEnv = deps.env;
-    let args: string[];
-    if (packageInfo) {
-      args = [
-        "-C",
-        join(srcRoot, "packages"),
-        "--filter",
-        packageInfo.packageFilter,
-        "run",
-        packageInfo.script,
-      ];
-      commandEnv = { ...deps.env, ...packageInfo.env };
-    } else if (starInfo) {
-      buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
-      const outputDir = join(buildTempDir, "star-github-release");
-      command = starInfo.script;
-      args = [outputDir];
-      commandEnv = {
-        ...deps.env,
-        STAR_RELEASE_ID: artifactId,
-      };
+    if (bootstrapInfo) {
+      sourceFile = bootstrapInfo.source(srcRoot);
+      artifactName = bootstrapInfo.artifactName;
+      sourceFiles = [{ source: sourceFile, name: artifactName }];
+      commandText = `record ${sourceFile}`;
     } else {
-      const rocketInfo = info!;
-      buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
-      const outDir = join(buildTempDir, rocketInfo.kind);
-      const bundle = join(buildTempDir, rocketInfo.artifactName);
-      args = [
-        "-C",
-        join(srcRoot, "packages"),
-        "--filter",
-        "@cocalc/rocket",
-        "run",
-        rocketInfo.script,
-        outDir,
-        bundle,
-      ];
+      if (!info && !packageInfo && !starInfo) {
+        throw new Error(
+          `software build ${component} is not wired yet; use --from-file <path> to create a local artifact manifest from an existing file`,
+        );
+      }
+      if (!deps.runCommand) {
+        throw new Error("software build requires runCommand dependency");
+      }
+      let command = "pnpm";
+      let commandEnv = deps.env;
+      let args: string[];
+      if (packageInfo) {
+        args = [
+          "-C",
+          join(srcRoot, "packages"),
+          "--filter",
+          packageInfo.packageFilter,
+          "run",
+          packageInfo.script,
+        ];
+        commandEnv = { ...deps.env, ...packageInfo.env };
+      } else if (starInfo) {
+        buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
+        const outputDir = join(buildTempDir, "star-github-release");
+        command = starInfo.script;
+        args = [outputDir];
+        commandEnv = {
+          ...deps.env,
+          STAR_RELEASE_ID: artifactId,
+        };
+      } else {
+        const rocketInfo = info!;
+        buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
+        const outDir = join(buildTempDir, rocketInfo.kind);
+        const bundle = join(buildTempDir, rocketInfo.artifactName);
+        args = [
+          "-C",
+          join(srcRoot, "packages"),
+          "--filter",
+          "@cocalc/rocket",
+          "run",
+          rocketInfo.script,
+          outDir,
+          bundle,
+        ];
+      }
+      const code = await deps.runCommand(command, args, {
+        stdio: "inherit",
+        env: commandEnv,
+      });
+      if (code !== 0) {
+        throw new Error(
+          `software build ${component} failed with exit status ${code}`,
+        );
+      }
+      if (packageInfo) {
+        sourceFile = packageInfo.artifactPath(srcRoot);
+        artifactName = packageInfo.artifactName;
+        sourceFiles = packageInfo.artifactFiles?.(srcRoot) ?? [
+          { source: sourceFile, name: artifactName },
+        ];
+      } else if (starInfo) {
+        const outputDir = args[0];
+        sourceFiles = await listStarReleaseFiles(outputDir);
+      } else {
+        sourceFile = args.at(-1);
+        artifactName = info!.artifactName;
+        sourceFiles = [{ source: sourceFile!, name: artifactName }];
+      }
+      commandText = [command, ...args].join(" ");
     }
-    const code = await deps.runCommand(command, args, {
-      stdio: "inherit",
-      env: commandEnv,
-    });
-    if (code !== 0) {
-      throw new Error(
-        `software build ${component} failed with exit status ${code}`,
-      );
-    }
-    if (packageInfo) {
-      sourceFile = packageInfo.artifactPath(srcRoot);
-      artifactName = packageInfo.artifactName;
-      sourceFiles = packageInfo.artifactFiles?.(srcRoot) ?? [
-        { source: sourceFile, name: artifactName },
-      ];
-    } else if (starInfo) {
-      const outputDir = args[0];
-      sourceFiles = await listStarReleaseFiles(outputDir);
-    } else {
-      sourceFile = args.at(-1);
-      artifactName = info!.artifactName;
-      sourceFiles = [{ source: sourceFile!, name: artifactName }];
-    }
-    commandText = [command, ...args].join(" ");
   }
   const dir = artifactDir({ localStore, component, artifactId });
   const filesDir = join(dir, "files");
@@ -2966,6 +3073,18 @@ function hostDeployTargetForComponent(component: SoftwareDeployComponent):
   return undefined;
 }
 
+function hostBootstrapDeployTargetForComponent(
+  component: SoftwareDeployComponent,
+):
+  | {
+      artifactComponent: "host-bootstrap";
+    }
+  | undefined {
+  return component === "host-bootstrap"
+    ? { artifactComponent: "host-bootstrap" }
+    : undefined;
+}
+
 function releaseDeployTargetForComponent(component: SoftwareDeployComponent):
   | {
       artifactComponent: "cli" | "launchpad" | "plus";
@@ -3524,6 +3643,8 @@ Supported deploy/smoke components:
         const startedAt = deps.now?.() ?? new Date();
         const rocketTarget = rocketDeployTargetForComponent(component);
         const hostTarget = hostDeployTargetForComponent(component);
+        const hostBootstrapTarget =
+          hostBootstrapDeployTargetForComponent(component);
         const releaseTarget = releaseDeployTargetForComponent(component);
         const starTarget = starDeployTargetForComponent(component);
         assertSingleReleaseDeployTarget({ component, targets: deployTargets });
@@ -3535,11 +3656,12 @@ Supported deploy/smoke components:
         const artifactComponent =
           rocketTarget?.artifactComponent ??
           hostTarget?.artifactComponent ??
+          hostBootstrapTarget?.artifactComponent ??
           releaseTarget?.artifactComponent ??
           starTarget?.artifactComponent;
         if (!artifactComponent) {
           throw new Error(
-            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, bay-conat-router, bay-conat-persist, bay-frontdoor, bay-cloudflared, bay-scaffold, host-conat-router, host-conat-persist, project-host, project, tools, cli, launchpad, plus, star`,
+            `software deploy ${component} is not wired yet; currently supported: ${DEPLOY_COMPONENTS_HELP}`,
           );
         }
         if (!releaseTarget && !deps.runCommand) {
@@ -3602,6 +3724,8 @@ Supported deploy/smoke components:
           let hostCompatUrl: string | undefined;
           let hostCatalogUrls: string[] | undefined;
           let hostManagedComponent: string | undefined;
+          let hostBootstrapUrl: string | undefined;
+          let hostBootstrapSha256Url: string | undefined;
           let releaseProduct: string | undefined;
           let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
           let releaseChannelManifestUrls: string[] | undefined;
@@ -3721,6 +3845,19 @@ Supported deploy/smoke components:
                 ]);
               }
             }
+          } else if (hostBootstrapTarget) {
+            targetKind = "project-host-fleet";
+            commandArgsList = [
+              [
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "reconcile",
+                "--all-online",
+                "--wait",
+              ],
+            ];
           } else if (releaseTarget) {
             releaseProduct = releaseProductForArtifactComponent(
               releaseTarget.artifactComponent,
@@ -3806,6 +3943,15 @@ Supported deploy/smoke components:
                 ? { host_managed_component: hostManagedComponent }
                 : {}),
               ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
+              ...(hostBootstrapTarget
+                ? { host_bootstrap_reconcile: true }
+                : {}),
+              ...(hostBootstrapUrl
+                ? { host_bootstrap_url: hostBootstrapUrl }
+                : {}),
+              ...(hostBootstrapSha256Url
+                ? { host_bootstrap_sha256_url: hostBootstrapSha256Url }
+                : {}),
               ...(releaseProduct ? { release_product: releaseProduct } : {}),
               ...(releaseChannel ? { release_channel: releaseChannel } : {}),
               ...(releaseInstall ?? {}),
@@ -3922,6 +4068,22 @@ Supported deploy/smoke components:
                 };
                 return;
               }
+              if (hostBootstrapTarget) {
+                const published = await publishHostBootstrapArtifact({
+                  client,
+                  config,
+                  entry: artifact.remote_entry,
+                });
+                hostBootstrapUrl = published.url;
+                hostBootstrapSha256Url = published.sha256_url;
+                record.details = {
+                  ...(record.details ?? {}),
+                  host_bootstrap_selector: published.selector,
+                  host_bootstrap_url: hostBootstrapUrl,
+                  host_bootstrap_sha256_url: hostBootstrapSha256Url,
+                  host_bootstrap_reconcile: true,
+                };
+              }
               for (const args of commandArgsList) {
                 const code = await deps.runCommand!(cli.command, args, {
                   stdio: "inherit",
@@ -3970,6 +4132,13 @@ Supported deploy/smoke components:
               ? { host_managed_component: hostManagedComponent }
               : {}),
             ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
+            ...(hostBootstrapUrl
+              ? { host_bootstrap_url: hostBootstrapUrl }
+              : {}),
+            ...(hostBootstrapSha256Url
+              ? { host_bootstrap_sha256_url: hostBootstrapSha256Url }
+              : {}),
+            ...(hostBootstrapTarget ? { host_bootstrap_reconcile: true } : {}),
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { channel: releaseChannel } : {}),
             ...(releaseInstall ?? {}),
@@ -4196,14 +4365,16 @@ Supported deploy/smoke components:
         const hostSmokeArtifact = hostArtifactForSmoke(component);
         const releaseSmokeTarget = releaseSmokeTargetForComponent(component);
         const starSmoke = isStarSmokeComponent(component);
+        const hostBootstrapSmoke = isHostBootstrapSmokeComponent(component);
         if (
           !["static", "hub", "bay"].includes(component) &&
           !hostSmokeArtifact &&
           !releaseSmokeTarget &&
-          !starSmoke
+          !starSmoke &&
+          !hostBootstrapSmoke
         ) {
           throw new Error(
-            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools, cli, launchpad, plus, star`,
+            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, host-bootstrap, project-host, project, tools, cli, launchpad, plus, star`,
           );
         }
         const startedAt = deps.now?.() ?? new Date();
@@ -4241,6 +4412,25 @@ Supported deploy/smoke components:
             {
               component,
               channel: targetName,
+              duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+              checks,
+            },
+          );
+          return;
+        }
+        if (hostBootstrapSmoke) {
+          const checks = await smokeHostBootstrapChecks({
+            timeoutMs,
+            deps,
+          });
+          assertSmokeChecks(checks);
+          emitSuccess(
+            { globals: command.optsWithGlobals() as any },
+            "software smoke",
+            {
+              component,
+              profile: targetName,
+              public_base_url: softwarePublicBaseUrl(deps),
               duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
               checks,
             },
