@@ -117,10 +117,11 @@ jest.mock("./projects-starred", () => ({
 }));
 
 jest.mock("./projects-table", () => ({
-  ProjectsTable: ({ freezeOrder, visible_projects }: any) => (
+  ProjectsTable: ({ freezeOrder, height, visible_projects }: any) => (
     <div
       data-testid="projects-table"
       data-freeze-order={String(!!freezeOrder)}
+      data-height={String(height)}
       data-visible-projects={JSON.stringify(visible_projects)}
     />
   ),
@@ -280,6 +281,33 @@ test("projects page falls back to locally visible projects without a matching ba
     "data-visible-projects",
     JSON.stringify(["local-project"]),
   );
+});
+
+test("projects page sizes the table from the flex list slot", () => {
+  const rectSpy = jest
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({
+      bottom: 720,
+      height: 720,
+      left: 0,
+      right: 0,
+      top: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+  try {
+    render(<ProjectsPage />);
+
+    expect(screen.getByTestId("projects-table")).toHaveAttribute(
+      "data-height",
+      "672",
+    );
+  } finally {
+    rectSpy.mockRestore();
+  }
 });
 
 test("projects page renders matching backend project window ids", () => {
