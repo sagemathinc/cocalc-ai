@@ -20,6 +20,7 @@ export const MANAGED_BACKUP_EGRESS_CATEGORY: ManagedProjectEgressCategory =
   "backup-upload";
 const LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE =
   "legacy-migration-initial-backup";
+const ADMIN_SITE_MIGRATION_BACKUP_OVERRIDE = "admin-site-migration";
 
 function formatManagedEgressCategory(category: string): string {
   if (category === "file-download") return "File downloads";
@@ -77,7 +78,8 @@ export async function checkManagedBackupAllowedBestEffort({
 > {
   if (
     managed_egress_override === "admin-host-drain" ||
-    managed_egress_override === LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
+    managed_egress_override === LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE ||
+    managed_egress_override === ADMIN_SITE_MIGRATION_BACKUP_OVERRIDE
   ) {
     return { allowed: true };
   }
@@ -152,11 +154,15 @@ export async function recordManagedBackupEgressBestEffort({
   if (!(bytes > 0) || !isProjectHostManagedEgressTrackingEnabled()) {
     return;
   }
-  if (managed_egress_override === LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE) {
-    logger.info("skipping account managed egress for legacy migration backup", {
+  if (
+    managed_egress_override === LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE ||
+    managed_egress_override === ADMIN_SITE_MIGRATION_BACKUP_OVERRIDE
+  ) {
+    logger.info("skipping account managed egress for managed backup override", {
       project_id,
       backup_id,
       bytes,
+      managed_egress_override,
       tags,
     });
     return;

@@ -883,6 +883,30 @@ export interface FinalizeIncomingProjectBackupMigrationResult {
   warnings: string[];
 }
 
+export interface BackupProjectToExternalRepositoryOptions {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  project_id: string;
+  destination_site: string;
+  destination_project_id: string;
+  migration_id: string;
+  rustic_repo_toml: string;
+  backup_index_store?: ProjectBackupIndexStoreConfig | null;
+  exclude_rootfs_state: true;
+  stop_source?: boolean;
+  require_source_stopped?: boolean;
+  tags?: string[];
+}
+
+export interface BackupProjectToExternalRepositoryResponse {
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -924,6 +948,7 @@ export const projects = {
   prepareIncomingProjectBackupMigration: authFirstRequireAccount,
   getProjectSiteMigrationStatus: authFirstRequireAccount,
   finalizeIncomingProjectBackupMigration: authFirstRequireAccount,
+  backupProjectToExternalRepository: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
   setProjectMetadata: authFirstRequireAccount,
   setProjectManageUsersOwnerOnly: authFirstRequireAccount,
@@ -1215,6 +1240,10 @@ export interface Projects {
   finalizeIncomingProjectBackupMigration: (
     opts: FinalizeIncomingProjectBackupMigrationOptions,
   ) => Promise<FinalizeIncomingProjectBackupMigrationResult>;
+
+  backupProjectToExternalRepository: (
+    opts: BackupProjectToExternalRepositoryOptions,
+  ) => Promise<BackupProjectToExternalRepositoryResponse>;
 
   getProjectRootfsPublishConfig: (opts: {
     account_id?: string;

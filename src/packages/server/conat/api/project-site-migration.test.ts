@@ -5,9 +5,17 @@ let getPoolMock: jest.Mock;
 let createProjectMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let getSeedProjectBackupConfigMock: jest.Mock;
+let recordExternalProjectBackupIndexMock: jest.Mock;
 let setProjectEntitlementOverrideLocalMock: jest.Mock;
 let setProjectLabelsMock: jest.Mock;
 let requireDangerousProjectMutationAuthMock: jest.Mock;
+let createLroMock: jest.Mock;
+let publishLroSummaryMock: jest.Mock;
+let publishLroEventMock: jest.Mock;
+let triggerBackupLroWorkerMock: jest.Mock;
+let resolveProjectBayMock: jest.Mock;
+let getConfiguredBayIdMock: jest.Mock;
+let stopProjectMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -28,6 +36,8 @@ jest.mock("@cocalc/server/project-backup", () => ({
   __esModule: true,
   getSeedProjectBackupConfig: (...args: any[]) =>
     getSeedProjectBackupConfigMock(...args),
+  recordExternalProjectBackupIndex: (...args: any[]) =>
+    recordExternalProjectBackupIndexMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/project-entitlement-overrides", () => ({
@@ -45,6 +55,42 @@ jest.mock("./project-dangerous-auth", () => ({
   __esModule: true,
   requireDangerousProjectMutationAuth: (...args: any[]) =>
     requireDangerousProjectMutationAuthMock(...args),
+}));
+
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  __esModule: true,
+  createLro: (...args: any[]) => createLroMock(...args),
+}));
+
+jest.mock("@cocalc/server/lro/stream", () => ({
+  __esModule: true,
+  publishLroSummary: (...args: any[]) => publishLroSummaryMock(...args),
+  publishLroEvent: (...args: any[]) => publishLroEventMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/backup-worker", () => ({
+  __esModule: true,
+  triggerBackupLroWorker: (...args: any[]) =>
+    triggerBackupLroWorkerMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  __esModule: true,
+  resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-config", () => ({
+  __esModule: true,
+  getConfiguredBayId: (...args: any[]) => getConfiguredBayIdMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    projectControl: jest.fn(() => ({
+      stop: (...args: any[]) => stopProjectMock(...args),
+    })),
+  })),
 }));
 
 describe("project site migration destination RPCs", () => {
@@ -97,9 +143,27 @@ describe("project site migration destination RPCs", () => {
         compression: "zstd",
       },
     }));
+    recordExternalProjectBackupIndexMock = jest.fn(async () => undefined);
     setProjectEntitlementOverrideLocalMock = jest.fn(async () => ({}));
     setProjectLabelsMock = jest.fn(async () => ({}));
     requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
+    createLroMock = jest.fn(async ({ scope_id, input }) => ({
+      op_id: "77777777-7777-4777-8777-777777777777",
+      kind: "project-backup",
+      scope_type: "project",
+      scope_id,
+      status: "queued",
+      input,
+    }));
+    publishLroSummaryMock = jest.fn(async () => undefined);
+    publishLroEventMock = jest.fn(async () => undefined);
+    triggerBackupLroWorkerMock = jest.fn();
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "alpha-bay",
+      epoch: 3,
+    }));
+    getConfiguredBayIdMock = jest.fn(() => "alpha-bay");
+    stopProjectMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("FROM accounts")) {
         return { rows: [{ account_id: OWNER_ID }] };
@@ -199,6 +263,75 @@ describe("project site migration destination RPCs", () => {
     );
   });
 
+  it("queues a source backup LRO to an external destination repository", async () => {
+    const { backupProjectToExternalRepository } =
+      await import("./project-site-migration");
+
+    await expect(
+      backupProjectToExternalRepository({
+        account_id: ADMIN_ID,
+        browser_id: "browser-1",
+        session_hash: "session-1",
+        project_id: SOURCE_PROJECT_ID,
+        destination_site: "prod",
+        destination_project_id: DESTINATION_PROJECT_ID,
+        migration_id: MIGRATION_ID,
+        rustic_repo_toml: '[repository]\npassword = "secret"',
+        backup_index_store: {
+          kind: "r2-object-store",
+          endpoint: "https://example.invalid",
+          bucket: "backups",
+          access_key_id: "access",
+          secret_access_key: "secret",
+          key_prefix: "project-backup-indexes",
+          compression: "zstd",
+        },
+        exclude_rootfs_state: true,
+      }),
+    ).resolves.toEqual({
+      op_id: "77777777-7777-4777-8777-777777777777",
+      scope_type: "project",
+      scope_id: SOURCE_PROJECT_ID,
+      service: "persist",
+      stream_name: "lro.77777777-7777-4777-8777-777777777777",
+    });
+
+    expect(stopProjectMock).toHaveBeenCalledWith({
+      project_id: SOURCE_PROJECT_ID,
+      epoch: 3,
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "project-backup",
+        scope_type: "project",
+        scope_id: SOURCE_PROJECT_ID,
+        created_by: ADMIN_ID,
+        routing: "hub",
+        dedupe_key: `project-backup:${SOURCE_PROJECT_ID}`,
+        status: "queued",
+        input: expect.objectContaining({
+          project_id: SOURCE_PROJECT_ID,
+          managed_egress_override: "admin-site-migration",
+          tags: expect.arrayContaining([
+            "cocalc-project-migration",
+            `migration:${MIGRATION_ID}`,
+            `source-project:${SOURCE_PROJECT_ID}`,
+            `destination-project:${DESTINATION_PROJECT_ID}`,
+          ]),
+          external_migration: expect.objectContaining({
+            destination_site: "prod",
+            destination_project_id: DESTINATION_PROJECT_ID,
+            migration_id: MIGRATION_ID,
+            rustic_repo_toml: '[repository]\npassword = "secret"',
+            exclude_rootfs_state: true,
+            stopped_source: true,
+          }),
+        }),
+      }),
+    );
+    expect(triggerBackupLroWorkerMock).toHaveBeenCalled();
+  });
+
   it("finalizes a migration as archive-only and records the snapshot id", async () => {
     const { finalizeIncomingProjectBackupMigration } =
       await import("./project-site-migration");
@@ -211,7 +344,18 @@ describe("project site migration destination RPCs", () => {
       destination_project_id: DESTINATION_PROJECT_ID,
       snapshot_id: "snapshot-123",
       backup_index_key: "indexes/key.sqlite.zst",
-      source_backup_result: { total_bytes: 1234 },
+      source_backup_result: {
+        id: "snapshot-123",
+        time: "2026-06-30T13:00:00Z",
+        total_bytes: 1234,
+        backup_index: {
+          object_key: "indexes/key.sqlite.zst",
+          compression: "gzip",
+          sqlite_bytes: 123,
+          object_bytes: 45,
+          sha256: "abc",
+        },
+      },
       restore: true,
     });
 
@@ -232,6 +376,17 @@ describe("project site migration destination RPCs", () => {
         }),
       }),
     );
+    expect(recordExternalProjectBackupIndexMock).toHaveBeenCalledWith({
+      project_id: DESTINATION_PROJECT_ID,
+      backup_id: "snapshot-123",
+      backup_time: "2026-06-30T13:00:00Z",
+      status: "complete",
+      object_key: "indexes/key.sqlite.zst",
+      compression: "gzip",
+      sqlite_bytes: 123,
+      object_bytes: 45,
+      sha256: "abc",
+    });
     expect(result).toEqual({
       migration_id: MIGRATION_ID,
       destination_project_id: DESTINATION_PROJECT_ID,

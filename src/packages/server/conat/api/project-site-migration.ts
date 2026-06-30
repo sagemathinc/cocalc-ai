@@ -6,14 +6,33 @@
 import { randomUUID } from "node:crypto";
 
 import getPool from "@cocalc/database/pool";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import { lroStreamName } from "@cocalc/conat/lro/names";
+import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import createProject from "@cocalc/server/projects/create";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
+import {
+  getSeedProjectBackupConfig,
+  recordExternalProjectBackupIndex,
+} from "@cocalc/server/project-backup";
 import { setProjectEntitlementOverrideLocal } from "@cocalc/server/membership/project-entitlement-overrides";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
+import { createLro } from "@cocalc/server/lro/lro-db";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
+import {
+  BACKUP_LRO_KIND,
+  BACKUP_TIMEOUT_MS,
+  backupLroDedupeKey,
+} from "@cocalc/server/projects/backup-lro";
+import { triggerBackupLroWorker } from "@cocalc/server/projects/backup-worker";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
+  BackupProjectToExternalRepositoryOptions,
+  BackupProjectToExternalRepositoryResponse,
   FinalizeIncomingProjectBackupMigrationOptions,
   FinalizeIncomingProjectBackupMigrationResult,
   GetProjectSiteMigrationStatusOptions,
@@ -168,6 +187,53 @@ async function requireFreshAuthAdmin({
   return accountId;
 }
 
+function lroResponse({
+  op,
+  project_id,
+}: {
+  op: LroSummary;
+  project_id: string;
+}): BackupProjectToExternalRepositoryResponse {
+  return {
+    op_id: op.op_id,
+    scope_type: "project",
+    scope_id: project_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
+}
+
+async function publishQueuedMigrationBackupLro({
+  op,
+  project_id,
+}: {
+  op: LroSummary;
+  project_id: string;
+}): Promise<void> {
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch {
+    // Best-effort. The durable LRO row is the source of truth.
+  }
+  void publishLroEvent({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    op_id: op.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase: "queued",
+      message: "queued project site migration backup",
+      progress: 0,
+      detail: { project_id },
+    },
+  }).catch(() => {});
+}
+
 function normalizeSourceSite(source_site: string): string {
   const sourceSite = `${source_site ?? ""}`.trim();
   if (!sourceSite || sourceSite.length > 256) {
@@ -276,6 +342,67 @@ async function loadDestinationProjectRegion(
     [project_id],
   );
   return rows[0]?.region ?? null;
+}
+
+function normalizeMigrationTags({
+  tags,
+  source_site,
+  source_project_id,
+  destination_site,
+  destination_project_id,
+  migration_id,
+}: {
+  tags?: string[];
+  source_site: string;
+  source_project_id: string;
+  destination_site: string;
+  destination_project_id: string;
+  migration_id: string;
+}): string[] {
+  const result = new Set<string>();
+  for (const tag of tags ?? []) {
+    const normalized = `${tag ?? ""}`.trim();
+    if (normalized) result.add(normalized);
+  }
+  for (const tag of [
+    "cocalc-project-migration",
+    `migration:${migration_id}`,
+    `source-site:${source_site}`,
+    `source-project:${source_project_id}`,
+    `destination-site:${destination_site}`,
+    `destination-project:${destination_project_id}`,
+  ]) {
+    result.add(tag);
+  }
+  return Array.from(result);
+}
+
+async function assertLocalSourceProjectForMigration(
+  project_id: string,
+): Promise<{ bay_id: string; epoch?: number }> {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    throw new Error(
+      "project site migration source backup must be requested on the source project's owning bay in v1",
+    );
+  }
+  return ownership;
+}
+
+async function stopSourceProjectForMigration({
+  project_id,
+  ownership,
+}: {
+  project_id: string;
+  ownership: { bay_id: string; epoch?: number };
+}): Promise<void> {
+  await getInterBayBridge().projectControl(ownership.bay_id).stop({
+    project_id,
+    epoch: ownership.epoch,
+  });
 }
 
 async function loadMigrationRecord(
@@ -438,6 +565,89 @@ export async function getProjectSiteMigrationStatus({
   return await loadMigrationRecord(migration_id);
 }
 
+export async function backupProjectToExternalRepository({
+  account_id,
+  browser_id,
+  session_hash,
+  project_id,
+  destination_site,
+  destination_project_id,
+  migration_id,
+  rustic_repo_toml,
+  backup_index_store,
+  exclude_rootfs_state,
+  stop_source,
+  require_source_stopped,
+  tags,
+}: BackupProjectToExternalRepositoryOptions): Promise<BackupProjectToExternalRepositoryResponse> {
+  await requireFreshAuthAdmin({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  const sourceProjectId = normalizeSourceProjectId(project_id);
+  const destinationSite = normalizeSourceSite(destination_site);
+  const destinationProjectId = normalizeSourceProjectId(destination_project_id);
+  const migrationId = normalizeSourceProjectId(migration_id);
+  if (exclude_rootfs_state !== true) {
+    throw new Error("exclude_rootfs_state=true is required");
+  }
+  if (!`${rustic_repo_toml ?? ""}`.trim()) {
+    throw new Error("rustic_repo_toml is required");
+  }
+  const ownership = await assertLocalSourceProjectForMigration(sourceProjectId);
+  const shouldStopSource = stop_source !== false;
+  if (!shouldStopSource && require_source_stopped) {
+    throw new Error(
+      "require_source_stopped without stop_source is not implemented in v1",
+    );
+  }
+  if (shouldStopSource) {
+    await stopSourceProjectForMigration({
+      project_id: sourceProjectId,
+      ownership,
+    });
+  }
+  const migrationTags = normalizeMigrationTags({
+    tags,
+    source_site: getConfiguredBayId(),
+    source_project_id: sourceProjectId,
+    destination_site: destinationSite,
+    destination_project_id: destinationProjectId,
+    migration_id: migrationId,
+  });
+  const op = await createLro({
+    kind: BACKUP_LRO_KIND,
+    scope_type: "project",
+    scope_id: sourceProjectId,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      project_id: sourceProjectId,
+      tags: migrationTags,
+      managed_egress_override: "admin-site-migration",
+      external_migration: {
+        destination_site: destinationSite,
+        destination_project_id: destinationProjectId,
+        migration_id: migrationId,
+        rustic_repo_toml,
+        backup_index_store: backup_index_store ?? null,
+        exclude_rootfs_state: true,
+        stopped_source: shouldStopSource,
+      },
+    },
+    status: "queued",
+    dedupe_key: backupLroDedupeKey(sourceProjectId),
+    expires_at: new Date(Date.now() + BACKUP_TIMEOUT_MS),
+  });
+  await publishQueuedMigrationBackupLro({
+    op,
+    project_id: sourceProjectId,
+  });
+  triggerBackupLroWorker();
+  return lroResponse({ op, project_id: sourceProjectId });
+}
+
 export async function finalizeIncomingProjectBackupMigration({
   account_id,
   browser_id,
@@ -486,7 +696,36 @@ export async function finalizeIncomingProjectBackupMigration({
   ) {
     throw new Error("destination project backup repo changed during migration");
   }
+  const sourceBackup = normalizeJsonObject(source_backup_result);
+  const sourceBackupId = `${sourceBackup.id ?? ""}`.trim();
+  if (sourceBackupId && sourceBackupId !== snapshotId) {
+    throw new Error("source_backup_result.id does not match snapshot_id");
+  }
+  const sourceBackupTime =
+    typeof sourceBackup.time === "string" || sourceBackup.time instanceof Date
+      ? sourceBackup.time
+      : new Date();
+  const sourceBackupIndex = normalizeJsonObject(sourceBackup.backup_index);
   const warnings: string[] = [];
+  if (sourceBackupIndex.object_key) {
+    await recordExternalProjectBackupIndex({
+      project_id: destination_project_id,
+      backup_id: snapshotId,
+      backup_time: sourceBackupTime,
+      status: "complete",
+      object_key: `${sourceBackupIndex.object_key}`,
+      compression:
+        typeof sourceBackupIndex.compression === "string"
+          ? sourceBackupIndex.compression
+          : null,
+      sqlite_bytes: asNullableNumber(sourceBackupIndex.sqlite_bytes),
+      object_bytes: asNullableNumber(sourceBackupIndex.object_bytes),
+      sha256:
+        typeof sourceBackupIndex.sha256 === "string"
+          ? sourceBackupIndex.sha256
+          : null,
+    });
+  }
   if (restore) {
     warnings.push(
       "restore after finalize is not implemented yet; migration was finalized archive-only",

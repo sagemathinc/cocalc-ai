@@ -30,6 +30,7 @@ path, which can corrupt large chat logs if interrupted mid-write.
 
 import { type Client } from "@cocalc/conat/core/client";
 import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
+import type { ProjectBackupIndexStoreConfig } from "@cocalc/conat/hub/api/hosts";
 import type {
   PublishProjectRootfsArtifact,
   RootfsArtifactTransferTarget,
@@ -62,7 +63,8 @@ export interface LroRef {
 
 export type ManagedProjectEgressOverride =
   | "admin-host-drain"
-  | "legacy-migration-initial-backup";
+  | "legacy-migration-initial-backup"
+  | "admin-site-migration";
 export type ManagedBackupEgressOverride = ManagedProjectEgressOverride;
 
 export interface SignedProjectArchiveDownload {
@@ -94,6 +96,21 @@ export interface ProjectArchiveEntry {
   size: number;
   type: "file" | "directory" | "symlink" | "other";
   mtime?: string;
+}
+
+export interface ExternalProjectBackupIndexResult {
+  object_key: string;
+  compression: "gzip";
+  sqlite_bytes: number;
+  object_bytes: number;
+  sha256: string;
+}
+
+export interface ExternalProjectBackupResult {
+  time: Date;
+  id: string;
+  summary: { [key: string]: string | number };
+  index?: ExternalProjectBackupIndexResult;
 }
 
 export interface FileTextPreview {
@@ -185,6 +202,19 @@ export interface Fileserver {
     lro?: LroRef;
     managed_egress_override?: ManagedBackupEgressOverride;
   }) => Promise<{ time: Date; id: string }>;
+  // Back up the source project HOME into an externally supplied rustic
+  // repository. This is used for admin site-to-site migration; rootfs state
+  // must be pruned before the backup is written.
+  backupProjectToExternalRepository: (opts: {
+    project_id: string;
+    destination_project_id: string;
+    migration_id: string;
+    rustic_repo_toml: string;
+    backup_index_store?: ProjectBackupIndexStoreConfig | null;
+    tags?: string[];
+    lro?: LroRef;
+    managed_egress_override?: ManagedBackupEgressOverride;
+  }) => Promise<ExternalProjectBackupResult>;
   // restore the given path in the backup to the given dest.  The default
   // path is '' (the whole project) and the default destination is the
   // same as the path.

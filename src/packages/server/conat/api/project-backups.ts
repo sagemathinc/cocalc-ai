@@ -129,7 +129,10 @@ async function assertManagedBackupAllowed({
   project_id: string;
   managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<void> {
-  if (managed_egress_override === "admin-host-drain") {
+  if (
+    managed_egress_override === "admin-host-drain" ||
+    managed_egress_override === "admin-site-migration"
+  ) {
     return;
   }
   const policy = await getManagedProjectEgressPolicy({
