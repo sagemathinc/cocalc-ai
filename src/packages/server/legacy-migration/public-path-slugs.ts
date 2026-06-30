@@ -8,9 +8,11 @@ import { normalizePublicDirectoryShareSlug } from "@cocalc/server/public-directo
 
 type QueryClient = PoolClient | ReturnType<typeof getPool>;
 
+let projectNameSchemaReady: Promise<void> | undefined;
+
 export type LegacyPublicPathSlugContext = {
   owner_name?: string | null;
-  project_title?: string | null;
+  project_name?: string | null;
 };
 
 export function clean(value: unknown): string | undefined {
@@ -45,10 +47,10 @@ export function legacyPublicPathSlugFromRecord(
   }
 
   const ownerName = clean(context.owner_name);
-  const projectTitle = clean(context.project_title);
+  const projectName = clean(context.project_name);
   const shareName = clean(row.name) ?? clean(row.slug) ?? clean(row.path);
-  if (ownerName && projectTitle && shareName) {
-    return normalizeSlug(`${ownerName}/${projectTitle}/${shareName}`);
+  if (ownerName && projectName && shareName) {
+    return normalizeSlug(`${ownerName}/${projectName}/${shareName}`);
   }
 
   const raw =
@@ -64,13 +66,22 @@ export async function legacyPublicPathSlugContextForProject(
   legacy_project_id: string,
   client: QueryClient = getPool(),
 ): Promise<LegacyPublicPathSlugContext> {
+  projectNameSchemaReady ??= client
+    .query(
+      `
+      ALTER TABLE legacy_migration_projects
+        ADD COLUMN IF NOT EXISTS name TEXT
+    `,
+    )
+    .then(() => undefined);
+  await projectNameSchemaReady;
   const { rows } = await client.query<{
     owner_name: string | null;
-    project_title: string | null;
+    project_name: string | null;
   }>(
     `
       SELECT accounts.metadata->>'name' AS owner_name,
-             projects.title AS project_title
+             COALESCE(projects.name, projects.metadata->>'name') AS project_name
         FROM legacy_migration_projects projects
         LEFT JOIN legacy_migration_accounts accounts
           ON accounts.legacy_account_id=projects.owner_legacy_account_id
