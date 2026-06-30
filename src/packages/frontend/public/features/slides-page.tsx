@@ -3,35 +3,38 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
+import {
+  PUBLIC_ELEVATION,
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
-import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
+import { FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
-function SlideDeckMock() {
+export function SlideDeckMock() {
   const slides = [
-    ["1", "Problem", "markdown + math"],
-    ["2", "Computation", "Jupyter cell"],
-    ["3", "Result", "plot + explanation"],
-    ["4", "Discussion", "questions"],
-  ];
+    ["markdown", "1", "Problem", "markdown + math"],
+    ["jupyter", "2", "Computation", "Jupyter cell"],
+    ["line-chart", "3", "Result", "plot + explanation"],
+    ["users", "4", "Discussion", "questions"],
+  ] satisfies [IconName, string, string, string][];
 
   return (
     <div
       aria-label="Illustration of CoCalc slides as slide-sized whiteboard pages"
       role="img"
       style={{
-        background:
-          "linear-gradient(145deg, #ffffff 0%, #f7fbff 56%, #fff8e8 100%)",
+        background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 56%, ${PUBLIC_COLORS.brandTint} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
-        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: PUBLIC_ELEVATION.lg,
         padding: 20,
       }}
     >
@@ -46,44 +49,31 @@ function SlideDeckMock() {
               </div>
             </div>
           </Flex>
-          <Tag color="gold" style={{ marginInlineEnd: 0 }}>
-            presets
-          </Tag>
         </Flex>
 
         <Row gutter={[12, 12]}>
-          {slides.map(([number, title, body]) => (
+          {slides.map(([icon, number, title, body]) => (
             <Col key={number} xs={24} sm={12}>
               <div
                 style={{
-                  aspectRatio: "16 / 9",
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
-                  boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
+                  borderRadius: PUBLIC_RADIUS.panel,
+                  boxShadow: PUBLIC_ELEVATION.card,
+                  height: "100%",
                   padding: 14,
                 }}
               >
-                <Flex
-                  vertical
-                  justify="space-between"
-                  style={{ height: "100%" }}
-                >
-                  <Flex justify="space-between" align="center">
-                    <Text strong>{title}</Text>
-                    <Text style={{ color: "#d46b08" }} strong>
-                      {number}
-                    </Text>
-                  </Flex>
-                  <div
-                    style={{
-                      background: "#fff7e6",
-                      border: "1px solid #ffd591",
-                      borderRadius: 14,
-                      padding: 12,
-                    }}
-                  >
-                    <Text>{body}</Text>
+                <Flex align="center" gap={12}>
+                  <IconBadge accent="#d46b08" icon={icon} />
+                  <div>
+                    <Flex align="center" gap={8} wrap>
+                      <Text strong>{title}</Text>
+                      <Text style={{ color: PUBLIC_COLORS.mutedText }} strong>
+                        {number}
+                      </Text>
+                    </Flex>
+                    <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
                   </div>
                 </Flex>
               </div>
@@ -107,18 +97,8 @@ function SlideFlow() {
     <PublicSection>
       <Flex vertical gap={18}>
         <div>
-          <Tag
-            color="blue"
-            style={{
-              background: COLORS.ANTD_BG_BLUE_L,
-              color: COLORS.BLUE_D,
-              marginBottom: 12,
-            }}
-          >
-            Presentation workflow
-          </Tag>
           <Title level={3} style={{ margin: 0 }}>
-            Slides are structured whiteboards.
+            How a deck comes together
           </Title>
           <Paragraph
             style={{
@@ -127,32 +107,32 @@ function SlideFlow() {
               maxWidth: "72ch",
             }}
           >
-            CoCalc slides use the same technical canvas ideas as whiteboards,
-            but organize them into a sequence of slide-sized pages with useful
-            presets for talks, lectures, and demos.
+            Build a deck in a few steps: choose a slide size, write the story in
+            markdown and math, add Jupyter cells, diagrams, or drawings, then
+            present from the same project.
           </Paragraph>
         </div>
         <div
           style={{
-            background: "#fff",
+            background: PUBLIC_COLORS.surface,
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 26,
-            boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+            borderRadius: PUBLIC_RADIUS.panel,
+            boxShadow: PUBLIC_ELEVATION.panel,
             padding: 22,
           }}
         >
           <Row gutter={[12, 12]} align="middle">
-            {steps.map(([icon, label], index) => (
-              <Col key={label} xs={24} lg={6}>
+            {steps.map(([icon, label]) => (
+              <Col key={label} xs={24} sm={12} lg={6}>
                 <Flex align="center" gap={12}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Flex
                       align="center"
                       gap={12}
                       style={{
-                        background: "#f7fbff",
+                        background: PUBLIC_COLORS.surfaceMuted,
                         border: `1px solid ${PUBLIC_COLORS.border}`,
-                        borderRadius: 16,
+                        borderRadius: PUBLIC_RADIUS.panel,
                         height: "100%",
                         padding: 14,
                       }}
@@ -161,9 +141,6 @@ function SlideFlow() {
                       <Text strong>{label}</Text>
                     </Flex>
                   </div>
-                  {index < steps.length - 1 ? (
-                    <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
-                  ) : null}
                 </Flex>
               </Col>
             ))}
@@ -193,28 +170,19 @@ export default function SlidesFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag color="gold" style={{ alignSelf: "flex-start" }}>
-                Technical presentations
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 Present from the same canvas where technical ideas are built.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc slides are a sequence of slide-sized whiteboards. They
-                keep markdown, math, diagrams, Jupyter cells, drawings, and
-                collaborative editing in the same project as the files and
-                notebooks behind the presentation.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Use them for lectures, research talks, demos, and presentations
-                that need more than static text and exported screenshots.
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+                Live, editable slides you can run as you present — never a
+                static export.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
                 </Button>
                 <Button href={appPath("features/whiteboard")}>
-                  Whiteboard
+                  Whiteboards and slides overview
                 </Button>
                 <Button href={appPath("features/jupyter-notebook")}>
                   Jupyter notebooks
@@ -228,60 +196,40 @@ export default function SlidesFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#d46b08" icon="slides" title="Slide-sized pages">
-            Use presentation-sized canvases and presets instead of trying to
-            force a huge whiteboard into a linear talk.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="tex" title="Math and code">
-            Combine equations, markdown, diagrams, and executable examples in
-            the same presentation workflow.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#389e0d" icon="users" title="Collaborative talks">
-            Coauthors and teaching assistants can edit the same deck in the same
-            project where supporting material lives.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <SlideFlow />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>
-              Why use slides in CoCalc
-            </Title>
-            <BulletList
-              items={[
-                "Build presentations from slide-sized whiteboard pages.",
-                "Keep slides close to notebooks, files, data, and terminal work.",
-                "Use math, diagrams, markdown, and code in technical talks.",
-                "Collaborate on the deck and keep TimeTravel history around it.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/whiteboard")}>Whiteboard</Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and create a slide deck for a lecture, demo, or research presentation."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start with a deck"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and create a slide deck for a technical presentation.",
+            href: primaryHref,
+            label: finalLabel,
+            title: "Start with a deck",
+          }}
+          relatedLinks={[
+            {
+              href: appPath("features/whiteboard"),
+              label: "Whiteboards and slides overview",
+            },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            {
+              href: appPath("products"),
+              label: "Compare operating models",
+            },
+            ...(helpEmail
+              ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
+              : []),
+          ]}
+          title="When slides belong in CoCalc"
+        >
+          <BulletList
+            items={[
+              "Present technical walkthroughs from the same editable canvas where the material was built.",
+              "Use math, diagrams, markdown, and code in technical talks.",
+              "Collaborate on the deck and keep TimeTravel history around it.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );
