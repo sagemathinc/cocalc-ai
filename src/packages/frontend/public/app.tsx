@@ -12,10 +12,10 @@ import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
 import type { PublicRoute } from "./routes";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { publicPath } from "./routes";
-import PublicDocsApp from "./docs/app";
 
 const PublicAboutApp = lazy(() => import("./about/app"));
 const PublicAuthApp = lazy(() => import("./auth/app"));
+const PublicDocsApp = lazy(() => import("./docs/app"));
 const PublicFeaturesApp = lazy(() => import("./features/app"));
 const PublicGuidesApp = lazy(() => import("./guides/app"));
 const PublicHomeApp = lazy(() => import("./home/app"));
