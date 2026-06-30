@@ -1098,6 +1098,8 @@ export interface Projects {
 
   setAdminProjectEntitlementOverride: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     disk_quota_mb: number;
     reason: string;
@@ -1106,6 +1108,8 @@ export interface Projects {
 
   clearAdminProjectEntitlementOverride: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     reason: string;
   }) => Promise<void>;

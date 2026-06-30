@@ -71,6 +71,13 @@ jest.mock("@cocalc/server/membership/project-defaults", () => ({
   getMembershipProjectDefaultsForAccount: jest.fn(async () => ({})),
 }));
 
+jest.mock("@cocalc/server/membership/project-entitlement-overrides", () => ({
+  __esModule: true,
+  applyProjectEntitlementOverrideToRunQuota: jest.fn(
+    async ({ run_quota }: { run_quota: unknown }) => run_quota,
+  ),
+}));
+
 jest.mock("@cocalc/database/postgres/quota-site-settings", () => ({
   __esModule: true,
   getQuotaSiteSettings: jest.fn(async () => ({})),

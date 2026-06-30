@@ -17,6 +17,10 @@ import {
 import { useCallback, useState } from "react";
 
 import type { ProjectEntitlementOverride } from "@cocalc/conat/hub/api/projects";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
 
@@ -55,6 +59,9 @@ export function ProjectEntitlementOverrideButton({
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    origin: "project disk override",
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,42 +94,48 @@ export function ProjectEntitlementOverrideButton({
     setError(null);
     try {
       const values = await form.validateFields();
-      const result =
-        await webapp_client.conat_client.hub.projects.setAdminProjectEntitlementOverride(
-          {
-            project_id,
-            disk_quota_mb: values.disk_quota_mb,
-            reason: values.reason,
-          },
-        );
-      setOverride(result);
-      void message.success("Project disk override saved.");
+      await runFreshAuthAction(async () => {
+        const result =
+          await webapp_client.conat_client.hub.projects.setAdminProjectEntitlementOverride(
+            {
+              project_id,
+              disk_quota_mb: values.disk_quota_mb,
+              reason: values.reason,
+              browser_id: webapp_client.browser_id,
+            },
+          );
+        setOverride(result);
+        void message.success("Project disk override saved.");
+      });
     } catch (err) {
       setError(`${err}`);
     } finally {
       setSaving(false);
     }
-  }, [form, project_id]);
+  }, [form, project_id, runFreshAuthAction]);
 
   const clear = useCallback(async () => {
     setClearing(true);
     setError(null);
     try {
-      await webapp_client.conat_client.hub.projects.clearAdminProjectEntitlementOverride(
-        {
-          project_id,
-          reason: "Admin cleared project disk override",
-        },
-      );
-      setOverride(null);
-      form.setFieldsValue({ disk_quota_mb: undefined, reason: "" });
-      void message.success("Project disk override cleared.");
+      await runFreshAuthAction(async () => {
+        await webapp_client.conat_client.hub.projects.clearAdminProjectEntitlementOverride(
+          {
+            project_id,
+            reason: "Admin cleared project disk override",
+            browser_id: webapp_client.browser_id,
+          },
+        );
+        setOverride(null);
+        form.setFieldsValue({ disk_quota_mb: undefined, reason: "" });
+        void message.success("Project disk override cleared.");
+      });
     } catch (err) {
       setError(`${err}`);
     } finally {
       setClearing(false);
     }
-  }, [form, project_id]);
+  }, [form, project_id, runFreshAuthAction]);
 
   const current = diskQuotaMb(override);
 
@@ -193,6 +206,7 @@ export function ProjectEntitlementOverrideButton({
           </Button>
         </Space>
       </Modal>
+      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }
