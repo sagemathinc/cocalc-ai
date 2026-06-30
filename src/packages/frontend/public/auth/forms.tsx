@@ -671,14 +671,23 @@ export function PublicSignInForm({
         <>
           {googleStrategy != null ? (
             <>
+              {policiesVisible ? (
+                <PolicyActionNotice
+                  action={`continuing with ${googleStrategy.display}`}
+                  privacyUrl={privacyUrl}
+                  termsUrl={termsUrl}
+                />
+              ) : null}
               <SsoButton
                 cookieBannerEnabled={cookieBannerEnabled}
                 cookieConsentReady={cookieConsentReady}
                 href={ssoLoginHref("google", {
                   target: resolveAuthRedirectPath(redirectToPath),
+                  terms: policiesVisible ? true : undefined,
                 })}
               >
-                Continue with {googleStrategy.display}
+                {policiesVisible ? "Agree and continue" : "Continue"} with{" "}
+                {googleStrategy.display}
               </SsoButton>
               <AuthDivider />
             </>

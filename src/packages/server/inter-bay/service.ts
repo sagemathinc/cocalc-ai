@@ -416,6 +416,7 @@ import {
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
+const DIRECTORY_SERVICE_MAX_PARALLEL_HANDLERS = 512;
 
 function isLegacyProjectIdUnavailableError(err: unknown): boolean {
   const message = `${(err as any)?.message ?? err}`;
@@ -632,6 +633,7 @@ async function startDirectoryService(): Promise<void> {
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,
+      maxParallelHandlers: DIRECTORY_SERVICE_MAX_PARALLEL_HANDLERS,
       impl,
     }),
   );
@@ -643,6 +645,7 @@ async function startDirectoryService(): Promise<void> {
     ...createInterBayDirectoryHandlers({
       client,
       parallel: true,
+      maxParallelHandlers: DIRECTORY_SERVICE_MAX_PARALLEL_HANDLERS,
       impl: {
         resolveProjectBay: async ({ project_id }) =>
           await resolveProjectBayAcrossCluster(`${project_id ?? ""}`),

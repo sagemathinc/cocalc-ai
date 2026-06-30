@@ -1607,6 +1607,7 @@ describe("project-host daemon stop", () => {
     }) as typeof fs.readFileSync);
     delete process.env.COCALC_FILE_SERVER_MOUNTPOINT;
     delete process.env.COCALC_PROJECT_RUNNER_MOUNTPOINT;
+    process.env.COCALC_DATA = mkTempDir("cocalc-project-host-daemon-");
 
     const resolved = __test__.resolveEnv(0);
 
@@ -1626,6 +1627,7 @@ describe("project-host daemon stop", () => {
     }) as typeof fs.readFileSync);
     delete process.env.COCALC_FILE_SERVER_MOUNTPOINT;
     delete process.env.COCALC_PROJECT_RUNNER_MOUNTPOINT;
+    process.env.COCALC_DATA = mkTempDir("cocalc-project-host-daemon-");
 
     const resolved = __test__.resolveEnv(0);
 
@@ -1636,6 +1638,7 @@ describe("project-host daemon stop", () => {
   it("defaults the runner mountpoint to an explicit file-server mountpoint", () => {
     process.env.COCALC_FILE_SERVER_MOUNTPOINT = "/storage/cocalc";
     delete process.env.COCALC_PROJECT_RUNNER_MOUNTPOINT;
+    process.env.COCALC_DATA = mkTempDir("cocalc-project-host-daemon-");
 
     const resolved = __test__.resolveEnv(0);
 

@@ -660,6 +660,7 @@ export class PassportLogin {
       password: "",
       display_name,
       home_bay_id: getConfiguredBayId(),
+      created_by: `${opts.req?.ip ?? ""}`.trim() || undefined,
       ephemeral: creationContext.tokenInfo?.ephemeral,
       customize: creationContext.tokenInfo?.customize,
       other_settings: buildMarketingConsentOtherSettings(

@@ -5471,6 +5471,72 @@ describe("hosts.resolveHostConnection", () => {
     });
   });
 
+  it("coalesces and briefly caches identical host connection lookups", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 2,
+    }));
+    let projectHostQueries = 0;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        projectHostQueries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return {
+          rows: [
+            {
+              id: "cached-local-host",
+              bay_id: "bay-0",
+              name: "Cached Local",
+              public_url: "https://cached-local.example.test",
+              internal_url: null,
+              ssh_server: null,
+              tier: null,
+              status: "running",
+              last_seen: new Date("2026-06-07T00:00:00.000Z"),
+              region: "local",
+              metadata: {
+                owner: ACCOUNT_ID,
+                size: "n2-standard-4",
+                machine: {
+                  cloud: "gcp",
+                },
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { resolveHostConnection } = await import("./hosts");
+    const [first, second] = await Promise.all([
+      resolveHostConnection({
+        account_id: ACCOUNT_ID,
+        host_id: "cached-local-host",
+      }),
+      resolveHostConnection({
+        account_id: ACCOUNT_ID,
+        host_id: "cached-local-host",
+      }),
+    ]);
+    expect(first).toMatchObject({
+      host_id: "cached-local-host",
+      connect_url: "https://cached-local.example.test",
+    });
+    expect(second).toEqual(first);
+    expect(projectHostQueries).toBe(1);
+    expect(resolveHostBayMock).toHaveBeenCalledTimes(1);
+
+    await expect(
+      resolveHostConnection({
+        account_id: ACCOUNT_ID,
+        host_id: "cached-local-host",
+      }),
+    ).resolves.toEqual(first);
+    expect(projectHostQueries).toBe(1);
+    expect(resolveHostBayMock).toHaveBeenCalledTimes(1);
+  });
+
   it("routes project start metadata lookup to the owning bay when the local host bay misses", async () => {
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",

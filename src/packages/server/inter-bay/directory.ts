@@ -88,6 +88,10 @@ export async function resolveHostBay(
     include_deleted?: boolean;
   } = {},
 ): Promise<BayOwnership | null> {
+  const local = await resolveHostBayDirect(host_id, opts);
+  if (local != null) {
+    return local;
+  }
   return await createInterBayDirectoryClient({
     client: getInterBayFabricClient(),
   }).resolveHostBay({

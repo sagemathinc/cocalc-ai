@@ -629,6 +629,7 @@ export interface AccountDirectoryCreateRequest {
   owner_id?: string;
   tags?: string[];
   signup_reason?: string;
+  created_by?: string;
   ephemeral?: number;
   customize?: any;
   other_settings?: Record<string, unknown>;

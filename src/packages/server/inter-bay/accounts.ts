@@ -787,6 +787,7 @@ export async function provisionLocalClusterAccount(
     home_bay_id: opts.home_bay_id,
     tags: Array.isArray(opts.tags) && opts.tags.length ? opts.tags : undefined,
     signupReason: opts.signup_reason,
+    created_by: opts.created_by,
     ephemeral: opts.ephemeral,
     customize: opts.customize,
     other_settings: opts.other_settings,
@@ -826,7 +827,7 @@ async function preferredLegacyAccountIdForEmail(
   const { rows } = await getPool().query<{ account_id: string | null }>(
     `
     WITH candidates AS (
-      SELECT legacy.legacy_account_id,
+      SELECT legacy.legacy_account_id::UUID AS legacy_account_id,
              legacy.last_active,
              lower(legacy.email_address) AS exact_email,
              CASE
@@ -836,6 +837,7 @@ async function preferredLegacyAccountIdForEmail(
              END AS gmail_canonical_email
         FROM legacy_migration_accounts legacy
        WHERE COALESCE(legacy.email_address_verified, false)=true
+         AND legacy.legacy_account_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     )
     SELECT candidates.legacy_account_id AS account_id
       FROM candidates

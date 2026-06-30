@@ -329,6 +329,73 @@ function pool() {
   return getPool();
 }
 
+const HOST_CONNECTION_CACHE_TTL_MS = 5_000;
+const HOST_CONNECTION_CACHE_MAX_ENTRIES = 5_000;
+
+type HostConnectionCacheEntry = {
+  expires_at: number;
+  value: HostConnectionInfo;
+};
+
+const hostConnectionCache = new Map<string, HostConnectionCacheEntry>();
+const hostConnectionInFlight = new Map<string, Promise<HostConnectionInfo>>();
+
+function hostConnectionCacheKey({
+  account_id,
+  host_id,
+  project_id,
+  public_directory_share_id,
+}: {
+  account_id: string;
+  host_id: string;
+  project_id?: string;
+  public_directory_share_id?: string;
+}): string {
+  return JSON.stringify({
+    account_id,
+    host_id,
+    project_id: project_id ?? "",
+    public_directory_share_id: public_directory_share_id ?? "",
+  });
+}
+
+function getCachedHostConnection(
+  key: string,
+  now = Date.now(),
+): HostConnectionInfo | undefined {
+  const cached = hostConnectionCache.get(key);
+  if (cached == null) return;
+  if (cached.expires_at <= now) {
+    hostConnectionCache.delete(key);
+    return;
+  }
+  return cached.value;
+}
+
+function pruneHostConnectionCache(now = Date.now()): void {
+  if (hostConnectionCache.size <= HOST_CONNECTION_CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of hostConnectionCache) {
+    if (
+      entry.expires_at <= now ||
+      hostConnectionCache.size > HOST_CONNECTION_CACHE_MAX_ENTRIES
+    ) {
+      hostConnectionCache.delete(key);
+    }
+  }
+}
+
+function setCachedHostConnection(
+  key: string,
+  value: HostConnectionInfo,
+  now = Date.now(),
+): void {
+  hostConnectionCache.set(key, {
+    expires_at: now + HOST_CONNECTION_CACHE_TTL_MS,
+    value,
+  });
+  pruneHostConnectionCache(now);
+}
+
 function normalizeDelegatedHostAccessRole(
   role: unknown,
 ): HostAccessRole | undefined {
@@ -3782,17 +3849,59 @@ export async function resolveHostConnection({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
+  const cacheKey = hostConnectionCacheKey({
+    account_id: owner,
+    host_id,
+    project_id,
+    public_directory_share_id,
+  });
+  const cached = getCachedHostConnection(cacheKey);
+  if (cached != null) {
+    return cached;
+  }
+  const inFlight = hostConnectionInFlight.get(cacheKey);
+  if (inFlight != null) {
+    return await inFlight;
+  }
+  const pending = resolveHostConnectionUncached({
+    account_id: owner,
+    host_id,
+    project_id,
+    public_directory_share_id,
+  }).then((result) => {
+    setCachedHostConnection(cacheKey, result);
+    return result;
+  });
+  hostConnectionInFlight.set(cacheKey, pending);
+  try {
+    return await pending;
+  } finally {
+    hostConnectionInFlight.delete(cacheKey);
+  }
+}
+
+async function resolveHostConnectionUncached({
+  account_id,
+  host_id,
+  project_id,
+  public_directory_share_id,
+}: {
+  account_id: string;
+  host_id: string;
+  project_id?: string;
+  public_directory_share_id?: string;
+}): Promise<HostConnectionInfo> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(host_id);
   if (remoteBay) {
     return await getInterBayBridge().hostConnection(remoteBay).get({
-      account_id: owner,
+      account_id,
       host_id,
       project_id,
       public_directory_share_id,
     });
   }
   const local = await resolveHostConnectionLocal({
-    account_id: owner,
+    account_id,
     host_id,
     project_id,
     public_directory_share_id,
@@ -3807,7 +3916,7 @@ export async function resolveHostConnection({
   }
   return await getInterBayBridge()
     .hostConnection(hostBay.bay_id)
-    .get({ account_id: owner, host_id, project_id, public_directory_share_id });
+    .get({ account_id, host_id, project_id, public_directory_share_id });
 }
 
 export async function resolveHostConnectionLocal({

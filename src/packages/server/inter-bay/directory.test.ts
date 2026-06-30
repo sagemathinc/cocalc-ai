@@ -82,6 +82,34 @@ describe("inter-bay directory", () => {
     );
   });
 
+  it("uses direct local host resolution before directory rpc", async () => {
+    queryMock.mockResolvedValue({ rows: [{ bay_id: "bay-local" }] });
+    const { resolveHostBay } = await import("./directory");
+    await expect(resolveHostBay("host-1")).resolves.toEqual({
+      bay_id: "bay-local",
+      epoch: 0,
+    });
+    expect(requestMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves host ownership through the directory rpc subject on a local miss", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    requestMock.mockResolvedValue({ data: { bay_id: "bay-0", epoch: 0 } });
+    const { resolveHostBay } = await import("./directory");
+    await expect(resolveHostBay("host-1")).resolves.toEqual({
+      bay_id: "bay-0",
+      epoch: 0,
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "global.directory.rpc.resolve-host-bay",
+      {
+        name: "resolveHostBay",
+        args: [{ host_id: "host-1", include_deleted: false }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("queries the local database for direct project resolution", async () => {
     queryMock.mockResolvedValue({ rows: [{ bay_id: "bay-7" }] });
     const { resolveProjectBayDirect } = await import("./directory");
@@ -134,6 +162,7 @@ describe("inter-bay directory", () => {
   });
 
   it("surfaces service-side directory errors", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
     requestMock.mockResolvedValue({ data: { error: "boom" } });
     const { resolveHostBay } = await import("./directory");
     await expect(resolveHostBay("host-1")).rejects.toThrow("boom");
