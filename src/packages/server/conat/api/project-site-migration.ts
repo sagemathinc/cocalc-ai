@@ -120,6 +120,14 @@ function asNullableNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function positiveNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const n = asNullableNumber(value);
+    if (n != null && n > 0) return n;
+  }
+  return null;
+}
+
 function normalizeJsonObject(value: unknown): Record<string, unknown> {
   if (value != null && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -305,10 +313,12 @@ function computeDiskOverrideMb({
   disk_mb,
   source_usage_bytes,
   warnings,
+  missing_source_usage_message,
 }: {
   disk_mb?: number | "auto";
   source_usage_bytes?: number | null;
   warnings: string[];
+  missing_source_usage_message?: string;
 }): number | null {
   if (disk_mb == null) return null;
   if (disk_mb === "auto") {
@@ -318,7 +328,8 @@ function computeDiskOverrideMb({
       source_usage_bytes <= 0
     ) {
       warnings.push(
-        "disk_mb=auto requested but source_usage_bytes was not provided; no disk override was set",
+        missing_source_usage_message ??
+          "disk_mb=auto requested but source_usage_bytes was not provided; no disk override was set",
       );
       return null;
     }
@@ -332,6 +343,86 @@ function computeDiskOverrideMb({
     throw new Error("disk_mb must be a positive finite number or 'auto'");
   }
   return Math.ceil(disk_mb);
+}
+
+function inferSourceUsageBytesFromBackupResult(
+  sourceBackup: Record<string, unknown>,
+): number | null {
+  const backupSummary = normalizeJsonObject(sourceBackup.backup_summary);
+  const summary = normalizeJsonObject(sourceBackup.summary);
+  return positiveNumber(
+    backupSummary.total_bytes_processed,
+    backupSummary.total_bytes,
+    summary.total_bytes_processed,
+    summary.total_bytes,
+    sourceBackup.total_bytes_processed,
+    sourceBackup.total_bytes,
+  );
+}
+
+async function maybeSetFinalizeDiskOverride({
+  actorAccountId,
+  migration,
+  destination_project_id,
+  sourceBackup,
+  warnings,
+}: {
+  actorAccountId: string;
+  migration: ProjectSiteMigrationRecord;
+  destination_project_id: string;
+  sourceBackup: Record<string, unknown>;
+  warnings: string[];
+}): Promise<{
+  source_usage_bytes: number | null;
+  disk_override_mb: number | null;
+}> {
+  const requestedDisk = migration.metadata?.disk_mb;
+  const existingDiskOverride = positiveNumber(
+    migration.metadata?.disk_override_mb,
+  );
+  if (requestedDisk !== "auto" || existingDiskOverride != null) {
+    return {
+      source_usage_bytes: migration.source_usage_bytes,
+      disk_override_mb: existingDiskOverride,
+    };
+  }
+  const sourceUsageBytes =
+    migration.source_usage_bytes ??
+    inferSourceUsageBytesFromBackupResult(sourceBackup);
+  const diskOverrideMb = computeDiskOverrideMb({
+    disk_mb: "auto",
+    source_usage_bytes: sourceUsageBytes,
+    warnings,
+    missing_source_usage_message:
+      "disk_mb=auto requested but neither source_usage_bytes nor backup summary size was available; no disk override was set",
+  });
+  if (diskOverrideMb == null) {
+    return {
+      source_usage_bytes: sourceUsageBytes,
+      disk_override_mb: null,
+    };
+  }
+  await setProjectEntitlementOverrideLocal({
+    project_id: destination_project_id,
+    actor_account_id: actorAccountId,
+    reason: "project site migration disk quota",
+    source: "project-site-migration",
+    override: {
+      project_defaults: {
+        disk_quota: { mode: "set", value: diskOverrideMb },
+      },
+      metadata: {
+        migration_id: migration.id,
+        source_site: migration.source_site,
+        source_project_id: migration.source_project_id,
+        finalized_from_backup: true,
+      },
+    },
+  });
+  return {
+    source_usage_bytes: sourceUsageBytes,
+    disk_override_mb: diskOverrideMb,
+  };
 }
 
 async function loadDestinationProjectRegion(
@@ -473,6 +564,8 @@ export async function prepareIncomingProjectBackupMigration({
     disk_mb,
     source_usage_bytes,
     warnings,
+    missing_source_usage_message:
+      "disk_mb=auto requested but source_usage_bytes was not provided; disk override may be set during finalization from the backup summary",
   });
   const migrationId = randomUUID();
   if (diskOverrideMb != null) {
@@ -711,6 +804,13 @@ export async function finalizeIncomingProjectBackupMigration({
       : new Date();
   const sourceBackupIndex = normalizeJsonObject(sourceBackup.backup_index);
   const warnings: string[] = [];
+  const finalizeDisk = await maybeSetFinalizeDiskOverride({
+    actorAccountId,
+    migration,
+    destination_project_id,
+    sourceBackup,
+    warnings,
+  });
   if (sourceBackupIndex.object_key) {
     await recordExternalProjectBackupIndex({
       project_id: destination_project_id,
@@ -743,6 +843,7 @@ export async function finalizeIncomingProjectBackupMigration({
             backup_summary=$4::jsonb,
             metadata=COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
             source_backup_op_id=COALESCE(source_backup_op_id, $6),
+            source_usage_bytes=COALESCE(source_usage_bytes, $7),
             error=NULL,
             updated_at=NOW(),
             completed_at=COALESCE(completed_at, NOW())
@@ -756,8 +857,11 @@ export async function finalizeIncomingProjectBackupMigration({
         finalized_by: actorAccountId,
         restore_requested: !!restore,
         finalize_warnings: warnings,
+        finalize_source_usage_bytes: finalizeDisk.source_usage_bytes,
+        finalize_disk_override_mb: finalizeDisk.disk_override_mb,
       }),
       sourceBackupOpId || null,
+      finalizeDisk.source_usage_bytes,
     ],
   );
   try {

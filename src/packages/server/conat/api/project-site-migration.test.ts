@@ -333,6 +333,8 @@ describe("project site migration destination RPCs", () => {
   });
 
   it("finalizes a migration as archive-only and records the snapshot id", async () => {
+    migrationRow.source_usage_bytes = null;
+    migrationRow.metadata = { disk_mb: "auto", disk_override_mb: null };
     const { finalizeIncomingProjectBackupMigration } =
       await import("./project-site-migration");
 
@@ -349,6 +351,9 @@ describe("project site migration destination RPCs", () => {
         time: "2026-06-30T13:00:00Z",
         source_backup_op_id: "77777777-7777-4777-8777-777777777777",
         total_bytes: 1234,
+        backup_summary: {
+          total_bytes_processed: 50 * 1024 * 1024,
+        },
         backup_index: {
           object_key: "indexes/key.sqlite.zst",
           compression: "gzip",
@@ -367,7 +372,20 @@ describe("project site migration destination RPCs", () => {
         "snapshot-123",
         "indexes/key.sqlite.zst",
         "77777777-7777-4777-8777-777777777777",
+        50 * 1024 * 1024,
       ]),
+    );
+    expect(setProjectEntitlementOverrideLocalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: DESTINATION_PROJECT_ID,
+        actor_account_id: ADMIN_ID,
+        source: "project-site-migration",
+        override: expect.objectContaining({
+          project_defaults: {
+            disk_quota: { mode: "set", value: 1074 },
+          },
+        }),
+      }),
     );
     expect(setProjectLabelsMock).toHaveBeenCalledWith(
       expect.objectContaining({
