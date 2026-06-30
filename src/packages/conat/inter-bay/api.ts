@@ -30,6 +30,7 @@ import type {
   MembershipClass,
   MembershipDetails,
   MembershipEffectiveLimits,
+  MembershipTierUsageReport,
   MembershipUsageLimits,
   MembershipPackageAssignment,
   MembershipPackageDetails,
@@ -1657,6 +1658,10 @@ export interface BayOpsMembershipTiersRequest {
   courseStoreVisibleOnly?: boolean;
 }
 
+export interface BayOpsMembershipTierUsageReportRequest {
+  account_id?: string;
+}
+
 export interface BayOpsSetServerSettingRequest {
   name: string;
   value: string;
@@ -2237,6 +2242,7 @@ export type BayOpsMethod =
   | "get-service-admission-denial-report"
   | "get-project-runtime-slot-report"
   | "get-membership-tiers"
+  | "get-membership-tier-usage-report"
   | "set-server-setting"
   | "set-site-settings"
   | "get-site-settings"
@@ -3478,6 +3484,9 @@ export interface InterBayBayOpsApi {
   getMembershipTiers: (
     opts: BayOpsMembershipTiersRequest,
   ) => Promise<MembershipTierCatalogRecord[]>;
+  getMembershipTierUsageReport: (
+    opts: BayOpsMembershipTierUsageReportRequest,
+  ) => Promise<MembershipTierUsageReport>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
   setSiteSettings: (
     opts: BayOpsSetSiteSettingsRequest,
@@ -8020,6 +8029,15 @@ export function createInterBayBayOpsClient({
       method: "get-membership-tiers",
     }),
   });
+  const membershipTierUsageReportClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getMembershipTierUsageReport">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-membership-tier-usage-report",
+    }),
+  });
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
@@ -8039,6 +8057,8 @@ export function createInterBayBayOpsClient({
       await projectRuntimeSlotReportClient.getProjectRuntimeSlotReport(opts),
     getMembershipTiers: async (opts) =>
       await membershipTiersClient.getMembershipTiers(opts),
+    getMembershipTierUsageReport: async (opts) =>
+      await membershipTierUsageReportClient.getMembershipTierUsageReport(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
     setSiteSettings: async (opts) =>
@@ -8183,6 +8203,20 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         getMembershipTiers: async (opts) => await impl.getMembershipTiers(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getMembershipTierUsageReport">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-membership-tier-usage-report",
+      }),
+      impl: {
+        getMembershipTierUsageReport: async (opts) =>
+          await impl.getMembershipTierUsageReport(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({

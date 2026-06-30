@@ -3,7 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import membershipTiersQuery from "./membership-tiers";
+import membershipTiersQuery, {
+  getMembershipTierUsageReport,
+} from "./membership-tiers";
 
 type QueryCall = {
   query: string;
@@ -218,6 +220,71 @@ describe("membershipTiersQuery", () => {
     )?.query;
     expect(accountSummaryQuery).toContain("FROM accounts");
     expect(accountSummaryQuery).toContain("coalesce(deleted,false)=false");
+  });
+
+  it("builds bay-local usage reports with home-bay filtered active account counts", async () => {
+    const { db, calls } = createDb({
+      siteLicenseRows: [{ tier_id: "instructor", site_license_count: 2 }],
+      teamSeatRows: [{ tier_id: "student", team_seat_count: 7 }],
+      packageAccountRows: [
+        {
+          tier_id: "student",
+          team_account_count: 3,
+          course_account_count: 5,
+          site_account_count: 2,
+        },
+      ],
+      adminAssignedRows: [
+        { tier_id: "student", admin_assigned_count: 1 },
+        { tier_id: "instructor", admin_assigned_count: 4 },
+      ],
+      usageHistoryRows: [{ tier_id: "student", usage_history_count: 1 }],
+      totalAccountRows: [
+        { tier_id: "student", total_account_count: 10 },
+        { tier_id: "instructor", total_account_count: 4 },
+      ],
+      totalActiveAccountCount: 44,
+    });
+
+    const result = await getMembershipTierUsageReport(db, "bay-1");
+
+    expect(result).toEqual({
+      bay_id: "bay-1",
+      total_active_account_count: 44,
+      tiers: [
+        {
+          tier_id: "instructor",
+          subscription_count: 0,
+          subscribed_account_count: 0,
+          team_seat_count: 0,
+          team_account_count: 0,
+          course_account_count: 0,
+          site_account_count: 0,
+          admin_assigned_count: 4,
+          site_license_count: 2,
+          total_account_count: 4,
+          usage_history_count: 0,
+        },
+        {
+          tier_id: "student",
+          subscription_count: 3,
+          subscribed_account_count: 2,
+          team_seat_count: 7,
+          team_account_count: 3,
+          course_account_count: 5,
+          site_account_count: 2,
+          admin_assigned_count: 1,
+          site_license_count: 0,
+          total_account_count: 10,
+          usage_history_count: 1,
+        },
+      ],
+    });
+    const accountSummaryCall = calls.find((call) =>
+      call.query.includes("total_active_account_count"),
+    );
+    expect(accountSummaryCall?.query).toContain("home_bay_id");
+    expect(accountSummaryCall?.params).toEqual(["bay-1"]);
   });
 
   it("blocks deleting a tier used by active site licenses", async () => {

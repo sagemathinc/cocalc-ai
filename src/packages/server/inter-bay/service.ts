@@ -141,6 +141,7 @@ import {
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
 import { getMembershipTiers } from "@cocalc/server/membership/tiers";
+import { getMembershipTierUsageReport as getMembershipTierUsageReportLocal } from "@cocalc/database/postgres/membership-tiers";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { getAccountIdFromRememberMe as getLocalAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
@@ -558,6 +559,8 @@ async function startBayOpsService(): Promise<void> {
         storeVisibleOnly: opts.storeVisibleOnly,
         courseStoreVisibleOnly: opts.courseStoreVisibleOnly,
       }),
+    getMembershipTierUsageReport: async () =>
+      await getMembershipTierUsageReportLocal(db(), bay_id),
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);
     },
