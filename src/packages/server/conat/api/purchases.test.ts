@@ -2793,6 +2793,66 @@ describe("purchases membership tier admin", () => {
     expect(result).toEqual({ id: "draft" });
   });
 
+  it("blocks deleting a tier with remote bay usage history", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-1" },
+    ]);
+    getMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-0",
+      total_active_account_count: 0,
+      tiers: [],
+    });
+    interBayGetMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-1",
+      total_active_account_count: 0,
+      tiers: [usageRow("draft", { usage_history_count: 1 })],
+    });
+
+    const { deleteMembershipTier } = await import("./purchases");
+    await expect(
+      deleteMembershipTier({
+        account_id: "admin-1",
+        session_hash: "fresh-session-4",
+        id: "draft",
+      }),
+    ).rejects.toThrow(
+      'cannot delete membership tier "draft" because it has usage history on bay(s): bay-1 (1)',
+    );
+
+    expect(deleteMembershipTierMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks deleting a tier when a remote bay cannot be checked", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-1" },
+    ]);
+    getMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-0",
+      total_active_account_count: 0,
+      tiers: [],
+    });
+    interBayGetMembershipTierUsageReportMock.mockRejectedValue(
+      new Error("bay offline"),
+    );
+
+    const { deleteMembershipTier } = await import("./purchases");
+    await expect(
+      deleteMembershipTier({
+        account_id: "admin-1",
+        session_hash: "fresh-session-4",
+        id: "draft",
+      }),
+    ).rejects.toThrow(
+      'cannot delete membership tier "draft" because usage history could not be checked on bay(s): bay-1',
+    );
+
+    expect(deleteMembershipTierMock).not.toHaveBeenCalled();
+  });
+
   it("aggregates membership tier usage across configured bays", async () => {
     isAdminMock.mockResolvedValue(true);
     listConfiguredBaysMock.mockResolvedValue([
@@ -2892,6 +2952,7 @@ describe("purchases membership tier admin", () => {
     ]);
     getMembershipTierRowsMock.mockResolvedValue([
       { id: "standard", label: "Standard" },
+      { id: "draft", label: "Draft" },
     ]);
     getMembershipTierUsageReportMock.mockResolvedValue({
       bay_id: "bay-0",
@@ -2927,6 +2988,13 @@ describe("purchases membership tier admin", () => {
         total_account_count: 1,
         total_active_account_count: 10,
         has_usage_history: true,
+      }),
+      expect.objectContaining({
+        id: "draft",
+        subscription_count: 0,
+        total_account_count: 0,
+        total_active_account_count: 10,
+        has_usage_history: undefined,
       }),
     ]);
   });

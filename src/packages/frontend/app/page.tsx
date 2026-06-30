@@ -155,7 +155,6 @@ export const Page: React.FC = () => {
   const accountIsReady = useTypedRedux("account", "is_ready");
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
-  const user_type = useTypedRedux("account", "user_type");
   const clientSignedIn = useClientSignedIn();
   const effectivelySignedIn = is_logged_in || clientSignedIn;
   const groups = useTypedRedux("account", "groups");
@@ -250,12 +249,7 @@ export const Page: React.FC = () => {
   }
 
   function render_sign_in_tab(): React.JSX.Element | null {
-    if (
-      lite ||
-      effectivelySignedIn ||
-      user_type === "signing_in" ||
-      !showSignInTab
-    ) {
+    if (lite || effectivelySignedIn || !showSignInTab) {
       return null;
     }
 
