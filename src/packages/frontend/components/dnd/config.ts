@@ -1,12 +1,15 @@
 // Shared DnD configuration constants for @dnd-kit.
-// Used by both file explorer DnD and frame editor DnD to ensure
-// identical activation behavior and visual appearance.
 
 import type { Modifier } from "@dnd-kit/core";
 
-/** Mouse: 300ms hold OR 3px drag distance to activate. */
+/** Mouse: hold to activate, with small movement tolerated before canceling. */
 export const MOUSE_SENSOR_OPTIONS = {
   activationConstraint: { distance: 3, delay: 300, tolerance: 5 },
+} as const;
+
+/** Mouse: activate as soon as the pointer moves far enough. */
+export const MOUSE_DISTANCE_SENSOR_OPTIONS = {
+  activationConstraint: { distance: 3 },
 } as const;
 
 /** Touch: 300ms hold to activate. */
