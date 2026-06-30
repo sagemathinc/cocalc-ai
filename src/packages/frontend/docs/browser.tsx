@@ -5,8 +5,6 @@
 
 import {
   createContext,
-  Suspense,
-  lazy,
   useCallback,
   useContext,
   useEffect,
@@ -53,6 +51,7 @@ import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type {
   DocsPrivateEntrySummary,
   DocsPrivateFilter,
@@ -60,9 +59,6 @@ import type {
 import "./browser.css";
 
 const { Paragraph, Text, Title } = Typography;
-const StaticMarkdown = lazy(
-  () => import("@cocalc/frontend/editors/slate/static-markdown"),
-);
 
 type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
@@ -401,9 +397,7 @@ export function DocsMarkdown({
       data-testid="docs-markdown"
       onClick={handleClick}
     >
-      <Suspense fallback={<Text type="secondary">Loading markdown...</Text>}>
-        <StaticMarkdown value={normalizeDocsMarkdownValue(value)} />
-      </Suspense>
+      <StaticMarkdown value={normalizeDocsMarkdownValue(value)} />
     </div>
   );
 }
