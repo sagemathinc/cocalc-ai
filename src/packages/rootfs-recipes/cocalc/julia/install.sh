@@ -50,7 +50,12 @@ $SUDO ln -sf "$jupyter_prefix/bin/jupyter" /usr/local/bin/jupyter
 curl -fsSL "$url" -o "$tmp/$archive"
 $SUDO mkdir -p "$prefix"
 $SUDO tar -xzf "$tmp/$archive" -C "$prefix" --strip-components=1
-$SUDO ln -sf "$prefix/bin/julia" /usr/local/bin/julia
+$SUDO tee /usr/local/bin/julia >/dev/null <<EOF
+#!/usr/bin/env bash
+export JULIA_DEPOT_PATH="$julia_depot\${JULIA_DEPOT_PATH:+:\$JULIA_DEPOT_PATH}"
+exec "$prefix/bin/julia" "\$@"
+EOF
+$SUDO chmod 755 /usr/local/bin/julia
 $SUDO chmod -R go+rX "$prefix"
 
 $SUDO mkdir -p "$julia_depot"

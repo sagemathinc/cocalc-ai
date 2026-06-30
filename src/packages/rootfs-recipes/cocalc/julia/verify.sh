@@ -7,7 +7,7 @@ command -v jupyter
 julia --version
 test -f /usr/local/share/jupyter/kernels/julia/kernel.json
 jupyter kernelspec list | grep -q 'julia'
-JULIA_DEPOT_PATH="${JULIA_DEPOT:-/opt/julia-depot}" julia --startup-file=no -e 'using IJulia; println("IJulia OK")'
+julia --startup-file=no -e 'using IJulia; println("IJulia OK")'
 "$jupyter_prefix/bin/python" - <<'PY'
 from queue import Empty
 from jupyter_client import KernelManager
