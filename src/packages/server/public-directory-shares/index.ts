@@ -1645,6 +1645,63 @@ export async function upsertMigratedLegacyPublicDirectoryShare(
   });
 }
 
+export async function repairMigratedLegacyPublicDirectoryShareSlug({
+  id,
+  legacy_public_path_id,
+  slug,
+  legacy_url,
+  account_id,
+}: {
+  id?: string | null;
+  legacy_public_path_id?: string | null;
+  slug: string;
+  legacy_url?: string | null;
+  account_id?: string | null;
+}): Promise<PublicDirectoryShareSummary | null> {
+  await ensurePublicDirectorySharesSchema();
+  const normalizedSlug = normalizePublicDirectoryShareSlug(slug);
+  const { rows } = await getPool().query<PublicDirectoryShareRow>(
+    `
+      SELECT *
+      FROM public_project_paths
+      WHERE ($1::uuid IS NOT NULL AND id=$1::uuid)
+         OR ($2::text IS NOT NULL AND legacy_public_path_id=$2::text)
+      LIMIT 1
+    `,
+    [id && isValidUUID(id) ? id : null, legacy_public_path_id ?? null],
+  );
+  const current = rows[0];
+  if (!current) return null;
+  return await savePublicDirectoryShare({
+    account_id: account_id ?? undefined,
+    id: current.id,
+    project_id: current.project_id,
+    path: current.path,
+    slug: normalizedSlug,
+    visibility: current.visibility,
+    requires_auth: current.requires_auth,
+    availability_status: current.availability_status,
+    availability_message: current.availability_message ?? null,
+    title: current.title ?? null,
+    description: current.description ?? null,
+    license: current.license ?? null,
+    image: current.image ?? null,
+    redirect: current.redirect ?? null,
+    site_license_id: current.site_license_id ?? null,
+    site_license_pool_id: current.site_license_pool_id ?? null,
+    site_license_membership_tier_id:
+      current.site_license_membership_tier_id ?? null,
+    site_license_duration_days: current.site_license_duration_days ?? null,
+    site_license_grant_on_copy: current.site_license_grant_on_copy,
+    site_license_copy_requires_grant: current.site_license_copy_requires_grant,
+    metadata: current.metadata ?? {},
+    legacy_public_path_id: current.legacy_public_path_id ?? null,
+    legacy_url: legacy_url ?? current.legacy_url ?? null,
+    last_edited: current.last_edited ?? null,
+    disabled: current.disabled,
+  });
+}
+
 export async function disableMigratedLegacyPublicDirectoryShare({
   legacy_public_path_id,
   account_id,

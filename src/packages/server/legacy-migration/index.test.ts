@@ -8,6 +8,7 @@ import {
   legacyProjectArchiveUncompressedBytes,
   normalizeLegacyProjectImportIds,
 } from ".";
+import { legacyPublicPathSlugFromRecord } from "./public-path-slugs";
 
 describe("legacy migration manifest helpers", () => {
   it("extracts advisory uncompressed project archive sizes", () => {
@@ -55,5 +56,47 @@ describe("legacy migration manifest helpers", () => {
     ).toThrow(
       `import at most ${MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST} legacy projects at a time`,
     );
+  });
+});
+
+describe("legacy public path slug helpers", () => {
+  it("reconstructs legacy public URLs from owner name, project title, and public path name", () => {
+    expect(
+      legacyPublicPathSlugFromRecord(
+        {
+          name: "JFM-Notebooks",
+          path: "JFM-Notebooks",
+          project_id: "69ad6ede-eb83-4733-aff0-afb8feb191b6",
+          slug: "JFM-Notebooks",
+        },
+        {
+          owner_name: "Cambridge",
+          project_title: "S0022112023010078",
+        },
+      ),
+    ).toBe("Cambridge/S0022112023010078/JFM-Notebooks");
+  });
+
+  it("preserves explicit legacy URL paths when present", () => {
+    expect(
+      legacyPublicPathSlugFromRecord(
+        {
+          url: "https://cocalc.com/Cambridge/S0022112023010078/JFM-Notebooks",
+          slug: "JFM-Notebooks",
+        },
+        {
+          owner_name: "Wrong",
+          project_title: "Wrong",
+        },
+      ),
+    ).toBe("Cambridge/S0022112023010078/JFM-Notebooks");
+  });
+
+  it("normalizes cocalc.ai share URLs to the stored share slug", () => {
+    expect(
+      legacyPublicPathSlugFromRecord({
+        url: "https://cocalc.ai/share/Cambridge/S0022112023010078/JFM-Notebooks",
+      }),
+    ).toBe("Cambridge/S0022112023010078/JFM-Notebooks");
   });
 });
