@@ -368,8 +368,8 @@ describe("PublicFeaturesApp", () => {
   it.each([
     {
       slug: "sage",
-      title: "Use SageMath where its history and future meet.",
-      section: "Build, test, and develop Sage from source.",
+      title: "Use SageMath inside collaborative mathematics projects.",
+      section: "Use Sage with the surrounding project.",
     },
     {
       slug: "julia",
@@ -433,7 +433,7 @@ describe("PublicFeaturesApp", () => {
   );
 
   it.each([
-    { finalCta: "Start using SageMath on CoCalc", slug: "sage" },
+    { finalCta: "Start using SageMath", slug: "sage" },
     { finalCta: "Start using CoCalc whiteboards", slug: "whiteboard" },
     { finalCta: "Start making slides", slug: "slides" },
     { finalCta: "Start using R", slug: "r-statistical-software" },
@@ -460,7 +460,7 @@ describe("PublicFeaturesApp", () => {
       for (const link of projectLinks) {
         expect(link.getAttribute("href")).toBe("/projects");
       }
-      expect(screen.queryByText(finalCta)).toBeNull();
+      expect(screen.queryByRole("link", { name: finalCta })).toBeNull();
     },
   );
 
