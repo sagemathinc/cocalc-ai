@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Grid, Layout, Row } from "antd";
+import { Button, Grid, Layout } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { useIntl } from "react-intl";
@@ -419,7 +419,15 @@ export const ProjectsPage: React.FC = () => {
     }
   }
 
-  const contentCol = { span: 20, offset: 2 };
+  const contentStyle: CSS = {
+    display: "flex",
+    flex: "1 1 0",
+    flexDirection: "column",
+    height: "100%",
+    marginLeft: screens.lg ? `${(2 / 24) * 100}%` : 0,
+    minHeight: 0,
+    width: screens.lg ? `${(20 / 24) * 100}%` : "100%",
+  };
 
   return (
     <div className={"smc-vfill"} style={{ overflow: "hidden" }}>
@@ -442,6 +450,10 @@ export const ProjectsPage: React.FC = () => {
         <Layout.Content
           style={{
             background: "white",
+            display: "flex",
+            flex: "1 1 auto",
+            flexDirection: "column",
+            height: "100%",
             padding: mobileProjectsList ? "8px 8px 0 8px" : "16px 0 0 15px",
             minHeight: 0,
             overflow: mobileProjectsList ? "auto" : "hidden",
@@ -452,7 +464,9 @@ export const ProjectsPage: React.FC = () => {
             className={"smc-vfill"}
             style={{
               display: "flex",
+              flex: "1 1 auto",
               flexDirection: "column",
+              height: "100%",
               minHeight: 0,
               overflowY: mobileProjectsList ? "auto" : "hidden",
             }}
@@ -465,202 +479,193 @@ export const ProjectsPage: React.FC = () => {
                 style={{ marginBottom: 12 }}
               />
             ) : null}
-            <Row style={{ flex: "1 1 auto", minHeight: 0, width: "100%" }}>
-              <Col
-                sm={24}
-                md={24}
-                lg={contentCol}
+            <div style={contentStyle}>
+              <div
                 style={{
+                  width: "100%",
                   display: "flex",
+                  flex: "1 1 0",
                   flexDirection: "column",
+                  gap: 10,
+                  height: "100%",
                   minHeight: 0,
+                  padding: narrow ? "0 10px 0 10px" : "0",
                 }}
               >
                 <div
                   style={{
-                    width: "100%",
+                    marginTop: mobileProjectsList ? "8px" : "20px",
                     display: "flex",
-                    flex: "1 1 auto",
-                    flexDirection: "column",
+                    width: "100%",
                     gap: 10,
-                    minHeight: 0,
-                    padding: narrow ? "0 10px 0 10px" : "0",
+                    alignItems: "center",
+                    flexWrap: mobileProjectsList ? "wrap" : "nowrap",
+                    flex: "0 0 auto",
                   }}
                 >
-                  <div
+                  <Title
+                    level={3}
                     style={{
-                      marginTop: mobileProjectsList ? "8px" : "20px",
-                      display: "flex",
-                      width: "100%",
-                      gap: "10px",
-                      alignItems: "center",
-                      flexWrap: mobileProjectsList ? "wrap" : "nowrap",
-                      flex: "0 0 auto",
+                      flex: "0 1 auto",
+                      marginBottom: mobileProjectsList ? 0 : "15px",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    <Title
-                      level={3}
-                      style={{
-                        flex: "0 1 auto",
-                        marginBottom: mobileProjectsList ? 0 : "15px",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      <Icon name="edit" /> {intl.formatMessage(labels.projects)}
-                    </Title>
+                    <Icon name="edit" /> {intl.formatMessage(labels.projects)}
+                  </Title>
+                  <Button
+                    ref={createNewRef}
+                    type="primary"
+                    disabled={createProjectDisabled}
+                    title={
+                      createProjectDisabled
+                        ? "Verify your email address before creating projects."
+                        : undefined
+                    }
+                    onClick={handleCreateProject}
+                    icon={<Icon name="plus-circle" />}
+                  >
+                    {capitalize(intl.formatMessage(labels.create))}
+                  </Button>
+                  {showLegacyProjectsButton ? (
                     <Button
-                      ref={createNewRef}
-                      type="primary"
-                      disabled={createProjectDisabled}
-                      title={
-                        createProjectDisabled
-                          ? "Verify your email address before creating projects."
-                          : undefined
+                      icon={<Icon name="exchange" />}
+                      onClick={() =>
+                        openAccountSettings({ page: "legacy-migration" })
                       }
-                      onClick={handleCreateProject}
-                      icon={<Icon name="plus-circle" />}
+                      title="View projects available from legacy migration."
                     >
-                      {capitalize(intl.formatMessage(labels.create))}
+                      Legacy Projects
                     </Button>
-                    {showLegacyProjectsButton ? (
-                      <Button
-                        icon={<Icon name="exchange" />}
-                        onClick={() =>
-                          openAccountSettings({ page: "legacy-migration" })
-                        }
-                        title="View projects available from legacy migration."
-                      >
-                        Legacy Projects
-                      </Button>
-                    ) : null}
-                    <div
-                      style={{
-                        flex: mobileProjectsList ? "1 0 100%" : "1 1 auto",
-                        minWidth: 0,
-                      }}
-                    >
-                      <StarredProjectsBar />
-                    </div>
-                    {!narrow && (
-                      <div
-                        ref={filenameSearchRef}
-                        style={{
-                          flex: "0 1 auto",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                      >
-                        <FilenameSearch
-                          style={{
-                            width: IS_MOBILE ? "100px" : "200px",
-                            display: "inline-block",
-                          }}
-                        />
-                        <RecentDocumentActivityButton />
-                      </div>
-                    )}
+                  ) : null}
+                  <div
+                    style={{
+                      flex: mobileProjectsList ? "1 0 100%" : "1 1 auto",
+                      minWidth: 0,
+                    }}
+                  >
+                    <StarredProjectsBar />
                   </div>
-
-                  {narrow && (
+                  {!narrow && (
                     <div
                       ref={filenameSearchRef}
                       style={{
+                        flex: "0 1 auto",
                         display: "flex",
-                        justifyContent: "flex-end",
+                        alignItems: "center",
                         gap: "8px",
-                        flex: "0 0 auto",
                       }}
                     >
-                      <RecentDocumentActivityButton />
                       <FilenameSearch
                         style={{
                           width: IS_MOBILE ? "100px" : "200px",
                           display: "inline-block",
                         }}
                       />
+                      <RecentDocumentActivityButton />
                     </div>
                   )}
+                </div>
 
+                {narrow && (
                   <div
+                    ref={filenameSearchRef}
                     style={{
-                      maxHeight: "50vh",
-                      overflow: "auto",
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      gap: "8px",
                       flex: "0 0 auto",
                     }}
                   >
-                    <IncomingInviteBanner
-                      state={inviteState}
-                      onReview={openInvitations}
+                    <RecentDocumentActivityButton />
+                    <FilenameSearch
+                      style={{
+                        width: IS_MOBILE ? "100px" : "200px",
+                        display: "inline-block",
+                      }}
                     />
                   </div>
+                )}
 
-                  {/* Table Controls (Search, Filters, Create Button) */}
-                  <div style={{ flex: "0 0 auto" }}>
-                    <ProjectsTableControls
-                      visible_projects={visible_projects}
-                      searchRef={searchRef}
-                      filtersRef={filtersRef}
-                      projectListChanged={backendWindowDirty}
-                      projectListChangedCount={backendWindowDirtyCount}
-                      onRefreshProjectList={refreshBackendWindow}
-                      tour={
-                        <ProjectsPageTour
-                          searchRef={searchRef}
-                          filtersRef={filtersRef}
-                          createNewRef={createNewRef}
-                          projectListRef={projectListRef}
-                          filenameSearchRef={filenameSearchRef}
-                          style={{ flex: 0 }}
-                        />
-                      }
-                    />
-                  </div>
-                  {/* Bulk Operations (when filters active) */}
-                  <div style={{ flex: "0 0 auto" }}>
-                    <ProjectsOperations
-                      visible_projects={visible_projects}
-                      selected_project_ids={selectedProjectIds}
-                      onSelectionChange={setSelectedProjectIds}
-                      filteredCollaborators={filteredCollaborators}
-                      onClearCollaboratorFilter={handleClearCollaboratorFilter}
-                    />
-                  </div>
-
-                  <div
-                    ref={projectListRef}
-                    style={{
-                      flex: mobileProjectsList ? "0 0 auto" : "1 1 auto",
-                      minHeight: 0,
-                      overflow: mobileProjectsList ? undefined : "hidden",
-                    }}
-                  >
-                    {mobileProjectsList ? (
-                      <MobileProjectsList
-                        visible_projects={visible_projects}
-                        rootfsImages={rootfsImages}
-                        rootfsImagesLoading={rootfsImagesLoading}
-                        selectedProjectIds={selectedProjectIds}
-                        onSelectedProjectIdsChange={setSelectedProjectIds}
-                      />
-                    ) : (
-                      <ProjectsTable
-                        visible_projects={visible_projects}
-                        rootfsImages={rootfsImages}
-                        rootfsImagesLoading={rootfsImagesLoading}
-                        height={tableHeight}
-                        narrow={narrow}
-                        filteredCollaborators={filteredCollaborators}
-                        onFilteredCollaboratorsChange={setFilteredCollaborators}
-                        selectedProjectIds={selectedProjectIds}
-                        onSelectedProjectIdsChange={setSelectedProjectIds}
-                        freezeOrder={backendWindowDirty}
-                      />
-                    )}
-                  </div>
+                <div
+                  style={{
+                    maxHeight: "50vh",
+                    overflow: "auto",
+                    flex: "0 0 auto",
+                  }}
+                >
+                  <IncomingInviteBanner
+                    state={inviteState}
+                    onReview={openInvitations}
+                  />
                 </div>
-              </Col>
-            </Row>
+
+                {/* Table Controls (Search, Filters, Create Button) */}
+                <div style={{ flex: "0 0 auto" }}>
+                  <ProjectsTableControls
+                    visible_projects={visible_projects}
+                    searchRef={searchRef}
+                    filtersRef={filtersRef}
+                    projectListChanged={backendWindowDirty}
+                    projectListChangedCount={backendWindowDirtyCount}
+                    onRefreshProjectList={refreshBackendWindow}
+                    tour={
+                      <ProjectsPageTour
+                        searchRef={searchRef}
+                        filtersRef={filtersRef}
+                        createNewRef={createNewRef}
+                        projectListRef={projectListRef}
+                        filenameSearchRef={filenameSearchRef}
+                        style={{ flex: 0 }}
+                      />
+                    }
+                  />
+                </div>
+                {/* Bulk Operations (when filters active) */}
+                <div style={{ flex: "0 0 auto" }}>
+                  <ProjectsOperations
+                    visible_projects={visible_projects}
+                    selected_project_ids={selectedProjectIds}
+                    onSelectionChange={setSelectedProjectIds}
+                    filteredCollaborators={filteredCollaborators}
+                    onClearCollaboratorFilter={handleClearCollaboratorFilter}
+                  />
+                </div>
+
+                <div
+                  ref={projectListRef}
+                  style={{
+                    flex: mobileProjectsList ? "0 0 auto" : "1 1 0",
+                    height: mobileProjectsList ? undefined : "100%",
+                    minHeight: 0,
+                    overflow: mobileProjectsList ? undefined : "hidden",
+                  }}
+                >
+                  {mobileProjectsList ? (
+                    <MobileProjectsList
+                      visible_projects={visible_projects}
+                      rootfsImages={rootfsImages}
+                      rootfsImagesLoading={rootfsImagesLoading}
+                      selectedProjectIds={selectedProjectIds}
+                      onSelectedProjectIdsChange={setSelectedProjectIds}
+                    />
+                  ) : (
+                    <ProjectsTable
+                      visible_projects={visible_projects}
+                      rootfsImages={rootfsImages}
+                      rootfsImagesLoading={rootfsImagesLoading}
+                      height={tableHeight}
+                      narrow={narrow}
+                      filteredCollaborators={filteredCollaborators}
+                      onFilteredCollaboratorsChange={setFilteredCollaborators}
+                      selectedProjectIds={selectedProjectIds}
+                      onSelectedProjectIdsChange={setSelectedProjectIds}
+                      freezeOrder={backendWindowDirty}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </Layout.Content>
       </Layout>
