@@ -93,6 +93,26 @@ describe("startProjectWithAdmission", () => {
     expect(callHubMock).not.toHaveBeenCalled();
   });
 
+  it("blocks project starts during pressure quarantine", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(2_000_000);
+    getProjectStopStateMock = jest.fn(() => ({
+      project_id: "proj-1",
+      pressure_cooldown_until_ms: 2_120_000,
+      pressure_quarantine_until_ms: 88_400_000,
+      pressure_quarantine_reason: "direct:resource_project_inotify_instances",
+    }));
+    const { startProjectWithAdmission } =
+      await import("./project-start-admission");
+
+    await expect(
+      startProjectWithAdmission({
+        account_id: "acct-1",
+        project_id: "proj-1",
+      }),
+    ).rejects.toThrow("repeatedly exceeded project-host resource limits");
+    expect(callHubMock).not.toHaveBeenCalled();
+  });
+
   it("allows project starts after pressure cooldown expires", async () => {
     jest.spyOn(Date, "now").mockReturnValue(2_000_000);
     getProjectStopStateMock = jest.fn(() => ({

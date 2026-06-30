@@ -34,9 +34,20 @@ export async function startProjectWithAdmission({
   if (!project) {
     throw new Error("project id is required to start a project");
   }
-  const pressureCooldownUntilMs =
-    getProjectStopState(project)?.pressure_cooldown_until_ms;
+  const stopState = getProjectStopState(project);
+  const pressureCooldownUntilMs = stopState?.pressure_cooldown_until_ms;
+  const pressureQuarantineUntilMs = stopState?.pressure_quarantine_until_ms;
   const now = Date.now();
+  if (
+    pressureQuarantineUntilMs != null &&
+    Number(pressureQuarantineUntilMs) > now
+  ) {
+    throw new Error(
+      `Project start is blocked because this project repeatedly exceeded project-host resource limits. It is quarantined for ${formatDuration(
+        Number(pressureQuarantineUntilMs) - now,
+      )}. You can still browse files and delete files without starting the project. Contact support if this is unexpected.`,
+    );
+  }
   if (
     pressureCooldownUntilMs != null &&
     Number(pressureCooldownUntilMs) > now

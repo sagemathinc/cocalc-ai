@@ -1,8 +1,9 @@
 # Project Host Podman Resource Hardening Plan
 
-Status: Phase 0, Phase 1, Phase 2 metrics, and gated Phase 3 direct-offender
-enforcement/restart cooldown landed. Quarantine and account aggregate
-enforcement remain.
+Status: Phase 0, Phase 1, Phase 2 metrics, gated Phase 3 direct-offender
+enforcement/restart cooldown, and host-local repeated direct-resource-stop
+quarantine landed. Admin unquarantine, account aggregate enforcement, and
+keyring hardening remain.
 
 Date: 2026-06-29
 
@@ -301,7 +302,8 @@ Cooldown behavior:
 - First violation: use the existing host-pressure cooldown, defaulting to 10-15
   minutes depending on final configuration.
 - Second violation within 24 hours: block restart for 1 hour.
-- Third violation within 24 hours: quarantine the project until admin review.
+- Third direct resource-offender stop within 24 hours: quarantine the project
+  for 24 hours; add admin review/unquarantine UI later.
 - Account aggregate violations should quarantine at account resource level only
   after multiple projects from the same account violate limits.
 
@@ -486,7 +488,7 @@ Phase 3:
 
 Phase 4:
 
-- Add durable quarantine state and admin unquarantine UI.
+- Add admin unquarantine UI for host-local project quarantines.
 - Add account aggregate enforcement.
 - Add keyring seccomp deny if key pressure is observed or if testing confirms it
   is safe for normal workloads.

@@ -5,8 +5,12 @@
 
 import { _test } from "./host-pressure";
 
-const { buildStopCandidates, classifyHostPressure, resourcePressureFindings } =
-  _test;
+const {
+  buildStopCandidates,
+  classifyHostPressure,
+  pressureStopStateUpdate,
+  resourcePressureFindings,
+} = _test;
 
 describe("host pressure controller helpers", () => {
   it("classifies memory pressure zones", () => {
@@ -308,5 +312,53 @@ describe("host pressure controller helpers", () => {
       "proj-default",
     ]);
     expect(candidates[0].explanation.join(",")).toContain("direct:resource");
+  });
+
+  it("escalates repeated pressure stops to quarantine", () => {
+    const generic = pressureStopStateUpdate({
+      existing: undefined,
+      project_id: "proj-1",
+      now: 900_000,
+      reason: "priority:0,state:running",
+      zone: "pressure",
+    });
+    expect(generic.pressure_stop_count).toBeUndefined();
+    expect(generic.pressure_quarantine_until_ms).toBeUndefined();
+
+    const first = pressureStopStateUpdate({
+      existing: undefined,
+      project_id: "proj-1",
+      now: 1_000_000,
+      reason: "direct:resource_project_inotify_watches",
+      zone: "pressure",
+    });
+    expect(first.pressure_stop_count).toBe(1);
+    expect(first.pressure_quarantine_until_ms).toBeNull();
+
+    const second = pressureStopStateUpdate({
+      existing: first,
+      project_id: "proj-1",
+      now: 1_100_000,
+      reason: "direct:resource_project_inotify_watches",
+      zone: "pressure",
+    });
+    expect(second.pressure_stop_count).toBe(2);
+    expect(second.pressure_cooldown_until_ms).toBeGreaterThan(
+      first.pressure_cooldown_until_ms ?? 0,
+    );
+    expect(second.pressure_quarantine_until_ms).toBeNull();
+
+    const third = pressureStopStateUpdate({
+      existing: second,
+      project_id: "proj-1",
+      now: 1_200_000,
+      reason: "direct:resource_project_inotify_instances",
+      zone: "pressure",
+    });
+    expect(third.pressure_stop_count).toBe(3);
+    expect(third.pressure_quarantine_until_ms).toBeGreaterThan(1_200_000);
+    expect(third.pressure_quarantine_reason).toContain(
+      "resource_project_inotify_instances",
+    );
   });
 });

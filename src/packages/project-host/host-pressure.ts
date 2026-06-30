@@ -14,6 +14,7 @@ import { listProjects, type ProjectRow } from "./sqlite/projects";
 import {
   getProjectStopState,
   listProjectStopPolicies,
+  type ProjectStopStateRow,
   type ProjectStopPolicyRow,
   upsertProjectStopState,
 } from "./sqlite/stop-policy";
@@ -60,6 +61,31 @@ const PRESSURE_PROJECT_COOLDOWN_MS = Math.max(
   Number(
     process.env.COCALC_PROJECT_HOST_PRESSURE_PROJECT_COOLDOWN_MS ?? 15 * 60_000,
   ),
+);
+const PRESSURE_STOP_WINDOW_MS = Math.max(
+  60_000,
+  Number(
+    process.env.COCALC_PROJECT_HOST_PRESSURE_VIOLATION_WINDOW_MS ??
+      24 * 60 * 60_000,
+  ),
+);
+const PRESSURE_REPEAT_COOLDOWN_MS = Math.max(
+  PRESSURE_PROJECT_COOLDOWN_MS,
+  Number(
+    process.env.COCALC_PROJECT_HOST_PRESSURE_REPEAT_COOLDOWN_MS ?? 60 * 60_000,
+  ),
+);
+const PRESSURE_QUARANTINE_MS = Math.max(
+  PRESSURE_REPEAT_COOLDOWN_MS,
+  Number(
+    process.env.COCALC_PROJECT_HOST_PRESSURE_QUARANTINE_MS ?? 24 * 60 * 60_000,
+  ),
+);
+const PRESSURE_QUARANTINE_STOP_COUNT = Math.max(
+  2,
+  Math.floor(
+    Number(process.env.COCALC_PROJECT_HOST_PRESSURE_QUARANTINE_STOP_COUNT ?? 3),
+  ) || 3,
 );
 const PRESSURE_SETTLE_MS = Math.max(
   0,
@@ -447,6 +473,74 @@ function hasMemoryPressureReason(reason: string | undefined): boolean {
 
 function hasResourcePressureReason(reason: string | undefined): boolean {
   return !!reason?.split(",").some((part) => part.startsWith("resource_"));
+}
+
+function countsTowardResourceQuarantine(reason: string): boolean {
+  return reason.split(",").some((part) => part.startsWith("direct:resource_"));
+}
+
+function pressureStopStateUpdate({
+  existing,
+  project_id,
+  now,
+  reason,
+  zone,
+}: {
+  existing: ProjectStopStateRow | undefined;
+  project_id: string;
+  now: number;
+  reason: string;
+  zone: HostPressureZone;
+}): ProjectStopStateRow {
+  if (!countsTowardResourceQuarantine(reason)) {
+    return {
+      project_id,
+      last_pressure_stop_ms: now,
+      pressure_cooldown_until_ms: now + PRESSURE_PROJECT_COOLDOWN_MS,
+      last_decision_reason: reason,
+      last_decision_pressure_zone: zone,
+      last_ranked_ms: now,
+    };
+  }
+
+  const existingWindowStartedMs = parseNonNegativeNumber(
+    existing?.pressure_stop_window_started_ms,
+  );
+  const existingStopCount = Math.max(
+    0,
+    Math.floor(Number(existing?.pressure_stop_count ?? 0) || 0),
+  );
+  const inExistingWindow =
+    existingWindowStartedMs != null &&
+    now - existingWindowStartedMs < PRESSURE_STOP_WINDOW_MS;
+  const pressureStopCount = inExistingWindow ? existingStopCount + 1 : 1;
+  const pressureStopWindowStartedMs = inExistingWindow
+    ? existingWindowStartedMs
+    : now;
+
+  let cooldownMs = PRESSURE_PROJECT_COOLDOWN_MS;
+  let pressureQuarantineUntilMs: number | null = null;
+  let pressureQuarantineReason: string | null = null;
+  if (pressureStopCount >= PRESSURE_QUARANTINE_STOP_COUNT) {
+    cooldownMs = PRESSURE_QUARANTINE_MS;
+    pressureQuarantineUntilMs = now + cooldownMs;
+    pressureQuarantineReason = reason;
+  } else if (pressureStopCount >= 2) {
+    cooldownMs = PRESSURE_REPEAT_COOLDOWN_MS;
+  }
+
+  return {
+    project_id,
+    last_pressure_stop_ms: now,
+    pressure_cooldown_until_ms: now + cooldownMs,
+    pressure_stop_window_started_ms: pressureStopWindowStartedMs,
+    pressure_stop_count: pressureStopCount,
+    pressure_quarantine_until_ms: pressureQuarantineUntilMs,
+    pressure_quarantine_reason: pressureQuarantineReason,
+    last_decision_reason: reason,
+    last_decision_pressure_zone: zone,
+    last_ranked_ms: now,
+  };
 }
 
 export function classifyHostPressure(
@@ -856,12 +950,13 @@ export function startHostPressureController({
           reason,
         });
         upsertProjectStopState({
-          project_id: candidate.project_id,
-          last_pressure_stop_ms: now,
-          pressure_cooldown_until_ms: now + PRESSURE_PROJECT_COOLDOWN_MS,
-          last_decision_reason: reason,
-          last_decision_pressure_zone: classified.zone,
-          last_ranked_ms: now,
+          ...pressureStopStateUpdate({
+            existing: getProjectStopState(candidate.project_id),
+            project_id: candidate.project_id,
+            now,
+            reason,
+            zone: classified.zone,
+          }),
         });
         recentPressureStopsMs.push(now);
         stoppedCount += 1;
@@ -1009,4 +1104,5 @@ export const _test = {
   classifyHostPressure,
   buildStopCandidates,
   resourcePressureFindings,
+  pressureStopStateUpdate,
 };

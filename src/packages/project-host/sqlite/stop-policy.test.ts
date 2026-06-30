@@ -56,11 +56,15 @@ describe("project stop policy sqlite", () => {
       project_id,
       last_started_ms: 111,
       pressure_cooldown_until_ms: 222,
+      pressure_stop_window_started_ms: 200,
+      pressure_stop_count: 1,
       last_decision_reason: "startup_protected",
     });
     upsertProjectStopState({
       project_id,
       last_pressure_stop_ms: 333,
+      pressure_quarantine_until_ms: 444,
+      pressure_quarantine_reason: "too_many_inotify_watches",
       last_decision_pressure_zone: "pressure",
     });
 
@@ -68,7 +72,11 @@ describe("project stop policy sqlite", () => {
       project_id,
       last_started_ms: 111,
       pressure_cooldown_until_ms: 222,
+      pressure_stop_window_started_ms: 200,
+      pressure_stop_count: 1,
       last_pressure_stop_ms: 333,
+      pressure_quarantine_until_ms: 444,
+      pressure_quarantine_reason: "too_many_inotify_watches",
       last_decision_reason: "startup_protected",
       last_decision_pressure_zone: "pressure",
     });
@@ -78,17 +86,23 @@ describe("project stop policy sqlite", () => {
     upsertProjectStopState({
       project_id,
       pressure_cooldown_until_ms: 222,
+      pressure_quarantine_until_ms: 333,
+      pressure_quarantine_reason: "pressure_stop",
       last_decision_reason: "pressure_stop",
     });
     upsertProjectStopState({
       project_id,
       pressure_cooldown_until_ms: null,
+      pressure_quarantine_until_ms: null,
+      pressure_quarantine_reason: null,
       last_decision_reason: null,
     });
 
     expect(getProjectStopState(project_id)).toMatchObject({
       project_id,
       pressure_cooldown_until_ms: null,
+      pressure_quarantine_until_ms: null,
+      pressure_quarantine_reason: null,
       last_decision_reason: null,
     });
   });
