@@ -5411,32 +5411,31 @@ export async function runDetachedAcpQueueWorker(
       if (!workerContext || workerStatus?.state === "active") {
         kickAllQueuedAcpJobs();
       }
-      const currentWorkerRunningJobs = workerContext
-        ? countRunningAcpJobsForWorker(workerContext.worker_id)
-        : 0;
-      if (
-        currentWorkerRunningJobs === 0 &&
-        Date.now() - lastRecoveryAt >= ACP_ORPHAN_RECOVERY_POLL_MS
-      ) {
+      if (Date.now() - lastRecoveryAt >= ACP_ORPHAN_RECOVERY_POLL_MS) {
         lastRecoveryAt = Date.now();
-        if (workerContext) {
-          await recoverOrphanedAcpTurns(client, {
-            liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
-            interruptedNotice: WORKER_INTERRUPTED_NOTICE,
-            recoveryReason: "ACP worker stopped unexpectedly",
-            autoResume: true,
-          });
-        }
         await recoverCurrentWorkerStuckAcpTurns(client, {
           recoveryReason: "backend lost live Codex turn",
         });
-        await recoverOrphanedRunningAcpJobsWithoutLease({
-          client,
-          recoveryReason:
-            workerContext != null
-              ? "ACP worker stopped unexpectedly"
-              : "ACP worker stopped before turn startup",
-        });
+        const currentWorkerRunningJobs = workerContext
+          ? countRunningAcpJobsForWorker(workerContext.worker_id)
+          : 0;
+        if (currentWorkerRunningJobs === 0) {
+          if (workerContext) {
+            await recoverOrphanedAcpTurns(client, {
+              liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
+              interruptedNotice: WORKER_INTERRUPTED_NOTICE,
+              recoveryReason: "ACP worker stopped unexpectedly",
+              autoResume: true,
+            });
+          }
+          await recoverOrphanedRunningAcpJobsWithoutLease({
+            client,
+            recoveryReason:
+              workerContext != null
+                ? "ACP worker stopped unexpectedly"
+                : "ACP worker stopped before turn startup",
+          });
+        }
       }
       const hasWork =
         listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;
