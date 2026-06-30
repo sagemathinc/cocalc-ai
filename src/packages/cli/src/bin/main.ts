@@ -176,6 +176,10 @@ import {
 import { registerLoadCommand, type LoadCommandDeps } from "./commands/load";
 import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
 import {
+  registerMigrateCommand,
+  type MigrateCommandDeps,
+} from "./commands/migrate";
+import {
   registerExportCommand,
   type ExportCommandDeps,
 } from "./commands/export";
@@ -2934,6 +2938,18 @@ const devCommandDeps = {
 } satisfies DevCommandDeps;
 
 registerDevCommand(program, devCommandDeps);
+
+const migrateCommandDeps = {
+  globalsFrom,
+  contextForGlobals,
+  closeCommandContext,
+  emitSuccess,
+  emitError,
+  waitForLro,
+  isValidUUID,
+} satisfies MigrateCommandDeps;
+
+registerMigrateCommand(program, migrateCommandDeps);
 
 const docsCommandDeps = {
   globalsFrom,
