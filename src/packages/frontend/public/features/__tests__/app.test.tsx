@@ -320,8 +320,10 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Python that moves from notebook to script to paper."),
     ).not.toBeNull();
-    expect(screen.getByText("From notebook to script to paper")).not.toBeNull();
-    expect(screen.getByText("Real Python on real Linux")).not.toBeNull();
+    expect(
+      screen.getByText("The right interface at each stage"),
+    ).not.toBeNull();
+    expect(screen.getByText("Project context")).not.toBeNull();
   });
 
   it("uses projects as the python CTA for authenticated users", () => {
@@ -341,7 +343,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start using Python on CoCalc")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
   });
 
   it("renders the richer whiteboard feature page", () => {
