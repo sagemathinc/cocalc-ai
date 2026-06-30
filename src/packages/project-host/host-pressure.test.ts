@@ -5,7 +5,8 @@
 
 import { _test } from "./host-pressure";
 
-const { buildStopCandidates, classifyHostPressure } = _test;
+const { buildStopCandidates, classifyHostPressure, resourcePressureFindings } =
+  _test;
 
 describe("host pressure controller helpers", () => {
   it("classifies memory pressure zones", () => {
@@ -33,6 +34,75 @@ describe("host pressure controller helpers", () => {
         memory_available_bytes: 400 * 1024 ** 2,
       }),
     ).toMatchObject({ zone: "emergency" });
+  });
+
+  it("classifies resource pressure only when resource mode is enabled", () => {
+    const metrics = {
+      memory_used_percent: 20,
+      memory_available_bytes: 8 * 1024 ** 3,
+      kernel_sysctls: {
+        targets: {
+          "fs.inotify.max_user_instances": 8192,
+          "fs.inotify.max_user_watches": 2_097_152,
+        },
+        values: {
+          "fs.inotify.max_user_instances": 8192,
+          "fs.inotify.max_user_watches": 2_097_152,
+        },
+        ok: true,
+        mismatches: [],
+      },
+      resource_pressure: {
+        running_project_count: 1,
+        sampled_project_count: 1,
+        fresh_project_count: 1,
+        stale_project_count: 0,
+        missing_project_count: 0,
+        truncated_project_count: 0,
+        error_project_count: 0,
+        total_pids: 2,
+        total_threads: 4,
+        total_file_descriptors: 100,
+        total_sockets: 10,
+        total_inotify_instances: 1200,
+        total_inotify_watches: 300_000,
+        largest_inotify_instances: {
+          project_id: "proj-watch",
+          sampled_at_ms: 1,
+          age_ms: 0,
+          pids: 2,
+          threads: 4,
+          file_descriptors: 100,
+          sockets: 10,
+          inotify_instances: 1200,
+          inotify_watches: 300_000,
+        },
+        largest_inotify_watches: {
+          project_id: "proj-watch",
+          sampled_at_ms: 1,
+          age_ms: 0,
+          pids: 2,
+          threads: 4,
+          file_descriptors: 100,
+          sockets: 10,
+          inotify_instances: 1200,
+          inotify_watches: 300_000,
+        },
+      },
+    };
+
+    expect(classifyHostPressure(metrics, 1)).toMatchObject({
+      zone: "normal",
+    });
+    expect(
+      classifyHostPressure(metrics, 1, { resourcePressureMode: "signal" }),
+    ).toMatchObject({
+      zone: "pressure",
+    });
+    expect(
+      resourcePressureFindings(metrics).directOffenders.get("proj-watch")
+        ?.reason,
+    ).toContain("resource_project_inotify");
   });
 
   it("ranks lower priority and older activity first", () => {
@@ -187,5 +257,56 @@ describe("host pressure controller helpers", () => {
       "proj-starting",
       "proj-protected",
     ]);
+  });
+
+  it("ranks direct resource offenders ahead of generic pressure candidates", () => {
+    const now = 2_000_000;
+    const candidates = buildStopCandidates({
+      zone: "pressure",
+      now,
+      directResourceOffenders: new Map([
+        [
+          "proj-protected",
+          {
+            project_id: "proj-protected",
+            reason:
+              "resource_project_inotify_watches>=262144,actual=300000,project=proj-protected",
+            score: 2,
+            zone: "pressure",
+          },
+        ],
+      ]),
+      projects: [
+        { project_id: "proj-default", state: "running" },
+        { project_id: "proj-protected", state: "running" },
+      ],
+      policies: new Map([
+        [
+          "proj-protected",
+          {
+            project_id: "proj-protected",
+            owner_account_id: "owner-2",
+            shared_compute_priority: 100,
+            authoritative_last_edited_ms: 1000,
+            policy_updated_ms: 1000,
+            stop_override: "protect",
+          },
+        ],
+      ]),
+      getStopState: (project_id) =>
+        project_id === "proj-protected"
+          ? {
+              project_id,
+              last_started_ms: now - 60_000,
+              pressure_cooldown_until_ms: now + 60_000,
+            }
+          : undefined,
+    });
+
+    expect(candidates.map((candidate) => candidate.project_id)).toEqual([
+      "proj-protected",
+      "proj-default",
+    ]);
+    expect(candidates[0].explanation.join(",")).toContain("direct:resource");
   });
 });

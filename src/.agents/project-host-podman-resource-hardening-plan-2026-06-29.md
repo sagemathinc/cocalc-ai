@@ -1,7 +1,7 @@
 # Project Host Podman Resource Hardening Plan
 
-Status: Phase 0, Phase 1, and Phase 2 metrics-only implementation landed;
-Phase 3+ enforcement remains.
+Status: Phase 0, Phase 1, Phase 2 metrics, and gated Phase 3 direct-offender
+enforcement landed. Quarantine and account aggregate enforcement remain.
 
 Date: 2026-06-29
 
@@ -280,8 +280,12 @@ Enforcement should be staged through the existing host-pressure controller:
 Stop behavior:
 
 - Prefer stopping a direct offender when the sampler identifies one.
-- If there is no clear direct offender, use the existing host-pressure candidate
-  ranking: stop lower-priority, older, less-protected projects first.
+- In the first stop-project rollout, resource-only pressure without a clear
+  project-level offender only publishes host pressure state. It does not stop a
+  generic lower-priority project based on rolling aggregate resource data.
+- Mixed memory pressure and resource pressure still uses the existing
+  host-pressure candidate ranking: stop lower-priority, older, less-protected
+  projects first.
 - Stop the selected project through the same `stopProjectForPressure` path used
   by memory pressure.
 - If clean stop times out, force-remove the container using the same fallback
@@ -472,7 +476,10 @@ Phase 3:
 
 - Extend host-pressure classification and candidate ranking to consume
   resource-pressure signals.
-- Enable stop-project enforcement for clear project-level resource violations.
+- Enable stop-project enforcement for clear project-level resource violations
+  with `COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE=enforce`.
+- Use `COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE=signal` first when validating
+  staging or production host behavior. The default remains `metrics`.
 - Add user-visible stopped reason and restart cooldown.
 - Validate repeated `inotify-watches` and `inotify-instances` tests.
 

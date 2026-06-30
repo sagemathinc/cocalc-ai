@@ -8,6 +8,7 @@ import type {
   HostCurrentMetrics,
   HostPressureState,
   HostPressureZone,
+  HostResourcePressureProjectSummary,
 } from "@cocalc/conat/hub/api/hosts";
 import { listProjects, type ProjectRow } from "./sqlite/projects";
 import {
@@ -78,12 +79,40 @@ const EMERGENCY_MAX_STOPS_PER_CYCLE = Math.max(
   ),
 );
 const RECENT_PRESSURE_STOP_WINDOW_MS = 60 * 60_000;
+const RESOURCE_PRESSURE_MODE = resourcePressureMode(
+  process.env.COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE,
+);
+const DEFAULT_PROJECT_INOTIFY_INSTANCES_WARN = 512;
+const DEFAULT_PROJECT_INOTIFY_INSTANCES_STOP = 1024;
+const DEFAULT_PROJECT_INOTIFY_WATCHES_WARN = 131_072;
+const DEFAULT_PROJECT_INOTIFY_WATCHES_STOP = 262_144;
+const HOST_RESOURCE_OBSERVE_RATIO = clampRatio(
+  process.env.COCALC_PROJECT_HOST_RESOURCE_PRESSURE_OBSERVE_RATIO,
+  0.7,
+);
+const HOST_RESOURCE_PRESSURE_RATIO = clampRatio(
+  process.env.COCALC_PROJECT_HOST_RESOURCE_PRESSURE_RATIO,
+  0.85,
+);
+const HOST_RESOURCE_EMERGENCY_RATIO = clampRatio(
+  process.env.COCALC_PROJECT_HOST_RESOURCE_EMERGENCY_RATIO,
+  0.95,
+);
 
 type StopActionStatus = NonNullable<HostPressureState["last_action_status"]>;
+type ResourcePressureMode = "metrics" | "signal" | "enforce";
+
+type DirectResourceOffender = {
+  project_id: string;
+  reason: string;
+  score: number;
+  zone: Exclude<HostPressureZone, "normal" | "observe">;
+};
 
 type StopCandidate = {
   project_id: string;
   state: string;
+  direct_resource_score: number;
   shared_compute_priority: number;
   override_rank: number;
   startup_protected: boolean;
@@ -113,6 +142,18 @@ function clampNonNegativeInteger(value: unknown, fallback: number): number {
   return Math.floor(parsed);
 }
 
+function clampRatio(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function resourcePressureMode(value: unknown): ResourcePressureMode {
+  const mode = `${value ?? ""}`.trim().toLowerCase();
+  if (mode === "signal" || mode === "enforce") return mode;
+  return "metrics";
+}
+
 function parseNonNegativeNumber(value: unknown): number | undefined {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return undefined;
@@ -138,9 +179,280 @@ function candidateExplanation(candidate: StopCandidate): string {
   return candidate.explanation.join(",");
 }
 
+function resourceLimit(
+  metrics: HostCurrentMetrics,
+  key: string,
+): number | undefined {
+  const value =
+    metrics.kernel_sysctls?.values?.[key] ??
+    metrics.kernel_sysctls?.targets?.[key];
+  return parseNonNegativeNumber(value);
+}
+
+function percentThreshold(
+  limit: number | undefined,
+  ratio: number,
+): number | undefined {
+  if (limit == null || limit <= 0) return undefined;
+  return Math.max(1, Math.floor(limit * ratio));
+}
+
+function projectThreshold(
+  fixed: number,
+  limit: number | undefined,
+  ratio: number,
+): number {
+  const dynamic = percentThreshold(limit, ratio);
+  return dynamic == null ? fixed : Math.min(fixed, dynamic);
+}
+
+function resourceUsageReason(opts: {
+  scope: "project" | "host";
+  resource: "inotify_instances" | "inotify_watches";
+  actual: number;
+  threshold: number;
+  project_id?: string;
+}): string {
+  const project = opts.project_id ? `,project=${opts.project_id}` : "";
+  return `resource_${opts.scope}_${opts.resource}>=${opts.threshold},actual=${opts.actual}${project}`;
+}
+
+function addDirectOffender(
+  offenders: Map<string, DirectResourceOffender>,
+  offender: DirectResourceOffender,
+) {
+  const existing = offenders.get(offender.project_id);
+  if (!existing || offender.score > existing.score) {
+    offenders.set(offender.project_id, offender);
+  }
+}
+
+function maybeDirectOffender(opts: {
+  offenders: Map<string, DirectResourceOffender>;
+  summary: HostResourcePressureProjectSummary | undefined;
+  resource: "inotify_instances" | "inotify_watches";
+  threshold: number;
+}) {
+  const actual = opts.summary?.[opts.resource];
+  const project_id = opts.summary?.project_id;
+  if (!project_id || actual == null || actual < opts.threshold) return;
+  addDirectOffender(opts.offenders, {
+    project_id,
+    zone: "pressure",
+    score: actual / Math.max(1, opts.threshold),
+    reason: resourceUsageReason({
+      scope: "project",
+      resource: opts.resource,
+      actual,
+      threshold: opts.threshold,
+      project_id,
+    }),
+  });
+}
+
+function resourcePressureFindings(metrics: HostCurrentMetrics | undefined): {
+  observeReasons: string[];
+  pressureReasons: string[];
+  emergencyReasons: string[];
+  directOffenders: Map<string, DirectResourceOffender>;
+} {
+  const observeReasons: string[] = [];
+  const pressureReasons: string[] = [];
+  const emergencyReasons: string[] = [];
+  const directOffenders = new Map<string, DirectResourceOffender>();
+  if (!metrics?.resource_pressure) {
+    return {
+      observeReasons,
+      pressureReasons,
+      emergencyReasons,
+      directOffenders,
+    };
+  }
+
+  const inotifyInstancesLimit = resourceLimit(
+    metrics,
+    "fs.inotify.max_user_instances",
+  );
+  const inotifyWatchesLimit = resourceLimit(
+    metrics,
+    "fs.inotify.max_user_watches",
+  );
+  const instanceWarnThreshold = projectThreshold(
+    DEFAULT_PROJECT_INOTIFY_INSTANCES_WARN,
+    inotifyInstancesLimit,
+    0.0625,
+  );
+  const instanceStopThreshold = projectThreshold(
+    DEFAULT_PROJECT_INOTIFY_INSTANCES_STOP,
+    inotifyInstancesLimit,
+    0.125,
+  );
+  const watchWarnThreshold = projectThreshold(
+    DEFAULT_PROJECT_INOTIFY_WATCHES_WARN,
+    inotifyWatchesLimit,
+    0.0625,
+  );
+  const watchStopThreshold = projectThreshold(
+    DEFAULT_PROJECT_INOTIFY_WATCHES_STOP,
+    inotifyWatchesLimit,
+    0.125,
+  );
+
+  const largestInstances = metrics.resource_pressure.largest_inotify_instances;
+  const largestWatches = metrics.resource_pressure.largest_inotify_watches;
+  if (
+    largestInstances?.inotify_instances != null &&
+    largestInstances.inotify_instances >= instanceWarnThreshold
+  ) {
+    observeReasons.push(
+      resourceUsageReason({
+        scope: "project",
+        resource: "inotify_instances",
+        actual: largestInstances.inotify_instances,
+        threshold: instanceWarnThreshold,
+        project_id: largestInstances.project_id,
+      }),
+    );
+  }
+  if (
+    largestWatches?.inotify_watches != null &&
+    largestWatches.inotify_watches >= watchWarnThreshold
+  ) {
+    observeReasons.push(
+      resourceUsageReason({
+        scope: "project",
+        resource: "inotify_watches",
+        actual: largestWatches.inotify_watches,
+        threshold: watchWarnThreshold,
+        project_id: largestWatches.project_id,
+      }),
+    );
+  }
+  maybeDirectOffender({
+    offenders: directOffenders,
+    summary: largestInstances,
+    resource: "inotify_instances",
+    threshold: instanceStopThreshold,
+  });
+  maybeDirectOffender({
+    offenders: directOffenders,
+    summary: largestWatches,
+    resource: "inotify_watches",
+    threshold: watchStopThreshold,
+  });
+  for (const offender of directOffenders.values()) {
+    pressureReasons.push(offender.reason);
+  }
+
+  const hostInstanceObserve = percentThreshold(
+    inotifyInstancesLimit,
+    HOST_RESOURCE_OBSERVE_RATIO,
+  );
+  const hostInstancePressure = percentThreshold(
+    inotifyInstancesLimit,
+    HOST_RESOURCE_PRESSURE_RATIO,
+  );
+  const hostInstanceEmergency = percentThreshold(
+    inotifyInstancesLimit,
+    HOST_RESOURCE_EMERGENCY_RATIO,
+  );
+  const hostWatchObserve = percentThreshold(
+    inotifyWatchesLimit,
+    HOST_RESOURCE_OBSERVE_RATIO,
+  );
+  const hostWatchPressure = percentThreshold(
+    inotifyWatchesLimit,
+    HOST_RESOURCE_PRESSURE_RATIO,
+  );
+  const hostWatchEmergency = percentThreshold(
+    inotifyWatchesLimit,
+    HOST_RESOURCE_EMERGENCY_RATIO,
+  );
+  const totalInstances = metrics.resource_pressure.total_inotify_instances;
+  const totalWatches = metrics.resource_pressure.total_inotify_watches;
+
+  if (
+    hostInstanceEmergency != null &&
+    totalInstances >= hostInstanceEmergency
+  ) {
+    emergencyReasons.push(
+      resourceUsageReason({
+        scope: "host",
+        resource: "inotify_instances",
+        actual: totalInstances,
+        threshold: hostInstanceEmergency,
+      }),
+    );
+  } else if (
+    hostInstancePressure != null &&
+    totalInstances >= hostInstancePressure
+  ) {
+    pressureReasons.push(
+      resourceUsageReason({
+        scope: "host",
+        resource: "inotify_instances",
+        actual: totalInstances,
+        threshold: hostInstancePressure,
+      }),
+    );
+  } else if (
+    hostInstanceObserve != null &&
+    totalInstances >= hostInstanceObserve
+  ) {
+    observeReasons.push(
+      resourceUsageReason({
+        scope: "host",
+        resource: "inotify_instances",
+        actual: totalInstances,
+        threshold: hostInstanceObserve,
+      }),
+    );
+  }
+
+  if (hostWatchEmergency != null && totalWatches >= hostWatchEmergency) {
+    emergencyReasons.push(
+      resourceUsageReason({
+        scope: "host",
+        resource: "inotify_watches",
+        actual: totalWatches,
+        threshold: hostWatchEmergency,
+      }),
+    );
+  } else if (hostWatchPressure != null && totalWatches >= hostWatchPressure) {
+    pressureReasons.push(
+      resourceUsageReason({
+        scope: "host",
+        resource: "inotify_watches",
+        actual: totalWatches,
+        threshold: hostWatchPressure,
+      }),
+    );
+  } else if (hostWatchObserve != null && totalWatches >= hostWatchObserve) {
+    observeReasons.push(
+      resourceUsageReason({
+        scope: "host",
+        resource: "inotify_watches",
+        actual: totalWatches,
+        threshold: hostWatchObserve,
+      }),
+    );
+  }
+
+  return { observeReasons, pressureReasons, emergencyReasons, directOffenders };
+}
+
+function hasMemoryPressureReason(reason: string | undefined): boolean {
+  return !!reason?.split(",").some((part) => part.startsWith("memory_"));
+}
+
+function hasResourcePressureReason(reason: string | undefined): boolean {
+  return !!reason?.split(",").some((part) => part.startsWith("resource_"));
+}
+
 export function classifyHostPressure(
   metrics: HostCurrentMetrics | undefined,
   now: number = Date.now(),
+  opts: { resourcePressureMode?: ResourcePressureMode } = {},
 ): HostPressureState | undefined {
   if (!metrics) return undefined;
   const usedPercent = parseNonNegativeNumber(metrics.memory_used_percent);
@@ -148,6 +460,7 @@ export function classifyHostPressure(
   const emergencyReasons: string[] = [];
   const pressureReasons: string[] = [];
   const observeReasons: string[] = [];
+  const mode = opts.resourcePressureMode ?? RESOURCE_PRESSURE_MODE;
   if (usedPercent != null && usedPercent >= EMERGENCY_MEMORY_USED_PERCENT) {
     emergencyReasons.push(
       `memory_used_percent>=${EMERGENCY_MEMORY_USED_PERCENT}`,
@@ -185,6 +498,12 @@ export function classifyHostPressure(
       `memory_available_bytes<=${OBSERVE_MEMORY_AVAILABLE_BYTES}`,
     );
   }
+  if (mode !== "metrics") {
+    const resourceFindings = resourcePressureFindings(metrics);
+    emergencyReasons.push(...resourceFindings.emergencyReasons);
+    pressureReasons.push(...resourceFindings.pressureReasons);
+    observeReasons.push(...resourceFindings.observeReasons);
+  }
   if (emergencyReasons.length > 0) {
     return {
       zone: "emergency",
@@ -220,12 +539,14 @@ export function buildStopCandidates({
   getStopState,
   zone,
   now,
+  directResourceOffenders,
 }: {
   projects: ProjectRow[];
   policies: Map<string, ProjectStopPolicyRow>;
   getStopState: (project_id: string) => ReturnType<typeof getProjectStopState>;
   zone: HostPressureZone;
   now: number;
+  directResourceOffenders?: Map<string, DirectResourceOffender>;
 }): StopCandidate[] {
   const candidates: StopCandidate[] = [];
   for (const row of projects) {
@@ -236,23 +557,24 @@ export function buildStopCandidates({
     }
     const project_id = `${row.project_id ?? ""}`.trim();
     if (!project_id) continue;
+    const directResourceOffender = directResourceOffenders?.get(project_id);
     const policy = policies.get(project_id);
     const stopState = getStopState(project_id);
     const startupProtected =
       STARTUP_PROTECTION_MS > 0 &&
       stopState?.last_started_ms != null &&
       now - stopState.last_started_ms < STARTUP_PROTECTION_MS;
-    if (startupProtected && zone !== "emergency") {
+    if (startupProtected && zone !== "emergency" && !directResourceOffender) {
       continue;
     }
     const protectOverride = policy?.stop_override === "protect";
-    if (protectOverride && zone !== "emergency") {
+    if (protectOverride && zone !== "emergency" && !directResourceOffender) {
       continue;
     }
     const cooldownActive =
       stopState?.pressure_cooldown_until_ms != null &&
       stopState.pressure_cooldown_until_ms > now;
-    if (cooldownActive && zone !== "emergency") {
+    if (cooldownActive && zone !== "emergency" && !directResourceOffender) {
       continue;
     }
     const runQuota = parseRunQuota(row.run_quota);
@@ -275,6 +597,9 @@ export function buildStopCandidates({
     if (cooldownActive) {
       explanation.push("cooldown_active");
     }
+    if (directResourceOffender) {
+      explanation.push(`direct:${directResourceOffender.reason}`);
+    }
     explanation.push(
       `priority:${Math.max(0, policy?.shared_compute_priority ?? 0)}`,
     );
@@ -282,6 +607,7 @@ export function buildStopCandidates({
     candidates.push({
       project_id,
       state,
+      direct_resource_score: directResourceOffender?.score ?? 0,
       shared_compute_priority: Math.max(
         0,
         policy?.shared_compute_priority ?? 0,
@@ -302,6 +628,9 @@ export function buildStopCandidates({
     });
   }
   candidates.sort((left, right) => {
+    if (left.direct_resource_score !== right.direct_resource_score) {
+      return right.direct_resource_score - left.direct_resource_score;
+    }
     if (left.override_rank !== right.override_rank) {
       return left.override_rank - right.override_rank;
     }
@@ -409,7 +738,10 @@ export function startHostPressureController({
   const runOnce = async (trigger: string): Promise<void> => {
     const now = Date.now();
     const metrics = (await refreshMetrics()) ?? getCurrentMetrics();
-    const classified = classifyHostPressure(metrics, now);
+    const resourcePressureMode = RESOURCE_PRESSURE_MODE;
+    const classified = classifyHostPressure(metrics, now, {
+      resourcePressureMode,
+    });
     if (!classified) {
       currentState = undefined;
       return;
@@ -428,6 +760,28 @@ export function startHostPressureController({
     if (pressureSinceMs == null) {
       pressureSinceMs = now;
     }
+    const resourceOnlyPressure =
+      hasResourcePressureReason(classified.reason) &&
+      !hasMemoryPressureReason(classified.reason);
+    const directResourceOffenders =
+      resourcePressureMode === "enforce"
+        ? resourcePressureFindings(metrics).directOffenders
+        : undefined;
+    const directResourceOffenderCount = directResourceOffenders?.size ?? 0;
+    if (
+      resourceOnlyPressure &&
+      (resourcePressureMode === "signal" ||
+        (resourcePressureMode === "enforce" &&
+          directResourceOffenderCount === 0))
+    ) {
+      publishState({
+        zone: classified.zone,
+        reason: classified.reason,
+        evaluated_at_ms: now,
+        candidate_count: directResourceOffenderCount,
+      });
+      return;
+    }
     const projects = listProjects();
     const policies = new Map(
       listProjectStopPolicies().map((row) => [row.project_id, row]),
@@ -438,6 +792,7 @@ export function startHostPressureController({
       getStopState: (project_id) => getProjectStopState(project_id),
       zone: classified.zone,
       now,
+      directResourceOffenders,
     });
     for (const candidate of candidates) {
       upsertProjectStopState({
@@ -653,4 +1008,5 @@ export function startHostPressureController({
 export const _test = {
   classifyHostPressure,
   buildStopCandidates,
+  resourcePressureFindings,
 };
