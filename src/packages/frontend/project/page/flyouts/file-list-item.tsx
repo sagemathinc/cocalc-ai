@@ -142,6 +142,7 @@ interface FileListItemProps {
   tooltip?: React.JSX.Element | string;
   dimFileExtensions?: boolean;
   currentPath?: string;
+  readOnlyViewer?: boolean;
   dragPaths?: string[];
 }
 
@@ -171,6 +172,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     tooltip,
     dimFileExtensions = false,
     currentPath,
+    readOnlyViewer = false,
     dragPaths,
   } = props;
   const isActive = mode === "active";
@@ -187,7 +189,9 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
   const bodyRef = useRef<HTMLDivElement>(null);
   const fullPath = path_to_file(effective_current_path, item.name);
   const enableDnD =
-    !student_project_functionality.disableActions && item.name !== "..";
+    !readOnlyViewer &&
+    !student_project_functionality.disableActions &&
+    item.name !== "..";
   const { dragRef, dragListeners, dragAttributes, isDragging } = useFileDrag(
     `flyout-row-${fullPath}`,
     dragPaths ?? [fullPath],
@@ -502,6 +506,40 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     }
 
     ctx.push({ key: "divider-header", type: "divider" });
+
+    if (readOnlyViewer) {
+      if (name !== "..") {
+        ctx.push({
+          key: "copy",
+          label: "Copy",
+          icon: <Icon name="copy" />,
+          onClick: () => {
+            const pathFn = path_to_file(effective_current_path, name);
+            if (!multiple) {
+              onChecked?.(true);
+            }
+            triggerFlyoutFileAction({
+              actions,
+              action: "copy",
+              path: pathFn,
+              multiple,
+            });
+          },
+        });
+      }
+      if (!multiple && name !== ".." && !isDir) {
+        const full_path = path_to_file(effective_current_path, name);
+        ctx.push({
+          key: "download",
+          label: "Download",
+          icon: <Icon name="cloud-download" />,
+          onClick: () => {
+            actions?.download_file({ path: full_path, log: true });
+          },
+        });
+      }
+      return ctx;
+    }
 
     // the file or directory actions
     makeContextMenuEntries(ctx, item, multiple);

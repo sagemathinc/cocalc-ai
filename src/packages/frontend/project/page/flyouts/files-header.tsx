@@ -510,7 +510,7 @@ export function FilesHeader({
   }
 
   function wrapDropzone(children: React.JSX.Element): React.JSX.Element {
-    if (disableUploads) return children;
+    if (disableUploads || readOnlyViewer) return children;
     return (
       <FileUploadWrapper
         project_id={project_id}
@@ -831,35 +831,37 @@ export function FilesHeader({
                 ]}
               />
             </Space>
-            <Space.Compact orientation="horizontal" size={"small"}>
-              <FileHeaderTooltip title="Upload files">
-                <span style={{ display: "inline-flex" }}>
-                  <Button
-                    aria-label="Upload files"
-                    className={uploadClassName}
-                    size="small"
-                    disabled={!projectIsRunning || disableUploads}
-                  >
-                    <Icon name={"upload"} />
-                  </Button>
-                </span>
-              </FileHeaderTooltip>
-              <FileHeaderTooltip title="Create file or folder">
-                <span style={{ display: "inline-flex" }}>
-                  <QuickCreateDropdown
-                    title={<Icon name={"plus-circle"} />}
-                    size="small"
-                    showDown={false}
-                    quickCreateIds={mergedLauncher.quickCreate}
-                    availableFeatures={availableFeatures}
-                    onCreateFile={createQuickFile}
-                    onCreateFolder={createQuickFolder}
-                    onCustomize={() => setShowCustomizeModal(true)}
-                    moreFileTypeItems={moreFileTypeMenuItems}
-                  />
-                </span>
-              </FileHeaderTooltip>
-            </Space.Compact>
+            {!readOnlyViewer ? (
+              <Space.Compact orientation="horizontal" size={"small"}>
+                <FileHeaderTooltip title="Upload files">
+                  <span style={{ display: "inline-flex" }}>
+                    <Button
+                      aria-label="Upload files"
+                      className={uploadClassName}
+                      size="small"
+                      disabled={!projectIsRunning || disableUploads}
+                    >
+                      <Icon name={"upload"} />
+                    </Button>
+                  </span>
+                </FileHeaderTooltip>
+                <FileHeaderTooltip title="Create file or folder">
+                  <span style={{ display: "inline-flex" }}>
+                    <QuickCreateDropdown
+                      title={<Icon name={"plus-circle"} />}
+                      size="small"
+                      showDown={false}
+                      quickCreateIds={mergedLauncher.quickCreate}
+                      availableFeatures={availableFeatures}
+                      onCreateFile={createQuickFile}
+                      onCreateFolder={createQuickFolder}
+                      onCustomize={() => setShowCustomizeModal(true)}
+                      moreFileTypeItems={moreFileTypeMenuItems}
+                    />
+                  </span>
+                </FileHeaderTooltip>
+              </Space.Compact>
+            ) : null}
           </div>,
         )}
         <div
@@ -924,7 +926,7 @@ export function FilesHeader({
             </FileHeaderTooltip>
           </Space.Compact>
           <Space.Compact orientation="horizontal" size="small">
-            {!lite ? (
+            {!lite && !readOnlyViewer ? (
               <FileHeaderTooltip title="Snapshots and backups">
                 <span style={{ display: "inline-flex" }}>
                   <DropdownMenu
@@ -997,7 +999,7 @@ export function FilesHeader({
                 </span>
               </FileHeaderTooltip>
             ) : null}
-            {platformMode === PLATFORM_MODE_CLOUD ? (
+            {platformMode === PLATFORM_MODE_CLOUD && !readOnlyViewer ? (
               <CloneProject project_id={project_id} flyout />
             ) : null}
           </Space.Compact>

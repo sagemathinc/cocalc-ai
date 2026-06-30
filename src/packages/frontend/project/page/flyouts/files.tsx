@@ -238,7 +238,8 @@ export function FilesFlyout({
   const [selectionOnMouseDown, setSelectionOnMouseDown] = useState<string>("");
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
-  const disableUploads = student_project_functionality.disableUploads ?? false;
+  const disableUploads =
+    readOnlyViewer || (student_project_functionality.disableUploads ?? false);
   const virtuosoRef = useRef<VirtuosoHandle>(null as any);
   const activePath = useMemo(() => {
     return tab_to_path(activeTab);
@@ -930,6 +931,7 @@ export function FilesFlyout({
           manageStarredFiles.setStarredPath(normalizedPath, starState);
         }}
         currentPath={effective_current_path}
+        readOnlyViewer={readOnlyViewer}
         dragPaths={
           checked_files.includes(fullPath)
             ? checked_files.toArray()
