@@ -81,7 +81,13 @@ export function normalizeShareDescriptionMarkdown(value: string): string {
   // Some legacy public_paths descriptions were imported with doubled LaTeX
   // escapes, e.g. "\\(" instead of "\(". Collapse only LaTeX-looking
   // sequences so ordinary markdown backslashes are not broadly rewritten.
-  return value.replace(/\\\\(?=(?:[()[\]]|[A-Za-z]+))/g, "\\");
+  return value
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n\\n/g, "\n\n")
+    .replace(/\\n(?![A-Za-z])/g, "\n")
+    .replace(/\\r(?![A-Za-z])/g, "\n")
+    .replace(/\\t(?![A-Za-z])/g, "\t")
+    .replace(/\\\\(?=(?:[()[\]]|[A-Za-z]+))/g, "\\");
 }
 
 function ShareDescription({ value }: { value: string }) {

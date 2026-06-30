@@ -15,6 +15,7 @@ const restoreProjectHostTokensForRestartMock = jest.fn();
 const getServerSettingsMock = jest.fn();
 const getRoutedHostControlClientMock = jest.fn();
 const maybeAutoGrowHostDiskForReservationFailureMock = jest.fn();
+const removeHostSshKnownHostAliasMock = jest.fn();
 
 jest.mock("./host-util", () => ({
   provisionIfNeeded: (...args: any[]) => provisionIfNeededMock(...args),
@@ -57,6 +58,11 @@ jest.mock("@cocalc/server/project-host/auto-grow", () => ({
     maybeAutoGrowHostDiskForReservationFailureMock(...args),
 }));
 
+jest.mock("./host-ssh-known-hosts", () => ({
+  removeHostSshKnownHostAlias: (...args: any[]) =>
+    removeHostSshKnownHostAliasMock(...args),
+}));
+
 beforeAll(async () => {
   await before({ noConat: true });
 }, 15000);
@@ -93,6 +99,7 @@ beforeEach(async () => {
     grown: false,
     reason: "not a reservation failure",
   });
+  removeHostSshKnownHostAliasMock.mockResolvedValue(undefined);
   getProviderContextMock.mockResolvedValue({
     entry: {
       provider: {
@@ -181,6 +188,14 @@ describe("cloud host start failures", () => {
     });
     expect(rows[0].metadata.metrics?.current).toBeUndefined();
     expect(rows[0].metadata.last_error).toContain("QUOTA_EXCEEDED");
+    expect(removeHostSshKnownHostAliasMock).toHaveBeenCalledWith({
+      host_id: hostId,
+      reason: "reprovision",
+    });
+    expect(removeHostSshKnownHostAliasMock).toHaveBeenCalledWith({
+      host_id: hostId,
+      reason: "provision",
+    });
   });
 
   it("clears host-scoped runtime deployment overrides when a host is deprovisioned", async () => {
@@ -247,6 +262,10 @@ describe("cloud host start failures", () => {
     );
     expect(rows[0].status).toBe("deprovisioned");
     expect(rows[0].metadata.runtime_deployments).toBeUndefined();
+    expect(removeHostSshKnownHostAliasMock).toHaveBeenCalledWith({
+      host_id: hostId,
+      reason: "delete",
+    });
   });
 
   it("clears Nebius preserved disk ids when a host is fully deprovisioned", async () => {

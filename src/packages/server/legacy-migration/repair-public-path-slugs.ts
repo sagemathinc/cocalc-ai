@@ -11,6 +11,7 @@ import {
 import {
   clean,
   legacyPublicPathSlugForRecord,
+  normalizeLegacyPublicPathDescription,
 } from "@cocalc/server/legacy-migration/public-path-slugs";
 
 type Options = {
@@ -26,6 +27,7 @@ type RepairRow = {
   payload: Record<string, any>;
   share_id: string | null;
   share_slug: string | null;
+  share_description: string | null;
 };
 
 let poolUsed = false;
@@ -137,7 +139,8 @@ async function rowsToRepair(options: Options): Promise<RepairRow[]> {
       SELECT raw.legacy_id,
              raw.payload,
              shares.id AS share_id,
-             shares.slug AS share_slug
+             shares.slug AS share_slug,
+             shares.description AS share_description
         FROM legacy_migration_raw_records raw
         LEFT JOIN public_project_paths shares
           ON shares.legacy_public_path_id=COALESCE(raw.payload->>'id', raw.legacy_id)
@@ -169,11 +172,57 @@ async function updateRawPayloadSlug({
   );
 }
 
+async function updateRawPayloadDescription({
+  legacy_id,
+  description,
+}: {
+  legacy_id: string;
+  description: string | null;
+}): Promise<void> {
+  await pool().query(
+    description == null
+      ? `
+      UPDATE legacy_migration_raw_records
+         SET payload=payload - 'description',
+             updated=NOW()
+       WHERE source='public_paths'
+         AND legacy_id=$1
+    `
+      : `
+      UPDATE legacy_migration_raw_records
+         SET payload=jsonb_set(payload, '{description}', to_jsonb($2::text), true),
+             updated=NOW()
+       WHERE source='public_paths'
+         AND legacy_id=$1
+    `,
+    description == null ? [legacy_id] : [legacy_id, description],
+  );
+}
+
+async function updateShareDescription({
+  share_id,
+  description,
+}: {
+  share_id: string;
+  description: string | null;
+}): Promise<void> {
+  await pool().query(
+    `
+      UPDATE public_project_paths
+         SET description=$2,
+             updated_at=NOW()
+       WHERE id=$1
+    `,
+    [share_id, description],
+  );
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const rows = await rowsToRepair(options);
   let rawChanged = 0;
   let shareChanged = 0;
+  let descriptionChanged = 0;
   let unchanged = 0;
   let skipped = 0;
   let failed = 0;
@@ -207,23 +256,47 @@ async function main(): Promise<void> {
     );
     const usesDuplicateFallback =
       payloadSlug === fallbackSlug && row.share_slug === fallbackSlug;
-    const needsRawUpdate = payloadSlug !== nextSlug;
-    const needsShareUpdate =
-      row.share_id != null && row.share_slug !== nextSlug;
+    let needsRawUpdate = payloadSlug !== nextSlug;
+    let needsShareUpdate = row.share_id != null && row.share_slug !== nextSlug;
+    const rawDescription = clean(row.payload.description) ?? null;
+    const nextDescription =
+      normalizeLegacyPublicPathDescription(row.payload.description) ?? null;
+    const needsRawDescriptionUpdate = rawDescription !== nextDescription;
+    const needsShareDescriptionUpdate =
+      row.share_id != null &&
+      row.share_description === rawDescription &&
+      row.share_description !== nextDescription;
     if (usesDuplicateFallback) {
+      needsRawUpdate = false;
+      needsShareUpdate = false;
+    }
+    if (
+      !needsRawUpdate &&
+      !needsShareUpdate &&
+      !needsRawDescriptionUpdate &&
+      !needsShareDescriptionUpdate
+    ) {
       unchanged += 1;
       continue;
     }
-    if (!needsRawUpdate && !needsShareUpdate) {
-      unchanged += 1;
-      continue;
+    const changes: string[] = [];
+    if (needsRawUpdate || needsShareUpdate) {
+      changes.push(
+        `slug ${payloadSlug ?? "(none)"} -> ${nextSlug}${row.share_slug ? `; share ${row.share_slug} -> ${nextSlug}` : ""}`,
+      );
+    }
+    if (needsRawDescriptionUpdate || needsShareDescriptionUpdate) {
+      changes.push("description escaped newlines -> real newlines");
     }
     console.log(
-      `${options.apply ? "repair" : "dry-run"} legacy_public_path=${legacyPublicPathId} slug ${payloadSlug ?? "(none)"} -> ${nextSlug}${row.share_slug ? `; share ${row.share_slug} -> ${nextSlug}` : ""}`,
+      `${options.apply ? "repair" : "dry-run"} legacy_public_path=${legacyPublicPathId} ${changes.join("; ")}`,
     );
     if (!options.apply) {
       if (needsRawUpdate) rawChanged += 1;
       if (needsShareUpdate) shareChanged += 1;
+      if (needsRawDescriptionUpdate || needsShareDescriptionUpdate) {
+        descriptionChanged += 1;
+      }
       continue;
     }
     try {
@@ -260,6 +333,21 @@ async function main(): Promise<void> {
         });
         rawChanged += 1;
       }
+      if (needsShareDescriptionUpdate && row.share_id) {
+        await updateShareDescription({
+          share_id: row.share_id,
+          description: nextDescription,
+        });
+      }
+      if (needsRawDescriptionUpdate) {
+        await updateRawPayloadDescription({
+          legacy_id: row.legacy_id,
+          description: nextDescription,
+        });
+      }
+      if (needsRawDescriptionUpdate || needsShareDescriptionUpdate) {
+        descriptionChanged += 1;
+      }
     } catch (err) {
       failed += 1;
       console.error(
@@ -268,7 +356,7 @@ async function main(): Promise<void> {
     }
   }
   console.log(
-    `done: scanned=${rows.length} raw_changed=${rawChanged} share_changed=${shareChanged} unchanged=${unchanged} skipped=${skipped} failed=${failed}`,
+    `done: scanned=${rows.length} raw_changed=${rawChanged} share_changed=${shareChanged} description_changed=${descriptionChanged} unchanged=${unchanged} skipped=${skipped} failed=${failed}`,
   );
   if (failed > 0) {
     process.exitCode = 1;

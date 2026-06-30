@@ -21,6 +21,19 @@ export function clean(value: unknown): string | undefined {
   return s ? s : undefined;
 }
 
+export function normalizeLegacyPublicPathDescription(
+  value: unknown,
+): string | undefined {
+  const text = clean(value);
+  if (!text) return undefined;
+  return text
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n\\n/g, "\n\n")
+    .replace(/\\n(?![A-Za-z])/g, "\n")
+    .replace(/\\r(?![A-Za-z])/g, "\n")
+    .replace(/\\t(?![A-Za-z])/g, "\t");
+}
+
 function normalizeSlug(raw: string): string {
   let slug = raw.trim();
   try {

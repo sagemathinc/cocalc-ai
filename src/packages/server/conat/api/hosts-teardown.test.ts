@@ -1,9 +1,21 @@
+const removeHostSshKnownHostAliasMock = jest.fn();
+
+jest.mock("@cocalc/server/cloud/host-ssh-known-hosts", () => ({
+  removeHostSshKnownHostAlias: (...args: any[]) =>
+    removeHostSshKnownHostAliasMock(...args),
+}));
+
 import {
   deleteHostInternalHelper,
   markHostDeprovisionedInternal,
 } from "./hosts-teardown";
 
 describe("hosts teardown helpers", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    removeHostSshKnownHostAliasMock.mockResolvedValue(undefined);
+  });
+
   it("clears host-scoped runtime deployments when marking a host deprovisioned", async () => {
     const clearHostRuntimeDeployments = jest.fn(async () => undefined);
     const updateHostDeprovisionedRecord = jest.fn(async () => undefined);
@@ -50,6 +62,10 @@ describe("hosts teardown helpers", () => {
     expect(markHostProjectsUnprovisioned).toHaveBeenCalledWith(
       "e5536552-6cb0-4426-b214-212af4779efd",
     );
+    expect(removeHostSshKnownHostAliasMock).toHaveBeenCalledWith({
+      host_id: "e5536552-6cb0-4426-b214-212af4779efd",
+      reason: "delete",
+    });
   });
 
   it("clears host-scoped runtime deployments for local deprovisioned deletes", async () => {
@@ -79,6 +95,10 @@ describe("hosts teardown helpers", () => {
     );
     expect(clearHostRuntimeDeployments).toHaveBeenCalledWith({
       host_id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+    });
+    expect(removeHostSshKnownHostAliasMock).toHaveBeenCalledWith({
+      host_id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+      reason: "delete",
     });
   });
 
@@ -112,5 +132,9 @@ describe("hosts teardown helpers", () => {
       "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
     );
     expect(enqueueCloudVmWork).not.toHaveBeenCalled();
+    expect(removeHostSshKnownHostAliasMock).toHaveBeenCalledWith({
+      host_id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+      reason: "delete",
+    });
   });
 });

@@ -2399,6 +2399,173 @@ describe("ConatClient routed project-host reconnect", () => {
     jest.useRealTimers();
   });
 
+  it("coalesces concurrent direct host resolution fallbacks by host", async () => {
+    jest.useFakeTimers();
+
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+
+    const hubRequest = jest.fn(async (_subject: string, mesg: any) => {
+      if (mesg?.name === "hosts.resolveHostConnection") {
+        return {
+          data: {
+            host_id: "host-1",
+            connect_url: "http://project-host",
+            host_session_id: "session-1",
+          },
+        };
+      }
+      throw Error(`unexpected hub request ${mesg?.name}`);
+    });
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: true,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: hubRequest,
+    };
+
+    const ensureHostInfo = jest.fn(
+      () => new Promise<undefined>(() => undefined),
+    );
+
+    jest.resetModules();
+    jest.dontMock("@cocalc/util/reuse-in-flight");
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({}),
+            host_info: immutable.Map({}),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn(() => hubClient),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    const refreshes = Promise.all([
+      client.refreshHostRoutingInfo("host-1"),
+      client.refreshHostRoutingInfo("host-1"),
+      client.refreshHostRoutingInfo("host-1"),
+    ]);
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const results = await refreshes;
+    expect(ensureHostInfo).toHaveBeenCalledTimes(1);
+    expect(hubRequest).toHaveBeenCalledTimes(1);
+    expect(hubRequest).toHaveBeenCalledWith(
+      "hub.account.acct-1.api",
+      {
+        name: "hosts.resolveHostConnection",
+        args: [{ host_id: "host-1" }],
+      },
+      expect.objectContaining({ timeout: 5_000 }),
+    );
+    expect(results).toEqual([
+      {
+        host_id: "host-1",
+        routing_key: "host-1",
+        address: "http://project-host",
+        host_session_id: "session-1",
+      },
+      {
+        host_id: "host-1",
+        routing_key: "host-1",
+        address: "http://project-host",
+        host_session_id: "session-1",
+      },
+      {
+        host_id: "host-1",
+        routing_key: "host-1",
+        address: "http://project-host",
+        host_session_id: "session-1",
+      },
+    ]);
+
+    jest.useRealTimers();
+  });
+
   it("does not privately resolve host info when reconnecting a public directory share", async () => {
     jest.useFakeTimers();
 

@@ -37,6 +37,7 @@ import {
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
+import { sshHostKeyAliasForHostId } from "@cocalc/server/cloud/host-ssh-known-hosts";
 
 const logger = getLogger("server:conat:api:hosts");
 const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
@@ -50,10 +51,12 @@ async function runSshScript({
   target,
   script,
   identityFile,
+  hostKeyAlias,
 }: {
   target: string;
   script: string;
   identityFile: string;
+  hostKeyAlias?: string;
 }): Promise<{ stdout: string; stderr: string }> {
   const args = [
     "-o",
@@ -63,6 +66,9 @@ async function runSshScript({
     "-o",
     "StrictHostKeyChecking=accept-new",
     "-o",
+    ...(hostKeyAlias
+      ? ["HostKeyAlias=" + hostKeyAlias, "-o", "CheckHostIP=no", "-o"]
+      : []),
     "ConnectTimeout=10",
     "-i",
     identityFile,
@@ -592,11 +598,13 @@ echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
   logger.info("host upgrade: reconciling host bootstrap over ssh", {
     host_id: opts.host_id,
     target,
+    host_key_alias: sshHostKeyAliasForHostId(opts.host_id),
   });
   const { stdout, stderr } = await runSshScript({
     target,
     script,
     identityFile: sshIdentity.privateKeyPath,
+    hostKeyAlias: sshHostKeyAliasForHostId(opts.host_id),
   });
   if (stdout.trim()) {
     logger.info("host upgrade: bootstrap reconcile stdout", {

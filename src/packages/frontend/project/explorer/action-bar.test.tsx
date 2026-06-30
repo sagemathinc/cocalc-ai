@@ -11,8 +11,13 @@ import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
 
 const getBackups = jest.fn();
 const setOtherSettings = jest.fn();
-const mockFileActionsDropdown = jest.fn(({ extraItems }: any) => (
+const mockFileActionsDropdown = jest.fn(({ extraItems, names }: any) => (
   <div>
+    {(names ?? []).map((name: string) => (
+      <button key={name} type="button">
+        {name}
+      </button>
+    ))}
     {(extraItems ?? []).map((item: any) => (
       <button
         disabled={item.disabled}
@@ -208,7 +213,7 @@ describe("ActionBar", () => {
     );
   });
 
-  it("shows a direct copy action for read-only selections", () => {
+  it("shows download and copy actions for read-only file selections", () => {
     const actions = {
       project_id: "project-1",
       set_file_action: jest.fn(),
@@ -219,6 +224,35 @@ describe("ActionBar", () => {
         project_id="project-1"
         checked_files={immutable.Set(["/work/a.txt"])}
         listing={[{ isDir: false, name: "a.txt" }] as any}
+        current_path="/work"
+        actions={actions}
+        readOnly
+        allowCopyOut
+      />,
+    );
+
+    expect(mockFileActionsDropdown).toHaveBeenCalledWith(
+      expect.objectContaining({
+        names: ["download", "copy"],
+        selectedPaths: ["/work/a.txt"],
+      }),
+    );
+    expect(screen.getByText("download")).toBeInTheDocument();
+    expect(screen.getByText("copy")).toBeInTheDocument();
+    expect(actions.set_file_action).not.toHaveBeenCalled();
+  });
+
+  it("shows a direct copy action for read-only directory selections", () => {
+    const actions = {
+      project_id: "project-1",
+      set_file_action: jest.fn(),
+    } as any;
+
+    render(
+      <ActionBar
+        project_id="project-1"
+        checked_files={immutable.Set(["/work/folder"])}
+        listing={[{ isDir: true, name: "folder" }] as any}
         current_path="/work"
         actions={actions}
         readOnly
