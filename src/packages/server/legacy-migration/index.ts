@@ -24,6 +24,11 @@ import {
   selectActiveHost,
   syncProjectUsersOnHost,
 } from "@cocalc/server/project-host/control";
+import {
+  normalizePublicDirectorySharePath,
+  normalizePublicDirectoryShareSlug,
+  upsertMigratedLegacyPublicDirectoryShare,
+} from "@cocalc/server/public-directory-shares";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { triggerLegacyMigrationProjectRestoreWorker } from "@cocalc/server/legacy-migration/restore-worker";
@@ -62,6 +67,7 @@ import type {
   LegacyMigrationRetryProjectRestoreResponse,
 } from "@cocalc/conat/hub/api/legacy-migration";
 
+import { posix } from "node:path";
 import { assertLegacyMigrationEnabled } from "./enabled";
 import { moneyRound2Up, moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -141,8 +147,14 @@ type LegacyProjectRow = {
   total_count?: number | null;
 };
 
+type LegacyPublicPathRawRecord = {
+  legacy_id: string;
+  payload: Record<string, any>;
+};
+
 let importSchemaReady: Promise<void> | undefined;
 let financialSchemaReady: Promise<void> | undefined;
+let rawRecordsSchemaReady: Promise<void> | undefined;
 
 async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
   importSchemaReady ??= (async () => {
@@ -240,6 +252,29 @@ async function ensureLegacyMigrationFinancialSchema(): Promise<void> {
   await financialSchemaReady;
 }
 
+async function ensureLegacyMigrationRawRecordsSchema(): Promise<void> {
+  rawRecordsSchemaReady ??= getPool()
+    .query(
+      `
+    CREATE TABLE IF NOT EXISTS legacy_migration_raw_records (
+      source VARCHAR(64) NOT NULL,
+      legacy_id TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      created TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated TIMESTAMP NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (source, legacy_id)
+    )
+  `,
+    )
+    .then(async () => {
+      await getPool().query(`
+      CREATE INDEX IF NOT EXISTS legacy_migration_raw_records_updated_idx
+        ON legacy_migration_raw_records(updated)
+    `);
+    });
+  await rawRecordsSchemaReady;
+}
+
 function normalizeEmail(value: unknown): string {
   return `${value ?? ""}`.trim().toLowerCase();
 }
@@ -272,6 +307,161 @@ function projectDescription(row: LegacyProjectRow): string {
     parts.push("", description);
   }
   return parts.join("\n");
+}
+
+function legacyBoolean(value: unknown): boolean {
+  return value === true || `${value}`.toLowerCase() === "true";
+}
+
+function legacyPublicPathSlug(row: Record<string, any>): string | null {
+  const raw =
+    clean(row.slug) ??
+    clean(row.url) ??
+    clean(row.name) ??
+    (clean(row.project_id) && clean(row.path)
+      ? `${clean(row.project_id)}/${clean(row.path)}`
+      : undefined);
+  if (!raw) return null;
+  let slug = raw.trim();
+  try {
+    if (/^https?:\/\//i.test(slug)) {
+      slug = new URL(slug).pathname;
+    }
+  } catch {
+    // Fall through to path-style normalization below.
+  }
+  slug = slug.replace(/^\/+|\/+$/g, "");
+  if (slug.toLowerCase().startsWith("share/")) {
+    slug = slug.slice("share/".length);
+  }
+  return normalizePublicDirectoryShareSlug(slug);
+}
+
+function normalizeLegacyPublicPathSharePath(row: Record<string, any>): string {
+  const rawPath = clean(row.path) ?? clean(row.original_path) ?? ".";
+  const originalPath = normalizePublicDirectorySharePath(rawPath);
+  if (clean(row.original_path_type) === "file") {
+    return normalizePublicDirectorySharePath(posix.dirname(originalPath));
+  }
+  return originalPath;
+}
+
+function legacyPublicPathVisibility(
+  row: Record<string, any>,
+): "disabled" | "listed" | "unlisted" {
+  if (legacyBoolean(row.disabled)) return "disabled";
+  if (legacyBoolean(row.unlisted)) return "unlisted";
+  return "listed";
+}
+
+function validLegacyPublicPathSiteLicenseId(
+  row: Record<string, any>,
+): string | null {
+  const siteLicenseId = clean(row.site_license_id);
+  return siteLicenseId && isValidUUID(siteLicenseId) ? siteLicenseId : null;
+}
+
+function legacyPublicPathMetadata(row: Record<string, any>) {
+  return {
+    authenticated: row.authenticated ?? null,
+    auth: row.auth ?? null,
+    compute_image: row.compute_image ?? null,
+    counter: row.counter ?? null,
+    legacy_path: clean(row.original_path) ?? clean(row.path) ?? null,
+    legacy_path_type: clean(row.original_path_type) ?? "directory",
+    legacy_site_license_id: clean(row.legacy_site_license_id),
+    jupyter_api: row.jupyter_api ?? null,
+    source: "legacy-migration",
+    token: row.token ?? null,
+    vhost: row.vhost ?? null,
+  };
+}
+
+async function replayLegacyPublicPathsForProject({
+  account_id,
+  legacy_project_id,
+  project_id,
+}: {
+  account_id: string;
+  legacy_project_id: string;
+  project_id: string;
+}): Promise<void> {
+  await ensureLegacyMigrationRawRecordsSchema();
+  const { rows } = await getPool().query<LegacyPublicPathRawRecord>(
+    `
+      SELECT legacy_id, payload
+        FROM legacy_migration_raw_records
+       WHERE source='public_paths'
+         AND payload->>'project_id'=$1
+       ORDER BY payload->>'created', legacy_id
+    `,
+    [legacy_project_id],
+  );
+  if (rows.length === 0) return;
+
+  let imported = 0;
+  let skipped = 0;
+  for (const { legacy_id, payload } of rows) {
+    const legacyPublicPathId = clean(payload.id) ?? legacy_id;
+    const slug = legacyPublicPathSlug(payload);
+    if (!legacyPublicPathId || !slug) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await upsertMigratedLegacyPublicDirectoryShare({
+        account_id,
+        project_id,
+        path: normalizeLegacyPublicPathSharePath(payload),
+        slug,
+        visibility: legacyPublicPathVisibility(payload),
+        requires_auth: true,
+        availability_status: "available",
+        title: clean(payload.title) ?? clean(payload.name) ?? null,
+        description: clean(payload.description) ?? null,
+        license: clean(payload.license) ?? null,
+        image: clean(payload.image) ?? null,
+        redirect: clean(payload.redirect) ?? null,
+        site_license_id: validLegacyPublicPathSiteLicenseId(payload),
+        metadata: legacyPublicPathMetadata(payload),
+        legacy_public_path_id: legacyPublicPathId,
+        legacy_url: clean(payload.url) ?? null,
+        last_edited: payload.last_edited ?? payload.last_saved ?? null,
+        disabled: legacyBoolean(payload.disabled),
+      });
+      imported += 1;
+    } catch (err) {
+      skipped += 1;
+      logger.warn("failed to replay legacy public path", {
+        legacy_project_id,
+        project_id,
+        legacy_public_path_id: legacyPublicPathId,
+        error: `${err}`,
+      });
+    }
+  }
+  logger.info("replayed legacy public paths for imported project", {
+    legacy_project_id,
+    project_id,
+    imported,
+    skipped,
+  });
+}
+
+async function replayLegacyPublicPathsForProjectBestEffort(opts: {
+  account_id: string;
+  legacy_project_id: string;
+  project_id: string;
+}): Promise<void> {
+  try {
+    await replayLegacyPublicPathsForProject(opts);
+  } catch (err) {
+    logger.warn("failed to replay legacy public paths for imported project", {
+      legacy_project_id: opts.legacy_project_id,
+      project_id: opts.project_id,
+      error: `${err}`,
+    });
+  }
 }
 
 function restoreStatusForProject(
@@ -2565,6 +2755,11 @@ async function importOneProject({
         legacy_project_id,
         project_id: existingProjectId,
       });
+      await replayLegacyPublicPathsForProjectBestEffort({
+        account_id,
+        legacy_project_id,
+        project_id: existingProjectId,
+      });
       return {
         legacy_project_id,
         project_id: existingProjectId,
@@ -2658,6 +2853,11 @@ async function importOneProject({
       legacy_project_id,
       project_id: migration.project_id,
     });
+    await replayLegacyPublicPathsForProjectBestEffort({
+      account_id,
+      legacy_project_id,
+      project_id: migration.project_id,
+    });
     return {
       legacy_project_id,
       project_id: migration.project_id,
@@ -2734,6 +2934,11 @@ async function importOneProject({
       restore_status,
       restore_lro_op_id,
       restore_error: null,
+    });
+    await replayLegacyPublicPathsForProjectBestEffort({
+      account_id,
+      legacy_project_id,
+      project_id,
     });
     return {
       legacy_project_id,
