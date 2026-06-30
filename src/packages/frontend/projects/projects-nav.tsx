@@ -45,6 +45,9 @@ import { normalizeProjectStateForDisplay } from "./host-operational";
 import { NewProjectCreator } from "./create-project";
 
 const PROJECT_NAME_STYLE: CSS = {
+  alignItems: "center",
+  display: "inline-flex",
+  gap: 4,
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -66,6 +69,8 @@ function getStoredProjectsNavMode(): ProjectsNavMode {
 
 interface ProjectTabProps {
   project_id: string;
+  starred: boolean;
+  onToggleStar: (project_id: string) => void;
 }
 
 function useProjectStatusAlerts(project_id: string) {
@@ -76,7 +81,45 @@ function useProjectStatusAlerts(project_id: string) {
   );
 }
 
-function ProjectTab({ project_id }: ProjectTabProps) {
+function ProjectStarButton({
+  project_id,
+  starred,
+  onToggleStar,
+}: {
+  project_id: string;
+  starred: boolean;
+  onToggleStar: (project_id: string) => void;
+}) {
+  const label = starred ? "Unstar project" : "Star project";
+  return (
+    <Tooltip title={label}>
+      <Button
+        aria-label={label}
+        size="small"
+        type="text"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggleStar(project_id);
+        }}
+        style={{
+          color: starred ? COLORS.STAR : COLORS.GRAY_L,
+          height: 22,
+          lineHeight: "20px",
+          padding: "0 2px",
+        }}
+      >
+        <Icon name={starred ? "star-filled" : "star"} />
+      </Button>
+    </Tooltip>
+  );
+}
+
+function ProjectTab({ project_id, starred, onToggleStar }: ProjectTabProps) {
   const { width } = useItemContext();
 
   // determine, if the "no internet" icon + text is shown – only known for sure, if project is running
@@ -237,7 +280,22 @@ function ProjectTab({ project_id }: ProjectTabProps) {
         {icon}
         {renderNoInternet()}
         {renderAvatar()}{" "}
-        <span style={{ marginLeft: 5, position: "relative" }}>{title}</span>
+        <ProjectStarButton
+          project_id={project_id}
+          starred={starred}
+          onToggleStar={onToggleStar}
+        />
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            position: "relative",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {title}
+        </span>
       </div>
     </div>
   );
@@ -276,7 +334,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
     "projects",
     "public_project_titles",
   );
-  const { bookmarkedProjects } = useBookmarkedProjects();
+  const { bookmarkedProjects, setProjectBookmarked } = useBookmarkedProjects();
   //const project_map = useTypedRedux("projects", "project_map");
   const [mode, setMode] = useState<ProjectsNavMode>(getStoredProjectsNavMode);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -303,15 +361,34 @@ export function ProjectsNav(props: ProjectsNavProps) {
     return () => window.removeEventListener("keydown", handleKeydown);
   }, [mode]);
 
+  const bookmarkedProjectSet = useMemo(
+    () => new Set(bookmarkedProjects ?? []),
+    [bookmarkedProjects],
+  );
+
+  function isProjectStarred(project_id: string): boolean {
+    return bookmarkedProjectSet.has(project_id);
+  }
+
+  function toggleProjectStar(project_id: string) {
+    setProjectBookmarked(project_id, !isProjectStarred(project_id));
+  }
+
   const items: TabsProps["items"] = useMemo(() => {
     if (openProjects == null) return [];
     return openProjects.toJS().map((project_id) => {
       return {
-        label: <ProjectTab project_id={project_id} />,
+        label: (
+          <ProjectTab
+            project_id={project_id}
+            starred={bookmarkedProjectSet.has(project_id)}
+            onToggleStar={toggleProjectStar}
+          />
+        ),
         key: project_id,
       };
     });
-  }, [openProjects]);
+  }, [bookmarkedProjectSet, openProjects, toggleProjectStar]);
 
   const project_ids: string[] = useMemo(() => {
     if (openProjects == null) return [];
@@ -474,6 +551,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
         ...visual,
         label: labelNode,
         labelText: visual.title,
+        starred: isProjectStarred(project_id),
         closable,
       };
     };
@@ -539,6 +617,11 @@ export function ProjectsNav(props: ProjectsNavProps) {
           >
             {renderLabelNode(option)}
           </span>
+          <ProjectStarButton
+            project_id={project_id}
+            starred={!!option?.starred}
+            onToggleStar={toggleProjectStar}
+          />
           {closable ? (
             <Button
               size="small"
@@ -580,6 +663,13 @@ export function ProjectsNav(props: ProjectsNavProps) {
             {mode === "tabs" ? "Tabs" : "List"}
           </Button>
         </Tooltip>
+        {activeProjectId ? (
+          <ProjectStarButton
+            project_id={activeProjectId}
+            starred={isProjectStarred(activeProjectId)}
+            onToggleStar={toggleProjectStar}
+          />
+        ) : null}
         <Select
           ref={selectRef}
           size="middle"
