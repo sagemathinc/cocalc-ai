@@ -304,6 +304,9 @@ describe("public/docs", () => {
     await waitFor(() =>
       expect(markdown.querySelector(".cocalc-slate-code-block")).not.toBeNull(),
     );
+    expect(
+      markdown.querySelector(".cocalc-slate-code-block .token"),
+    ).not.toBeNull();
     expect(markdown.querySelector("button")).not.toBeNull();
   });
 

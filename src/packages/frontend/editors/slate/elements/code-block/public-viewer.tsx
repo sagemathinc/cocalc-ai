@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Element } from "slate";
 import type { RenderElementProps } from "../register";
 import { register } from "../register";
@@ -23,6 +23,7 @@ const COLLAPSE_THRESHOLD_CHARS = 1200;
 const COLLAPSED_PREVIEW_MAX_LINES = 6;
 const COLLAPSED_PREVIEW_MAX_CHARS = 800;
 const COLLAPSED_PREVIEW_MAX_LINE_CHARS = 180;
+const COPY_BUTTON_RESET_MS = 1500;
 
 function truncateCollapsedLine(line: string): string {
   if (line.length <= COLLAPSED_PREVIEW_MAX_LINE_CHARS) return line;
@@ -44,6 +45,69 @@ function getCollapsedPreview(value: string): string {
     return `${trimmed.slice(0, newline)}...`;
   }
   return `${trimmed}...`;
+}
+
+async function copyText(value: string): Promise<boolean> {
+  if (!value) return false;
+  try {
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall back to execCommand below.
+  }
+  if (typeof document === "undefined") return false;
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+function PublicCodeCopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setCopied(false);
+  }, [value]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), COPY_BUTTON_RESET_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <button
+      aria-label="Copy code block"
+      className="cocalc-slate-code-copy-button"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void copyText(value).then((ok) => {
+          if (ok) setCopied(true);
+        });
+      }}
+      type="button"
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
 }
 
 const StaticElement: React.FC<RenderElementProps> = (props) => {
@@ -92,7 +156,12 @@ function StaticCodeBlockElement({
   const isCollapsed = shouldCollapse && !expanded;
 
   return (
-    <div {...attributes} style={{ marginBottom: "1em", textIndent: 0 }}>
+    <div
+      {...attributes}
+      className="cocalc-slate-code-block-wrapper"
+      style={{ marginBottom: "1em", position: "relative", textIndent: 0 }}
+    >
+      <PublicCodeCopyButton value={value} />
       {isCollapsed ? (
         <div
           style={{
