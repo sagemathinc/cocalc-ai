@@ -13,6 +13,8 @@ const projectActions = {
   move_project_tab: jest.fn(),
   open_project: jest.fn(),
 };
+const mockSetProjectBookmarked = jest.fn();
+let mockBookmarkedProjects: string[] = [];
 
 jest.mock("antd", () => ({
   Button: ({ children, icon, onClick, ...props }: any) => (
@@ -30,13 +32,14 @@ jest.mock("antd", () => ({
         Add project
       </button>
       {items.map((item: any) => (
-        <button
+        <div
           key={item.key}
-          type="button"
+          role="tab"
+          tabIndex={0}
           onClick={() => onChange?.(item.key)}
         >
           {item.label}
-        </button>
+        </div>
       ))}
     </div>
   ),
@@ -130,7 +133,10 @@ jest.mock("./theme", () => ({
 }));
 
 jest.mock("./use-bookmarked-projects", () => ({
-  useBookmarkedProjects: () => ({ bookmarkedProjects: [] }),
+  useBookmarkedProjects: () => ({
+    bookmarkedProjects: mockBookmarkedProjects,
+    setProjectBookmarked: mockSetProjectBookmarked,
+  }),
 }));
 
 describe("ProjectsNav", () => {
@@ -140,6 +146,8 @@ describe("ProjectsNav", () => {
     pageActions.set_active_tab.mockReset();
     projectActions.move_project_tab.mockReset();
     projectActions.open_project.mockReset();
+    mockSetProjectBookmarked.mockReset();
+    mockBookmarkedProjects = [];
   });
 
   it("opens the create-project modal from the editable tabs add button", () => {
@@ -152,5 +160,24 @@ describe("ProjectsNav", () => {
       "true",
     );
     expect(pageActions.set_active_tab).not.toHaveBeenCalledWith("projects");
+  });
+
+  it("toggles the active project star from a project tab", () => {
+    render(<ProjectsNav height={42} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Star project" }));
+
+    expect(mockSetProjectBookmarked).toHaveBeenCalledWith("project-1", true);
+    expect(pageActions.set_active_tab).not.toHaveBeenCalledWith("project-1");
+  });
+
+  it("shows a filled star for starred project tabs", () => {
+    mockBookmarkedProjects = ["project-1"];
+
+    render(<ProjectsNav height={42} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Unstar project" }));
+
+    expect(mockSetProjectBookmarked).toHaveBeenCalledWith("project-1", false);
   });
 });
