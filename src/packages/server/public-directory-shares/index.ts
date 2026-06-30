@@ -1630,6 +1630,21 @@ export async function upsert(
   return await savePublicDirectoryShare(opts);
 }
 
+export async function upsertMigratedLegacyPublicDirectoryShare(
+  opts: UpsertPublicDirectoryShareOptions,
+): Promise<PublicDirectoryShareSummary> {
+  await ensurePublicDirectorySharesSchema();
+  // Legacy migration replays shares only after the target project is explicitly
+  // imported. Do not apply the owner UI limit or live filesystem existence
+  // check here; the old public path may point at content that is still being
+  // restored.
+  return await savePublicDirectoryShare({
+    ...opts,
+    requires_auth: true,
+    availability_status: opts.availability_status ?? "available",
+  });
+}
+
 async function savePublicDirectoryShare(
   opts: UpsertPublicDirectoryShareOptions,
 ): Promise<PublicDirectoryShareSummary> {

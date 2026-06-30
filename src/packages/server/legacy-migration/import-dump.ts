@@ -11,11 +11,9 @@ import { createGunzip } from "node:zlib";
 
 import getPool from "@cocalc/database/pool";
 import {
-  ensurePublicDirectorySharesSchema,
   normalizePublicDirectorySharePath,
   normalizePublicDirectoryShareSlug,
 } from "@cocalc/server/public-directory-shares";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 
@@ -779,190 +777,6 @@ function validUuidOrNull(value: unknown): string | null {
   return null;
 }
 
-async function upsertPublicPaths(rows: Record<string, any>[]): Promise<void> {
-  await ensurePublicDirectorySharesSchema();
-  const payload = rows
-    .map((row) => ({
-      skip_public_path: row.__skip_public_path === true,
-      legacy_public_path_id: clean(row.id),
-      project_id: clean(row.project_id),
-      path: clean(row.path) ?? ".",
-      original_path: clean(row.original_path) ?? clean(row.path) ?? ".",
-      original_path_type: clean(row.original_path_type) ?? "directory",
-      slug: clean(row.slug),
-      visibility: row.disabled
-        ? "disabled"
-        : row.unlisted
-          ? "unlisted"
-          : "listed",
-      requires_auth: true,
-      title: clean(row.title) ?? clean(row.name),
-      description: clean(row.description),
-      license: clean(row.license),
-      image: clean(row.image),
-      redirect: clean(row.redirect),
-      site_license_id: clean(row.site_license_id),
-      legacy_url: clean(row.url),
-      created_at: row.created ?? null,
-      metadata: {
-        authenticated: row.authenticated ?? null,
-        auth: row.auth ?? null,
-        compute_image: row.compute_image ?? null,
-        counter: row.counter ?? null,
-        legacy_path: clean(row.original_path) ?? clean(row.path) ?? null,
-        legacy_path_type: clean(row.original_path_type) ?? "directory",
-        legacy_site_license_id: clean(row.legacy_site_license_id),
-        jupyter_api: row.jupyter_api ?? null,
-        token: row.token ?? null,
-        vhost: row.vhost ?? null,
-      },
-      last_edited: row.last_edited ?? row.last_saved ?? null,
-      disabled: row.disabled === true,
-    }))
-    .filter((row) => {
-      if (row.skip_public_path === true) {
-        return false;
-      }
-      if (row.legacy_public_path_id && row.project_id && row.slug) {
-        return true;
-      }
-      publicPathCounters.skippedMissingRequired += 1;
-      return false;
-    });
-  if (payload.length === 0) return;
-  const { rows: resultRows } = await pool().query<{
-    skipped_missing_project: number;
-  }>(
-    `
-    WITH input AS (
-      SELECT *
-        FROM jsonb_to_recordset($1::jsonb) AS x(
-          legacy_public_path_id TEXT,
-          project_id UUID,
-          path TEXT,
-          slug TEXT,
-          visibility TEXT,
-          requires_auth BOOLEAN,
-          title TEXT,
-          description TEXT,
-          license TEXT,
-          image TEXT,
-          redirect TEXT,
-          site_license_id UUID,
-          legacy_url TEXT,
-          created_at TIMESTAMPTZ,
-          metadata JSONB,
-          last_edited TIMESTAMPTZ,
-          disabled BOOLEAN
-        )
-    ),
-    missing_project AS (
-      SELECT input.legacy_public_path_id
-        FROM input
-        LEFT JOIN projects ON projects.project_id=input.project_id
-       WHERE input.legacy_public_path_id IS NOT NULL
-         AND projects.project_id IS NULL
-    ),
-    deleted_paths AS (
-      DELETE FROM public_project_paths p
-       USING missing_project
-       WHERE p.legacy_public_path_id=missing_project.legacy_public_path_id
-      RETURNING p.id
-    ),
-    deleted_slug_rows AS (
-      DELETE FROM public_project_path_slugs s
-       USING deleted_paths
-       WHERE s.public_project_path_id=deleted_paths.id
-      RETURNING 1
-    ),
-    prepared AS (
-      SELECT input.*,
-             'available'::text AS availability_status,
-             NULL::text AS availability_message
-        FROM input
-        JOIN projects ON projects.project_id=input.project_id
-    ),
-    upserted AS (
-      INSERT INTO public_project_paths (
-        id, project_id, path, slug, visibility, requires_auth,
-        availability_status, availability_message, title, description, license,
-        image, redirect, site_license_id, metadata, legacy_public_path_id,
-        legacy_url, last_edited, disabled, created_at, updated_at
-      )
-      SELECT gen_random_uuid(),
-             project_id,
-             path,
-             slug,
-             visibility,
-             COALESCE(requires_auth, true),
-             availability_status,
-             availability_message,
-             title,
-             description,
-             license,
-             image,
-             redirect,
-             site_license_id,
-             COALESCE(metadata, '{}'::jsonb),
-             legacy_public_path_id,
-             legacy_url,
-             last_edited,
-             COALESCE(disabled, false) OR visibility='disabled',
-             COALESCE(created_at, NOW()),
-             NOW()
-        FROM prepared
-       WHERE legacy_public_path_id IS NOT NULL
-         AND project_id IS NOT NULL
-         AND COALESCE(slug, '') <> ''
-      ON CONFLICT (legacy_public_path_id)
-        WHERE legacy_public_path_id IS NOT NULL
-      DO UPDATE SET
-        project_id=EXCLUDED.project_id,
-        path=EXCLUDED.path,
-        slug=EXCLUDED.slug,
-        visibility=EXCLUDED.visibility,
-        requires_auth=EXCLUDED.requires_auth,
-        availability_status=EXCLUDED.availability_status,
-        availability_message=EXCLUDED.availability_message,
-        title=EXCLUDED.title,
-        description=EXCLUDED.description,
-        license=EXCLUDED.license,
-        image=EXCLUDED.image,
-        redirect=EXCLUDED.redirect,
-        site_license_id=EXCLUDED.site_license_id,
-        metadata=EXCLUDED.metadata,
-        legacy_url=EXCLUDED.legacy_url,
-        created_at=EXCLUDED.created_at,
-        last_edited=EXCLUDED.last_edited,
-        disabled=EXCLUDED.disabled,
-        updated_at=NOW()
-      RETURNING id, project_id, slug, disabled
-    ),
-    upserted_slug_rows AS (
-    INSERT INTO public_project_path_slugs (
-      slug_lower, slug, owning_bay_id, public_project_path_id, project_id,
-      disabled, updated_at
-    )
-    SELECT lower(slug), slug, $2, id, project_id, disabled, NOW()
-      FROM upserted
-    ON CONFLICT (slug_lower) DO UPDATE SET
-      slug=EXCLUDED.slug,
-      owning_bay_id=EXCLUDED.owning_bay_id,
-      public_project_path_id=EXCLUDED.public_project_path_id,
-      project_id=EXCLUDED.project_id,
-      disabled=EXCLUDED.disabled,
-      updated_at=NOW()
-      RETURNING 1
-    )
-    SELECT COUNT(*)::int AS skipped_missing_project
-      FROM missing_project
-    `,
-    [JSON.stringify(payload), getConfiguredBayId()],
-  );
-  publicPathCounters.skippedMissingProject +=
-    resultRows[0]?.skipped_missing_project ?? 0;
-}
-
 async function ensureRawRecordsSchema(): Promise<void> {
   rawRecordsSchemaReady ??= (async () => {
     await pool().query(`
@@ -1052,7 +866,7 @@ async function writeBatch(
   } else if (target === "artifacts") {
     await upsertArtifacts(rows);
   } else if (target === "public_paths") {
-    await upsertPublicPaths(rows);
+    await upsertRawRecords(target, rows);
   } else {
     await upsertRawRecords(target, rows);
   }
