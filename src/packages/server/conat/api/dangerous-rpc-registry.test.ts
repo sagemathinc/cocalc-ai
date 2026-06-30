@@ -26,6 +26,7 @@ const SOURCE_MODULES: SourceModule[] = [
   { filename: "notifications.ts", hubGroup: "notifications" },
   { filename: "projects.ts", hubGroup: "projects" },
   { filename: "project-backups.ts", hubGroup: "projects" },
+  { filename: "project-site-migration.ts", hubGroup: "projects" },
   { filename: "project-snapshots.ts", hubGroup: "projects" },
   { filename: "hosts.ts", hubGroup: "hosts" },
   { filename: "system.ts", hubGroup: "system" },
@@ -39,7 +40,7 @@ const RISKY_EXPORT_PATTERN =
   /^export\s+(?:async\s+)?function\s+(\w+)|^export\s+const\s+(\w+)\s*=\s*(?:reuseInFlight\()?/gm;
 
 const DANGEROUS_RPC_NAME_PATTERN =
-  /^(?:add|admin|apply|archive|assign|begin|bootstrap|cancel|claim|clear|cleanup|create|delete|disable|dismiss|drain|finalize|force|gc|generate|hard|import|issue|leave|mark|move|prune|publish|pull|purchase|purge|reconcile|record|release|remove|repair|request|reserve|restart|restore|rehome|review|revoke|rollout|run|save|scan|send|set|start|stop|sync|terminate|update|upgrade|upsert)/i;
+  /^(?:add|admin|apply|archive|assign|begin|bootstrap|cancel|claim|clear|cleanup|create|delete|disable|dismiss|drain|finalize|force|gc|generate|hard|import|issue|leave|mark|move|prepare|prune|publish|pull|purchase|purge|reconcile|record|release|remove|repair|request|reserve|restart|restore|rehome|review|revoke|rollout|run|save|scan|send|set|start|stop|sync|terminate|update|upgrade|upsert)/i;
 
 function exportedNames(source: string): string[] {
   const names: string[] = [];

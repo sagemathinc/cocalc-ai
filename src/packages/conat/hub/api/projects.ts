@@ -41,6 +41,7 @@ import type {
   HostRootfsBuildStartRequest,
   HostRootfsBuildStatusResponse,
 } from "@cocalc/conat/project-host/api";
+import type { ProjectBackupIndexStoreConfig } from "./hosts";
 
 export type ProjectCopyState =
   | "queued"
@@ -796,6 +797,92 @@ export interface ProjectMetadataPatch {
   theme?: ProjectTheme | null;
 }
 
+export type ProjectSiteMigrationStatus =
+  | "prepared"
+  | "source-backup-running"
+  | "source-backup-failed"
+  | "backup-written"
+  | "finalized"
+  | "restore-running"
+  | "restored"
+  | "failed"
+  | "cancelled";
+
+export interface PrepareIncomingProjectBackupMigrationOptions {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  source_site: string;
+  source_project_id: string;
+  owner: string;
+  title?: string;
+  description?: string;
+  disk_mb?: number | "auto";
+  source_usage_bytes?: number | null;
+  restore_after_finalize?: boolean;
+}
+
+export interface PrepareIncomingProjectBackupMigrationResult {
+  migration_id: string;
+  destination_project_id: string;
+  destination_backup_repo_id: string;
+  destination_project_url?: string;
+  rustic_repo_toml: string;
+  backup_index_store?: ProjectBackupIndexStoreConfig | null;
+  expires_at: string;
+  warnings: string[];
+}
+
+export interface ProjectSiteMigrationRecord {
+  id: string;
+  source_site: string;
+  source_project_id: string;
+  destination_project_id: string;
+  destination_owner_account_id: string;
+  destination_backup_repo_id: string | null;
+  status: ProjectSiteMigrationStatus;
+  source_backup_op_id: string | null;
+  destination_restore_op_id: string | null;
+  snapshot_id: string | null;
+  backup_index_key: string | null;
+  source_project_title: string | null;
+  source_project_description: string | null;
+  source_usage_bytes: number | null;
+  backup_summary: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  error: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface GetProjectSiteMigrationStatusOptions {
+  account_id?: string;
+  migration_id: string;
+}
+
+export interface FinalizeIncomingProjectBackupMigrationOptions {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  migration_id: string;
+  destination_project_id: string;
+  snapshot_id: string;
+  backup_index_key?: string | null;
+  source_backup_result?: Record<string, unknown> | null;
+  restore?: boolean;
+}
+
+export interface FinalizeIncomingProjectBackupMigrationResult {
+  migration_id: string;
+  destination_project_id: string;
+  snapshot_id: string;
+  status: "finalized" | "restore-running" | "restored";
+  restore_op_id?: string;
+  warnings: string[];
+}
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -834,6 +921,9 @@ export const projects = {
   getAdminProjectEntitlementOverride: authFirstRequireAccount,
   setAdminProjectEntitlementOverride: authFirstRequireAccount,
   clearAdminProjectEntitlementOverride: authFirstRequireAccount,
+  prepareIncomingProjectBackupMigration: authFirstRequireAccount,
+  getProjectSiteMigrationStatus: authFirstRequireAccount,
+  finalizeIncomingProjectBackupMigration: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
   setProjectMetadata: authFirstRequireAccount,
   setProjectManageUsersOwnerOnly: authFirstRequireAccount,
@@ -1113,6 +1203,18 @@ export interface Projects {
     project_id: string;
     reason: string;
   }) => Promise<void>;
+
+  prepareIncomingProjectBackupMigration: (
+    opts: PrepareIncomingProjectBackupMigrationOptions,
+  ) => Promise<PrepareIncomingProjectBackupMigrationResult>;
+
+  getProjectSiteMigrationStatus: (
+    opts: GetProjectSiteMigrationStatusOptions,
+  ) => Promise<ProjectSiteMigrationRecord>;
+
+  finalizeIncomingProjectBackupMigration: (
+    opts: FinalizeIncomingProjectBackupMigrationOptions,
+  ) => Promise<FinalizeIncomingProjectBackupMigrationResult>;
 
   getProjectRootfsPublishConfig: (opts: {
     account_id?: string;

@@ -565,6 +565,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin project disk entitlement override mutation",
   },
+  "projects.prepareIncomingProjectBackupMigration": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin project site migration setup creates a destination project and returns backup-write credentials",
+  },
+  "projects.finalizeIncomingProjectBackupMigration": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin project site migration finalization records an externally written backup snapshot",
+  },
   "projects.setProjectManageUsersOwnerOnly": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
