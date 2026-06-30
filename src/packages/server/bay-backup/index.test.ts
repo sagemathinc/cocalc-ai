@@ -189,6 +189,30 @@ describe("bay-backup runner", () => {
     return true;
   }
 
+  function makeMockPool(
+    queryImpl: (sql: string, params?: any[]) => Promise<{ rows: any[] }>,
+    { lockAvailable = true }: { lockAvailable?: boolean } = {},
+  ) {
+    const query = jest.fn(queryImpl);
+    const client = {
+      query: jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("pg_try_advisory_lock")) {
+          return { rows: [{ locked: lockAvailable }] };
+        }
+        if (sql.includes("pg_advisory_unlock")) {
+          return { rows: [{ pg_advisory_unlock: true }] };
+        }
+        return await query(sql, params);
+      }),
+      release: jest.fn(),
+    };
+    return {
+      query,
+      connect: jest.fn(async () => client),
+      client,
+    };
+  }
+
   beforeEach(async () => {
     jest.resetModules();
     oldEnv = { ...process.env };
@@ -442,8 +466,8 @@ describe("bay-backup runner", () => {
         cb(new Error(`unexpected command '${cmd}'`));
       },
     );
-    getPoolMock = jest.fn(() => ({
-      query: jest.fn(async () => ({
+    getPoolMock = jest.fn(() =>
+      makeMockPool(async () => ({
         rows: [
           {
             current_user: "smc",
@@ -459,7 +483,7 @@ describe("bay-backup runner", () => {
           },
         ],
       })),
-    }));
+    );
     getServerSettingsMock = jest.fn(async () => ({}));
     installSandboxBinaryMock = jest.fn(async () => undefined);
     getSingleBayInfoMock = jest.fn(() => ({
@@ -521,6 +545,32 @@ describe("bay-backup runner", () => {
     expect(status.restore_readiness.gold_star).toBe(false);
   });
 
+  it("does not start a full backup when another process owns the bay backup lock", async () => {
+    const pool = makeMockPool(async () => ({ rows: [] }), {
+      lockAvailable: false,
+    });
+    getPoolMock = jest.fn(() => pool);
+
+    const { runBayBackup } = await import("./index");
+
+    await expect(runBayBackup()).rejects.toThrow(
+      "bay backup is already running for bay 'bay-0'",
+    );
+    expect(execFileMock).not.toHaveBeenCalledWith(
+      "pg_dumpall",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(execFileMock).not.toHaveBeenCalledWith(
+      "pg_basebackup",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(pool.client.release).toHaveBeenCalledTimes(1);
+  });
+
   it("backs up snapshots to rustic and restores from rustic when local archives are absent", async () => {
     rusticMissingConfigFailuresRemaining = 1;
     getServerSettingsMock = jest.fn(async () => ({
@@ -575,8 +625,8 @@ describe("bay-backup runner", () => {
   });
 
   it("falls back from pg_basebackup to pg_dumpall when replication is blocked", async () => {
-    getPoolMock = jest.fn(() => ({
-      query: jest.fn(async () => ({
+    getPoolMock = jest.fn(() =>
+      makeMockPool(async () => ({
         rows: [
           {
             current_user: "smc",
@@ -592,7 +642,7 @@ describe("bay-backup runner", () => {
           },
         ],
       })),
-    }));
+    );
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -653,8 +703,8 @@ describe("bay-backup runner", () => {
     whichMock = jest.fn(async (binary: string) =>
       binary === "sqlite3" ? null : `/usr/bin/${binary}`,
     );
-    getPoolMock = jest.fn(() => ({
-      query: jest.fn(async () => ({
+    getPoolMock = jest.fn(() =>
+      makeMockPool(async () => ({
         rows: [
           {
             current_user: "smc",
@@ -670,7 +720,7 @@ describe("bay-backup runner", () => {
           },
         ],
       })),
-    }));
+    );
 
     const { runBayBackup } = await import("./index");
 
@@ -764,8 +814,8 @@ describe("bay-backup runner", () => {
       ),
     );
     const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
-    getPoolMock = jest.fn(() => ({
-      query: jest.fn(async (sql: string, params?: string[]) => {
+    getPoolMock = jest.fn(() =>
+      makeMockPool(async (sql: string, params?: string[]) => {
         if (
           sql.includes("current_user AS current_user") &&
           sql.includes("FROM pg_roles r")
@@ -821,7 +871,7 @@ describe("bay-backup runner", () => {
         }
         throw new Error(`unexpected query '${sql}'`);
       }),
-    }));
+    );
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -1105,8 +1155,8 @@ describe("bay-backup runner", () => {
       ),
     );
     const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
-    getPoolMock = jest.fn(() => ({
-      query: jest.fn(async (sql: string, params?: string[]) => {
+    getPoolMock = jest.fn(() =>
+      makeMockPool(async (sql: string, params?: string[]) => {
         if (
           sql.includes("current_user AS current_user") &&
           sql.includes("FROM pg_roles r")
@@ -1162,7 +1212,7 @@ describe("bay-backup runner", () => {
         }
         throw new Error(`unexpected query '${sql}'`);
       }),
-    }));
+    );
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -1402,8 +1452,8 @@ describe("bay-backup runner", () => {
       "bay-backups/bay-0/wal/0000000100000000000000E8.zst",
       "bay-backups/bay-0/wal/0000000100000000000000E9.zst",
     ];
-    getPoolMock = jest.fn(() => ({
-      query: jest.fn(async (sql: string, params?: string[]) => {
+    getPoolMock = jest.fn(() =>
+      makeMockPool(async (sql: string, params?: string[]) => {
         if (
           sql.includes(
             "CREATE TABLE IF NOT EXISTS public.bay_restore_test_pitr_events",
@@ -1439,7 +1489,7 @@ describe("bay-backup runner", () => {
         }
         throw new Error(`unexpected query '${sql}'`);
       }),
-    }));
+    );
     listObjectsMock = jest.fn(async ({ prefix }: { prefix?: string }) => {
       if (prefix !== "bay-backups/bay-0/wal/") {
         throw new Error(`unexpected WAL prefix '${prefix}'`);
