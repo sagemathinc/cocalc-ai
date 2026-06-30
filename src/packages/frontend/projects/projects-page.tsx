@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Grid, Layout, Row, Space } from "antd";
+import { Button, Col, Grid, Layout, Row } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import { useIntl } from "react-intl";
 
 // ensure redux stuff (actions and store) are initialized:
@@ -37,7 +37,6 @@ import { ProjectsTable } from "./projects-table";
 import { ProjectsTableControls } from "./projects-table-controls";
 import { ProjectDrawer } from "./project-drawer";
 import ProjectsPageTour from "./tour";
-import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { getVisibleProjects } from "./util";
 import { FilenameSearch } from "./filename-search";
 import { MobileProjectsList } from "./mobile-projects-list";
@@ -63,8 +62,54 @@ const LOADING_STYLE: CSS = {
   textAlign: "center",
   color: COLORS.GRAY,
 } as const;
+
+const PROJECTS_TABLE_INITIAL_BODY_HEIGHT = 400;
+const PROJECTS_TABLE_MIN_BODY_HEIGHT = 160;
+const PROJECTS_TABLE_HEADER_RESERVED_PX = 48;
+
 const VISIBLE_WINDOW_REPAIR_LIMIT = 200;
 const VISIBLE_WINDOW_REPAIR_DELAY_MS = 500;
+
+function useProjectTableBodyHeight(
+  projectListRef: RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+): number {
+  const [height, setHeight] = useState(PROJECTS_TABLE_INITIAL_BODY_HEIGHT);
+
+  useLayoutEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const element = projectListRef.current;
+    if (element == null) {
+      return;
+    }
+
+    const updateHeight = () => {
+      const next = Math.max(
+        Math.floor(
+          element.getBoundingClientRect().height -
+            PROJECTS_TABLE_HEADER_RESERVED_PX,
+        ),
+        PROJECTS_TABLE_MIN_BODY_HEIGHT,
+      );
+      setHeight((cur) => (cur === next ? cur : next));
+    };
+
+    updateHeight();
+
+    if (globalThis.ResizeObserver == null) {
+      window.addEventListener("resize", updateHeight);
+      return () => window.removeEventListener("resize", updateHeight);
+    }
+
+    const resizeObserver = new ResizeObserver(updateHeight);
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  }, [enabled, projectListRef]);
+
+  return height;
+}
 
 function readMaybeImmutable(value: any, key: string): any {
   return value?.get?.(key) ?? value?.[key];
@@ -94,7 +139,6 @@ function projectListWindowQuery({
 
 export const ProjectsPage: React.FC = () => {
   const intl = useIntl();
-  const { bookmarkedProjects } = useBookmarkedProjects();
 
   const project_map = useTypedRedux("projects", "project_map");
   const host_info = useTypedRedux("projects", "host_info");
@@ -146,28 +190,15 @@ export const ProjectsPage: React.FC = () => {
   const searchRef = useRef<any>(null);
   const filtersRef = useRef<any>(null);
   const createNewRef = useRef<any>(null);
-  const projectListRef = useRef<any>(null);
+  const projectListRef = useRef<HTMLDivElement>(null);
   const filenameSearchRef = useRef<any>(null);
-
-  // Calculating table height
-  const containerRef = useRef<HTMLDivElement>(null);
-  const titleRef = useRef<HTMLDivElement>(null);
-  const starredBarRef = useRef<HTMLDivElement>(null);
-  const controlsRef = useRef<HTMLDivElement>(null);
-  const inviteInboxRef = useRef<HTMLDivElement>(null);
-  const operationsRef = useRef<HTMLDivElement>(null);
-  // Elements to account for in height calculation (everything except projectList and footer)
-  const refs = [
-    titleRef,
-    starredBarRef,
-    inviteInboxRef,
-    controlsRef,
-    operationsRef,
-  ] as const;
 
   const [createPanelOpen, setCreatePanelOpen] = useState(false);
 
-  const [tableHeight, setTableHeight] = useState<number>(400);
+  const tableHeight = useProjectTableBodyHeight(
+    projectListRef,
+    !mobileProjectsList,
+  );
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
 
@@ -367,92 +398,6 @@ export const ProjectsPage: React.FC = () => {
     });
   }, [project_map]);
 
-  // Calculate dynamic table height following these steps:
-  // 1. Get container's offset from viewport top
-  // 2. Available area = viewport height - offset
-  // 3. Table height = available area - fixed elements - gaps
-  useLayoutEffect(() => {
-    const calculateHeight = () => {
-      if (!containerRef.current) return;
-
-      // 1. Get container's offset from top of viewport
-      const containerTop = containerRef.current.getBoundingClientRect().top;
-
-      // 2. Calculate available area for the entire page
-      const viewportHeight = window.innerHeight;
-      const availableArea = viewportHeight - containerTop;
-
-      // 3. Sum heights of all fixed elements (including margins)
-      let fixedElementsHeight = 0;
-      refs.forEach((ref) => {
-        if (ref.current) {
-          const rect = ref.current.getBoundingClientRect();
-          const style = window.getComputedStyle(ref.current);
-          const marginTop = parseFloat(style.marginTop) || 0;
-          const marginBottom = parseFloat(style.marginBottom) || 0;
-          const totalHeight = rect.height + marginTop + marginBottom;
-          fixedElementsHeight += totalHeight;
-        }
-      });
-
-      // 4. Account for margins on the projectListRef wrapper div
-      let projectListMargins = 0;
-      if (projectListRef.current) {
-        const style = window.getComputedStyle(projectListRef.current);
-        const marginTop = parseFloat(style.marginTop) || 0;
-        const marginBottom = parseFloat(style.marginBottom) || 0;
-        projectListMargins = marginTop + marginBottom;
-      }
-
-      // 5. Account for 10px gaps between visible elements from Space component
-      const visibleGaps = refs.length * 10;
-
-      // 6. Add buffer to ensure loadAll button is fully visible
-      const buffer = 80;
-
-      const calculatedHeight =
-        availableArea -
-        fixedElementsHeight -
-        projectListMargins -
-        visibleGaps -
-        buffer;
-
-      // enforce a minimum height
-      const newHeight = Math.max(calculatedHeight, 400);
-
-      setTableHeight(newHeight);
-    };
-
-    const rafId = requestAnimationFrame(() => {
-      calculateHeight();
-      setTimeout(calculateHeight, 100);
-    });
-
-    // Set up ResizeObserver to watch for changes
-    const resizeObserver = new ResizeObserver(calculateHeight);
-
-    // Observe the container
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current);
-    }
-
-    // Observe all fixed elements so we detect when they change/disappear
-    refs.forEach((ref) => {
-      if (ref.current) {
-        resizeObserver.observe(ref.current);
-      }
-    });
-
-    // Also listen to window resize
-    window.addEventListener("resize", calculateHeight);
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", calculateHeight);
-    };
-  }, [bookmarkedProjects.length]);
-
   function handleCreateProject() {
     if (createProjectDisabled) return;
     setCreatePanelOpen(true);
@@ -504,200 +449,218 @@ export const ProjectsPage: React.FC = () => {
           }}
         >
           <div
-            ref={containerRef}
             className={"smc-vfill"}
-            style={{ overflowY: mobileProjectsList ? "auto" : "hidden" }}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+              overflowY: mobileProjectsList ? "auto" : "hidden",
+            }}
           >
-            <>
-              {emailVerificationRequired ? (
-                <VerifyEmailRequiredPanel
-                  title="Verify your email to create projects"
-                  description="You can accept project invites and open projects you already have access to. Please verify your email address before creating new projects or starting project runtimes."
-                  compact
-                  style={{ marginBottom: 12 }}
-                />
-              ) : null}
-              <Row>
-                <Col sm={24} md={24} lg={contentCol}>
-                  <Space
-                    orientation="vertical"
-                    size={10}
+            {emailVerificationRequired ? (
+              <VerifyEmailRequiredPanel
+                title="Verify your email to create projects"
+                description="You can accept project invites and open projects you already have access to. Please verify your email address before creating new projects or starting project runtimes."
+                compact
+                style={{ marginBottom: 12 }}
+              />
+            ) : null}
+            <Row style={{ flex: "1 1 auto", minHeight: 0, width: "100%" }}>
+              <Col
+                sm={24}
+                md={24}
+                lg={contentCol}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
+                }}
+              >
+                <div
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    flex: "1 1 auto",
+                    flexDirection: "column",
+                    gap: 10,
+                    minHeight: 0,
+                    padding: narrow ? "0 10px 0 10px" : "0",
+                  }}
+                >
+                  <div
                     style={{
-                      width: "100%",
+                      marginTop: mobileProjectsList ? "8px" : "20px",
                       display: "flex",
-                      padding: narrow ? "0 10px 0 10px" : "0",
+                      width: "100%",
+                      gap: "10px",
+                      alignItems: "center",
+                      flexWrap: mobileProjectsList ? "wrap" : "nowrap",
+                      flex: "0 0 auto",
                     }}
                   >
-                    <div
-                      ref={titleRef}
+                    <Title
+                      level={3}
                       style={{
-                        marginTop: mobileProjectsList ? "8px" : "20px",
-                        display: "flex",
-                        width: "100%",
-                        gap: "10px",
-                        alignItems: "center",
-                        flexWrap: mobileProjectsList ? "wrap" : "nowrap",
+                        flex: "0 1 auto",
+                        marginBottom: mobileProjectsList ? 0 : "15px",
+                        whiteSpace: "nowrap",
                       }}
                     >
-                      <Title
-                        level={3}
-                        style={{
-                          flex: "0 1 auto",
-                          marginBottom: mobileProjectsList ? 0 : "15px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        <Icon name="edit" />{" "}
-                        {intl.formatMessage(labels.projects)}
-                      </Title>
+                      <Icon name="edit" /> {intl.formatMessage(labels.projects)}
+                    </Title>
+                    <Button
+                      ref={createNewRef}
+                      type="primary"
+                      disabled={createProjectDisabled}
+                      title={
+                        createProjectDisabled
+                          ? "Verify your email address before creating projects."
+                          : undefined
+                      }
+                      onClick={handleCreateProject}
+                      icon={<Icon name="plus-circle" />}
+                    >
+                      {capitalize(intl.formatMessage(labels.create))}
+                    </Button>
+                    {showLegacyProjectsButton ? (
                       <Button
-                        ref={createNewRef}
-                        type="primary"
-                        disabled={createProjectDisabled}
-                        title={
-                          createProjectDisabled
-                            ? "Verify your email address before creating projects."
-                            : undefined
+                        icon={<Icon name="exchange" />}
+                        onClick={() =>
+                          openAccountSettings({ page: "legacy-migration" })
                         }
-                        onClick={handleCreateProject}
-                        icon={<Icon name="plus-circle" />}
+                        title="View projects available from legacy migration."
                       >
-                        {capitalize(intl.formatMessage(labels.create))}
+                        Legacy Projects
                       </Button>
-                      {showLegacyProjectsButton ? (
-                        <Button
-                          icon={<Icon name="exchange" />}
-                          onClick={() =>
-                            openAccountSettings({ page: "legacy-migration" })
-                          }
-                          title="View projects available from legacy migration."
-                        >
-                          Legacy Projects
-                        </Button>
-                      ) : null}
-                      <div
-                        ref={starredBarRef}
-                        style={{
-                          flex: mobileProjectsList ? "1 0 100%" : "1 1 auto",
-                          minWidth: 0,
-                        }}
-                      >
-                        <StarredProjectsBar />
-                      </div>
-                      {!narrow && (
-                        <div
-                          ref={filenameSearchRef}
-                          style={{
-                            flex: "0 1 auto",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                          }}
-                        >
-                          <FilenameSearch
-                            style={{
-                              width: IS_MOBILE ? "100px" : "200px",
-                              display: "inline-block",
-                            }}
-                          />
-                          <RecentDocumentActivityButton />
-                        </div>
-                      )}
+                    ) : null}
+                    <div
+                      style={{
+                        flex: mobileProjectsList ? "1 0 100%" : "1 1 auto",
+                        minWidth: 0,
+                      }}
+                    >
+                      <StarredProjectsBar />
                     </div>
-
-                    {narrow && (
+                    {!narrow && (
                       <div
                         ref={filenameSearchRef}
                         style={{
+                          flex: "0 1 auto",
                           display: "flex",
-                          justifyContent: "flex-end",
+                          alignItems: "center",
                           gap: "8px",
                         }}
                       >
-                        <RecentDocumentActivityButton />
                         <FilenameSearch
                           style={{
                             width: IS_MOBILE ? "100px" : "200px",
                             display: "inline-block",
                           }}
                         />
+                        <RecentDocumentActivityButton />
                       </div>
                     )}
+                  </div>
 
+                  {narrow && (
                     <div
-                      ref={inviteInboxRef}
-                      style={{ maxHeight: "50vh", overflow: "auto" }}
+                      ref={filenameSearchRef}
+                      style={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        gap: "8px",
+                        flex: "0 0 auto",
+                      }}
                     >
-                      <IncomingInviteBanner
-                        state={inviteState}
-                        onReview={openInvitations}
+                      <RecentDocumentActivityButton />
+                      <FilenameSearch
+                        style={{
+                          width: IS_MOBILE ? "100px" : "200px",
+                          display: "inline-block",
+                        }}
                       />
                     </div>
+                  )}
 
-                    {/* Table Controls (Search, Filters, Create Button) */}
-                    <div ref={controlsRef}>
-                      <ProjectsTableControls
+                  <div
+                    style={{
+                      maxHeight: "50vh",
+                      overflow: "auto",
+                      flex: "0 0 auto",
+                    }}
+                  >
+                    <IncomingInviteBanner
+                      state={inviteState}
+                      onReview={openInvitations}
+                    />
+                  </div>
+
+                  {/* Table Controls (Search, Filters, Create Button) */}
+                  <div style={{ flex: "0 0 auto" }}>
+                    <ProjectsTableControls
+                      visible_projects={visible_projects}
+                      searchRef={searchRef}
+                      filtersRef={filtersRef}
+                      projectListChanged={backendWindowDirty}
+                      projectListChangedCount={backendWindowDirtyCount}
+                      onRefreshProjectList={refreshBackendWindow}
+                      tour={
+                        <ProjectsPageTour
+                          searchRef={searchRef}
+                          filtersRef={filtersRef}
+                          createNewRef={createNewRef}
+                          projectListRef={projectListRef}
+                          filenameSearchRef={filenameSearchRef}
+                          style={{ flex: 0 }}
+                        />
+                      }
+                    />
+                  </div>
+                  {/* Bulk Operations (when filters active) */}
+                  <div style={{ flex: "0 0 auto" }}>
+                    <ProjectsOperations
+                      visible_projects={visible_projects}
+                      selected_project_ids={selectedProjectIds}
+                      onSelectionChange={setSelectedProjectIds}
+                      filteredCollaborators={filteredCollaborators}
+                      onClearCollaboratorFilter={handleClearCollaboratorFilter}
+                    />
+                  </div>
+
+                  <div
+                    ref={projectListRef}
+                    style={{
+                      flex: mobileProjectsList ? "0 0 auto" : "1 1 auto",
+                      minHeight: 0,
+                      overflow: mobileProjectsList ? undefined : "hidden",
+                    }}
+                  >
+                    {mobileProjectsList ? (
+                      <MobileProjectsList
                         visible_projects={visible_projects}
-                        searchRef={searchRef}
-                        filtersRef={filtersRef}
-                        projectListChanged={backendWindowDirty}
-                        projectListChangedCount={backendWindowDirtyCount}
-                        onRefreshProjectList={refreshBackendWindow}
-                        tour={
-                          <ProjectsPageTour
-                            searchRef={searchRef}
-                            filtersRef={filtersRef}
-                            createNewRef={createNewRef}
-                            projectListRef={projectListRef}
-                            filenameSearchRef={filenameSearchRef}
-                            style={{ flex: 0 }}
-                          />
-                        }
+                        rootfsImages={rootfsImages}
+                        rootfsImagesLoading={rootfsImagesLoading}
+                        selectedProjectIds={selectedProjectIds}
+                        onSelectedProjectIdsChange={setSelectedProjectIds}
                       />
-                    </div>
-                    {/* Bulk Operations (when filters active) */}
-                    <div ref={operationsRef}>
-                      <ProjectsOperations
+                    ) : (
+                      <ProjectsTable
                         visible_projects={visible_projects}
-                        selected_project_ids={selectedProjectIds}
-                        onSelectionChange={setSelectedProjectIds}
+                        rootfsImages={rootfsImages}
+                        rootfsImagesLoading={rootfsImagesLoading}
+                        height={tableHeight}
+                        narrow={narrow}
                         filteredCollaborators={filteredCollaborators}
-                        onClearCollaboratorFilter={
-                          handleClearCollaboratorFilter
-                        }
+                        onFilteredCollaboratorsChange={setFilteredCollaborators}
+                        selectedProjectIds={selectedProjectIds}
+                        onSelectedProjectIdsChange={setSelectedProjectIds}
+                        freezeOrder={backendWindowDirty}
                       />
-                    </div>
-
-                    <div ref={projectListRef}>
-                      {mobileProjectsList ? (
-                        <MobileProjectsList
-                          visible_projects={visible_projects}
-                          rootfsImages={rootfsImages}
-                          rootfsImagesLoading={rootfsImagesLoading}
-                          selectedProjectIds={selectedProjectIds}
-                          onSelectedProjectIdsChange={setSelectedProjectIds}
-                        />
-                      ) : (
-                        <ProjectsTable
-                          visible_projects={visible_projects}
-                          rootfsImages={rootfsImages}
-                          rootfsImagesLoading={rootfsImagesLoading}
-                          height={tableHeight}
-                          narrow={narrow}
-                          filteredCollaborators={filteredCollaborators}
-                          onFilteredCollaboratorsChange={
-                            setFilteredCollaborators
-                          }
-                          selectedProjectIds={selectedProjectIds}
-                          onSelectedProjectIdsChange={setSelectedProjectIds}
-                          freezeOrder={backendWindowDirty}
-                        />
-                      )}
-                    </div>
-                  </Space>
-                </Col>
-              </Row>
-            </>
+                    )}
+                  </div>
+                </div>
+              </Col>
+            </Row>
           </div>
         </Layout.Content>
       </Layout>
