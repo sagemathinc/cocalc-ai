@@ -37,6 +37,7 @@ import {
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
+import { sshHostKeyAliasForHostId } from "@cocalc/server/cloud/host-ssh-known-hosts";
 
 const logger = getLogger("server:conat:api:hosts");
 const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
@@ -99,10 +100,6 @@ async function runSshScript({
     });
     child.stdin.end(script);
   });
-}
-
-function sshHostKeyAliasForHostId(host_id: string): string {
-  return `cocalc-host-${host_id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 }
 
 type HostBootstrapReconcileState = {

@@ -48,6 +48,7 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { computeHostOperationalAvailability } from "@cocalc/server/conat/api/hosts-normalization";
 import { enqueueRootfsPrepullForHost } from "./rootfs-prepull";
+import { removeHostSshKnownHostAlias } from "./host-ssh-known-hosts";
 
 const logger = getLogger("server:cloud:host-work");
 const pool = () => getPool();
@@ -1043,6 +1044,12 @@ async function handleProvision(row: any) {
     host_id: row.id,
     provider: providerId,
   });
+  if (!row.metadata?.runtime?.instance_id) {
+    await removeHostSshKnownHostAlias({
+      host_id: row.id,
+      reason: "provision",
+    });
+  }
   let startupScript: string | undefined;
   if (providerId) {
     try {
@@ -1250,6 +1257,10 @@ async function handleStart(row: any) {
         });
         await entry.provider.deleteHost(runtime, creds, {
           preserveDataDisk: true,
+        });
+        await removeHostSshKnownHostAlias({
+          host_id: row.id,
+          reason: "reprovision",
         });
       }
       const clearedMetadata = {
@@ -2102,6 +2113,10 @@ async function handleDelete(row: any) {
   const providerId = normalizeProviderId(machine.cloud);
   await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
   await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
+  await removeHostSshKnownHostAlias({
+    host_id: row.id,
+    reason: "delete",
+  });
   if (providerId && runtime?.instance_id) {
     const { entry, creds } = await getProviderContext(providerId, {
       region: row.region,

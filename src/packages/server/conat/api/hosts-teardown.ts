@@ -26,6 +26,7 @@ large hosts API implementation.
 */
 
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import { removeHostSshKnownHostAlias } from "@cocalc/server/cloud/host-ssh-known-hosts";
 
 export async function setHostDesiredStateInternal({
   id,
@@ -104,6 +105,10 @@ export async function markHostDeprovisionedInternal({
   logStatusUpdate(row.id, "deprovisioned", "api");
   await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
   await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
+  await removeHostSshKnownHostAlias({
+    host_id: row.id,
+    reason: action,
+  });
   try {
     if (await hasCloudflareTunnel()) {
       await deleteCloudflareTunnel({
@@ -251,6 +256,10 @@ export async function deleteHostInternalHelper({
     !!`${row.metadata?.runtime?.instance_id ?? ""}`.trim();
   if (row.status === "deprovisioned" || (managedCloud && !hasProviderRuntime)) {
     await setHostDesiredStateInternal({ id, desiredState: "stopped" });
+    await removeHostSshKnownHostAlias({
+      host_id: id,
+      reason: "delete",
+    });
     await markHostProjectsUnprovisioned(id);
     await markHostDeleted(id);
     return;
@@ -267,6 +276,10 @@ export async function deleteHostInternalHelper({
     return;
   }
   logStatusUpdate(id, "deprovisioned", "api");
+  await removeHostSshKnownHostAlias({
+    host_id: id,
+    reason: "delete",
+  });
   await markHostStoppedDeprovisioned(id);
   await markHostProjectsUnprovisioned(id);
   await clearHostRuntimeDeployments({ host_id: id });
