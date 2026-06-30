@@ -174,6 +174,7 @@ async function ensureLegacyMigrationProjectImportSchema(): Promise<void> {
     `);
     await getPool().query(`
       ALTER TABLE legacy_migration_projects
+        ADD COLUMN IF NOT EXISTS name TEXT,
         ADD COLUMN IF NOT EXISTS disk_mb DOUBLE PRECISION
     `);
     await getPool().query(`

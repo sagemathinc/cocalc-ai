@@ -280,6 +280,7 @@ Table({
     primary_key: "legacy_project_id",
     pg_indexes: [
       "owner_legacy_account_id",
+      "name",
       "artifact_status",
       "last_edited",
       "disk_mb",
@@ -290,6 +291,7 @@ Table({
         admin: true,
         fields: {
           legacy_project_id: null,
+          name: null,
           title: null,
           description: null,
           owner_legacy_account_id: null,
@@ -313,6 +315,7 @@ Table({
         delete: true,
         fields: {
           legacy_project_id: null,
+          name: null,
           title: null,
           description: null,
           owner_legacy_account_id: null,
@@ -336,6 +339,10 @@ Table({
       type: "string",
       pg_type: "VARCHAR(128)",
       desc: "Stable project id from legacy cocalc.com.",
+    },
+    name: {
+      type: "string",
+      desc: "Legacy project URL name, e.g. support in /wstein/support/examples.",
     },
     title: {
       type: "string",
