@@ -124,7 +124,11 @@ import {
   endProjectHostActivity,
   noteProjectHostActivityProgress,
 } from "../health-progress";
-import { assertProjectDiskQuotaStartAllowed } from "../project-start-quota";
+import {
+  ProjectDiskQuotaExceededError,
+  assertProjectDiskQuotaStartAllowed,
+  isProjectDiskQuotaExceeded,
+} from "../project-start-quota";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -1024,7 +1028,62 @@ async function startRunnerWithStorageReservation<T>({
   });
 }
 
-async function assertStartDiskQuotaAllowed(project_id: string): Promise<void> {
+function requestedDiskQuotaBytes(run_quota?: any): number | undefined {
+  const value = Number(normalizeRunQuota(run_quota)?.disk_quota);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  return Math.floor(value * MB);
+}
+
+async function assertStartDiskQuotaAllowed({
+  project_id,
+  run_quota,
+}: {
+  project_id: string;
+  run_quota?: any;
+}): Promise<void> {
+  const requestedDiskBytes = requestedDiskQuotaBytes(run_quota);
+  if (requestedDiskBytes != null) {
+    try {
+      const vol = await getVolume(project_id);
+      const quota = await vol.quota.get();
+      if (
+        isProjectDiskQuotaExceeded({
+          used: quota.used,
+          size: requestedDiskBytes,
+        })
+      ) {
+        throw new ProjectDiskQuotaExceededError({
+          used: quota.used,
+          size: requestedDiskBytes,
+        });
+      }
+      const currentSize = Number(quota.size);
+      if (
+        !Number.isFinite(currentSize) ||
+        currentSize <= 0 ||
+        requestedDiskBytes > currentSize
+      ) {
+        await vol.quota.set(requestedDiskBytes);
+        logger.info("raised project disk quota before start", {
+          project_id,
+          previous_size: quota.size,
+          requested_size: requestedDiskBytes,
+          used: quota.used,
+        });
+      }
+      return;
+    } catch (err) {
+      if (err instanceof ProjectDiskQuotaExceededError) {
+        throw err;
+      }
+      logger.warn("unable to reconcile project disk quota before start", {
+        project_id,
+        requested_size: requestedDiskBytes,
+        err: `${err}`,
+      });
+      return;
+    }
+  }
   await assertProjectDiskQuotaStartAllowed({
     project_id,
     logger,
@@ -1399,7 +1458,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         message: "checking project disk quota",
       });
       await timings.measure("check_quota", async () => {
-        await assertStartDiskQuotaAllowed(project_id);
+        await assertStartDiskQuotaAllowed({
+          project_id,
+          run_quota: startMetadata.run_quota,
+        });
       });
       upsertProjectStopState({
         project_id,

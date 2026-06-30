@@ -622,6 +622,45 @@ describe("project host start ACP rehydrate ordering", () => {
     });
   });
 
+  it("raises an existing project volume quota before checking start admission", async () => {
+    const quotaSet = jest.fn(async () => undefined);
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      run_quota: { disk_quota: 65_000 },
+    });
+    getVolume.mockResolvedValueOnce({
+      path: `/mnt/cocalc/project-${project_id}`,
+      quota: {
+        get: jest.fn(async () => ({
+          used: 57_000_000_000,
+          size: 50_000_000_000,
+        })),
+        set: quotaSet,
+      },
+    });
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(quotaSet).toHaveBeenCalledWith(65_000_000_000);
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({
+        disk: 65_000_000_000,
+      }),
+    });
+  });
+
   it("rejects invalid persisted rootfs image names on start()", async () => {
     const runnerApi = {
       start: jest.fn(async () => ({
