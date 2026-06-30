@@ -31,7 +31,9 @@ import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run"
 import {
   configureProjectHostAcpContainerFileIO,
   ensureFileDownloadReadServer,
+  ensureShareFileDownloadReadServer,
   ensureFileUploadWriteServer,
+  ensureViewerFileDownloadReadServer,
   initFileServer,
   initFsServer,
   PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
@@ -584,6 +586,35 @@ export async function main(
       return parsed.pathname.includes(`/${project_id}/files/`);
     } catch {
       return false;
+    }
+  };
+  const getReadOnlyProjectFileDownloadContext = ({
+    req,
+    project_id,
+    account_id,
+  }: {
+    req: IncomingMessage;
+    project_id: string;
+    account_id?: string;
+  }):
+    | { type: "share"; account_id: string; share_id: string }
+    | { type: "viewer"; account_id: string }
+    | undefined => {
+    if (!account_id) return;
+    try {
+      const parsed = new URL(req.url ?? "/", "http://project-host.local");
+      if (!parsed.pathname.includes(`/${project_id}/files/`)) return;
+      if (!parsed.searchParams.has("download")) return;
+      const share_id = `${parsed.searchParams.get("share") ?? ""}`.trim();
+      if (share_id) {
+        if (!isValidUUID(share_id)) return;
+        return { type: "share", account_id, share_id };
+      }
+      if (parsed.searchParams.get("viewer") === "1") {
+        return { type: "viewer", account_id };
+      }
+    } catch {
+      return;
     }
   };
   const isProjectUploadRequest = (
@@ -1257,15 +1288,40 @@ export async function main(
           req,
           project_id,
         );
-        await ensureFileDownloadReadServer({
-          client: conatClient,
+        const readOnlyDownloadContext = getReadOnlyProjectFileDownloadContext({
+          req,
           project_id,
+          account_id,
         });
+        const readOptions =
+          readOnlyDownloadContext?.type === "share"
+            ? await ensureShareFileDownloadReadServer({
+                client: conatClient,
+                project_id,
+                share_id: readOnlyDownloadContext.share_id,
+                account_id: readOnlyDownloadContext.account_id,
+              })
+            : readOnlyDownloadContext?.type === "viewer"
+              ? await ensureViewerFileDownloadReadServer({
+                  client: conatClient,
+                  project_id,
+                  account_id: readOnlyDownloadContext.account_id,
+                })
+              : undefined;
+        if (readOptions == null) {
+          await ensureFileDownloadReadServer({
+            client: conatClient,
+            project_id,
+          });
+        }
         await handleFileDownload({
           req,
           res,
           client: conatClient,
-          readServiceName: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
+          readServiceName:
+            readOptions?.readServiceName ??
+            PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
+          statSubject: readOptions?.statSubject,
           beforeExplicitDownload: explicitDownload
             ? async ({ project_id }: { project_id: string; path: string }) =>
                 await checkManagedFileDownloadAllowedBestEffort({

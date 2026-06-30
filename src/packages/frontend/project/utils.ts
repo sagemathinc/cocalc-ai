@@ -299,13 +299,23 @@ export function download_href(
   {
     deleteAfterDownload,
     downloadFilename,
+    share_id,
+    viewer,
   }: {
     deleteAfterDownload?: boolean;
     downloadFilename?: string;
+    share_id?: string;
+    viewer?: boolean;
   } = {},
 ): string {
   const u = url_href(project_id, path);
   const params = [`download`, `ts=${Date.now()}`];
+  if (viewer || share_id) {
+    params.push("viewer=1");
+  }
+  if (share_id) {
+    params.push(`share=${encodeURIComponent(share_id)}`);
+  }
   if (deleteAfterDownload) {
     params.push("deleteAfterDownload=1");
   }

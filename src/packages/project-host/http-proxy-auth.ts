@@ -31,6 +31,13 @@ import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { conatPassword } from "@cocalc/backend/data";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
 import { authorizePublicAppPath } from "./app-public-access";
+import callHub from "@cocalc/conat/hub/call-hub";
+import type {
+  AuthorizePublicDirectoryShareReadResponse,
+  GetTemporaryViewerReadPolicyResponse,
+} from "@cocalc/conat/hub/api/public-directory-shares";
+import { getMasterConatClient } from "./master-status";
+import { isProjectViewerRole } from "@cocalc/util/project-access";
 
 const collaboratorCache = new TTL<string, boolean>({
   max: 50_000,
@@ -287,6 +294,112 @@ function isProjectCollaboratorLocal({
   return allowed;
 }
 
+function isProjectViewerLocal({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): boolean {
+  const row = getRow("projects", JSON.stringify({ project_id }));
+  const userEntry = row?.users?.[account_id];
+  const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
+  return isProjectViewerRole(group);
+}
+
+function parseReadOnlyDownloadRequest({
+  req,
+  project_id,
+}: {
+  req: IncomingMessage;
+  project_id: string;
+}): { type: "share"; share_id: string } | { type: "viewer" } | undefined {
+  if (!/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
+    return;
+  }
+  try {
+    const parsed = new URL(req.url ?? "/", "http://project-host.local");
+    if (!parsed.pathname.includes(`/${project_id}/files/`)) return;
+    if (!parsed.searchParams.has("download")) return;
+    const share_id = `${parsed.searchParams.get("share") ?? ""}`.trim();
+    if (share_id) {
+      if (!isValidUUID(share_id)) return;
+      return { type: "share", share_id };
+    }
+    if (parsed.searchParams.get("viewer") === "1") {
+      return { type: "viewer" };
+    }
+  } catch {
+    return;
+  }
+}
+
+async function hasTemporaryViewerGrant({
+  host_id,
+  account_id,
+  project_id,
+}: {
+  host_id: string;
+  account_id: string;
+  project_id: string;
+}): Promise<boolean> {
+  const client = getMasterConatClient();
+  if (!client) {
+    return false;
+  }
+  try {
+    const response = (await callHub({
+      client,
+      host_id,
+      name: "publicDirectoryShares.getTemporaryViewerReadPolicy",
+      args: [{ account_id, project_id }],
+      timeout: 5_000,
+    })) as GetTemporaryViewerReadPolicyResponse;
+    return (
+      response.account_id === account_id &&
+      response.project_id === project_id &&
+      Array.isArray(response.read_policy?.rules) &&
+      response.read_policy.rules.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function canReadPublicDirectoryShareDownload({
+  host_id,
+  account_id,
+  project_id,
+  share_id,
+}: {
+  host_id: string;
+  account_id: string;
+  project_id: string;
+  share_id: string;
+}): Promise<boolean> {
+  const client = getMasterConatClient();
+  if (!client) {
+    return false;
+  }
+  try {
+    const response = (await callHub({
+      client,
+      host_id,
+      name: "publicDirectoryShares.authorizeRead",
+      args: [{ account_id, project_id, share_id }],
+      timeout: 5_000,
+    })) as AuthorizePublicDirectoryShareReadResponse;
+    return (
+      response.project_id === project_id &&
+      response.share_id === share_id &&
+      Array.isArray(response.read_policy?.rules) &&
+      response.read_policy.rules.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function clearProjectHostHttpProxyAuthCaches() {
   collaboratorCache.clear();
 }
@@ -459,6 +572,64 @@ export function createProjectHostHttpProxyAuth({
     }
   };
 
+  const authorizeAccountForHttpProjectFileDownload = async ({
+    account_id,
+    project_id,
+    req,
+  }: {
+    account_id: string;
+    project_id: string;
+    req: IncomingMessage;
+  }): Promise<boolean> => {
+    const download = parseReadOnlyDownloadRequest({ req, project_id });
+    if (!download) {
+      return false;
+    }
+    if (download.type === "share") {
+      return await canReadPublicDirectoryShareDownload({
+        host_id,
+        account_id,
+        project_id,
+        share_id: download.share_id,
+      });
+    }
+    return (
+      isProjectViewerLocal({ account_id, project_id }) ||
+      (await hasTemporaryViewerGrant({
+        host_id,
+        account_id,
+        project_id,
+      }))
+    );
+  };
+
+  const authorizeAccountForHttpRequest = async ({
+    account_id,
+    project_id,
+    req,
+  }: {
+    account_id: string;
+    project_id: string;
+    req: IncomingMessage;
+  }) => {
+    if (isProjectCollaboratorLocal({ account_id, project_id })) {
+      return;
+    }
+    if (
+      await authorizeAccountForHttpProjectFileDownload({
+        account_id,
+        project_id,
+        req,
+      })
+    ) {
+      return;
+    }
+    throw new HttpAuthError(
+      403,
+      "permission denied: account is not a collaborator on this project",
+    );
+  };
+
   const cleanQueryTokenOrRedirect = (
     req: IncomingMessage,
     res: ServerResponse,
@@ -521,9 +692,10 @@ export function createProjectHostHttpProxyAuth({
         clearSessionCookie(req, res, project_id);
         throw err;
       }
-      authorizeAccountForProject({
+      await authorizeAccountForHttpRequest({
         account_id: accountFromBrowserSession.account_id,
         project_id,
+        req,
       });
       setSessionCookie(
         req,
@@ -552,9 +724,10 @@ export function createProjectHostHttpProxyAuth({
         clearSessionCookie(req, res, project_id);
         throw err;
       }
-      authorizeAccountForProject({
+      await authorizeAccountForHttpRequest({
         account_id: accountFromSession.account_id,
         project_id,
+        req,
       });
       setAuthContext(req, {
         account_id: accountFromSession.account_id,
@@ -586,7 +759,7 @@ export function createProjectHostHttpProxyAuth({
     const account_id = verifyClaimsAndGetAccountId(claims, req, project_id);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
     if ((claims.act ?? "account") === "account") {
-      authorizeAccountForProject({ account_id, project_id });
+      await authorizeAccountForHttpRequest({ account_id, project_id, req });
     }
     setAuthContext(req, {
       account_id,
