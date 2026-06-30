@@ -86,13 +86,18 @@ function truncateAtWord(value: string, maxLength: number): string {
   return `${truncated.trimEnd()}...`;
 }
 
-function newsExcerpt(markdown: string): string {
+export function newsExcerpt(markdown: string): string {
   const text = markdown
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, "$1")
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^\s{0,3}[-*+]\s+/gm, "")
-    .replace(/[`*_~>#]/g, "")
+    .replace(/^\s{0,3}>\s?/gm, "")
     .replace(/\s+/g, " ")
     .trim();
 

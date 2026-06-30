@@ -6,8 +6,8 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Suspense, lazy } from "react";
 
+import { CopyOutlined } from "@ant-design/icons";
 import { App as AntdApp, Button, Empty, Flex, Spin, Typography } from "antd";
-import { Icon } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getSiteName,
@@ -105,7 +105,7 @@ function CodeCopyButton({ value }: { value: string }) {
     <Button
       aria-label="Copy to clipboard"
       className="cocalc-code-copy-button"
-      icon={<Icon name="copy" />}
+      icon={<CopyOutlined />}
       onClick={() => {
         if (typeof navigator === "undefined" || navigator.clipboard == null) {
           void message.info("Copy the code manually.");

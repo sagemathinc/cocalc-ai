@@ -69,6 +69,7 @@ export const PUBLIC_SITEMAP_PATHS = [
   "/policies/ferpa",
   "/pricing",
   "/products",
+  "/products/cocalc-star",
   "/products/cocalc-launchpad",
   "/products/cocalc-plus",
   "/products/cocalc-rocket",

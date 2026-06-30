@@ -133,6 +133,7 @@ function JuliaProjectFit() {
 }
 
 export default function JuliaFeaturePage({
+  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -190,6 +191,9 @@ export default function JuliaFeaturePage({
             { href: appPath("features/linux"), label: "Linux environment" },
             { href: appPath("features/teaching"), label: "Teaching" },
             { href: appPath("products"), label: "Compare operating models" },
+            ...(helpEmail
+              ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
+              : []),
           ]}
           title="When Julia belongs in CoCalc"
         >

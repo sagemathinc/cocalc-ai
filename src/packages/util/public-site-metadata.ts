@@ -238,6 +238,25 @@ const PRODUCT_SITEMAP_PATHS = [
   "products/cocalc-rocket",
 ] as const;
 
+// Keep this in sync with frontend/public/features/catalog.ts index pages.
+const FEATURE_SITEMAP_SLUGS = new Set([
+  "jupyter-notebook",
+  "latex-editor",
+  "ai",
+  "slides",
+  "whiteboard",
+  "r-statistical-software",
+  "sage",
+  "octave",
+  "python",
+  "julia",
+  "terminal",
+  "linux",
+  "teaching",
+  "api",
+  "compare",
+]);
+
 const POLICY_SITEMAP_SLUGS = [
   "terms",
   "privacy",
@@ -254,8 +273,6 @@ const TEAM_MEMBER_SITEMAP_SLUGS = [
   "harald-schilly",
   "andrey-novoseltsev",
 ] as const;
-
-const LEGACY_FEATURE_SITEMAP_SLUGS = new Set(["icons", "i18n"]);
 
 function normalizeBasePath(basePath?: string): string {
   const trimmed = `${basePath ?? ""}`.trim();
@@ -293,8 +310,8 @@ export const PUBLIC_SITEMAP_PATHS = uniquePublicPaths([
   ...TEAM_MEMBER_SITEMAP_SLUGS.map((slug) => publicPath(`about/team/${slug}`)),
   publicPath("docs"),
   publicPath("features"),
-  ...PUBLIC_FEATURE_METADATA.filter(
-    (page) => !LEGACY_FEATURE_SITEMAP_SLUGS.has(page.slug),
+  ...PUBLIC_FEATURE_METADATA.filter((page) =>
+    FEATURE_SITEMAP_SLUGS.has(page.slug),
   ).map((page) => publicPath(`features/${page.slug}`)),
   publicPath("guides"),
   langPath(),

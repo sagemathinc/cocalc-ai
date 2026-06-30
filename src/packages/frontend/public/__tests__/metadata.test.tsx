@@ -4,6 +4,7 @@ import { render, waitFor } from "@testing-library/react";
 
 import { getPublicRouteMetadata, PublicRouteHeadMetadata } from "../metadata";
 import type { PublicRoute } from "../routes";
+import { PUBLIC_SITEMAP_PATHS } from "../sitemap-paths";
 
 type PublicProductsRoute = Extract<PublicRoute, { section: "products" }>;
 
@@ -144,6 +145,17 @@ describe("public route metadata", () => {
 
     expect(metadata.canonicalPath).toBe("/base/products/cocalc-star");
     expect(metadata.imagePath).toBe("/base/public/landing/product-options.jpg");
+  });
+
+  it("only emits routable feature detail pages in the public metadata sitemap", () => {
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/julia");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/r-statistical-software");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/compare");
+    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/automations");
+    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/cli");
+    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/more-languages");
+    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/icons");
+    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/i18n");
   });
 
   it("applies canonical and social tags for the current public route", async () => {

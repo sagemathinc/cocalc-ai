@@ -412,6 +412,24 @@ describe("PublicFeaturesApp", () => {
     },
   );
 
+  it.each(["julia", "r-statistical-software"])(
+    "renders the configured support link on the %s feature page",
+    (slug) => {
+      render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      expect(
+        screen
+          .getByRole("link", { name: "Contact support" })
+          .getAttribute("href"),
+      ).toBe("mailto:help@example.com");
+    },
+  );
+
   it.each([
     { finalCta: "Start using SageMath on CoCalc", slug: "sage" },
     { finalCta: "Start using CoCalc whiteboards", slug: "whiteboard" },

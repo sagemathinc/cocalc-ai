@@ -133,6 +133,7 @@ function RProjectFitBand() {
 }
 
 export default function RStatisticalSoftwareFeaturePage({
+  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -193,6 +194,9 @@ export default function RStatisticalSoftwareFeaturePage({
               href: appPath("products"),
               label: "Compare operating models",
             },
+            ...(helpEmail
+              ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
+              : []),
           ]}
           title="From analysis to a shared report"
         >

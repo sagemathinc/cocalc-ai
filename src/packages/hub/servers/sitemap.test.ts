@@ -61,7 +61,7 @@ describe("public sitemap", () => {
     }
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/auth");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/support/new");
-    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/products/cocalc-star");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/products/cocalc-star");
   });
 
   it("serves every listed path through current public route handlers", async () => {
