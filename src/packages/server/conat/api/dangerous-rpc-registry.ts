@@ -440,6 +440,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "collaborator-authorized cancellation of an in-project durable RootFS build",
   },
+  "projects.clearAdminProjectEntitlementOverride": {
+    decision: "fresh-auth-required",
+    reason: "admin project disk entitlement override removal",
+  },
   "projects.cleanupRestoreStaging": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -556,6 +560,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "projects.setProjectEnv": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.setAdminProjectEntitlementOverride": {
+    decision: "fresh-auth-required",
+    reason: "admin project disk entitlement override mutation",
   },
   "projects.setProjectManageUsersOwnerOnly": {
     decision: "fresh-auth-not-required",

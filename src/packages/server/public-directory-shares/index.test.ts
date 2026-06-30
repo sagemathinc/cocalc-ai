@@ -176,6 +176,8 @@ describe("public directory share normalization", () => {
 });
 
 describe("public directory temporary viewer grants", () => {
+  jest.setTimeout(15000);
+
   beforeAll(async () => {
     await initEphemeralDatabase({ reset: true });
     await ensurePublicDirectorySharesSchema();

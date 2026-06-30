@@ -22,6 +22,7 @@ import {
 import {
   managedProjectEgressResidualTracker,
   type ManagedProjectEgressResidualTracker,
+  type ManagedRawNetworkResidualSample,
 } from "./managed-egress-residual";
 
 const logger = getLogger("project-host:raw-network-egress");
@@ -71,6 +72,11 @@ function envPositiveInt(name: string, fallback: number): number {
   return value;
 }
 
+const SAMPLE_LOG_PROJECT_LIMIT = envPositiveInt(
+  "COCALC_PROJECT_HOST_RAW_NETWORK_EGRESS_LOG_PROJECTS",
+  5,
+);
+
 function diffCounter(
   current: number | undefined,
   previous: number | undefined,
@@ -97,6 +103,64 @@ function formatManagedEgressCategory(category: string): string {
   if (category === "backup-upload") return "Project backup uploads";
   if (category === CATEGORY) return "Project outbound network traffic";
   return capitalize(category.replace(/[-_]/g, " "));
+}
+
+function summarizeResidualSamplesForLog(
+  residuals: ManagedRawNetworkResidualSample[],
+): {
+  project_count: number;
+  total_bytes: number;
+  total_boundary_bytes: number;
+  total_classified_boundary_bytes: number;
+  classified_categories: Record<string, number>;
+  top_projects: Array<{
+    project_id: string;
+    bytes: number;
+    boundary_bytes: number;
+    classified_boundary_bytes: number;
+    pid?: number;
+    interface_name?: string;
+  }>;
+} {
+  const classified_categories: Record<string, number> = {};
+  let total_bytes = 0;
+  let total_boundary_bytes = 0;
+  let total_classified_boundary_bytes = 0;
+  for (const residual of residuals) {
+    total_bytes += residual.bytes;
+    total_boundary_bytes += residual.boundary_bytes;
+    total_classified_boundary_bytes += residual.classified_boundary_bytes;
+    for (const [category, bytes] of Object.entries(
+      residual.classified_categories,
+    )) {
+      classified_categories[category] =
+        (classified_categories[category] ?? 0) + (bytes ?? 0);
+    }
+  }
+  const top_projects = residuals
+    .slice()
+    .sort(
+      (a, b) => b.bytes - a.bytes || a.project_id.localeCompare(b.project_id),
+    )
+    .slice(0, SAMPLE_LOG_PROJECT_LIMIT)
+    .map((residual) => ({
+      project_id: residual.project_id,
+      bytes: residual.bytes,
+      boundary_bytes: residual.boundary_bytes,
+      classified_boundary_bytes: residual.classified_boundary_bytes,
+      ...(residual.metadata?.pid != null ? { pid: residual.metadata.pid } : {}),
+      ...(residual.metadata?.interface_name
+        ? { interface_name: residual.metadata.interface_name }
+        : {}),
+    }));
+  return {
+    project_count: residuals.length,
+    total_bytes,
+    total_boundary_bytes,
+    total_classified_boundary_bytes,
+    classified_categories,
+    top_projects,
+  };
 }
 
 function normalizeProjectContainerName(name: unknown): string | undefined {
@@ -458,17 +522,9 @@ export function startManagedRawNetworkEgressLoop({
       }
 
       if (residuals.length > 0) {
-        logger.info("managed raw network egress sample", {
+        logger.debug("managed raw network egress sample", {
           mode,
-          projects: residuals.map((residual) => ({
-            project_id: residual.project_id,
-            bytes: residual.bytes,
-            boundary_bytes: residual.boundary_bytes,
-            classified_boundary_bytes: residual.classified_boundary_bytes,
-            classified_categories: residual.classified_categories,
-            pid: residual.metadata?.pid,
-            interface_name: residual.metadata?.interface_name,
-          })),
+          ...summarizeResidualSamplesForLog(residuals),
         });
       }
 
@@ -554,5 +610,6 @@ export const __test__ = {
   diffCounter,
   parseProcNetDev,
   parseProcNetRouteDefaultInterface,
+  summarizeResidualSamplesForLog,
   summarizeManagedRawNetworkEgressDeltas,
 };

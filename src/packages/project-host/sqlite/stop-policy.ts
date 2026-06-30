@@ -18,6 +18,10 @@ export interface ProjectStopStateRow {
   last_started_ms?: number | null;
   last_pressure_stop_ms?: number | null;
   pressure_cooldown_until_ms?: number | null;
+  pressure_stop_window_started_ms?: number | null;
+  pressure_stop_count?: number | null;
+  pressure_quarantine_until_ms?: number | null;
+  pressure_quarantine_reason?: string | null;
   last_ranked_ms?: number | null;
   last_decision_reason?: string | null;
   last_decision_pressure_zone?: string | null;
@@ -58,17 +62,51 @@ function ensureStopPolicyTables() {
       last_started_ms INTEGER,
       last_pressure_stop_ms INTEGER,
       pressure_cooldown_until_ms INTEGER,
+      pressure_stop_window_started_ms INTEGER,
+      pressure_stop_count INTEGER,
+      pressure_quarantine_until_ms INTEGER,
+      pressure_quarantine_reason TEXT,
       last_ranked_ms INTEGER,
       last_decision_reason TEXT,
       last_decision_pressure_zone TEXT,
       updated_at INTEGER NOT NULL
     )
   `);
+  const columns = new Set(
+    (
+      db.prepare("PRAGMA table_info(project_stop_state)").all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name),
+  );
+  if (!columns.has("pressure_stop_window_started_ms")) {
+    db.exec(
+      "ALTER TABLE project_stop_state ADD COLUMN pressure_stop_window_started_ms INTEGER",
+    );
+  }
+  if (!columns.has("pressure_stop_count")) {
+    db.exec(
+      "ALTER TABLE project_stop_state ADD COLUMN pressure_stop_count INTEGER",
+    );
+  }
+  if (!columns.has("pressure_quarantine_until_ms")) {
+    db.exec(
+      "ALTER TABLE project_stop_state ADD COLUMN pressure_quarantine_until_ms INTEGER",
+    );
+  }
+  if (!columns.has("pressure_quarantine_reason")) {
+    db.exec(
+      "ALTER TABLE project_stop_state ADD COLUMN pressure_quarantine_reason TEXT",
+    );
+  }
   db.exec(
     "CREATE INDEX IF NOT EXISTS project_stop_policy_updated_idx ON project_stop_policy(policy_updated_ms)",
   );
   db.exec(
     "CREATE INDEX IF NOT EXISTS project_stop_state_cooldown_idx ON project_stop_state(pressure_cooldown_until_ms)",
+  );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS project_stop_state_quarantine_idx ON project_stop_state(pressure_quarantine_until_ms)",
   );
 }
 
@@ -165,6 +203,10 @@ export function upsertProjectStopState(row: ProjectStopStateRow): void {
             last_started_ms,
             last_pressure_stop_ms,
             pressure_cooldown_until_ms,
+            pressure_stop_window_started_ms,
+            pressure_stop_count,
+            pressure_quarantine_until_ms,
+            pressure_quarantine_reason,
             last_ranked_ms,
             last_decision_reason,
             last_decision_pressure_zone
@@ -185,6 +227,20 @@ export function upsertProjectStopState(row: ProjectStopStateRow): void {
   const nextPressureCooldownUntilMs = hasOwn("pressure_cooldown_until_ms")
     ? (row.pressure_cooldown_until_ms ?? null)
     : (existing.pressure_cooldown_until_ms ?? null);
+  const nextPressureStopWindowStartedMs = hasOwn(
+    "pressure_stop_window_started_ms",
+  )
+    ? (row.pressure_stop_window_started_ms ?? null)
+    : (existing.pressure_stop_window_started_ms ?? null);
+  const nextPressureStopCount = hasOwn("pressure_stop_count")
+    ? (row.pressure_stop_count ?? null)
+    : (existing.pressure_stop_count ?? null);
+  const nextPressureQuarantineUntilMs = hasOwn("pressure_quarantine_until_ms")
+    ? (row.pressure_quarantine_until_ms ?? null)
+    : (existing.pressure_quarantine_until_ms ?? null);
+  const nextPressureQuarantineReason = hasOwn("pressure_quarantine_reason")
+    ? (row.pressure_quarantine_reason ?? null)
+    : (existing.pressure_quarantine_reason ?? null);
   const nextLastRankedMs = hasOwn("last_ranked_ms")
     ? (row.last_ranked_ms ?? null)
     : (existing.last_ranked_ms ?? null);
@@ -201,16 +257,24 @@ export function upsertProjectStopState(row: ProjectStopStateRow): void {
         last_started_ms,
         last_pressure_stop_ms,
         pressure_cooldown_until_ms,
+        pressure_stop_window_started_ms,
+        pressure_stop_count,
+        pressure_quarantine_until_ms,
+        pressure_quarantine_reason,
         last_ranked_ms,
         last_decision_reason,
         last_decision_pressure_zone,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id) DO UPDATE SET
         last_started_ms=excluded.last_started_ms,
         last_pressure_stop_ms=excluded.last_pressure_stop_ms,
         pressure_cooldown_until_ms=excluded.pressure_cooldown_until_ms,
+        pressure_stop_window_started_ms=excluded.pressure_stop_window_started_ms,
+        pressure_stop_count=excluded.pressure_stop_count,
+        pressure_quarantine_until_ms=excluded.pressure_quarantine_until_ms,
+        pressure_quarantine_reason=excluded.pressure_quarantine_reason,
         last_ranked_ms=excluded.last_ranked_ms,
         last_decision_reason=excluded.last_decision_reason,
         last_decision_pressure_zone=excluded.last_decision_pressure_zone,
@@ -221,6 +285,10 @@ export function upsertProjectStopState(row: ProjectStopStateRow): void {
     nextLastStartedMs,
     nextLastPressureStopMs,
     nextPressureCooldownUntilMs,
+    nextPressureStopWindowStartedMs,
+    nextPressureStopCount,
+    nextPressureQuarantineUntilMs,
+    nextPressureQuarantineReason,
     nextLastRankedMs,
     nextLastDecisionReason,
     nextLastDecisionPressureZone,
@@ -241,6 +309,10 @@ export function getProjectStopState(
           last_started_ms,
           last_pressure_stop_ms,
           pressure_cooldown_until_ms,
+          pressure_stop_window_started_ms,
+          pressure_stop_count,
+          pressure_quarantine_until_ms,
+          pressure_quarantine_reason,
           last_ranked_ms,
           last_decision_reason,
           last_decision_pressure_zone,
@@ -263,6 +335,10 @@ export function listProjectStopStates(): ProjectStopStateRow[] {
           last_started_ms,
           last_pressure_stop_ms,
           pressure_cooldown_until_ms,
+          pressure_stop_window_started_ms,
+          pressure_stop_count,
+          pressure_quarantine_until_ms,
+          pressure_quarantine_reason,
           last_ranked_ms,
           last_decision_reason,
           last_decision_pressure_zone,

@@ -1284,6 +1284,8 @@ export async function setAdminProjectEntitlementOverride({
   expires_at,
 }: {
   account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   disk_quota_mb: number;
   reason: string;
@@ -1322,6 +1324,8 @@ export async function clearAdminProjectEntitlementOverride({
   reason,
 }: {
   account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   reason: string;
 }): Promise<void> {

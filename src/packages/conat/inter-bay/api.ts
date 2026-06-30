@@ -14,6 +14,7 @@ import type {
   AccountFeedProjectRemoveEvent,
   AccountFeedProjectUpsertEvent,
 } from "@cocalc/conat/hub/api/account-feed";
+import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
   ExternalCredentialSelector,
@@ -251,7 +252,7 @@ export interface ProjectControlStartRequest {
   lro_op_id?: string;
   source_bay_id?: string;
   autostart?: boolean;
-  managed_egress_override?: "admin-host-drain";
+  managed_egress_override?: ManagedProjectEgressOverride;
   epoch?: number;
 }
 
@@ -272,7 +273,7 @@ export interface ProjectControlBackupRequest {
   project_id: string;
   account_id?: string;
   tags?: string[];
-  managed_egress_override?: "admin-host-drain";
+  managed_egress_override?: ManagedProjectEgressOverride;
   epoch?: number;
 }
 

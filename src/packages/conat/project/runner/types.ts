@@ -54,6 +54,12 @@ export interface Configuration {
   swap?: boolean;
   // pid limit
   pids?: number;
+  // open file descriptor limit, applied as both soft and hard RLIMIT_NOFILE.
+  nofile?: number;
+  // core dump size limit, applied as both soft and hard RLIMIT_CORE.
+  core?: number;
+  // podman shared memory size, e.g. "64m".
+  shmSize?: string;
   // disk size in bytes
   disk?: number;
   // if given, a disk-backed temporary volume of this size in bytes is mounted

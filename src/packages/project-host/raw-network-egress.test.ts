@@ -249,6 +249,60 @@ ens4\t0100B40A\t00000000\t0005
     ).toEqual([]);
   });
 
+  it("summarizes residual samples for bounded logs", () => {
+    expect(
+      __test__.summarizeResidualSamplesForLog([
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          bytes: 20,
+          boundary_bytes: 30,
+          classified_boundary_bytes: 10,
+          classified_categories: { ssh: 10 },
+          bucket_start: 0,
+          bucket_ms: 5000,
+          metadata: { pid: 222, interface_name: "ens4" },
+        },
+        {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          bytes: 50,
+          boundary_bytes: 60,
+          classified_boundary_bytes: 10,
+          classified_categories: { "http-proxy": 10 },
+          bucket_start: 0,
+          bucket_ms: 5000,
+          metadata: { pid: 111, interface_name: "ens4" },
+        },
+      ]),
+    ).toEqual({
+      project_count: 2,
+      total_bytes: 70,
+      total_boundary_bytes: 90,
+      total_classified_boundary_bytes: 20,
+      classified_categories: {
+        "http-proxy": 10,
+        ssh: 10,
+      },
+      top_projects: [
+        {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          bytes: 50,
+          boundary_bytes: 60,
+          classified_boundary_bytes: 10,
+          pid: 111,
+          interface_name: "ens4",
+        },
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          bytes: 20,
+          boundary_bytes: 30,
+          classified_boundary_bytes: 10,
+          pid: 222,
+          interface_name: "ens4",
+        },
+      ],
+    });
+  });
+
   it("records deltas after the baseline and stops over-limit projects", async () => {
     const stopMock = jest.fn().mockResolvedValue({ state: "opened" });
     recordManagedProjectEgressMock.mockResolvedValue({ recorded: true });
