@@ -15,6 +15,7 @@ export function parseSoftwareBuildComponent(
     case "static":
     case "hub":
     case "bay":
+    case "host-bootstrap":
     case "project-host":
     case "project":
     case "tools":
