@@ -47,8 +47,8 @@ export function legacyPublicPathSlugFromRecord(
   }
 
   const ownerName = clean(context.owner_name);
-  const projectName = clean(context.project_name);
-  const shareName = clean(row.name) ?? clean(row.slug) ?? clean(row.path);
+  const projectName = clean(context.project_name) ?? clean(row.project_id);
+  const shareName = clean(row.name) ?? clean(row.path) ?? clean(row.slug);
   if (ownerName && projectName && shareName) {
     return normalizeSlug(`${ownerName}/${projectName}/${shareName}`);
   }
