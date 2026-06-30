@@ -77,6 +77,11 @@ type LegacyProjectArchiveDeps = {
     size: number | string,
   ) => Promise<void>;
   setProjectQuotaGraceActive?: (project_id: string, active: boolean) => void;
+  setProjectArchiveRestoreActive?: (
+    project_id: string,
+    active: boolean,
+  ) => void;
+  markProjectArchiveInitialBackupExempt?: (project_id: string) => void;
   projectMountpoint: (project_id: string) => string;
   invalidateProjectFsServer: (project_id: string) => void;
   touchProjectLastEdited: (project_id: string, reason: string) => void;
@@ -641,6 +646,8 @@ export function createLegacyProjectArchiveHandlers({
   getProjectQuota,
   setProjectQuota,
   setProjectQuotaGraceActive,
+  setProjectArchiveRestoreActive,
+  markProjectArchiveInitialBackupExempt,
   projectMountpoint,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -683,6 +690,7 @@ export function createLegacyProjectArchiveHandlers({
       tmpDir = await mkdtemp(join(tmpRoot, `${project_id}-`));
       archivePath = join(tmpDir, "project.tar.zst");
       try {
+        setProjectArchiveRestoreActive?.(project_id, true);
         const downloaded = await downloadSignedProjectArchive({
           download,
           dest: archivePath,
@@ -805,6 +813,7 @@ export function createLegacyProjectArchiveHandlers({
           },
         });
         invalidateProjectFsServer(project_id);
+        markProjectArchiveInitialBackupExempt?.(project_id);
         void touchProjectLastEdited(project_id, "legacy-migration-restore");
         return {
           ...downloaded,
@@ -818,6 +827,7 @@ export function createLegacyProjectArchiveHandlers({
           duration_ms: Date.now() - started,
         };
       } finally {
+        setProjectArchiveRestoreActive?.(project_id, false);
         if (quotaGraceEnabled && quotaSizeToRestore != null) {
           try {
             await setProjectQuota?.(project_id, quotaSizeToRestore);

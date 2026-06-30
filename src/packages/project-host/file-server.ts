@@ -243,6 +243,15 @@ const quotaInFlight = new Map<
   }>
 >();
 const projectQuotaGraceActive = new Set<string>();
+const legacyProjectArchiveRestoreActive = new Set<string>();
+const legacyProjectInitialBackupEgressExempt = new Set<string>();
+const LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE: ManagedBackupEgressOverride =
+  "legacy-migration-initial-backup";
+const LEGACY_MIGRATION_INITIAL_BACKUP_TAGS = [
+  "legacy-migration",
+  "legacy-migration-initial",
+  "scheduled",
+];
 const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
   getOrEnsureVolume,
   getProjectQuota: async (project_id) => await getQuota({ project_id }),
@@ -254,6 +263,16 @@ const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
     } else {
       projectQuotaGraceActive.delete(project_id);
     }
+  },
+  setProjectArchiveRestoreActive: (project_id, active) => {
+    if (active) {
+      legacyProjectArchiveRestoreActive.add(project_id);
+    } else {
+      legacyProjectArchiveRestoreActive.delete(project_id);
+    }
+  },
+  markProjectArchiveInitialBackupExempt: (project_id) => {
+    legacyProjectInitialBackupEgressExempt.add(project_id);
   },
   projectMountpoint,
   invalidateProjectFsServer,
@@ -3790,7 +3809,11 @@ async function createBackup({
     backup_id: result.id,
     tags,
     summary: result.summary,
+    managed_egress_override,
   });
+  if (managed_egress_override === LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE) {
+    legacyProjectInitialBackupEgressExempt.delete(project_id);
+  }
   try {
     const generation = await getGeneration(projectMountpoint(project_id)).catch(
       () => null,
@@ -4041,6 +4064,16 @@ async function updateBackups({
   counts?: Partial<SnapshotCounts>;
   limit?: number;
 }): Promise<void> {
+  if (legacyProjectArchiveRestoreActive.has(project_id)) {
+    logger.info("skipping scheduled backup during legacy project restore", {
+      project_id,
+    });
+    return;
+  }
+  const legacyInitialBackupOverride =
+    legacyProjectInitialBackupEgressExempt.has(project_id)
+      ? LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
+      : undefined;
   const createdBackupIds = new Set<string>();
   let newestCreatedBackupTime: Date | undefined;
   const vol = await withBackupConfigRefreshOnMissingBucket({
@@ -4050,10 +4083,17 @@ async function updateBackups({
       const refreshed = await getVolumeForBackup(project_id);
       await refreshed.rustic.update(counts, {
         limit,
+        tags:
+          legacyInitialBackupOverride == null
+            ? undefined
+            : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
         index: { project_id },
         beforeCreate: async () => {
           const managedBackupPolicy = await checkManagedBackupAllowedBestEffort(
-            { project_id },
+            {
+              project_id,
+              managed_egress_override: legacyInitialBackupOverride,
+            },
           );
           if (!managedBackupPolicy.allowed) {
             throw new Error(managedBackupPolicy.message);
@@ -4073,7 +4113,12 @@ async function updateBackups({
             await recordManagedBackupEgressBestEffort({
               project_id,
               backup_id: backup.id,
+              tags:
+                legacyInitialBackupOverride == null
+                  ? undefined
+                  : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
               summary: backup.summary,
+              managed_egress_override: legacyInitialBackupOverride,
             });
           }
         },
@@ -4104,6 +4149,9 @@ async function updateBackups({
     });
   } catch (err) {
     logger.warn("backup index update failed", { project_id, err });
+  }
+  if (createdBackupIds.size > 0 && legacyInitialBackupOverride != null) {
+    legacyProjectInitialBackupEgressExempt.delete(project_id);
   }
   if (createdBackupIds.size > 0 && reportTime) {
     try {

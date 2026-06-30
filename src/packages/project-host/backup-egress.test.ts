@@ -95,6 +95,16 @@ describe("project-host backup managed egress", () => {
     expect(getManagedProjectEgressPolicyMock).not.toHaveBeenCalled();
   });
 
+  it("allows legacy migration initial backups without consulting policy", async () => {
+    await expect(
+      checkManagedBackupAllowedBestEffort({
+        project_id: "proj-1",
+        managed_egress_override: "legacy-migration-initial-backup",
+      }),
+    ).resolves.toEqual({ allowed: true });
+    expect(getManagedProjectEgressPolicyMock).not.toHaveBeenCalled();
+  });
+
   it("blocks new backups when the owner is already over the managed egress limit", async () => {
     getManagedProjectEgressPolicyMock.mockResolvedValue({
       allowed: false,
@@ -151,6 +161,21 @@ describe("project-host backup managed egress", () => {
         files_new: 12,
       },
     });
+  });
+
+  it("does not record legacy migration initial backup bytes against the account", async () => {
+    await recordManagedBackupEgressBestEffort({
+      project_id: "proj-1",
+      backup_id: "backup-1",
+      tags: ["legacy-migration", "legacy-migration-initial"],
+      summary: {
+        data_added_packed: 1234,
+        data_added: 5678,
+        total_bytes_processed: 9999,
+      },
+      managed_egress_override: "legacy-migration-initial-backup",
+    });
+    expect(recordManagedProjectEgressMock).not.toHaveBeenCalled();
   });
 
   it("does not record zero-byte backups", async () => {
