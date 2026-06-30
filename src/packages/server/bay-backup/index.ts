@@ -80,7 +80,7 @@ import {
 } from "@cocalc/backend/sandbox/install";
 import { ensureInitialized as ensureRusticInitialized } from "@cocalc/backend/sandbox/rustic";
 import { which } from "@cocalc/backend/which";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import dbPassword from "@cocalc/database/pool/password";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import type {
@@ -300,8 +300,53 @@ const DEFAULT_BAY_BACKUP_RETENTION_COUNT = 14;
 const DEFAULT_BAY_BACKUP_RESTORE_RETENTION_DAYS = 7;
 const DEFAULT_BAY_WAL_LOCAL_RETENTION_COUNT = 128;
 const DEFAULT_BAY_WAL_REMOTE_RETENTION_BACKUPS = 2;
+const BAY_BACKUP_RUN_LOCK_PREFIX = "bay-backup-full-snapshot";
 const WAL_SEGMENT_SIZE = 16n * 1024n * 1024n;
 const XLOG_SEGMENTS_PER_XLOG_ID = (1n << 32n) / WAL_SEGMENT_SIZE;
+
+class BayBackupAlreadyRunningError extends Error {
+  constructor(bay_id: string) {
+    super(`bay backup is already running for bay '${bay_id}'`);
+    this.name = "BayBackupAlreadyRunningError";
+  }
+}
+
+async function withBayBackupRunLock<T>({
+  bay_id,
+  fn,
+}: {
+  bay_id: string;
+  fn: () => Promise<T>;
+}): Promise<T> {
+  const lockKey = `${BAY_BACKUP_RUN_LOCK_PREFIX}:${bay_id}`;
+  const client: PoolClient = await getPool().connect();
+  let locked = false;
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [lockKey],
+    );
+    locked = rows[0]?.locked === true;
+    if (!locked) {
+      throw new BayBackupAlreadyRunningError(bay_id);
+    }
+    return await fn();
+  } finally {
+    if (locked) {
+      try {
+        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+          lockKey,
+        ]);
+      } catch (err) {
+        logger.warn("failed to release bay backup advisory lock", {
+          bay_id,
+          err,
+        });
+      }
+    }
+    client.release();
+  }
+}
 
 function getWalArchiveIntervalMs(): number {
   const n = Number.parseInt(
@@ -3236,6 +3281,16 @@ async function runBayBackupMaintenance({
     scheduleBayBackupMaintenance({ bay_id, delay_ms: null });
     return;
   }
+  const { state } = await loadBayBackupState({ bay_id });
+  const dueDelay = computeNextBackupMaintenanceDelayMs({ state, config });
+  if (dueDelay == null) {
+    scheduleBayBackupMaintenance({ bay_id, delay_ms: null });
+    return;
+  }
+  if (dueDelay > 0) {
+    scheduleBayBackupMaintenance({ bay_id, delay_ms: dueDelay });
+    return;
+  }
   backupMaintenanceRunning = true;
   const started_at = new Date().toISOString();
   try {
@@ -3267,6 +3322,29 @@ async function runBayBackupMaintenance({
       delay_ms: config.full_snapshot_interval_ms,
     });
   } catch (err) {
+    if (err instanceof BayBackupAlreadyRunningError) {
+      const finished_at = new Date().toISOString();
+      await writeUpdatedBayBackupState({
+        bay_id,
+        update: (state) => ({
+          ...state,
+          maintenance_last_finished_at: finished_at,
+        }),
+      }).catch((writeErr) => {
+        logger.warn("failed to persist skipped bay backup maintenance", {
+          bay_id,
+          err: writeErr,
+        });
+      });
+      logger.info("bay backup maintenance skipped; backup already running", {
+        bay_id,
+      });
+      scheduleBayBackupMaintenance({
+        bay_id,
+        delay_ms: config.full_snapshot_retry_interval_ms,
+      });
+      return;
+    }
     const finished_at = new Date().toISOString();
     await writeUpdatedBayBackupState({
       bay_id,
@@ -3641,314 +3719,324 @@ export async function runBayBackup({
     if (resolvedBayId !== currentBay.bay_id) {
       throw new Error(`bay '${resolvedBayId}' not found`);
     }
-    const [postgres, r2] = await Promise.all([
-      inspectPostgres(),
-      resolveR2Target(resolvedBayId),
-    ]);
-    const rusticRepo = await buildBayRusticRepoConfig({ r2 });
-    const rusticRepoProfilePath = rusticRepo
-      ? await ensureBayRusticRepoProfile(rusticRepo)
-      : null;
-    const current_storage_backend: StorageBackend = rusticRepo
-      ? "rustic"
-      : "local";
-    const paths = getBayBackupPaths(resolvedBayId);
-    const previous =
-      (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ??
-      defaultState({
-        bay_id: resolvedBayId,
-        current_storage_backend,
-        r2,
-      });
-    await Promise.all([
-      ensureDir(paths.archives_dir),
-      ensureDir(paths.manifests_dir),
-      ensureDir(paths.staging_dir),
-      ensureDir(paths.wal_archive_dir),
-    ]);
-    const started_at = new Date().toISOString();
-    const backup_set_id = randomUUID();
-    const initialState: StoredBayBackupState = {
-      ...previous,
+    return await withBayBackupRunLock({
       bay_id: resolvedBayId,
-      current_storage_backend,
-      r2_configured: r2.configured,
-      bucket_name: r2.bucket_name ?? null,
-      bucket_region: r2.bucket_region ?? null,
-      bucket_endpoint: r2.bucket_endpoint ?? null,
-      object_prefix_root: r2.object_prefix_root ?? null,
-      rustic_repo_selector:
-        rusticRepo?.repo_selector ?? previous.rustic_repo_selector ?? null,
-      last_started_at: started_at,
-      last_finished_at: null,
-      last_error_at: null,
-      last_error: null,
-      latest_remote_snapshot_id: previous.latest_remote_snapshot_id ?? null,
-      latest_remote_snapshot_host: previous.latest_remote_snapshot_host ?? null,
-      last_restore_test_backup_set_id:
-        previous.last_restore_test_backup_set_id ?? null,
-      last_restore_test_status: previous.last_restore_test_status ?? null,
-      last_restore_tested_at: previous.last_restore_tested_at ?? null,
-      last_restore_test_target_dir:
-        previous.last_restore_test_target_dir ?? null,
-      last_restore_test_recovery_ready:
-        previous.last_restore_test_recovery_ready ?? null,
-      last_pruned_wal_count: previous.last_pruned_wal_count ?? 0,
-      last_pruned_remote_wal_count: previous.last_pruned_remote_wal_count ?? 0,
-      last_pruned_local_archive_count:
-        previous.last_pruned_local_archive_count ?? 0,
-      last_pruned_restore_count: previous.last_pruned_restore_count ?? 0,
-    };
-    await writeJson(paths.state_file, initialState);
-    const staging_dir = await mkdtemp(
-      join(paths.staging_dir, `${backup_set_id}-`),
-    );
-    let archive_dir: string | null = null;
-    let rustic_stage_dir: string | null = null;
-    try {
-      logger.info("starting bay postgres backup", {
-        bay_id: resolvedBayId,
-        backup_set_id,
-        strategy: postgres.preferred_strategy,
-        current_storage_backend,
-      });
-      await assertControlPlaneBackupToolsAvailable();
-      await assertRemoteBackupToolsAvailable({ rusticRepoProfilePath });
-      const actual_strategy = await runBackupCommand({
-        strategy: postgres.preferred_strategy,
-        staging_dir,
-      });
-      await stageControlPlaneArtifacts({
-        stagingDir: staging_dir,
-      });
-      archive_dir = join(paths.archives_dir, backup_set_id);
-      await rename(staging_dir, archive_dir);
-      await writeOfflineRestoreHelper({
-        archiveDir: archive_dir,
-        backup_set_id,
-      });
-      let artifacts = await collectArtifacts(archive_dir);
-      const artifact_bytes = artifacts.reduce(
-        (sum, artifact) => sum + artifact.bytes,
-        0,
-      );
-      const local_manifest_path = join(
-        paths.manifests_dir,
-        `${backup_set_id}.json`,
-      );
-      let latest_storage_backend: StorageBackend = "local";
-      let latest_remote_manifest_key: string | null = null;
-      let latest_object_prefix: string | null = null;
-      let latest_remote_snapshot_id: string | null = null;
-      let latest_remote_snapshot_host: string | null = null;
-      const wal_keep_from_segment =
-        actual_strategy === "pg_basebackup"
-          ? await readWalKeepFromBackupManifestFile(
-              join(archive_dir, "backup_manifest"),
-            ).catch(() => null)
+      fn: async () => {
+        const [postgres, r2] = await Promise.all([
+          inspectPostgres(),
+          resolveR2Target(resolvedBayId),
+        ]);
+        const rusticRepo = await buildBayRusticRepoConfig({ r2 });
+        const rusticRepoProfilePath = rusticRepo
+          ? await ensureBayRusticRepoProfile(rusticRepo)
           : null;
-      const snapshotManifest: StoredBayBackupManifest = {
-        bay_id: resolvedBayId,
-        bay_label: currentBay.label,
-        backup_set_id,
-        created_at: started_at,
-        finished_at: started_at,
-        format: actual_strategy,
-        current_storage_backend,
-        latest_storage_backend: rusticRepoProfilePath ? "rustic" : "local",
-        bucket_name: r2.bucket_name ?? null,
-        bucket_region: r2.bucket_region ?? null,
-        bucket_endpoint: r2.bucket_endpoint ?? null,
-        object_prefix: null,
-        remote_manifest_key: null,
-        remote_snapshot_id: null,
-        remote_snapshot_host: resolvedBayId,
-        wal_keep_from_segment,
-        rustic_repo_selector: rusticRepo?.repo_selector ?? null,
-        postgres,
-        artifacts,
-      };
-      await writeJson(join(archive_dir, "manifest.json"), snapshotManifest);
-      if (rusticRepoProfilePath) {
+        const current_storage_backend: StorageBackend = rusticRepo
+          ? "rustic"
+          : "local";
+        const paths = getBayBackupPaths(resolvedBayId);
+        const previous =
+          (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ??
+          defaultState({
+            bay_id: resolvedBayId,
+            current_storage_backend,
+            r2,
+          });
+        await Promise.all([
+          ensureDir(paths.archives_dir),
+          ensureDir(paths.manifests_dir),
+          ensureDir(paths.staging_dir),
+          ensureDir(paths.wal_archive_dir),
+        ]);
+        const started_at = new Date().toISOString();
+        const backup_set_id = randomUUID();
+        const initialState: StoredBayBackupState = {
+          ...previous,
+          bay_id: resolvedBayId,
+          current_storage_backend,
+          r2_configured: r2.configured,
+          bucket_name: r2.bucket_name ?? null,
+          bucket_region: r2.bucket_region ?? null,
+          bucket_endpoint: r2.bucket_endpoint ?? null,
+          object_prefix_root: r2.object_prefix_root ?? null,
+          rustic_repo_selector:
+            rusticRepo?.repo_selector ?? previous.rustic_repo_selector ?? null,
+          last_started_at: started_at,
+          last_finished_at: null,
+          last_error_at: null,
+          last_error: null,
+          latest_remote_snapshot_id: previous.latest_remote_snapshot_id ?? null,
+          latest_remote_snapshot_host:
+            previous.latest_remote_snapshot_host ?? null,
+          last_restore_test_backup_set_id:
+            previous.last_restore_test_backup_set_id ?? null,
+          last_restore_test_status: previous.last_restore_test_status ?? null,
+          last_restore_tested_at: previous.last_restore_tested_at ?? null,
+          last_restore_test_target_dir:
+            previous.last_restore_test_target_dir ?? null,
+          last_restore_test_recovery_ready:
+            previous.last_restore_test_recovery_ready ?? null,
+          last_pruned_wal_count: previous.last_pruned_wal_count ?? 0,
+          last_pruned_remote_wal_count:
+            previous.last_pruned_remote_wal_count ?? 0,
+          last_pruned_local_archive_count:
+            previous.last_pruned_local_archive_count ?? 0,
+          last_pruned_restore_count: previous.last_pruned_restore_count ?? 0,
+        };
+        await writeJson(paths.state_file, initialState);
+        const staging_dir = await mkdtemp(
+          join(paths.staging_dir, `${backup_set_id}-`),
+        );
+        let archive_dir: string | null = null;
+        let rustic_stage_dir: string | null = null;
         try {
-          rustic_stage_dir = await mkdtemp(
-            join(paths.staging_dir, `${backup_set_id}-rustic-`),
-          );
-          await materializeRusticSnapshotTree({
-            archiveDir: archive_dir,
-            destinationDir: rustic_stage_dir,
-          });
-          const remoteSnapshot = await backupToBayRusticRepo({
-            repoProfilePath: rusticRepoProfilePath,
-            snapshotHost: resolvedBayId,
+          logger.info("starting bay postgres backup", {
+            bay_id: resolvedBayId,
             backup_set_id,
-            format: actual_strategy,
-            sourceDir: rustic_stage_dir,
+            strategy: postgres.preferred_strategy,
+            current_storage_backend,
           });
-          latest_storage_backend = "rustic";
-          latest_remote_snapshot_id = remoteSnapshot.id;
-          latest_remote_snapshot_host =
-            remoteSnapshot.hostname ?? resolvedBayId;
-        } catch (err) {
-          logger.warn(
-            "bay backup rustic upload failed; local backup retained",
-            {
+          await assertControlPlaneBackupToolsAvailable();
+          await assertRemoteBackupToolsAvailable({ rusticRepoProfilePath });
+          const actual_strategy = await runBackupCommand({
+            strategy: postgres.preferred_strategy,
+            staging_dir,
+          });
+          await stageControlPlaneArtifacts({
+            stagingDir: staging_dir,
+          });
+          archive_dir = join(paths.archives_dir, backup_set_id);
+          await rename(staging_dir, archive_dir);
+          await writeOfflineRestoreHelper({
+            archiveDir: archive_dir,
+            backup_set_id,
+          });
+          let artifacts = await collectArtifacts(archive_dir);
+          const artifact_bytes = artifacts.reduce(
+            (sum, artifact) => sum + artifact.bytes,
+            0,
+          );
+          const local_manifest_path = join(
+            paths.manifests_dir,
+            `${backup_set_id}.json`,
+          );
+          let latest_storage_backend: StorageBackend = "local";
+          let latest_remote_manifest_key: string | null = null;
+          let latest_object_prefix: string | null = null;
+          let latest_remote_snapshot_id: string | null = null;
+          let latest_remote_snapshot_host: string | null = null;
+          const wal_keep_from_segment =
+            actual_strategy === "pg_basebackup"
+              ? await readWalKeepFromBackupManifestFile(
+                  join(archive_dir, "backup_manifest"),
+                ).catch(() => null)
+              : null;
+          const snapshotManifest: StoredBayBackupManifest = {
+            bay_id: resolvedBayId,
+            bay_label: currentBay.label,
+            backup_set_id,
+            created_at: started_at,
+            finished_at: started_at,
+            format: actual_strategy,
+            current_storage_backend,
+            latest_storage_backend: rusticRepoProfilePath ? "rustic" : "local",
+            bucket_name: r2.bucket_name ?? null,
+            bucket_region: r2.bucket_region ?? null,
+            bucket_endpoint: r2.bucket_endpoint ?? null,
+            object_prefix: null,
+            remote_manifest_key: null,
+            remote_snapshot_id: null,
+            remote_snapshot_host: resolvedBayId,
+            wal_keep_from_segment,
+            rustic_repo_selector: rusticRepo?.repo_selector ?? null,
+            postgres,
+            artifacts,
+          };
+          await writeJson(join(archive_dir, "manifest.json"), snapshotManifest);
+          if (rusticRepoProfilePath) {
+            try {
+              rustic_stage_dir = await mkdtemp(
+                join(paths.staging_dir, `${backup_set_id}-rustic-`),
+              );
+              await materializeRusticSnapshotTree({
+                archiveDir: archive_dir,
+                destinationDir: rustic_stage_dir,
+              });
+              const remoteSnapshot = await backupToBayRusticRepo({
+                repoProfilePath: rusticRepoProfilePath,
+                snapshotHost: resolvedBayId,
+                backup_set_id,
+                format: actual_strategy,
+                sourceDir: rustic_stage_dir,
+              });
+              latest_storage_backend = "rustic";
+              latest_remote_snapshot_id = remoteSnapshot.id;
+              latest_remote_snapshot_host =
+                remoteSnapshot.hostname ?? resolvedBayId;
+            } catch (err) {
+              logger.warn(
+                "bay backup rustic upload failed; local backup retained",
+                {
+                  bay_id: resolvedBayId,
+                  backup_set_id,
+                  err,
+                },
+              );
+              initialState.last_error_at = new Date().toISOString();
+              initialState.last_error = `remote rustic upload failed: ${String(err)}`;
+            }
+          }
+          const finished_at = new Date().toISOString();
+          const manifest: StoredBayBackupManifest = {
+            bay_id: resolvedBayId,
+            bay_label: currentBay.label,
+            backup_set_id,
+            created_at: started_at,
+            finished_at,
+            format: actual_strategy,
+            current_storage_backend,
+            latest_storage_backend,
+            bucket_name: r2.bucket_name ?? null,
+            bucket_region: r2.bucket_region ?? null,
+            bucket_endpoint: r2.bucket_endpoint ?? null,
+            object_prefix: latest_object_prefix,
+            remote_manifest_key: latest_remote_manifest_key,
+            remote_snapshot_id: latest_remote_snapshot_id,
+            remote_snapshot_host: latest_remote_snapshot_host,
+            wal_keep_from_segment,
+            rustic_repo_selector: rusticRepo?.repo_selector ?? null,
+            postgres,
+            artifacts,
+          };
+          await writeJson(local_manifest_path, manifest);
+          let state: StoredBayBackupState = {
+            ...initialState,
+            latest_backup_set_id: backup_set_id,
+            latest_format: actual_strategy,
+            latest_storage_backend,
+            latest_local_manifest_path: local_manifest_path,
+            latest_remote_manifest_key,
+            latest_object_prefix,
+            latest_remote_snapshot_id,
+            latest_remote_snapshot_host,
+            latest_artifact_count: artifacts.length,
+            latest_artifact_bytes: artifact_bytes,
+            last_finished_at: finished_at,
+            last_successful_backup_at: finished_at,
+            last_successful_remote_backup_at:
+              latest_storage_backend === "rustic"
+                ? finished_at
+                : previous.last_successful_remote_backup_at,
+            restore_state:
+              latest_storage_backend === "rustic"
+                ? "ready"
+                : "ready-local-only",
+          };
+          await writeJson(paths.state_file, state);
+          try {
+            const walSync = await syncBayWalArchive({
+              bay_id: resolvedBayId,
+              forceSwitch:
+                `${postgres.archive_mode ?? ""}`.toLowerCase() === "on",
+            });
+            state = walSync.state;
+          } catch (err) {
+            logger.warn("post-backup WAL archive sync failed", {
               bay_id: resolvedBayId,
               backup_set_id,
               err,
-            },
-          );
-          initialState.last_error_at = new Date().toISOString();
-          initialState.last_error = `remote rustic upload failed: ${String(err)}`;
-        }
-      }
-      const finished_at = new Date().toISOString();
-      const manifest: StoredBayBackupManifest = {
-        bay_id: resolvedBayId,
-        bay_label: currentBay.label,
-        backup_set_id,
-        created_at: started_at,
-        finished_at,
-        format: actual_strategy,
-        current_storage_backend,
-        latest_storage_backend,
-        bucket_name: r2.bucket_name ?? null,
-        bucket_region: r2.bucket_region ?? null,
-        bucket_endpoint: r2.bucket_endpoint ?? null,
-        object_prefix: latest_object_prefix,
-        remote_manifest_key: latest_remote_manifest_key,
-        remote_snapshot_id: latest_remote_snapshot_id,
-        remote_snapshot_host: latest_remote_snapshot_host,
-        wal_keep_from_segment,
-        rustic_repo_selector: rusticRepo?.repo_selector ?? null,
-        postgres,
-        artifacts,
-      };
-      await writeJson(local_manifest_path, manifest);
-      let state: StoredBayBackupState = {
-        ...initialState,
-        latest_backup_set_id: backup_set_id,
-        latest_format: actual_strategy,
-        latest_storage_backend,
-        latest_local_manifest_path: local_manifest_path,
-        latest_remote_manifest_key,
-        latest_object_prefix,
-        latest_remote_snapshot_id,
-        latest_remote_snapshot_host,
-        latest_artifact_count: artifacts.length,
-        latest_artifact_bytes: artifact_bytes,
-        last_finished_at: finished_at,
-        last_successful_backup_at: finished_at,
-        last_successful_remote_backup_at:
-          latest_storage_backend === "rustic"
-            ? finished_at
-            : previous.last_successful_remote_backup_at,
-        restore_state:
-          latest_storage_backend === "rustic" ? "ready" : "ready-local-only",
-      };
-      await writeJson(paths.state_file, state);
-      try {
-        const walSync = await syncBayWalArchive({
-          bay_id: resolvedBayId,
-          forceSwitch: `${postgres.archive_mode ?? ""}`.toLowerCase() === "on",
-        });
-        state = walSync.state;
-      } catch (err) {
-        logger.warn("post-backup WAL archive sync failed", {
-          bay_id: resolvedBayId,
-          backup_set_id,
-          err,
-        });
-      }
-      try {
-        state = await applyBayBackupRetention({
-          bay_id: resolvedBayId,
-          paths,
-          state,
-          rusticRepoProfilePath,
-        });
-        await writeJson(paths.state_file, state);
-      } catch (err) {
-        logger.warn("bay backup retention maintenance failed", {
-          bay_id: resolvedBayId,
-          backup_set_id,
-          err,
-        });
-      }
-      if (backupMaintenanceTimer && !backupMaintenanceRunning) {
-        const config = getBayBackupMaintenanceConfig();
-        if (config.enabled) {
-          scheduleBayBackupMaintenance({
+            });
+          }
+          try {
+            state = await applyBayBackupRetention({
+              bay_id: resolvedBayId,
+              paths,
+              state,
+              rusticRepoProfilePath,
+            });
+            await writeJson(paths.state_file, state);
+          } catch (err) {
+            logger.warn("bay backup retention maintenance failed", {
+              bay_id: resolvedBayId,
+              backup_set_id,
+              err,
+            });
+          }
+          if (backupMaintenanceTimer && !backupMaintenanceRunning) {
+            const config = getBayBackupMaintenanceConfig();
+            if (config.enabled) {
+              scheduleBayBackupMaintenance({
+                bay_id: resolvedBayId,
+                delay_ms: config.full_snapshot_interval_ms,
+              });
+            }
+          }
+          const wal = await getWalArchiveSnapshot({ paths, state });
+          await publishBayBackupMetadata({
             bay_id: resolvedBayId,
-            delay_ms: config.full_snapshot_interval_ms,
+            paths,
+            r2,
+            state,
+            snapshot: wal,
+            config: getBayBackupMaintenanceConfig(),
+            event: {
+              event: "full-backup",
+              backup_set_id,
+            },
+          }).catch((err) => {
+            logger.warn("failed to publish bay backup metadata", {
+              bay_id: resolvedBayId,
+              backup_set_id,
+              err,
+            });
           });
+          return {
+            ...currentBay,
+            started_at,
+            finished_at,
+            backup_set_id,
+            format: actual_strategy,
+            bucket_name: r2.bucket_name ?? null,
+            object_prefix: latest_object_prefix,
+            remote_snapshot_id: latest_remote_snapshot_id,
+            remote_snapshot_host: latest_remote_snapshot_host,
+            rustic_repo_selector: rusticRepo?.repo_selector ?? null,
+            local_manifest_path,
+            storage_backend: latest_storage_backend,
+            artifact_count: artifacts.length,
+            artifact_bytes,
+            artifacts,
+            postgres,
+            bay_backup: mapStateToStatus({
+              paths,
+              state,
+              wal,
+            }),
+          };
+        } catch (err) {
+          const finished_at = new Date().toISOString();
+          const failed: StoredBayBackupState = {
+            ...initialState,
+            last_finished_at: finished_at,
+            last_error_at: finished_at,
+            last_error: String(err),
+            restore_state: previous.restore_state ?? "failed",
+          };
+          await writeJson(paths.state_file, failed);
+          throw err;
+        } finally {
+          if (archive_dir == null) {
+            await rm(staging_dir, { recursive: true, force: true }).catch(
+              () => undefined,
+            );
+          }
+          if (rustic_stage_dir != null) {
+            await rm(rustic_stage_dir, { recursive: true, force: true }).catch(
+              () => undefined,
+            );
+          }
         }
-      }
-      const wal = await getWalArchiveSnapshot({ paths, state });
-      await publishBayBackupMetadata({
-        bay_id: resolvedBayId,
-        paths,
-        r2,
-        state,
-        snapshot: wal,
-        config: getBayBackupMaintenanceConfig(),
-        event: {
-          event: "full-backup",
-          backup_set_id,
-        },
-      }).catch((err) => {
-        logger.warn("failed to publish bay backup metadata", {
-          bay_id: resolvedBayId,
-          backup_set_id,
-          err,
-        });
-      });
-      return {
-        ...currentBay,
-        started_at,
-        finished_at,
-        backup_set_id,
-        format: actual_strategy,
-        bucket_name: r2.bucket_name ?? null,
-        object_prefix: latest_object_prefix,
-        remote_snapshot_id: latest_remote_snapshot_id,
-        remote_snapshot_host: latest_remote_snapshot_host,
-        rustic_repo_selector: rusticRepo?.repo_selector ?? null,
-        local_manifest_path,
-        storage_backend: latest_storage_backend,
-        artifact_count: artifacts.length,
-        artifact_bytes,
-        artifacts,
-        postgres,
-        bay_backup: mapStateToStatus({
-          paths,
-          state,
-          wal,
-        }),
-      };
-    } catch (err) {
-      const finished_at = new Date().toISOString();
-      const failed: StoredBayBackupState = {
-        ...initialState,
-        last_finished_at: finished_at,
-        last_error_at: finished_at,
-        last_error: String(err),
-        restore_state: previous.restore_state ?? "failed",
-      };
-      await writeJson(paths.state_file, failed);
-      throw err;
-    } finally {
-      if (archive_dir == null) {
-        await rm(staging_dir, { recursive: true, force: true }).catch(
-          () => undefined,
-        );
-      }
-      if (rustic_stage_dir != null) {
-        await rm(rustic_stage_dir, { recursive: true, force: true }).catch(
-          () => undefined,
-        );
-      }
-    }
+      },
+    });
   })();
   try {
     return await runInFlight;
