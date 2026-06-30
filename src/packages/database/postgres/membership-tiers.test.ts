@@ -27,6 +27,10 @@ function createDb({
   ],
   siteLicenseTablesExist = true,
   membershipPackageTablesExist = true,
+  tierRows = [
+    { id: "student", label: "Student" },
+    { id: "instructor", label: "Instructor" },
+  ],
   subscriptionRows = [
     {
       tier_id: "student",
@@ -45,6 +49,7 @@ function createDb({
   existingTables?: string[];
   siteLicenseTablesExist?: boolean;
   membershipPackageTablesExist?: boolean;
+  tierRows?: { id: string; label?: string }[];
   subscriptionRows?: {
     tier_id: string;
     subscription_count: number;
@@ -100,10 +105,7 @@ function createDb({
         opts.cb(null, { rows: packageAccountRows });
       } else if (sql === "SELECT * FROM membership_tiers") {
         opts.cb(null, {
-          rows: [
-            { id: "student", label: "Student" },
-            { id: "instructor", label: "Instructor" },
-          ],
+          rows: tierRows,
         });
       } else if (sql.includes("usage_history_count")) {
         opts.cb(null, { rows: usageHistoryRows });
@@ -220,6 +222,46 @@ describe("membershipTiersQuery", () => {
     )?.query;
     expect(accountSummaryQuery).toContain("FROM accounts");
     expect(accountSummaryQuery).toContain("coalesce(deleted,false)=false");
+  });
+
+  it("counts site admins as admin-tier admin memberships", async () => {
+    const { db, calls } = createDb({
+      tierRows: [{ id: "admin", label: "Admin" }],
+      subscriptionRows: [],
+      adminAssignedRows: [{ tier_id: "admin", admin_assigned_count: 4 }],
+      totalAccountRows: [{ tier_id: "admin", total_account_count: 4 }],
+    });
+
+    const result = await membershipTiersQuery(db, [], { id: "*" });
+
+    expect(result).toEqual([
+      {
+        id: "admin",
+        label: "Admin",
+        subscription_count: 0,
+        subscribed_account_count: 0,
+        team_seat_count: 0,
+        team_account_count: 0,
+        course_account_count: 0,
+        site_account_count: 0,
+        admin_assigned_count: 4,
+        site_license_count: 0,
+        total_account_count: 4,
+        total_active_account_count: 12,
+        has_usage_history: false,
+      },
+    ]);
+    const adminAssignedQuery = calls.find((call) =>
+      call.query.includes("admin_assigned_count"),
+    )?.query;
+    const totalAccountQuery = calls.find((call) =>
+      call.query.includes("total_account_count"),
+    )?.query;
+    for (const query of [adminAssignedQuery, totalAccountQuery]) {
+      expect(query).toContain("'admin' = ANY(a.groups)");
+      expect(query).toContain("coalesce(t.disabled,false)=false");
+      expect(query).toContain("coalesce(a.deleted,false)=false");
+    }
   });
 
   it("builds bay-local usage reports with home-bay filtered active account counts", async () => {
