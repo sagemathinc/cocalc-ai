@@ -1231,6 +1231,14 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 rootctl.read_text(encoding="utf-8"),
             )
             self.assertIn(
+                "apply-sysctls)",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "fs.inotify.max_user_instances = 8192",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
                 "allow_forensics_capture_dir",
                 rootctl.read_text(encoding="utf-8"),
             )

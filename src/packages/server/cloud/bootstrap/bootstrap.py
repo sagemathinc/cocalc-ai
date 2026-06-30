@@ -3994,9 +3994,25 @@ ENV_FILE="/etc/cocalc/project-host.env"
 PROJECT_POOL_CGROUP_DEFAULT="__PROJECT_POOL_CGROUP__"
 PROJECT_POOL_MEMORY_RESERVE_MB_DEFAULT="__PROJECT_POOL_MEMORY_RESERVE_MB__"
 MIN_PROJECT_POOL_MEMORY_MB="__MIN_PROJECT_POOL_MEMORY_MB__"
+SYSCTL_CONFIG_PATH="/etc/sysctl.d/90-cocalc-project-host.conf"
 
 run_daemon() {
   sudo -n -u "${RUNTIME_USER}" -H "${RUNTIME_BIN}" daemon "$@"
+}
+
+apply_project_host_sysctls() {
+  cat > "${SYSCTL_CONFIG_PATH}" <<'SYSCTL'
+# Managed by CoCalc project-host.
+# Keep these limits high enough for many rootless project containers,
+# but low enough that drift is visible before one project can dominate.
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 2097152
+fs.inotify.max_queued_events = 65536
+kernel.keys.maxkeys = 20000
+kernel.keys.maxbytes = 25000000
+SYSCTL
+  chmod 0644 "${SYSCTL_CONFIG_PATH}"
+  sysctl -p "${SYSCTL_CONFIG_PATH}"
 }
 
 read_env_value() {
@@ -4246,6 +4262,9 @@ case "${cmd}" in
     fi
     capture_forensics "$1" "$2" "$3" "$4"
     ;;
+  apply-sysctls)
+    apply_project_host_sysctls
+    ;;
   noop)
     exit 0
     ;;
@@ -4266,7 +4285,7 @@ case "${cmd}" in
     fi
     ;;
   *)
-    echo "usage: ${0} {start|stop|restart|ensure|status|protect|capture-forensics|noop}" >&2
+    echo "usage: ${0} {start|stop|restart|ensure|status|protect|capture-forensics|apply-sysctls|noop}" >&2
     exit 2
     ;;
 esac
