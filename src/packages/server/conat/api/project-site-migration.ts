@@ -701,6 +701,10 @@ export async function finalizeIncomingProjectBackupMigration({
   if (sourceBackupId && sourceBackupId !== snapshotId) {
     throw new Error("source_backup_result.id does not match snapshot_id");
   }
+  const sourceBackupOpId = `${sourceBackup.source_backup_op_id ?? ""}`.trim();
+  if (sourceBackupOpId && !isValidUUID(sourceBackupOpId)) {
+    throw new Error("source_backup_result.source_backup_op_id must be a uuid");
+  }
   const sourceBackupTime =
     typeof sourceBackup.time === "string" || sourceBackup.time instanceof Date
       ? sourceBackup.time
@@ -738,6 +742,7 @@ export async function finalizeIncomingProjectBackupMigration({
             backup_index_key=$3,
             backup_summary=$4::jsonb,
             metadata=COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
+            source_backup_op_id=COALESCE(source_backup_op_id, $6),
             error=NULL,
             updated_at=NOW(),
             completed_at=COALESCE(completed_at, NOW())
@@ -752,6 +757,7 @@ export async function finalizeIncomingProjectBackupMigration({
         restore_requested: !!restore,
         finalize_warnings: warnings,
       }),
+      sourceBackupOpId || null,
     ],
   );
   try {

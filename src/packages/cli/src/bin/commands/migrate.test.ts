@@ -8,6 +8,7 @@ import { registerMigrateCommand } from "./migrate";
 const SOURCE_PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const DEST_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 const MIGRATION_ID = "33333333-3333-4333-8333-333333333333";
+const SOURCE_BACKUP_OP_ID = "55555555-5555-4555-8555-555555555555";
 
 function isValidUUID(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -95,7 +96,7 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
         backupProjectToExternalRepository: async (opts: any) => {
           state.calls.push({ ctx: "alpha", name: "backup", opts });
           return {
-            op_id: "backup-op",
+            op_id: SOURCE_BACKUP_OP_ID,
             scope_type: "project",
             scope_id: SOURCE_PROJECT_ID,
             service: "project-backup",
@@ -246,13 +247,18 @@ test("migrate project prepares destination, backs up source, then finalizes", as
     state.calls.find((call: any) => call.name === "finalize").ctx,
     "prod",
   );
+  assert.equal(
+    state.calls.find((call: any) => call.name === "finalize").opts
+      .source_backup_result.source_backup_op_id,
+    SOURCE_BACKUP_OP_ID,
+  );
   assert.deepEqual(state.output.data, {
     source_profile: "alpha",
     source_project_id: SOURCE_PROJECT_ID,
     destination_profile: "prod",
     destination_project_id: DEST_PROJECT_ID,
     migration_id: MIGRATION_ID,
-    source_backup_op_id: "backup-op",
+    source_backup_op_id: SOURCE_BACKUP_OP_ID,
     snapshot_id: "snapshot-1",
     status: "finalized",
     destination_status: "finalized",

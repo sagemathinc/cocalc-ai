@@ -298,7 +298,10 @@ async function runProjectMigration({
             typeof sourceBackupResult.backup_index_key === "string"
               ? sourceBackupResult.backup_index_key
               : null,
-          source_backup_result: sourceBackupResult,
+          source_backup_result: {
+            ...sourceBackupResult,
+            source_backup_op_id: backupOp.op_id,
+          },
           restore: !!options.restore,
         },
       )) as FinalizeIncomingProjectBackupMigrationResult;

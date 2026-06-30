@@ -347,6 +347,7 @@ describe("project site migration destination RPCs", () => {
       source_backup_result: {
         id: "snapshot-123",
         time: "2026-06-30T13:00:00Z",
+        source_backup_op_id: "77777777-7777-4777-8777-777777777777",
         total_bytes: 1234,
         backup_index: {
           object_key: "indexes/key.sqlite.zst",
@@ -365,6 +366,7 @@ describe("project site migration destination RPCs", () => {
         MIGRATION_ID,
         "snapshot-123",
         "indexes/key.sqlite.zst",
+        "77777777-7777-4777-8777-777777777777",
       ]),
     );
     expect(setProjectLabelsMock).toHaveBeenCalledWith(
