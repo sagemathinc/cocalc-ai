@@ -46,12 +46,13 @@ import { NewProjectCreator } from "./create-project";
 
 const PROJECT_NAME_STYLE: CSS = {
   alignItems: "center",
-  display: "inline-flex",
+  display: "flex",
   gap: 4,
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
   maxWidth: "200px",
+  width: "100%",
 } as const;
 
 type ProjectsNavMode = "tabs" | "dropdown";
@@ -273,6 +274,8 @@ function ProjectTab({ project_id, starred, onToggleStar }: ProjectTabProps) {
       onMouseUp={onMouseUp}
       style={{
         marginTop: "-1px" /* compensate for border */,
+        minWidth: 0,
+        overflow: "hidden",
         ...(width != null ? { width } : undefined),
       }}
     >
