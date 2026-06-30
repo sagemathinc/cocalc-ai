@@ -27,9 +27,9 @@ import {
 import {
   disableMigratedLegacyPublicDirectoryShare,
   normalizePublicDirectorySharePath,
-  normalizePublicDirectoryShareSlug,
   upsertMigratedLegacyPublicDirectoryShare,
 } from "@cocalc/server/public-directory-shares";
+import { legacyPublicPathSlugForRecord } from "@cocalc/server/legacy-migration/public-path-slugs";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { triggerLegacyMigrationProjectRestoreWorker } from "@cocalc/server/legacy-migration/restore-worker";
@@ -314,30 +314,6 @@ function legacyBoolean(value: unknown): boolean {
   return value === true || `${value}`.toLowerCase() === "true";
 }
 
-function legacyPublicPathSlug(row: Record<string, any>): string | null {
-  const raw =
-    clean(row.slug) ??
-    clean(row.url) ??
-    clean(row.name) ??
-    (clean(row.project_id) && clean(row.path)
-      ? `${clean(row.project_id)}/${clean(row.path)}`
-      : undefined);
-  if (!raw) return null;
-  let slug = raw.trim();
-  try {
-    if (/^https?:\/\//i.test(slug)) {
-      slug = new URL(slug).pathname;
-    }
-  } catch {
-    // Fall through to path-style normalization below.
-  }
-  slug = slug.replace(/^\/+|\/+$/g, "");
-  if (slug.toLowerCase().startsWith("share/")) {
-    slug = slug.slice("share/".length);
-  }
-  return normalizePublicDirectoryShareSlug(slug);
-}
-
 function normalizeLegacyPublicPathSharePath(row: Record<string, any>): string {
   const rawPath = clean(row.path) ?? clean(row.original_path) ?? ".";
   const originalPath = normalizePublicDirectorySharePath(rawPath);
@@ -408,7 +384,7 @@ async function replayLegacyPublicPathsForProject({
   let skipped = 0;
   for (const { legacy_id, payload } of rows) {
     const legacyPublicPathId = clean(payload.id) ?? legacy_id;
-    const slug = legacyPublicPathSlug(payload);
+    const slug = await legacyPublicPathSlugForRecord(payload);
     if (!legacyPublicPathId || !slug) {
       skipped += 1;
       continue;
