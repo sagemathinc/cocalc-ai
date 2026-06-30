@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
+export * from "./project-site-migration";
 import execProject from "@cocalc/server/projects/exec";
 import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
 import {

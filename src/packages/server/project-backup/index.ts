@@ -1627,6 +1627,80 @@ export async function recordProjectBackupIndex({
   );
 }
 
+export async function recordExternalProjectBackupIndex({
+  project_id,
+  backup_id,
+  backup_time,
+  status,
+  storage_backend = "r2-object-store",
+  object_key,
+  compression,
+  sqlite_bytes,
+  object_bytes,
+  sha256,
+  error,
+}: {
+  project_id: string;
+  backup_id: string;
+  backup_time: Date | string;
+  status: "complete" | "failed";
+  storage_backend?: "r2-object-store";
+  object_key?: string | null;
+  compression?: string | null;
+  sqlite_bytes?: number | null;
+  object_bytes?: number | null;
+  sha256?: string | null;
+  error?: string | null;
+}): Promise<void> {
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (!backup_id) {
+    throw new Error("backup_id must be specified");
+  }
+  await ensureProjectBackupIndexSchema();
+  const bucket = await getProjectBackupIndexBucket({ project_id });
+  let recordedAt = backup_time ? new Date(backup_time) : new Date();
+  if (Number.isNaN(recordedAt.getTime())) {
+    recordedAt = new Date();
+  }
+  await pool().query(
+    `INSERT INTO project_backup_indexes (
+      id, project_id, backup_id, backup_time, status, storage_backend, bucket_id,
+      object_key, compression, sqlite_bytes, object_bytes, sha256, error, host_id
+    ) VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULL)
+    ON CONFLICT (project_id, backup_id) DO UPDATE SET
+      backup_time = EXCLUDED.backup_time,
+      status = EXCLUDED.status,
+      storage_backend = EXCLUDED.storage_backend,
+      bucket_id = EXCLUDED.bucket_id,
+      object_key = EXCLUDED.object_key,
+      compression = EXCLUDED.compression,
+      sqlite_bytes = EXCLUDED.sqlite_bytes,
+      object_bytes = EXCLUDED.object_bytes,
+      sha256 = EXCLUDED.sha256,
+      error = EXCLUDED.error,
+      host_id = NULL,
+      updated = NOW()`,
+    [
+      project_id,
+      backup_id,
+      recordedAt,
+      status === "failed"
+        ? PROJECT_BACKUP_INDEX_STATUS_FAILED
+        : PROJECT_BACKUP_INDEX_STATUS_COMPLETE,
+      storage_backend,
+      bucket?.id ?? null,
+      object_key ?? null,
+      compression ?? null,
+      sqlite_bytes ?? null,
+      object_bytes ?? null,
+      sha256 ?? null,
+      error ?? null,
+    ],
+  );
+}
+
 export async function getProjectBackupIndexes({
   host_id,
   project_id,

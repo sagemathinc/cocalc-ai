@@ -26,6 +26,7 @@ import {
   type CopyOptions,
   type DirectorySummary,
   type DirectorySummaryEntry,
+  type ExternalProjectBackupResult,
   type LroRef,
   type ManagedBackupEgressOverride,
   type RestoreMode,
@@ -57,9 +58,11 @@ import {
 import { filesystem, type Filesystem } from "@cocalc/file-server/btrfs";
 import {
   BACKUP_INDEX_LABEL_PREFIX,
+  backupIndexFilePath,
   backupIndexDir,
   backupIndexFileName,
   backupIndexHost,
+  buildBackupIndex,
 } from "@cocalc/file-server/btrfs/backup-index";
 import {
   beginRestoreStaging as beginRestoreStagingBtrfs,
@@ -179,6 +182,7 @@ import {
   parseCreatedBackupSnapshot,
 } from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
+import { withBtrfsMutationLock } from "@cocalc/file-server/btrfs/operation-cache";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
 import {
@@ -200,6 +204,8 @@ const ROOTFS_PUBLISH_TIMEOUT_S = 60 * 60;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const PROJECT_RUSTIC_TIMEOUT_MS = 30 * 60 * 1000;
 const PROJECT_ROOTS_CACHE = join(data, "cache", "project-roots");
+const PROJECT_SITE_MIGRATION_STAGING_DIR = ".project-site-migration-staging";
+const PROJECT_SITE_MIGRATION_ROOTFS_STATE_PATH = ".local/share/cocalc/rootfs";
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
   envToInt("COCALC_PROJECT_HOST_SSH_WAKE_TIMEOUT_MS", 120_000),
@@ -3630,6 +3636,207 @@ async function getBackupIndexEntry({
 }
 
 // Rustic backups
+function requireProjectSiteMigrationUuid(value: string, name: string): string {
+  const normalized = `${value ?? ""}`.trim();
+  if (!isValidUUID(normalized)) {
+    throw new Error(`${name} must be a valid uuid`);
+  }
+  return normalized;
+}
+
+function projectSiteMigrationRepoProfileDir(migration_id: string): string {
+  if (!secrets) {
+    throw new Error("SECRETS path is not configured");
+  }
+  return join(secrets, "rustic", "project-site-migrations", migration_id);
+}
+
+async function writeProjectSiteMigrationRepoProfile({
+  migration_id,
+  rustic_repo_toml,
+}: {
+  migration_id: string;
+  rustic_repo_toml: string;
+}): Promise<{ profilePath: string; profileDir: string }> {
+  const profileDir = projectSiteMigrationRepoProfileDir(migration_id);
+  const profilePath = join(profileDir, "repo.toml");
+  const toml = `${rustic_repo_toml ?? ""}`;
+  if (!toml.trim()) {
+    throw new Error("rustic_repo_toml is required");
+  }
+  await mkdir(profileDir, { recursive: true });
+  await writeFile(profilePath, toml, "utf8");
+  await chmod(profilePath, 0o600);
+  return { profilePath, profileDir };
+}
+
+function projectSiteMigrationStagingRoot({
+  mount,
+  project_id,
+  migration_id,
+}: {
+  mount: string;
+  project_id: string;
+  migration_id: string;
+}): string {
+  return join(
+    mount,
+    PROJECT_SITE_MIGRATION_STAGING_DIR,
+    project_id,
+    migration_id,
+  );
+}
+
+async function deleteProjectSiteMigrationSnapshot(path: string): Promise<void> {
+  await btrfs({
+    args: ["subvolume", "delete", path],
+    err_on_exit: false,
+    verbose: false,
+  });
+}
+
+async function backupProjectToExternalRepository({
+  project_id,
+  destination_project_id,
+  migration_id,
+  rustic_repo_toml,
+  backup_index_store,
+  tags,
+  lro,
+  managed_egress_override,
+}: {
+  project_id: string;
+  destination_project_id: string;
+  migration_id: string;
+  rustic_repo_toml: string;
+  backup_index_store?: ProjectBackupIndexStoreConfig | null;
+  tags?: string[];
+  lro?: LroRef;
+  managed_egress_override?: ManagedBackupEgressOverride;
+}): Promise<ExternalProjectBackupResult> {
+  project_id = requireProjectSiteMigrationUuid(project_id, "project_id");
+  destination_project_id = requireProjectSiteMigrationUuid(
+    destination_project_id,
+    "destination_project_id",
+  );
+  migration_id = requireProjectSiteMigrationUuid(migration_id, "migration_id");
+
+  const progress = createLroRusticReporter(lro, "backup-to-destination-repo");
+  const managedBackupPolicy = await checkManagedBackupAllowedBestEffort({
+    project_id,
+    managed_egress_override,
+  });
+  if (!managedBackupPolicy.allowed) {
+    throw new Error(managedBackupPolicy.message);
+  }
+
+  const { profilePath, profileDir } =
+    await writeProjectSiteMigrationRepoProfile({
+      migration_id,
+      rustic_repo_toml,
+    });
+  let backupResult: ExternalProjectBackupResult | undefined;
+  try {
+    const vol = await getVolume(project_id);
+    backupResult = await withBackupParallelLimit({
+      project_id,
+      op: "backupProjectToExternalRepository",
+      run: async () =>
+        await withBtrfsMutationLock({
+          mount: vol.filesystem.opts.mount,
+          operation: "project-site-migration-backup",
+          run: async () => {
+            const stagingRoot = projectSiteMigrationStagingRoot({
+              mount: vol.filesystem.opts.mount,
+              project_id,
+              migration_id,
+            });
+            const snapshotPath = join(stagingRoot, "home");
+            await deleteProjectSiteMigrationSnapshot(snapshotPath).catch(
+              () => {},
+            );
+            await rm(stagingRoot, { recursive: true, force: true }).catch(
+              () => {},
+            );
+            await sudo({ command: "mkdir", args: ["-p", stagingRoot] });
+            try {
+              await btrfs({
+                args: ["subvolume", "snapshot", vol.path, snapshotPath],
+              });
+              await sudo({
+                command: "rm",
+                args: [
+                  "-rf",
+                  join(snapshotPath, PROJECT_SITE_MIGRATION_ROOTFS_STATE_PATH),
+                ],
+              });
+              const backup = await projectRusticBackup({
+                src: snapshotPath,
+                repoProfile: profilePath,
+                host: destination_project_id,
+                timeoutMs: PROJECT_RUSTIC_TIMEOUT_MS,
+                tags,
+                progress,
+              });
+              let index: ExternalProjectBackupResult["index"] | undefined;
+              if (backup_index_store) {
+                const outputPath = backupIndexFilePath(
+                  destination_project_id,
+                  backup.id,
+                );
+                await buildBackupIndex({
+                  snapshotPath,
+                  outputPath,
+                  meta: {
+                    backupId: backup.id,
+                    backupTime: backup.time,
+                    snapshotId: backup.id,
+                  },
+                });
+                index = await uploadBackupIndexObject({
+                  config: backup_index_store,
+                  project_id: destination_project_id,
+                  backup_id: backup.id,
+                  input_path: outputPath,
+                });
+              }
+              return {
+                time: backup.time,
+                id: backup.id,
+                summary: backup.summary,
+                ...(index ? { index } : {}),
+              };
+            } finally {
+              try {
+                await deleteProjectSiteMigrationSnapshot(snapshotPath);
+              } finally {
+                await rm(stagingRoot, { recursive: true, force: true }).catch(
+                  () => {},
+                );
+              }
+            }
+          },
+        }),
+    });
+    await recordManagedBackupEgressBestEffort({
+      project_id,
+      backup_id: backupResult.id,
+      tags,
+      summary: backupResult.summary,
+      managed_egress_override,
+    });
+    return backupResult;
+  } finally {
+    await rm(profileDir, { recursive: true, force: true }).catch((err) => {
+      logger.debug("project site migration repo profile cleanup failed", {
+        project_id,
+        migration_id,
+        err: `${err}`,
+      });
+    });
+  }
+}
+
 async function createBackup({
   project_id,
   limit,
@@ -4789,6 +4996,9 @@ export async function initFileServer({
     cp,
     // backups
     createBackup: reuseInFlight(createBackup),
+    backupProjectToExternalRepository: reuseInFlight(
+      backupProjectToExternalRepository,
+    ),
     restoreBackup: reuseInFlight(restoreBackup),
     restoreProjectArchive: reuseInFlight(
       legacyProjectArchiveHandlers.restoreProjectArchive,
