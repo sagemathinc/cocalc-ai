@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260330-v1"
+HELPER_SCHEMA_VERSION = "20260630-v1"
 RUNTIME_WRAPPER_VERSION = "20260505-v9"
 NVM_VERSION = "0.40.4"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
@@ -718,8 +718,13 @@ def read_current_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
 
 
 def helper_schema_installed(cfg: BootstrapConfig) -> str | None:
-    path = project_host_runtime_root(cfg) / "bin" / "fetch-tools.sh"
-    return HELPER_SCHEMA_VERSION if path.exists() else None
+    path = project_host_rootctl_path(cfg)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    match = re.search(r'^HELPER_SCHEMA_VERSION="([^"]+)"$', text, re.MULTILINE)
+    return match.group(1) if match else None
 
 
 def runtime_wrapper_version_installed() -> str | None:
@@ -3995,6 +4000,7 @@ PROJECT_POOL_CGROUP_DEFAULT="__PROJECT_POOL_CGROUP__"
 PROJECT_POOL_MEMORY_RESERVE_MB_DEFAULT="__PROJECT_POOL_MEMORY_RESERVE_MB__"
 MIN_PROJECT_POOL_MEMORY_MB="__MIN_PROJECT_POOL_MEMORY_MB__"
 SYSCTL_CONFIG_PATH="/etc/sysctl.d/90-cocalc-project-host.conf"
+HELPER_SCHEMA_VERSION="__HELPER_SCHEMA_VERSION__"
 
 run_daemon() {
   sudo -n -u "${RUNTIME_USER}" -H "${RUNTIME_BIN}" daemon "$@"
@@ -4307,6 +4313,7 @@ esac
         "__MIN_PROJECT_POOL_MEMORY_MB__",
         str(MIN_PROJECT_POOL_MEMORY_MB),
     )
+    rootctl = rootctl.replace("__HELPER_SCHEMA_VERSION__", HELPER_SCHEMA_VERSION)
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
     (bin_dir / "logs").write_text(logs_script, encoding="utf-8")
