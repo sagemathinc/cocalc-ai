@@ -193,7 +193,7 @@ Table({
     },
     admin_assigned_count: {
       type: "number",
-      desc: "Number of active admin-assigned memberships using this tier.",
+      desc: "Number of active admin-managed memberships using this tier, including site admins on the Admin tier.",
     },
     site_license_count: {
       type: "number",

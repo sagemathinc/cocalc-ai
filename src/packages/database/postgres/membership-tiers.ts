@@ -193,6 +193,19 @@ async function getLiveSubscriptionTierCounts(
   );
 }
 
+function accountHomeBayFilterSql(
+  accountAlias: string,
+  bay_id?: string,
+  paramIndex = 1,
+): { sql: string; params: string[] } {
+  const normalizedBayId = `${bay_id ?? ""}`.trim();
+  if (!normalizedBayId) return { sql: "", params: [] };
+  return {
+    sql: `AND COALESCE(NULLIF(BTRIM(${accountAlias}.home_bay_id), ''), $${paramIndex}::TEXT) = $${paramIndex}::TEXT`,
+    params: [normalizedBayId],
+  };
+}
+
 async function getActiveSiteLicenseTierCounts(
   db: PostgreSQL,
 ): Promise<Record<string, number>> {
@@ -282,13 +295,36 @@ async function getActivePackageAccountTierCounts(
 
 async function getActiveAdminAssignedTierCounts(
   db: PostgreSQL,
+  bay_id?: string,
 ): Promise<Record<string, number>> {
+  const homeBayFilter = accountHomeBayFilterSql("a", bay_id);
   const { rows } = await callback2(db._query, {
-    query: `SELECT membership_class AS tier_id,
-                   COUNT(*)::int AS admin_assigned_count
-            FROM admin_assigned_memberships
-            WHERE expires_at IS NULL OR expires_at > NOW()
-            GROUP BY membership_class`,
+    query: `SELECT tier_id,
+                   COUNT(DISTINCT account_id)::int AS admin_assigned_count
+              FROM (
+                SELECT m.membership_class AS tier_id,
+                       m.account_id
+                  FROM admin_assigned_memberships m
+                  LEFT JOIN accounts a
+                    ON a.account_id = m.account_id
+                 WHERE m.account_id IS NOT NULL
+                   AND (m.expires_at IS NULL OR m.expires_at > NOW())
+                   ${homeBayFilter.sql}
+                UNION ALL
+                SELECT 'admin' AS tier_id,
+                       a.account_id
+                  FROM accounts a
+                  JOIN membership_tiers t
+                    ON t.id = 'admin'
+                   AND coalesce(t.disabled,false)=false
+                 WHERE 'admin' = ANY(a.groups)
+                   AND coalesce(a.deleted,false)=false
+                   ${homeBayFilter.sql}
+              ) admin_sources
+             WHERE tier_id IS NOT NULL
+               AND tier_id != ''
+             GROUP BY tier_id`,
+    params: homeBayFilter.params.length ? homeBayFilter.params : undefined,
   });
   return (rows ?? []).reduce((acc, row) => {
     if (!row?.tier_id) return acc;
@@ -299,7 +335,9 @@ async function getActiveAdminAssignedTierCounts(
 
 async function getTotalAccountTierCounts(
   db: PostgreSQL,
+  bay_id?: string,
 ): Promise<Record<string, number>> {
+  const homeBayFilter = accountHomeBayFilterSql("a", bay_id);
   const includePackageAccounts = await hasMembershipPackageUsageTables(db);
   const packageAccountUnion = includePackageAccounts
     ? `UNION ALL
@@ -314,6 +352,16 @@ async function getTotalAccountTierCounts(
           AND (p.starts_at IS NULL OR p.starts_at <= NOW())
           AND (p.expires_at IS NULL OR p.expires_at > NOW())`
     : "";
+  const adminGroupAccountUnion = `UNION ALL
+                SELECT 'admin' AS tier_id,
+                       a.account_id
+                  FROM accounts a
+                  JOIN membership_tiers t
+                    ON t.id = 'admin'
+                   AND coalesce(t.disabled,false)=false
+                 WHERE 'admin' = ANY(a.groups)
+                   AND coalesce(a.deleted,false)=false
+                   ${homeBayFilter.sql}`;
   const { rows } = await callback2(db._query, {
     query: `SELECT tier_id,
                    COUNT(DISTINCT account_id)::int AS total_account_count
@@ -324,16 +372,21 @@ async function getTotalAccountTierCounts(
                  WHERE ${LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER}
                    AND account_id IS NOT NULL
                 UNION ALL
-                SELECT membership_class AS tier_id,
-                       account_id
-                  FROM admin_assigned_memberships
-                 WHERE account_id IS NOT NULL
-                   AND (expires_at IS NULL OR expires_at > NOW())
+                SELECT m.membership_class AS tier_id,
+                       m.account_id
+                  FROM admin_assigned_memberships m
+                  LEFT JOIN accounts a
+                    ON a.account_id = m.account_id
+                 WHERE m.account_id IS NOT NULL
+                   AND (m.expires_at IS NULL OR m.expires_at > NOW())
+                   ${homeBayFilter.sql}
                 ${packageAccountUnion}
+                ${adminGroupAccountUnion}
               ) accounts
              WHERE tier_id IS NOT NULL
                AND tier_id != ''
              GROUP BY tier_id`,
+    params: homeBayFilter.params.length ? homeBayFilter.params : undefined,
   });
   return (rows ?? []).reduce((acc, row) => {
     if (!row?.tier_id) return acc;
@@ -400,10 +453,10 @@ export async function getMembershipTierUsageReport(
     getHistoricalTierUsageCounts(db),
     getLiveSubscriptionTierCounts(db),
     getActiveSiteLicenseTierCounts(db),
-    getActiveAdminAssignedTierCounts(db),
+    getActiveAdminAssignedTierCounts(db, bay_id),
     getActiveTeamSeatTierCounts(db),
     getActivePackageAccountTierCounts(db),
-    getTotalAccountTierCounts(db),
+    getTotalAccountTierCounts(db, bay_id),
     getTotalActiveAccountCount(db, bay_id),
   ]);
   const rows = new Map<string, MembershipTierUsageCountRow>();

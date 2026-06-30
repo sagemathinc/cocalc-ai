@@ -3812,7 +3812,7 @@ export function MembershipTiers() {
           <Table.Column<Tier>
             title={compactColumnTitle(
               "Admin assign",
-              "Active admin-assigned memberships using this tier",
+              "Active admin-managed memberships using this tier, including site admins on the Admin tier",
             )}
             dataIndex="admin_assigned_count"
             align="center"
