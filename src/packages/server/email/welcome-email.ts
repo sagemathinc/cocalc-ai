@@ -11,7 +11,7 @@ import { getServerSettings } from "@cocalc/database/settings";
 import { LIVE_DEMO_REQUEST } from "@cocalc/util/theme";
 import { getVerifyEmail } from "./verify";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
-import { joinUrlPath } from "@cocalc/util/url-path";
+import { appendUrlPath } from "@cocalc/util/url-path";
 import siteURL from "@cocalc/database/settings/site-url";
 
 export default async function sendWelcomeEmail(
@@ -59,24 +59,24 @@ async function getWelcomeEmail(
   const { help_email, site_name } = await getServerSettings();
 
   const site_url = await siteURL();
-  const manual_docs_url = joinUrlPath(site_url, "docs");
-  const jupyter_docs_url = joinUrlPath(site_url, "docs/jupyter/use-jupyter");
-  const jupyter_feature_url = joinUrlPath(
+  const manual_docs_url = appendUrlPath(site_url, "docs");
+  const jupyter_docs_url = appendUrlPath(site_url, "docs/jupyter/use-jupyter");
+  const jupyter_feature_url = appendUrlPath(
     site_url,
     "features/jupyter-notebook",
   );
-  const sage_feature_url = joinUrlPath(site_url, "features/sage");
-  const latex_feature_url = joinUrlPath(site_url, "features/latex-editor");
-  const octave_feature_url = joinUrlPath(site_url, "features/octave");
-  const julia_feature_url = joinUrlPath(site_url, "features/julia");
-  const features_url = joinUrlPath(site_url, "features");
-  const pricing_url = joinUrlPath(site_url, "pricing");
-  const software_url = joinUrlPath(site_url, "software");
-  const teaching_docs_url = joinUrlPath(
+  const sage_feature_url = appendUrlPath(site_url, "features/sage");
+  const latex_feature_url = appendUrlPath(site_url, "features/latex-editor");
+  const octave_feature_url = appendUrlPath(site_url, "features/octave");
+  const julia_feature_url = appendUrlPath(site_url, "features/julia");
+  const features_url = appendUrlPath(site_url, "features");
+  const pricing_url = appendUrlPath(site_url, "pricing");
+  const software_url = appendUrlPath(site_url, "software");
+  const teaching_docs_url = appendUrlPath(
     site_url,
     "docs/teaching/course-workflow",
   );
-  const connectivity_docs_url = joinUrlPath(
+  const connectivity_docs_url = appendUrlPath(
     site_url,
     "docs/troubleshooting/connectivity",
   );

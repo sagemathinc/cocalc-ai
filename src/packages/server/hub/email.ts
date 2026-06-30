@@ -25,7 +25,7 @@ import { AllSiteSettingsCached } from "@cocalc/util/db-schema/types";
 import { contains_url } from "@cocalc/backend/misc";
 import { site_settings_conf } from "@cocalc/util/db-schema/site-defaults";
 import { defaults, required, split, to_json } from "@cocalc/util/misc";
-import { joinUrlPath } from "@cocalc/util/url-path";
+import { appendUrlPath } from "@cocalc/util/url-path";
 import {
   COMPANY_EMAIL,
   COMPANY_NAME,
@@ -675,19 +675,19 @@ ${site_name} supports online editing of
 
 <ul>
 <li style="margin-top:0;margin-bottom:10px;">
-    <strong><a href="${joinUrlPath(url, "docs")}">CoCalc Docs:</a></strong> learn more about CoCalc's features.
+    <strong><a href="${appendUrlPath(url, "docs")}">CoCalc Docs:</a></strong> learn more about CoCalc's features.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="${joinUrlPath(url, "docs/jupyter/use-jupyter")}">Working with Jupyter Notebooks</a>
+    <a href="${appendUrlPath(url, "docs/jupyter/use-jupyter")}">Working with Jupyter Notebooks</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <strong><a href="${joinUrlPath(url, "pricing")}">Subscriptions:</a></strong> make hosting more robust and increase project quotas
+    <strong><a href="${appendUrlPath(url, "pricing")}">Subscriptions:</a></strong> make hosting more robust and increase project quotas
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="${joinUrlPath(url, "docs/teaching/course-workflow")}">Teaching a course on CoCalc</a>.
+    <a href="${appendUrlPath(url, "docs/teaching/course-workflow")}">Teaching a course on CoCalc</a>.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="${joinUrlPath(url, "docs/troubleshooting/connectivity")}">Troubleshooting connectivity issues</a>
+    <a href="${appendUrlPath(url, "docs/troubleshooting/connectivity")}">Troubleshooting connectivity issues</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="https://github.com/sagemathinc/cocalc/wiki/MathematicalSyntaxErrors">Common mathematical syntax errors:</a> look into this if you are new to working with a programming language!
@@ -725,7 +725,7 @@ You can share your thoughts in a <strong>side chat</strong> next to each documen
 </ul>
 
 <p style="margin-top:0;margin-bottom:20px;">
-Visit our <a href="${joinUrlPath(url, "software")}">Software overview page</a> for more details!
+Visit our <a href="${appendUrlPath(url, "software")}">Software overview page</a> for more details!
 </p>
 
 
