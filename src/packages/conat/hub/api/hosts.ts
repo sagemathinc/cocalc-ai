@@ -1527,6 +1527,7 @@ export interface Hosts {
     id?: string;
     deployments: HostRuntimeDeploymentUpsert[];
     replace?: boolean;
+    align_runtime_stack?: boolean;
   }) => Promise<HostRuntimeDeploymentRecord[]>;
   reconcileHostRuntimeDeployments: (opts: {
     account_id?: string;

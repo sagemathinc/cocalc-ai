@@ -24,6 +24,8 @@ export const SOFTWARE_DEPLOY_COMPONENTS = [
   "bay-scaffold",
   "host-conat-router",
   "host-conat-persist",
+  "host-acp-worker",
+  "host-runtime-stack",
   "host-bootstrap",
   "project-host",
   "project",

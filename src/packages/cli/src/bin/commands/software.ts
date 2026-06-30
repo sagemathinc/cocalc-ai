@@ -169,6 +169,19 @@ const KNOWN_ROCKET_REMOTES: Record<string, string> = {
 
 type SoftwareInfoComponent = SoftwareBuildComponent | SoftwareDeployComponent;
 
+type HostManagedSoftwareComponent =
+  | "project-host"
+  | "conat-router"
+  | "conat-persist"
+  | "acp-worker";
+
+const HOST_RUNTIME_STACK_COMPONENTS: HostManagedSoftwareComponent[] = [
+  "project-host",
+  "conat-router",
+  "conat-persist",
+  "acp-worker",
+];
+
 type SoftwareComponentInfo = {
   component: SoftwareInfoComponent;
   title: string;
@@ -435,6 +448,8 @@ function softwareInfoOverview() {
         "tools",
         "host-conat-router",
         "host-conat-persist",
+        "host-acp-worker",
+        "host-runtime-stack",
       ],
       release_channels: ["cli", "launchpad", "plus", "tools-minimal", "star"],
     },
@@ -553,19 +568,36 @@ function rawSoftwareComponentInfo(
     };
   }
 
-  if (component === "host-conat-router" || component === "host-conat-persist") {
-    const service = component.replace(/^host-/, "");
+  if (
+    component === "host-conat-router" ||
+    component === "host-conat-persist" ||
+    component === "host-acp-worker" ||
+    component === "host-runtime-stack"
+  ) {
+    const fullStack = component === "host-runtime-stack";
+    const managedComponents = hostManagedComponentsForDeployComponent(
+      component as SoftwareDeployComponent,
+    );
+    const service = fullStack
+      ? "runtime stack"
+      : component.replace(/^host-/, "");
     return {
       component,
-      title: `Project-host service: ${service}`,
+      title: fullStack
+        ? "Project-host managed runtime stack"
+        : `Project-host service: ${service}`,
       status: "deploy-only",
       artifact_component: "project-host",
       target_kind: "project-host-fleet",
-      purpose: `Roll only the ${service} managed service on online project hosts using a project-host artifact.`,
+      purpose: fullStack
+        ? "Explicitly roll the full project-host managed runtime stack using a project-host artifact."
+        : `Roll only the ${service} managed service on online project hosts using a project-host artifact.`,
       lifecycle: [
         "Build a project-host artifact.",
         "Publish host compatibility metadata.",
-        `Set the desired managed component version for ${service}.`,
+        fullStack
+          ? "Set desired managed component versions for project-host, conat-router, conat-persist, and acp-worker."
+          : `Set the desired managed component version for ${service}.`,
         "Reconcile online project hosts and wait for convergence.",
       ],
       commands: {
@@ -580,11 +612,14 @@ function rawSoftwareComponentInfo(
       },
       related_components: ["project-host"],
       operator_notes: [
-        "This updates host deploy desired state and reconciles online hosts.",
+        fullStack
+          ? "This is intentionally broad and should be used only when all host-managed services must move together."
+          : "This updates host deploy desired state and reconciles only the selected managed component.",
         "Offline hosts converge when the host deployment machinery sees them later.",
       ],
       agent_notes: [
         "Resolve artifacts using artifact_component=project-host.",
+        `Managed component target(s): ${managedComponents?.join(", ") ?? "none"}.`,
         "Expect host deploy set and host deploy reconcile subprocesses during deploy.",
       ],
       common_failure_modes: [
@@ -850,6 +885,10 @@ function softwareComponentDescription(
       return "This component targets the project-host-local Conat router managed component, not the bay router. It uses a project-host artifact and reconciles the managed component across online project hosts.";
     case "host-conat-persist":
       return "This component targets the project-host-local Conat persist managed component, not the bay persist service. It uses a project-host artifact and reconciles only that managed component across online hosts.";
+    case "host-acp-worker":
+      return "This component targets the project-host ACP worker managed component. It uses a project-host artifact and applies the worker drain/replacement policy without intentionally restarting project-host, conat-router, or conat-persist.";
+    case "host-runtime-stack":
+      return "This explicit broad target rolls the full project-host managed runtime stack: project-host, host-local conat-router, host-local conat-persist, and acp-worker. Use it only when all host-managed services must move together.";
     case "project-host":
       return "Project-host is the host agent/runtime that supervises projects, host services, RootFS operations, and host-side deployment state. Deploy it when project-host control logic changes.";
     case "project":
@@ -907,7 +946,12 @@ function projectHostArtifactInfo({
     },
     related_components:
       component === "project-host"
-        ? ["host-conat-router", "host-conat-persist"]
+        ? [
+            "host-conat-router",
+            "host-conat-persist",
+            "host-acp-worker",
+            "host-runtime-stack",
+          ]
         : [],
     operator_notes: [
       ...notes,
@@ -3043,14 +3087,17 @@ function hostDeployTargetForComponent(component: SoftwareDeployComponent):
   | {
       artifactComponent: SoftwareBuildComponent;
       upgradeArtifact: "project-host" | "project" | "tools";
-      managedComponent?: "conat-router" | "conat-persist";
+      managedComponents?: HostManagedSoftwareComponent[];
     }
   | undefined {
-  if (
-    component === "project-host" ||
-    component === "project" ||
-    component === "tools"
-  ) {
+  if (component === "project-host") {
+    return {
+      artifactComponent: component,
+      upgradeArtifact: component,
+      managedComponents: ["project-host"],
+    };
+  }
+  if (component === "project" || component === "tools") {
     return {
       artifactComponent: component,
       upgradeArtifact: component,
@@ -3060,17 +3107,43 @@ function hostDeployTargetForComponent(component: SoftwareDeployComponent):
     return {
       artifactComponent: "project-host",
       upgradeArtifact: "project-host",
-      managedComponent: "conat-router",
+      managedComponents: ["conat-router"],
     };
   }
   if (component === "host-conat-persist") {
     return {
       artifactComponent: "project-host",
       upgradeArtifact: "project-host",
-      managedComponent: "conat-persist",
+      managedComponents: ["conat-persist"],
+    };
+  }
+  if (component === "host-acp-worker") {
+    return {
+      artifactComponent: "project-host",
+      upgradeArtifact: "project-host",
+      managedComponents: ["acp-worker"],
+    };
+  }
+  if (component === "host-runtime-stack") {
+    return {
+      artifactComponent: "project-host",
+      upgradeArtifact: "project-host",
+      managedComponents: HOST_RUNTIME_STACK_COMPONENTS,
     };
   }
   return undefined;
+}
+
+function hostManagedComponentsForDeployComponent(
+  component: SoftwareDeployComponent,
+): HostManagedSoftwareComponent[] | undefined {
+  return hostDeployTargetForComponent(component)?.managedComponents;
+}
+
+function hostManagedComponentPolicy(
+  component: HostManagedSoftwareComponent,
+): "restart_now" | "drain_then_replace" {
+  return component === "acp-worker" ? "drain_then_replace" : "restart_now";
 }
 
 function hostBootstrapDeployTargetForComponent(
@@ -3723,7 +3796,7 @@ Supported deploy/smoke components:
           let hostBaseUrl: string | undefined;
           let hostCompatUrl: string | undefined;
           let hostCatalogUrls: string[] | undefined;
-          let hostManagedComponent: string | undefined;
+          let hostManagedComponents: HostManagedSoftwareComponent[] | undefined;
           let hostBootstrapUrl: string | undefined;
           let hostBootstrapSha256Url: string | undefined;
           let releaseProduct: string | undefined;
@@ -3771,7 +3844,7 @@ Supported deploy/smoke components:
             hostBaseUrl = compat.base_url;
             hostCompatUrl = compat.urls.join("\n");
             hostCatalogUrls = compat.catalog_urls;
-            hostManagedComponent = hostTarget.managedComponent;
+            hostManagedComponents = hostTarget.managedComponents;
             targetKind = "project-host-fleet";
             const reason = `software-deploy-${component}`;
             commandArgsList = [
@@ -3793,7 +3866,7 @@ Supported deploy/smoke components:
                 reason,
               ],
             ];
-            if (hostManagedComponent) {
+            for (const hostManagedComponent of hostManagedComponents ?? []) {
               commandArgsList.push([
                 ...cli.args,
                 "--profile",
@@ -3807,7 +3880,7 @@ Supported deploy/smoke components:
                 "--desired-version",
                 artifact.artifact_id,
                 "--policy",
-                "restart_now",
+                hostManagedComponentPolicy(hostManagedComponent),
                 "--reason",
                 reason,
               ]);
@@ -3828,7 +3901,7 @@ Supported deploy/smoke components:
                 hostBaseUrl,
                 "--wait",
               ]);
-              if (hostManagedComponent) {
+              if (hostManagedComponents?.length) {
                 commandArgsList.push([
                   ...cli.args,
                   "--profile",
@@ -3837,8 +3910,10 @@ Supported deploy/smoke components:
                   "deploy",
                   "reconcile",
                   "--all-online",
-                  "--component",
-                  hostManagedComponent,
+                  ...hostManagedComponents.flatMap((component) => [
+                    "--component",
+                    component,
+                  ]),
                   "--reason",
                   reason,
                   "--wait",
@@ -3939,8 +4014,11 @@ Supported deploy/smoke components:
               ...(hostCatalogUrls?.length
                 ? { host_catalog_urls: hostCatalogUrls }
                 : {}),
-              ...(hostManagedComponent
-                ? { host_managed_component: hostManagedComponent }
+              ...(hostManagedComponents?.length === 1
+                ? { host_managed_component: hostManagedComponents[0] }
+                : {}),
+              ...(hostManagedComponents?.length
+                ? { host_managed_components: hostManagedComponents }
                 : {}),
               ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
               ...(hostBootstrapTarget
@@ -4128,8 +4206,11 @@ Supported deploy/smoke components:
               : {}),
             ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
-            ...(hostManagedComponent
-              ? { host_managed_component: hostManagedComponent }
+            ...(hostManagedComponents?.length === 1
+              ? { host_managed_component: hostManagedComponents[0] }
+              : {}),
+            ...(hostManagedComponents?.length
+              ? { host_managed_components: hostManagedComponents }
               : {}),
             ...(hostTarget ? { host_rollout: opts.rollout === true } : {}),
             ...(hostBootstrapUrl

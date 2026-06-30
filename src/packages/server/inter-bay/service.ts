@@ -2218,6 +2218,7 @@ async function startHostConnectionService(): Promise<void> {
       id,
       deployments,
       replace,
+      align_runtime_stack,
     }) =>
       await setHostRuntimeDeployments({
         account_id,
@@ -2225,6 +2226,7 @@ async function startHostConnectionService(): Promise<void> {
         id,
         deployments,
         replace,
+        align_runtime_stack,
       }),
     getHostManagedComponentStatus: async ({ account_id, id }) =>
       await getHostManagedComponentStatus({
