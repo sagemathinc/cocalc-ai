@@ -138,10 +138,18 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
   const input = op.input ?? {};
   const project_id = input.project_id;
   const tags = Array.isArray(input.tags) ? input.tags : undefined;
+  const externalMigration =
+    input.external_migration != null &&
+    typeof input.external_migration === "object" &&
+    !Array.isArray(input.external_migration)
+      ? (input.external_migration as Record<string, any>)
+      : undefined;
   const managed_egress_override =
     input.managed_egress_override === "admin-host-drain"
       ? ("admin-host-drain" as ManagedBackupEgressOverride)
-      : undefined;
+      : input.managed_egress_override === "admin-site-migration"
+        ? ("admin-site-migration" as ManagedBackupEgressOverride)
+        : undefined;
   const limit = Number.isFinite(Number(input.limit))
     ? Math.max(0, Math.floor(Number(input.limit)))
     : DEFAULT_MAX_BACKUPS_PER_PROJECT;
@@ -253,8 +261,16 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     }
     progress({
       step: "backup",
-      message: "creating backup snapshot",
-      detail: { tags },
+      message: externalMigration
+        ? "creating project migration backup"
+        : "creating backup snapshot",
+      detail: externalMigration
+        ? {
+            tags,
+            migration_id: externalMigration.migration_id,
+            destination_project_id: externalMigration.destination_project_id,
+          }
+        : { tags },
     });
 
     const backup = await Promise.race([
@@ -269,11 +285,28 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
             client,
             maxWait: FILE_SERVER_READY_TIMEOUT_MS,
           });
+          const lro = {
+            op_id,
+            scope_type: op.scope_type,
+            scope_id: op.scope_id,
+          };
+          if (externalMigration) {
+            return await client.backupProjectToExternalRepository({
+              project_id,
+              destination_project_id: `${externalMigration.destination_project_id ?? ""}`,
+              migration_id: `${externalMigration.migration_id ?? ""}`,
+              rustic_repo_toml: `${externalMigration.rustic_repo_toml ?? ""}`,
+              backup_index_store: externalMigration.backup_index_store ?? null,
+              tags,
+              lro,
+              managed_egress_override,
+            });
+          }
           return await client.createBackup({
             project_id,
             limit,
             tags,
-            lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+            lro,
             managed_egress_override,
           });
         })(),
@@ -302,15 +335,35 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       });
       return;
     }
+    const result: Record<string, any> = {
+      id: backup.id,
+      time: backup_time,
+      duration_ms,
+    };
+    if (externalMigration) {
+      result.migration_id = externalMigration.migration_id;
+      result.destination_project_id = externalMigration.destination_project_id;
+      result.backup_summary = backup.summary ?? {};
+      if (backup.index) {
+        result.backup_index_key = backup.index.object_key;
+        result.backup_index = backup.index;
+      }
+    }
     const updated = await updateLro({
       op_id,
       status: "succeeded",
-      result: { id: backup.id, time: backup_time, duration_ms },
+      result,
       progress_summary: {
         phase: "done",
         id: backup.id,
         time: backup_time,
         duration_ms,
+        ...(externalMigration
+          ? {
+              migration_id: externalMigration.migration_id,
+              destination_project_id: externalMigration.destination_project_id,
+            }
+          : {}),
       },
       error: null,
     });
