@@ -6,7 +6,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { useBookmarkedProjects } from "./use-bookmarked-projects";
+import {
+  resetBookmarkedProjectsForTests,
+  useBookmarkedProjects,
+} from "./use-bookmarked-projects";
 import { redux } from "@cocalc/frontend/app-framework";
 import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 
@@ -70,6 +73,7 @@ describe("useBookmarkedProjects", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    resetBookmarkedProjectsForTests();
     getStoreMock.mockReturnValue({
       async_wait: async () => {},
       get_account_id: () => "account-1",
@@ -128,6 +132,64 @@ describe("useBookmarkedProjects", () => {
     expect(screen.getByTestId("bookmarks").textContent).toBe("");
     expect(screen.getByTestId("mirror").textContent).toBe("");
     expect(bookmarks.set).toHaveBeenLastCalledWith("projects", []);
+  });
+
+  it("does not clear cached bookmarks when the initial dkv snapshot has no projects key", async () => {
+    dkvMock.mockResolvedValueOnce(
+      new FakeBookmarks({
+        projects: ["project-1"],
+      }),
+    );
+
+    const first = render(<TestComponent />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("yes");
+      expect(screen.getByTestId("bookmarks").textContent).toBe("project-1");
+    });
+
+    first.unmount();
+
+    dkvMock.mockResolvedValueOnce(new FakeBookmarks({}));
+
+    render(<TestComponent />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("yes");
+    });
+
+    expect(screen.getByTestId("bookmarks").textContent).toBe("project-1");
+  });
+
+  it("clears cached bookmarks when the initial dkv snapshot has an explicit empty projects list", async () => {
+    dkvMock.mockResolvedValueOnce(
+      new FakeBookmarks({
+        projects: ["project-1"],
+      }),
+    );
+
+    const first = render(<TestComponent />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("yes");
+      expect(screen.getByTestId("bookmarks").textContent).toBe("project-1");
+    });
+
+    first.unmount();
+
+    dkvMock.mockResolvedValueOnce(
+      new FakeBookmarks({
+        projects: [],
+      }),
+    );
+
+    render(<TestComponent />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("yes");
+    });
+
+    expect(screen.getByTestId("bookmarks").textContent).toBe("");
   });
 
   it("finishes initialization if account readiness is stale", async () => {
