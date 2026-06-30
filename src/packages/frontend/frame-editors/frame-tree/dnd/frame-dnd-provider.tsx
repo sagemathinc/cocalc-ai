@@ -16,7 +16,7 @@ import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import {
-  MOUSE_SENSOR_OPTIONS,
+  MOUSE_DISTANCE_SENSOR_OPTIONS,
   TOUCH_SENSOR_OPTIONS,
   DRAG_OVERLAY_MODIFIERS,
   DragOverlayContent,
@@ -142,7 +142,7 @@ export function FrameDndProvider({ actions, children }: Props) {
   );
 
   const sensors = useSensors(
-    useSensor(MouseSensor, MOUSE_SENSOR_OPTIONS),
+    useSensor(MouseSensor, MOUSE_DISTANCE_SENSOR_OPTIONS),
     useSensor(TouchSensor, TOUCH_SENSOR_OPTIONS),
   );
 
