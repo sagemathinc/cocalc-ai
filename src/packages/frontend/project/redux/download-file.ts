@@ -15,6 +15,8 @@ interface DownloadProjectFileOptions {
   showError?: boolean;
   deleteAfterDownload?: boolean;
   downloadFilename?: string;
+  share_id?: string;
+  viewer?: boolean;
   logAction: (opts: {
     event: "file_action";
     action: "downloaded";
@@ -43,6 +45,8 @@ export async function downloadProjectFile({
   showError = true,
   deleteAfterDownload,
   downloadFilename,
+  share_id,
+  viewer,
   logAction,
   routeProjectHostHttpUrl,
   ensureProjectHostBrowserSessionForProject,
@@ -63,6 +67,8 @@ export async function downloadProjectFile({
     const hubUrl = download_href(project_id, path, {
       deleteAfterDownload,
       downloadFilename,
+      share_id,
+      viewer,
     });
     const url = await routeProjectHostHttpUrl({
       project_id,

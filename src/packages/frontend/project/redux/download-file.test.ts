@@ -119,6 +119,37 @@ describe("downloadProjectFile", () => {
     });
   });
 
+  it("adds public share context to project-host downloads", async () => {
+    const routeProjectHostHttpUrl = jest
+      .fn()
+      .mockResolvedValue("https://host.example/download");
+    const downloadFile = jest.fn().mockResolvedValue(undefined);
+
+    await downloadProjectFile({
+      project_id: "project-1",
+      path: "/home/user/public/example.txt",
+      share_id: "share-1",
+      routeProjectHostHttpUrl,
+      ensureProjectHostBrowserSessionForProject: jest.fn(),
+      downloadFile,
+      logAction: jest.fn(),
+      openNewTab: jest.fn(),
+    });
+
+    const hubUrl = download_href("project-1", "/home/user/public/example.txt", {
+      share_id: "share-1",
+    });
+    expect(routeProjectHostHttpUrl).toHaveBeenCalledWith({
+      project_id: "project-1",
+      url: hubUrl,
+    });
+    expect(hubUrl).toContain("viewer=1");
+    expect(hubUrl).toContain("share=share-1");
+    expect(downloadFile).toHaveBeenCalledWith("https://host.example/download", {
+      onAuthFailure: expect.any(Function),
+    });
+  });
+
   it("uses a direct file URL for print/manual open mode", async () => {
     const print = jest.fn();
     const openNewTab = jest.fn(() => ({ print }) as any);

@@ -102,6 +102,8 @@ import {
   SHARE_FILE_SERVICE,
   VIEWER_FILE_SERVICE,
   fsSubject,
+  shareFsSubject,
+  viewerFsSubject,
   parseShareFsSubject,
   parseViewerFsSubject,
 } from "@cocalc/conat/files/fs";
@@ -4441,6 +4443,37 @@ export async function initFsServer({
 
 const fileDownloadReadServers = new Map<string, Promise<void>>();
 
+function viewerFileDownloadReadServiceName({
+  account_id,
+}: {
+  account_id: string;
+}) {
+  return `${PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE}-viewer-account-${account_id}`;
+}
+
+function shareFileDownloadReadServiceName({
+  share_id,
+  account_id,
+}: {
+  share_id: string;
+  account_id: string;
+}) {
+  return `${PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE}-share-${share_id}-account-${account_id}`;
+}
+
+async function createProjectFilesystem(project_id: string) {
+  const { path: home } = await getOrEnsureVolume(project_id);
+  return createProjectSandboxFilesystem({
+    project_id,
+    home,
+    rootfs: getRootfsMountpoint(project_id),
+    scratch: getScratchMountpoint(project_id),
+    sharedScratch: getSharedScratchMountpoint(),
+    deleteSnapshot: async (name: string) =>
+      await deleteSnapshot({ project_id, name }),
+  });
+}
+
 export async function ensureFileDownloadReadServer({
   client,
   project_id,
@@ -4455,16 +4488,7 @@ export async function ensureFileDownloadReadServer({
       project_id,
       name: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
       createReadStream: async (containerPath: string, opts?: any) => {
-        const { path: home } = await getOrEnsureVolume(project_id);
-        const fs = createProjectSandboxFilesystem({
-          project_id,
-          home,
-          rootfs: getRootfsMountpoint(project_id),
-          scratch: getScratchMountpoint(project_id),
-          sharedScratch: getSharedScratchMountpoint(),
-          deleteSnapshot: async (name: string) =>
-            await deleteSnapshot({ project_id, name }),
-        });
+        const fs = await createProjectFilesystem(project_id);
         const absPath = await fs.safeAbsPath(containerPath);
         return createReadStream(absPath, opts);
       },
@@ -4477,6 +4501,95 @@ export async function ensureFileDownloadReadServer({
     fileDownloadReadServers.set(project_id, server);
   }
   await server;
+}
+
+export async function ensureViewerFileDownloadReadServer({
+  client,
+  project_id,
+  account_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+  account_id: string;
+}): Promise<{ readServiceName: string; statSubject: string }> {
+  const readServiceName = viewerFileDownloadReadServiceName({ account_id });
+  const statSubject = viewerFsSubject({ project_id, account_id });
+  const key = `${project_id}:viewer:${account_id}`;
+  let server = fileDownloadReadServers.get(key);
+  if (server == null) {
+    server = createReadServer({
+      client,
+      project_id,
+      name: readServiceName,
+      createReadStream: async (containerPath: string, opts?: any) => {
+        const projectFs = await createProjectFilesystem(project_id);
+        const readOnlyFs = createViewerReadOnlyFilesystem({
+          fs: projectFs,
+          readPolicy: await getViewerReadPolicy({ project_id, account_id }),
+        });
+        await readOnlyFs.stat(containerPath);
+        const absPath = await projectFs.safeAbsPath(containerPath);
+        return createReadStream(absPath, opts);
+      },
+    })
+      .then(() => undefined)
+      .catch((err) => {
+        fileDownloadReadServers.delete(key);
+        throw err;
+      });
+    fileDownloadReadServers.set(key, server);
+  }
+  await server;
+  return { readServiceName, statSubject };
+}
+
+export async function ensureShareFileDownloadReadServer({
+  client,
+  project_id,
+  share_id,
+  account_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+  share_id: string;
+  account_id: string;
+}): Promise<{ readServiceName: string; statSubject: string }> {
+  const readServiceName = shareFileDownloadReadServiceName({
+    share_id,
+    account_id,
+  });
+  const statSubject = shareFsSubject({ project_id, share_id, account_id });
+  const key = `${project_id}:share:${share_id}:${account_id}`;
+  let server = fileDownloadReadServers.get(key);
+  if (server == null) {
+    server = createReadServer({
+      client,
+      project_id,
+      name: readServiceName,
+      createReadStream: async (containerPath: string, opts?: any) => {
+        const projectFs = await createProjectFilesystem(project_id);
+        const readOnlyFs = createViewerReadOnlyFilesystem({
+          fs: projectFs,
+          readPolicy: await getShareReadPolicy({
+            project_id,
+            share_id,
+            account_id,
+          }),
+        });
+        await readOnlyFs.stat(containerPath);
+        const absPath = await projectFs.safeAbsPath(containerPath);
+        return createReadStream(absPath, opts);
+      },
+    })
+      .then(() => undefined)
+      .catch((err) => {
+        fileDownloadReadServers.delete(key);
+        throw err;
+      });
+    fileDownloadReadServers.set(key, server);
+  }
+  await server;
+  return { readServiceName, statSubject };
 }
 
 export const PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE = ":project-host";

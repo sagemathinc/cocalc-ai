@@ -93,6 +93,38 @@ describe("handleFileDownload", () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it("uses an explicit stat subject for HEAD downloads", async () => {
+    mockFsStat.mockResolvedValue({ size: 456 });
+    const req: any = {
+      method: "HEAD",
+      url: "/projects/project-123/files/home/user/public.txt?download&viewer=1",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+      statSubject:
+        "fs-share.project-project-123.share-share-id.account-user-id",
+    });
+
+    expect(mockFsSubject).not.toHaveBeenCalled();
+    expect(mockFsClient).toHaveBeenCalledWith({
+      client: { id: "client-1" },
+      subject: "fs-share.project-project-123.share-share-id.account-user-id",
+    });
+    expect(mockFsStat).toHaveBeenCalledWith("/home/user/public.txt");
+    expect(res.statusCode).toBe(200);
+  });
+
   it("parses legacy /projects project file URLs for streamed downloads", async () => {
     mockReadFile.mockResolvedValue([
       Buffer.from("hello"),

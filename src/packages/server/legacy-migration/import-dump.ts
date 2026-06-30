@@ -20,6 +20,7 @@ import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/le
 type ImportTarget =
   | "accounts"
   | "projects"
+  | "project_names"
   | "artifacts"
   | "purchases"
   | "subscriptions"
@@ -118,7 +119,7 @@ Options:
                         Optional Stripe subscriptions CSV export. If omitted,
                         import-dump auto-detects stripe_subscriptions.csv in
                         the dump directory or subscriptions.csv next to it.
-  --only <list>         Comma-separated import targets: accounts,projects,artifacts,purchases,subscriptions,stripe_subscriptions,site_licenses,public_paths.
+  --only <list>         Comma-separated import targets: accounts,projects,project_names,artifacts,purchases,subscriptions,stripe_subscriptions,site_licenses,public_paths.
   --limit <n>           Stop after importing n rows per file, useful for smoke tests.
   --batch-size <n>      Rows per database batch. Default: ${DEFAULT_BATCH_SIZE}.
   --dry-run             Parse files and report counts without writing to the database.
@@ -180,6 +181,7 @@ function parseArgs(argv: string[]): Options {
     const allowed = new Set([
       "accounts",
       "projects",
+      "project_names",
       "artifacts",
       "purchases",
       "subscriptions",
@@ -348,6 +350,10 @@ async function ensureProjectsSchema(): Promise<void> {
   projectsSchemaReady ??= (async () => {
     await pool().query(`
       ALTER TABLE legacy_migration_projects
+        ADD COLUMN IF NOT EXISTS name TEXT
+    `);
+    await pool().query(`
+      ALTER TABLE legacy_migration_projects
         ADD COLUMN IF NOT EXISTS disk_mb DOUBLE PRECISION
     `);
     await pool().query(`
@@ -432,6 +438,7 @@ function targetForFile(file: string): ImportTarget | undefined {
   const name = basename(file);
   if (name === "accounts.ndjson.gz") return "accounts";
   if (name === "projects.ndjson.gz") return "projects";
+  if (name === "project_names.ndjson.gz") return "project_names";
   if (name === "artifacts.ndjson.gz") return "artifacts";
   if (name === "purchases.ndjson.gz") return "purchases";
   if (name === "subscriptions.ndjson.gz") return "subscriptions";
@@ -564,6 +571,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
       SELECT *
         FROM jsonb_to_recordset($1::jsonb) AS x(
           legacy_project_id TEXT,
+          name TEXT,
           title TEXT,
           description TEXT,
           owner_legacy_account_id TEXT,
@@ -583,6 +591,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
     )
     INSERT INTO legacy_migration_projects (
       legacy_project_id,
+      name,
       title,
       description,
       owner_legacy_account_id,
@@ -601,6 +610,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
       updated
     )
     SELECT legacy_project_id,
+           NULLIF(name, ''),
            title,
            description,
            owner_legacy_account_id,
@@ -622,6 +632,7 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
        AND COALESCE(deleted, false)=false
        AND COALESCE(hidden, false)=false
     ON CONFLICT (legacy_project_id) DO UPDATE SET
+      name=COALESCE(EXCLUDED.name, legacy_migration_projects.name),
       title=EXCLUDED.title,
       description=EXCLUDED.description,
       owner_legacy_account_id=EXCLUDED.owner_legacy_account_id,
@@ -645,6 +656,29 @@ async function upsertProjects(rows: Record<string, any>[]): Promise<void> {
     [JSON.stringify(rows)],
   );
   await requeueSkippedRestoresWithArtifacts(rows);
+}
+
+async function upsertProjectNames(rows: Record<string, any>[]): Promise<void> {
+  await ensureProjectsSchema();
+  await pool().query(
+    `
+    WITH input AS (
+      SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS x(
+          legacy_project_id TEXT,
+          name TEXT
+        )
+    )
+    UPDATE legacy_migration_projects projects
+       SET name=NULLIF(input.name, ''),
+           updated=NOW()
+      FROM input
+     WHERE projects.legacy_project_id=input.legacy_project_id
+       AND COALESCE(input.legacy_project_id, '') <> ''
+       AND COALESCE(input.name, '') <> ''
+    `,
+    [JSON.stringify(rows)],
+  );
 }
 
 async function upsertArtifacts(rows: Record<string, any>[]): Promise<void> {
@@ -863,6 +897,8 @@ async function writeBatch(
     await upsertAccounts(rows);
   } else if (target === "projects") {
     await upsertProjects(rows);
+  } else if (target === "project_names") {
+    await upsertProjectNames(rows);
   } else if (target === "artifacts") {
     await upsertArtifacts(rows);
   } else if (target === "public_paths") {
@@ -933,6 +969,7 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
     row.display_name = clean(row.display_name);
   } else if (target === "projects") {
     row.legacy_project_id = clean(row.legacy_project_id);
+    row.name = clean(row.name);
     row.owner_legacy_account_id = clean(row.owner_legacy_account_id);
     row.title = clean(row.title);
     row.description = clean(row.description);
@@ -983,6 +1020,7 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
     row.id = clean(row.id);
     row.legacy_account_id = clean(row.legacy_account_id);
     row.legacy_project_id = clean(row.legacy_project_id);
+    row.name = clean(row.name);
   }
 }
 
@@ -1057,12 +1095,13 @@ async function filesToImport(options: Options): Promise<ImportFileSpec[]> {
   const order: Record<ImportTarget, number> = {
     accounts: 0,
     projects: 1,
-    artifacts: 2,
-    purchases: 3,
-    subscriptions: 4,
-    stripe_subscriptions: 5,
-    site_licenses: 6,
-    public_paths: 7,
+    project_names: 2,
+    artifacts: 3,
+    purchases: 4,
+    subscriptions: 5,
+    stripe_subscriptions: 6,
+    site_licenses: 7,
+    public_paths: 8,
   };
   return files.sort((a, b) => order[a.target] - order[b.target]);
 }

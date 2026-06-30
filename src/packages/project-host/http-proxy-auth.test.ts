@@ -11,6 +11,8 @@ jest.mock("./app-public-access", () => ({
 
 const getRowMock = jest.fn();
 const getAccountRevokedBeforeMsMock = jest.fn(() => undefined);
+const mockCallHub = jest.fn();
+const mockGetMasterConatClient = jest.fn(() => ({ id: "master-client" }));
 
 jest.mock("@cocalc/lite/hub/sqlite/database", () => ({
   getRow: (...args: any[]) => getRowMock(...args),
@@ -19,6 +21,15 @@ jest.mock("@cocalc/lite/hub/sqlite/database", () => ({
 jest.mock("./sqlite/account-revocations", () => ({
   getAccountRevokedBeforeMs: (...args: any[]) =>
     getAccountRevokedBeforeMsMock(...args),
+}));
+
+jest.mock("@cocalc/conat/hub/call-hub", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockCallHub(...args),
+}));
+
+jest.mock("./master-status", () => ({
+  getMasterConatClient: (...args: any[]) => mockGetMasterConatClient(...args),
 }));
 
 import {
@@ -53,6 +64,9 @@ describe("project-host HTTP session cookie", () => {
     });
     getAccountRevokedBeforeMsMock.mockReset();
     getAccountRevokedBeforeMsMock.mockReturnValue(undefined);
+    mockCallHub.mockReset();
+    mockGetMasterConatClient.mockReset();
+    mockGetMasterConatClient.mockReturnValue({ id: "master-client" });
   });
 
   it("scopes the session cookie to the project path", () => {
@@ -260,5 +274,73 @@ describe("project-host HTTP session cookie", () => {
       account_id,
     });
     expect(req.url).toBe(`/${project_id}/apps/python-hello/?x=1`);
+  });
+
+  it("authorizes explicit public share file downloads for signed-in non-collaborators", async () => {
+    const share_id = "00000000-1000-4000-8000-000000000042";
+    const visitor_id = "00000000-1000-4000-8000-000000000043";
+    getRowMock.mockReturnValue({ users: {} });
+    mockCallHub.mockResolvedValue({
+      project_id,
+      share_id,
+      read_policy: { rules: [{ action: "include", path: "public/**" }] },
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id: visitor_id,
+      now_ms: Date.now(),
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "x-forwarded-proto": "https",
+      },
+      method: "HEAD",
+      socket: {},
+      url: `/${project_id}/files/home/user/public/a.txt?download&viewer=1&share=${share_id}`,
+    } as any;
+    const res = createResponse();
+    res.end = jest.fn();
+    res.statusCode = 200;
+
+    await auth.authorizeHttpRequest(req, res, project_id);
+
+    expect(mockCallHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client: { id: "master-client" },
+        name: "publicDirectoryShares.authorizeRead",
+        args: [{ account_id: visitor_id, project_id, share_id }],
+      }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
+  it("does not let public share visitors access non-download project URLs", async () => {
+    const visitor_id = "00000000-1000-4000-8000-000000000043";
+    getRowMock.mockReturnValue({ users: {} });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id: visitor_id,
+      now_ms: Date.now(),
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+      },
+      method: "GET",
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+    const res = createResponse();
+
+    await expect(
+      auth.authorizeHttpRequest(req, res, project_id),
+    ).rejects.toThrow("permission denied");
+    expect(mockCallHub).not.toHaveBeenCalled();
   });
 });

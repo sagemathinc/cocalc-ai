@@ -100,6 +100,7 @@ export async function handleFileDownload({
   beforeExplicitDownload,
   onExplicitDownloadComplete,
   readServiceName,
+  statSubject,
   // allow a long download time (1 hour), since files can be large and
   // networks can be slow.
   maxWait = 1000 * 60 * 60,
@@ -122,6 +123,7 @@ export async function handleFileDownload({
     partial: boolean;
   }) => Promise<void>;
   readServiceName?: string;
+  statSubject?: string;
   maxWait?: number;
 }) {
   url ??= req.url;
@@ -191,7 +193,7 @@ export async function handleFileDownload({
     try {
       const stat = await fsClient({
         client,
-        subject: fsSubject({ project_id }),
+        subject: statSubject ?? fsSubject({ project_id }),
       }).stat(path);
       if (typeof stat.size === "number" && Number.isFinite(stat.size)) {
         res.setHeader("Content-Length", stat.size);

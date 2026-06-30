@@ -60,7 +60,7 @@ describe("legacy migration manifest helpers", () => {
 });
 
 describe("legacy public path slug helpers", () => {
-  it("reconstructs legacy public URLs from owner name, project title, and public path name", () => {
+  it("reconstructs legacy public URLs from owner name, project URL name, and public path name", () => {
     expect(
       legacyPublicPathSlugFromRecord(
         {
@@ -71,10 +71,54 @@ describe("legacy public path slug helpers", () => {
         },
         {
           owner_name: "Cambridge",
-          project_title: "S0022112023010078",
+          project_name: "S0022112023010078",
         },
       ),
     ).toBe("Cambridge/S0022112023010078/JFM-Notebooks");
+  });
+
+  it("uses legacy project URL names rather than project titles or paths", () => {
+    expect(
+      legacyPublicPathSlugFromRecord(
+        {
+          name: "examples",
+          path: "support",
+          project_id: "4a5f0542-5873-4eed-a85c-a18c706e8bcd",
+        },
+        {
+          owner_name: "wstein",
+          project_name: "support",
+        },
+      ),
+    ).toBe("wstein/support/examples");
+  });
+
+  it("falls back to the legacy project id when the project URL name is missing", () => {
+    expect(
+      legacyPublicPathSlugFromRecord(
+        {
+          name: "examples",
+          path: "support",
+          project_id: "4a5f0542-5873-4eed-a85c-a18c706e8bcd",
+        },
+        {
+          owner_name: "wstein",
+        },
+      ),
+    ).toBe("wstein/4a5f0542-5873-4eed-a85c-a18c706e8bcd/examples");
+  });
+
+  it("does not invent owner/project URL segments without owner context", () => {
+    expect(
+      legacyPublicPathSlugFromRecord(
+        {
+          name: "examples",
+          path: "support",
+          project_id: "4a5f0542-5873-4eed-a85c-a18c706e8bcd",
+        },
+        {},
+      ),
+    ).toBe("examples");
   });
 
   it("preserves explicit legacy URL paths when present", () => {
@@ -86,7 +130,7 @@ describe("legacy public path slug helpers", () => {
         },
         {
           owner_name: "Wrong",
-          project_title: "Wrong",
+          project_name: "Wrong",
         },
       ),
     ).toBe("Cambridge/S0022112023010078/JFM-Notebooks");

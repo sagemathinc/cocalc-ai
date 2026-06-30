@@ -11,7 +11,7 @@ export const privacyPolicy: PublicPolicy = {
   navLabel: "Privacy",
   slug: "privacy",
   title: "Privacy Policy",
-  updated: "June 9, 2026",
+  updated: "June 30, 2026",
   content: (
     <>
       <p>
@@ -246,7 +246,11 @@ export const privacyPolicy: PublicPolicy = {
             </li>{" "}
             <li>Process payment for products or services purchased; </li>{" "}
             <li>Process applications and transactions; </li>{" "}
-            <li>Prevent potentially prohibited or illegal activities; </li>{" "}
+            <li>
+              Prevent potentially prohibited or illegal activities (which may
+              include the use of automated, AI-assisted analysis for abuse
+              detection);{" "}
+            </li>{" "}
             <li>Enforce our Terms. </li>{" "}
           </ul>{" "}
           <p>
@@ -786,8 +790,12 @@ export const privacyPolicy: PublicPolicy = {
           relating to decisions based solely on automated processing, including
           profiling, that produce legal effects concerning you or similarly
           significantly affect you, including requesting human intervention
-          where required by law. If you would like to exercise any of these
-          rights, please contact us as set forth below.{" "}
+          where required by law. If your account is restricted or suspended due
+          to automated security monitoring, you have the right to request human
+          intervention and contest the decision by contacting us at{" "}
+          <A href="mailto:help@sagemath.com">help@sagemath.com</A>. If you would
+          like to exercise any of these rights, please contact us as set forth
+          below.{" "}
         </p>{" "}
         <p>
           {" "}
@@ -821,11 +829,15 @@ export const privacyPolicy: PublicPolicy = {
           encryption for data storage and backups, firewalls, and access
           controls. You can learn more about our security controls, third-party
           audits, and certifications on our Trust page at{" "}
-          <A href="/policies/trust">https://cocalc.ai/policies/trust</A>. No
-          method of transmission or storage over the Internet is completely
-          secure, and we cannot guarantee absolute security. To the fullest
-          extent permitted by applicable law, we do not accept liability for
-          unintentional disclosure.{" "}
+          <A href="/policies/trust">https://cocalc.ai/policies/trust</A>. Where
+          automated or AI-based analysis is used for security monitoring,
+          Sagemath configures these tools to ensure that user content is
+          analyzed only for classification of abuse and is not used to train the
+          underlying models of third-party providers. No method of transmission
+          or storage over the Internet is completely secure, and we cannot
+          guarantee absolute security. To the fullest extent permitted by
+          applicable law, we do not accept liability for unintentional
+          disclosure.{" "}
         </p>{" "}
         <p>
           {" "}
@@ -1149,6 +1161,10 @@ export const privacyPolicy: PublicPolicy = {
             <tr>
               <td>Update: clarify lawful bases for processing</td>
               <td> 2026-05-13 </td>
+            </tr>
+            <tr>
+              <td>Update: clarify automated abuse detection safeguards</td>
+              <td> 2026-06-30 </td>
             </tr>
           </tbody>
         </table>
