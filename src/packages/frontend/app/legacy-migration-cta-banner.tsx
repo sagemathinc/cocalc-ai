@@ -51,11 +51,6 @@ function projectNeedsAction(project: LegacyMigrationProjectSummary): boolean {
   );
 }
 
-function membershipLabel(value: string | null | undefined): string {
-  if (!value) return "membership";
-  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)} membership`;
-}
-
 function financialState(
   preview: LegacyMigrationFinancialPreviewResponse | undefined,
 ): Pick<
@@ -164,9 +159,7 @@ export function LegacyMigrationCtaBanner() {
   const showBilling = state.financialApply || state.financialContinue;
   const showProjects = state.projectActionCount > 0;
   const message = state.financialContinue
-    ? `Your free legacy ${membershipLabel(
-        state.financialMembershipClass,
-      )} is active`
+    ? "Your 30-day membership grant is active."
     : "Finish your cocalc.com migration";
   const description = state.financialContinue
     ? "Set up renewal now if you want to keep it. Your paid membership starts after the free migration month."

@@ -93,7 +93,7 @@ describe("legacy public path slug helpers", () => {
     ).toBe("wstein/support/examples");
   });
 
-  it("does not use legacy project titles as URL segments", () => {
+  it("falls back to the legacy project id when the project URL name is missing", () => {
     expect(
       legacyPublicPathSlugFromRecord(
         {
@@ -104,6 +104,19 @@ describe("legacy public path slug helpers", () => {
         {
           owner_name: "wstein",
         },
+      ),
+    ).toBe("wstein/4a5f0542-5873-4eed-a85c-a18c706e8bcd/examples");
+  });
+
+  it("does not invent owner/project URL segments without owner context", () => {
+    expect(
+      legacyPublicPathSlugFromRecord(
+        {
+          name: "examples",
+          path: "support",
+          project_id: "4a5f0542-5873-4eed-a85c-a18c706e8bcd",
+        },
+        {},
       ),
     ).toBe("examples");
   });

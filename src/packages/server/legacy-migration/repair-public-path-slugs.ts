@@ -4,7 +4,10 @@
  */
 
 import getPool from "@cocalc/database/pool";
-import { repairMigratedLegacyPublicDirectoryShareSlug } from "@cocalc/server/public-directory-shares";
+import {
+  normalizePublicDirectoryShareSlug,
+  repairMigratedLegacyPublicDirectoryShareSlug,
+} from "@cocalc/server/public-directory-shares";
 import {
   clean,
   legacyPublicPathSlugForRecord,
@@ -15,6 +18,7 @@ type Options = {
   limit?: number;
   legacyProjectId?: string;
   legacyPublicPathId?: string;
+  onlyImportedShares?: boolean;
 };
 
 type RepairRow = {
@@ -40,6 +44,7 @@ Options:
   --limit <n>                   Stop after scanning n legacy public_paths rows.
   --legacy-project-id <uuid>    Restrict to one legacy project.
   --legacy-public-path-id <id>  Restrict to one legacy public_paths.id.
+  --only-imported-shares        Only scan rows with an imported public_project_paths row.
   --help                        Show this help.
 `);
   process.exit(0);
@@ -53,6 +58,32 @@ function positiveInt(value: string, name: string): number {
   return n;
 }
 
+function isSlugTakenError(err: unknown): boolean {
+  return `${(err as Error | undefined)?.message ?? err}`.includes(
+    "already taken",
+  );
+}
+
+function isInvalidSlugError(err: unknown): boolean {
+  return `${(err as Error | undefined)?.message ?? err}`.includes("slug must");
+}
+
+function duplicateSlugFallbackValue(
+  slug: string,
+  legacyPublicPathId: string,
+): string {
+  return `${slug}~${legacyPublicPathId.slice(0, 10)}`;
+}
+
+function duplicateSlugFallback(
+  slug: string,
+  legacyPublicPathId: string,
+): string {
+  return normalizePublicDirectoryShareSlug(
+    duplicateSlugFallbackValue(slug, legacyPublicPathId),
+  );
+}
+
 function parseArgs(argv: string[]): Options {
   const options: Options = { apply: false };
   for (let i = 0; i < argv.length; i += 1) {
@@ -60,6 +91,10 @@ function parseArgs(argv: string[]): Options {
     if (arg === "--help" || arg === "-h") usage();
     if (arg === "--apply") {
       options.apply = true;
+      continue;
+    }
+    if (arg === "--only-imported-shares") {
+      options.onlyImportedShares = true;
       continue;
     }
     const value = argv[++i];
@@ -91,6 +126,9 @@ async function rowsToRepair(options: Options): Promise<RepairRow[]> {
     clauses.push(
       `(raw.legacy_id=$${params.length} OR raw.payload->>'id'=$${params.length})`,
     );
+  }
+  if (options.onlyImportedShares) {
+    clauses.push("shares.id IS NOT NULL");
   }
   const limitClause =
     options.limit == null ? "" : `LIMIT ${Math.floor(options.limit)}`;
@@ -141,15 +179,41 @@ async function main(): Promise<void> {
   let failed = 0;
   for (const row of rows) {
     const legacyPublicPathId = clean(row.payload.id) ?? row.legacy_id;
-    const nextSlug = await legacyPublicPathSlugForRecord(row.payload, pool());
+    let nextSlug: string | null;
+    try {
+      nextSlug = await legacyPublicPathSlugForRecord(row.payload, pool());
+    } catch (err) {
+      if (isInvalidSlugError(err)) {
+        skipped += 1;
+        console.warn(
+          `skipping legacy_public_path=${legacyPublicPathId}: ${err}`,
+        );
+      } else {
+        failed += 1;
+        console.error(
+          `failed to compute slug for legacy_public_path=${legacyPublicPathId}: ${err}`,
+        );
+      }
+      continue;
+    }
     if (!nextSlug || !legacyPublicPathId) {
       skipped += 1;
       continue;
     }
     const payloadSlug = clean(row.payload.slug);
+    const fallbackSlug = duplicateSlugFallbackValue(
+      nextSlug,
+      legacyPublicPathId,
+    );
+    const usesDuplicateFallback =
+      payloadSlug === fallbackSlug && row.share_slug === fallbackSlug;
     const needsRawUpdate = payloadSlug !== nextSlug;
     const needsShareUpdate =
       row.share_id != null && row.share_slug !== nextSlug;
+    if (usesDuplicateFallback) {
+      unchanged += 1;
+      continue;
+    }
     if (!needsRawUpdate && !needsShareUpdate) {
       unchanged += 1;
       continue;
@@ -163,19 +227,36 @@ async function main(): Promise<void> {
       continue;
     }
     try {
+      let slugToWrite = nextSlug;
       if (needsShareUpdate) {
-        await repairMigratedLegacyPublicDirectoryShareSlug({
-          id: row.share_id,
-          legacy_public_path_id: legacyPublicPathId,
-          slug: nextSlug,
-          legacy_url: clean(row.payload.url) ?? null,
-        });
+        try {
+          await repairMigratedLegacyPublicDirectoryShareSlug({
+            id: row.share_id,
+            legacy_public_path_id: legacyPublicPathId,
+            slug: nextSlug,
+            legacy_url: clean(row.payload.url) ?? null,
+          });
+        } catch (err) {
+          if (!isSlugTakenError(err)) {
+            throw err;
+          }
+          slugToWrite = duplicateSlugFallback(nextSlug, legacyPublicPathId);
+          console.warn(
+            `slug conflict for legacy_public_path=${legacyPublicPathId}; retrying with ${slugToWrite}`,
+          );
+          await repairMigratedLegacyPublicDirectoryShareSlug({
+            id: row.share_id,
+            legacy_public_path_id: legacyPublicPathId,
+            slug: slugToWrite,
+            legacy_url: clean(row.payload.url) ?? null,
+          });
+        }
         shareChanged += 1;
       }
-      if (needsRawUpdate) {
+      if (needsRawUpdate || slugToWrite !== nextSlug) {
         await updateRawPayloadSlug({
           legacy_id: row.legacy_id,
-          slug: nextSlug,
+          slug: slugToWrite,
         });
         rawChanged += 1;
       }

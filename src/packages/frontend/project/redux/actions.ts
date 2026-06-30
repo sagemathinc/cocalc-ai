@@ -3051,6 +3051,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     deleteAfterDownload?: boolean;
     downloadFilename?: string;
   }): Promise<void> => {
+    const share_id =
+      `${this.get_store()?.get("public_directory_share_id") ?? ""}`.trim();
     await downloadProjectFile({
       project_id: this.project_id,
       path,
@@ -3060,6 +3062,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       showError,
       deleteAfterDownload,
       downloadFilename,
+      share_id: share_id || undefined,
+      viewer: !share_id && this.isViewerProjectUser() ? true : undefined,
       logAction: (opts) => this.log(opts),
       routeProjectHostHttpUrl: (opts) =>
         webapp_client.conat_client.routeProjectHostHttpUrl(opts),

@@ -181,6 +181,7 @@ function parseArgs(argv: string[]): Options {
     const allowed = new Set([
       "accounts",
       "projects",
+      "project_names",
       "artifacts",
       "purchases",
       "subscriptions",
